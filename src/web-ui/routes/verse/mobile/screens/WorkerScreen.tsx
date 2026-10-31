@@ -25,7 +25,7 @@ export function WorkerScreen({ job }: { job: string }) {
   const detail = query.data;
   const failed = query.status === 'error';
   const gatewayUnavailable = (query.error instanceof ApiError && [401, 403].includes(query.error.status))
-    || (isRemoteMobileMode() && (failed || detail === null));
+    || (isRemoteMobileMode() && failed);
   const snapshotQuery = useQuery(homeRunsQuery, { enabled: gatewayUnavailable || detail === null });
   const refetchSnapshot = useRefetch(homeRunsQuery);
   usePollWhileVisible(refetchSnapshot, 15_000, { enabled: gatewayUnavailable || detail === null });

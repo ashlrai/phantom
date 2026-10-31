@@ -6,7 +6,8 @@
  * Reviewed fleet surface for the mobile remote: GET fleet/runs,
  * fleet/control/switches and fleet/control/lanes; GET fleet/runs/inbox with a
  * bounded limit and optional source filter; GET fleet/live/bus and
- * fleet/live/queue bare or with a bounded limit; POST fleet/runs/inbox
+ * fleet/live/queue bare or with a bounded limit; GET fleet/job with a single
+ * id matching the fleet job grammar; POST fleet/runs/inbox
  * {text, source?} without step-up (a message, not a control); POST
  * fleet/control/switches {id, on} and fleet/control/lanes {lane, target}
  * behind step-up. Every path and body shape is exact — no wildcards.
@@ -73,6 +74,9 @@ const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
 // ids against LANE_ID_RE plus per-lane bounds, so the gateway bounds format.
 const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
 const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
+// Same grammar the Hub applies in runs-job-detail `isFleetJobId`; duplicated
+// so this module stays free of server-side imports.
+const FLEET_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
 const FLEET_READ_LIMIT = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 200;
 
 function exactParams(params: URLSearchParams, shape: Record<string, (value: string) => boolean>): boolean {
@@ -155,6 +159,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
   )) return { kind: 'read', path };
   if ((path === '/api/verse/fleet/live/bus' || path === '/api/verse/fleet/live/queue')
     && exactParams(params, { limit: FLEET_READ_LIMIT })) return { kind: 'read', path };
+  if (path === '/api/fleet/job'
+    && exactParams(params, { id: (v) => FLEET_JOB_ID.test(v) })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints'
     && exactParams(params, { chatId: (v) => CHECKPOINT_ID.test(v) })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints/diff') {
