@@ -168,6 +168,7 @@ function printResourcesHelp(): void {
   console.log('');
   console.log(`    ${cyan('phm resources')}          ${dim('table view of availability/used%/cap/resets')}`);
   console.log(`    ${cyan('phm resources --json')}   ${dim('raw JSON (ResourceSnapshot)')}`);
+  console.log(`    ${cyan('phm resources autopilot --json')} ${dim('read-only lane targets from disk, inode and credit readings')}`);
   console.log(`    ${cyan('phm resources --watch')}  ${dim('refresh every 30s (Ctrl-C to stop)')}`);
   console.log('');
 }
@@ -184,6 +185,10 @@ export async function cmdResources(args: string[]): Promise<number> {
   if (args[0] === 'launcher') {
     const { cmdResourceLauncher } = await import('./resource-launcher.js');
     return cmdResourceLauncher(args.slice(1));
+  }
+  if (args[0] === 'autopilot') {
+    const { cmdResourceAutopilot } = await import('./resource-autopilot.js');
+    return cmdResourceAutopilot(args.slice(1));
   }
   if (args[0] === 'pool') {
     const { cmdResourcePool } = await import('./resource-pool.js');

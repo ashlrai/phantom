@@ -1,4 +1,6 @@
 /** Scheduling policy is independent of DRIVER-1 storage and the host semaphore. */
+import { drivePoolAllowed, isPoolDayShare, pacedShareRemaining, type PoolDayShare } from './pool-routing.js';
+
 export type DriveJobState = 'READY' | 'HELD' | 'STARTING' | 'RUNNING' | 'FINISHED' | 'FAILED' | 'PUBLISHING' | 'PUBLISHED' | 'PUBLISH_UNKNOWN';
 export interface DriveJob {
   id: string;
@@ -7,9 +9,20 @@ export interface DriveJob {
   priority: number;
   exitCode?: number;
 }
+export interface DrivePool {
+  id: string;
+  floor: number;
+  ceiling: number;
+  /**
+   * Optional paced daily share (pool-routing.ts): the pool may dispatch only
+   * the share that has vested by now, minus what the bridge already counted.
+   * Absent means unpaced — the ceiling alone bounds the pool.
+   */
+  daily?: PoolDayShare;
+}
 export interface DriveSnapshot {
   version: 1;
-  pools: { id: string; floor: number; ceiling: number }[];
+  pools: DrivePool[];
   maxRunning: number;
   paused: boolean;
   admission: 'open' | 'closed' | 'unknown';
@@ -70,11 +83,14 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
   if (!object(value) || value.version !== 1 || !count(value.maxRunning) ||
       typeof value.paused !== 'boolean' || typeof value.admission !== 'string' || !['open', 'closed', 'unknown'].includes(value.admission) ||
       !Array.isArray(value.pools) || !Array.isArray(value.jobs) || value.jobs.length > 100_000) return invalid();
-  const pools = new Map<string, { id: string; floor: number; ceiling: number }>();
+  const pools = new Map<string, DrivePool>();
   for (const pool of value.pools) {
     if (!object(pool) || !id(pool.id) || pools.has(pool.id) || !count(pool.floor) ||
         !count(pool.ceiling) || pool.floor > pool.ceiling) return invalid();
-    pools.set(pool.id, { id: pool.id, floor: pool.floor, ceiling: pool.ceiling });
+    // A malformed share must never read as an unpaced pool.
+    if (pool.daily !== undefined && !isPoolDayShare(pool.daily)) return invalid();
+    pools.set(pool.id, { id: pool.id, floor: pool.floor, ceiling: pool.ceiling,
+      ...(pool.daily === undefined ? {} : { daily: { ...pool.daily } }) });
   }
   if ([...pools.values()].reduce((total, pool) => total + pool.floor, 0) > value.maxRunning) return invalid();
   const jobs: DriveJob[] = [];
@@ -94,17 +110,25 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
 
 const active = (job: DriveJob): boolean => job.state === 'RUNNING' || job.state === 'STARTING';
 
-/** Floor deficits get first choice; priority and queue order break ties. */
-export function planDrive(snapshot: DriveSnapshot): string[] {
+/**
+ * Floor deficits get first choice; priority and queue order break ties. A
+ * READY job whose declared pool cannot serve its kind (pool-routing.ts) is
+ * never eligible — the line waits for corrected routing, it is not re-pooled.
+ * A pool carrying `daily` launches only while its paced share still has room;
+ * `nowMs` is caller-supplied so the plan stays pure.
+ */
+export function planDrive(snapshot: DriveSnapshot, nowMs = Date.now()): string[] {
   snapshot = parseDriveSnapshot(snapshot);
   if (snapshot.paused || snapshot.admission !== 'open') return [];
   const counts = new Map(snapshot.pools.map(pool => [pool.id, snapshot.jobs.filter(job => job.pool === pool.id && active(job)).length]));
   const pools = new Map(snapshot.pools.map(pool => [pool.id, pool]));
+  const shareLeft = new Map(snapshot.pools.map(pool =>
+    [pool.id, pool.daily === undefined ? Number.POSITIVE_INFINITY : pacedShareRemaining(pool.daily, nowMs)]));
   let total = snapshot.jobs.filter(active).length;
-  const ready = snapshot.jobs.filter(job => job.state === 'READY');
+  const ready = snapshot.jobs.filter(job => job.state === 'READY' && drivePoolAllowed(job.id, job.pool));
   const result: string[] = [];
   while (total < snapshot.maxRunning) {
-    const eligible = ready.filter(job => counts.get(job.pool)! < pools.get(job.pool)!.ceiling);
+    const eligible = ready.filter(job => counts.get(job.pool)! < pools.get(job.pool)!.ceiling && shareLeft.get(job.pool)! > 0);
     eligible.sort((a, b) => {
       const deficit = (job: DriveJob): number => Number(counts.get(job.pool)! < pools.get(job.pool)!.floor);
       return deficit(b) - deficit(a) || b.priority - a.priority;
@@ -114,6 +138,7 @@ export function planDrive(snapshot: DriveSnapshot): string[] {
     result.push(job.id);
     ready.splice(ready.indexOf(job), 1);
     counts.set(job.pool, counts.get(job.pool)! + 1);
+    shareLeft.set(job.pool, shareLeft.get(job.pool)! - 1);
     total++;
   }
   return result;
@@ -123,6 +148,7 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
   const { bridge } = deps;
   const dryRun = options.dryRun === true;
   let lease: string | null = null;
+  const nowMs = (): number => (deps.now?.() ?? new Date()).getTime();
   const report: DriveReport = { version: 1, at: (deps.now?.() ?? new Date()).toISOString(), dryRun,
     paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null };
   const snapshot = async (): Promise<DriveSnapshot> => {
@@ -137,7 +163,7 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
   try {
     if (options.signal?.aborted) { report.held = 'stopping'; return report; }
     if (dryRun) {
-      report.planned = planDrive(await snapshot());
+      report.planned = planDrive(await snapshot(), nowMs());
       return report;
     }
     lease = await bridge.acquire();
@@ -160,13 +186,13 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
       else report.publicationUnknown.push(job.id);
     }
     state = await snapshot();
-    report.planned = planDrive(state);
+    report.planned = planDrive(state, nowMs());
     const launchBudget = report.planned.length;
     const attempted = new Set<string>();
     while (attempted.size < launchBudget && !options.signal?.aborted) {
       // Fresh snapshots account for external pool users and changed ceilings.
       state = await snapshot();
-      const next = planDrive(state).find(job => !attempted.has(job));
+      const next = planDrive(state, nowMs()).find(job => !attempted.has(job));
       if (!next) break;
       attempted.add(next);
       if (await deps.paused()) { report.paused = true; report.held = 'paused'; break; }
