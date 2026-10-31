@@ -624,6 +624,7 @@ export async function startGateway(
   registry: McpRegistry,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<void> {
+  const startupParent = process.ppid;
   // This also catches aliases and opaque executable wrappers that structural
   // registry filtering cannot recognize. Check before any downstream starts.
   if (process.env[GATEWAY_ENV_MARKER] !== undefined) {
@@ -792,12 +793,20 @@ export async function startGateway(
   let closing: Promise<void> | undefined;
   const onSigint = (): void => onSignal('SIGINT');
   const onSigterm = (): void => onSignal('SIGTERM');
+  const onSighup = (): void => onSignal('SIGHUP');
+  let finish: () => void;
+  const onDisconnect = (): void => finish();
+  let parentWatch: ReturnType<typeof setInterval> | undefined;
   let onSignal: (signal: NodeJS.Signals) => void;
   const closeAll = (): Promise<void> => {
     if (closing) return closing;
     closed = true;
     process.removeListener('SIGINT', onSigint);
     process.removeListener('SIGTERM', onSigterm);
+    process.removeListener('SIGHUP', onSighup);
+    process.stdin.removeListener('end', onDisconnect);
+    process.stdin.removeListener('close', onDisconnect);
+    clearInterval(parentWatch);
     const clients = downstreams.flatMap((d) => {
       d.generation++;
       const client = d.client;
@@ -818,7 +827,13 @@ export async function startGateway(
     return closing;
   };
   const finished = new Promise<void>((resolve) => {
-    const finish = (): void => { void closeAll().then(resolve, resolve); };
+    finish = (): void => {
+      if (closing) return;
+      // Bound teardown even if an in-flight connection or SDK close hangs.
+      const deadline = setTimeout(() => process.exit(0), 3_000);
+      deadline.unref();
+      void closeAll().finally(() => clearTimeout(deadline)).then(resolve, resolve);
+    };
     server.onclose = finish;
     onSignal = (signal): void => {
       process.stderr.write(`[ashlr mcp] received ${signal} — shutting down\n`);
@@ -826,10 +841,18 @@ export async function startGateway(
     };
     process.once('SIGINT', onSigint);
     process.once('SIGTERM', onSigterm);
+    process.once('SIGHUP', onSighup);
+    process.stdin.once('end', onDisconnect);
+    process.stdin.once('close', onDisconnect);
+    parentWatch = setInterval(() => {
+      if (process.ppid !== startupParent) finish();
+    }, 5_000);
+    parentWatch.unref();
   });
   try {
     await server.connect(new StdioServerTransport());
     if (!closed) process.stderr.write(`[ashlr mcp] gateway ready — ${listNativeTools().length} native ashlr tool(s) + ${routes.size} downstream tool(s) from ${downstreams.filter((d) => d.client).length}/${downstreams.length} server(s)\n`);
+    if (process.stdin.readableEnded || process.stdin.destroyed) finish();
     await finished;
   } finally {
     await closeAll();
