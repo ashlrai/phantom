@@ -112,29 +112,45 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     readSource(join(root, 'queue', 'ready.tsv'), MAX_READY, false),
     readSource(join(root, 'queue', 'precheck-skips.tsv'), MAX_SKIPS, true),
   ]);
-  // The shared parser recognizes READY but not PARKED as a positional status.
-  // Retain original suffix casing, which the shared parser otherwise uppercases.
-  const originalStates = new Map<string, string>();
-  let hasHeader = false;
-  const prepared = readySource.text.split('\n').map((line) => {
-    const cells = line.split('\t');
-    if (!hasHeader && cells.length >= 2 && cells.every((cell) => /^(?:id|job|jobid|task|name|status|state|pool|lane|account|repo|repository|project|tier|priority|pri|title|summary|at|ts|time|timestamp|updated|updatedat|createdat|landedat|mergedat|completedat)$/i.test(cell.trim())) &&
-        cells.some((cell) => /^(?:status|state|pool|lane|account)$/i.test(cell.trim()))) hasHeader = true;
-    for (const cell of cells) {
-      const value = cell.trim().replace(/^(?:status|state)=/i, '');
-      if (PARKED.test(value)) originalStates.set(value.toUpperCase(), value);
+  // An upgraded queue can contain positional rows alongside headered rows.
+  // Parse each row with the active header unless it has a positional status;
+  // the shared parser otherwise applies that header to all subsequent rows.
+  let header: string | null = null;
+  let statusColumn = -1;
+  const parsedRows: Array<{ row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined }> = [];
+  let dropped = 0;
+  for (const raw of readySource.text.split('\n')) {
+    if (parsedRows.length >= 50_000) break; // Match the shared parser's row bound.
+    const line = raw.replace(/\r$/, '');
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    const cells = line.split('\t').map((cell) => cell.trim());
+    while (cells.at(-1) === '') cells.pop();
+    const names = cells.map((cell) => cell.toLowerCase().replace(/[^a-z]/g, ''));
+    if (names.length >= 2 && names.every((name) => /^(?:id|job|jobid|task|name|status|state|pool|lane|account|repo|repository|project|tier|priority|pri|title|summary|at|ts|time|timestamp|updated|updatedat|createdat|landedat|mergedat|completedat)$/.test(name)) &&
+        names.some((name) => /^(?:status|state|pool|lane|account)$/.test(name))) {
+      header = line;
+      statusColumn = names.findIndex((name) => name === 'status' || name === 'state');
+      continue;
     }
-    if (!hasHeader && PARKED.test(cells[0]?.trim() ?? '')) cells[0] = `status=${cells[0]!.trim()}`;
-    return cells.join('\t');
-  }).join('\n');
-  const parsed = parseReadyTsv(prepared);
+    const first = cells[0] ?? '';
+    const positional = !header || (statusColumn !== 0 && (/^READY$/i.test(first) || PARKED.test(first)));
+    const input = positional && PARKED.test(first) ? `status=${first}\t${cells.slice(1).join('\t')}` : line;
+    const result = parseReadyTsv(positional ? input : `${header}\n${input}`);
+    dropped += result.dropped;
+    const row = result.rows[0];
+    if (!row) continue;
+    const originalState = positional
+      ? (PARKED.test(first) ? first : cells.find((cell) => /^(?:status|state)=/i.test(cell))?.replace(/^(?:status|state)=/i, ''))
+      : cells[statusColumn];
+    parsedRows.push({ row, originalState });
+  }
   const lanes = new Map<string, { lane: string; ready: number; parked: number }>();
   const groups = new Map<string, ParkedGroup>();
   let ready = 0;
   let parked = 0;
-  let malformed = parsed.dropped;
-  for (const row of parsed.rows) {
-    const state = parseParkedState(originalStates.get(row.status) ?? row.status);
+  let malformed = dropped;
+  for (const { row, originalState } of parsedRows) {
+    const state = parseParkedState(originalState?.toUpperCase() === row.status ? originalState : row.status);
     if (!row.id || !JOB_ID.test(row.id) || (row.status !== 'READY' && !state.parked)) { malformed++; continue; }
     const lane = state.lane ?? row.pool;
     const counts = lanes.get(lane) ?? { lane, ready: 0, parked: 0 };

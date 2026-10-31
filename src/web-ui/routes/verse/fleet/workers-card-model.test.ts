@@ -8,7 +8,7 @@ export const fixture = { v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { w
   { job: 'job-two', lane: null, url: 'http://example.com/unsafe', at: '2026-10-31T12:00:00Z' },
 ] };
 it('narrows the allowed snapshot and rejects malformed workers', () => {
-  expect(narrowWorkers(fixture)).toEqual(fixture);
+  expect(narrowWorkers(fixture)).toEqual({ ...fixture, switches: [], paused: null, runsDir: 'not-landed' });
   expect(narrowWorkers({ ...fixture, workers: {} })).toBeNull();
   expect(narrowWorkers({ ...fixture, workers: [{ ...fixture.workers[0], ageSeconds: '59' }] })).toBeNull();
   expect(validJob('job/one')).toBe(false);

@@ -13,3 +13,4 @@
 .highlight { background: var(--status-success-bg); box-shadow: inset 3px 0 var(--status-success-solid); padding-left: var(--space-3); }
 .seen { color: var(--status-success-fg); background: var(--status-success-bg); }
 .waiting { color: var(--status-warning-fg); background: var(--status-warning-bg); }
+.waiting[data-overdue="true"] { color: var(--status-danger-fg); background: var(--status-danger-bg); }
