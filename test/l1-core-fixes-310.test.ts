@@ -151,7 +151,7 @@ function fleetDeps(over: Partial<FleetLiveDeps> = {}): FleetLiveDeps {
     isMirror: (path) => path.startsWith('/m/'),
     repoIdentity: (path) => (path === CHECKOUT ? 'ashlrai/locus' : path === MIRROR ? 'ashlrai/gone' : null),
     watches: () => [],
-    greenPct: () => ({ finished: 0, green: 0, pct: null }),
+    dispatchStarts: async () => new Map(),
     ...over,
   };
 }

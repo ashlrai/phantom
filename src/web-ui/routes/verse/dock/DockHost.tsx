@@ -1,7 +1,7 @@
 /**
  * routes/verse/dock/DockHost.tsx — the dock with the open chat wired in
- * (unit C2; 3.16 workbench). The Chat section loads THIS lazily the first
- * time the dock opens: the dock starts closed, so none of it — the
+ * (unit C2; 3.16 workbench). The Chat section loads THIS lazily after
+ * first render: the dock starts closed, so none of it — the
  * container, the pane registry and every pane — belongs on the chat's
  * first-paint path (SPEC-310C budget: chat critical JS ≤ 350 KB).
  *
@@ -17,6 +17,8 @@ import type { ChatTask } from '../chat/tasks-model.js';
 import { ChatPaneDataContext, type ChatPaneData } from '../panes/chat-pane-data.js';
 import type { PaneHost } from '../panes/index.js';
 import { Dock, type DockPaneContext } from './Dock.js';
+import { DockHelperBoundary } from './DockHelperBoundary.js';
+import { FleetWorkspaceAutoOpen } from './FleetWorkspaceAutoOpen.js';
 import { closeDockTab, openDockPane, requestDiff, requestTerminal, requestTerminalBelow } from './dock-store.js';
 
 export interface DockHostProps {
@@ -73,6 +75,9 @@ export function DockHost(props: DockHostProps) {
 
   return (
     <ChatPaneDataContext.Provider value={data}>
+      <DockHelperBoundary name="fleet-workspace-auto-open">
+        <FleetWorkspaceAutoOpen />
+      </DockHelperBoundary>
       <Dock presentation={props.presentation} windowWidth={props.windowWidth} columnWidth={props.columnWidth}
         columnMax={props.columnMax} columnHeight={props.columnHeight} pane={pane} />
     </ChatPaneDataContext.Provider>
