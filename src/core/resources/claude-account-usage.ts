@@ -27,6 +27,7 @@ const TITLES: Record<string, string> = {
   'Current week (Fable)': 'seven_day_fable',
 };
 // Preserve the native display string, not an invented timestamp/year/timezone conversion.
+const DATE_ONLY_RESET = /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:[1-9]|[12]\d|3[01])$/;
 const RESET = /^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:[1-9]|[12]\d|3[01]) at )?(?:[1-9]|1[0-2])(?::[0-5]\d)?(?:am|pm) \([A-Za-z_+-]+(?:\/[A-Za-z_+-]+){0,2}\)$/;
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -48,15 +49,16 @@ export function parseClaudeNativeUsage(raw: string): ResourceConnectionQuotaWind
     if (!line.startsWith('Current ')) continue; // Never publish activity/behavior diagnostics.
     const match = /^(Current [^:]+): (\d{1,3})% used(?: · resets (.+))?$/.exec(line);
     if (!match || !Object.hasOwn(TITLES, match[1]!) || Number(match[2]) > 100 ||
-      match[3] !== undefined && (match[3].length > 128 || !RESET.test(match[3]))) return null;
+      match[3] !== undefined && (match[3].length > 128 || (!RESET.test(match[3]) && !DATE_ONLY_RESET.test(match[3])))) return null;
     const id = TITLES[match[1]!]!;
     if (ids.has(id)) return null;
     ids.add(id);
     windows.push({ id, usedPercent: Number(match[2]), resetsAt: null,
       nativeReport: { source: 'claude-usage', resetDescription: match[3] ?? null } });
   }
-  // Do not turn a partial/native-changed response into a complete allowance claim.
-  return ids.has('five_hour') && ids.has('seven_day') ? windows : null;
+  // The provider removed this account's session window on 2026-10-31;
+  // a weekly-only report is now complete. Preserve a session window only when reported.
+  return ids.has('seven_day') ? windows : null;
 }
 
 /** Calendar-valid provider ISO, including fractional seconds and explicit offset. */
@@ -160,7 +162,8 @@ export function parseClaudeNativeUsageStream(raw: string, observedAt: string): {
   }
   const extra = report.rate_limits.extra_usage;
   const extraUsageEnabled = record(extra) && typeof extra.is_enabled === 'boolean' ? extra.is_enabled : null;
-  return ids.has('five_hour') && ids.has('seven_day') ? { windows, quotaFresh: true, extraUsageEnabled } : null;
+  // The provider removed this account's session window on 2026-10-31; weekly-only is complete.
+  return ids.has('seven_day') ? { windows, quotaFresh: true, extraUsageEnabled } : null;
 }
 
 /**
