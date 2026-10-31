@@ -202,9 +202,6 @@ export function devinChatVerdict(state: DevinStatus['state'], newSessionGate?: D
     : { ready: false, tone: 'off', word: 'Off', detail: 'Connect Devin to chat with it.', fix: commandFix('Connect Devin', 'ashlr devin connect') } as ReadinessVerdict;
 }
 
-/** @deprecated 3.15 — kept for importers; the live answer is `devinChatVerdict(state)`. */
-export const DEVIN_CHAT_VERDICT: ReadinessVerdict = Object.freeze(devinChatVerdict('not-connected'));
-
 /**
  * The fleet verdict: why the fleet may or may not launch Devin sessions now.
  * Ready needs the lane on, a key, Mason's opt-in, a live standing grant whose

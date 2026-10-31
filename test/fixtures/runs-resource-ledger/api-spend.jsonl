@@ -1,0 +1,6 @@
+{"ts":"2026-10-31T08:00:00Z","job":"one","lane":"claude-api","model":"claude-test-a","input_tokens":100,"output_tokens":20,"is_error":false,"cost_usd":1.25}
+{"ts":"2026-10-31T10:00:00Z","job":"two","lane":"claude-api","model":"claude-test-b","input_tokens":30,"output_tokens":5,"is_error":true,"cost_estimated":true}
+{"ts":"2026-10-30T10:00:00Z","model":"claude-test-a","usd":0.5}
+{"at":"2026-10-26T10:00:00Z","model":"claude-test-a","cost":0.25}
+{"timestamp":"2026-10-25T10:00:00Z","model":"claude-test-a","cost":10}
+{"ts":"2026-10-24T10:00:00Z","model":"claude-test-a"}

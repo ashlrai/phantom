@@ -459,6 +459,12 @@ const loadTelemetryCmd = lazyCmd(
 
 // ─── M21 command loaders ────────────────────────────────────────────
 
+const loadNodeCmd = lazyCmd(
+  () => import('./node.js'),
+  (m) => m['cmdNode'] as Cmd,
+  'node command requires src/cli/node.ts.',
+);
+
 const loadSandboxCmd = lazyCmd(
   () => import('./sandbox.js'),
   (m) => m.cmdSandbox as Cmd,
@@ -837,6 +843,29 @@ function die(msg: string, code = 1): never {
   process.exit(code);
 }
 
+/**
+ * True when `--help` or `-h` appears in argv. The core commands below honor it
+ * by printing usage and exiting 0 before any index/config/side-effect work -
+ * `phm status --help` used to build the index and `phm ls -h` treated -h as a
+ * category filter. Guarded end-to-end by test/cli-help-no-side-effects.test.ts.
+ */
+function wantsHelp(args: string[]): boolean {
+  return args.includes('--help') || args.includes('-h');
+}
+
+/** Render a core command's usage block: a `phm <cmd>` title line plus usage rows. */
+function printCoreUsage(cmd: string, desc: string, rows: readonly (readonly [string, string])[]): void {
+  console.log('');
+  console.log(bold(`  phm ${cmd}`) + dim(` - ${desc}`));
+  console.log('');
+  console.log('  ' + bold('Usage:'));
+  console.log('');
+  const w = Math.max(...rows.map(([r]) => r.length));
+  for (const [usage, detail] of rows) {
+    console.log(`    ${cyan(pad(usage, w))}${detail ? `  ${dim(detail)}` : ''}`);
+  }
+  console.log('');
+}
 
 /** Ensure the index exists; auto-build if missing. Returns the index. */
 function requireIndex(cfg: AshlrConfig): AshlrIndex {
@@ -999,6 +1028,12 @@ function persistConfigSet(
 // ─── Command: index ───────────────────────────────────────────────────────────
 
 function cmdIndex(args: string[]): void {
+  if (wantsHelp(args)) {
+    printCoreUsage('index', 'Rebuild the desktop index; print counts by category.', [
+      ['phm index [--refresh]', 'build (or force-rebuild) the index, then show counts by category'],
+    ]);
+    return;
+  }
   const refresh = args.includes('--refresh');
   const cfg = loadConfig();
 
@@ -1053,6 +1088,14 @@ function cmdIndex(args: string[]): void {
 // ─── Command: go ─────────────────────────────────────────────────────────────
 
 async function cmdGo(args: string[]): Promise<void> {
+  if (wantsHelp(args)) {
+    printCoreUsage('go', 'Find an item; open in editor, print its path for cd, or show a summary.', [
+      ['phm go [query]', 'best match wins; ambiguous matches open the picker'],
+      ['phm go <query> --open', 'open the match in your editor'],
+      ['phm go <query> --cd', 'print the match path only - for `cd $(phm go <query> --cd)`'],
+    ]);
+    return;
+  }
   const openFlag = args.includes('--open');
   const cdFlag   = args.includes('--cd');
   const queryArgs = args.filter(a => !a.startsWith('--'));
@@ -1157,6 +1200,13 @@ function printNoReposHelp(cfg: AshlrConfig): void {
 }
 
 async function cmdStatus(args: string[]): Promise<void> {
+  if (wantsHelp(args)) {
+    printCoreUsage('status', 'Attention board: dirty, off-sync and stale repos; ecosystem summary.', [
+      ['phm status', 'human attention board'],
+      ['phm status --json', 'machine-readable StatusJson on stdout'],
+    ]);
+    return;
+  }
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
 
@@ -1363,6 +1413,10 @@ async function cmdStatus(args: string[]): Promise<void> {
           `  ${dim('·')}  ${cyan(`${gs.openIssues} open issue${gs.openIssues !== 1 ? 's' : ''}`)}` +
           `  ${dim('·')}  ${ciStr}${repoLabel}`
         );
+        if (gs.repo) {
+          const { collectMergeEtas, formatMergeEta } = await import('../core/merge-eta.js');
+          for (const eta of collectMergeEtas(cwd, gs.repo)) console.log(`    ${formatMergeEta(eta)}`);
+        }
         console.log('');
       }
     }
@@ -1446,6 +1500,12 @@ async function cmdStatus(args: string[]): Promise<void> {
 // ─── Command: ls ─────────────────────────────────────────────────────────────
 
 function cmdLs(args: string[]): void {
+  if (wantsHelp(args)) {
+    printCoreUsage('ls', 'List all indexed items, optionally filtered by category.', [
+      ['phm ls [category]', 'exact category match first, then partial match fallback'],
+    ]);
+    return;
+  }
   const catFilter = args.filter(a => !a.startsWith('--'))[0] ?? null;
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
@@ -1500,6 +1560,12 @@ function cmdLs(args: string[]): void {
 // ─── Command: open ────────────────────────────────────────────────────────────
 
 async function cmdOpen(args: string[]): Promise<void> {
+  if (wantsHelp(args)) {
+    printCoreUsage('open', 'Open the best match in your editor; no query opens the picker.', [
+      ['phm open [query]', 'top match opens directly; no query opens the interactive picker'],
+    ]);
+    return;
+  }
   const query = args.filter(a => !a.startsWith('--')).join(' ');
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
@@ -1532,6 +1598,14 @@ async function cmdOpen(args: string[]): Promise<void> {
 // ─── Command: tidy ────────────────────────────────────────────────────────────
 
 function cmdTidy(args: string[]): void {
+  if (wantsHelp(args)) {
+    printCoreUsage('tidy', 'Show (or apply) tidy moves for loose Desktop files.', [
+      ['phm tidy', 'dry-run: print the planned moves'],
+      ['phm tidy --apply', 'apply the moves'],
+      ['phm tidy --json', 'emit the TidyPlan as JSON (with --apply, the post-apply plan)'],
+    ]);
+    return;
+  }
   const apply = args.includes('--apply');
   const json  = args.includes('--json');
   const cfg = loadConfig();
@@ -1653,6 +1727,15 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 }
 
 async function cmdConfig(args: string[]): Promise<void> {
+  if (wantsHelp(args)) {
+    printCoreUsage('config', 'Read/write config values; no args prints a summary.', [
+      ['phm config get <key>', 'read a dot-path value (sensitive leaves print <redacted>)'],
+      ['phm config set <key> <value>', 'write a scalar; use --json <value> for structured keys'],
+      ['phm config path', 'print the config file path'],
+      ['phm config effective [--json]', 'read-only effective autonomy/daemon/foundry/backend settings'],
+    ]);
+    return;
+  }
   const subCmd = args[0];
 
   // `config set <key> --help` (or `set --help <value>`) used to store "--help"
@@ -2125,6 +2208,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'top': {
+        const { cmdTop } = await import('./top.js');
+        process.exitCode = await cmdTop(rest);
+        break;
+      }
+
       case 'tui':
       case 'dash': {
         const cmdTui = await loadTuiCmd();
@@ -2192,6 +2281,12 @@ async function main(): Promise<void> {
       case 'worktrees': {
         const { cmdWorktrees } = await import('./worktrees.js');
         process.exitCode = cmdWorktrees(rest);
+        break;
+      }
+
+      case 'node': {
+        const cmdNode = await loadNodeCmd();
+        process.exitCode = await cmdNode(rest);
         break;
       }
 
@@ -2599,6 +2694,12 @@ async function main(): Promise<void> {
       case 'version':
       case '--version':
       case '-v': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('version', 'Print the installed ashlr version.', [
+            ['phm version', 'aliases: --version, -v'],
+          ]);
+          break;
+        }
         // ASHLR_VERSION is set by the Bun SEA shim (build-sea.mjs) because
         // createRequire(import.meta.url) cannot resolve package.json from
         // inside Bun's virtual FS (/$bunfs/root/…) at runtime.
