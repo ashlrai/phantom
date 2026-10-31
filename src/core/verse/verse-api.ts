@@ -193,7 +193,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -232,6 +232,9 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'devin', load: async () => (await import('../devin/devin-api.js')).handleDevinApi },
   // 3.15 Jev decisions: GET /api/verse/jev (core/decide/jev-api.ts), read-only.
   { id: 'jev', load: async () => (await import('../decide/jev-api.js')).handleJevApi },
+  // Fleet runs history: GET /api/verse/runs-history (core/verse/runs-history-api.ts),
+  // the durable per-minute lane series; read-only, sampling happens on read.
+  { id: 'runs-history', load: async () => (await import('./runs-history-api.js')).handleRunsHistoryApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
