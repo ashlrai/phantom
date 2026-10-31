@@ -6,7 +6,7 @@ const runs: FleetRuns = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: '2026-10-31T11:59:00Z', paused: false, memFreePct: null, diskFreeGb: null, switches: ['safe'], claudeLane: 'busy',
   lanes: [{ lane: 'codex-personal', running: 18, target: 24, queued: 0, held: true, heldReason: 'budget', tokensLastHour: null, merged24h: null, mergeRate24h: null }],
-  workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [], mergesLastHour: { count: 1, items: [{ repo: 'fake/repo', number: 12, title: 'A change' }] }, events: [], codexPersonal: null,
+  workers: [], claimed: [], leaders: [], orchestratorAgents: null, publishesLastHour: [], mergesLastHour: { count: 1, items: [{ repo: 'fake/repo', number: 12, title: 'A change' }] }, events: [], codexPersonal: null,
   inbox: [{ at: '2026-10-31T11:45:00Z', source: 'test', text: 'Hello' }, { at: '2026-10-31T11:50:00Z', source: 'fake', text: 'Latest' }], drop: null,
 };
 const now = Date.parse('2026-10-31T12:00:00Z');
