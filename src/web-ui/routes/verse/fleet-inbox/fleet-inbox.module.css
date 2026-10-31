@@ -4,6 +4,8 @@
 .row { border-top: 1px solid var(--border-subtle); padding: var(--space-3) 0; }
 .meta { font-size: var(--text-xs-size); color: var(--text-secondary); }
 .text { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-3) 0; }
+.jobs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-3) 0; font-size: var(--text-xs-size); color: var(--text-secondary); }
+.jobChip { overflow-wrap: anywhere; }
 .banner { padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--text-secondary); }
 .composer label { display: block; margin-bottom: var(--space-2); }
 .composer textarea { box-sizing: border-box; width: 100%; resize: vertical; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-input); color: var(--text-primary); font: inherit; }
