@@ -48,6 +48,23 @@ are serialized; it must not await another receive on the same receiver.
 does not mean a leader read or acted on it. `duplicate` means a matching receipt
 was already recorded within the window, not that the leader acted on it.
 
+## Agent-bus mirroring
+
+An `accepted` receipt is also mirrored onto the durable local agent bus as a
+`mason` → `leaders` P0 envelope whose body is
+`{ kind: 'interjection', channel, text, receivedAt, dedupeKey }`, so
+`phm comms bus read` and the fleet agent-bus API observe the interjection
+without reading the inbox. The bus id derives from the dedupe key, so a retry
+after a restart cannot double-post one receipt. Mirroring is best effort: it
+runs after the durable write and before the ack, outside the ack timeout, and
+a `duplicate` receipt is never republished. A successful result carries a
+`publishState` of `published`, `skipped` or `failed`; a failed mirror never
+changes the receipt, the result or the ack. `publish: null` disables mirroring
+and a `publish` function replaces the default sink. `busRoot` selects the store
+root for the default sink; the default stays hermetic for runsDir-scoped
+receivers that name no `busRoot`, while adapters that pass neither option
+publish to the canonical store.
+
 ## Minimal use
 
 The following assumes the adapter has already authenticated the request,
