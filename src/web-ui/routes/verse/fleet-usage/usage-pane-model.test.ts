@@ -24,6 +24,22 @@ describe('rowsFromAccounts', () => {
     expect(rows[0].windows[0]).toMatchObject({ label: 'Weekly', usedPercent: 58, limitReached: false, measured: true });
     expect(rows[0].windows.map((w) => w.label).join()).not.toMatch(/5\s?h/i);
   });
+  it('hides a stale five_hour window on a Claude account and notes why', () => {
+    const rows = rowsFromAccounts(snapshot([account({
+      id: 'claude-1', label: 'Claude Max', provider: 'claude',
+      windows: [window({ id: 'five_hour', label: '5-hour', usedPercent: 10 }), window({ id: 'seven_day', label: 'Weekly', usedPercent: 58 })],
+    })]));
+    expect(rows[0].windows.map((w) => w.label)).toEqual(['Weekly']);
+    expect(rows[0].note).toBe('Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.');
+  });
+  it('keeps a Codex account’s session window and adds no note', () => {
+    const rows = rowsFromAccounts(snapshot([account({
+      id: 'codex-1', provider: 'codex',
+      windows: [window({ id: 'five_hour', label: '5-hour', usedPercent: 10 }), window({ id: 'codex_secondary', label: 'Weekly', usedPercent: 40 })],
+    })]));
+    expect(rows[0].windows.map((w) => w.label)).toEqual(['5-hour', 'Weekly']);
+    expect(rows[0].note).toBeNull();
+  });
   it('keeps an unmeasured reading unmeasured and falls back to the window id for the label', () => {
     const rows = rowsFromAccounts(snapshot([account({ id: 'codex-1', provider: 'codex', windows: [window({ id: 'primary_5h', usedPercent: 100, limitReached: true, measured: false })] })]));
     expect(rows[0].windows[0]).toMatchObject({ label: 'primary_5h', usedPercent: 100, limitReached: true, measured: false });

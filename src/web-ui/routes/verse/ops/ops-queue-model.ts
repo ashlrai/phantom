@@ -9,7 +9,7 @@ export interface FleetQueueV1 {
   ready: number;
   parked: number;
   malformed: number;
-  byLane: Array<{ lane: string; ready: number; parked: number }>;
+  byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
   groups: ParkedGroup[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
@@ -18,6 +18,8 @@ export interface FleetQueueV1 {
 type Check<T> = (value: unknown) => value is T;
 const str: Check<string> = (v): v is string => typeof v === 'string';
 const num: Check<number> = (v): v is number => typeof v === 'number' && Number.isFinite(v);
+const optional = <T>(check: Check<T>): Check<T | undefined> => (v): v is T | undefined => v === undefined || check(v);
+const count: Check<number> = (v): v is number => num(v) && Number.isInteger(v) && v >= 0;
 const nullable = <T>(check: Check<T>): Check<T | null> => (v): v is T | null => v === null || check(v);
 const array = <T>(check: Check<T>): Check<T[]> => (v): v is T[] => Array.isArray(v) && v.every(check);
 function shape<S extends Record<string, Check<unknown>>>(schema: S): Check<{ [K in keyof S]: S[K] extends Check<infer T> ? T : never }> {
@@ -30,7 +32,7 @@ const source: Check<FleetQueueV1['sources']['ready']> = (v): v is FleetQueueV1['
 export const isFleetQueue: Check<FleetQueueV1> = shape({
   v: (v): v is 1 => v === 1, generatedAt: str, sources: shape({ ready: source, skips: source }),
   total: num, ready: num, parked: num, malformed: num,
-  byLane: array(shape({ lane: str, ready: num, parked: num })),
+  byLane: array(shape({ lane: str, ready: num, parked: num, phantom: optional(count), other: optional(count), otherRepos: optional(array(str)) })),
   groups: array(shape({ reason: str, lane: nullable(str), count: num, jobs: array(str) })),
   skips: array(shape({ at: str, job: str, code: str, reason: str })), skipsLast24h: nullable(num),
 });

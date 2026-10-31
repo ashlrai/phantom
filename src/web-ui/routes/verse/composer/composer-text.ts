@@ -84,7 +84,7 @@ export function mentionFor(match: VerseFileMatch, primaryRoot: string | null): s
 // Slash commands
 // ---------------------------------------------------------------------------
 
-export type SlashCommandId = 'fleet' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
+export type SlashCommandId = 'fleet' | 'lane' | 'pane' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
 
 export interface SlashCommand {
   id: SlashCommandId;
@@ -101,6 +101,8 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'effort', title: '/effort', description: 'Choose the reasoning effort' },
   { id: 'model', title: '/model', description: 'Choose the model' },
   { id: 'fleet', title: '/fleet', description: 'Send a message to the fleet leaders’ inbox' },
+  { id: 'lane', title: '/lane', description: 'Set a fleet lane’s worker target: /lane <lane> <n>' },
+  { id: 'pane', title: '/pane', description: 'Open a dock pane: /pane <name>' },
 ];
 
 /** Commands whose id or title starts with (then contains) the query. */
@@ -162,4 +164,35 @@ export function readFileAsBase64(file: Blob): Promise<string> {
 export function parseFleetCommand(draft: string): { text: string } | null {
   const match = /^\/fleet\s+(\S[\s\S]*)$/.exec(draft);
   return match ? { text: match[1]!.trim().slice(0, FLEET_RUNS_INBOX_MAX_CHARS) } : null;
+}
+
+/** Resolve a pane by id or a unique id/title prefix. */
+export function parsePaneCommand(draft: string, panes: ReadonlyArray<{ id: string; title: string }>): { id: string; title: string } | { error: string } | null {
+  if (!/^\/pane(?=\s|$)/.test(draft)) return null;
+  const name = draft.slice('/pane'.length).trim();
+  if (!name) return { error: 'Use /pane <name> to open a dock pane.' };
+  const query = name.toLowerCase();
+  const exact = panes.find((pane) => pane.id.toLowerCase() === query);
+  if (exact) return { id: exact.id, title: exact.title };
+  const normalize = (value: string) => value.toLowerCase().replace(/^fleet-/, '');
+  const prefix = normalize(query);
+  const matches = prefix ? panes.filter((pane) => normalize(pane.id).startsWith(prefix) || normalize(pane.title).startsWith(prefix)) : [];
+  if (matches.length === 1) return { id: matches[0]!.id, title: matches[0]!.title };
+  if (matches.length > 1) return { error: `Ambiguous pane: ${matches.slice(0, 8).map((pane) => pane.title).join(', ')}` };
+  return { error: `No pane named ${name}` };
+}
+
+/** Parse a lane command without allowing malformed commands to become chat turns. */
+export function parseLaneCommand(draft: string): { lane: string; target: number } | { error: string } | null {
+  if (!/^\/lane(?=\s|$)/.test(draft)) return null;
+  const parts = draft.trim().split(/\s+/);
+  if (parts.length !== 3) return { error: 'Use /lane <lane> <n> to set a worker target.' };
+  const lane = parts[1]!;
+  if (!/^[a-z][a-z0-9-]{1,39}$/.test(lane)) return { error: 'Enter a valid lane name (2–40 lowercase letters, digits or hyphens).' };
+  const rawTarget = parts[2]!;
+  const target = Number(rawTarget);
+  if (!/^\d+$/.test(rawTarget) || !Number.isSafeInteger(target) || target > 999) {
+    return { error: 'Enter a whole-number target from 0 to 999.' };
+  }
+  return { lane, target };
 }

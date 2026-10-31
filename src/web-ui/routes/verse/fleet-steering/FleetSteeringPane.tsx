@@ -6,6 +6,9 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { fleetSteeringQuery } from './fleet-steering-queries.js';
 import styles from './fleet-steering.module.css';
+import { leaderJournalQuery } from '../leader-journal/leader-journal-queries.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
+import { lastExchange, pendingOrders, pendingText } from './last-exchange-model.js';
 import { buildSteering, fleetSourceHealth, summarizeReaction, type SteeringEntry } from './steering-model.js';
 
 const PREVIEW_CHARS = 160;
@@ -50,9 +53,15 @@ function EntryRow({ entry }: { entry: SteeringEntry }) {
 
 export function FleetSteeringPane({ visible }: PaneProps) {
   const read = useQuery(fleetSteeringQuery, { enabled: visible, freshMs: 0 });
+  const journal = useQuery(leaderJournalQuery, { enabled: visible });
+  const refetchJournal = useRefetch(leaderJournalQuery);
+  usePollWhileVisible(refetchJournal, 30_000, { enabled: visible });
   const refetch = useRefetch(fleetSteeringQuery);
   usePollWhileVisible(refetch, 10_000, { enabled: visible });
   const entries = useMemo(() => buildSteering(read.data), [read.data]);
+  const nowMs = Date.now();
+  const exchange = lastExchange(entries, journal.data, nowMs);
+  const pending = pendingText(pendingOrders(read.data, nowMs));
   const missing = read.data === null || (read.error instanceof ApiError && read.error.status === 404);
   if (missing) return <p className={styles.message}>Live runs not in this build</p>;
   if (read.data === undefined) {
@@ -66,7 +75,19 @@ export function FleetSteeringPane({ visible }: PaneProps) {
   const degraded = sources.inbox !== 'healthy' || sources.runsDir !== 'healthy';
   return (
     <section className={styles.root} aria-label="Steering">
-      {degraded && <p className={styles.notice} role="status">Inbox or dispatcher events may be incomplete.</p>}
+      <p role="status" aria-label="Pending orders" className={styles.text} data-tone={pending.tone}
+        style={{ color: pending.tone === 'danger' ? 'var(--status-danger-fg)' : pending.tone === 'warning' ? 'var(--status-warning-fg)' : undefined }}>
+        {pending.text}
+      </p>
+      <Button size="sm" onClick={() => openInterjectDialog()}>Send another</Button>
+      <p role="status" aria-label="Last exchange" className={styles.text} data-tone={exchange.tone}
+        style={{ color: exchange.tone === 'danger' ? 'var(--status-danger-fg)' : exchange.tone === 'warning' ? 'var(--status-warning-fg)' : undefined }}>
+        {exchange.text}
+      </p>
+      {journal.status === 'error' && <p className={styles.notice} role="status">Leader journal could not refresh.</p>}
+      {degraded && <p className={styles.notice} role="status">{sources.runsDir === 'missing'
+        ? 'No fleet on this Mac yet (~/.ashlr-runs not found).'
+        : 'Inbox or dispatcher events may be incomplete.'}</p>}
       {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
       {entries.length === 0
         ? <p className={styles.message}>No orders yet. Use the interject box.</p>

@@ -3,13 +3,17 @@
  * the dock Usage pane: one dense row per provider account, the fleet
  * snapshot's own Codex personal figure, and tokens-per-lane.
  *
- * Windows are rendered EXACTLY as the provider reported them — a Claude
- * account carrying only a weekly window produces one meter here, never a
- * synthesized 5-hour one. Runs data is narrowed field-by-field (like
- * fleet-events-model) so a drifted or partial body degrades to nothing
- * rather than throwing at render time.
+ * Windows are rendered EXACTLY as the provider reported them, minus the one
+ * window that no longer exists: Anthropic removed Claude's 5-hour limit, so
+ * a stale `five_hour` in the payload is filtered out (provider-windows) and
+ * the row says why only the weekly window applies. Runs data is narrowed
+ * field-by-field (like fleet-events-model) so a drifted or partial body
+ * degrades to nothing rather than throwing at render time.
  */
 import type { Account, AccountProvider, AccountsSnapshot } from '../usage/usage-contract.js';
+import { visibleWindows, windowNote } from '../usage/provider-windows.js';
+import { formatRelative } from '../autonomy/format.js';
+import { usedPercentText } from '../percent-text.js';
 
 // ---------------------------------------------------------------------------
 // Provider accounts (GET /api/verse/accounts, already narrowed to
@@ -35,6 +39,8 @@ export interface UsageRow {
   state: Account['state'];
   reason: string | null;
   windows: UsageWindowRow[];
+  /** One line when the provider retired a window (Claude's lifted 5-hour limit). */
+  note: string | null;
 }
 
 const PROVIDER_RANK: Record<AccountProvider, number> = { claude: 0, codex: 1, grok: 2 };
@@ -49,7 +55,7 @@ export function rowsFromAccounts(snapshot: AccountsSnapshot | null): UsageRow[] 
       provider: account.provider,
       state: account.state,
       reason: account.reason,
-      windows: account.windows.map((w) => ({
+      windows: visibleWindows(account.provider, account.windows).map((w) => ({
         label: w.label ?? w.id,
         usedPercent: w.usedPercent,
         resetsAt: w.resetsAt,
@@ -57,6 +63,7 @@ export function rowsFromAccounts(snapshot: AccountsSnapshot | null): UsageRow[] 
         limitReached: w.limitReached,
         measured: w.measured,
       })),
+      note: windowNote(account.provider),
     }))
     .sort((a, b) => PROVIDER_RANK[a.provider] - PROVIDER_RANK[b.provider] || a.label.localeCompare(b.label));
 }
@@ -84,6 +91,36 @@ export function codexPersonalRow(runs: unknown): CodexPersonalRow | null {
   const personal = data ? record(data['codexPersonal']) : null;
   if (!personal) return null;
   return { usedPct: num(personal, 'usedPct'), resetsAt: str(personal, 'resetsAt'), asOf: str(personal, 'asOf') };
+}
+
+/** Select only an unambiguous personal account, shared by the projection and view. */
+export function personalCodexAccount<T extends Pick<UsageRow, 'id' | 'label' | 'provider'>>(accounts: T[]): T | null {
+  const codex = accounts.filter((account) => account.provider === 'codex');
+  const personal = codex.filter((account) => /personal/i.test(account.id) || /personal/i.test(account.label));
+  return personal.length === 1 ? personal[0] : personal.length === 0 && codex.length === 1 ? codex[0] : null;
+}
+
+/** Explain materially different readings without guessing an account or window. */
+export function personalDisagreement(rows: UsageRow[], personal: CodexPersonalRow | null, accountObservedAt: string | null, nowMs: number): {
+  fleetPct: number; accountPct: number; fleetAsOf: string | null; accountAsOf: string | null; deltaPoints: number; text: string;
+} | null {
+  const account = personalCodexAccount(rows);
+  if (!account || !personal || typeof personal.usedPct !== 'number' || !Number.isFinite(personal.usedPct)) return null;
+  const weekly = account.windows.filter((window) => /weekly|seven[\s_-]*day|7[\s_-]*(?:day|d)\b/i.test(window.label));
+  const window = weekly.length === 1 ? weekly[0] : weekly.length === 0 && account.windows.length === 1 ? account.windows[0] : null;
+  const accountPct = window?.usedPercent;
+  if (!window?.measured || typeof accountPct !== 'number' || !Number.isFinite(accountPct)) return null;
+  const fleetPct = personal.usedPct;
+  const deltaPoints = Math.abs(fleetPct - accountPct);
+  if (deltaPoints < 10) return null;
+  const fleetAsOf = personal.asOf;
+  const accountAsOf = accountObservedAt;
+  const fleetAge = fleetAsOf && Number.isFinite(Date.parse(fleetAsOf)) ? `as of ${formatRelative(fleetAsOf, nowMs)}, ` : '';
+  const accountAge = accountAsOf && Number.isFinite(Date.parse(accountAsOf)) ? ` (observed ${formatRelative(accountAsOf, nowMs)})` : '';
+  return {
+    fleetPct, accountPct, fleetAsOf, accountAsOf, deltaPoints,
+    text: `Two personal Codex readings disagree: the fleet reads ${usedPercentText(fleetPct)} (${fleetAge}used for dispatch) and the account reader says ${usedPercentText(accountPct)}${accountAge}. The fleet figure is the one the leaders act on.`,
+  };
 }
 
 export interface LaneTokenRow {

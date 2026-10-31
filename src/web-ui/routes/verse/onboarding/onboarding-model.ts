@@ -19,13 +19,14 @@
  * A2's own fix argv (through C6's capacity rows).
  */
 import { PRODUCT_NAME } from '../../../app/product-brand.js';
+import type { FleetPresence } from './fleet-presence.js';
 import type { LocalModelsSnapshot } from '../usage/usage-contract.js';
 
 // ---------------------------------------------------------------------------
 // Steps
 // ---------------------------------------------------------------------------
 
-export type OnboardingStepId = 'welcome' | 'accounts' | 'local' | 'autonomy' | 'stops' | 'finish';
+export type OnboardingStepId = 'welcome' | 'accounts' | 'local' | 'autonomy' | 'fleet' | 'stops' | 'finish';
 
 export interface OnboardingStepMeta {
   id: OnboardingStepId;
@@ -57,6 +58,11 @@ export const ONBOARDING_STEPS: readonly OnboardingStepMeta[] = [
     subtitle: 'It stays off until you set it up. Turning it down is always one click.',
   },
   {
+    id: 'fleet',
+    title: 'Your fleet',
+    subtitle: 'Fleet availability and sources on this Mac.',
+  },
+  {
     id: 'stops',
     title: 'Three ways to stop',
     subtitle: 'They do not have the same blast radius. This is the one screen that says so.',
@@ -67,6 +73,21 @@ export const ONBOARDING_STEPS: readonly OnboardingStepMeta[] = [
     subtitle: 'Theme, accent, density and font live in Settings. Then start a chat.',
   },
 ];
+
+export const FLEET_STEP_POINTS: readonly { label: string; detail: string }[] = [
+  { label: 'Fleet workspace', detail: 'See live jobs, lanes and merges from ~/.ashlr-runs on this Mac.' },
+  { label: "Leaders' inbox", detail: 'Your prompts and interjections land in MASON-INBOX.md, which leaders read every pass.' },
+  { label: 'Kill switches', detail: 'HOLD, PAUSE and other switches in Fleet ▸ Switches stop dispatch at once.' },
+];
+
+export function fleetStepPoints(presence: FleetPresence): readonly { label: string; detail: string }[] {
+  if (presence === 'present') return FLEET_STEP_POINTS;
+  if (presence === 'missing') return [{
+    label: 'No fleet on this Mac yet (~/.ashlr-runs not found)',
+    detail: 'The fleet leaders create it on their first pass; Settings ▸ Connection ▸ Fleet sources shows each source',
+  }];
+  return [{ label: 'Fleet presence is not available yet', detail: 'Settings ▸ Connection ▸ Fleet sources shows each source.' }];
+}
 
 export function clampStep(step: number): number {
   if (!Number.isFinite(step)) return 0;
