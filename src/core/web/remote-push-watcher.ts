@@ -1,15 +1,17 @@
 /**
  * Watches the local Verse activity feed for new operator work and completed
  * turns. The first successful read is a baseline, never a notification. Push
- * delivery remains content-free; this module never passes activity data to it.
+ * activity delivery remains content-free; fleet summaries are bounded and scrubbed.
  */
 import { NEEDS_YOU_SOURCES, type NeedsYouSource, type VerseActivityResponse } from '../verse/workbench-types.js';
-import type { RemotePushKind } from './remote-push.js';
+import { diffFleetForPush, validPushFleet, type PushFleetSnapshot } from './remote-push-fleet.js';
+import type { RemotePushDetail, RemotePushKind } from './remote-push.js';
 
 type Activity = Pick<VerseActivityResponse, 'cursor' | 'needsYou' | 'completions' | 'sources'>;
 export interface RemotePushWatcherOptions {
   read: (since: string | null) => Promise<unknown>;
-  send: (kind: RemotePushKind) => Promise<unknown>;
+  readFleet?: () => Promise<unknown>;
+  send: (kind: RemotePushKind, detail?: RemotePushDetail) => Promise<unknown>;
   intervalMs?: number;
 }
 
@@ -41,6 +43,7 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
   if (!Number.isSafeInteger(intervalMs) || intervalMs < 5_000 || intervalMs > 300_000) {
     throw new Error('Invalid remote push poll interval');
   }
+  let fleet: PushFleetSnapshot | null = null;
   let cursor: string | null = null;
   let initialized = false;
   let polling = false;
@@ -48,9 +51,7 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
   const known = new Map<NeedsYouSource, Set<string>>();
   const healthy = new Set<NeedsYouSource>();
 
-  async function pollOnce(): Promise<boolean> {
-    if (polling) return false;
-    polling = true;
+  async function pollActivity(): Promise<boolean> {
     try {
       const result = await options.read(cursor);
       if (!validActivity(result)) return false;
@@ -72,7 +73,26 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
       if (newCompletion) await options.send('completed').catch(() => undefined);
       return true;
     } catch { return false; }
-    finally { polling = false; }
+  }
+
+  async function pollFleet(): Promise<void> {
+    if (!options.readFleet) return;
+    try {
+      const current = await options.readFleet();
+      if (!validPushFleet(current)) return;
+      const intents = diffFleetForPush(fleet, current);
+      fleet = current;
+      for (const { kind, ...detail } of intents) await options.send(kind, detail).catch(() => undefined);
+    } catch { /* Preserve the last successful baseline. */ }
+  }
+
+  async function pollOnce(): Promise<boolean> {
+    if (polling) return false;
+    polling = true;
+    try {
+      const [activity] = await Promise.all([pollActivity(), pollFleet()]);
+      return activity;
+    } finally { polling = false; }
   }
 
   return {
