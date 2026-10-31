@@ -1,10 +1,39 @@
 import { nextPassEta } from '../fleet/next-pass-eta.js';
+import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { passSummary, type LeaderJournalV1 } from '../leader-journal/leader-journal-model.js';
 import { naiveClock, type SteeringEntry } from './steering-model.js';
 
 const easternClock = (atMs: number): string => new Intl.DateTimeFormat('en-GB', {
   timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit',
 }).format(atMs);
+
+const record = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+export function pendingOrders(runs: unknown, nowMs: number) {
+  const data = record(runs);
+  const leaders = Array.isArray(data.leaders) ? data.leaders.flatMap((value: unknown) => {
+    const age = record(value).ageSeconds;
+    return typeof age === 'number' || age === null ? [{ ageSeconds: age }] : [];
+  }) : undefined;
+  const newestPassMs = newestLeaderPassMs(leaders, Date.parse(typeof data.generatedAt === 'string' ? data.generatedAt : ''));
+  const inbox = Array.isArray(data.inbox) ? data.inbox : [];
+  const count = inbox.filter((value: unknown) => {
+    const at = record(value).at;
+    const entryMs = typeof at === 'string' ? parseInboxAt(at, nowMs) : null;
+    // Unparseable inbox timestamps cannot be compared and are not counted.
+    return entryMs !== null && (newestPassMs === null || entryMs > newestPassMs);
+  }).length;
+  return { count, newestPassMs, eta: nextPassEta(newestPassMs, nowMs) };
+}
+
+export function pendingText(view: ReturnType<typeof pendingOrders>): { text: string; tone: 'ok' | 'warning' | 'danger' } {
+  if (view.count === 0) return { text: 'All orders seen by a leader', tone: 'ok' };
+  const timing = view.eta.kind === 'due-in' ? `due in ${view.eta.minutes} min`
+    : view.eta.kind === 'overdue' ? `overdue by ${view.eta.minutes} min` : 'next pass time unknown';
+  const tone = view.eta.kind === 'overdue' ? view.eta.minutes > 30 ? 'danger' : 'warning' : 'ok';
+  return { text: `${view.count} ${view.count === 1 ? 'order' : 'orders'} waiting for the next leader pass · ${timing}`, tone };
+}
 
 /** Inbox timestamps are local wall clocks; only journal timestamps are instants. */
 export function lastExchange(entries: SteeringEntry[], journal: LeaderJournalV1 | null | undefined, nowMs: number) {
