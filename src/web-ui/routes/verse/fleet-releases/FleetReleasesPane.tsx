@@ -27,6 +27,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
       return <li key={`${repo.repo}:${index}`} className={styles.row}>
         <div>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{repo.repo}</a> : <span>{repo.repo}</span>}</div>
         <div>Version: {repo.version ?? '—'} · Tag: {repo.latestTag ?? '—'}</div>
+        <div>{repo.commitsSinceTag == null ? 'Commits since tag: unknown' : `${repo.commitsSinceTag} commits since ${repo.latestTag ?? 'unknown tag'}`}</div>
         {repo.gh === null ? <div className={styles.muted}>GitHub status unknown (gh offline)</div> : <>
           <div>Release: {release ? <>{release.label}{release.badge && <> <StatusBadge status={release.badge} tone="warning" /></>} · {formatRelative(repo.gh.latestRelease?.publishedAt)}</> : '—'}</div>
           <div>Run: {run ? <>{run.workflow} · <StatusBadge status={run.status} tone={tone === 'ok' ? 'success' : tone === 'warn' ? 'warning' : tone}>{run.status}{run.conclusion ? `/${run.conclusion}` : ''}</StatusBadge> · {formatRelative(run.at)}</> : '—'}</div>
