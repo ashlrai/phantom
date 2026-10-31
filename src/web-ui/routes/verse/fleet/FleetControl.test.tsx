@@ -123,6 +123,11 @@ describe('shared native readback', () => {
 });
 
 describe('automatic control polling', () => {
+  function stubControlFetch(fetcher: (path: string, init: RequestInit) => Promise<Response>): void {
+    vi.stubGlobal('fetch', (path: string, init: RequestInit) => path === '/api/verse/fleet/control/switches'
+      ? Promise.resolve(json({ v: 1, switches: [], sourceState: 'missing' })) : fetcher(path, init));
+  }
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
@@ -143,7 +148,7 @@ describe('automatic control polling', () => {
     const fetcher = vi.fn(() => fetcher.mock.calls.length === 1
       ? Promise.resolve(json(initial))
       : new Promise<Response>(resolve => { replies.push(resolve); }));
-    vi.stubGlobal('fetch', fetcher);
+    stubControlFetch(fetcher);
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const region = screen.getByRole('region', { name: 'Fleet control' });
@@ -172,7 +177,7 @@ describe('automatic control polling', () => {
     fresh.daemon.pid = 36373;
     let finish!: (response: Response) => void;
     const fetcher = vi.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
-    vi.stubGlobal('fetch', fetcher);
+    stubControlFetch(fetcher);
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(3 * FLEET_CONTROL_POLL_MS); });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -188,7 +193,7 @@ describe('automatic control polling', () => {
     const releases: (() => void)[] = [];
     const blockers = Array.from({ length: 4 }, (_, i) => runQuery(`pending-metadata-${i}`, () => new Promise<void>(resolve => { releases.push(resolve); })));
     const fetcher = vi.fn(() => Promise.resolve(json(fleetControl('live'))));
-    vi.stubGlobal('fetch', fetcher);
+    stubControlFetch(fetcher);
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(3 * FLEET_CONTROL_POLL_MS); });
     expect(fetcher).not.toHaveBeenCalled();
@@ -247,7 +252,7 @@ describe('automatic control polling', () => {
     const fetcher = vi.fn((_path: string): Promise<Response> => fetcher.mock.calls.length === 1
       ? new Promise<Response>((resolve, reject) => { finish = resolve; fail = reject; })
       : Promise.resolve(json(fresh)));
-    vi.stubGlobal('fetch', fetcher);
+    stubControlFetch(fetcher);
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(2 * FLEET_CONTROL_POLL_MS); });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -263,7 +268,7 @@ describe('automatic control polling', () => {
 
   it('keeps hidden sections quiet and catches up when shown again', async () => {
     const fetcher = vi.fn(() => Promise.resolve(json(fleetControl('live'))));
-    vi.stubGlobal('fetch', fetcher);
+    stubControlFetch(fetcher);
     const { rerender, unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(fetcher).toHaveBeenCalledTimes(1);
