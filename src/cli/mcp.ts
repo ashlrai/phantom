@@ -1029,6 +1029,15 @@ export async function cmdMcp(args: string[]): Promise<number> {
     }
   }
 
+  // `mcp <verb> --help` prints usage and never runs the verb: `mcp run --help`
+  // used to start the stdio gateway, `mcp list --help` scanned the registry,
+  // and `mcp ecosystem --write --help` would have merged servers into
+  // ~/.ashlr/settings.json.
+  if (args.slice(1).includes('--help') || args.slice(1).includes('-h')) {
+    printHelp();
+    return 0;
+  }
+
   // Default / explicit "run"
   if (!sub || sub === 'run') {
     return cmdMcpRun();
