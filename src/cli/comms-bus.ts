@@ -7,18 +7,21 @@ import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json|->
 phm comms bus status
-phm comms bus read [--after <cursor>] [--limit <n>] [--id <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
-phm comms bus watch [--after <cursor>] [--limit <n>] [--id <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>]
+phm comms bus read [--after <cursor>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
+phm comms bus watch [--after <cursor>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
 --exclude-from omits envelopes with that sender routing label.
 ID filters match envelope IDs exactly and case-sensitively; IDs are transport data, not authentication.
+--in-reply-to matches an object's own string body.inReplyTo exactly and case-sensitively.
+This is an application convention, not an envelope field or authenticated identity.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
 Priority is a routing attribute; it does not establish identity or authority.
 Example: phm comms bus watch --to worker --from coordinator --priority P0
-Use --id=<id>, --to=<address>, --from=<address> or --exclude-from=<address> for values that look like command flags.
+Request/reply example: a reply body {"inReplyTo":"request-1"} matches phm comms bus read --in-reply-to request-1
+Use --id=<id>, --in-reply-to=<id>, --to=<address>, --from=<address> or --exclude-from=<address> for values that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
 Limit: 1..100 (default 50). Store: 1 MiB / 1024 records, then full; no eviction.
@@ -41,7 +44,7 @@ export interface CommsBusDependencies {
   emit?: (json: string) => void;
 }
 
-type BusFilters = { id?: string; to?: string; from?: string; excludeFrom?: string; priority?: string };
+type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string };
 
 async function readStdin(stdin: Readable): Promise<string | null> {
   const chunks: Buffer[] = [];
@@ -60,9 +63,11 @@ async function readStdin(stdin: Readable): Promise<string | null> {
 }
 
 function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
-  if (page.status !== 'ok' || filters.id === undefined && filters.to === undefined && filters.from === undefined && filters.excludeFrom === undefined && filters.priority === undefined) return page;
+  if (page.status !== 'ok' || filters.id === undefined && filters.inReplyTo === undefined && filters.to === undefined && filters.from === undefined && filters.excludeFrom === undefined && filters.priority === undefined) return page;
   return { ...page, messages: page.messages.filter(({ envelope }) =>
     (filters.id === undefined || envelope.id === filters.id) &&
+    (filters.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
+      !Array.isArray(envelope.body) && Object.hasOwn(envelope.body, 'inReplyTo') && envelope.body.inReplyTo === filters.inReplyTo) &&
     (filters.to === undefined || envelope.to === filters.to) &&
     (filters.from === undefined || envelope.from === filters.from) &&
     (filters.excludeFrom === undefined || envelope.from !== filters.excludeFrom) &&
@@ -129,11 +134,11 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   }
   if (verb !== 'post' && verb !== 'read' && verb !== 'watch') return invalid();
   for (let i = 0; i < rest.length; i++) {
-    const token = rest[i]!, inline = /^(--id|--to|--from|--exclude-from)=(.*)$/s.exec(token);
+    const token = rest[i]!, inline = /^(--id|--in-reply-to|--to|--from|--exclude-from)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
-    const label = key === '--id' || key === '--to' || key === '--from' || key === '--exclude-from';
-    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--id', '--to', '--from', '--exclude-from', '--priority'] : ['--after', '--limit', '--id', '--to', '--from', '--exclude-from', '--priority'];
-    if (!flags.includes(key) || values.has(key) || !value || (label ? !inline && (flags.includes(value) || /^(--id|--to|--from|--exclude-from)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
+    const label = key === '--id' || key === '--in-reply-to' || key === '--to' || key === '--from' || key === '--exclude-from';
+    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'] : ['--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'];
+    if (!flags.includes(key) || values.has(key) || !value || (label ? !inline && (flags.includes(value) || /^(--id|--in-reply-to|--to|--from|--exclude-from)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
     values.set(key, value);
   }
   if (verb === 'post' && !values.has('--file')) return invalid();
@@ -141,9 +146,9 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
-  const filters = { id: values.get('--id'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority') };
+  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority') };
   if (filters.priority !== undefined && !BUS_PRIORITIES.includes(filters.priority as BusPriority)) return invalid();
-  for (const label of [filters.id, filters.to, filters.from, filters.excludeFrom]) {
+  for (const label of [filters.id, filters.inReplyTo, filters.to, filters.from, filters.excludeFrom]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
   const after = Number(values.get('--after') ?? 0), limit = Number(values.get('--limit') ?? 50);

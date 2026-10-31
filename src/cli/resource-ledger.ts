@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { laneDeadSignals, type LaneDeadSignal } from '../core/fleet/lane-dead-signal.js';
 import { readResourceLedger, type ResourceLedgerV1 } from '../core/fleet/runs-resource-ledger.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -27,6 +28,15 @@ function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model:
   return view;
 }
 
+/** Human-friendly summary of a lane's dead signal, for CLI output. */
+export function formatDeadSignal(signal: LaneDeadSignal | null): string {
+  if (signal === null) return 'unknown';
+  return `state=${signal.state}; emptyFailures=${signal.emptyFailures}; lastFinishes=${signal.lastFinishes}`;
+}
+
+export { laneDeadSignals };
+export type { LaneDeadSignal };
+
 function printLedger(ledger: LedgerView): void {
   console.log(`Resource ledger (generated: ${ledger.generatedAt}; observed: ${value(ledger.asOf)})`);
   if (ledger.laneFilter !== undefined) {
@@ -45,6 +55,7 @@ function printLedger(ledger: LedgerView): void {
       console.log('  Usage: unmetered / no reported window');
     }
     console.log(`  Reset: ${value(lane.resetAt)}; source: ${value(lane.source)}`);
+    console.log(`  Dead: ${formatDeadSignal(lane.deadSignal)}`);
     console.log(`  Burn: ${lane.burnPctPerHour === null ? 'unknown' : `${lane.burnPctPerHour}%/hour`}; tokens/hour (6h): ${value(lane.tokensPerHour6h)}; projected exhaustion: ${value(lane.projectedExhaustion)}`);
   }
   const spend = ledger.apiSpend;
