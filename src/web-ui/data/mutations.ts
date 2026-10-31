@@ -47,22 +47,28 @@ export async function resumeFleet(): Promise<void> {
   invalidate('fleet-activity');
 }
 
-export async function approveProposal(id: string): Promise<void> {
-  await post(`/api/inbox/${encodeURIComponent(id)}/approve`, {});
-  emitAgentDecision(id, 'approve');
+function invalidateProposalViews(id: string): void {
   invalidate('inbox');
   invalidate('dashboard-snapshot');
   invalidate(`proposal-detail-${id}`);
   invalidatePrefix('inbox-list:');
 }
 
+export async function approveProposal(id: string): Promise<void> {
+  await post(`/api/inbox/${encodeURIComponent(id)}/approve`, {});
+  emitAgentDecision(id, 'approve');
+  invalidateProposalViews(id);
+}
+
 export async function rejectProposal(id: string): Promise<void> {
   await post(`/api/inbox/${encodeURIComponent(id)}/reject`, {});
   emitAgentDecision(id, 'deny');
-  invalidate('inbox');
-  invalidate('dashboard-snapshot');
-  invalidate(`proposal-detail-${id}`);
-  invalidatePrefix('inbox-list:');
+  invalidateProposalViews(id);
+}
+
+export async function decideApprovalRequest(id: string, revision: string, decision: 'approve' | 'deny'): Promise<void> {
+  await post(`/api/inbox/${encodeURIComponent(id)}/decision`, { revision, decision });
+  invalidateProposalViews(id);
 }
 
 export interface OpenTargetRequest {
