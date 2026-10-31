@@ -17,6 +17,7 @@ either name.
 | Install dependencies | `npm ci` |
 | Build `dist/` (CLI, assets, web console, build identity) | `npm run build` |
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
+| Inspect a recorded job | `npm run dev -- replay <job-id> [--once]` (tool calls, edits and checks from the retained run stream; j/k scroll, q quits; `--once` prints all steps) |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
 | Type check (backend + web) | `npm run typecheck` |

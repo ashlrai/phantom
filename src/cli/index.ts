@@ -2125,6 +2125,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'replay': {
+        process.exitCode = await (await import('./replay.js')).cmdReplay(rest);
+        break;
+      }
+
       case 'tui':
       case 'dash': {
         const cmdTui = await loadTuiCmd();
