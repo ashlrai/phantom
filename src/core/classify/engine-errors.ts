@@ -181,6 +181,19 @@ export function isRateLimitText(text: string): boolean {
 }
 
 /**
+ * Account exhaustion — the login itself is spent for a window, not merely
+ * throttled: "usage limit", "out of credits/quota" and the providers' own
+ * snake_case tokens (usage_limit_exceeded, credits_depleted). Kept distinct
+ * from `isRateLimitText` on purpose: a transient 429 backs off and retries,
+ * an exhausted account is a failover signal. Both `cloud/launcher.ts` and
+ * `reasoning/ingest-codex.ts` previously carried private copies of this
+ * notion; this is now the single one.
+ */
+export function isUsageLimitText(text: string): boolean {
+  return /usage.?limit|out[ _]of[ _](?:credits|quota)|credits?[ _]depleted|quota[ _](?:used[ _]up|exhausted|ran[ _]out)|no[ _]quota[ _]allocation/i.test(text);
+}
+
+/**
  * An MCP downstream server crashed or could not be reached. Lifted verbatim
  * from `self-heal.ts` so both subsystems agree on the definition.
  *
