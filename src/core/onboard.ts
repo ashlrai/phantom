@@ -12,6 +12,7 @@
  */
 
 import { readEnvironmentCredential } from './integrations/secrets.js';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, symlinkSync, readlinkSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -32,6 +33,7 @@ import {
 import { serviceActivity } from './daemon/service-activity.js';
 import { fleetReadiness } from './fleet/engine-readiness.js';
 import { listEnrolled, enroll } from './sandbox/policy.js';
+import { apiKeyCatalogResources } from './onboard/catalog.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -802,4 +804,131 @@ export async function setupWizard(
   nextSteps.push('try: ashlr run / ashlr swarm / ashlr tui');
 
   return { steps, ready: base.ready && daemonStep.status !== 'manual', nextSteps };
+}
+
+// ---------------------------------------------------------------------------
+// API-key custody -- Connect Resources (loopback local console only).
+// The value goes straight from the POST body into `phantom add <KEY> --stdin`
+// -- the existing vault write path -- never into argv, config, logs, or the
+// response. One cheap provider call runs inside `phantom exec` (Phantom
+// injects the stored value into the child env), and callers only ever see
+// metadata: the env NAME, a masked last-4, and a validated yes/no.
+// ---------------------------------------------------------------------------
+
+const PHANTOM_BIN = 'phantom';
+const KEY_WRITE_TIMEOUT_MS = 10_000;
+const KEY_VALIDATE_TIMEOUT_MS = 20_000;
+
+/**
+ * One-off provider probe run INSIDE `phantom exec`. Reads the key from the
+ * injected env NAME given in argv (never a value), GETs the models endpoint,
+ * and encodes the verdict in its exit code only -- child stdio stays ignored
+ * so no provider body text enters this process. Exit codes: 0 = accepted
+ * (<400), 2 = rejected (4xx), 3 = unreachable/5xx, 4 = env name absent.
+ */
+const KEY_VALIDATE_SCRIPT =
+  'const [env,url]=process.argv.slice(1);' +
+  'const key=process.env[env];' +
+  'if(!key)process.exit(4);' +
+  "const h={accept:'application/json'};" +
+  "if(env==='ANTHROPIC_API_KEY'){h['x-api-key']=key;h['anthropic-version']='2023-06-01';}" +
+  "else if(env==='GEMINI_API_KEY'){h['x-goog-api-key']=key;}" +
+  "else{h.authorization='Bearer '+key;}" +
+  `fetch(url,{method:'GET',headers:h,redirect:'error',signal:AbortSignal.timeout(8000)})` +
+  '.then(r=>process.exit(r.status<400?0:r.status<500?2:3))' +
+  '.catch(()=>process.exit(3));';
+
+export interface ApiKeyCustodyEntry {
+  resource: string;
+  /** Vault env secret NAME -- never a value. */
+  envName: string;
+  displayName: string;
+  /** True when `phantom list` already reports the env name (names only). */
+  stored: boolean;
+}
+
+/**
+ * Names-only custody view for the Connect surface. Never reads, returns, or
+ * logs secret values; on any probe failure every entry reports stored:false.
+ */
+export function apiKeyCustodyStatus(): ApiKeyCustodyEntry[] {
+  let names = new Set<string>();
+  try {
+    names = new Set(getPhantomStatus().secretNames);
+  } catch {
+    // callers only ever get stored:false.
+  }
+  return apiKeyCatalogResources().map((r) => ({
+    resource: r.id,
+    envName: r.keyEnvName as string,
+    displayName: r.displayName,
+    stored: names.has(r.keyEnvName as string),
+  }));
+}
+
+export type ApiKeyCustodyError =
+  | 'unknown-resource'
+  | 'invalid-key-shape'
+  | 'phantom-unavailable'
+  | 'vault-write-failed';
+
+export type ApiKeyCustodyResult =
+  | { ok: true; resource: string; envName: string; masked: string; stored: true; validated: boolean | null }
+  | { ok: false; code: ApiKeyCustodyError; error: string };
+
+/**
+ * Take one provider API key into Phantom Secrets custody. The shape gate
+ * runs BEFORE any subprocess spawn; the vault write pipes the value on
+ * stdin only (argv stays value-free, matching storePatViaPhantom in
+ * src/cli/pulse.ts); the single validation call runs under `phantom exec`.
+ * `masked` carries only the last 4 characters -- nothing else ever leaves.
+ */
+export function custodyApiKey(resourceId: string, value: string): ApiKeyCustodyResult {
+  const resource = apiKeyCatalogResources().find((r) => r.id === resourceId);
+  if (!resource || typeof resource.keyEnvName !== 'string' || typeof resource.validateEndpoint !== 'string') {
+    return { ok: false, code: 'unknown-resource', error: 'unknown apikey resource' };
+  }
+  if (!(value.length >= 8 && value.length <= 512 && /^[\x21-\x7e]+$/.test(value))) {
+    return { ok: false, code: 'invalid-key-shape', error: 'key must be 8-512 printable non-space characters' };
+  }
+
+  const env = { ...process.env, PHANTOM_NO_UPDATE_CHECK: '1' };
+  const probe = spawnSync(PHANTOM_BIN, ['--version'], { encoding: 'utf8', timeout: 5_000, env });
+  if (probe.error || probe.status !== 0) {
+    return { ok: false, code: 'phantom-unavailable', error: 'phantom secrets CLI is not available' };
+  }
+
+  // `phantom add KEY --stdin`: the value is piped on stdin, never in argv.
+  const write = spawnSync(PHANTOM_BIN, ['add', resource.keyEnvName, '--stdin'], {
+    encoding: 'utf8',
+    timeout: KEY_WRITE_TIMEOUT_MS,
+    env,
+    input: value,
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  if (write.error || write.status !== 0) {
+    return {
+      ok: false,
+      code: 'vault-write-failed',
+      error: 'phantom vault write failed; run `phantom init` in the hub directory and retry',
+    };
+  }
+
+  // One cheap provider call through `phantom exec` -- the child's whole
+  // contract is its exit code (stdio ignored). In SEA builds execPath may
+  // not be a node binary; validation then reports null, not a false reject.
+  const run = spawnSync(
+    PHANTOM_BIN,
+    ['exec', '--', process.execPath, '-e', KEY_VALIDATE_SCRIPT, resource.keyEnvName, resource.validateEndpoint],
+    { encoding: 'utf8', timeout: KEY_VALIDATE_TIMEOUT_MS, env, stdio: 'ignore' },
+  );
+
+  return {
+    ok: true,
+    resource: resource.id,
+    envName: resource.keyEnvName,
+    masked: `****${value.slice(-4)}`,
+    stored: true,
+    validated: run.status === 0 ? true : run.status === 2 ? false : null,
+  };
 }

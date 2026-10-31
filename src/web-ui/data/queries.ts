@@ -368,3 +368,16 @@ export const portfolioQuery: QueryDef<PortfolioSummary | null> = {
   key: 'portfolio',
   fetch: (signal) => apiGet<PortfolioSummary | null>('/api/portfolio', signal),
 };
+
+/**
+ * GET /api/connect/keys -- Connect Resources custody view (src/core/web/api.ts).
+ * Names-only: whether each catalog env NAME is in the vault. Never a value.
+ */
+export interface ConnectKeysResponse {
+  keys: { resource: string; envName: string; displayName: string; stored: boolean }[];
+}
+
+export const connectKeysQuery: QueryDef<ConnectKeysResponse> = {
+  key: 'connect-keys',
+  fetch: (signal) => apiGet<ConnectKeysResponse>('/api/connect/keys', signal),
+};

@@ -22,11 +22,14 @@
  *   GET /api/daemon            -> strict provenance-bearing daemon observation
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
  *   GET /api/host              -> read-only console, inference bind and Stop summary
+ *   GET /api/connect/keys      -> Connect custody view: env NAMES only, never values
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
  *   POST /api/run              -> runGoal (budget-capped, local-first)
  *   POST /api/open             -> openInEditor/openInFinder for an enrolled repo path (M100)
+ *   POST /api/connect/key      -> API key into Phantom Secrets custody (stdin write +
+ *                               one `phantom exec` validation; masked last-4 reply)
  *   POST /api/fleet/pause      -> engage the fleet kill switch
  *   POST /api/fleet/resume     -> clear the fleet kill switch
  *   POST /api/daemon/service/repair -> fail closed pending signed repair authority
@@ -89,6 +92,8 @@ import { buildControlSnapshot } from './control.js';
 import { buildFleetActivity } from './control.js';
 // M100: desktop-open actions — reuse CLI launchers (read-only import; no mutation).
 import { openInEditor, openInFinder } from '../../cli/open.js';
+// Connect Resources: API keys into Phantom Secrets custody (names-only metadata).
+import { apiKeyCustodyStatus, custodyApiKey } from '../onboard.js';
 import { listEnrolled, setKill } from '../sandbox/policy.js';
 import { listGoals } from '../goals/store.js';
 import { progressOf } from '../goals/advance.js';
@@ -2114,6 +2119,56 @@ export async function handleApi(
         const msg = err instanceof Error ? err.message : String(err);
         send500(res, `open failed: ${msg}`);
       }
+      return true;
+    }
+
+    // ── GET /api/connect/keys ─────────────────────────────────────────────────
+    // Connect custody view: catalog apikey resources + whether their env NAME
+    // is in the Phantom vault. Names-only -- never a value. Unreachable through
+    // the remote gateway (it deny-lists unlisted paths), so loopback only.
+    if (path === '/api/connect/keys' && method === 'GET') {
+      sendJson(res, 200, { keys: apiKeyCustodyStatus() });
+      return true;
+    }
+
+    // ── POST /api/connect/key ────────────────────────────────────────────────
+    // Take one provider API key into Phantom Secrets custody. Same loopback +
+    // token gate as every mutation (remote gateway can never reach this path).
+    // Body {resource, value}: the value goes straight into
+    // `phantom add <KEY> --stdin` (stdin only) and is validated once via
+    // `phantom exec`. The reply carries only the env NAME, masked last-4, and
+    // a validated yes/no -- the plaintext is never logged, stored, or returned.
+    if (path === '/api/connect/key' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) {
+        return true;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return true;
+      }
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        sendJson(res, 400, { error: 'body must be a JSON object' });
+        return true;
+      }
+      const obj = body as Record<string, unknown>;
+      const result = custodyApiKey(
+        typeof obj['resource'] === 'string' ? obj['resource'].trim() : '',
+        typeof obj['value'] === 'string' ? obj['value'] : '',
+      );
+      if (!result.ok) {
+        const status = result.code === 'phantom-unavailable' ? 503
+          : result.code === 'vault-write-failed' ? 502 : 400;
+        sendJson(res, status, result);
+        return true;
+      }
+      sendJson(res, 200, result);
       return true;
     }
 

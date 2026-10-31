@@ -31,3 +31,14 @@ export const RESOURCE_CATALOG: readonly CatalogResource[] = [
   { id: 'cloud-computer', kind: 'cloud', displayName: 'Cloud computer', planTiers: [], cliBinary: null, loginCheckCommand: null, keyEnvName: null, validateEndpoint: null, docsUrl: 'https://phm.dev/', logoPath: null },
   { id: 'proactive-agents', kind: 'agent', displayName: 'Proactive agents', planTiers: [], cliBinary: null, loginCheckCommand: null, keyEnvName: null, validateEndpoint: null, docsUrl: 'https://phm.dev/', logoPath: null },
 ];
+
+/**
+ * Catalog rows that can take an API key into Phantom Secrets custody:
+ * apikey resources carrying both a vault env NAME and a validate endpoint.
+ * Metadata only -- the key value itself is handled by core/onboard.ts.
+ */
+export function apiKeyCatalogResources(): CatalogResource[] {
+  return RESOURCE_CATALOG.filter(
+    (r) => r.kind === 'apikey' && typeof r.keyEnvName === 'string' && typeof r.validateEndpoint === 'string',
+  );
+}

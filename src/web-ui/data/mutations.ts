@@ -73,3 +73,25 @@ export interface OpenTargetRequest {
 export async function openTarget(req: OpenTargetRequest): Promise<void> {
   await post('/api/open', req);
 }
+
+export interface ConnectApiKeyResult {
+  ok: true;
+  resource: string;
+  envName: string;
+  /** Masked last-4 only -- the hub never returns the key value. */
+  masked: string;
+  stored: true;
+  /** One cheap provider call via `phantom exec`: true/false, or null when unreachable. */
+  validated: boolean | null;
+}
+
+/**
+ * POST /api/connect/key -- key into Phantom Secrets custody via the loopback
+ * API. The value goes straight into `phantom add <KEY> --stdin`; never
+ * logged, persisted, or returned. Remote gateway deny-lists the path.
+ */
+export async function connectApiKey(resource: string, value: string): Promise<ConnectApiKeyResult> {
+  const result = await post<ConnectApiKeyResult>('/api/connect/key', { resource, value });
+  invalidate('connect-keys');
+  return result;
+}

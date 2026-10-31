@@ -52,6 +52,7 @@ import {
 import { listSandboxes, ORPHAN_STALE_MS, resolveSandboxCap } from './sandbox/worktree.js';
 import { findStaleGitLocks, type StaleGitLock } from './sandbox/stale-git-locks.js';
 import { getPhantomStatus } from './phantom.js';
+import { apiKeyCatalogResources } from './onboard/catalog.js';
 import { discoverMcpServers } from './mcp-registry.js';
 import type { PhantomStatus } from './types.js';
 import { assurePrivateStoragePath } from './util/private-storage.js';
@@ -101,6 +102,11 @@ export interface ReadinessPhantomSnapshot {
   };
   capabilities: PhantomStatus['capability']['modes'];
   commands: PhantomStatus['capability']['commands'];
+  /** Catalog apikey resources eligible for custody vs. present in the vault (names only). */
+  apiKeyCustody: {
+    eligible: number;
+    stored: number;
+  };
   mcp: {
     configured: boolean;
     source: string | null;
@@ -516,6 +522,7 @@ function normalizeMcpSourceForDisplay(source: string | undefined): string | null
 
 function readinessPhantomSnapshot(status: PhantomStatus): ReadinessPhantomSnapshot {
   const known = status.capability.knownFleetSecrets;
+  const eligible = apiKeyCatalogResources().map((r) => r.keyEnvName as string);
   return {
     installed: status.installed,
     version: status.version,
@@ -532,6 +539,10 @@ function readinessPhantomSnapshot(status: PhantomStatus): ReadinessPhantomSnapsh
     },
     capabilities: status.capability.modes,
     commands: status.capability.commands,
+    apiKeyCustody: {
+      eligible: eligible.length,
+      stored: eligible.filter((name) => status.secretNames.includes(name)).length,
+    },
     mcp: phantomMcpRegistration(),
     ...(status.error ? { error: status.error } : {}),
   };
@@ -872,12 +883,13 @@ export async function buildReadiness(cfg: AshlrConfig): Promise<ReadinessReport>
         : 'pulse credential missing';
       const mcp = phantom?.mcp.configured ? 'mcp configured' : 'mcp not configured';
       const agent = status.capability.commands.agentAvailable ? 'agent command present' : 'agent command absent';
+      const keys = phantom ? `api keys ${phantom.apiKeyCustody.stored}/${phantom.apiKeyCustody.eligible} in custody` : '';
       info.push({
         id: 'phantom',
         severity: 'info',
         detail:
           `phantom ${status.version ?? 'unknown'} project configured; vault readiness unverified; ` +
-          `${status.capability.secretCount} secret name(s); ${pulse}; ${mcp}; ${agent}; values hidden`,
+          `${status.capability.secretCount} secret name(s); ${pulse}; ${mcp}; ${agent}; ${keys}; values hidden`,
       });
     } else if (status?.installed) {
       const agent = status.capability.commands.agentAvailable ? 'agent command present' : 'agent command absent';
