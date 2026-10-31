@@ -16,6 +16,16 @@ it('never remembers zero and falls back to the floor or one', () => {
   expect(resumeTransition('codex', {}, 0).target).toBe(1);
 });
 
+it('falls back to the server-remembered target behind the local record', () => {
+  expect(resumeTransition('codex', {}, 0, 6)).toEqual({ target: 6, record: {} });
+  expect(resumeTransition('codex', { codex: 4 }, 0, 6).target).toBe(4);
+  expect(resumeTransition('codex', {}, 2, 2).target).toBe(2);
+  expect(resumeTransition('codex', {}, 2, 1).target).toBe(2);
+  expect(pauseLabel('codex', {}, 6)).toBe('Paused · was 6');
+  expect(pauseLabel('codex', { codex: 4 }, 6)).toBe('Paused · was 4');
+  expect(pauseLabel('codex', {})).toBeNull();
+});
+
 it('ignores corrupt storage and invalid values', () => {
   expect(parsePauseRecord('{')).toEqual({});
   expect(parsePauseRecord('[]')).toEqual({});
