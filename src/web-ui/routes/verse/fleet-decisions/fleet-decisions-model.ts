@@ -1,6 +1,25 @@
 import type { OpsFleetV1 } from '../../../../core/verse/ops-types.js';
+import { splitRefs } from '../fleet/job-refs.js';
 
 export type Filter = 'all' | 'launched' | 'skipped';
+
+export function decisionPr(title: string, snapshot: {
+  publishesLastHour?: Array<{ job: string; url: string | null }>;
+  mergesLastHour?: { items: Array<{ repo: string; number: number; title: string }> };
+} | undefined): { label: string; href: string | null; state: 'merged' | 'published' } | null {
+  const job = splitRefs(title).find(segment => segment.kind === 'job')?.value;
+  if (!job) return null;
+  const merged = snapshot?.mergesLastHour?.items.find(item => item.title.includes(job));
+  if (merged) {
+    const parts = merged.repo.split('/');
+    const safe = /^[\w.-]+\/[\w.-]+$/.test(merged.repo) && parts.every(part => part !== '.' && part !== '..')
+      && Number.isSafeInteger(merged.number) && merged.number > 0;
+    return { label: `PR #${merged.number} · merged`, href: safe ? `https://github.com/${merged.repo}/pull/${merged.number}` : null, state: 'merged' };
+  }
+  const published = snapshot?.publishesLastHour?.find(item => item.job === job && item.url !== null);
+  if (!published) return null;
+  return { label: 'PR · published', href: published.url?.startsWith('https://github.com/') ? published.url : null, state: 'published' };
+}
 
 export function decisionRows(fleet: OpsFleetV1, filter: Filter) {
   return fleet.decisions.map((d, index) => ({
