@@ -5,8 +5,8 @@
  * path as the Leader send — token sheet when the hold has lapsed, then
  * POST, then toast — and a refused send keeps the words and shows why.
  */
-import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMutationToken, setMutationToken } from '../../../../data/auth-store.js';
 import { evictAll } from '../../../../data/cache.js';
 import { resetGuard } from '../../shell/guard-store.js';
@@ -42,6 +42,8 @@ function mount(overrides: Parameters<typeof renderMobile>[1] = {}) {
   return renderMobile(<><RunsScreen /><MobileGuardSheet /><MobileToasts /></>, overrides);
 }
 
+// Transform the lazy module during setup, outside the timed interaction.
+beforeAll(async () => { await import('../LaneTargetSheet.js'); });
 beforeEach(() => setMutationToken(TOKEN));
 
 afterEach(() => {
@@ -52,9 +54,68 @@ afterEach(() => {
   resetFleetRunsMissingForTest();
   resetBusMissingForTest();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('RunsScreen reads', () => {
+  it('opens the selected lane with server bounds', async () => {
+    stubFetch({ 'GET /api/verse/fleet/runs': healthy(),
+      'GET /api/verse/fleet/control/lanes': { v: 1, generatedAt: '', sourceState: 'healthy', lanes: [
+        { lane: 'claude', target: 2, floor: 1, ceiling: 7, held: false, heldReason: null, heldUntil: null, lastChange: null, changedBy: null },
+      ] } });
+    mount();
+    fireEvent.click(await screen.findByLabelText('Adjust claude target'));
+    const title = await screen.findByText('claude lane target');
+    expect(title.closest('[role="dialog"]')).toHaveTextContent('Floor 1 · Ceiling 7');
+  });
+  it('refreshes targets and live runs after setting a target', async () => {
+    let target = 2;
+    const control = () => ({ v: 1, generatedAt: '', sourceState: 'healthy', lanes: [
+      { lane: 'claude', target, floor: 1, ceiling: 7, held: false, heldReason: null, heldUntil: null, lastChange: null, changedBy: null },
+    ] });
+    const { calls } = stubFetch({ 'GET /api/verse/fleet/runs': healthy(),
+      'GET /api/verse/fleet/control/lanes': control,
+      'POST /api/verse/fleet/control/lanes': () => { target = 3; return control(); } });
+    mount();
+    fireEvent.click(await screen.findByLabelText('Adjust claude target'));
+    fireEvent.click(await screen.findByLabelText('Increase target'));
+    fireEvent.click(screen.getByText('Set target', { selector: 'button' }));
+    const guard = (await screen.findByText('Set claude target to 3?')).closest<HTMLElement>('[role="alertdialog"]');
+    expect(guard).not.toBeNull();
+    fireEvent.click(within(guard!).getByText('Set target', { selector: 'button' }));
+    await waitFor(() => expect(screen.getByLabelText('Adjust claude target')).toHaveTextContent('target 3'));
+    expect(calls.filter((call) => call.method === 'GET' && call.url === '/api/verse/fleet/control/lanes')).toHaveLength(2);
+    expect(calls.filter((call) => call.method === 'GET' && call.url === '/api/verse/fleet/runs')).toHaveLength(2);
+  });
+  it('keeps lane rows read-only when the control route returns 404', async () => {
+    stubFetch({ 'GET /api/verse/fleet/runs': healthy() });
+    mount();
+    await screen.findByText('claude');
+    expect(screen.queryByLabelText('Adjust claude target')).not.toBeInTheDocument();
+  });
+  it('polls targets every ten seconds while visible and stops after a 404', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let missing = false;
+    const { calls } = stubFetch({ 'GET /api/verse/fleet/runs': healthy(),
+      'GET /api/verse/fleet/control/lanes': () => missing ? json({ error: 'not found' }, 404)
+        : { v: 1, generatedAt: '', sourceState: 'healthy', lanes: [] } });
+    mount();
+    await screen.findByLabelText('Adjust claude target');
+    missing = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    await waitFor(() => expect(screen.queryByLabelText('Adjust claude target')).not.toBeInTheDocument());
+    const reads = calls.filter((call) => call.url === '/api/verse/fleet/control/lanes').length;
+    expect(reads).toBe(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(calls.filter((call) => call.url === '/api/verse/fleet/control/lanes')).toHaveLength(reads);
+  });
+  it('keeps lane rows read-only without action permission', async () => {
+    stubFetch({ 'GET /api/verse/fleet/runs': healthy(),
+      'GET /api/verse/fleet/control/lanes': { v: 1, generatedAt: '', sourceState: 'healthy', lanes: [] } });
+    mount({ permissions: permissionsFor('unavailable') });
+    await screen.findByText('claude');
+    expect(screen.queryByLabelText('Adjust claude target')).not.toBeInTheDocument();
+  });
   it('refreshes both runs and bus data', async () => {
     const bus = { v: 1, hops: [], events: [{ at: '2026-10-31T11:00:00Z', kind: 'launch', text: 'Bus launch' }], sources: { hops: 'healthy', events: 'healthy' } };
     const { calls } = stubFetch({ 'GET /api/verse/fleet/runs': healthy(), 'GET /api/verse/fleet/live/bus': bus });
@@ -76,8 +137,8 @@ describe('RunsScreen reads', () => {
     expect(await screen.findByText('1 running · 3 merged in the last hour')).toBeInTheDocument();
     expect(screen.getByText(/Last tick .* · leaders 10m/)).toBeInTheDocument();
     expect(screen.getByText('claude')).toBeInTheDocument();
-    expect(screen.getByText('2/2 · queued 1')).toBeInTheDocument();
-    expect(screen.getByText('0/1 · queued 0 · HOLD file present')).toBeInTheDocument();
+    expect(screen.getByText('2 running · target 2 · queued 1')).toBeInTheDocument();
+    expect(screen.getByText('0 running · target 1 · queued 0 · HOLD file present')).toBeInTheDocument();
     expect(screen.getByText('held')).toBeInTheDocument();
     expect(screen.getByText('phm improve binshield')).toBeInTheDocument();
     expect(screen.getByText('ashlrai/phantom · claude · elite')).toBeInTheDocument();

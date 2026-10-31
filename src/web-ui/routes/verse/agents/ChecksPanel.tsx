@@ -60,7 +60,15 @@ export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: 
     const ctl = new AbortController();
     setLoading(true);
     fetchAgentChecks(cardId, fresh, ctl.signal).then(
-      (d) => { if (alive.current) { setDetail(d); setError(null); } },
+      (d) => {
+        if (!alive.current) return;
+        if (!d || !Array.isArray(d.checks) || !Array.isArray(d.comments) || !d.mergeVerdict) {
+          setError('Checks are unavailable: the server returned an incomplete response.');
+          return;
+        }
+        setDetail(d);
+        setError(null);
+      },
       (err: unknown) => { if (alive.current && !ctl.signal.aborted) setError(describeContextError(err)); },
     ).finally(() => { if (alive.current) setLoading(false); });
     return ctl;
