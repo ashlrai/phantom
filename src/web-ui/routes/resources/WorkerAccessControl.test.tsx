@@ -10,10 +10,53 @@ const NOW = '2026-09-08T12:00:00.000Z';
 const OPEN: WorkerAccessSnapshot = { pausedWorkerIds: [], revision: 0, updatedAt: null };
 const PAUSED: WorkerAccessSnapshot = { pausedWorkerIds: ['codex-a'], revision: 1, updatedAt: NOW };
 const workers = resourceFixture().snapshot.pool.workers;
-const checkbox = (id = 'codex-a') => screen.getByRole('checkbox', { name: `Allow ${id} for fleet work` });
-const saveButton = () => screen.getByRole('button', { name: 'Save account access' });
+const checkbox = (id = 'codex-a') => screen.getByLabelText(`Allow ${id} for fleet work`);
+const saveButton = () => within(screen.getByRole('region', { name: 'Fleet account access' }))
+  .getByRole('button', { name: 'Save account access' });
 
 describe('fleet account access control', () => {
+  it.each([' CODEX-A ', 'codex', 'configured-codex', 'codex-account'])(
+    'searches existing worker identities locally with an accessible result count: %s', (query) => {
+      const save = vi.fn();
+      render(<WorkerAccessControl workers={workers} policy={PAUSED} writable onSave={save} />);
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search worker access' }), { target: { value: query } });
+      expect(screen.getByRole('status')).toHaveTextContent('2 of 3 worker access entries');
+      expect(checkbox()).not.toBeChecked();
+      expect(screen.queryByRole('checkbox', { name: 'Allow local-a for fleet work' })).not.toBeInTheDocument();
+      expect(save).not.toHaveBeenCalled();
+    });
+  it('preserves hidden saved pauses and draft changes when filtering and saving', async () => {
+    const save = vi.fn().mockResolvedValue(false);
+    render(<WorkerAccessControl workers={workers} policy={PAUSED} writable onSave={save} />);
+    fireEvent.click(checkbox('codex-alias'));
+    const search = screen.getByRole('searchbox', { name: 'Search worker access' });
+    fireEvent.change(search, { target: { value: 'missing' } });
+    expect(screen.getByRole('status')).toHaveTextContent('0 of 3 worker access entries');
+    expect(screen.getByText('No worker access entries match your search.')).toBeVisible();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    fireEvent.change(search, { target: { value: 'local' } });
+    fireEvent.click(checkbox('local-a'));
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith(['codex-a', 'codex-alias', 'local-a'], 1));
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getAllByRole('checkbox')).toHaveLength(workers.length);
+    expect(checkbox()).not.toBeChecked(); expect(checkbox('codex-alias')).not.toBeChecked();
+  });
+  it.each([{ writable: false }, { writable: true, disabled: true }, { writable: true, busy: true },
+    { writable: true, historical: true }])('preserves write restrictions while searching %#', (props) => {
+    const save = vi.fn();
+    render(<WorkerAccessControl workers={workers} policy={PAUSED} onSave={save} {...props} />);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search worker access' }), { target: { value: 'codex-a' } });
+    expect(checkbox()).toBeDisabled();
+    fireEvent.click(checkbox());
+    expect(checkbox()).not.toBeChecked(); expect(save).not.toHaveBeenCalled();
+  });
+  it('shows an empty state when no worker access entries exist', () => {
+    render(<WorkerAccessControl workers={[]} policy={OPEN} writable onSave={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('0 of 0 worker access entries');
+    expect(screen.getByText('No worker access entries available.')).toBeVisible();
+    expect(saveButton()).toBeDisabled();
+  });
   it('shows shared-account pauses even when an alias checkbox has no explicit pause', () => {
     render(<WorkerAccessControl workers={workers} policy={PAUSED} writable quotaReservationsAvailable onSave={vi.fn()} />);
     expect(checkbox('codex-alias')).toBeChecked();

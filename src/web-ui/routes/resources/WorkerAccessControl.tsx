@@ -19,8 +19,13 @@ export function WorkerAccessControl({ workers, policy, writable, disabled = fals
   onSave: (pausedWorkerIds: string[], expectedRevision: number) => Promise<boolean>;
 }) {
   const descriptionId = useId();
+  const resultCountId = useId();
+  const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<{ pausedWorkerIds: string[]; revision: number } | null>(null);
   if (!policy) return null;
+  const query = search.trim().toLowerCase();
+  const filteredWorkers = workers.filter((worker) =>
+    [worker.id, worker.provider, worker.model, worker.capacityKey].some((value) => value.toLowerCase().includes(query)));
   const paused = draft?.pausedWorkerIds ?? policy.pausedWorkerIds;
   const conflict = draft !== null && draft.revision !== policy.revision;
   const unsaved = draft !== null && (paused.length !== policy.pausedWorkerIds.length ||
@@ -46,8 +51,18 @@ export function WorkerAccessControl({ workers, policy, writable, disabled = fals
       <span className={styles.saved}>{historical ? 'Last reported access' : 'Saved access'} · revision {policy.revision}
         <small>{policy.updatedAt === null ? 'No individual pauses saved' : `Updated ${resourceTime(policy.updatedAt)}`}</small></span>
     </div>
+    <label className={styles.note}>Search worker access
+      <input type="search" value={search} aria-describedby={resultCountId}
+        onChange={(event) => setSearch(event.target.value)} />
+    </label>
+    <p id={resultCountId} className={styles.note} role="status">
+      {filteredWorkers.length} of {workers.length} worker access entries
+    </p>
+    {filteredWorkers.length === 0 ? <p className={styles.note}>
+      {workers.length === 0 ? 'No worker access entries available.' : 'No worker access entries match your search.'}
+    </p> : null}
     <div className={styles.workers} role="group" aria-label="Accounts permitted for fleet work" aria-describedby={descriptionId}>
-      {workers.map((worker) => <label className={styles.worker} key={worker.id}>
+      {filteredWorkers.map((worker) => <label className={styles.worker} key={worker.id}>
         <input type="checkbox" checked={!paused.includes(worker.id)} disabled={blocked || conflict}
           aria-label={`Allow ${worker.id} for fleet work`} onChange={(event) => change(worker.id, event.target.checked)} />
         <span className={styles.identity}><strong>{worker.id}</strong><small>{worker.provider} / {worker.model}</small></span>
