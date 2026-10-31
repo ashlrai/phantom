@@ -10,3 +10,4 @@
 .text { min-width: 0; overflow-wrap: anywhere; }
 .text a { color: var(--accent-500); white-space: nowrap; }
 .header { white-space: nowrap; overflow-x: auto; }
+.summary { margin: 0; color: var(--text-tertiary); font-size: var(--text-xs-size); line-height: 1.4; white-space: nowrap; overflow-x: auto; }
