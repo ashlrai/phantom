@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ashlr.ai/schema/fleet-runs.v1.schema.json",
+  "title": "Phantom Fleet Runs v1",
+  "description": "Live fleet snapshot. The desktop polls every 5 seconds. Null means unknown, never zero.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "generatedAt", "sources", "lastTick", "paused", "memFreePct", "diskFreeGb", "switches", "claudeLane", "lanes", "workers", "leaders", "orchestratorAgents", "publishesLastHour", "mergesLastHour", "events", "codexPersonal", "inbox", "drop"],
+  "properties": {
+    "v": {"const": 1},
+    "generatedAt": {"type": "string"},
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runsDir", "workers", "inbox", "codex", "merges"],
+      "properties": {
+        "runsDir": {"type": "string", "enum": ["healthy", "degraded", "missing", "not-landed"]},
+        "workers": {"type": "string", "enum": ["healthy", "degraded", "missing", "not-landed"]},
+        "inbox": {"type": "string", "enum": ["healthy", "degraded", "missing", "not-landed"]},
+        "codex": {"type": "string", "enum": ["healthy", "degraded", "missing", "not-landed"]},
+        "merges": {"type": "string", "enum": ["healthy", "degraded", "missing", "not-landed"]}
+      }
+    },
+    "lastTick": {"type": ["string", "null"]},
+    "paused": {"type": ["boolean", "null"]},
+    "memFreePct": {"type": ["number", "null"]},
+    "diskFreeGb": {"type": ["number", "null"]},
+    "switches": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "claudeLane": {"type": ["string", "null"]},
+    "lanes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lane", "running", "target", "queued", "held", "heldReason", "tokensLastHour", "merged24h", "mergeRate24h"],
+        "properties": {
+          "lane": {"type": "string"},
+          "running": {"type": "number"},
+          "target": {"type": "number"},
+          "queued": {"type": "number"},
+          "held": {"type": "boolean"},
+          "heldReason": {"type": ["string", "null"]},
+          "tokensLastHour": {"type": ["number", "null"]},
+          "merged24h": {"type": ["number", "null"]},
+          "mergeRate24h": {"type": ["number", "null"]}
+        }
+      }
+    },
+    "workers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job", "repo", "lane", "tier", "ageSeconds"],
+        "properties": {
+          "job": {"type": "string"},
+          "repo": {"type": "string"},
+          "lane": {"type": "string"},
+          "tier": {"type": "string"},
+          "ageSeconds": {"type": ["number", "null"]}
+        }
+      }
+    },
+    "claimed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job", "lane", "tier", "at"],
+        "properties": {
+          "job": {"type": "string"},
+          "lane": {"type": "string"},
+          "tier": {"type": "string"},
+          "at": {"type": "string"}
+        }
+      }
+    },
+    "leaders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "ageSeconds"],
+        "properties": {
+          "label": {"type": "string"},
+          "ageSeconds": {"type": ["number", "null"]}
+        }
+      }
+    },
+    "orchestratorAgents": {"type": ["number", "null"]},
+    "publishesLastHour": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job", "lane", "url", "at"],
+        "properties": {
+          "job": {"type": "string"},
+          "lane": {"type": ["string", "null"]},
+          "url": {"type": ["string", "null"]},
+          "at": {"type": "string"}
+        }
+      }
+    },
+    "mergesLastHour": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "items"],
+      "properties": {
+        "count": {"type": ["number", "null"]},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repo", "number", "title"],
+            "properties": {
+              "repo": {"type": "string"},
+              "number": {"type": "number"},
+              "title": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "kind", "text"],
+        "properties": {
+          "at": {"type": "string"},
+          "kind": {"type": "string"},
+          "text": {"type": "string"}
+        }
+      }
+    },
+    "codexPersonal": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["usedPct", "resetsAt", "asOf"],
+      "properties": {
+        "usedPct": {"type": ["number", "null"]},
+        "resetsAt": {"type": ["string", "null"]},
+        "asOf": {"type": ["string", "null"]}
+      }
+    },
+    "inbox": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "source", "text"],
+        "properties": {
+          "at": {"type": "string"},
+          "source": {"type": "string"},
+          "text": {"type": "string"}
+        }
+      }
+    },
+    "drop": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["pending", "done"],
+      "properties": {
+        "pending": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lane", "file"],
+            "properties": {
+              "lane": {"type": "string"},
+              "file": {"type": "string"}
+            }
+          }
+        },
+        "done": {"type": "number"}
+      }
+    }
+  }
+}

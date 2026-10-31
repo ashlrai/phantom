@@ -1,0 +1,10 @@
+.pane { padding: var(--space-4); color: var(--text-primary); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }
+.tile, .primary, .secondary { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--bg-surface); font: inherit; cursor: pointer; }
+.tile { display: flex; flex-direction: column; gap: var(--space-2); text-align: left; }
+.primary { width: 100%; font-weight: 600; background: var(--bg-hover); }
+.secondary { width: 100%; margin-top: var(--space-2); color: var(--text-secondary); }
+.count { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.tile:disabled, .primary:disabled, .secondary:disabled { cursor: default; color: var(--text-tertiary); }
+.tile:not(:disabled):hover, .primary:not(:disabled):hover, .secondary:not(:disabled):hover { background: var(--bg-hover); }
+.tile:focus-visible, .primary:focus-visible, .secondary:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }

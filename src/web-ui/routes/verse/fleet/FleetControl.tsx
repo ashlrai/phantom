@@ -39,6 +39,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { darkSinceLabel } from './dark-since.js';
 import { fleetControlQuery, postFleetControl, refreshFleetControlReads } from './fleet-control-queries.js';
 import { nativeFleetAvailable, runNativeFleetOp, type NativeFleetEvent, type NativeFleetOp } from './native-fleet.js';
+import { RunsSwitches } from './RunsSwitches.js';
 import styles from './fleet-control.module.css';
 
 export const FLEET_CONTROL_POLL_MS = 5_000;
@@ -398,6 +399,7 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
           </dd>
         </div>
       </dl>
+      <RunsSwitches readOnly={actions.readOnly} />
     </section>
   );
 }

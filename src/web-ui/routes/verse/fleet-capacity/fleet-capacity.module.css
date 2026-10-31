@@ -1,0 +1,24 @@
+.pane { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; padding: var(--space-4); color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.header, .controls, .line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.headline { flex: 1 1 12rem; margin: 0; color: var(--text-secondary); }
+.button { min-height: var(--control-h-sm); padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+.button:hover, .button[aria-pressed='true'] { background: var(--bg-hover); }
+.button:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.section { min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.title { margin: 0 0 var(--space-3); color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.list, .gaps { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.gaps { margin-top: var(--space-2); }
+.lane, .gaps, .headline { overflow-wrap: anywhere; }
+.line span { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.chart { display: block; width: 100%; height: 3rem; margin-top: var(--space-2); overflow: visible; }
+.running, .target { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.running { stroke: var(--data-seq-4); }
+.target { stroke: var(--text-secondary); stroke-dasharray: 4 3; }
+.dot { fill: var(--data-seq-4); }
+.paused { fill: var(--text-tertiary); opacity: .12; }
+.held { fill: var(--status-unknown-solid); opacity: .2; }
+.muted { margin: 0; color: var(--text-tertiary); }
+
+.laneButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+.laneButton:hover { text-decoration: underline; }
+.laneButton:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }

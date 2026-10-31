@@ -207,10 +207,11 @@ describe('CommandSection — seat capacity and metered spend', () => {
     render(<CommandSection />);
     await ready();
     const seats = screen.getByRole('region', { name: 'Seats' });
-    const claude = await within(seats).findByRole('button', { name: /^Claude Max: 26% left/ });
-    expect(claude).toHaveTextContent('Claude Max26% left');
-    expect(claude).toHaveTextContent('resets Sep 24 at 5pm (America/New_York)');
-    // The router holds Claude above its 70% 5-hour ceiling.
+    // The stale 5-hour binding is hidden: the weekly window leads the strip.
+    const claude = await within(seats).findByRole('button', { name: /^Claude Max: 46% left/ });
+    expect(claude).toHaveTextContent('Claude Max46% left');
+    expect(claude).toHaveTextContent('resets Sep 25 at 7pm (America/New_York)');
+    // The router's own hold reason still prints verbatim.
     expect(claude).toHaveTextContent('Held back');
     expect(within(seats).queryByRole('figure')).toBeNull();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/api/verse/bootstrap'))).toBe(false);
