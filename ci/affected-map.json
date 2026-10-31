@@ -354,6 +354,7 @@
     "test/ecosystem-index-docs.test.ts",
     "test/ecosystem-stats.test.ts",
     "test/fixture-custody.test.ts",
+    "test/fleet-dirty-superseded-31.test.ts",
     "test/gate.test.ts",
     "test/h8.cleanup-comment-only.test.ts",
     "test/h8.docs.test.ts",
