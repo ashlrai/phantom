@@ -1,5 +1,7 @@
 import { ApiError, apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
+import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
+import { isFleetRuns } from '../ops/ops-runs-model.js';
 
 export interface InboxEntry { at: string; source: string; text: string }
 
@@ -15,12 +17,15 @@ export function narrowInboxTail(value: unknown): InboxEntry[] {
 }
 
 let missing: ApiError | null = null;
-export const inboxTailQuery: QueryDef<InboxEntry[]> = {
+export const inboxTailQuery: QueryDef<{ inbox: InboxEntry[]; snapshot: FleetRunsV1 | undefined }> = {
   key: 'verse-mobile-inbox-tail',
   async fetch(signal) {
     if (missing) throw missing;
     try {
-      return narrowInboxTail(await apiGet<unknown>('/api/verse/fleet/runs', signal));
+      const value = await apiGet<unknown>('/api/verse/fleet/runs', signal);
+      const inbox = narrowInboxTail(value);
+      const snapshot = isFleetRuns(value) && value.host !== undefined ? { ...value, host: value.host } : undefined;
+      return { inbox, snapshot };
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) missing = error;
       throw error;
