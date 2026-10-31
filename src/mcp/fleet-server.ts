@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
 import { MAX_FLEET_TICKS, MAX_FLEET_BUS_HOPS, readFleetLoop, readFleetStatus, readFleetBusHops } from './fleet.js';
 
@@ -12,6 +13,7 @@ export interface FleetReaders {
   status: () => Promise<unknown>;
   loop: (limit: number) => Promise<unknown>;
   bus?: (limit: number) => Promise<unknown>;
+  hostRuns?: () => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -53,11 +55,17 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_host_runs',
+      description: 'Read the bounded persisted host runs projection, including launched activity, claims and lane counts. Missing or degraded sources are reported as such; this does not probe providers or establish live worker state.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     const limited = name === 'fleet_loop' || name === 'fleet_bus_hops';
@@ -71,7 +79,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     try {
       const value = name === 'fleet_status' ? await readers.status()
         : name === 'fleet_loop' ? await readers.loop(limit as number)
-        : await (readers.bus ?? readFleetBusHops)(limit as number);
+        : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
+        : await (readers.hostRuns ?? readFleetRunsDirState)();
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
       const text = JSON.stringify(value, (_key, item: unknown) =>
