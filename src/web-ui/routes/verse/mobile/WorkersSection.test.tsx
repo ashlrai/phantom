@@ -22,7 +22,7 @@ describe('Fleet workers', () => {
     const oldest = screen.getByText('RQ-FAKE-21').closest('div');
     expect(oldest).toHaveTextContent('fake-lane · work');
     expect(oldest?.querySelector('[data-tone="bad"]')).toBeInTheDocument();
-    expect(screen.getByText('+2 more')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show all 22 workers' })).toBeInTheDocument();
     expect(screen.queryByText('RQ-FAKE-0')).not.toBeInTheDocument();
     expect(screen.queryByText(/private-(repo|inbox)-fixture/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Refresh' }));

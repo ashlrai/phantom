@@ -36,7 +36,8 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
     <section aria-label="By lane"><h3 className={styles.heading}>By lane</h3>
       {data.byLane.length === 0 ? <p className={styles.message}>No lane counts available.</p> : <ul className={styles.list}>{laneRows(data).map((lane) => {
         const drain = laneDrainText(lane, snapshotLanes.find((snapshotLane) => snapshotLane.lane === lane.lane));
-        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}</li>;
+        const next = data.nextUp?.find((entry) => entry.lane === lane.lane);
+        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <span className={styles.muted} data-testid="lane-next">Next: <JobRefs text={next.jobs.join(', ')} onOpenJob={openJob} /></span>}</li>;
       })}</ul>}
     </section>
     <section aria-label="Parked groups"><h3 className={styles.heading}>Parked groups</h3>
