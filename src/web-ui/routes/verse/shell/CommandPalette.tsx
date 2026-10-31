@@ -29,7 +29,7 @@ import { PALETTE_QUERY_EVENT, takePaletteQuery } from '../voice/palette-handoff.
 import { insertDictation } from '../voice/insert-text.js';
 import { detectKeyPlatform, findCommand, type WorkbenchCommand } from './command-catalog.js';
 import { argumentItems, buildPaletteItems, paletteView, type PaletteItem } from './palette-model.js';
-import { executeCatalogCommand } from './run-command.js';
+import { executeCatalogCommand, shellNotify } from './run-command.js';
 import { useActivity } from './useActivity.js';
 import styles from './CommandPalette.module.css';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
@@ -38,6 +38,13 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { usePanes } from '../panes/pane-registry.js';
 import { paletteWorkers } from './palette-workers.js';
+
+import { paletteLanes, type PaletteLane } from './palette-lanes.js';
+import { LANE_PAUSE_KEY, parsePauseRecord, pauseTransition, resumeTransition } from '../fleet-lanes/lane-pause-model.js';
+import { laneTargetsQuery, postLaneTarget } from '../ops/lane-targets-queries.js';
+import { laneWriting, setLaneWriting } from '../fleet-lanes/LaneTargetStepper.js';
+import { refetchQuery } from '../../../data/cache.js';
+import { readFailureReason } from '../../../data/client.js';
 
 // Dictation (voice/): lazy, so the palette opens as fast as before.
 const VoiceInput = lazy(() => import('../voice/VoiceInput.js'));
@@ -80,6 +87,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     () => ({
       panes: [...panes].sort((a, b) => a.title.localeCompare(b.title)),
       workers: paletteWorkers(runs.data),
+      lanes: paletteLanes(runs.data, parsePauseRecord(localStorage.getItem(LANE_PAUSE_KEY))),
       needsYou: activity.data?.needsYou ?? [],
       running: activity.data?.running ?? [],
       sessions: sessions.data ?? bootstrap.data?.sessions ?? [],
@@ -144,9 +152,32 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     setActive(0);
   }
 
+  async function changeLane(lane: PaletteLane) {
+    if (laneWriting()) return;
+    setLaneWriting(true);
+    try {
+      const record = parsePauseRecord(localStorage.getItem(LANE_PAUSE_KEY));
+      const next = lane.paused ? resumeTransition(lane.lane, record) : pauseTransition(lane.lane, lane.target, record);
+      await postLaneTarget(lane.lane, next.target);
+      localStorage.setItem(LANE_PAUSE_KEY, JSON.stringify(next.record));
+      shellNotify(`Lane ${lane.lane}: target ${next.target} saved${lane.held ? ' · held, resume target only' : ''}`, 'success');
+      await Promise.all([
+        refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+        refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+      ]);
+    } catch (reason) {
+      shellNotify(readFailureReason(reason), 'danger');
+    } finally { setLaneWriting(false); }
+  }
+
   function run(item: PaletteItem | undefined) {
     if (!item) return;
     const payload = item.payload;
+    if (payload.kind === 'lane') {
+      void changeLane(payload.lane);
+      onClose();
+      return;
+    }
     if (payload.kind === 'command') {
       const command = findCommand(payload.commandId);
       // Enter on an argument command asks for the argument, like Tab.

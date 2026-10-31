@@ -9,6 +9,14 @@ const panes = [
 
 export const CURATED_FLEET_WORKSPACE = ['fleet-lanes', 'fleet-inbox', 'fleet-merges', 'fleet-bus', 'fleet-releases', 'fleet-usage'] as const;
 
+/** Tile count string: appends "· N held" when any lane has `held === true`. */
+export function lanesTileCount(lanes: { running: number; target: number; held: boolean }[]) {
+  const running = lanes.reduce((n, lane) => n + lane.running, 0);
+  const target = lanes.reduce((n, lane) => n + lane.target, 0);
+  const held = lanes.filter((lane) => lane.held).length;
+  return held > 0 ? `${running}/${target} · ${held} held` : `${running}/${target}`;
+}
+
 export function curatedWorkspace(presentIds: readonly string[]) {
   return CURATED_FLEET_WORKSPACE.filter((id) => presentIds.includes(id));
 }
@@ -16,7 +24,7 @@ export function curatedWorkspace(presentIds: readonly string[]) {
 /** Stable tile order and readings; registration is supplied by the caller. */
 export function hubTiles(runs: FleetRuns | null, registered: readonly { id: string; title: string; description?: string | null; order?: number }[]) {
   const counts: Record<string, string> = runs ? {
-    'fleet-lanes': `${runs.lanes.reduce((n, lane) => n + lane.running, 0)}/${runs.lanes.reduce((n, lane) => n + lane.target, 0)}`,
+    'fleet-lanes': lanesTileCount(runs.lanes),
     'fleet-events': String(runs.events.length),
     'fleet-inbox': String(runs.inbox.length),
     'fleet-merges': String(runs.mergesLastHour.count ?? '—'),

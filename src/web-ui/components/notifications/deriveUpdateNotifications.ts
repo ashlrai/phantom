@@ -1,9 +1,8 @@
 /**
  * components/notifications/deriveUpdateNotifications.ts — the self-update
- * lane of the attention queue: "an update is ready to apply" and "an apply
- * did not finish" as stable notification items, the same two signals the
- * gear tray's update badge already computes (shell/self-update-badge.ts)
- * and the Updates row renders (sections/UpdateStatusRow.tsx).
+ * lane of the attention queue: ready, failed, and successful applies as
+ * stable notification items alongside the Updates row
+ * (sections/UpdateStatusRow.tsx).
  *
  * Two sources, read exactly as the row merges them:
  *   - The native desktop updater (app/desktop-updates.ts DesktopUpdateState):
@@ -23,11 +22,10 @@
  *
  * Dedupe rides the store's id rule: at most one item per distinct version
  * per state, keyed `update-ready:<version>` / `update-held:<version>` /
- * `update-failed:<version>:<reason-hash>` — a NEW version lands a NEW item
- * (and a fresh OS mirror), the same one updates in place. Nothing while
- * checking, idle, downloading, applying or applied — an update that is
- * moving on its own does not need you, and reload-pending already has the
- * UpdateReloadBanner.
+ * `update-failed:<version>:<reason-hash>` / `update-restart-needed:<sha>` /
+ * `update-applied:<sha>` — a NEW version lands a NEW item (and a fresh OS
+ * mirror), the same one updates in place. Nothing while checking, idle,
+ * downloading or applying; already-current applies remain silent.
  */
 import { describeDesktopUpdateReason } from '../../app/desktop-update-reasons.js';
 import type { DesktopUpdateState } from '../../app/desktop-updates.js';
@@ -39,8 +37,8 @@ import type { AppNotification } from './types.js';
 /** Native phases where the download is complete and install can start. */
 const READY_PHASES = new Set<DesktopUpdateState['phase']>(['staged', 'waiting-for-idle', 'waiting-for-app-quit']);
 /**
- * `lastApply` is durable history — a failure this old is a Work Journal
- * fact, not something still needing attention (same 24h convention
+ * `lastApply` is durable history — an apply this old is a Work Journal
+ * fact, not a recent notification (same 24h convention
  * deriveNotifications uses for run failures).
  */
 const LAST_APPLY_NOTIFY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -124,6 +122,25 @@ export function deriveUpdateNotifications(
         title: `Update to ${target} ${last.outcome}: ${reason}`,
         detail: 'The step log and retry live in Settings ▸ Desktop ▸ Updates.',
         ts: last.finishedAt, actionLabel: 'Open Updates', actionRun: openUpdatesSettings });
+    }
+    if (last !== null && last.outcome === 'updated'
+      && now - Date.parse(last.finishedAt) <= LAST_APPLY_NOTIFY_WINDOW_MS) {
+      const target = shortSha(last.toCommit) ?? 'unknown';
+      const restartNeeded = last.restartRequired && last.fromCommit !== null && status.headSha === last.fromCommit;
+      if (restartNeeded) {
+        push({ id: `update-restart-needed:${target}`, category: 'action-required', severity: 'high',
+          title: `Phantom updated to ${target}; restart to load it`,
+          detail: last.restartMode === 'manual' ? 'Quit and reopen Phantom to run the new code.'
+            : 'Phantom restarts itself when idle.',
+          ts: last.finishedAt, actionLabel: 'Open Updates', actionRun: openUpdatesSettings });
+      } else {
+        const minutes = Math.max(0, Math.floor((now - Date.parse(last.finishedAt)) / 60_000));
+        const from = shortSha(last.fromCommit);
+        push({ id: `update-applied:${target}`, category: 'daemon-health', severity: 'info',
+          title: `Now running ${target}`,
+          detail: `Updated ${minutes} min ago${from === null ? '' : ` from ${from}`}`,
+          ts: last.finishedAt });
+      }
     }
   }
   return out;
