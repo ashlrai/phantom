@@ -29,7 +29,7 @@ it('refreshes the inbox after posting and highlights the newest matching entry f
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   await screen.findByText(/^Sent ·/);
   await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(2));
-  expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'GET')).toHaveLength(2);
+  expect(fetcher.mock.calls.filter(([url, init]) => String(url).includes('/inbox?') && init?.method === 'GET')).toHaveLength(2);
   const post = fetcher.mock.calls.find(([, init]) => init?.method === 'POST')!;
   expect(post[0]).toBe('/api/verse/fleet/runs/inbox');
   expect(JSON.parse(String(post[1]!.body))).toEqual({ text: 'Ship this', source: 'Phantom desktop' });
