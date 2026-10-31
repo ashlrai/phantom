@@ -19,11 +19,10 @@ import { TOP_LEVEL_COMMANDS, cmdCompletions } from '../src/cli/completions.js';
 
 const ROOT = join(__dirname, '..');
 
-/**
- * Agent-facing docs held to the CLI. README.md, docs/QUICKSTART.md and
- * docs/VERSE.md are left out while the release branch owns them.
- */
+/** Entry points and agent-facing docs held to the current CLI. */
 const DOCS = [
+  'README.md',
+  'docs/ECOSYSTEM-MAP.md',
   'AGENTS.md',
   'CLAUDE.md',
   'CONTRIBUTING.md',
@@ -119,6 +118,34 @@ afterEach(() => {
 
 describe('agent docs name only real CLI commands, verbs and flags', () => {
   const all = DOCS.flatMap(invocations);
+
+  it('keeps companion server lists aligned with repo configuration', () => {
+    // Read names only: never include server environment or credential values in diagnostics.
+    const config = JSON.parse(readFileSync(join(ROOT, '.mcp.json'), 'utf8')) as { mcpServers: Record<string, unknown> };
+    const expected = Object.keys(config.mcpServers).sort();
+    for (const file of ['README.md', 'AGENTS.md', 'CLAUDE.md', 'docs/ECOSYSTEM-MAP.md']) {
+      const text = readFileSync(join(ROOT, file), 'utf8');
+      const paragraph = text.split(/\n\s*\n/).find((p) => p.includes('`.mcp.json`') && p.includes('`phantom-secrets`'));
+      expect(paragraph, `${file}: missing companion server list`).toBeDefined();
+      const names = [...(paragraph ?? '').matchAll(/`([a-z][a-z-]*)`/g)]
+        .map((m) => m[1]!).sort();
+      expect(names, `${file}: companion server list differs from .mcp.json`).toEqual(expected);
+    }
+  });
+
+  it('keeps documented npm scripts aligned with package.json', () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    const bad: string[] = [];
+    for (const file of ['README.md', 'AGENTS.md', 'CLAUDE.md', 'docs/ECOSYSTEM-MAP.md']) {
+      const lines = readFileSync(join(ROOT, file), 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        for (const match of line.matchAll(/\bnpm run ([a-z][a-z0-9:-]*)/g)) {
+          if (!Object.hasOwn(pkg.scripts, match[1]!)) bad.push(`${file}:${i + 1}: npm run ${match[1]}`);
+        }
+      });
+    }
+    expect(bad, 'unknown npm script; fix the documented command').toEqual([]);
+  });
 
   it('finds invocations to check', () => {
     expect(all.length).toBeGreaterThan(50);
