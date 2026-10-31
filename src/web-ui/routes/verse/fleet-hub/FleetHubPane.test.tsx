@@ -24,7 +24,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it('opens a tile and lays out only registered fleet panes with one store update', async () => {
   render(<FleetHubPane visible />);
-  await screen.findByText('1/2');
+  await screen.findByText('1/2 · 1 held');
   fireEvent.click(screen.getByText('Lanes'));
   expect(getDockState().active).toBe('fleet-lanes');
   const listener = vi.fn();
@@ -38,7 +38,7 @@ it('opens a tile and lays out only registered fleet panes with one store update'
 
 it('reacts to late registrations and uses the registered title', async () => {
   render(<FleetHubPane visible />);
-  await screen.findByText('1/2');
+  await screen.findByText('1/2 · 1 held');
   let unregister = () => {};
   act(() => { unregister = registerPane({ id: 'fleet-inbox', title: 'Fleet inbox', needsSession: false, icon: () => null, component: () => null }); });
   fireEvent.click(screen.getByRole('button', { name: 'Fleet inbox 0' }));
