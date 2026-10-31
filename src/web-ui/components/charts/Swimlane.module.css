@@ -14,6 +14,24 @@
   transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
+.selectBar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.selectBar:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.selectBar svg { display: block; }
+.selectBar .bar { cursor: pointer; }
+
 /* Another run is hovered: step back so the one being read stands out. */
 .dimmed {
   opacity: 0.45;
