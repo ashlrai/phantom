@@ -67,6 +67,7 @@ import { SECTION_MODULES, sectionImporter } from './shell/section-modules.js';
 import { SurfaceNotInBuild, SurfaceSkeleton } from './shell/skeletons.js';
 import { onActivityCompletions, useActivity } from './shell/useActivity.js';
 import { useViewport } from './shell/viewport.js';
+import { useWindowTitle } from './shell/window-title.js';
 import type { WarmupOptions } from './shell/warmup.js';
 import { useVerseUi } from './useVerseUi.js';
 import { useFocusMode } from './shell/focus-mode.js';
@@ -188,6 +189,7 @@ const Shortcuts = preloadedLazy(() => importShortcuts().then((m) => m.ShortcutsO
 const GearTray = lazy(() => importGearTray().then((m) => ({ default: m.GearTray })));
 const ReviewMenu = lazy(() => import('./shell/ReviewMenu.js'));
 const PowerStatus = lazy(() => import('./power/PowerStatus.js').then((module) => ({ default: module.PowerStatus })));
+const InterjectDialog = lazy(() => import('./fleet/InterjectDialog.js').then((m) => ({ default: m.InterjectDialog })));
 
 const OnboardingGate = lazy(() => importOnboarding().then((m) => ({ default: m.OnboardingGate })));
 const ResourcesChrome = lazy(() => importResources().then((m) => ({ default: m.ResourcesChrome })));
@@ -307,6 +309,7 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 }
 
 export function VerseApp() {
+  useWindowTitle();
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
@@ -621,6 +624,7 @@ export function VerseApp() {
         {ui.overlay === 'needs-you' ? <Drawer.Slot /> : null}
         {ui.overlay === 'shortcuts' ? <Shortcuts.Slot /> : null}
       </Suspense>
+      <Suspense fallback={null}><InterjectDialog /></Suspense>
       {voiceHud ? <Suspense fallback={null}><VoiceHud /></Suspense> : null}
       {guardOpen ? <Suspense fallback={null}><GuardHost /></Suspense> : null}
       {computerUse ? (

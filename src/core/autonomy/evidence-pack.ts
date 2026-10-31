@@ -185,7 +185,6 @@ export interface SignedAutonomyEvidencePackV3 extends AutonomyEvidencePackV3Payl
   sealedPackDigest: string;
 }
 
-export type AutonomyEvidencePackV3 = SignedAutonomyEvidencePackV3;
 export type AutonomyEvidencePack = AutonomyEvidencePackLegacy | SignedAutonomyEvidencePackV3;
 
 export interface BuildAutonomyEvidenceInput {
