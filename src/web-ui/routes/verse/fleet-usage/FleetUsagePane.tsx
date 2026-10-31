@@ -2,9 +2,10 @@
  * routes/verse/fleet-usage/FleetUsagePane.tsx — the dock Usage pane.
  *
  * One dense row per provider account (Claude, Codex, Grok) rendering exactly
- * the windows the provider reported — a weekly-only Claude account is one
- * meter, never a synthesized 5-hour one — plus the fleet snapshot's own
- * Codex personal figure and a tokens-per-lane table. Accounts poll every
+ * the windows the provider reported — minus Claude's retired 5-hour window,
+ * which Anthropic lifted; the row carries one note saying the weekly window
+ * is the whole story — plus the fleet snapshot's own Codex personal figure
+ * and a tokens-per-lane table. Accounts poll every
  * 60 s and the live fleet snapshot every 10 s, only while the pane is on
  * top; both reads degrade to a notice rather than taking the pane down.
  */
@@ -93,12 +94,16 @@ function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
     <li className={styles.row}>
       <span className={styles.account} title={row.label}>{row.label}</span>
       {row.state !== 'observed' ? (
-        <span className={styles.reason}>{row.reason ?? STATE_FALLBACK[row.state]}</span>
-      ) : row.windows.length === 0 ? (
+        <ul className={styles.windows}>
+          <li className={styles.reason}>{row.reason ?? STATE_FALLBACK[row.state]}</li>
+          {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
+        </ul>
+      ) : row.windows.length === 0 && row.note === null ? (
         <span className={styles.reason}>—</span>
       ) : (
         <ul className={styles.windows}>
           {row.windows.map((w, i) => <WindowMeter key={`${w.label}:${i}`} account={row.label} window={w} nowMs={nowMs} />)}
+          {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
         </ul>
       )}
     </li>
