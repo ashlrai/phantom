@@ -15,6 +15,16 @@ export const GETTING_STARTED_LINES: readonly string[] = [
   ['phm run "<goal>"', 'run one task now'],
 ].map(([cmd, what]) => `${cmd!.padEnd(18)}${what}`);
 
+/** Checkable first task guidance; these instructions do not claim live readiness. */
+export const FIRST_TASK_READINESS_LINES: readonly string[] = [
+  'Connect: add an account or configure a local model in Resources in `phm verse`.',
+  '   Check chat readiness: connected alone is not usable. Resolve signed-out, unknown usage, quota or capacity holds before starting.',
+  'Select: choose your project and workspace; confirm the repository path before asking for changes.',
+  'Check: in Work with me, ask: "Read the README and name one test command with its source path. Do not change files."',
+  '   Done: verify the cited file and command in your project. A waiting task or connected badge alone does not pass this check.',
+  'For fleet work later, check fleet readiness separately; chat success does not establish fleet authority.',
+];
+
 /**
  * The lead `phm setup` prints before its refusal detail, so a new user
  * learns they are not stuck before reading the authority wording.
@@ -27,6 +37,7 @@ export function setupRefusalLead(platform: NodeJS.Platform = process.platform): 
     'phm setup installs the background service, and that is turned off until standing authority is set up.',
     'You do not need it to get started:',
     ...GETTING_STARTED_LINES.map((line) => `  ${line}`),
+    ...FIRST_TASK_READINESS_LINES.map((line) => `  ${line}`),
     unattended,
   ];
 }
@@ -48,6 +59,7 @@ export function authoritySetupPlatformRefusal(
     `phm authority setup needs macOS: standing grants are signed with Touch ID and held by a macOS custody helper. This machine is ${platform}.`,
     'Nothing was changed. On this machine you can still:',
     ...GETTING_STARTED_LINES.map((line) => `  ${line}`),
+    ...FIRST_TASK_READINESS_LINES.map((line) => `  ${line}`),
     'To see the setup steps without running them: phm authority setup --dry-run',
   ];
 }

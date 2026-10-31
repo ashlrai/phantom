@@ -824,7 +824,7 @@ export type VerseEvent =
     outTokens?: number;
     tokPerSec?: number;
   }
-  /** A human-readable notice about the turn's plumbing (API retry, preflight, no-output watchdog). */
+  /** A human-readable notice about the turn's plumbing (API retry, preflight, no-output watchdog, automatic model switch). */
   | { seq: number; at: string; type: 'status'; turnId: string | null; kind: VerseStatusKind; message: string }
   // ── V3.10 PERSISTED events ────────────────────────────────────────────────
   /**
@@ -925,7 +925,7 @@ export type VerseThinkingKind = 'summary' | 'raw' | 'progress';
 export type VerseProgressPhase = 'thinking' | 'tool' | 'writing' | 'waiting';
 
 /** V3.10. What a transient `status` notice is about. */
-export type VerseStatusKind = 'retry' | 'preflight' | 'watchdog';
+export type VerseStatusKind = 'retry' | 'preflight' | 'watchdog' | 'model-switch';
 
 /** V3.10. How a `recovered` event restored the conversation. */
 export type VerseRecoveryHow = 'new-native-session' | 'handoff';

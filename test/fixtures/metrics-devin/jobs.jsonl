@@ -1,0 +1,8 @@
+{"lane":"devin","jobId":"a","ts":"2026-10-26T10:00:00Z","startedAt":"2026-10-26T09:00:00Z","completedAt":"2026-10-26T10:00:00Z","project":"/repos/phantom","prUrl":"https://github.com/example/repo/pull/1","merged":false}
+{"lane":"devin","jobId":"a","ts":"2026-10-26T11:00:00Z","startedAt":"2026-10-26T09:00:00Z","completedAt":"2026-10-26T10:00:00Z","project":"/repos/phantom","prUrl":"https://github.com/example/repo/pull/1","merged":true}
+{"lane":"devin","jobId":"b","ts":"2026-10-26T11:00:00Z","startedAt":"2026-10-26T09:00:00Z","completedAt":"2026-10-26T11:00:00Z","project":"/repos/phantom","prUrl":"https://github.com/example/repo/pull/2","merged":false}
+{"lane":"codex","jobId":"a","ts":"2026-10-26T11:00:00Z","project":"/repos/other","prUrl":"https://github.com/example/repo/pull/3","merged":true}
+{"lane":"devin","jobId":"old","ts":"2026-09-01T11:00:00Z","merged":true}
+{"lane":"devin","jobId":"future","ts":"2026-11-01T11:00:00Z","merged":true}
+null
+{broken

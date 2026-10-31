@@ -140,7 +140,7 @@
 .tabWrap[data-selected] .tab { color: var(--text-primary); font-weight: var(--font-weight-medium); }
 .tab:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
 
-.tabClose {
+.tabClose, .tabCopy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -160,6 +160,9 @@
 .tabWrap[data-selected] .tabClose,
 .tabClose:focus-visible { opacity: 1; }
 .tabClose:hover { color: var(--text-primary); background: var(--bg-active); }
+.tabCopy { width: auto; min-width: var(--control-h-xs); padding: 0 var(--space-1); opacity: 1; font: inherit; font-size: var(--text-sm-size); white-space: nowrap; }
+.tabCopy:hover { color: var(--text-primary); background: var(--bg-active); }
+.tabCopy:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
 
 .headActions {
   flex: none;
@@ -301,3 +304,18 @@
 }
 :root[data-motion='reduce'] .scrim,
 :root[data-motion='reduce'] .sheetLayer .dock { animation: none; }
+
+.body[data-workspace] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+.body[data-workspace] .pane:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+}
+.body[data-workspace] .pane:not([hidden]) > :last-child { flex: 1; min-height: 0; height: auto; }
+.workspaceTitle { flex: none; padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); font-weight: 600; }

@@ -82,6 +82,24 @@ macOS may require **Open Anyway** on first launch.
 For a source build and local signing, follow [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md).
 There is no Linux or Windows desktop package in this release; use the CLI above.
 
+### Complete your first readiness check
+
+1. Open **Resources** in `phm verse` and connect an account or configure a local
+   model. Check **chat readiness**: a connected badge alone does not mean the
+   resource is usable. Resolve signed-out, unknown usage, exhausted quota or
+   capacity holds before starting; follow the resource's displayed recovery step.
+2. Select your project and workspace. Confirm the repository path so the task
+   uses the project you intended.
+3. In **Work with me**, ask: “Read the README and name one test command with its
+   source path. Do not change files.” Verify the cited file and command in your
+   project. This is done when the answer checks out; a waiting task or connection
+   alone does not pass. If it waits, return to Resources and resolve the hold.
+
+`phm doctor` checks the machine and `phm onboard` checks activation prerequisites;
+neither result proves a connected resource can complete your task. Check **fleet
+readiness** separately before unattended work: a successful chat does not establish
+fleet authority. The first task above does not require enrolling the repository.
+
 ### Read the workbench before starting work
 
 - In the desktop top bar, expand **Automatic awake** to inspect the idle-sleep
