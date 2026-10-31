@@ -15,13 +15,19 @@ import { refreshFleetControlReads } from './fleet-control-queries.js';
 import { FleetControl, FLEET_CONTROL_POLL_MS } from './FleetControl.js';
 import { SectionVisibilityProvider } from '../shell/section-visibility.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
-import { stubSurfaceFetch } from '../command/fetch-stub.test-support.js';
+import { stubSurfaceFetch as baseSurfaceFetch } from '../command/fetch-stub.test-support.js';
 import { fleetControl, fleetLive, grantDraft } from '../command/fixtures.test-support.js';
 import { resetCommandBus } from '../shell/command-bus.js';
 import { executeCatalogCommand } from '../shell/run-command.js';
 import { mockWideViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { resetVerseUi } from '../verse-ui-store.js';
 import type { FleetControlActionResultV1, FleetControlStateV1 } from '../../../../core/fleet/fleet-control-types.js';
+
+const SWITCHES_PATH = '/api/verse/fleet/control/switches';
+const SWITCHES = { v: 1, switches: [], sourceState: 'healthy' };
+function stubSurfaceFetch(options: Parameters<typeof baseSurfaceFetch>[0] = {}) {
+  return baseSurfaceFetch({ ...options, routes: { [SWITCHES_PATH]: SWITCHES, ...options.routes } });
+}
 
 const TOKEN = 'c'.repeat(64);
 let vp: ViewportMock | null = null;
@@ -143,7 +149,8 @@ describe('automatic control polling', () => {
     const fetcher = vi.fn(() => fetcher.mock.calls.length === 1
       ? Promise.resolve(json(initial))
       : new Promise<Response>(resolve => { replies.push(resolve); }));
-    vi.stubGlobal('fetch', fetcher);
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => path === SWITCHES_PATH
+      ? Promise.resolve(json(SWITCHES)) : Reflect.apply(fetcher, undefined, [path, init]));
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const region = screen.getByRole('region', { name: 'Fleet control' });
@@ -172,7 +179,8 @@ describe('automatic control polling', () => {
     fresh.daemon.pid = 36373;
     let finish!: (response: Response) => void;
     const fetcher = vi.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
-    vi.stubGlobal('fetch', fetcher);
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => path === SWITCHES_PATH
+      ? Promise.resolve(json(SWITCHES)) : Reflect.apply(fetcher, undefined, [path, init]));
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(3 * FLEET_CONTROL_POLL_MS); });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -188,7 +196,8 @@ describe('automatic control polling', () => {
     const releases: (() => void)[] = [];
     const blockers = Array.from({ length: 4 }, (_, i) => runQuery(`pending-metadata-${i}`, () => new Promise<void>(resolve => { releases.push(resolve); })));
     const fetcher = vi.fn(() => Promise.resolve(json(fleetControl('live'))));
-    vi.stubGlobal('fetch', fetcher);
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => path === SWITCHES_PATH
+      ? Promise.resolve(json(SWITCHES)) : Reflect.apply(fetcher, undefined, [path, init]));
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(3 * FLEET_CONTROL_POLL_MS); });
     expect(fetcher).not.toHaveBeenCalled();
@@ -247,7 +256,8 @@ describe('automatic control polling', () => {
     const fetcher = vi.fn((_path: string): Promise<Response> => fetcher.mock.calls.length === 1
       ? new Promise<Response>((resolve, reject) => { finish = resolve; fail = reject; })
       : Promise.resolve(json(fresh)));
-    vi.stubGlobal('fetch', fetcher);
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => path === SWITCHES_PATH
+      ? Promise.resolve(json(SWITCHES)) : Reflect.apply(fetcher, undefined, [path, init]));
     const { unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(2 * FLEET_CONTROL_POLL_MS); });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -263,7 +273,8 @@ describe('automatic control polling', () => {
 
   it('keeps hidden sections quiet and catches up when shown again', async () => {
     const fetcher = vi.fn(() => Promise.resolve(json(fleetControl('live'))));
-    vi.stubGlobal('fetch', fetcher);
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => path === SWITCHES_PATH
+      ? Promise.resolve(json(SWITCHES)) : Reflect.apply(fetcher, undefined, [path, init]));
     const { rerender, unmount } = render(panel());
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(fetcher).toHaveBeenCalledTimes(1);

@@ -40,6 +40,7 @@ import { darkSinceLabel } from './dark-since.js';
 import { fleetControlQuery, postFleetControl, refreshFleetControlReads } from './fleet-control-queries.js';
 import { nativeFleetAvailable, runNativeFleetOp, type NativeFleetEvent, type NativeFleetOp } from './native-fleet.js';
 import styles from './fleet-control.module.css';
+import { SwitchesRow } from './SwitchesRow.js';
 
 export const FLEET_CONTROL_POLL_MS = 5_000;
 
@@ -368,6 +369,9 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
               </span>
             ) : null}
           </dd>
+        </div>
+        <div className={styles.fact}>
+          <dt><MicroLabel>Switches</MicroLabel></dt><dd><SwitchesRow /></dd>
         </div>
         <div className={styles.fact}>
           <dt><MicroLabel>Custody</MicroLabel></dt>
