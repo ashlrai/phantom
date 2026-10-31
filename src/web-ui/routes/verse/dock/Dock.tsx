@@ -64,6 +64,7 @@ import {
 import { CloseGlyph, PanelBottomGlyph, PanelRightGlyph, SplitGlyph } from './dock-icons.js';
 import styles from './Dock.module.css';
 import { useAgentWorkspace, WORKSPACE_PANES } from './agent-workspace.js';
+import { paneLinkUrl } from './pane-link.js';
 
 /** What every pane gets besides its own id, visibility and presentation (PaneProps minus those). */
 export type DockPaneContext = Omit<PaneProps, 'paneId' | 'visible' | 'presentation' | 'requests'>;
@@ -126,6 +127,13 @@ export function Dock(props: DockProps) {
   const tabRefs = useRef(new Map<DockPaneId, HTMLButtonElement>());
   const idBase = useId();
   const [menu, setMenu] = useState<{ kind: 'add' | 'split'; anchor: MenuAnchor; from: HTMLElement } | null>(null);
+  const [copyNotice, setCopyNotice] = useState<{ pane: DockPaneId; text: 'Copied' | 'Copy failed' } | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyRequest = useRef(0);
+  useEffect(() => () => {
+    copyRequest.current += 1;
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+  }, []);
   // Panes mount on first show and stay mounted while their tab is open.
   const [mounted, setMounted] = useState<ReadonlySet<DockPaneId>>(() => new Set(state.open && state.active ? [state.active] : []));
 
@@ -191,7 +199,31 @@ export function Dock(props: DockProps) {
 
   if (!open) return null;
 
+  async function copyPaneLink(pane: DockPaneId) {
+    const request = ++copyRequest.current;
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+    setCopyNotice(null);
+    let text: 'Copied' | 'Copy failed' = 'Copy failed';
+    try {
+      const link = paneLinkUrl(pane, paneContext.sessionId, getPane(pane)?.needsSession ?? true);
+      if (!link || !navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(link);
+      text = 'Copied';
+    } catch {
+      // An unavailable or rejected clipboard is reported on the button.
+    }
+    if (request !== copyRequest.current) return;
+    setCopyNotice({ pane, text });
+    copyTimer.current = setTimeout(() => setCopyNotice(null), 1500);
+  }
+
   function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, pane: DockPaneId) {
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'c') {
+      event.preventDefault();
+      event.stopPropagation();
+      void copyPaneLink(pane);
+      return;
+    }
     const i = tabs.indexOf(pane);
     let next: DockPaneId | undefined;
     if (event.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
@@ -275,6 +307,11 @@ export function Dock(props: DockProps) {
                   <Icon size={14} />
                   <span className={styles.tabLabel}>{title}</span>
                 </button>
+                {selected ? <button type="button" className={styles.tabCopy}
+                  aria-label={copyNotice?.pane === id ? copyNotice.text : `Copy link to ${title}`}
+                  title={`Copy link to ${title}`} onClick={() => { void copyPaneLink(id); }}>
+                  {copyNotice?.pane === id ? copyNotice.text : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7" /></svg>}
+                </button> : null}
                 {!tiled || !WORKSPACE_PANES.some((pane) => pane === id) ? <button type="button" className={styles.tabClose} aria-label={`Close ${title}`}
                   title={`Close ${title}`} tabIndex={-1} onClick={() => closeDockTab(id)}>
                   <CloseGlyph size={12} />

@@ -1,83 +1,93 @@
 --- precheck.base.sh
 +++ precheck.sh
-@@ -2,7 +2,8 @@
+@@ -2,14 +2,16 @@
  # precheck.sh: deterministic empty-run precheck, no model call.
  # Usage: precheck.sh '<router-queue job line>' <repo-clone-dir>
  # Exit 0 = launch the job. Exit 10 = already merged/closed, 11 = PR open and green,
--# 12 = duplicate open PR for this job id, 13 = named files/symbols already satisfy acceptance.
-+# 12 = duplicate open PR for this job id (also PRECHECK_UNSURE on gh failure),
-+# 13 = named files/symbols already satisfy acceptance.
- # Exit 2 = usage error. Needs git, gh (read-only), rg or grep. Prints one SKIP/GO line.
+-# 12 = duplicate open PR for this job id (also PRECHECK_UNSURE on gh failure),
+-# 13 = named files/symbols already satisfy acceptance.
+-# Exit 2 = usage error. Needs git, gh (read-only), rg or grep. Prints one SKIP/GO line.
++# 12 = duplicate open PR; 75 = retryable/unknown; 64 = invalid job.
++# Legacy exit 13 is retired: existence does not establish completion.
++# Needs gh (read-only), grep and tr. Prints one outcome receipt.
  set -u
  line=${1:-}; clone=${2:-}
-@@ -16,19 +17,64 @@
- # RQ-EMPTY-SHAPE: also 'land https://github.com/<org>/<repo>/pull/N' and RQ-LAND-PRN / RQ-FIXUP-PRN ids
- [ -z "$pr" ] && printf '%s' "$id" | grep -qE '^RQ-(LAND|FIXUP)-' && pr=$( { printf '%s\n' "$id" | grep -oE -- '-PR[0-9]+$' | tr -d 'PR-'; printf '%s' "$line" | grep -oE "github\.com/$org/$repo/pull/[0-9]+" | grep -oE '[0-9]+$'; } | head -1)
- if [ -n "$pr" ] && [ -n "$repo" ]; then
--  st=$(gh pr view "$pr" -R "$org/$repo" --json state,mergeStateStatus,statusCheckRollup \
--       -q '.state+" "+.mergeStateStatus+" "+([.statusCheckRollup[]?|(.conclusion // .state)]|map(select(.=="FAILURE" or .=="ERROR" or .=="CANCELLED" or .=="TIMED_OUT"))|length|tostring)' 2>/dev/null)
-+  vrc=0; st=$(gh pr view "$pr" -R "$org/$repo" --json state,mergeStateStatus,statusCheckRollup \
-+       -q '.state+" "+.mergeStateStatus+" "+([.statusCheckRollup[]?|(.conclusion // .state)]|map(select(.=="FAILURE" or .=="ERROR" or .=="CANCELLED" or .=="TIMED_OUT"))|length|tostring)' 2>/dev/null) || vrc=$?
-+  # fail closed: a named target PR we cannot read is UNSURE, not a launch
-+  [ "$vrc" -ne 0 ] && skip 12 "PRECHECK_UNSURE_pr_$pr"
+-[ -n "$line" ] && [ -d "$clone/.git" ] || { echo "usage: precheck.sh '<job line>' <repo-clone>" >&2; exit 2; }
++[ -n "$line" ] || { echo "REJECT code=64 reason=invalid_job"; exit 64; }
++[ -e "$clone/.git" ] || { echo "RETRY code=75 reason=clone_unavailable"; exit 75; }
+ id=$(printf '%s' "$line" | grep -oE 'RQ-[A-Z0-9-]+[A-Z0-9]' | head -1)
+ repo=$(printf '%s' "$line" | grep -oE '\brepo=[a-z0-9-]+' | head -1 | cut -d= -f2)
++[ -n "$id" ] && [ -n "$repo" ] || { echo "REJECT code=64 reason=invalid_job"; exit 64; }
+ org=${PRECHECK_ORG:-ashlrai}
+ skip(){ echo "SKIP $id code=$1 reason=$2"; exit "$1"; }
+ # 1 FIXUP/LAND/CLOSE-DUP target PR state
+@@ -20,10 +22,12 @@
+   vrc=0; st=$(gh pr view "$pr" -R "$org/$repo" --json state,mergeStateStatus,statusCheckRollup \
+        -q '.state+" "+.mergeStateStatus+" "+([.statusCheckRollup[]?|(.conclusion // .state)]|map(select(.=="FAILURE" or .=="ERROR" or .=="CANCELLED" or .=="TIMED_OUT"))|length|tostring)' 2>/dev/null) || vrc=$?
+   # fail closed: a named target PR we cannot read is UNSURE, not a launch
+-  [ "$vrc" -ne 0 ] && skip 12 "PRECHECK_UNSURE_pr_$pr"
++  [ "$vrc" -ne 0 ] && skip 75 "PRECHECK_UNSURE_pr_$pr"
    case "$st" in
      MERGED*|CLOSED*) skip 10 "pr_${pr}_${st%% *}";;
      "OPEN CLEAN 0") skip 11 "pr_${pr}_green_clean";;
++    OPEN\ *) ;;
++    *) skip 75 "PRECHECK_UNSURE_pr_$pr";;
    esac
  fi
--# 2 job id already merged or open as a PR
-+# 2 job id already merged or open as a PR. `gh --search "$id in:title,body"`
-+# tokenizes the id on '-', so every hit is only a CANDIDATE: a PR counts iff
-+# its title or body carries the id as a whole [A-Za-z0-9-] token (a '-' never
-+# delimits, so RQ-RELEASE-TRAIN-1 matches neither RQ-RELTRAIN-1-RETIRE nor
-+# RQ-RELEASE-TRAIN-1-RETIRE, and -02 never matches -020), or its head branch
-+# is exactly codex-bridge/<id>. grep -F only; the id is never used as a regex.
-+# gh failure or unparseable output is UNSURE: fail closed as a possible
-+# duplicate (exit 12, reason=PRECHECK_UNSURE_*) instead of launching blind.
-+id_in_text() { # $1 = PR title+body; true iff $id is a maximal [A-Za-z0-9-] run
-+  printf '%s\n' "$1" | tr -cs 'A-Za-z0-9-' '\n' | grep -Fxq -- "$id"
-+}
-+dup_pr() { # $1 = open|merged -> prints matching PR number; rc 0 hit / 1 none / 2 unsure
-+  local tsv num head text h rc2
-+  case "$1" in open|merged) ;; *) return 2 ;; esac
-+  tsv=$(gh pr list -R "$org/$repo" --state "$1" --search "$id in:title,body" \
-+          --json number,title,body,headRefName -q \
-+          '.[] | [.number, (.headRefName // ""), ((.title // "") + "\n" + (.body // "") | gsub("[\n\t]"; " "))] | @tsv' \
-+          2>/dev/null) || return 2
-+  while IFS=$'\t' read -r num head text; do
-+    case "$num" in
-+      '') continue ;;
-+      *[!0-9]*) return 2 ;;   # malformed output row -> UNSURE
-+    esac
-+    if [ "$head" = "codex-bridge/$id" ]; then printf '%s\n' "$num"; return 0; fi
-+    id_in_text "$text"; rc2=$?
-+    [ "$rc2" -gt 1 ] && return 2   # grep/tr error -> UNSURE
-+    [ "$rc2" -eq 0 ] && { printf '%s\n' "$num"; return 0; }
-+  done <<PRECHECK_TSV
-+$tsv
-+PRECHECK_TSV
-+  # the search index never sees headRefName: probe it exactly on its own
-+  h=$(gh pr list -R "$org/$repo" --state "$1" --head "codex-bridge/$id" --json number -q '.[0].number // empty' 2>/dev/null) || return 2
-+  case "$h" in
-+    '') ;;
-+    *[!0-9]*) return 2 ;;
-+    *) printf '%s\n' "$h"; return 0 ;;
-+  esac
-+  return 1
-+}
+ # 2 job id already merged or open as a PR. `gh --search "$id in:title,body"`
+@@ -33,7 +37,7 @@
+ # RQ-RELEASE-TRAIN-1-RETIRE, and -02 never matches -020), or its head branch
+ # is exactly codex-bridge/<id>. grep -F only; the id is never used as a regex.
+ # gh failure or unparseable output is UNSURE: fail closed as a possible
+-# duplicate (exit 12, reason=PRECHECK_UNSURE_*) instead of launching blind.
++# unknown (exit 75, reason=PRECHECK_UNSURE_*) instead of launching blind.
+ id_in_text() { # $1 = PR title+body; true iff $id is a maximal [A-Za-z0-9-] run
+   printf '%s\n' "$1" | tr -cs 'A-Za-z0-9-' '\n' | grep -Fxq -- "$id"
+ }
+@@ -66,42 +70,15 @@
+   return 1
+ }
  if [ -n "$id" ] && [ -n "$repo" ]; then
--  m=$(gh pr list -R "$org/$repo" --state merged --search "$id in:title,body" --json number -q '.[0].number' 2>/dev/null)
-+  for c in gh tr; do command -v "$c" >/dev/null 2>&1 || skip 12 "PRECHECK_UNSURE_no_$c"; done
-+  mrc=0; m=$(dup_pr merged) || mrc=$?
-+  [ "$mrc" -eq 2 ] && skip 12 "PRECHECK_UNSURE_merged"
+-  for c in gh tr; do command -v "$c" >/dev/null 2>&1 || skip 12 "PRECHECK_UNSURE_no_$c"; done
++  for c in gh tr; do command -v "$c" >/dev/null 2>&1 || skip 75 "PRECHECK_UNSURE_no_$c"; done
+   mrc=0; m=$(dup_pr merged) || mrc=$?
+-  [ "$mrc" -eq 2 ] && skip 12 "PRECHECK_UNSURE_merged"
++  [ "$mrc" -eq 2 ] && skip 75 "PRECHECK_UNSURE_merged"
    [ -n "$m" ] && skip 10 "id_merged_pr_$m"
--  o=$(gh pr list -R "$org/$repo" --state open --search "$id in:title,body" --json number -q '.[0].number' 2>/dev/null)
--  [ -n "$o" ] && [ -z "$pr" ] && skip 12 "id_open_pr_$o"
-+  orc=0; o=$(dup_pr open) || orc=$?
-+  if [ -z "$pr" ]; then
-+    [ "$orc" -eq 2 ] && skip 12 "PRECHECK_UNSURE_open"
-+    [ -n "$o" ] && skip 12 "id_open_pr_$o"
-+  fi
+   orc=0; o=$(dup_pr open) || orc=$?
+   if [ -z "$pr" ]; then
+-    [ "$orc" -eq 2 ] && skip 12 "PRECHECK_UNSURE_open"
++    [ "$orc" -eq 2 ] && skip 75 "PRECHECK_UNSURE_open"
+     [ -n "$o" ] && skip 12 "id_open_pr_$o"
+   fi
  fi
- # 3 named files/symbols already satisfy acceptance (on fresh default branch)
- git -C "$clone" fetch -q origin 2>/dev/null
+-# 3 named files/symbols already satisfy acceptance (on fresh default branch)
+-git -C "$clone" fetch -q origin 2>/dev/null
+-ref=$(git -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/master)
+-files=$(printf '%s' "$line" | grep -oE '\b[A-Za-z0-9_./-]+\.(ts|tsx|js|mjs|rs|py|sh|json)\b' | sort -u)
+-acc=${line#*Acceptance:}
+-if [ -n "$files" ]; then
+-  all=1; any=0
+-  for f in $files; do
+-    if git -C "$clone" cat-file -e "$ref:$f" 2>/dev/null; then any=1
+-      # TODO-cleanup lines: satisfied when the file has no hits left
+-      if printf '%s' "$line" | grep -q 'TODO/FIXME/any/ts-ignore'; then
+-        git -C "$clone" show "$ref:$f" | grep -qE 'TODO|FIXME|@ts-ignore|as any\b|: any\b' && all=0
+-      fi
+-    else all=0; fi
+-  done
+-  # new-file jobs: every named source file plus a test mentioning it already exist
+-  if [ $all = 1 ] && [ $any = 1 ] && ! printf '%s' "$line" | grep -qE '\b(FIXUP|LAND|CLOSE-DUP)\b'; then
+-    tests=0
+-    for f in $files; do b=$(basename "${f%.*}"); git -C "$clone" ls-tree -r --name-only "$ref" | grep -qE "(test|spec).*$b|$b.*\.(test|spec)\." && tests=$((tests+1)); done
+-    [ $tests -ge 1 ] && skip 13 "files_and_tests_exist"
+-  fi
+-fi
+-# backticked symbols in scope already defined
+-syms=$(printf '%s' "${line%%Acceptance:*}" | grep -oE '`[A-Za-z_][A-Za-z0-9_]{3,}\(?\)?`' | tr -d '`()' | sort -u)
+-if [ -n "$syms" ]; then
+-  miss=0; for s in $syms; do git -C "$clone" grep -qE "(function|const|fn|def|class|let|export) +$s\b" "$ref" -- . ':!.github' 2>/dev/null || miss=1; done
+-  [ $miss = 0 ] && skip 13 "symbols_defined"
+-fi
++# Existing files, tests and symbols are context, never proof of acceptance.
+ echo "GO $id"; exit 0
