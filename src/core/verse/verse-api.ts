@@ -193,7 +193,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -235,6 +235,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Fleet runs history: GET /api/verse/runs-history (core/verse/runs-history-api.ts),
   // the durable per-minute lane series; read-only, sampling happens on read.
   { id: 'runs-history', load: async () => (await import('./runs-history-api.js')).handleRunsHistoryApi },
+  { id: 'release-pr', load: async () => (await import('./ops-release-pr-api.js')).handleReleasePrApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;

@@ -519,7 +519,7 @@ describe('@ files and / commands', () => {
     const list = await screen.findByRole('listbox', { name: 'Commands' });
     expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual([
       expect.stringContaining('/handoff'), expect.stringContaining('/compact'), expect.stringContaining('/new'),
-      expect.stringContaining('/plan'), expect.stringContaining('/effort'), expect.stringContaining('/model'), expect.stringContaining('/fleet'),
+      expect.stringContaining('/plan'), expect.stringContaining('/effort'), expect.stringContaining('/model'), expect.stringContaining('/fleet'), expect.stringContaining('/lane'),
     ]);
     // No handoff wired by the owner: listed, disabled, and says where it is.
     expect(within(list).getAllByRole('option')[0]).toHaveAttribute('aria-disabled', 'true');

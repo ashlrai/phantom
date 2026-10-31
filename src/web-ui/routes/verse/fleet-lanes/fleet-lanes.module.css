@@ -19,3 +19,9 @@
 .muted { margin: 0; color: var(--text-tertiary); }
 .burn { color: var(--text-secondary); font-size: var(--text-xs-size); }
 p.burn { margin: 0 0 var(--space-3); }
+.stepper { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.stepper button { min-width: var(--control-h-sm); min-height: var(--control-h-sm); padding: 0 var(--space-1); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+.stepper button:hover:not(:disabled) { background: var(--bg-hover); }
+.stepper button:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.stepper button:disabled { color: var(--text-tertiary); cursor: not-allowed; }
+.pauseError { color: var(--status-danger-fg); white-space: nowrap; }

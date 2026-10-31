@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readHostLoad } from '../fleet/host-load.js';
 import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead } from './fleet-inbox-read.js';
@@ -23,6 +24,7 @@ const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 export interface FleetRunsApiDeps {
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
+  readHostLoad?: () => unknown;
   readInbox?: (limit: number) => Promise<unknown>;
   appendInbox?: (text: string, source: string) => Promise<unknown>;
   codexPersonal?: () => Promise<unknown>;
@@ -52,6 +54,8 @@ function project(value: unknown, shape: Shape): unknown {
   return Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, project(value[k], s)]));
 }
 const inboxShape: Shape = [{ at: 'string', source: 'string', text: 'string' }];
+// The independent host reading projects nullable load averages, core count and ratio.
+const hostShape: Shape = { load1: 'number?', load5: 'number?', load15: 'number?', cores: 'number?', ratio: 'number?' };
 const runsShape: Shape = {
   lastTick: 'string?', paused: 'boolean?', memFreePct: 'number?', diskFreeGb: 'number?', switches: ['string'], claudeLane: 'string?',
   lanes: [{ lane: 'string', running: 'number', target: 'number', queued: 'number', held: 'boolean', heldReason: 'string?', tokensLastHour: 'number?', merged24h: 'number?', mergeRate24h: 'number?' }],
@@ -62,6 +66,7 @@ const workersShape: Shape = {
   workers: [{ job: 'string', repo: 'string', lane: 'string', tier: 'string', ageSeconds: 'number?' }],
   leaders: [{ label: 'string', ageSeconds: 'number?' }], orchestratorAgents: 'number?',
 };
+const claimsShape: Shape = [{ job: 'string', lane: 'string', tier: 'string', at: 'string' }];
 const dropShape: Shape = { pending: [{ lane: 'string', file: 'string' }], done: 'number' };
 const codexShape: Shape = { usedPct: 'number?', resetsAt: 'string?', asOf: 'string?' };
 const mergesShape: Shape = { count: 'number?', items: [{ repo: 'string', number: 'number', title: 'string' }] };
@@ -110,9 +115,11 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   async function build(): Promise<FleetRunsV1> {
     const result: FleetRunsV1 = {
       v: 1, generatedAt: new Date(now()).toISOString(), sources: { runsDir: 'degraded', workers: 'degraded', inbox: 'degraded', codex: 'degraded', merges: 'degraded' },
-      lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, lanes: [],
+      lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, host: null, switches: [], claudeLane: null, lanes: [],
       workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [], mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
     };
+    try { result.host = project((deps.readHostLoad ?? readHostLoad)(), hostShape) as FleetRunsV1['host']; }
+    catch { /* Keep the independent host reading unknown. */ }
     const sources = [
       ['runsDir', runs, runsShape], ['workers', workers, workersShape], ['inbox', () => inbox(30), inboxShape],
       ['codex', deps.codexPersonal ?? (() => personal(now())), codexShape], ['merges', merges, mergesShape],
@@ -121,10 +128,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       try {
         const raw: unknown = await read();
         if (raw === null && key === 'codex') { result.sources[key] = 'missing'; return; }
-        const value = project(raw, shape);
+        // The canonical inbox reader returns an envelope; older injected
+        // readers may still supply the snapshot array directly.
+        if (key === 'inbox' && !Array.isArray(raw) &&
+          (!record(raw) || !['healthy', 'missing', 'degraded'].includes(String(raw.sourceState)))) throw new Error('inbox state');
+        const value = project(key === 'inbox' && record(raw) ? raw.entries : raw, shape);
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
+        const claimed = key === 'runsDir' && record(raw) && raw.claimed != null ? project(raw.claimed, claimsShape) : [];
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
+        if (key === 'runsDir') result.claimed = claimed as FleetRunsV1['claimed'];
         if (key === 'runsDir') result.drop = drop as FleetRunsV1['drop'];
         if (key === 'inbox') result.inbox = value as FleetRunsV1['inbox'];
         if (key === 'codex') result.codexPersonal = value as FleetRunsV1['codexPersonal'];
