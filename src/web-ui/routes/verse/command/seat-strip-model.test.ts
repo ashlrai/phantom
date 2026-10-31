@@ -72,7 +72,7 @@ describe('seatStrip', () => {
     const { items } = strip([CLAUDE_MAX_SEAT], budget([{ id: 'claude', label: 'Claude Max', engine: 'claude', eligible: false, reason: 'weekly window exhausted' }]));
     const [claude] = items;
     expect(claude).toMatchObject({ level: 'out', value: 'Spent', leftPercent: 0 });
-    expect(claude!.note).toBe('resets Sep 25 at 7pm (America/New_York)');
+    expect(claude!.note).toBe('resets Sep 25 at 7pm (America/New_York) · Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.');
     expect(claude!.autonomy).toMatchObject({ kind: 'held', word: 'Held back' });
   });
 
@@ -145,6 +145,28 @@ describe('seatStrip', () => {
     ]);
     expect(items[0]!.note).toMatch(/^resets /);
     expect(seatStrip({ rows: [], budget: null, healthRead: false, now: NOW }).items).toEqual([]);
+  });
+
+  it('reads a stale Claude session binding as the weekly window — never the retired figure or reset', () => {
+    const view = budget([
+      { id: 'claude', label: 'Claude Max', engine: 'claude', eligible: true, head: {
+        bindingWindow: 'session', sessionUsedPercent: 74, weeklyUsedPercent: 54,
+        resetAt: new Date(NOW + 5 * 3_600_000).toISOString(),
+      } },
+      { id: 'codex-a', label: 'Codex', engine: 'codex', eligible: true, head: {
+        bindingWindow: 'session', sessionUsedPercent: 74, weeklyUsedPercent: 54,
+        resetAt: new Date(NOW + 5 * 3_600_000).toISOString(),
+      } },
+    ]);
+    const { items } = seatStrip({ rows: [], budget: view, healthRead: true, now: NOW });
+    // Claude shows the weekly reading and no reset — the reported resetAt
+    // belongs to the retired window. Codex keeps its real 5-hour window.
+    expect(items.map((i) => [i.name, i.value])).toEqual([
+      ['Claude Max', '46% left'],
+      ['Codex', '26% left'],
+    ]);
+    expect(items[0]!.note).toBeNull();
+    expect(items[1]!.note).toMatch(/^resets /);
   });
 });
 
