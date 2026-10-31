@@ -5,7 +5,7 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--json [--report] [--require-upstream]]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--json [--report] [--require-upstream] [--require-upstream-outputs]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -25,6 +25,10 @@ distinct input order. A task or output citation in the emitted pack covers an
 upstream, including the node's own ID if listed. This checks evidence coverage,
 not completion or trust. Missing citations return 1 with the partial pack; the
 knowledge command also emits its standard JSON error line on failure.
+--require-upstream-outputs requires --json and adds
+check.missingUpstreamOutputJobIds in distinct input order. Only emitted output
+citations count, including truncated outputs. This checks evidence presence,
+not task success. Missing outputs return 1 with the partial pack.
 `;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -64,6 +68,7 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   let json = false;
   let report = false;
   let requireUpstream = false;
+  let requireUpstreamOutputs = false;
   let byteBudget: number | undefined;
   let query: string | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -71,11 +76,12 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
     if (arg === '--json' && !json) json = true;
     else if (arg === '--report' && !report) report = true;
     else if (arg === '--require-upstream' && !requireUpstream) requireUpstream = true;
+    else if (arg === '--require-upstream-outputs' && !requireUpstreamOutputs) requireUpstreamOutputs = true;
     else if (arg === '--stdin' && !useStdin) useStdin = true;
     else if (arg === '--query' && query === undefined) {
       const value = args[++i];
       if (!value?.trim() || Array.from(value).length > 2000 ||
-          ['--query', '--file', '--stdin', '--json', '--report', '--require-upstream', '--byte-budget', '--help', '-h'].includes(value)) {
+          ['--query', '--file', '--stdin', '--json', '--report', '--require-upstream', '--require-upstream-outputs', '--byte-budget', '--help', '-h'].includes(value)) {
         return invalid('--query requires nonblank text of at most 2000 characters');
       }
       query = value;
@@ -94,6 +100,7 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   }
   if (report && !json) return invalid('--report requires --json');
   if (requireUpstream && !json) return invalid('--require-upstream requires --json');
+  if (requireUpstreamOutputs && !json) return invalid('--require-upstream-outputs requires --json');
   if (file !== undefined && useStdin) return invalid('--file and --stdin are mutually exclusive');
   if (file === undefined && !useStdin) return invalid('--file or --stdin is required');
 
@@ -139,8 +146,8 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
     node: query === undefined ? input.node : { ...input.node, query },
   });
   const bytes = Buffer.byteLength(pack, 'utf8');
-  const records = report || requireUpstream ? pack.split('\n').filter(Boolean).map(line =>
-    JSON.parse(line) as { jobId: string; truncated: boolean }) : [];
+  const records = report || requireUpstream || requireUpstreamOutputs ? pack.split('\n').filter(Boolean).map(line =>
+    JSON.parse(line) as { jobId: string; kind: 'task' | 'output'; truncated: boolean }) : [];
   const details = report ? {
     requestedByteBudget: effectiveBudget,
     emittedBytes: bytes,
@@ -151,9 +158,15 @@ export async function runKnowledgeContextPack(args: string[], stdin: Readable = 
   const citedJobIds = new Set(records.map(record => record.jobId));
   const missingUpstreamJobIds = requireUpstream
     ? [...new Set(input.node.upstreamJobIds)].filter(id => !citedJobIds.has(id)) : [];
+  const outputJobIds = new Set(records.filter(record => record.kind === 'output').map(record => record.jobId));
+  const missingUpstreamOutputJobIds = requireUpstreamOutputs
+    ? [...new Set(input.node.upstreamJobIds)].filter(id => !outputJobIds.has(id)) : [];
   process.stdout.write(json
     ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes, ...(report ? { report: details } : {}),
-      ...(requireUpstream ? { check: { missingUpstreamJobIds } } : {}) }) + '\n'
+      ...(requireUpstream || requireUpstreamOutputs ? { check: {
+        ...(requireUpstream ? { missingUpstreamJobIds } : {}),
+        ...(requireUpstreamOutputs ? { missingUpstreamOutputJobIds } : {}),
+      } } : {}) }) + '\n'
     : pack);
-  return missingUpstreamJobIds.length ? 1 : 0;
+  return missingUpstreamJobIds.length || missingUpstreamOutputJobIds.length ? 1 : 0;
 }
