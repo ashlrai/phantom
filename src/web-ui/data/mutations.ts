@@ -84,3 +84,7 @@ export async function openTarget(req: OpenTargetRequest): Promise<void> {
 export async function setResourcePlanTier(resourceId: string, planTier: string | null): Promise<void> {
   await post('/api/onboard/plan-tier', { resourceId, planTier });
 }
+
+export async function setLocalModelsEnabled(enabled: boolean): Promise<void> {
+  await post('/api/onboard/local-models', { enabled });
+}

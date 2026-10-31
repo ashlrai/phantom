@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { RESOURCE_CATALOG, type ResourceKind } from '../../../core/onboard/catalog.js';
 import { apiGet } from '../../data/client.js';
-import { setResourcePlanTier } from '../../data/mutations.js';
-import type { OnboardResourceStatus, OnboardStatusReport } from '../../data/api-types.js';
+import { setLocalModelsEnabled, setResourcePlanTier } from '../../data/mutations.js';
+import type { HardwareSnapshot, OnboardResourceStatus, OnboardStatusReport } from '../../data/api-types.js';
 import styles from './ConnectView.module.css';
 
 const STEPS: readonly { kind: ResourceKind; title: string; description: string }[] = [
@@ -21,10 +21,17 @@ function statusText(resource: OnboardResourceStatus): string {
   return 'Installed - sign-in unknown';
 }
 
+function hardwareText(hw: HardwareSnapshot): string {
+  return [hw.chip, `${Math.round(hw.memoryBytes / 2 ** 30)} GiB RAM`,
+    hw.gpu ? `GPU: ${hw.gpu}` : null, hw.ane ? 'Neural Engine' : null]
+    .filter(Boolean).join(' · ');
+}
+
 export function ConnectView() {
   const [report, setReport] = useState<OnboardStatusReport | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [localSaveFailed, setLocalSaveFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +55,16 @@ export function ConnectView() {
     }
   }
 
+  async function toggleLocalModels(enabled: boolean) {
+    setLocalSaveFailed(false);
+    try {
+      await setLocalModelsEnabled(enabled);
+      setReport(await apiGet<OnboardStatusReport>('/api/onboard/status'));
+    } catch {
+      setLocalSaveFailed(true);
+    }
+  }
+
   return (
     <div className={styles.page}>
       <h1>Connect Resources</h1>
@@ -66,15 +83,23 @@ export function ConnectView() {
             <p>{step.description}</p>
             <ul>
               {RESOURCE_CATALOG.filter((resource) => resource.kind === step.kind).map((resource) => {
-                const detected = step.kind === 'subscription' ? byId.get(resource.id) : undefined;
+                const detected = step.kind === 'subscription' || step.kind === 'local'
+                  ? byId.get(resource.id) : undefined;
                 return (
                   <li key={resource.id}>
                     <span className={styles.badge} aria-hidden="true">{resource.displayName.slice(0, 1)}</span>
                     <div>
                       <a href={resource.docsUrl}>{resource.displayName}</a>
                       {resource.planTiers.length > 0 && <small>{resource.planTiers.join(' · ')}</small>}
+                      {resource.id === 'this-computer' && report?.hardware && (
+                        <small className={styles.status}>{hardwareText(report.hardware)}</small>
+                      )}
                       {detected && resource.cliBinary && (
                         <small className={styles.status}>{statusText(detected)}</small>
+                      )}
+                      {detected && step.kind === 'local' && report?.localModels.enabled && (
+                        <small className={styles.status}>{detected.reachable === true
+                          ? `reachable - ${detected.modelCount ?? 0} model(s)` : 'unreachable'}</small>
                       )}
                       {detected?.installed && detected.loginCommand && detected.loginState !== 'logged-in' && (
                         <small>Run <code>{detected.loginCommand}</code></small>
@@ -103,6 +128,16 @@ export function ConnectView() {
             )}
             {step.kind === 'subscription' && picksLocked && !saveFailed && (
               <small>Plan picks save to local config when this server runs with dispatch enabled.</small>
+            )}
+            {step.kind === 'local' && (
+              <>
+                <label className={styles.toggle}>
+                  <input type="checkbox" checked={report?.localModels.enabled === true}
+                    disabled={picksLocked} onChange={(e) => void toggleLocalModels(e.target.checked)} />
+                  Detect hardware and probe local runtimes (127.0.0.1 only)
+                </label>
+                {localSaveFailed && <small role="alert">Local detection setting was not saved.</small>}
+              </>
             )}
           </section>
         ))}

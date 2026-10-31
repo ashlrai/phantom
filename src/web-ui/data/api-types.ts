@@ -418,3 +418,4 @@ export type {
 
 /** RQ-ONB-2 DETECT: GET /api/onboard/status row + report shapes. */
 export type { OnboardResourceStatus, OnboardStatusReport } from '../../core/onboard.js';
+export type { HardwareSnapshot } from '../../core/readiness.js';

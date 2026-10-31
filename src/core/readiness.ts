@@ -21,7 +21,7 @@
  * time, so we do NOT use it here for the writeable probe.)
  */
 
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import {
   accessSync,
   closeSync,
@@ -33,12 +33,13 @@ import {
   readFileSync,
   type Stats,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { cpus, homedir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { AshlrConfig } from './types.js';
 import { probeEndpoint } from './providers.js';
+import { validateLocalBaseUrl } from './run/local-inference.js';
 import {
   readKillSwitch,
   readEnrollmentRegistry,
@@ -664,22 +665,31 @@ export async function buildReadiness(cfg: AshlrConfig): Promise<ReadinessReport>
   // -- local model reachable (down => warning, never a blocker, never throws) --
   {
     const models = cfg?.models;
-    const lmUrl = typeof models?.lmstudio === 'string' ? models.lmstudio : '';
-    const olUrl = typeof models?.ollama === 'string' ? models.ollama : '';
+    // RQ-ONB-4: a configured non-loopback base URL is refused, never fetched.
+    const refused: string[] = [];
     const probes: Array<Promise<{ id: string; up: boolean; error?: string; url: string }>> = [];
-    if (lmUrl) probes.push(probeEndpoint('lmstudio', lmUrl));
-    if (olUrl) probes.push(probeEndpoint('ollama', olUrl));
+    for (const [id, url] of [['lmstudio', models?.lmstudio], ['ollama', models?.ollama]] as const) {
+      if (typeof url !== 'string' || !url) continue;
+      const checked = validateLocalBaseUrl(url);
+      if (checked.ok && checked.loopback) probes.push(probeEndpoint(id, checked.baseUrl));
+      else refused.push(`${id} ${checked.ok ? 'remote-not-allowed' : checked.reason}`);
+    }
 
     if (probes.length === 0) {
+      const anyRefused = refused.length > 0;
       warnings.push({
         id: 'model',
         severity: 'warning',
-        detail: 'no local model endpoint configured (cfg.models.lmstudio / cfg.models.ollama)',
-        fix: 'Configure a local model in ~/.ashlr/config.json or run `ashlr models`.',
+        detail: anyRefused
+          ? `local model endpoint refused - ${refused.join('; ')}`
+          : 'no local model endpoint configured (cfg.models.lmstudio / cfg.models.ollama)',
+        fix: anyRefused
+          ? 'Point cfg.models.lmstudio / cfg.models.ollama at a loopback (127.0.0.1) endpoint; remote model servers are never probed.'
+          : 'Configure a local model in ~/.ashlr/config.json or run `ashlr models`.',
       });
     } else {
       let anyUp = false;
-      const downDetails: string[] = [];
+      const downDetails: string[] = [...refused];
       // probeEndpoint never throws, but stay defensive — a single rejection must
       // not abort the whole readiness report.
       const results = await Promise.allSettled(probes);
@@ -1028,4 +1038,41 @@ export async function probeCliLogin(checkCommand: string, timeoutMs = 4000): Pro
     if (err.killed === true || err.code === 'ENOENT') return 'unknown';
     return cliLoginVerdict(typeof err.code === 'number' ? err.code : null, `${err.stdout ?? ''}\n${err.stderr ?? ''}`);
   }
+}
+
+// RQ-ONB-4 LOCAL MODELS: read-only hardware snapshot; mutates nothing, never throws.
+
+/** Read-only hardware snapshot (chip, RAM, GPU, Apple Neural Engine). */
+export interface HardwareSnapshot {
+  platform: string;
+  arch: string;
+  chip: string | null;   // e.g. 'Apple M4 Pro'; null when the OS reports none
+  memoryBytes: number;   // total physical RAM
+  gpu: string | null;    // macOS system_profiler chipset model; else null
+  ane: boolean | null;   // Apple silicon: true; Intel mac: false; other OS: null
+}
+
+export type HardwareCommandReader = (file: string, args: string[]) => string;
+
+/** READ-ONLY hardware detection; system_profiler only on macOS. Never throws. */
+export function detectHardware(
+  read: HardwareCommandReader = (f, a) =>
+    execFileSync(f, a, { encoding: 'utf8', timeout: 1_500, maxBuffer: 1024 * 1024 }),
+): HardwareSnapshot {
+  let chip: string | null = null;
+  try { chip = cpus()[0]?.model.trim() || null; } catch { /* os.cpus unavailable */ }
+  let gpu: string | null = null;
+  if (process.platform === 'darwin') {
+    try {
+      gpu = /^ *Chipset Model:\s*(.+?)\s*$/m
+        .exec(read('/usr/sbin/system_profiler', ['SPDisplaysDataType']))?.[1]?.slice(0, 120) ?? null;
+    } catch { /* profiler absent or timed out */ }
+    // Apple silicon integrates the GPU in the chip; the chip name still
+    // identifies it when the profiler yields nothing.
+    if (gpu === null && process.arch === 'arm64') gpu = chip;
+  }
+  return {
+    platform: process.platform, arch: process.arch, chip, memoryBytes: totalmem(), gpu,
+    ane: process.platform === 'darwin' ? process.arch === 'arm64' : null,
+  };
 }

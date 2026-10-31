@@ -20,8 +20,13 @@ import { fileURLToPath } from 'node:url';
 import type { AshlrConfig, OnboardResult, OnboardStep } from './types.js';
 import { loadConfig, saveConfig, defaultConfig, INDEX_PATH } from './config.js';
 import { buildIndex, writeIndex } from './index-engine.js';
-import { RESOURCE_CATALOG } from './onboard/catalog.js';
-import { probeCliLogin, resolveCliOnPath, type CliLoginVerdict } from './readiness.js';
+import { RESOURCE_CATALOG, type CatalogResource } from './onboard/catalog.js';
+import {
+  detectHardware, probeCliLogin, resolveCliOnPath,
+  type CliLoginVerdict, type HardwareSnapshot,
+} from './readiness.js';
+import { probeEndpoint } from './providers.js';
+import { validateLocalBaseUrl } from './run/local-inference.js';
 import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
@@ -822,6 +827,9 @@ export interface OnboardResourceStatus {
   loginState: CliLoginVerdict | null;
   loginCommand: string | null;
   selectedPlanTier: string | null;
+  // RQ-ONB-4: loopback probe verdict for 'local' rows; nulls when not probed.
+  reachable: boolean | null;
+  modelCount: number | null;
 }
 
 /** GET /api/onboard/status response body. */
@@ -829,18 +837,34 @@ export interface OnboardStatusReport {
   generatedAt: string;
   /** Mirrors the server's mutation surface so the picker can gate honestly. */
   dispatchEnabled: boolean;
+  // RQ-ONB-4: hardware + loopback probes run only when enabled is true.
+  localModels: { enabled: boolean };
+  hardware: HardwareSnapshot | null;
   resources: OnboardResourceStatus[];
+}
+
+/** Loopback-only probe of a 'local' catalog entry; a non-loopback endpoint is refused, never fetched. */
+async function probeLocalResource(entry: CatalogResource) {
+  const checked = entry.validateEndpoint ? validateLocalBaseUrl(entry.validateEndpoint) : null;
+  if (!checked?.ok || !checked.loopback) return { reachable: false, modelCount: null };
+  const probe = await probeEndpoint(entry.id, checked.baseUrl);
+  return { reachable: probe.up, modelCount: probe.up ? probe.models.length : null };
 }
 
 /**
  * Per-catalog-entry detection. Read-only: `which` for the binary and the CLI's
  * own status command for the login verdict (never token files or ~/.codex
- * contents). Probed in parallel, each bounded. Never throws.
+ * contents). 'local' rows also answer a bounded loopback probe, only when
+ * cfg.onboard.localModels.enabled is true (opt-in, off by default). Never throws.
  */
 export async function detectOnboardResources(cfg: AshlrConfig): Promise<OnboardResourceStatus[]> {
+  const localEnabled = cfg.onboard?.localModels?.enabled === true;
   return Promise.all(RESOURCE_CATALOG.map(async (entry) => {
     const binaryPath = entry.cliBinary ? resolveCliOnPath(entry.cliBinary) : null;
     const pick = cfg.onboard?.planTiers?.[entry.id];
+    const probe = localEnabled && entry.kind === 'local'
+      ? await probeLocalResource(entry)
+      : { reachable: null, modelCount: null };
     return {
       id: entry.id,
       installed: binaryPath !== null,
@@ -850,8 +874,38 @@ export async function detectOnboardResources(cfg: AshlrConfig): Promise<OnboardR
         : null,
       loginCommand: entry.loginCommand ?? entry.cliBinary,
       selectedPlanTier: typeof pick === 'string' && entry.planTiers.includes(pick) ? pick : null,
+      ...probe,
     };
   }));
+}
+
+/** Full GET /api/onboard/status body: catalog rows plus opt-in local state. */
+export async function buildOnboardStatusReport(
+  cfg: AshlrConfig,
+  dispatchEnabled: boolean,
+): Promise<OnboardStatusReport> {
+  const enabled = cfg.onboard?.localModels?.enabled === true;
+  return {
+    generatedAt: new Date().toISOString(),
+    dispatchEnabled,
+    localModels: { enabled },
+    hardware: enabled ? detectHardware() : null,
+    resources: await detectOnboardResources(cfg),
+  };
+}
+
+/** Persist the local-model opt-in to cfg.onboard.localModels in ~/.ashlr/config.json. */
+export function persistOnboardLocalModels(
+  body: unknown,
+): { ok: true; enabled: boolean } | { ok: false; error: string } {
+  const { enabled } = (body ?? {}) as { enabled?: unknown };
+  if (typeof enabled !== 'boolean') {
+    return { ok: false, error: 'enabled must be a boolean' };
+  }
+  const cfg = loadConfig();
+  cfg.onboard = { ...(cfg.onboard ?? {}), localModels: { enabled } };
+  saveConfig(cfg);
+  return { ok: true, enabled };
 }
 
 /**

@@ -1952,18 +1952,14 @@ export async function handleApi(
     // command supplies the login verdict (never token files or ~/.codex
     // contents). Read-only like /api/orient; probes are bounded.
     if (path === '/api/onboard/status' && method === 'GET') {
-      const { detectOnboardResources } = await import('../onboard.js');
-      sendJson(res, 200, {
-        generatedAt: new Date().toISOString(),
-        dispatchEnabled: ctx.allowDispatch,
-        resources: await detectOnboardResources(cfg),
-      });
+      const { buildOnboardStatusReport } = await import('../onboard.js');
+      sendJson(res, 200, await buildOnboardStatusReport(cfg, ctx.allowDispatch));
       return true;
     }
 
-    // ── POST /api/onboard/plan-tier ── persists a pick to cfg.onboard.planTiers.
+    // ── POST /api/onboard/{plan-tier,local-models} ── persist a Connect pick.
     // Same posture as every mutation route: 404 w/o dispatch, token + JSON required.
-    if (path === '/api/onboard/plan-tier' && method === 'POST') {
+    if ((path === '/api/onboard/plan-tier' || path === '/api/onboard/local-models') && method === 'POST') {
       if (!ctx.allowDispatch) {
         sendJson(res, 404, { error: 'not found' });
         return true;
@@ -1976,8 +1972,10 @@ export async function handleApi(
         sendJson(res, 400, { error: 'invalid JSON body' });
         return true;
       }
-      const { persistOnboardPlanTier } = await import('../onboard.js');
-      const result = persistOnboardPlanTier(body);
+      const { persistOnboardPlanTier, persistOnboardLocalModels } = await import('../onboard.js');
+      const result = path === '/api/onboard/plan-tier'
+        ? persistOnboardPlanTier(body)
+        : persistOnboardLocalModels(body);
       if (!result.ok) {
         sendJson(res, 400, { error: result.error });
         return true;

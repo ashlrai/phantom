@@ -8,13 +8,15 @@ import { ConnectView } from './ConnectView.js';
 function resourceStatus(overrides: Partial<OnboardResourceStatus> = {}): OnboardResourceStatus {
   return {
     id: 'codex', installed: true, binaryPath: '/bin/codex',
-    loginState: 'logged-out', loginCommand: 'codex login', selectedPlanTier: null, ...overrides,
+    loginState: 'logged-out', loginCommand: 'codex login', selectedPlanTier: null,
+    reachable: null, modelCount: null, ...overrides,
   };
 }
 
 function report(overrides: Partial<OnboardStatusReport> = {}): OnboardStatusReport {
   return {
     generatedAt: '2026-10-28T00:00:00.000Z', dispatchEnabled: true,
+    localModels: { enabled: false }, hardware: null,
     resources: [resourceStatus()], ...overrides,
   };
 }
@@ -67,6 +69,23 @@ describe('Connect Resources', () => {
     fireEvent.change(picker, { target: { value: 'Plus' } });
     await vi.waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toMatchObject({ path: '/api/onboard/plan-tier', body: JSON.stringify({ resourceId: 'codex', planTier: 'Plus' }) });
+  });
+
+  it('shows local probe status + hardware when opted in, and the toggle posts the opt-in', async () => {
+    const posts: unknown[] = [];
+    stubApi(200, report({
+      localModels: { enabled: true },
+      hardware: { platform: 'darwin', arch: 'arm64', chip: 'Apple M4', memoryBytes: 16 * 2 ** 30, gpu: 'Apple M4', ane: true },
+      resources: [resourceStatus({ id: 'ollama', reachable: true, modelCount: 3 })],
+    }), posts);
+    render(<ConnectView />);
+    expect(await screen.findByText('reachable - 3 model(s)')).toBeInTheDocument();
+    expect(screen.getByText(/Apple M4 · 16 GiB RAM/)).toBeInTheDocument();
+    const toggle = screen.getByRole('checkbox');
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    await vi.waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ path: '/api/onboard/local-models', body: JSON.stringify({ enabled: false }) });
   });
 
   it('locks the picker when dispatch is off and says when detection is down', async () => {

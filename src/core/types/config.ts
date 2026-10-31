@@ -1111,6 +1111,8 @@ export interface AshlrConfig {
   /** RQ-ONB-2: Connect plan picks (resource id -> tier), written by POST /api/onboard/plan-tier. */
   onboard?: {
     planTiers?: Record<string, string>;
+    /** RQ-ONB-4: local-model detection opt-in. Absent = off (no hardware/probe work). */
+    localModels?: { enabled?: boolean };
   };
   /**
    * M111: Multi-machine fleet work-queue coordination. DEFAULT ABSENT (off) -
