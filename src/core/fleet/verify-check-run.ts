@@ -28,6 +28,14 @@
  * token can only create runs as its own App, so no other App (a Vercel
  * integration, an agent's token) can ever be mistaken for the fleet's.
  *
+ * This module also owns the partition G7 applies to every check on a head:
+ * only the required contexts block (on a local-enforcement repo that is the
+ * App's `ashlr/verify`, plus whatever the branch names anyway); every other
+ * observed check — a Vercel preview, an advisory lint — is informational,
+ * reported in the gate row but never part of the verdict
+ * (partitionBlockingCheckContexts; the verdict itself lives in
+ * merge-gates.ts evaluateG7Checks).
+ *
  * Needs the App permission `checks: write`. A 403 is reported as `permission`
  * (not retryable); `ashlr authority setup` detects the missing permission and
  * prints where to grant it.
@@ -190,6 +198,62 @@ export function decideVerifyCheck(input: {
       `this head is that tree on that base, so GitHub can require this check.`,
     text,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Which checks on a head may block a merge (used by G7, merge-gates.ts)
+// ---------------------------------------------------------------------------
+
+/** The lifecycle state of one observed check context. */
+export type CheckContextState = 'green' | 'red' | 'pending';
+
+/** A check observed on a head: a check run (named, App-attributed) or a commit status. */
+export interface ObservedCheckContext {
+  /** Check-run name or commit-status context. */
+  name: string;
+  /** The App a check run came from; null for commit statuses and unattributed runs. */
+  appId: string | null;
+  state: CheckContextState;
+}
+
+/** A context a merge waits on: the check name plus the App it must come from (null = any source). */
+export interface BlockingCheckContext {
+  context: string;
+  appId: string | null;
+}
+
+export interface CheckContextPartition {
+  /** Every blocking context with its state — a required context nothing reported stays `pending`. */
+  blocking: { name: string; state: CheckContextState }[];
+  /** Every non-required check observed on the head — reported, never blocking. */
+  informational: { name: string; state: CheckContextState }[];
+}
+
+/**
+ * PURE: split the checks observed on a head into the contexts that block a
+ * merge — the required ones — and everything else. A failing or pending
+ * non-required check (a Vercel preview, an advisory lint) is informational:
+ * it shows up in the gate row's inputs, never in its verdict. A required
+ * context pinned to an App is satisfied only by that App's run — a same-named
+ * run from any other App counts for nothing and is itself informational.
+ */
+export function partitionBlockingCheckContexts(input: {
+  required: readonly BlockingCheckContext[];
+  observed: readonly ObservedCheckContext[];
+}): CheckContextPartition {
+  const satisfies = (obs: ObservedCheckContext, req: BlockingCheckContext): boolean =>
+    obs.name === req.context && (req.appId === null || obs.appId === req.appId);
+  const blocking = input.required.map((req) => {
+    const seen = input.observed.filter((obs) => satisfies(obs, req));
+    const state: CheckContextState = seen.length === 0 ? 'pending'
+      : seen.some((obs) => obs.state === 'red') ? 'red'
+      : seen.every((obs) => obs.state === 'green') ? 'green' : 'pending';
+    return { name: req.context, state };
+  });
+  const informational = input.observed
+    .filter((obs) => !input.required.some((req) => satisfies(obs, req)))
+    .map((obs) => ({ name: obs.name, state: obs.state }));
+  return { blocking, informational };
 }
 
 async function call(deps: Deps, repo: string, method: GithubCall['method'], suffix: string, body?: unknown): Promise<GithubReply> {
