@@ -64,6 +64,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
   {
+    usage: 'phm top --json [--fleet <path>]',
+    description: 'Read saved fleet maps, pool usage and required reset pace. No collection or dispatch. Exit 1 for unavailable fleet input, 2 for invalid arguments.',
+    safety: 'read',
+    jsonShape: 'TopSnapshot (schemaVersion top.v1); nullable metrics with source and freshness states',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -690,6 +696,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
+  { cmd: 'top --json [--fleet <path>]', desc: 'Read-only top.v1 fleet, pool usage and reset pace snapshot.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },

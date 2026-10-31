@@ -378,6 +378,12 @@ const loadTuiCmd = lazyCmd(
 
 // ─── M253 resources command loader ───────────────────────────────────────────
 
+const loadTopCmd = lazyCmd(
+  () => import('./top.js'),
+  (m) => m.cmdTop as Cmd,
+  'top command requires src/cli/top.ts.',
+);
+
 const loadResourcesCmd = lazyCmd(
   () => import('./resources.js' as unknown as string),
   (m) => m.cmdResources as Cmd,
@@ -2573,6 +2579,11 @@ async function main(): Promise<void> {
       case 'resource': {
         const { cmdResource } = await import('./resource.js');
         process.exitCode = await cmdResource(rest);
+        break;
+      }
+
+      case 'top': {
+        process.exitCode = await (await loadTopCmd())(rest);
         break;
       }
 

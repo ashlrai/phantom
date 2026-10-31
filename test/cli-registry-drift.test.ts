@@ -84,6 +84,15 @@ describe('CLI registry anti-drift (structural, parses src/cli/index.ts)', () => 
     expect(dispatched).toContain('help');
   });
 
+  it('keeps both resource and top commands discoverable after integration', () => {
+    const helpCommands = HELP_ENTRIES.map((entry) => entry.cmd.split(' ')[0]);
+    for (const command of ['resource', 'top']) {
+      expect(dispatched).toContain(command);
+      expect(TOP_LEVEL_COMMANDS).toContain(command);
+      expect(helpCommands).toContain(command);
+    }
+  });
+
   it('never dispatches the internal skills-audit worker entry point as a user command', () => {
     // Defense in depth: even if the regex were loosened, `__skills-audit-worker`
     // must never leak into a user-facing registry.
