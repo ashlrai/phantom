@@ -50,3 +50,21 @@ export function groupRejects(rows: readonly DropIngestRow[]): Record<string, num
   }
   return groups;
 }
+
+export function filterPasses(passes: readonly JournalPass[], query: string): Array<{ pass: JournalPass; matchedBullets: Set<string> }> {
+  const needle = query.trim().toLowerCase();
+  return passes.flatMap((pass) => {
+    const matchedBullets = new Set<string>();
+    let matched = !needle;
+    for (const section of pass.sections) {
+      if (needle && section.title.toLowerCase().includes(needle)) matched = true;
+      for (const bullet of section.bullets) {
+        if (needle && bullet.toLowerCase().includes(needle)) { matched = true; matchedBullets.add(bullet); }
+      }
+    }
+    return matched ? [{ pass, matchedBullets }] : [];
+  });
+}
+export function passFilterLabel(shown: number, total: number): string {
+  return shown === total ? '' : `${shown} of ${total} passes`;
+}

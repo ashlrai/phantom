@@ -24,6 +24,10 @@ function printLedger(ledger: ResourceLedgerV1): void {
   } else {
     console.log(`\nAPI spend: today ${value(spend.usdToday)} USD; week ${value(spend.usdWeek)} USD; rows ${spend.rowsToday}; errors ${spend.errorsToday}`);
     console.log(`  Tokens in/out today: ${spend.tokensInToday}/${spend.tokensOutToday}; last observed: ${value(spend.lastAt)}; models: ${spend.models.length ? spend.models.join(', ') : 'none reported'}`);
+    for (const model of spend.modelUsageToday ?? []) {
+      console.log(`  ${model.model}: rows ${model.rows}; errors ${model.errors}; tokens in/out ${model.inputTokens}/${model.outputTokens}; ${value(model.usd)} USD; last observed: ${model.lastAt}`);
+    }
+    if (spend.modelUsageTodayOmitted > 0) console.log(`  Model usage omitted: ${spend.modelUsageTodayOmitted}`);
   }
 }
 

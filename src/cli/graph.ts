@@ -105,7 +105,8 @@ export async function cmdGraph(args: string[]): Promise<number> {
     if (command === 'neighbors') {
       const neighborhood = graphNeighborhood(graph, options.nodeId!, options.direction, options.depth);
       if (!neighborhood) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Graph node not found.');
-      const result = { schemaVersion: 1, command, status: 'ready', ...neighborhood };
+      const result = { schemaVersion: 1, command, status: 'ready', ...neighborhood,
+        ...(options.json ? { complete: graph.complete, sources: graph.sources, issues: graph.issues } : {}) };
       console.log(JSON.stringify(result, null, options.json ? undefined : 2));
       return 0;
     }
@@ -113,7 +114,8 @@ export async function cmdGraph(args: string[]): Promise<number> {
       ? { counts: { nodes: graph.nodes.length, edges: graph.edges.length } }
       : { [command]: graph[command] };
     if (options.json) {
-      console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', ...data }));
+      console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', ...data,
+        complete: graph.complete, sources: graph.sources, issues: graph.issues }));
     } else if (command === 'status') {
       console.log(`Graph: ready · ${graph.nodes.length} node${graph.nodes.length === 1 ? '' : 's'} · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}`);
     } else {

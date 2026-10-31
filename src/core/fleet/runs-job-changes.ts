@@ -12,6 +12,8 @@ export interface FleetJobChangesV1 {
   job: string;
   state: 'live' | 'missing' | 'degraded';
   baseSha: string | null;
+  /** Present when tracked changes were compared against HEAD instead of the recorded base. */
+  comparisonBase?: 'HEAD';
   files: Array<{ path: string; added: number | null; removed: number | null; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' }>;
   totals: { files: number; added: number; removed: number };
   truncated: boolean;
@@ -66,10 +68,19 @@ async function project(job: string, runs: string, home: string, runner: GitRunne
   try {
     // defaultGitRunner supplies gitChildEnv(), including GIT_OPTIONAL_LOCKS=0.
     const options = { cwd: worktree, timeoutMs: 5_000, maxStdoutBytes: 1024 * 1024 };
-    const [diff, status] = await Promise.all([
+    const [baseDiff, status] = await Promise.all([
       runner('git', ['diff', '--numstat', '-z', result.baseSha ?? 'HEAD'], options),
       runner('git', ['status', '--porcelain=v2', '-z', '--untracked-files=all'], options),
     ]);
+    let diff = baseDiff;
+    // Only an unavailable recorded object warrants a second comparison. Never
+    // retry resource failures or expose Git's stderr to the caller.
+    if (result.baseSha && diff.code !== null && diff.code !== 0 && !diff.timedOut && !diff.missing && !diff.truncated &&
+      (diff.stderr.trim() === `fatal: bad object ${result.baseSha}` || diff.stderr.trim() === `fatal: bad revision '${result.baseSha}'`)) {
+      result.state = 'degraded';
+      diff = await runner('git', ['diff', '--numstat', '-z', 'HEAD'], options);
+      if (diff.code === 0 && !diff.timedOut && !diff.missing && !diff.truncated) result.comparisonBase = 'HEAD';
+    }
     result.truncated = diff.truncated || status.truncated;
     if ([diff, status].some(out => out.code !== 0 || out.timedOut || out.missing || out.truncated)) result.state = 'degraded';
     const changed = parsePorcelainV2(status.code === 0 ? status.stdout : '').changed;
