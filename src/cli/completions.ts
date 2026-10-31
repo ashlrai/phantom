@@ -18,7 +18,7 @@ import { makeColors, isTty } from './ui.js';
  * list (or HELP_ENTRIES) ever falls out of sync with it again).
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'autopilot', 'metrics', 'init',
+  'index', 'go', 'status', 'top', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'autopilot', 'metrics', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -43,6 +43,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'benchmark', 'queue',
   // 3.15 automations.
   'automations',
+  'routines',
   // 3.15 Jev decision layer.
   'jev',
   // 3.15 private repo wiki.
@@ -134,6 +135,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
+  routines: ['export', 'import', 'rebalance', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
   automations: ['list', 'templates', 'add', 'enable', 'disable', 'remove', 'fire', 'help'],
   // Mirrors the dispatch in src/cli/universe.ts (cmdUniverse).
