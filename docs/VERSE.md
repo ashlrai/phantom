@@ -1996,3 +1996,12 @@ gate ordinary dispatch.
 Single-producer spend accounting uses the admitted concrete engine, rather than trusting a
 subscription-like tier on a custom engine. An unaccounted interrupted zero-dollar batch or unexpected execution identity
 keeps its journal armed for reconciliation.
+
+### Split agent workspace
+
+In a chat, select **Split** to opt into `agentWorkspace`: the conversation
+stays beside a grid of Terminal, Browser, Computer use and Changes. The choice
+is saved per chat in local storage, alongside the dock's existing persisted
+sizes. Select Split again to return to the standard dock. Narrow windows use the existing
+sheet/tab layout. Computer use reports native desktop control status; the
+window's existing consent and stop controls continue to govern app access.
