@@ -75,6 +75,35 @@ external-message, delete, spend`. Agents can request them; nobody can accept
 them until a human owner/admin runs `phm team approve <id>`. There is no MCP
 tool that approves.
 
+### Workspace actions and audit
+
+After `phm team join --team acme`, a local human owner/admin can run:
+
+```sh
+phm team invite human:evan --team acme
+phm team role human:evan admin --team acme
+phm team link ashlrai/phantom --team acme
+phm audit --team acme --json
+phm audit --team acme --action member.role-changed --limit 20
+```
+
+Invites add local workspace membership; they send no email or external message.
+Workspace mutations derive the caller from the local human identity, ignore
+`--as`, and reject agent processes. Owners cannot be demoted through this API;
+role changes require another owner/admin. Linked repos appear in `team view`.
+
+Each successful action is its own audit record in the existing locked,
+append-only `events.jsonl`: `member.invited`, `member.role-changed` (including
+previous role), or `repo.linked`, with actor, timestamp and event ID. A failed
+or duplicate action appends nothing. State and audit share the same append,
+so a state change cannot succeed without its record. Earlier `member.joined`
+records also appear in the audit listing. The viewer is read-only, newest-first,
+with exact event-type `--action`, `--since`, `--limit` and `--json` filters;
+`--result` is not supported for team records. There is no rewrite/delete API;
+peer imports with an existing event ID cannot replace its original record.
+As with the rest of the local bus, a process with direct filesystem access as
+the same OS user can edit the file; this is not tamper-proof remote storage.
+
 ## 4. MCP tools (agents)
 
 | tool | safety | purpose |
