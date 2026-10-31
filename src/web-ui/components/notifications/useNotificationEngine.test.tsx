@@ -4,7 +4,7 @@ import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
 import { NOTIFICATION_CATEGORY_LABEL } from './types.js';
 import { evictAll, refetchQuery } from '../../data/cache.js';
 import { markCheckComplete } from '../../data/auth-store.js';
-import { __resetNotificationStoreForTests, getNotificationSnapshot } from './notification-store.js';
+import { __resetNotificationStoreForTests, enableDesktopNotifications, getNotificationSnapshot, setMuted } from './notification-store.js';
 import { useNotificationEngine } from './useNotificationEngine.js';
 
 class EventSourceStub extends EventTarget {
@@ -118,5 +118,34 @@ describe('notification refresh channel', () => {
       await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true);
     });
     expect(getNotificationSnapshot().items).toEqual([]);
+  });
+
+  it('shows merges alongside incidents, sends one desktop alert per merge, and honors fleet mute', async () => {
+    const desktop = vi.fn();
+    vi.stubGlobal('Notification', Object.assign(desktop, { permission: 'granted' }));
+    await enableDesktopNotifications();
+    const fleetSnapshot = { generatedAt: '2026-09-06T12:05:00.000Z', paused: false,
+      claudeLane: 'down', lanes: [], workers: [], sources: { merges: 'healthy' },
+      mergesLastHour: { count: 1, items: [{ repo: 'ashlrai/bridge', number: 1715, title: 'RQ-PHX-INBOXPOST31' }] },
+      drop: null, events: [] };
+    const sources: Record<string, unknown> = { '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
+      '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] }, '/api/verse/fleet/runs': fleetSnapshot };
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => Response.json(sources[path])));
+    await act(async () => { render(<Harness />); });
+    expect(getNotificationSnapshot().items.map((item) => item.id)).toEqual([
+      'fleet-claude-lane-down', 'fleet-merge:ashlrai/bridge#1715',
+    ]);
+    expect(desktop).toHaveBeenCalledTimes(2);
+    expect(desktop).toHaveBeenCalledWith('Merged #1715', expect.objectContaining({ tag: 'fleet-merge:ashlrai/bridge#1715' }));
+    await act(async () => { await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true); });
+    expect(getNotificationSnapshot().items).toHaveLength(2);
+    expect(desktop).toHaveBeenCalledTimes(2);
+    act(() => setMuted('fleet', true));
+    expect(getNotificationSnapshot().items).toEqual([]);
+    fleetSnapshot.mergesLastHour.items.push({ repo: 'ashlrai/bridge', number: 1716, title: 'Another merge' });
+    fleetSnapshot.mergesLastHour.count = 2;
+    await act(async () => { await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true); });
+    expect(getNotificationSnapshot().items).toEqual([]);
+    expect(desktop).toHaveBeenCalledTimes(2);
   });
 });

@@ -23,6 +23,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import type { RemoteDeviceStore } from '../web/remote-device-store.js';
 import type { ApiModule } from './api-modules.js';
 import type { VerseApiContext } from './verse-api.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -44,10 +45,11 @@ import {
   VERSE_FLEET_CONTROL_RUNS_PREFIX,
 } from '../fleet/fleet-control-types.js';
 
-let deps: FleetControlDeps | null = null;
+type ControlDeps = FleetControlDeps & { remoteDevices?: () => Pick<RemoteDeviceStore, 'list'> };
+let deps: ControlDeps | null = null;
 
 /** Test seam: replace the dependencies (null restores the defaults). */
-export function setFleetControlDepsForTest(next: FleetControlDeps | null): void {
+export function setFleetControlDepsForTest(next: ControlDeps | null): void {
   deps = next;
 }
 
@@ -108,6 +110,40 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
 let actionInFlight: Promise<unknown> | null = null;
 
 export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, method) => {
+  if (path === '/api/verse/fleet/control/remote-devices') {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    if (!noQuery(req, res)) return true;
+    try {
+      const { createRemoteDeviceStore } = await import('../web/remote-device-store.js');
+      let sourceState: 'healthy' | 'missing' = 'healthy';
+      const store = deps?.remoteDevices?.() ?? createRemoteDeviceStore();
+      // list() preserves the registry's privacy and validation checks, even
+      // when it is empty. Only ENOENT is a missing source.
+      const devices = store.list();
+      if (!deps?.remoteDevices) {
+        const { stat } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        const { defaultVerseRoot } = await import('./preferences.js');
+        try { await stat(join(defaultVerseRoot(), 'remote-devices.json')); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          sourceState = 'missing';
+        }
+      }
+      sendJson(res, 200, {
+        v: 1, generatedAt: new Date().toISOString(), sourceState,
+        devices: sourceState === 'missing' ? [] : devices.map(d => ({
+          id: d.id, label: d.label.slice(0, 200), email: d.email.slice(0, 200), subject: d.subject.slice(0, 200),
+          act: d.scopes.act, createdAt: new Date(d.createdAt).toISOString(),
+          lastUsedAt: d.lastUsedAt === null ? null : new Date(d.lastUsedAt).toISOString(),
+          revokedAt: d.revokedAt === null ? null : new Date(d.revokedAt).toISOString(),
+        })),
+      });
+    } catch {
+      sendJson(res, 500, { code: 'fleet-control-failed', error: 'the remote devices request failed' });
+    }
+    return true;
+  }
   if (path === '/api/verse/fleet/control/lanes') {
     try {
       const { readLaneTargets, setLaneTarget, parseLaneTargetAction, LaneTargetError } = await import('../fleet/runs-lane-targets.js');
