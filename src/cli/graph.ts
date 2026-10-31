@@ -14,6 +14,8 @@ const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
               Use -- before a node ID that looks like an option (also applies to node).
   --kind      Filter nodes by agent|engine-account|model|mcp, or edges by
               can-message|can-delegate|reviews|routes-to (exact match).
+  --from      Filter edges by exact source ID; use --from=<id> for option-like IDs.
+  --to        Filter edges by exact destination ID; use --to=<id> for option-like IDs.
   --json      Emit one versioned JSON object on stdout, including errors.
   --help, -h  Show this help without loading the graph.
 
@@ -37,6 +39,8 @@ interface Options {
   direction: GraphDirection;
   depth: number;
   kind: string | null;
+  from: string | null;
+  to: string | null;
 }
 
 function isCommand(value: string): value is GraphCommand {
@@ -44,7 +48,7 @@ function isCommand(value: string): value is GraphCommand {
 }
 
 function parse(args: string[]): Options {
-  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null };
+  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null, from: null, to: null };
   let directionSeen = false;
   let depthSeen = false;
   for (let i = 0; i < args.length; i++) {
@@ -58,6 +62,14 @@ function parse(args: string[]): Options {
       const kinds: readonly string[] = options.command === 'nodes' ? NODE_KINDS : EDGE_KINDS;
       if (value === undefined || !kinds.includes(value)) throw new Error(`Kind must be ${kinds.join(', ')}.`);
       options.kind = value;
+    } else if (options.command === 'edges' && /^(--from|--to)(=|$)/.test(arg)) {
+      const separator = arg.indexOf('=');
+      const key = (separator === -1 ? arg.slice(2) : arg.slice(2, separator)) as 'from' | 'to';
+      const value = separator === -1 ? args[++i] : arg.slice(separator + 1);
+      if (options[key] !== null || !value || (separator === -1 && value.startsWith('-'))) {
+        throw new Error(`Invalid --${key} filter.`);
+      }
+      options[key] = value;
     } else if (options.command === 'neighbors' && arg === '--direction' && !directionSeen) {
       const value = args[++i];
       if (value !== 'in' && value !== 'out' && value !== 'both') throw new Error('Direction must be in, out, or both.');
@@ -130,13 +142,21 @@ export async function cmdGraph(args: string[]): Promise<number> {
       return 0;
     }
     const records = command === 'nodes' || command === 'edges'
-      ? (options.kind === null ? graph[command] : graph[command].filter((record) => record?.kind === options.kind))
+      ? graph[command].filter((record) =>
+        (options.kind === null || record?.kind === options.kind)
+        && (options.from === null || record?.from === options.from)
+        && (options.to === null || record?.to === options.to))
       : null;
     const data = command === 'status'
       ? { counts: { nodes: graph.nodes.length, edges: graph.edges.length } }
       : { [command]: records };
     if (options.json) {
       console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', ...data,
+        ...(options.from !== null || options.to !== null ? { filters: {
+          ...(options.kind !== null ? { kind: options.kind } : {}),
+          ...(options.from !== null ? { from: options.from } : {}),
+          ...(options.to !== null ? { to: options.to } : {}),
+        } } : {}),
         complete: graph.complete, sources: graph.sources, issues: graph.issues }));
     } else if (command === 'status') {
       console.log(`Graph: ready · ${graph.nodes.length} node${graph.nodes.length === 1 ? '' : 's'} · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}`);
