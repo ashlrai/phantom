@@ -19,6 +19,8 @@
  */
 import './builtin-panes.js';
 import { registerUnitPanes } from './register-adapter.js';
+import { watchDockPaneRegistry } from '../dock/dock-store.js';
+import { listPanes, subscribePanes } from './pane-registry.js';
 
 /**
  * Every `*.pane.ts(x)` under routes/verse — keyed by path, evaluated for
@@ -36,6 +38,8 @@ export const DISCOVERED_PANE_MODULES: Record<string, unknown> = import.meta.glob
  */
 export const UNIT_PANE_MODULES: Record<string, unknown> = import.meta.glob('../*/register.ts', { eager: true });
 export const UNIT_PANE_IDS: readonly string[] = registerUnitPanes(UNIT_PANE_MODULES);
+
+watchDockPaneRegistry(listPanes, subscribePanes);
 
 export * from './pane-registry.js';
 export { isUnitPaneRegistration, registerUnitPanes, type UnitPaneRegistration } from './register-adapter.js';

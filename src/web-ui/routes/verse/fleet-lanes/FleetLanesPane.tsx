@@ -1,8 +1,13 @@
+import { useState } from 'react';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { burnLine, burnTotals, formatTokens, headline, laneBars, workerRows } from './fleet-lanes-model.js';
+import { LanePauseButton } from './LanePauseButton.js';
 import { LaneTargetStepper } from './LaneTargetStepper.js';
 import styles from './fleet-lanes.module.css';
 
@@ -14,6 +19,7 @@ function pullUrl(repo: string, number: number): string | null {
 }
 
 export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
+  const [showAll, setShowAll] = useState(false);
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const active = visible && sectionVisible && documentVisible;
@@ -23,6 +29,12 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
   usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
   const data = read.data;
   const workers = data ? workerRows(data) : [];
+
+  function openLog(job: string): void {
+    if (!JOB_ID_RE.test(job)) return;
+    requestWorkerLogJob(job);
+    openDockPane('worker-log');
+  }
 
   return <div className={styles.pane} aria-label="Lanes">
     <header className={styles.header}>
@@ -39,7 +51,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
           <p className={styles.burn}>{burnLine(burnTotals(data))}</p>
           {data.lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>
             {laneBars(data).map((lane) => <li key={lane.lane} className={styles.lane}>
-              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><LaneTargetStepper lane={lane.lane} /><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
+              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><LaneTargetStepper lane={lane.lane} /><LanePauseButton lane={lane.lane} /><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
               <div className={styles.track} role="img" aria-label={`${lane.lane}: ${lane.running} running of ${lane.target} target`}>
                 {lane.fillPct !== null ? <div className={styles.fill} data-tone={lane.tone} style={{ width: `${lane.fillPct}%` }} /> : null}
               </div>
@@ -49,9 +61,9 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
         <section className={styles.section} aria-labelledby="fleet-lanes-workers">
           <h3 id="fleet-lanes-workers" className={styles.title}>Workers</h3>
           {workers.length === 0 ? <p className={styles.muted}>No workers running.</p> : <ul className={styles.list}>
-            {workers.slice(0, 12).map((worker, i) => <li key={`${worker.job}:${i}`} className={styles.worker}><code>{worker.job}</code><span>{worker.lane} · {worker.tier}</span><span>{worker.age}</span></li>)}
+            {(showAll ? workers : workers.slice(0, 12)).map((worker, i) => <li key={`${worker.job}:${i}`} className={styles.worker}><button type="button" className={styles.jobButton} onClick={() => openLog(worker.job)} aria-label={`Open log for ${worker.job}`}><code>{worker.job}</code></button><span>{worker.lane} · {worker.tier}</span><span>{worker.age}</span></li>)}
           </ul>}
-          {workers.length > 12 ? <p className={styles.muted}>+{workers.length - 12} more</p> : null}
+          {workers.length > 12 ? <button type="button" className={styles.moreButton} aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer' : `Show ${workers.length - 12} more`}</button> : null}
         </section>
         <section className={styles.section} aria-labelledby="fleet-lanes-merges">
           <h3 id="fleet-lanes-merges" className={styles.title}>Merged last hour</h3>

@@ -2,8 +2,9 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, parse, resolve } from 'node:path';
 import { laneDeadSignals, type LaneDeadSignal } from './lane-dead-signal.js';
+import { buildCodexResourceReport, collectCodexSessionUsages } from './codex-session-usage.js';
 import { redactHomePaths, scrubPrivateText } from '../util/scrub.js';
 
 export const VERSE_LEADER_RESOURCES_PATH = '/api/verse/leader/resources';
@@ -13,6 +14,7 @@ export interface ResourceLaneRow {
   usedPct: number | null; creditsRemaining: number | null; resetAt: string | null;
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
   source: string | null; deadSignal: LaneDeadSignal | null;
+  observation?: { source: 'codex-personal-sessions'; asOf: string };
 }
 export interface ApiModelUsage {
   model: string; rows: number; errors: number; inputTokens: number; outputTokens: number;
@@ -111,7 +113,7 @@ export function summarizeApiSpend(lines: string, nowMs: number, tzOffsetMinutes 
   return parseSpend(lines, nowMs, tzOffsetMinutes).summary;
 }
 
-export async function readResourceLedger(opts: { runsDir?: string; now?: () => number } = {}): Promise<ResourceLedgerV1> {
+export async function readResourceLedger(opts: { runsDir?: string; now?: () => number; personalCodexHome?: string } = {}): Promise<ResourceLedgerV1> {
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
   const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null };
@@ -157,6 +159,38 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       } catch (e) { result.sources.apiSpend = missing(e) ? 'missing' : 'degraded'; }
     })(),
   ]);
+  // Both collector slots point at the explicitly personal home. The collector
+  // deduplicates them; relabel only that isolated reading before reporting it.
+  const personalHome = opts.personalCodexHome ?? join(homedir(), '.codex-2');
+  if (isAbsolute(personalHome) && personalHome === personalHome.trim() && personalHome.length <= 4096 &&
+      !/\p{Cc}/u.test(personalHome) && resolve(personalHome) !== parse(personalHome).root &&
+      !personalHome.split(/[\\/]+/).some(part => part === '.codex' || part === '..')) {
+    const usages = collectCodexSessionUsages({ env: { CODEX_HOME: personalHome, CODEX_HOME_ALT: personalHome }, homeDir: homedir() });
+    const report = buildCodexResourceReport(usages.map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const })), [], now);
+    const personal = report.resources[0];
+    const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;
+    let lane = result.lanes.find(row => row.lane === 'codex-personal');
+    const statusAt = result.asOf ? Date.parse(result.asOf) : NaN;
+    if (personal?.weekly?.usedPct != null &&
+        (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
+        Number.isFinite(observed) && observed <= now &&
+        (!lane || (Number.isFinite(statusAt) ? observed > statusAt : lane.usedPct === null))) {
+      if (!lane) {
+        lane = { lane: 'codex-personal', running: null, target: null, held: null,
+          window: 'weekly', usedPct: null, creditsRemaining: null, resetAt: null,
+          burnPctPerHour: null, tokensPerHour6h: null, projectedExhaustion: null,
+          source: null, deadSignal: null };
+        result.lanes.push(lane);
+      }
+      lane.usedPct = personal.weekly.usedPct;
+      lane.resetAt = personal.weekly.resetsAt;
+      lane.burnPctPerHour = personal.weekly.burnPctPerHour;
+      lane.tokensPerHour6h = null;
+      lane.projectedExhaustion = personal.weekly.projectedExhaustionAt;
+      lane.source = 'codex-personal-sessions';
+      lane.observation = { source: 'codex-personal-sessions', asOf: personal.observedAt! };
+    }
+  }
   if (signals !== null) {
     const byLane = new Map((signals as ReturnType<typeof laneDeadSignals>).lanes.map(signal => [signal.lane, signal]));
     for (const lane of result.lanes) lane.deadSignal = byLane.get(lane.lane) ?? { lane: lane.lane, lastFinishes: 0, emptyFailures: 0, state: 'ok' };

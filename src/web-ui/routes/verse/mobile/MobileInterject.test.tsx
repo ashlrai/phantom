@@ -1,7 +1,9 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
-import { evictAll } from '../../../data/cache.js';
+import { evictAll, refetchQuery } from '../../../data/cache.js';
+import { fleetRunsFixture } from '../fleet/fleet-runs-fixtures.test-support.js';
+import { inboxTailQuery } from './inbox-tail-query.js';
 import { MobileInterject } from './MobileInterject.js';
 import { MobileToasts, resetMobileToastsForTest } from './mobile-toast.js';
 import { json, permissionsFor, renderMobile, stubFetch, TOKEN } from './mobile.test-support.js';
@@ -9,7 +11,7 @@ import { json, permissionsFor, renderMobile, stubFetch, TOKEN } from './mobile.t
 const at = '2026-09-27T12:52:00Z';
 const entry = { at, source: 'Phantom mobile', text: 'A message' };
 
-beforeEach(() => setMutationToken(TOKEN));
+beforeEach(() => { sessionStorage.clear(); setMutationToken(TOKEN); });
 afterEach(() => {
   clearMutationToken();
   evictAll();
@@ -35,9 +37,34 @@ describe('Tell the leaders', () => {
     await waitFor(() => expect(stub.posts()).toHaveLength(1));
     expect(stub.posts()[0]).toMatchObject({ body: { text: 'A message', source: 'Phantom mobile' }, headers: { 'x-ashlr-token': TOKEN } });
     expect(await screen.findByText('A message')).toBeInTheDocument();
-    expect(screen.getByText(/^Landed /)).toBeInTheDocument();
+    expect(screen.getByText(/^Landed in the inbox/)).toBeInTheDocument();
     expect(field).toHaveValue('');
     expect(stub.calls.filter((call) => call.method === 'GET')).toHaveLength(2);
+  });
+
+  it('keeps the acknowledgement across a screen switch and updates it after a leader pass', async () => {
+    const posted = Date.parse(at);
+    vi.spyOn(Date, 'now').mockReturnValue(posted + 60_000);
+    let pass = posted - 6 * 60_000;
+    stubFetch({
+      'GET /api/verse/fleet/runs': () => fleetRunsFixture({
+        generatedAt: new Date(posted + 60_000).toISOString(), host: null, claudeLane: null,
+        leaders: [{ label: 'fake leader', ageSeconds: (posted + 60_000 - pass) / 1000 }], inbox: [],
+      }),
+      'POST /api/verse/fleet/runs/inbox': { ok: true, at },
+    });
+    const view = renderMobile(<MobileInterject />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'A message' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    // The microphone also exposes its browser fallback as a status.
+    expect(await screen.findByText(/^Landed in the inbox/)).toHaveAttribute('role', 'status');
+    await waitFor(() => expect(screen.getByText(/^Landed in the inbox/)).toHaveTextContent('next leader pass due in about 8 min'));
+    view.unmount();
+    renderMobile(<MobileInterject />);
+    expect(screen.getByText(/^Landed in the inbox/)).toHaveAttribute('role', 'status');
+    pass = posted + 30_000;
+    await act(() => refetchQuery(inboxTailQuery.key, () => inboxTailQuery.fetch(), true));
+    await waitFor(() => expect(screen.getByText(/^Read by the .* pass$/)).toHaveAttribute('role', 'status'));
   });
 
   it('shows at most three entries without the field in read-only mode', async () => {
