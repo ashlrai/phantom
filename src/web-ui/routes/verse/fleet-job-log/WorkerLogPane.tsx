@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
+import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
+import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
 import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
@@ -44,6 +46,17 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const refreshDetail = useRefresh(query);
   usePollWhileVisible(refetchRuns, 5_000, { enabled: visible, refreshOnShow: false });
   usePollWhileVisible(refetchDetail, pollMs(detail.data), { enabled: visible && valid, refreshOnShow: false });
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (notice !== 'Copied') return;
+    const timer = setTimeout(() => setNotice(''), 2_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const copy = async () => {
+    if (!valid || !detail.data) return;
+    try { await navigator.clipboard.writeText(workerLogMarkdown(job, detail.data, Date.now())); setNotice('Copied'); }
+    catch { setNotice('Copy failed'); }
+  };
   const [follow, setFollow] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
@@ -77,6 +90,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         if (event.key === 'Enter') { event.preventDefault(); moveMatch(event.shiftKey ? -1 : 1); }
         if (event.key === 'Escape') { setSearch(''); setSelectedMatch(null); }
       }} /></label>
+      <Button size="sm" variant="subtle" aria-label="Copy as Markdown" disabled={!valid || !detail.data} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span>
       <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
       <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
       <button type="button" aria-label="Next" disabled={matches.length === 0} onClick={() => moveMatch(1)}>↓</button>

@@ -2,7 +2,7 @@ import { Meter } from '../../../components/primitives/Meter.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { ageText, apiSpendLine, asOfText, easternClock, ledgerRows, runsOutText } from './fleet-ledger-model.js';
+import { ageText, apiSpendLine, asOfText, easternClock, laneAsOf, ledgerRows, runsOutText, sourceLabel, staleness } from './fleet-ledger-model.js';
 import { fleetLedgerQuery } from './fleet-ledger-queries.js';
 import usage from './usage.module.css';
 import styles from './fleet-ledger.module.css';
@@ -42,11 +42,12 @@ export function FleetLedgerCard({ now }: { now: number }) {
             const at = lane.projectedExhaustion === null ? NaN : Date.parse(lane.projectedExhaustion);
             const delta = at - now;
             const tone = (lane.usedPct !== null && lane.usedPct >= 100) || (Number.isFinite(delta) && delta < 2 * 3_600_000) ? 'danger' : delta < 8 * 3_600_000 ? 'warning' : 'neutral';
+            const age = staleness(laneAsOf(lane, data.asOf), now);
             return <tr key={`${row.lane}-${index}`}>
             <th scope="row">{row.lane} {row.deadSignal && row.deadSignal.state !== 'ok' ? <StatusBadge status={row.deadSignal.state} tone={row.deadSignal.state === 'dead' ? 'danger' : 'warning'}>{row.deadSignal.state === 'dead' ? 'Dead' : 'Suspect'} · {row.deadSignal.emptyFailures} empty failures</StatusBadge> : null} {row.held ? <StatusBadge status="held" tone="warning">Held</StatusBadge> : null}{row.caption ? <div className={styles.note}>{row.caption}</div> : null}{text ? <div className={styles.note} data-tone={tone} style={{ color: tone === 'neutral' ? undefined : `var(--status-${tone}-fg)` }}>{text}</div> : null}</th>
             <td><span>{row.usage}</span>{row.usedPct !== null ? <Meter variant="line" value={row.usedPct} max={100} aria-label={`${row.lane} used`} /> : null}</td>
             <td>{row.resets ?? '—'}</td><td>{row.burn ?? '—'}</td><td>{row.runsOut ?? '—'}</td><td>{row.running ?? '—'}</td>
-            <td className={styles.source} title={row.source ?? undefined}>{row.source ?? '—'}</td>
+            <td className={styles.source} title={sourceLabel(row.source)}><span data-tone={age.state === 'stale' ? 'warn' : undefined} style={{ color: age.state === 'stale' ? 'var(--status-warning-fg)' : undefined }}>source: {sourceLabel(row.source)} · {age.text}{age.state === 'stale' ? ' · stale' : ''}</span></td>
           </tr>; })}</tbody>
         </table>
       </div> : null}
