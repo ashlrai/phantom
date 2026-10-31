@@ -1,5 +1,6 @@
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { useMobile } from './mobile-context.js';
 import { sinceText } from './connectivity.js';
 import { Button } from './ui.js';
 import { Badge, EmptyState, Row, Section, ui } from './ui-parts.js';
@@ -7,6 +8,7 @@ import { workerRows } from './workers-model.js';
 import { workersQuery } from './workers-query.js';
 
 export function WorkersSection() {
+  const { navigate } = useMobile();
   const query = useQuery(workersQuery);
   const refetch = useRefetch(workersQuery);
   const refresh = useRefresh(workersQuery);
@@ -23,7 +25,7 @@ export function WorkersSection() {
         {view && view.rows.length === 0 ? <EmptyState title="No workers running" /> : null}
         {view && view.rows.length > 0 ? <div className={ui.group}>
           {view.rows.slice(0, 20).map((worker, index) => (
-            <Row key={`${worker.job}-${index}`} title={<code>{worker.job}</code>} subtitle={`${worker.lane} · ${worker.tier}`}
+            <Row key={`${worker.job}-${index}`} title={<code>{worker.job}</code>} label={`Open worker ${worker.job}`} onClick={() => navigate({ screen: 'worker', job: worker.job })} subtitle={`${worker.lane} · ${worker.tier}`}
               trailing={<span data-tone={worker.tone}><Badge tone={worker.tone === 'bad' ? 'danger' : worker.tone === 'warn' ? 'warning' : worker.tone === 'ok' ? 'success' : 'neutral'}>{worker.ageText}</Badge></span>} />
           ))}
           {view.rows.length > 20 ? <Row title={`+${view.rows.length - 20} more`} /> : null}

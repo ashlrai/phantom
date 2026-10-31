@@ -6,7 +6,7 @@ import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
-import { filterPasses, groupRejects, ingestTone, passFilterLabel, passSchedule, passSummary } from './leader-journal-model.js';
+import { filterNotes, filterPasses, groupRejects, ingestTone, passFilterLabel, passSchedule, passSummary } from './leader-journal-model.js';
 import { leaderJournalQuery } from './leader-journal-queries.js';
 import styles from './leader-journal.module.css';
 
@@ -27,6 +27,7 @@ export function LeaderJournalPane({ visible }: PaneProps) {
   const schedule = data ? passSchedule(passes, nowMs) : null;
   const searching = query.trim().length > 0;
   const filtered = filterPasses(passes, query);
+  const notes = filterNotes(data?.notes ?? [], query);
   const rejects = data ? Object.entries(groupRejects(data.ingest)) : [];
 
   return <div className={styles.pane} aria-label="Leader journal">
@@ -43,6 +44,14 @@ export function LeaderJournalPane({ visible }: PaneProps) {
       : data === null ? <p className={styles.note}>The leader journal API has not landed in this build yet.</p>
         : data === undefined ? <div className={styles.section} aria-label="Loading leader journal" aria-busy="true"><SkeletonLine /><SkeletonLine /></div>
           : <>
+            <section className={styles.section} aria-labelledby="journal-notes">
+              <h3 id="journal-notes">Leader notes</h3>
+              {data.sources.orchestration !== 'healthy' ? <p className={styles.note}>Leader notes source missing.</p> : null}
+              {notes.length === 0 ? <p className={styles.note}>{searching ? 'No notes match' : 'No leader notes yet.'}</p> : notes.map((note, index) => <details className={styles.pass} key={`${note.at}-${index}`} open={searching || index === 0}>
+                <summary>{note.at}{note.bullets[0] ? <span> · {note.bullets[0]}</span> : null}</summary>
+                <ul>{note.bullets.map((bullet, bulletIndex) => <li key={bulletIndex}>{bullet}</li>)}</ul>
+              </details>)}
+            </section>
             <section className={styles.section} aria-labelledby="journal-passes">
               <h3 id="journal-passes">Passes</h3>
               {data.sources.planLog !== 'healthy' ? <p className={styles.note}>Plan log source {data.sources.planLog}.</p> : null}
