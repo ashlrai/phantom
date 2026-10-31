@@ -249,6 +249,7 @@ export async function cmdBacklog(args: string[]): Promise<number> {
 
   // ── Parse arguments ──────────────────────────────────────────────────────
   let subcommand: 'list' | 'refresh' = 'list';
+  let explicitSubcommand = false;
   let filterRepo:   string | undefined;
   let filterSource: WorkSource | undefined;
   let limit:        number | undefined;
@@ -258,13 +259,18 @@ export async function cmdBacklog(args: string[]): Promise<number> {
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === 'refresh') {
-      subcommand = 'refresh';
+    if (a === 'refresh' || a === 'list') {
+      if (explicitSubcommand) {
+        console.error(col.red('error: ') + 'Specify only one backlog subcommand');
+        return 2;
+      }
+      subcommand = a;
+      explicitSubcommand = true;
     } else if (a === '--json') {
       jsonMode = true;
     } else if (a === '--repo') {
       filterRepo = args[++i];
-      if (!filterRepo) {
+      if (!filterRepo || filterRepo.startsWith('-')) {
         console.error(col.red('error: ') + '--repo requires a path argument');
         return 2;
       }
@@ -277,14 +283,12 @@ export async function cmdBacklog(args: string[]): Promise<number> {
       filterSource = raw as WorkSource;
     } else if (a === '--limit') {
       const raw = args[++i];
-      const n = raw !== undefined ? parseInt(raw, 10) : NaN;
-      if (isNaN(n) || n <= 0) {
+      const n = raw !== undefined && /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+      if (!Number.isSafeInteger(n) || n <= 0) {
         console.error(col.red('error: ') + `--limit requires a positive integer, got: ${raw ?? '(missing)'}`);
         return 2;
       }
       limit = n;
-    } else if (a === 'list') {
-      // explicit 'list' subcommand — no-op, it's the default
     } else if (a?.startsWith('-')) {
       console.error(col.red('error: ') + `Unknown flag: ${a}`);
       console.error(col.dim('Usage: ashlr backlog [refresh] [--repo <path>] [--source <src>] [--limit <n>] [--json]'));

@@ -59,9 +59,6 @@ export const PALETTE_PREFIXES: Readonly<Record<'>' | '#', PaletteGroupId>> = { '
 /** An empty query shows the last this-many actions run. */
 export const PALETTE_RECENT_LIMIT = 5;
 
-/** The palette opens in under this (it lives in the shell chunk). */
-export const PALETTE_OPEN_BUDGET_MS = 50;
-
 // ===========================================================================
 // Commands
 // ===========================================================================

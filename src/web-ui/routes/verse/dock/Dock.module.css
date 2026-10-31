@@ -301,3 +301,18 @@
 }
 :root[data-motion='reduce'] .scrim,
 :root[data-motion='reduce'] .sheetLayer .dock { animation: none; }
+
+.body[data-workspace] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+.body[data-workspace] .pane:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+}
+.body[data-workspace] .pane:not([hidden]) > :last-child { flex: 1; min-height: 0; height: auto; }
+.workspaceTitle { flex: none; padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); font-weight: 600; }
