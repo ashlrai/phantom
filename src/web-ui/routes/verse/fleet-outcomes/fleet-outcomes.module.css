@@ -8,4 +8,7 @@
 .caseRow { composes: row; width: 100%; padding: 0; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .caseRow[aria-pressed='true'] { color: var(--accent-500); }
 .dim { color: var(--text-secondary); }
+.filters { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.filters button { cursor: pointer; }
+.filters button[aria-checked='true'] { font-weight: bold; }
 .timelineHead { display: flex; align-items: start; justify-content: space-between; gap: var(--space-2); }
