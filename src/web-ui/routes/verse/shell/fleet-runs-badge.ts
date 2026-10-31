@@ -71,7 +71,10 @@ export function fleetRunsIdle(b: FleetRunsBadge): boolean {
 }
 
 export function fleetRunsTone(b: FleetRunsBadge): 'warning' | 'running' {
-  return b.paused || b.heldLanes?.length || b.switchesOn.length || fleetRunsIdle(b) || underTargetLanes(b).length ? 'warning' : 'running';
+  return b.paused || b.heldLanes?.length || b.switchesOn.length || fleetRunsIdle(b) || underTargetLanes(b).length
+    /* personal usage near-cap flips the rail badge to warning */
+    || b.personalPct != null && b.personalPct >= 95
+    ? 'warning' : 'running';
 }
 
 export function underTargetLanes(b: FleetRunsBadge): FleetRunsBadge['lanes'] {
