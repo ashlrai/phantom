@@ -18,6 +18,7 @@
  * shape, or when the runs-dir source is not healthy/degraded — then the
  * Fleet and All splits may never claim "All clear" on its behalf.
  */
+import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { derivePulse, readPulseInput } from '../ops/merge-pulse-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
 
@@ -42,6 +43,8 @@ export interface FleetNeedsYouResult {
 
 /** The drawer's poll cadence while it is open. */
 export const FLEET_NEEDS_YOU_POLL_MS = 15_000;
+export const LEADER_PASS_CADENCE_MS = 15 * 60_000;
+export const LEADER_OVERDUE_MS = 2 * LEADER_PASS_CADENCE_MS;
 
 /**
  * A server status line is printed only when it cannot smuggle a path or a
@@ -105,6 +108,22 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       detail: pulse.detail ?? 'Nothing started and nothing merged for 30 minutes.',
       nextStep: 'Check Live runs and the leaders in Ops',
       target: 'ops',
+    });
+  }
+
+  const newestPass = newestLeaderPassMs(snapshot.leaders, Date.parse(snapshot.generatedAt));
+  if (answered && snapshot.switches.length === 0 && snapshot.paused !== true && pulse.state !== 'incident'
+    && (snapshot.leaders.length === 0 || (newestPass !== null && nowMs - newestPass > LEADER_OVERDUE_MS))) {
+    const waiting = snapshot.inbox.filter(entry => {
+      if (snapshot.leaders.length === 0) return true;
+      const at = parseInboxAt(entry.at, nowMs);
+      return at !== null && newestPass !== null && at > newestPass;
+    }).length;
+    items.push({
+      id: 'leader-overdue', severity: 'urgent',
+      title: newestPass === null ? 'No leader process is running' : `No leader pass for ${Math.floor((nowMs - newestPass) / 60_000)} minutes`,
+      detail: waiting === 0 ? 'Nothing is waiting in the inbox yet' : `${waiting} inbox entries are waiting on a leader`,
+      nextStep: 'Check the leaders in Ops and restart the leader loop if it stopped', target: 'ops',
     });
   }
 
