@@ -29,6 +29,35 @@ Local routes remain `/verse/`, and the published macOS app is `Phantom.app`. See
 Use the qualified workbench release links below to install. Website availability
 does not establish installed fleet or hosted-service readiness.
 
+## From public Connect to your first local session
+
+If you arrived through the public **Connect** experience, continue with the
+local workbench installation below. A public page or a selected provider does
+not verify local installation, account sign-in, model access or available quota.
+If an advertised resource is unavailable, use another eligible resource or
+finish its setup before sending work; no working hosted session is implied.
+
+1. Install a qualified release, check `phm --version`, then run `phm verse`
+   to open the local workbench. `phm doctor` checks this machine; it does not
+   establish provider readiness or authorize unattended work.
+2. In **Resources**, inspect the account you intend to use and its chat readiness.
+   Sign in through that provider's own CLI, configure an API resource, or start
+   a tool-capable local model. Missing or stale usage remains unknown, and a
+   saved account or model listing does not prove entitlement or usable capacity.
+   Keep subscription allowances, API credits and local hardware separate.
+3. Choose **Work with me** → **New chat** and select a scratch project or a
+   public repository you can edit. Confirm the selected folder before sending;
+   saving a project does not enroll it for unattended fleet work.
+4. Start with a small task, for example: “Fix one typo in README.md, show the
+   diff and report the checks you ran. Leave the change uncommitted.” Review the
+   diff and actual verification results before accepting the result. If a turn
+   is held, inspect the resource's reason; connection alone is not readiness.
+
+Use **Automatic** for an eligible resource, or **Advanced** to choose an account
+or model explicitly. No eligible resource means setup is still incomplete.
+Fleet activation is a separate, optional step after this first interactive task.
+See the [first-session guide](VERSE.md#first-local-session) for the same checklist.
+
 <a id="open-verse"></a>
 
 ## Open Phantom
@@ -82,6 +111,24 @@ macOS may require **Open Anyway** on first launch.
 For a source build and local signing, follow [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md).
 There is no Linux or Windows desktop package in this release; use the CLI above.
 
+### Complete your first readiness check
+
+1. Open **Resources** in `phm verse` and connect an account or configure a local
+   model. Check **chat readiness**: a connected badge alone does not mean the
+   resource is usable. Resolve signed-out, unknown usage, exhausted quota or
+   capacity holds before starting; follow the resource's displayed recovery step.
+2. Select your project and workspace. Confirm the repository path so the task
+   uses the project you intended.
+3. In **Work with me**, ask: “Read the README and name one test command with its
+   source path. Do not change files.” Verify the cited file and command in your
+   project. This is done when the answer checks out; a waiting task or connection
+   alone does not pass. If it waits, return to Resources and resolve the hold.
+
+`phm doctor` checks the machine and `phm onboard` checks activation prerequisites;
+neither result proves a connected resource can complete your task. Check **fleet
+readiness** separately before unattended work: a successful chat does not establish
+fleet authority. The first task above does not require enrolling the repository.
+
 ### Read the workbench before starting work
 
 - In the desktop top bar, expand **Automatic awake** to inspect the idle-sleep
@@ -123,6 +170,25 @@ See [Automatic work](AUTOMATIC-OUTCOMES.md) for resource boundaries and recovery
 To give Claude Code, Codex or Cursor the tools of Phantom Secrets, Locus and
 Ashlr MD through one MCP connection, see
 [One connection for every agent](COMPANIONS.md#one-connection-for-every-agent).
+
+### Troubleshoot account setup and return to the tour
+
+- If no account appears, open **Apps & Accounts** under the gear. Sign in to
+  the supported provider's own CLI, or start Ollama for local models. For
+  separate native accounts, follow [seat commissioning](RESOURCE-POOLS.md#commission-native-accounts-and-local-capacity);
+  preparing a profile alone does not sign in or enroll it.
+- If a seat is signed out, choose **Reconnect** where offered and finish the
+  provider's sign-in in Terminal. Opening sign-in from Phantom is supported on
+  macOS; otherwise use the provider's own CLI. Choose **Check again** where
+  offered to refresh health. For a spent or unavailable seat, inspect its
+  reported reason and reset in **Resources**; a connection does not guarantee
+  available quota or permission to run.
+- If you closed or skipped the tour, open **Settings → Onboarding** and choose
+  **Replay**. Closing the tour card folds it back to its chip; **Skip setup**
+  or the chip's × dismisses it. Opening Settings does not complete the tour.
+- If the workbench itself is closed, run `phm verse` to open it again. Keep
+  the printed tokens private. See [Automatic work](AUTOMATIC-OUTCOMES.md) for
+  readiness and recovery, and [the Phantom guide](VERSE.md) for the interface.
 
 ### Make your first useful turn
 

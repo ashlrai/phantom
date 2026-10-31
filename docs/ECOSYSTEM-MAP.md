@@ -1,18 +1,40 @@
 # Ashlr Ecosystem Map
 
-> **Historical planning snapshot, 2026-07-02.** This 21-repo local inventory and
+> **Historical planning snapshot, 2026-07-02, inventory amended October 2026.** This 23-repo inventory and
 > its [machine-readable index](./ecosystem-index.json) are not a current public
-> repository list, a live integration map or a current star-count source. Newer
-> independent projects such as Locus and Lexicon are absent. For the current
+> repository list, a live integration map or a current star-count source. Locus
+> and Lexicon have inventory entries but no detailed profiles. For the current
 > public focus projects, start with the [Phantom README](../README.md#the-phantom-ecosystem)
 > and each linked repository. The composition ideas below remain design targets
 > until their individual integrations are verified.
 
 ---
 
-## July 2026 21-repo inventory
+## Current Phantom checkout
 
-This table mirrors the local `dev-tools/` workspace as it was on 2026-07-02.
+The current package is `@ashlr/phantom`, with `phm` and compatible `ashlr`
+entrypoints in [package.json](../package.json). Historical `ashlr-hub` names
+below describe the dated inventory, not a separate current Phantom package.
+
+The repo's `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`,
+`ashlr`. This is the configured companion server list, not a fixed MCP tool
+count or proof of a live integration. See [the toolchain guide](AGENT-TOOLCHAIN.md)
+for roles and limits. Inspect the current CLI and gateway with:
+
+```sh
+phm docs --agent --json
+phm mcp list --json
+phm mcp doctor
+```
+
+`test/doc-facts.test.ts` compares these commands with the CLI registry and the
+companion lists with `.mcp.json`. Tool counts in the historical sections below
+are snapshot observations; use discovery for current counts.
+
+## Historical inventory (23 entries after October amendment)
+
+This table began with the local `dev-tools/` workspace on 2026-07-02; the
+October amendment added Locus and Lexicon.
 The machine-readable source for that dated table is
 [`docs/ecosystem-index.json`](./ecosystem-index.json). It should not drive a live
 repository directory without a fresh inventory and owner review.
@@ -24,7 +46,7 @@ The whole inventory matters, but it should not receive equal attention. Ashlr wi
 | Tier | Repos | Operating directive |
 |---|---|---|
 | **Core fleet spine** | ashlr-hub, phantom-secrets, ashlr-plugin, binshield, ashlr-md, ashlr-stack, ashlr-pulse, ashlrcode, ashlr-workbench, lexicon, locus | Keep these moving first. They are the product, execution harness, trust layer, review surface, observability plane, secrets layer, and infra layer that make the autonomous engineering fleet useful. |
-| **Core-adjacent candidate** | ashlr-mux | Not present in the local 21-repo inventory yet. Track as cofounder-owned and evaluate as core once the repo is available locally or via GitHub. |
+| **Core-adjacent candidate** | ashlr-mux | Not present in the local 23-repo inventory yet. Track as cofounder-owned and evaluate as core once the repo is available locally or via GitHub. |
 | **Force multipliers** | @ashlr/core-efficiency, morphkit, webfetch, prompt-trackr | Develop when they compound the core fleet: cheaper context, product-building leverage, retrieval/building blocks, or prompt-quality feedback. |
 | **Supporting substrate + distribution** | ashlr-auth, ashlr-cli-common, ashlr-config, ashlr-cost, ashlr-mcp-kit, homebrew-ashlr, homebrew-phantom, openclaw-setup | Maintain quality, package boundaries, and distribution. Do not let these pull focus from the core spine unless they are blocking it. |
 
@@ -68,7 +90,7 @@ Ownership is the routing boundary for fleet work. Local Ashlr repos can receive 
 | ashlr-stack | core-fleet | backend provisioning tool | expanded |
 | webfetch | force-multiplier | license-first web/image fetch tool | composition-only |
 
-`binshield-internal-backup` exists beside these repos locally but is intentionally excluded from the active 21-repo inventory.
+`binshield-internal-backup` exists beside these repos locally but is intentionally excluded from the active 23-repo inventory.
 
 October 2026: `lexicon` and `locus` were added to the machine-readable index as core-fleet repos (23 entries) so Phantom's improve/steward loop prioritizes them alongside the rest of the ecosystem.
 
@@ -120,7 +142,7 @@ ashlr-hub is the **conductor**. It enrolls repos' backlogs, dispatches sandboxed
 These profiles are the higher-confidence, manually expanded capability map for 12 repos. The current inventory above and `ecosystem-index.json` are the count source of truth until the remaining repos get full profiles.
 
 ### ashlr-hub — *the conductor*
-- **Purpose:** Autonomous engineering fleet (orchestrator at the center of the 21-repo platform): a single Node binary that scans enrolled repos' backlogs, dispatches sandboxed agent swarms across multiple backends, and deposits proposal-only diffs into a human-gated Approval Inbox — proposal-only, sandboxed, gated by model-trust tier. Also a local command center (project index, MCP gateway, spend tracking, ad-hoc run/swarm).
+- **Purpose:** Autonomous engineering fleet (orchestrator at the center of the 23-repo platform): a single Node binary that scans enrolled repos' backlogs, dispatches sandboxed agent swarms across multiple backends, and deposits proposal-only diffs into a human-gated Approval Inbox: proposal-only, sandboxed, gated by model-trust tier. Also a local command center (project index, MCP gateway, spend tracking, ad-hoc run/swarm).
 - **Stack:** TypeScript (ESM) on Node >=22.15. Build `tsc` → `dist/` + copy-assets; optional SEA binary. Vitest, ESLint 9. Zero runtime deps except `@modelcontextprotocol/sdk`. Sub-surfaces: Raycast extension, Tauri desktop app, terminal TUI.
 - **Status:** active / best-in-class-track. Published as `@ashlr/hub` (3.0.1). v1–v5 (M1–M55) shipped; v6 Verification-First (M140+) in progress. 367 adversarial test files, 10 named safety invariants each proven by a test.
 - **Key modules:** `src/cli/index.ts` (68KB ~70-case router); `src/api/{index,core,plugin,types}.ts` (public npm surface — `applyProposal` deliberately NOT exported); `src/core/types.ts` (155KB); `src/core/config.ts` (`~/.ashlr/config.json`); `src/core/daemon/loop.ts` (66KB operator loop); `src/core/run/orchestrator.ts` (96KB) + run/router + sandboxed-engine + sandbox/{worktree,confine,policy}; `src/core/swarm/{runner,gate,sign,rollback}`; `src/core/inbox/{store,merge,apply}` (merge 69KB); `src/core/fleet/` (28 files: manager/judge, router, quota, self-improve, regression-sentinel, red-team, taste-critic); `src/core/foundry/provenance.ts`; `src/core/genome/`; `src/core/goals/+vision/+strategy/`; `src/core/ecosystem/map.ts`; `src/core/integrations/`; `src/core/web/` (Mission Control 127.0.0.1:7777); `src/core/plugins/`; `bin/ashlr`; `schema/config.schema.json`.

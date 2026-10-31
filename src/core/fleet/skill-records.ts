@@ -150,9 +150,6 @@ export function skillUseEventsDir(): string {
   return join(skillRecordsDir(), 'uses');
 }
 
-/** Alias matching the ~/.ashlr/skills directory name. */
-export const skillsDir = skillRecordsDir;
-
 function eventTimestamp(value: unknown): string {
   const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
   if (!Number.isFinite(parsed)) throw new Error('invalid skill record timestamp');
@@ -338,6 +335,9 @@ export function sanitizeSkillCard(card: SkillCard): SkillCard {
     summary: boundedText(card.summary, MAX_TEXT.summary),
     status: enumValue(card.status, CARD_STATUSES, 'candidate'),
     source: enumValue(card.source, CARD_SOURCES, 'manual'),
+    ...(card.trigger ? { trigger: boundedText(card.trigger, MAX_TEXT.summary) } : {}),
+    ...(card.steps ? { steps: boundedTextList(card.steps, MAX_LIST_ITEMS, MAX_TEXT.summary) } : {}),
+    ...(card.sourceJobIds ? { sourceJobIds: boundedTextList(card.sourceJobIds, MAX_LIST_ITEMS, MAX_TEXT.id) } : {}),
     ...(tags ? { tags } : {}),
     ...(taskKinds ? { taskKinds } : {}),
     ...(commandKinds ? { commandKinds } : {}),
@@ -520,10 +520,6 @@ export function recordSkillCard(input: SkillCard | SkillCard[]): void {
 export function recordSkillUseEvent(input: SkillUseEvent | SkillUseEvent[]): void {
   appendRecords(input, skillUseEventsDir(), sanitizeSkillUseEvent);
 }
-
-/** Append aliases for callers that name the storage operation directly. */
-export const appendSkillCard = recordSkillCard;
-export const appendSkillUseEvent = recordSkillUseEvent;
 
 function boundedOption(value: number | undefined, fallback: number, max: number): number {
   return typeof value === 'number' && Number.isFinite(value)
