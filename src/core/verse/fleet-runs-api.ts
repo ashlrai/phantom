@@ -66,6 +66,7 @@ const workersShape: Shape = {
   workers: [{ job: 'string', repo: 'string', lane: 'string', tier: 'string', ageSeconds: 'number?' }],
   leaders: [{ label: 'string', ageSeconds: 'number?' }], orchestratorAgents: 'number?',
 };
+const claimsShape: Shape = [{ job: 'string', lane: 'string', tier: 'string', at: 'string' }];
 const dropShape: Shape = { pending: [{ lane: 'string', file: 'string' }], done: 'number' };
 const codexShape: Shape = { usedPct: 'number?', resetsAt: 'string?', asOf: 'string?' };
 const mergesShape: Shape = { count: 'number?', items: [{ repo: 'string', number: 'number', title: 'string' }] };
@@ -134,7 +135,9 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         const value = project(key === 'inbox' && record(raw) ? raw.entries : raw, shape);
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
+        const claimed = key === 'runsDir' && record(raw) && raw.claimed != null ? project(raw.claimed, claimsShape) : [];
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
+        if (key === 'runsDir') result.claimed = claimed as FleetRunsV1['claimed'];
         if (key === 'runsDir') result.drop = drop as FleetRunsV1['drop'];
         if (key === 'inbox') result.inbox = value as FleetRunsV1['inbox'];
         if (key === 'codex') result.codexPersonal = value as FleetRunsV1['codexPersonal'];
