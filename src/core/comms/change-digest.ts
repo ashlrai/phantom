@@ -380,7 +380,11 @@ export interface DigestPlan {
 export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, nowMs: number): DigestPlan {
   const nowIso = new Date(nowMs).toISOString();
   const reported = new Set(prev?.reported ?? []);
-  const fresh = facts.events.filter((e) => !reported.has(e.key)).sort((a, b) => (a.at < b.at ? -1 : 1));
+  const fresh = facts.events
+    .map((event) => ({ event, time: Date.parse(event.at) }))
+    .filter(({ event, time }) => !reported.has(event.key) && Number.isFinite(time))
+    .sort((a, b) => a.time - b.time || (a.event.key < b.event.key ? -1 : a.event.key > b.event.key ? 1 : 0))
+    .map(({ event }) => event);
 
   // Seat transitions (only judged when we have a baseline and a snapshot).
   const seatLines: string[] = [];
@@ -396,9 +400,15 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
     }
   }
 
-  const workAt = fresh.filter((e) => e.work).map((e) => e.at).sort().pop();
-  const baselineActivity = prev?.lastActivityAt ?? new Date(nowMs - IDLE_MS).toISOString();
-  const lastActivityAt = workAt && workAt > baselineActivity ? workAt : baselineActivity;
+  const previousTime = prev ? Date.parse(prev.lastActivityAt) : nowMs - IDLE_MS;
+  // Recover a corrupt or future stored watermark conservatively from this check.
+  const baselineTime = Number.isFinite(previousTime) && previousTime <= nowMs ? previousTime : nowMs;
+  const baselineActivity = prev && baselineTime === previousTime ? prev.lastActivityAt : new Date(baselineTime).toISOString();
+  // Future events can be reported once, but do not establish activity until a
+  // real, non-future event arrives; otherwise clock skew could suppress idle indefinitely.
+  const work = fresh.filter((e) => e.work && Date.parse(e.at) <= nowMs).at(-1);
+  const activityAdvanced = work !== undefined && Date.parse(work.at) > baselineTime;
+  const lastActivityAt = activityAdvanced ? work.at : baselineActivity;
 
   const next: DigestState = {
     v: 1,
@@ -441,7 +451,7 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
     if (!facts.autonomy.on && (opened.length > 0 || merges.length > 0)) lines.push(autonomyLine(facts.autonomy));
     next.lastSentAt = nowIso;
     // Activity resets the idle stretch.
-    if (workAt) next.idleNoticeFor = null;
+    if (activityAdvanced) next.idleNoticeFor = null;
     return { text: lines.join('\n'), reason: 'changes', next };
   }
 

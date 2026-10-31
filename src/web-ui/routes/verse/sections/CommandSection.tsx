@@ -56,6 +56,7 @@ import { AutonomyOffState, useSetupChecklist } from '../autonomy/AutonomyOffStat
 import { autonomyOffState } from '../autonomy/autonomy-off-model.js';
 import { buildKpis, claudeReserve, kpisSayNothing, seatNames, sinceYouLooked } from '../command/command-model.js';
 import { KpiRow } from '../command/KpiRow.js';
+import { RunsNowRow } from '../command/RunsNowRow.js';
 import { LeaderCard } from '../command/LeaderCard.js';
 import { NeedsYouCard } from '../command/NeedsYouCard.js';
 import { SeatStrip } from '../command/SeatStrip.js';
@@ -223,6 +224,7 @@ export function CommandSection() {
       <Cell span={7}>
         <LeaderCard read={leader.data} loading={leader.status === 'loading'} actions={actions} seatNames={names} />
       </Cell>
+      <Cell span={12}><RunsNowRow now={now} /></Cell>
       {banner && kpisEmpty ? null : (
         <Cell span={12}>
           <KpiRow kpis={kpis} />
