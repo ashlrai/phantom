@@ -11,11 +11,6 @@ import { ShortcutsTable } from '../shell/ShortcutsOverlay.js';
 import { Panel } from './SettingRow.js';
 import styles from './SettingsSection.module.css';
 
-/** ⌘ on Apple platforms, Ctrl everywhere else. */
-export function isApplePlatform(): boolean {
-  return detectKeyPlatform() === 'mac';
-}
-
 export function ShortcutsPanel() {
   const platform = useMemo(() => detectKeyPlatform(), []);
   const overlay = findCommand('shortcuts.open')?.keys[0];
