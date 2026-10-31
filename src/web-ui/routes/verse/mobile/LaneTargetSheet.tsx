@@ -47,7 +47,7 @@ export function LaneTargetSheet({ row, open, onClose, onDone }: LaneTargetSheetP
   const togglePause = () => {
     if (disabled) return;
     const transition = pause.paused
-      ? resumeTransition(row.lane, readPauseRecord(), row.floor)
+      ? resumeTransition(row.lane, readPauseRecord(), row.floor, row.pausedFrom)
       : pauseTransition(row.lane, row.target ?? 0, readPauseRecord());
     runMobileAction({
       title: `${pause.paused ? 'Resume' : 'Pause'} ${row.lane}?`,

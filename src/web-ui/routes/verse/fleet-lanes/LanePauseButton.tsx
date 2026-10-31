@@ -37,7 +37,7 @@ export function LanePauseButton({ lane }: { lane: string }) {
   async function change() {
     if (!row || !hold.hasHold || laneWriting()) return;
     const remembered = readRecord();
-    const transition = paused ? resumeTransition(lane, remembered, row.floor) : pauseTransition(lane, row.target, remembered);
+    const transition = paused ? resumeTransition(lane, remembered, row.floor, row.pausedFrom) : pauseTransition(lane, row.target, remembered);
     setError('');
     // Refuse to pause when the previous target cannot be saved for later.
     try { if (!paused) localStorage.setItem(LANE_PAUSE_KEY, JSON.stringify(remembered)); }
@@ -62,7 +62,7 @@ export function LanePauseButton({ lane }: { lane: string }) {
   }
 
   return <>
-    {paused && pauseLabel(lane, record) ? <span className={styles.badge}>{pauseLabel(lane, record)}</span> : null}
+    {paused && pauseLabel(lane, record, row?.pausedFrom) ? <span className={styles.badge}>{pauseLabel(lane, record, row?.pausedFrom)}</span> : null}
     <Button size="sm" aria-label={`${paused ? 'Resume' : 'Pause'} ${lane}`} disabled={!row || !hold.hasHold || pending} onClick={() => void change()}>{paused ? 'Resume' : 'Pause'}</Button>
     {error ? <span className={styles.pauseError} role="status">{error}</span> : null}
   </>;
