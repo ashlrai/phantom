@@ -14,6 +14,9 @@ interface Source {
   checkedAt: string | null;
   urls: string[];
   stale: boolean | null;
+  /** Untrusted, explicitly supplied license evidence. */
+  license?: string;
+  licenseUrls?: string[];
   /** Untrusted text copied from explicit Takeaway fields. */
   takeaways?: string[];
   takeawaysTruncated?: { count: boolean; bytes: boolean };
@@ -130,6 +133,23 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
     } else if (source) {
       const note = /^- Takeaway:[ \t]*(\S.*)$/.exec(line);
       if (note) takeaway = [note[1]!.trim()];
+      const license = /^- License:[ \t]*(.*)$/.exec(line)?.[1]?.trim();
+      if (license && Array.from(license).length <= 120 && !source.license) source.license = license;
+      const licenseSource = /^- License source:[ \t]*(.*)$/.exec(line)?.[1];
+      if (licenseSource !== undefined) {
+        const links = [...licenseSource.matchAll(/\[[^\]]+\]\(([^\s)]+)\)/g)].map((match) => match[1]!);
+        // A bare URL is also accepted when it is the entire field value.
+        if (/^https:\/\/\S+$/i.test(licenseSource.trim())) links.push(licenseSource.trim());
+        for (const link of links) {
+          try {
+            const url = new URL(link);
+            if (/^https:\/\//i.test(link) && url.protocol === 'https:' && !url.username && !url.password && !/^https:\/\/[^/?#]*@/i.test(link)) {
+              const urls = source.licenseUrls ??= [];
+              if (!urls.includes(link)) urls.push(link);
+            }
+          } catch { /* Ignore invalid links. */ }
+        }
+      }
       const dateField = /^- Checked:\s*(.*?)\s*$/.exec(line);
       if (dateField && !hasChecked) {
         hasChecked = true;
