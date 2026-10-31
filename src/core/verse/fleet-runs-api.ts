@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readHostLoad } from '../fleet/host-load.js';
 import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead } from './fleet-inbox-read.js';
@@ -23,6 +24,7 @@ const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 export interface FleetRunsApiDeps {
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
+  readHostLoad?: () => unknown;
   readInbox?: (limit: number) => Promise<unknown>;
   appendInbox?: (text: string, source: string) => Promise<unknown>;
   codexPersonal?: () => Promise<unknown>;
@@ -52,6 +54,8 @@ function project(value: unknown, shape: Shape): unknown {
   return Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, project(value[k], s)]));
 }
 const inboxShape: Shape = [{ at: 'string', source: 'string', text: 'string' }];
+// The independent host reading projects nullable load averages, core count and ratio.
+const hostShape: Shape = { load1: 'number?', load5: 'number?', load15: 'number?', cores: 'number?', ratio: 'number?' };
 const runsShape: Shape = {
   lastTick: 'string?', paused: 'boolean?', memFreePct: 'number?', diskFreeGb: 'number?', switches: ['string'], claudeLane: 'string?',
   lanes: [{ lane: 'string', running: 'number', target: 'number', queued: 'number', held: 'boolean', heldReason: 'string?', tokensLastHour: 'number?', merged24h: 'number?', mergeRate24h: 'number?' }],
@@ -110,9 +114,11 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   async function build(): Promise<FleetRunsV1> {
     const result: FleetRunsV1 = {
       v: 1, generatedAt: new Date(now()).toISOString(), sources: { runsDir: 'degraded', workers: 'degraded', inbox: 'degraded', codex: 'degraded', merges: 'degraded' },
-      lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, lanes: [],
+      lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, host: null, switches: [], claudeLane: null, lanes: [],
       workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [], mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
     };
+    try { result.host = project((deps.readHostLoad ?? readHostLoad)(), hostShape) as FleetRunsV1['host']; }
+    catch { /* Keep the independent host reading unknown. */ }
     const sources = [
       ['runsDir', runs, runsShape], ['workers', workers, workersShape], ['inbox', () => inbox(30), inboxShape],
       ['codex', deps.codexPersonal ?? (() => personal(now())), codexShape], ['merges', merges, mergesShape],
