@@ -139,6 +139,8 @@ A local branch is not a merge, release or production acceptance. Keep scope,
 resource reserves and acceptance criteria explicit; routine execution can proceed
 within them without turning discovery or a passing trial into broader authority.
 
+For an opt-in versioned source installation, see [versioned self-swap](https://github.com/ashlrai/phantom/blob/master/docs/SELF-SWAP.md) (source).
+
 To set up and operate Phantom from a cold start, see the [agent operations guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md) (source).
 
 For the public-source review of contributor instructions across the seven repos, see the [AGENTS.md audit](https://github.com/ashlrai/phantom/blob/master/docs/AGENTS-MD-AUDIT.md) (source).
