@@ -1,0 +1,2 @@
+RQ-EXISTING (P1, pool=codex-personal, tier=work, repo=phantom): Existing work
+RQ-RESEARCH-20261025-LOCAL (P2, pool=codex-personal, tier=work, repo=phantom): Previous day
