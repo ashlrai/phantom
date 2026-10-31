@@ -9,8 +9,17 @@ The desktop is one window with distinct places for distinct questions. Status la
 | Place | What it answers | Data it reads | Poll |
 | --- | --- | --- | --- |
 | **Ops ▸ Live runs** | What is running on this Mac now: lanes, workers, leaders, merges in the last hour, personal Codex usage, kill switches and the inbox tail? | `GET /api/verse/fleet/runs` [^landing] | 5 s |
-| **Ops ▸ Fleet & router ▸ Lanes on this Mac** | How much credit, queued and live work, and recent merges does each lane have? | `GET /api/fleet/lanes` [^master], `fleet.lanes.v1`; the placement is landing [^landing] | 15 s |
-| **Fleet ▸ Tell the leaders** | What should the leaders hear, and what were the last entries? | `POST /api/verse/fleet/runs/inbox` appends to the leaders' inbox file under the runs dir; show the snapshot's recent entries [^landing] | Snapshot: 5 s; submit on request |
+| **Ops ▸ Fleet & router ▸ Lanes on this Mac** | How much credit, queued and live work, and recent merges does each lane have? | `GET /api/fleet/lanes`, `fleet.lanes.v1`; the placement is landing [^landing] | 15 s |
+| **Fleet ▸ Tell the leaders** | What should the leaders hear, and what were the last entries? | `GET /api/verse/fleet/runs` reads recent entries; `POST /api/verse/fleet/runs/inbox` appends via `src/core/fleet/mason-inbox.ts` and `src/web-ui/routes/verse/fleet/InterjectBox.tsx` submits [^master] | Snapshot: 5 s; submit on request |
+| **Rail badge** | Does the fleet need attention? | `GET /api/verse/fleet/runs`; `src/web-ui/routes/verse/shell/fleet-runs-badge.ts` [^master] | 5 s |
+| **Working on this Mac card + job detail sheet** | What is running here, and what happened in a job? | `GET /api/verse/fleet/runs` and `GET /api/fleet/job` [^landing] | 5 s; detail on request |
+| **Ops ▸ Leaders ▸ Leader passes** | What did each leader do in a pass? | `GET /api/verse/ops/leaders` [^landing] | While visible |
+| **Publish → merge funnel** | Where is work between publishing and merging? | `GET /api/verse/fleet/runs` [^landing] | 5 s |
+| **Fleet header ▸ Switches** | Which fleet controls are active? | `GET /api/verse/fleet/control/switches` [^landing] | While visible |
+| **Command ▸ Right now tiles** | What needs attention right now? | `GET /api/verse/fleet/runs` [^landing] | 5 s |
+| **Usage ▸ Personal Codex burn** | How quickly is personal Codex capacity being used? | `GET /api/verse/fleet/runs` [^landing] | 5 s |
+| **⚙ menu ▸ Update** | Is a desktop update available? | `GET /api/verse/ops/self-update` [^landing] | On request |
+| **Window title** | Which fleet state is visible at a glance? | `GET /api/verse/fleet/runs` [^landing] | 5 s |
 | **Resources drawer (⌘.)** | What is each account's live usage? Claude has no session cap now; show its weekly window only. | Shared capacity, health, budget and provider readings; preserve unknown and stale states [^master] | While open, using each source's cadence |
 | **Settings ▸ Desktop ▸ Updates** | Is an update available, and can the desktop apply it and restart? | `GET /api/verse/ops/self-update`; apply and restart follow [^landing] | On request |
 
@@ -19,7 +28,9 @@ The desktop is one window with distinct places for distinct questions. Status la
 
 ## Pulse and incidents
 
-The planned Ops pulse line, notification bell category **Fleet on this Mac**, and phone share the same incident: no start and no merge in 30 minutes. Evaluate that rule only when the necessary evidence is known; a null count is never shown as zero or used as proof of inactivity. These projections are landing [^landing].
+The Ops pulse line uses `src/web-ui/routes/verse/ops/MergePulse.tsx` and `src/web-ui/routes/verse/ops/merge-pulse-model.ts`: no start and no merge in 30 minutes signals a stall [^master].
+
+Evaluate the rule only when the necessary evidence is known; a null count is never shown as zero or used as proof of inactivity. The notification bell category **Fleet on this Mac** and phone projection are landing [^landing]. The agent bus feed and runs graph are also landing [^landing].
 
 ## Phone
 
@@ -35,17 +46,10 @@ The planned `/verse/m/#/runs` shows the same snapshot and the same leaders' inbo
 
 ## Kill switches
 
-The landing runs view reports under `switches` the files under the runs dir that pause dispatch, by their reported roles [^landing]. Do not infer filenames or claim a switch is clear when its source cannot be inspected. The existing lane projection does not identify those files; see the [CLI reference](CLI-REFERENCE.md) for the documented fleet pause and resume commands and the separate global kill switch.
+The switches API is landing: `GET /api/verse/fleet/control/switches` reads and `POST /api/verse/fleet/control/switches` changes six flag roles: leaders off, Opus leader off, pause launches, publish hold, hold dispatcher, and queue disabled [^landing]. Do not claim a switch is clear when its source cannot be inspected.
 
 ## For the next job
 
-- Read `src/web-ui/DESIGN.md` before designing a surface.
-- Reuse `useQuery` for shared reads.
-- Reuse `usePollWhileVisible` for visible polling.
-- Narrow data structurally at the boundary.
-- Degrade on 404 without hiding other sources.
-- Keep poll cadence appropriate to the place.
-- Preserve unknowns and source freshness.
-- Send writes through the mutation gate.
-- Name a new test file, such as `test/docs-desktop-command-center.test.ts`.
-- Never touch the owner-reviewed paths.
+- Name a NEW test file for the job, so parallel work does not collide.
+- Never edit a file another in-flight job owns; check the in-flight job prompts in the runs dir for ownership.
+- Narrow `/api/verse/fleet/runs` locally at the boundary, and treat 404 as “not in this build.”

@@ -14,6 +14,15 @@ export const BUS_INBOX_MAX_MESSAGES = 1024;
 export const BUS_INBOX_MAX_READ = 100;
 export interface BusInboxOptions { root?: string; now?: () => number }
 export interface BusInboxReceipt { cursor: number; receivedAt: number; envelope: BusEnvelope }
+export interface BusInboxInspection {
+  source: 'missing' | 'available' | 'unavailable';
+  retainedCount: number | null;
+  retainedBytes: number | null;
+  maxMessages: number;
+  maxBytes: number;
+  liveCount: number | null;
+  expiredCount: number | null;
+}
 type Failure = { status: 'invalid' | 'unavailable' | 'retryable' | 'full' | 'conflict' };
 export type BusInboxPost = Failure | { status: 'posted' | 'duplicate'; id: string; cursor: number };
 export type BusInboxPage = Failure | { status: 'ok'; messages: BusInboxReceipt[]; nextCursor: number };
@@ -29,20 +38,20 @@ function missing(path: string): boolean {
   try { lstatSync(path); return false; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true; throw new Error('Unavailable'); }
 }
-function load(root: string): BusInboxReceipt[] {
+function loadSnapshot(root: string): { source: 'missing' | 'available'; rows: BusInboxReceipt[]; bytes: number | null } {
   const directory = join(root, 'bus-inbox'), file = join(directory, 'messages.json');
-  if (missing(root)) return [];
+  if (missing(root)) return { source: 'missing', rows: [], bytes: null };
   privatePath(root, 'directory', root);
-  if (missing(directory)) return [];
+  if (missing(directory)) return { source: 'missing', rows: [], bytes: null };
   privatePath(directory, 'directory', root);
-  if (missing(file)) return [];
+  if (missing(file)) return { source: 'missing', rows: [], bytes: null };
   privatePath(file, 'file', root);
   const read = readStableRegularFile(file, { anchorPath: root, maxFileBytes: BUS_INBOX_MAX_BYTES, remainingBytes: BUS_INBOX_MAX_BYTES });
   if (!read.ok) throw new Error('Unavailable');
   const rows: unknown = JSON.parse(read.text);
   if (!Array.isArray(rows) || rows.length > BUS_INBOX_MAX_MESSAGES) throw new Error('Unavailable');
   const ids = new Set<string>();
-  return rows.map((row: BusInboxReceipt, index) => {
+  const validated = rows.map((row: BusInboxReceipt, index) => {
     if (!row || Object.keys(row).sort().join() !== 'cursor,envelope,receivedAt' || row.cursor !== index + 1 ||
       !Number.isSafeInteger(row.receivedAt) || row.receivedAt < 0) throw new Error('Unavailable');
     const checked = validateBusEnvelope(row.envelope);
@@ -50,6 +59,30 @@ function load(root: string): BusInboxReceipt[] {
     ids.add(checked.value.id);
     return { cursor: row.cursor, receivedAt: row.receivedAt, envelope: checked.value };
   });
+  return { source: 'available', rows: validated, bytes: read.bytesRead };
+}
+function load(root: string): BusInboxReceipt[] { return loadSnapshot(root).rows; }
+
+/** Observe retained capacity without creating or changing the store. Counts are
+ * unknown for missing/unavailable stores; an invalid clock only hides TTL counts. */
+export function inspectBusInbox(options: BusInboxOptions = {}): BusInboxInspection {
+  const unknown: BusInboxInspection = {
+    source: 'unavailable', retainedCount: null, retainedBytes: null,
+    maxMessages: BUS_INBOX_MAX_MESSAGES, maxBytes: BUS_INBOX_MAX_BYTES,
+    liveCount: null, expiredCount: null,
+  };
+  try {
+    const snapshot = loadSnapshot(rootPath(options));
+    if (snapshot.source === 'missing') return { ...unknown, source: 'missing' };
+    const result: BusInboxInspection = {
+      ...unknown, source: 'available', retainedCount: snapshot.rows.length, retainedBytes: snapshot.bytes,
+    };
+    let now: number;
+    try { now = (options.now ?? Date.now)(); } catch { return result; }
+    if (!Number.isSafeInteger(now) || now < 0) return result;
+    const liveCount = snapshot.rows.filter(row => Math.max(0, now - row.receivedAt) < row.envelope.ttl).length;
+    return { ...result, liveCount, expiredCount: snapshot.rows.length - liveCount };
+  } catch { return unknown; }
 }
 /** Atomic bounded snapshot: retained IDs and ordinal cursors never reset or evict. */
 export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): BusInboxPost {

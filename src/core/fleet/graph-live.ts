@@ -32,7 +32,7 @@
  *   limited    — warn-level: quota warn or a fresh window at/above warnPercent
  *   unknown    — a reading was expected but none qualifies (the fail-closed
  *                class: unknown usage is not headroom)
- *   stale      — readings existed but every dated one exceeded the bound
+ *   stale      — readings existed but every valid dated one exceeded the bound
  *   held       — a gate or policy refused (verdict, signed-out seat, invalid
  *                quota configuration, daily budget cap)
  *   exhausted  — provably saturated: provider limit flag, >=100% used, quota over
@@ -105,7 +105,7 @@ export interface GraphNodeLive {
   resetsAtMs: number | null;
   /** Metered USD spent today attributed to this node's resources; null unmeasured. */
   spentTodayUsd: number | null;
-  /** Age of the freshest dated contributing reading (ms); null = nothing dated. */
+  /** Age of the freshest valid dated reading (ms); null = age unknown. */
   readingAgeMs: number | null;
   /** Dated readings existed and every one exceeded the staleness bound. */
   stale: boolean;
@@ -129,7 +129,11 @@ export interface GraphLiveIssue {
   nodeIds: string[];
 }
 
-/** A subscription-window reading: the raw SubscriptionUsage, or a dated wrapper. */
+/**
+ * A bare SubscriptionUsage is a caller-supplied current snapshot. Wrappers
+ * and provider seats require a finite timestamp no later than now; missing,
+ * invalid, or future times have unknown age and cannot establish headroom.
+ */
 export type GraphLiveUsageInput =
   | SubscriptionUsage
   | { usage?: SubscriptionUsage | null; observedAtMs?: number }
@@ -189,7 +193,7 @@ interface Contribution {
   label: string;
   usedPercent: number | null;
   resetsAtMs: number | null;
-  /** Reading age in ms; null when the reading carries no timestamp. */
+  /** Reading age in ms; null when its timestamp cannot establish an age. */
   ageMs: number | null;
   fresh: boolean;
   limitReached: boolean;
@@ -230,6 +234,12 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function observationAge(observedAtMs: unknown, nowMs: number): number | null {
+  const at = finiteNumber(observedAtMs);
+  if (at === null || at > nowMs) return null;
+  return finiteNumber(nowMs - at);
+}
+
 /** Percent is a provider reading: clamp garbage into the measured band. */
 function clampPercent(value: unknown): number | null {
   const n = finiteNumber(value);
@@ -254,10 +264,10 @@ function seatContribution(
       limitReached: false, spentTodayUsd: spent };
   }
   const observedMs = seat.observedAt === null ? NaN : Date.parse(seat.observedAt);
-  const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
+  const ageMs = observationAge(observedMs, nowMs);
   if (seat.signedOut || seat.reachable === false) {
     return { label, usedPercent: null, resetsAtMs: null, ageMs,
-      fresh: true, limitReached: false, spentTodayUsd: spent,
+      fresh: ageMs !== null, limitReached: false, spentTodayUsd: spent,
       forceState: 'held' };
   }
   let usedPercent: number | null = null;
@@ -289,13 +299,13 @@ function usageContribution(
 ): Contribution | null {
   if (input === null || input === undefined || typeof input !== 'object') return null;
   let usage: SubscriptionUsage | null | undefined;
-  let ageMs = 0;
+  let ageMs: number | null;
   if ('usedPercent' in input) {
     usage = input;
+    ageMs = 0; // Legacy direct input is explicitly a current snapshot.
   } else {
     usage = input.usage;
-    const at = finiteNumber(input.observedAtMs);
-    ageMs = at === null ? 0 : Math.max(0, nowMs - at);
+    ageMs = observationAge(input.observedAtMs, nowMs);
   }
   if (usage === null || usage === undefined || typeof usage !== 'object') return null;
   const usedPercent = clampPercent(usage.usedPercent);
@@ -311,7 +321,7 @@ function usageContribution(
     usedPercent,
     resetsAtMs,
     ageMs,
-    fresh: ageMs <= maxAgeMs,
+    fresh: ageMs !== null && ageMs <= maxAgeMs,
     limitReached: false,
     spentTodayUsd: null,
   };
@@ -399,6 +409,10 @@ function resolveLive(
   const verdictDenied = signals.verdict !== undefined && !signals.verdict.allowed;
   const hasFreshEvidence = qualified.length > 0 || quotaKnown || signals.verdict !== undefined;
   const heldForced = contributions.some((c) => c.forceState === 'held');
+  // An age-unknown saturation report remains a conservative blocking signal,
+  // but is not a fresh measurement and cannot establish headroom or an age.
+  const saturated = contributions.filter((c) =>
+    (c.fresh || c.ageMs === null) && (c.limitReached || c.usedPercent === 100));
 
   const measured = qualified.filter((c) => c.usedPercent !== null || c.limitReached);
   const usedPercent = measured.length === 0
@@ -416,10 +430,10 @@ function resolveLive(
 
   for (const c of contributions) {
     if (c.forceState === 'held') reasons.push(`${c.label} reports signed out or unreachable`);
-    else if (c.fresh && c.limitReached) reasons.push(`${c.label}: provider reported the limit reached`);
-    else if (c.fresh && c.usedPercent === 100) reasons.push(`${c.label}: window exhausted`);
+    else if ((c.fresh || c.ageMs === null) && c.limitReached) reasons.push(`${c.label}: provider reported the limit reached`);
+    else if ((c.fresh || c.ageMs === null) && c.usedPercent === 100) reasons.push(`${c.label}: window exhausted`);
     else if (!c.fresh && c.ageMs !== null) reasons.push(`${c.label}: reading stale`);
-    else if (c.ageMs === null && !c.fresh) reasons.push(`${c.label}: reading undated`);
+    if (c.ageMs === null && !c.fresh) reasons.push(`${c.label}: reading undated or timestamp invalid`);
   }
   if (signals.quota?.standing === 'over') {
     reasons.push(`dispatch quota exhausted (${signals.quota.used}/${signals.quota.limit} per ${signals.quota.windowLabel ?? 'window'})`);
@@ -437,8 +451,7 @@ function resolveLive(
   if (!signals.tracked) {
     state = 'untracked';
     reasons.push('no live signal applies');
-  } else if (signals.quota?.standing === 'over' ||
-             qualified.some((c) => c.limitReached || c.usedPercent === 100)) {
+  } else if (signals.quota?.standing === 'over' || saturated.length > 0) {
     state = 'exhausted';
   } else if (verdictDenied || signals.quotaInvalid || signals.budgetHeld || heldForced) {
     state = 'held';
@@ -675,10 +688,14 @@ export function joinGraphLive(
     });
   }
 
-  const outNodes: GraphLiveNode[] = nodes.map((node) => ({
-    ...node,
-    live: node.kind === 'mcp' ? liveUntracked() : liveById.get(node.id) ?? liveUntracked(),
-  }));
+  const outNodes: GraphLiveNode[] = nodes.map((node) => {
+    const live = node.kind === 'mcp' ? liveUntracked() : liveById.get(node.id) ?? liveUntracked();
+    return {
+      ...node,
+      ...(node.kind === 'engine-account' ? { seatIds: [...node.seatIds] } : {}),
+      live: { ...live, quota: live.quota === null ? null : { ...live.quota }, reasons: [...live.reasons] },
+    };
+  });
 
   const byState: Record<GraphLiveState, number> = {
     ready: 0, limited: 0, exhausted: 0, held: 0, stale: 0, unknown: 0, untracked: 0,
