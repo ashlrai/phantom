@@ -19,11 +19,12 @@
  */
 import { codexCreditsAvailable } from '../../../../core/resources/codex-credits.js';
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle } from './codex-credit-value.js';
-import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { formatMetric } from '../../../components/charts/format-metric.js';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { IconChevronDown, IconChevronUp } from '../../../components/primitives/icons.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
+import { getQuerySnapshot, subscribeQuery } from '../../../data/cache.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usedPercentText } from '../percent-text.js';
 import { historicalLeftPercent } from './resource-usage-history.js';
@@ -32,6 +33,8 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { personalReader } from '../usage/codex-burn-queries.js';
 import { pacePerHour, readings, recordReading } from '../usage/codex-burn-model.js';
 import { personalRunwayText } from './personal-runway-text.js';
+import { opsRunsQuery } from '../ops/ops-runs-queries.js';
+import { personalLaneFacts } from './personal-lane-facts.js';
 import { formatResetInstant } from '../seat-subscription.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
 import { buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
@@ -267,7 +270,18 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   });
   const personalRead = useQuery(personalQuery, { enabled: resources.bar && sectionVisible && documentVisible, freshMs: 30_000 });
   const refreshPersonal = useRefetch(personalQuery);
-  usePollWhileVisible(refreshPersonal, 30_000, { enabled: resources.bar && !personalRead.data?.missing });
+  // 'verse-fleet-runs' is a shared projection: the notification engine and any
+  // open fleet surface fetch it, so the bar subscribes once the key holds a
+  // snapshot and lets the personal row's own poll keep it current rather than
+  // issuing a second request for the same route.
+  const runsWarm = useSyncExternalStore(
+    useCallback((listener: () => void) => subscribeQuery(opsRunsQuery.key, listener), []),
+    () => getQuerySnapshot(opsRunsQuery.key).data !== undefined,
+    () => false,
+  );
+  const runs = useQuery(opsRunsQuery, { enabled: resources.bar && sectionVisible && documentVisible && runsWarm, freshMs: 30_000 });
+  const refreshRuns = useRefetch(opsRunsQuery);
+  usePollWhileVisible(() => { refreshPersonal(); if (runsWarm) refreshRuns(); }, 30_000, { enabled: resources.bar && !personalRead.data?.missing });
   const proactiveRead = useQuery(proactiveProfilesQuery, { enabled: resources.bar });
   const creditRead = useQuery(creditPoolsQuery, { enabled: resources.bar, freshMs: 15_000 });
   const refreshCredits = useRefetch(creditPoolsQuery);
@@ -378,7 +392,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     : `no session-log reading yet · source ${personalRead.error !== undefined ? 'unavailable' : personalRead.data?.sourceState ?? 'unknown'}`;
   const personalRow: BarRow = { key: 'codex-personal:sessions', engine: 'codex', name: 'Codex personal · session logs',
     leftPercent: personalLeft, level: personalLevel(personalLeft), value: personal?.usedPct == null ? 'No reading' : `${usedPercentText(personal.usedPct)} used${personalRunway ? ` · ${personalRunway.split(' at ')[0]}` : ''}`,
-    summary: `Codex personal · session logs: ${personalStatus}`, detail: [] };
+    summary: `Codex personal · session logs: ${personalStatus}`, detail: runs.error === undefined ? personalLaneFacts(runs.data?.lanes) : [] };
   entries.push({ key: personalRow.key, name: personalRow.name, content: (
     <Tooltip content={<RowTip row={personalRow} />} placement="right">
       <button type="button" className={styles.row} data-level={personalRow.level}

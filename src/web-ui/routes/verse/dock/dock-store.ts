@@ -207,6 +207,18 @@ export function withTabClosed(state: DockState, pane: DockPaneId): DockState {
   };
 }
 
+/**
+ * Close several tabs at once — a tab's "Close other panes" / "Close all
+ * panes" folds withTabClosed over the list, so the active-handover rule is
+ * the same one the per-tab close button uses. Ids not among the tabs are
+ * ignored (a stale menu item cannot corrupt the layout); when nothing
+ * changes the SAME state object comes back, so subscribers do not
+ * re-render for a no-op.
+ */
+export function withTabsClosed(state: DockState, panes: readonly DockPaneId[]): DockState {
+  return panes.reduce((next, pane) => (next.tabs.includes(pane) ? withTabClosed(next, pane) : next), state);
+}
+
 /** Split `pane` BELOW the active one ("Preview over Terminal"); null un-splits. */
 export function withSplit(state: DockState, pane: DockPaneId | null): DockState {
   if (pane === null) return { ...state, splitWith: null };
@@ -292,6 +304,10 @@ export function closeDock(): void {
 
 export function closeDockTab(pane: DockPaneId): void {
   setState(withTabClosed(current().state, pane));
+}
+
+export function closeDockTabs(panes: readonly DockPaneId[]): void {
+  setState(withTabsClosed(current().state, panes));
 }
 
 export function splitDock(pane: DockPaneId | null): void {
