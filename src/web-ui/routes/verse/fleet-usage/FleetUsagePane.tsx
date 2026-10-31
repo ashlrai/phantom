@@ -9,8 +9,10 @@
  * 60 s and the live fleet snapshot every 10 s, only while the pane is on
  * top; both reads degrade to a notice rather than taking the pane down.
  */
-import { useMemo } from 'react';
-import { SkeletonLine } from '../../../components/primitives/index.js';
+import { useMemo, useState } from 'react';
+import { formatDecimalMetric, formatMetric } from '../../../components/charts/format-metric.js';
+import { copyText } from '../../../components/primitives/clipboard.js';
+import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
@@ -18,7 +20,8 @@ import { formatTokens } from '../fleet-lanes/fleet-lanes-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { projectAccountsSnapshot } from '../usage/usage-contract.js';
+import { creditsSpendable } from '../usage/accounts-model.js';
+import { projectAccountsSnapshot, type AccountCredits } from '../usage/usage-contract.js';
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import { fleetUsageRunsQuery } from './fleet-usage-queries.js';
 import {
@@ -91,21 +94,90 @@ function WindowMeter({ account, window: w, nowMs }: { account: string; window: U
   );
 }
 
+/** The balance figure, mirroring the Usage section's CreditsRow derivation. */
+function creditBalanceText(credits: AccountCredits): string {
+  if (credits.unlimited) return 'unlimited';
+  if (credits.balance === null) return 'not reported';
+  return credits.balanceValue !== null
+    ? formatDecimalMetric(credits.balance) ?? formatMetric(credits.balanceValue)
+    : formatDecimalMetric(credits.balance) ?? credits.balance;
+}
+
+/**
+ * What the balance means for usability, in one clause. The
+ * usable-past-the-limit fact is claimed only when the provider's own fields
+ * support it (creditsSpendable) — a held spend control or a balance that is
+ * not spendable gets the honest sentence instead.
+ */
+function creditUsabilityNote(credits: AccountCredits): string {
+  if (creditsSpendable(credits)) return 'credits keep this account usable past the weekly limit';
+  if (credits.spendControlReached === true) return 'the provider reports credit spending held';
+  return 'no spendable credit balance is reported';
+}
+
+/**
+ * The account facts the meters cannot say: how old the reading is, whether
+ * credits keep the account usable past the weekly limit, and the server's
+ * sanitized reconnect command as a copy action. Null when the wire carries
+ * none of them, so a fact-less row is exactly the one this pane has always
+ * rendered.
+ */
+function AccountFacts({ row, nowMs }: { row: UsageRow; nowMs: number }) {
+  const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const observedAt = row.observedAt ?? null;
+  const credits = row.credits ?? null;
+  const reconnectCommand = row.reconnectCommand ?? null;
+  if (observedAt === null && credits === null && reconnectCommand === null) return null;
+  return (
+    <>
+      {observedAt !== null && (
+        <li className={styles.asOf}>
+          <time dateTime={observedAt}>as of {formatRelative(observedAt, nowMs)}</time>
+        </li>
+      )}
+      {credits !== null && (
+        <li className={styles.asOf}>Credits {creditBalanceText(credits)} — {creditUsabilityNote(credits)}</li>
+      )}
+      {reconnectCommand !== null && (
+        <li className={styles.asOf}>
+          <Button
+            variant="subtle"
+            size="sm"
+            title={reconnectCommand}
+            onClick={() => void copyText(reconnectCommand).then((ok) => setCopied(ok ? 'copied' : 'failed'))}
+          >
+            Copy reconnect command
+          </Button>{' '}
+          <span role="status">{copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : ''}</span>
+        </li>
+      )}
+    </>
+  );
+}
+
 function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
+  const planType = row.planType ?? null;
+  const hasFacts = row.observedAt != null || row.credits != null || row.reconnectCommand != null;
   return (
     <li className={styles.row}>
-      <span className={styles.account} title={row.label}>{row.label}</span>
+      <span className={styles.account} title={row.label}>
+        {row.label}
+        {planType !== null ? ` · ${planType}` : ''}
+      </span>
       {row.state !== 'observed' ? (
         <ul className={styles.windows}>
           <li className={styles.reason}>{row.reason ?? STATE_FALLBACK[row.state]}</li>
           {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
+          <AccountFacts row={row} nowMs={nowMs} />
         </ul>
-      ) : row.windows.length === 0 && row.note === null ? (
+      ) : row.windows.length === 0 && row.note === null && !hasFacts ? (
         <span className={styles.reason}>—</span>
       ) : (
         <ul className={styles.windows}>
           {row.windows.map((w, i) => <WindowMeter key={`${w.label}:${i}`} account={row.label} window={w} nowMs={nowMs} />)}
+          {row.windows.length === 0 && row.note === null ? <li className={styles.reason}>—</li> : null}
           {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
+          <AccountFacts row={row} nowMs={nowMs} />
         </ul>
       )}
     </li>

@@ -4,6 +4,7 @@
 .controls { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: var(--space-2); }
 .filters { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .filters button[aria-pressed='true'] { border-color: var(--accent-500); }
+.filterText { flex: 1 1 12rem; max-width: 24rem; }
 .list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
 .row { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; font-size: var(--text-xs-size); }
 .time { color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
