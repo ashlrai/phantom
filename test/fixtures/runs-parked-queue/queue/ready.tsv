@@ -1,0 +1,7 @@
+READY	JOB-READY-1	codex-local	work	repo	prompts/example.md
+READY	JOB-READY-2	codex-personal	work	repo	/Users/example/prompts/other.md
+PARKED-MERGERATE.codex-personal	JOB-MERGE-2	codex-personal	work	repo	prompts/example.md
+PARKED-MERGERATE.codex-personal	JOB-MERGE-1	codex-personal	work	repo	prompts/example.md
+PARKED-INVALID.codex-local	JOB-INVALID	codex-local	work	repo	prompts/example.md
+PARKED-SPLIT.codex-local	JOB-SPLIT	codex-local	work	repo	prompts/example.md
+READY	bad/id	codex-local	work	repo	prompts/example.md
