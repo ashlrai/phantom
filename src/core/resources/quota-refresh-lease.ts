@@ -303,11 +303,6 @@ function observedOwnerStart(pid: number, lockKey: string): number | undefined {
   return observed.epochSecond;
 }
 
-/** Forget remembered owner start times (tests). */
-export function _clearOwnerStartCacheForTest(): void {
-  ownerStartCache.clear();
-}
-
 /** Inspect without acquiring/reclaiming a lease or contacting a provider. */
 export function inspectResourceQuotaRefreshOwner(root: string): ResourceQuotaRefreshOwner {
   try {

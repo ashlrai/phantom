@@ -26,6 +26,7 @@ import { useCapacityData, useCapacityClock } from '../usage/CapacityStrip.js';
 import type { VerseSectionId } from '../verse-ui-store.js';
 import styles from './RailStatus.module.css';
 import { usedPercentText } from '../percent-text.js';
+import { describeFleetRuns, fleetRunsTone, useFleetRunsBadge, type FleetRunsBadge } from './fleet-runs-badge.js';
 
 export interface RailBadge {
   /** Appended to the rail button's accessible name (", 3 need you"). */
@@ -35,7 +36,14 @@ export interface RailBadge {
   count?: number;
   tone?: 'running' | 'info' | 'warning' | 'danger' | 'success' | 'neutral';
   autonomy?: VerseAutonomyBadge;
+  fleet?: { runs?: FleetRunsBadge | null };
+  title?: string;
 }
+
+const fleetBadge = (badge: RailBadge, runs?: FleetRunsBadge | null): RailBadge => {
+  Object.defineProperty(badge, 'fleet', { value: { runs }, enumerable: false });
+  return badge;
+};
 
 export function autonomyTone(badge: VerseAutonomyBadge): NonNullable<RailBadge['tone']> {
   if (badge.stopped) return 'danger';
@@ -46,7 +54,19 @@ export function autonomyTone(badge: VerseAutonomyBadge): NonNullable<RailBadge['
 }
 
 /** The badge a rail item shows, or null (nothing to say, or not known). */
-export function railBadgeFor(section: VerseSectionId, data: VerseActivityResponse | null): RailBadge | null {
+export function railBadgeFor(section: VerseSectionId, data: VerseActivityResponse | null, runs?: FleetRunsBadge | null): RailBadge | null {
+  if (section === 'fleet') {
+    const autonomy = data?.autonomy ?? undefined;
+    const spoken = autonomy ? `, ${autonomy.label}` : '';
+    if (runs && runs.workers > 0) return fleetBadge({
+      kind: 'count', count: runs.workers, autonomy,
+      spoken: `${spoken}, ${runs.lanes?.length || runs.personalPct != null ? describeFleetRuns(runs) : `${runs.workers} ${runs.workers === 1 ? 'worker' : 'workers'} running`}`,
+      tone: fleetRunsTone(runs),
+    }, runs);
+    return fleetBadge(autonomy
+      ? { kind: 'autonomy', spoken, autonomy, tone: runs && fleetRunsTone(runs) === 'warning' ? 'warning' : autonomyTone(autonomy) }
+      : { kind: 'autonomy', spoken: '' }, runs);
+  }
   if (!data) return null;
   switch (section) {
     case 'command': {
@@ -59,8 +79,6 @@ export function railBadgeFor(section: VerseSectionId, data: VerseActivityRespons
       const unread = data.counts.unread;
       return unread > 0 ? { kind: 'dot', spoken: `, ${unread} unread`, tone: 'info' } : null;
     }
-    case 'fleet':
-      return data.autonomy ? { kind: 'autonomy', spoken: `, ${data.autonomy.label}`, autonomy: data.autonomy, tone: autonomyTone(data.autonomy) } : null;
     case 'mind':
       return data.mind?.unseen ? { kind: 'dot', spoken: ', new memo', tone: 'info' } : null;
     default:
@@ -69,19 +87,29 @@ export function railBadgeFor(section: VerseSectionId, data: VerseActivityRespons
 }
 
 export function RailBadgeMark({ badge }: { badge: RailBadge }) {
+  return badge.fleet ? <FleetRailBadgeMark badge={badge} /> : <BadgeShape badge={badge} />;
+}
+
+function FleetRailBadgeMark({ badge }: { badge: RailBadge }) {
+  const liveRuns = useFleetRunsBadge();
+  const runs = liveRuns ?? badge.fleet?.runs;
+  const current = runs ? {
+    ...badge, kind: runs.workers > 0 || !badge.autonomy ? 'count' as const : 'autonomy' as const,
+    count: runs.workers, tone: fleetRunsTone(runs), title: describeFleetRuns(runs),
+  } : badge;
+  return <BadgeShape badge={current} />;
+}
+
+function BadgeShape({ badge }: { badge: RailBadge }) {
+  const a = badge.autonomy;
+  const shape = a ? (a.stopped ? 'stopped' : a.paused ? 'paused' : a.mode) : null;
+  const autonomyTitle = badge.kind === 'autonomy' ? badge.title : undefined;
+  const autonomy = shape ? <span className={styles.autonomy} data-shape={shape} data-tone={badge.tone} aria-hidden={autonomyTitle ? undefined : true} role={autonomyTitle ? 'img' : undefined} aria-label={autonomyTitle} data-badge="autonomy" title={autonomyTitle} /> : null;
   if (badge.kind === 'count') {
     const n = badge.count ?? 0;
-    return (
-      <span className={styles.count} data-tone={badge.tone} aria-hidden="true" data-badge="count">
-        {n > 99 ? '99+' : n}
-      </span>
-    );
+    return <>{autonomy}<span className={styles.count} data-autonomy={a ? 'true' : undefined} data-tone={badge.tone} aria-hidden={badge.title ? undefined : true} role={badge.title ? 'img' : undefined} aria-label={badge.title} data-badge="count" title={badge.title}>{n > 99 ? '99+' : n}</span></>;
   }
-  if (badge.kind === 'autonomy' && badge.autonomy) {
-    const a = badge.autonomy;
-    const shape = a.stopped ? 'stopped' : a.paused ? 'paused' : a.mode;
-    return <span className={styles.autonomy} data-shape={shape} data-tone={badge.tone} aria-hidden="true" data-badge="autonomy" />;
-  }
+  if (badge.kind === 'autonomy') return autonomy;
   return <span className={badge.kind === 'pulse' ? styles.pulse : styles.dot} data-tone={badge.tone} aria-hidden="true" data-badge={badge.kind} />;
 }
 
@@ -104,6 +132,7 @@ export function capacityTone(usedPercent: number): 'ok' | 'tight' | 'critical' {
 export interface RailCapacity {
   seatId: string;
   label: string;
+  runs?: FleetRunsBadge | null;
   /** "5-hour window", "weekly fable window"; null when the seat is blocked with no window read. */
   windowLabel: string | null;
   /** 0–100 for the ring. A reached limit or a blocked seat fills it. */
@@ -137,9 +166,10 @@ export function railCapacityFromRow(row: CapacityRow | null): RailCapacity | nul
 /** "Claude Max: weekly fable window 92% used · resets Sep 25" — the tooltip and the accessible name. */
 export function describeRailCapacity(c: RailCapacity): string {
   const reset = c.resetText ? ` · ${c.resetText}` : '';
-  if (c.limitReached) return `${c.label}: ${c.windowLabel ?? 'window'} limit reached${reset}`;
-  if (c.windowLabel === null) return `${c.label}: ${c.word}`;
-  return `${c.label}: ${c.windowLabel} ${usedPercentText(c.usedPercent)} used${reset}`;
+  const capacity = c.limitReached ? `${c.label}: ${c.windowLabel ?? 'window'} limit reached${reset}`
+    : c.windowLabel === null ? `${c.label}: ${c.word}`
+      : `${c.label}: ${c.windowLabel} ${usedPercentText(c.usedPercent)} used${reset}`;
+  return c.runs ? `${capacity} · ${describeFleetRuns(c.runs)}` : capacity;
 }
 
 /**
@@ -151,11 +181,15 @@ export function describeRailCapacity(c: RailCapacity): string {
  * left out — they have no quota to run out of.
  */
 export function useRailCapacity(): RailCapacity | null {
+  const runs = useFleetRunsBadge();
   const data = useCapacityData({ withBudget: false });
   const now = useCapacityClock(undefined, data.seats.map(seat => seat.capacity));
   return useMemo(
-    () => railCapacityFromRow(scarcestSeat(buildCapacityRows(data.seats, { health: data.health, local: 'hide', now }))),
-    [data.seats, data.health, now],
+    () => {
+      const capacity = railCapacityFromRow(scarcestSeat(buildCapacityRows(data.seats, { health: data.health, local: 'hide', now })));
+      return capacity ? { ...capacity, runs } : null;
+    },
+    [data.seats, data.health, now, runs],
   );
 }
 

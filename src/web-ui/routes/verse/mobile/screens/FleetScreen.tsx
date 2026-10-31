@@ -17,7 +17,7 @@
  * `ashlr fleet resume`), sign or widen a grant (Touch ID on the Mac), or
  * raise the budget above the grant's ceiling. Each says so where it applies.
  */
-import { useCallback, useState } from 'react';
+import { lazy, Suspense, useCallback, useState } from 'react';
 import type { BudgetMode } from '../../../../../core/routing/types.js';
 import type { AutonomySwitch } from '../../../../../core/authority/types.js';
 import type { FleetLiveRun } from '../../../../../core/fleet/fleet-types.js';
@@ -31,15 +31,22 @@ import { BUDGET_MODE_OPTIONS, modeAboveCeiling } from '../../budget/budget-model
 import { decisionsQuery } from '../../command/ladder-queries.js';
 import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-model.js';
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
+import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
+import { fleetLedgerQuery } from '../../usage/fleet-ledger-queries.js';
+import { decisionPrUrl } from '../decision-link.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
+import { FleetUsageCard } from '../FleetUsageCard.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
+import { MobileSwitches } from '../MobileSwitches.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, Banner, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
+import { Badge, Banner, ErrorState, Row, Section, ui, type RowProps, type Tone } from '../ui-parts.js';
 import styles from './FleetScreen.module.css';
+
+const QueueSection = lazy(() => import('../QueueSection.js').then(({ QueueSection }) => ({ default: QueueSection })));
 
 export const FLEET_POLL_MS = 15_000;
 const STOP = STOP_ACTION.kind === 'daemon' ? STOP_ACTION : null;
@@ -116,6 +123,8 @@ export function refreshFleetScreen(): Promise<unknown> {
   return Promise.all([
     refetchQuery(verseControlQuery.key, () => verseControlQuery.fetch(), true),
     refetchQuery(fleetLiveQuery.key, () => fleetLiveQuery.fetch(), true),
+    refetchQuery(fleetLedgerQuery.key, () => fleetLedgerQuery.fetch(), true),
+    refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
     refetchQuery(authorityQuery.key, () => authorityQuery.fetch(), true),
     refetchQuery(budgetQuery.key, () => budgetQuery.fetch(), true),
     refetchQuery(decisionsQuery.key, () => decisionsQuery.fetch(), true),
@@ -129,6 +138,14 @@ function Stat({ label, value }: { label: string; value: string }) {
       <span className={styles.statLabel}>{label}</span>
     </div>
   );
+}
+
+function DecisionRow({ repo, prNumber, ...props }: RowProps & { repo: string; prNumber: number | null }) {
+  const url = decisionPrUrl(repo, prNumber);
+  const row = <Row {...props} />;
+  return url
+    ? <a className={styles.decisionRow} href={url} target="_blank" rel="noopener noreferrer">{row}</a>
+    : <div className={styles.decisionRow}>{row}</div>;
 }
 
 export function FleetScreen() {
@@ -250,6 +267,7 @@ export function FleetScreen() {
                 title={LANE_LABEL[lane.lane] ?? lane.lane}
                 subtitle={lane.capReason ?? undefined}
                 trailing={lane.slots === 0 ? 'off' : `${lane.busy} of ${lane.slots} busy`}
+                onClick={() => navigate({ screen: 'runs' })}
               />
             ))}
           </div>
@@ -341,8 +359,10 @@ export function FleetScreen() {
     ) : (
       <div className={ui.group}>
         {decisionList.slice(0, DECISION_ROWS).map((d) => (
-          <Row
+          <DecisionRow
             key={`${d.proposalId}-${d.at}`}
+            repo={d.repo}
+            prNumber={d.prNumber}
             leading={<Badge tone={toneOf(OUTCOME_TONE[d.outcome])}>{DECISION_WORD[d.outcome]}</Badge>}
             title={d.prNumber !== null ? `${repoShort(d.repo)} #${d.prNumber}` : repoShort(d.repo)}
             subtitle={d.why}
@@ -362,8 +382,10 @@ export function FleetScreen() {
               const o = RUN_OUTCOME[r.outcome!]!;
               const where = r.prNumber !== null ? `${repoShort(r.repo)} #${r.prNumber}` : repoShort(r.repo);
               return (
-                <Row
+                <DecisionRow
                   key={r.id}
+                  repo={r.repo}
+                  prNumber={r.prNumber}
                   leading={<Badge tone={o.tone}>{o.word}</Badge>}
                   title={r.title}
                   subtitle={r.hold?.reason ? `${where} · ${r.hold.reason}` : where}
@@ -380,7 +402,10 @@ export function FleetScreen() {
   return (
     <Screen title="Fleet" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshFleetScreen} header={header} label="Fleet">
       {fleetCard}
+      <MobileSwitches />
       <Section title="Right now" flat>{liveBody}</Section>
+      <FleetUsageCard />
+      <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>
       <Section title="Recent decisions" flat>{decisionsBody}</Section>
