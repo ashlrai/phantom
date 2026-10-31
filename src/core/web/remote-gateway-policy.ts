@@ -2,6 +2,14 @@
  * Policy for the opt-in phone gateway. It is separate from the Hub server:
  * a remote browser must never reach the local token prompt, desktop assets,
  * or the general /api/* router.
+ *
+ * Reviewed fleet surface for the mobile remote: GET fleet/runs,
+ * fleet/control/switches and fleet/control/lanes; GET fleet/runs/inbox with a
+ * bounded limit and optional source filter; GET fleet/live/bus and
+ * fleet/live/queue bare or with a bounded limit; POST fleet/runs/inbox
+ * {text, source?} without step-up (a message, not a control); POST
+ * fleet/control/switches {id, on} and fleet/control/lanes {lane, target}
+ * behind step-up. Every path and body shape is exact — no wildcards.
  */
 import { timingSafeEqual } from 'node:crypto';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
@@ -28,8 +36,14 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/cloud',
   '/api/verse/leader',
   '/api/verse/leader/directives',
+  '/api/verse/leader/resources',
   '/api/verse/cloud/previews',
   '/api/verse/devin/previews',
+  '/api/verse/fleet/runs',
+  '/api/verse/fleet/live/bus',
+  '/api/verse/fleet/live/queue',
+  '/api/verse/fleet/control/switches',
+  '/api/verse/fleet/control/lanes',
 ]);
 
 export type RemoteRouteDecision =
@@ -52,6 +66,13 @@ const HEAD_SHA = /^[0-9a-f]{40}$/;
 const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 // Match the opaque cursor emitted by the activity route without accepting arbitrary query strings.
 const ACTIVITY_CURSOR = /^v1\.[0-9a-f]{8}\.[et]\.\d{1,15}$/;
+// Fleet inbox read/post share this source label grammar with the Hub route.
+const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
+// Body shape only: the Hub re-checks switch ids against RUNS_SWITCHES and lane
+// ids against LANE_ID_RE plus per-lane bounds, so the gateway bounds format.
+const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
+const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
+const FLEET_READ_LIMIT = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 200;
 
 function exactParams(params: URLSearchParams, shape: Record<string, (value: string) => boolean>): boolean {
   const keys = [...params.keys()];
@@ -79,9 +100,11 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
       && ACTION_ID.test(path.slice('/api/verse/leader/directives/'.length))) return { kind: 'write', path, stepUp: true };
     if (method !== 'POST') return { kind: 'deny' };
     if (path === '/api/verse/activity/seen' || path === '/api/verse/sessions'
-      || path === '/api/verse/leader/thread' || path === '/api/verse/leader/directives') return { kind: 'write', path, stepUp: false };
+      || path === '/api/verse/leader/thread' || path === '/api/verse/leader/directives'
+      || path === '/api/verse/fleet/runs/inbox') return { kind: 'write', path, stepUp: false };
     if (path === '/api/verse/daemon' || path === '/api/verse/budget' || path === '/api/verse/authority'
       || path === '/api/verse/fleet/live'
+      || path === '/api/verse/fleet/control/switches' || path === '/api/verse/fleet/control/lanes'
       || path === '/api/verse/leader') return { kind: 'write', path, stepUp: true };
     const inbox = /^\/api\/inbox\/([^/]+)\/(approve|reject)$/.exec(path);
     if (inbox && PROPOSAL_ID.test(inbox[1]!)) return { kind: 'write', path, stepUp: true };
@@ -125,6 +148,12 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     exactParams(params, { limit: (v) => v === '50' })
     || exactParams(params, { limit: (v) => v === '50', before: (v) => THREAD_ID.test(v) })
   )) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/runs/inbox' && (
+    exactParams(params, { limit: FLEET_READ_LIMIT })
+    || exactParams(params, { limit: FLEET_READ_LIMIT, source: (v) => FLEET_INBOX_SOURCE.test(v) })
+  )) return { kind: 'read', path };
+  if ((path === '/api/verse/fleet/live/bus' || path === '/api/verse/fleet/live/queue')
+    && exactParams(params, { limit: FLEET_READ_LIMIT })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints'
     && exactParams(params, { chatId: (v) => CHECKPOINT_ID.test(v) })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints/diff') {
@@ -182,6 +211,15 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
   if (path === '/api/verse/leader') return (keys(body, ['action', 'actionId'])
     && body.action === 'veto' && boundedText(body.actionId, 128))
     || (keys(body, ['action', 'itemId']) && body.action === 'dismiss' && boundedText(body.itemId, 256));
+  if (path === '/api/verse/fleet/runs/inbox') return keys(body, ['text', 'source'])
+    && boundedText(body.text, 4_000)
+    && (body.source === undefined || (typeof body.source === 'string' && FLEET_INBOX_SOURCE.test(body.source)));
+  if (path === '/api/verse/fleet/control/switches') return keys(body, ['id', 'on'])
+    && typeof body.id === 'string' && FLEET_SWITCH_ID.test(body.id)
+    && typeof body.on === 'boolean';
+  if (path === '/api/verse/fleet/control/lanes') return keys(body, ['lane', 'target'])
+    && typeof body.lane === 'string' && FLEET_LANE_ID.test(body.lane)
+    && Number.isSafeInteger(body.target) && (body.target as number) >= 0 && (body.target as number) <= 64;
   if (path === '/api/verse/leader/thread') return keys(body, ['text', 'replyTo'])
     && boundedText(body.text, 16_384)
     && (body.replyTo === undefined || (typeof body.replyTo === 'string' && THREAD_ID.test(body.replyTo)));

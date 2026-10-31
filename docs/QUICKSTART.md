@@ -29,6 +29,35 @@ Local routes remain `/verse/`, and the published macOS app is `Phantom.app`. See
 Use the qualified workbench release links below to install. Website availability
 does not establish installed fleet or hosted-service readiness.
 
+## From public Connect to your first local session
+
+If you arrived through the public **Connect** experience, continue with the
+local workbench installation below. A public page or a selected provider does
+not verify local installation, account sign-in, model access or available quota.
+If an advertised resource is unavailable, use another eligible resource or
+finish its setup before sending work; no working hosted session is implied.
+
+1. Install a qualified release, check `phm --version`, then run `phm verse`
+   to open the local workbench. `phm doctor` checks this machine; it does not
+   establish provider readiness or authorize unattended work.
+2. In **Resources**, inspect the account you intend to use and its chat readiness.
+   Sign in through that provider's own CLI, configure an API resource, or start
+   a tool-capable local model. Missing or stale usage remains unknown, and a
+   saved account or model listing does not prove entitlement or usable capacity.
+   Keep subscription allowances, API credits and local hardware separate.
+3. Choose **Work with me** → **New chat** and select a scratch project or a
+   public repository you can edit. Confirm the selected folder before sending;
+   saving a project does not enroll it for unattended fleet work.
+4. Start with a small task, for example: “Fix one typo in README.md, show the
+   diff and report the checks you ran. Leave the change uncommitted.” Review the
+   diff and actual verification results before accepting the result. If a turn
+   is held, inspect the resource's reason; connection alone is not readiness.
+
+Use **Automatic** for an eligible resource, or **Advanced** to choose an account
+or model explicitly. No eligible resource means setup is still incomplete.
+Fleet activation is a separate, optional step after this first interactive task.
+See the [first-session guide](VERSE.md#first-local-session) for the same checklist.
+
 <a id="open-verse"></a>
 
 ## Open Phantom

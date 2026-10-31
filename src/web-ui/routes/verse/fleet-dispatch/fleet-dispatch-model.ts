@@ -1,5 +1,7 @@
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
 import { incidents } from '../command/incidents-model.js';
+import { parseHeldReason } from '../fleet/held-reason.js';
+import { durationText } from '../ops/ops-lane-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
 
 type Lane = FleetRunsV1['lanes'][number];
@@ -11,6 +13,29 @@ export interface LaneVerdict {
   tone: 'ok' | 'warn' | 'danger' | 'neutral';
 }
 
+const easternTime = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+function heldDetails(reason: string | null, nowMs: number): { headline: string; expired: boolean } {
+  const parsed = parseHeldReason(reason);
+  const headline = `held — ${parsed?.label || 'no reason given'}`;
+  const at = parsed?.at ? Date.parse(parsed.at) : NaN;
+  if (!Number.isFinite(at) || !Number.isFinite(nowMs)) return { headline, expired: false };
+  if (parsed?.until) {
+    if (at <= nowMs) return { headline: `${headline} · reset time passed; lane should resume`, expired: true };
+    const parts = easternTime.formatToParts(at);
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value ?? '';
+    const time = `${part('month')} ${part('day')} ${part('hour')}:${part('minute')} ET`;
+    return { headline: `${headline} · back in ${durationText(at - nowMs)} (${time})`, expired: false };
+  }
+  return { headline: `${headline} · ${durationText(nowMs - at)} ago`, expired: false };
+}
+
+export function heldHeadline(reason: string | null, nowMs: number): string {
+  return heldDetails(reason, nowMs).headline;
+}
+
 export function laneVerdict(lane: Lane, ctx: Context): LaneVerdict {
   const { running, target, queued } = lane;
   const free = Math.max(0, target - running);
@@ -18,7 +43,9 @@ export function laneVerdict(lane: Lane, ctx: Context): LaneVerdict {
     ({ lane: lane.lane, kind, headline, action, free, tone });
   if (lane.held) {
     const reason = lane.heldReason ?? 'no reason given';
-    return result('held', `held — ${reason}`, 'warn', /usage|limit|quota/i.test(reason)
+    const { headline, expired } = heldDetails(lane.heldReason, ctx.nowMs);
+    if (expired) return result('held', headline, 'danger', 'Check the dispatcher: the hold outlived its reset time');
+    return result('held', headline, 'warn', /usage|limit|quota/i.test(reason)
       ? 'Waits for the provider reset; put jobs on other lanes' : /token|auth|login/i.test(reason) ? 'Re-authenticate this lane' : null);
   }
   if (lane.lane === 'claude' && /down/i.test(ctx.claudeLane ?? '')) return result('down', `lane down — ${ctx.claudeLane}`, 'danger', 'Run ~/.ashlr-runs/bin/fix-claude-lane.sh');

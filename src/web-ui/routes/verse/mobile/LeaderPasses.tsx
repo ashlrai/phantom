@@ -18,7 +18,7 @@ export function LeaderPasses() {
   return (
     <Section title="Leader passes on the Mac" footer={note}>
       <Row title={<Badge tone={view.tone}>{view.headline}</Badge>} />
-      {view.passes.map((pass, index) => <Row key={`${pass.label}-${index}`} title={pass.label} trailing={pass.age} />)}
+      {view.passes.map((pass, index) => <Row key={`${pass.label}-${index}`} title={pass.label} trailing={<>{pass.age} · <span data-tone={pass.eta.kind === 'unknown' ? 'neutral' : pass.tone}><Badge tone={pass.eta.kind === 'unknown' ? 'neutral' : pass.tone === 'ok' ? 'success' : pass.tone}>{pass.dueText}</Badge></span></>} />)}
       <Row title="Orchestrator" trailing={view.agents === null ? '—' : `${view.agents} ${view.agents === 1 ? 'agent' : 'agents'}`} />
       <Row title="Last dispatcher tick" trailing={view.lastTick.text} />
       <Row title="Claude lane" trailing={view.claudeLane.down ? <Badge tone="danger">Claude lane down</Badge> : /^(healthy|up|ready|active|paused|held)$/i.test(view.claudeLane.text?.trim() ?? '') ? view.claudeLane.text?.trim() : '—'} />

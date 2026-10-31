@@ -5,13 +5,15 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatDuration, formatRelative } from '../autonomy/format.js';
 import { safeHref } from '../cloud/cloud-model.js';
+import { JobRefs } from '../fleet/JobRefs.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { diffNew, filterByKinds, readFeed, sortNewestFirst, type FeedItem } from './fleet-events-model.js';
 import { fleetEventsQuery } from './fleet-events-queries.js';
 import styles from './fleet-events.module.css';
 
-export function FleetEventsPane({ visible }: PaneProps) {
+export function FleetEventsPane({ visible, host }: PaneProps) {
   const read = useQuery(fleetEventsQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(fleetEventsQuery);
   usePollWhileVisible(refetch, 5_000, { enabled: visible });
@@ -56,7 +58,7 @@ export function FleetEventsPane({ visible }: PaneProps) {
         return <li key={item.id} className={styles.row}>
           <time className={styles.time} dateTime={valid ? item.at : undefined} title={valid ? new Date(item.at).toLocaleString() : undefined}>{formatRelative(item.at)}</time>
           <Tag size="sm">{item.kind}</Tag>
-          <span className={styles.text}>{item.text}{href && <> · <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`Pull request for ${item.text}`}>PR <IconExternalLink size={12} aria-hidden="true" /></a></>}</span>
+          <span className={styles.text}><JobRefs text={item.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />{href && <> · <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`Pull request for ${item.text}`}>PR <IconExternalLink size={12} aria-hidden="true" /></a></>}</span>
         </li>;
       })}</ol>}
   </section>;

@@ -1,32 +1,53 @@
 import { SkeletonLine, StatusBadge } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
+import { releasePrQuery } from '../fleet/release-pr-query.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { orderRepos, releaseLabel, runTone, safeRepoHref } from './fleet-releases-model.js';
 import { opsReleasesQuery } from './fleet-releases-queries.js';
+import { releasePrRows } from './release-pr-view-model.js';
 import styles from './fleet-releases.module.css';
 
 export function FleetReleasesPane({ visible }: PaneProps) {
   const read = useQuery(opsReleasesQuery, { enabled: visible, freshMs: 0 });
+  const prRead = useQuery(releasePrQuery, { enabled: visible });
   const refetch = useRefetch(opsReleasesQuery);
+  const refetchPr = useRefetch(releasePrQuery);
   usePollWhileVisible(refetch, 60_000, { enabled: visible });
+  usePollWhileVisible(refetchPr, 60_000, { enabled: visible });
 
   if (read.data === null) return <p className={styles.message}>Releases not in this build</p>;
   if (read.data === undefined) return <div className={styles.root} role="status">{read.status === 'error' ? 'Releases are unavailable.' : <><span>Reading releases…</span><SkeletonLine /><SkeletonLine /></>}</div>;
   const data = read.data;
+  const prRows = releasePrRows(prRead.status === 'error' ? undefined : prRead.data, Date.now());
   return <section className={styles.root} aria-label="Release train">
     <p className={styles.header}>{data.repos.length} repos · read {formatRelative(data.generatedAt)}</p>
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Release data may be incomplete.</p>}
+    {prRead.status === 'error' && <p className={styles.notice} role="status">Release PR state is unavailable.</p>}
+    {prRead.status !== 'error' && prRead.data?.kind === 'available' && prRead.data.data.sourceState === 'degraded' && <p className={styles.notice} role="status">GitHub unreachable, showing the last answer.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Releases could not refresh. Showing the last reading.</p>}
     <ul className={styles.list} aria-label="Releases">{orderRepos(data.repos).map((repo, index) => {
       const href = safeRepoHref(repo.repo);
       const release = repo.gh?.latestRelease ? releaseLabel(repo.gh.latestRelease) : null;
       const run = repo.gh?.latestRun;
+      const pr = prRows.get(repo.repo.toLowerCase());
+      const prNotes = pr && 'notes' in pr ? pr.notes : prRead.data?.kind === 'available'
+        ? prRead.data.data.repos.find(row => row.repo.toLowerCase() === repo.repo.toLowerCase())?.notes ?? [] : [];
       const tone = run ? runTone(run) : 'neutral';
       return <li key={`${repo.repo}:${index}`} className={styles.row}>
         <div>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{repo.repo}</a> : <span>{repo.repo}</span>}</div>
         <div>Version: {repo.version ?? '—'} · Tag: {repo.latestTag ?? '—'}</div>
+        {pr && <div className={styles.prBlock}>
+          <div className={styles.headline} data-tone={pr.tone}>{'href' in pr && pr.href ? <a href={pr.href} target="_blank" rel="noopener noreferrer">{pr.headline}</a> : pr.headline}</div>
+          {'checks' in pr && pr.checks.length > 0 && <div className={styles.checks} aria-label="Release PR checks">{pr.checks.map((check, checkIndex) => {
+            const label = `${check.name} · ${check.state}`;
+            const className = `${styles.chip} ${styles[check.state]}`;
+            return check.href ? <a key={checkIndex} className={className} href={check.href} target="_blank" rel="noopener noreferrer">{label}</a> : <span key={checkIndex} className={className}>{label}</span>;
+          })}</div>}
+          {prNotes.length > 0 && <ul className={styles.notes}>{prNotes.map((note, noteIndex) => <li key={noteIndex}>{note}</li>)}</ul>}
+        </div>}
+        <div>{repo.commitsSinceTag == null ? 'Commits since tag: unknown' : `${repo.commitsSinceTag} commits since ${repo.latestTag ?? 'unknown tag'}`}</div>
         {repo.gh === null ? <div className={styles.muted}>GitHub status unknown (gh offline)</div> : <>
           <div>Release: {release ? <>{release.label}{release.badge && <> <StatusBadge status={release.badge} tone="warning" /></>} · {formatRelative(repo.gh.latestRelease?.publishedAt)}</> : '—'}</div>
           <div>Run: {run ? <>{run.workflow} · <StatusBadge status={run.status} tone={tone === 'ok' ? 'success' : tone === 'warn' ? 'warning' : tone}>{run.status}{run.conclusion ? `/${run.conclusion}` : ''}</StatusBadge> · {formatRelative(run.at)}</> : '—'}</div>

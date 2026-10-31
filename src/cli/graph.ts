@@ -1,9 +1,21 @@
 /** Read-only GRAPH-1 CLI. Exit codes: 0 success/help, 1 unavailable/error, 2 usage. */
+import { graphNeighborhood, type GraphDirection } from '../core/graph/neighborhood.js';
+
 const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
+       phm graph node <node-id> [--json]
+       phm graph neighbors <node-id> [--direction in|out|both] [--depth 1..4] [--json]
 
   nodes       List graph node records.
+  node        Retrieve one exact graph node record.
   edges       List graph edge records.
   status      Report graph availability and node/edge counts.
+  neighbors   Find a node and its bounded graph neighborhood (default: both, depth 1).
+              Returns at most 500 nodes and indicates whether results were truncated.
+              Use -- before a node ID that looks like an option (also applies to node).
+  --kind      Filter nodes by agent|engine-account|model|mcp, or edges by
+              can-message|can-delegate|reviews|routes-to (exact match).
+  --from      Filter edges by exact source ID; use --from=<id> for option-like IDs.
+  --to        Filter edges by exact destination ID; use --to=<id> for option-like IDs.
   --json      Emit one versioned JSON object on stdout, including errors.
   --help, -h  Show this help without loading the graph.
 
@@ -11,37 +23,78 @@ Read-only; graph data comes exclusively from the GRAPH-1 loader.
 Until GRAPH-1 is available, all data commands report GRAPH_UNAVAILABLE.
 Unavailable counts are unknown, never reported as zero.
 Exit codes: 0 success/help, 1 unavailable or loader failure, 2 invalid arguments.
+Node and neighbors also exit 1 when the node is not found.
 `;
 
-type GraphCommand = 'nodes' | 'edges' | 'status';
-type ErrorCode = 'GRAPH_USAGE' | 'GRAPH_UNAVAILABLE' | 'GRAPH_LOAD_FAILED';
+type GraphCommand = 'nodes' | 'node' | 'edges' | 'status' | 'neighbors';
+type ErrorCode = 'GRAPH_USAGE' | 'GRAPH_UNAVAILABLE' | 'GRAPH_LOAD_FAILED' | 'GRAPH_NODE_NOT_FOUND';
+const NODE_KINDS = ['agent', 'engine-account', 'model', 'mcp'] as const;
+const EDGE_KINDS = ['can-message', 'can-delegate', 'reviews', 'routes-to'] as const;
 
 interface Options {
   command: GraphCommand | null;
   json: boolean;
   help: boolean;
+  nodeId: string | null;
+  direction: GraphDirection;
+  depth: number;
+  kind: string | null;
+  from: string | null;
+  to: string | null;
 }
 
 function isCommand(value: string): value is GraphCommand {
-  return value === 'nodes' || value === 'edges' || value === 'status';
+  return value === 'nodes' || value === 'node' || value === 'edges' || value === 'status' || value === 'neighbors';
 }
 
 function parse(args: string[]): Options {
-  const options: Options = { command: null, json: false, help: false };
-  for (const arg of args) {
+  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null, from: null, to: null };
+  let directionSeen = false;
+  let depthSeen = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
     if (arg === '--json' && !options.json) options.json = true;
     else if ((arg === '--help' || arg === '-h') && !options.help) options.help = true;
+    else if ((options.command === 'neighbors' || options.command === 'node') && arg === '--' && options.nodeId === null && i + 1 < args.length) {
+      options.nodeId = args[++i]!;
+    } else if ((options.command === 'nodes' || options.command === 'edges') && arg === '--kind' && options.kind === null) {
+      const value = args[++i];
+      const kinds: readonly string[] = options.command === 'nodes' ? NODE_KINDS : EDGE_KINDS;
+      if (value === undefined || !kinds.includes(value)) throw new Error(`Kind must be ${kinds.join(', ')}.`);
+      options.kind = value;
+    } else if (options.command === 'edges' && /^(--from|--to)(=|$)/.test(arg)) {
+      const separator = arg.indexOf('=');
+      const key = (separator === -1 ? arg.slice(2) : arg.slice(2, separator)) as 'from' | 'to';
+      const value = separator === -1 ? args[++i] : arg.slice(separator + 1);
+      if (options[key] !== null || !value || (separator === -1 && value.startsWith('-'))) {
+        throw new Error(`Invalid --${key} filter.`);
+      }
+      options[key] = value;
+    } else if (options.command === 'neighbors' && arg === '--direction' && !directionSeen) {
+      const value = args[++i];
+      if (value !== 'in' && value !== 'out' && value !== 'both') throw new Error('Direction must be in, out, or both.');
+      options.direction = value;
+      directionSeen = true;
+    } else if (options.command === 'neighbors' && arg === '--depth' && !depthSeen) {
+      const value = args[++i];
+      if (value === undefined || !/^[1-4]$/.test(value)) throw new Error('Depth must be an integer from 1 to 4.');
+      options.depth = Number(value);
+      depthSeen = true;
+    } else if ((options.command === 'neighbors' || options.command === 'node') && options.nodeId === null && !arg.startsWith('-')) {
+      options.nodeId = arg;
+    }
     else if (isCommand(arg) && options.command === null) options.command = arg;
-    else throw new Error('Expected one of nodes, edges, or status, with optional --json and --help.');
+    else throw new Error('Invalid graph arguments.');
   }
   if (!options.help && options.command === null) throw new Error('A graph subcommand is required.');
+  if (!options.help && (options.command === 'neighbors' || options.command === 'node') && options.nodeId === null) throw new Error('A node ID is required.');
   return options;
 }
 
 function fail(options: Pick<Options, 'command' | 'json'>, code: ErrorCode, message: string): number {
   if (options.json) {
     console.log(JSON.stringify({ schemaVersion: 1, command: options.command,
-      status: code === 'GRAPH_UNAVAILABLE' ? 'unavailable' : 'error', error: { code, message } }));
+      status: code === 'GRAPH_UNAVAILABLE' ? 'unavailable' : code === 'GRAPH_NODE_NOT_FOUND' ? 'not_found' : 'error', error: { code, message } }));
   } else {
     console.error(`graph: ${message}`);
     if (code === 'GRAPH_USAGE') console.error('Run `phm graph --help` for usage.');
@@ -73,17 +126,44 @@ export async function cmdGraph(args: string[]): Promise<number> {
       throw new Error('Invalid graph snapshot');
     }
     const command = options.command!;
+    if (command === 'node') {
+      const node = graph.nodes.find((record) => record?.id === options.nodeId);
+      if (!node) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Graph node not found.');
+      console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', node,
+        complete: graph.complete, sources: graph.sources, issues: graph.issues }, null, options.json ? undefined : 2));
+      return 0;
+    }
+    if (command === 'neighbors') {
+      const neighborhood = graphNeighborhood(graph, options.nodeId!, options.direction, options.depth);
+      if (!neighborhood) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Graph node not found.');
+      const result = { schemaVersion: 1, command, status: 'ready', ...neighborhood,
+        ...(options.json ? { complete: graph.complete, sources: graph.sources, issues: graph.issues } : {}) };
+      console.log(JSON.stringify(result, null, options.json ? undefined : 2));
+      return 0;
+    }
+    const records = command === 'nodes' || command === 'edges'
+      ? graph[command].filter((record) =>
+        (options.kind === null || record?.kind === options.kind)
+        && (options.from === null || record?.from === options.from)
+        && (options.to === null || record?.to === options.to))
+      : null;
     const data = command === 'status'
       ? { counts: { nodes: graph.nodes.length, edges: graph.edges.length } }
-      : { [command]: graph[command] };
+      : { [command]: records };
     if (options.json) {
-      console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', ...data }));
+      console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', ...data,
+        ...(options.from !== null || options.to !== null ? { filters: {
+          ...(options.kind !== null ? { kind: options.kind } : {}),
+          ...(options.from !== null ? { from: options.from } : {}),
+          ...(options.to !== null ? { to: options.to } : {}),
+        } } : {}),
+        complete: graph.complete, sources: graph.sources, issues: graph.issues }));
     } else if (command === 'status') {
       console.log(`Graph: ready · ${graph.nodes.length} node${graph.nodes.length === 1 ? '' : 's'} · ${graph.edges.length} edge${graph.edges.length === 1 ? '' : 's'}`);
     } else {
-      const records = JSON.stringify(graph[command], null, 2);
-      console.log(`Graph ${command}: ${graph[command].length}`);
-      console.log(records);
+      const serialized = JSON.stringify(records, null, 2);
+      console.log(`Graph ${command}: ${records!.length}`);
+      console.log(serialized);
     }
     return 0;
   } catch {

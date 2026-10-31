@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { RunsSample } from '../../../../core/fleet/runs-history.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
+import { NoFleetNotice } from '../fleet/NoFleetNotice.js';
+import { isNoFleet } from '../fleet/no-fleet.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { headline, laneSeries, launchGaps, MAX_GAP_MS, sparkPath, type SparkPoint } from './capacity-model.js';
@@ -34,7 +36,7 @@ function Chart({ points, samples, held, label }: { points: SparkPoint[]; samples
   </svg>;
 }
 
-export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
+export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> & Partial<Pick<PaneProps, 'host'>>) {
   const [hours, setHours] = useState<CapacityHours>(24);
   const query = useMemo(() => runsHistoryQuery(hours), [hours]);
   const sectionVisible = useSectionVisible();
@@ -47,13 +49,14 @@ export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
   const data = read.data;
   const now = Date.now();
   const samples = data ? [...data.samples].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) : [];
+  const noFleet = !!data && samples.length === 0 && isNoFleet(data.sourceState);
   const lanes = data ? laneSeries(data, now) : [];
   const gaps = data ? launchGaps(data) : [];
   const workerPoints = samples.map((sample) => ({ atMs: Date.parse(sample.at), running: sample.workers, target: sample.leaders }));
 
   return <div className={styles.pane} aria-label="Capacity">
     <header className={styles.header}>
-      <p className={styles.headline}>{data ? headline(data, now) : 'Fleet capacity history'}</p>
+      <p className={styles.headline}>{data && !noFleet ? headline(data, now) : 'Fleet capacity history'}</p>
       <button type="button" className={styles.button} onClick={refresh}>Refresh</button>
     </header>
     <div className={styles.controls} role="group" aria-label="History window">
@@ -63,6 +66,7 @@ export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Capacity history is unavailable.' : 'Reading capacity history…'}</p>
       : <>
         {read.status === 'error' ? <p className={styles.muted} role="status">Capacity history could not refresh. Showing the last reading.</p> : null}
+        {noFleet ? <NoFleetNotice /> : null}
         {samples.length > 0 ? <>
           <p className={styles.muted}>Solid: running · dashed: target · shaded: held · muted band: paused. Breaks indicate missing observations.</p>
           <p className={styles.muted}>Observed: {new Date(samples[0].at).toLocaleString()} – {new Date(samples[samples.length - 1].at).toLocaleString()}</p>
@@ -73,7 +77,7 @@ export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
                 return { atMs: Date.parse(sample.at), running: value?.running ?? null, target: value?.target ?? null };
               });
               return <li key={lane.lane} className={styles.lane}>
-                <div className={styles.line}><strong>{lane.lane}</strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min</span></div>
+                <div className={styles.line}><strong><button type="button" className={styles.laneButton} aria-label={`Open ${lane.lane} in Lanes`} onClick={() => host?.openPane('fleet-lanes')}>{lane.lane}</button></strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min</span></div>
                 <Chart points={points} samples={samples} held={lane.lane} label={`${lane.lane}: ran at ${percent(lane.fillPct)} of target, ${format(lane.idleSlotMinutes)} idle slot-minutes`} />
               </li>;
             })}</ul>}
