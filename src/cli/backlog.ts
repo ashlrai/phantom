@@ -222,6 +222,7 @@ function printBacklogHelp(col: ReturnType<typeof makeColors>): void {
   console.log(`    ${col.cyan('ashlr backlog')}                   top scored work items (read; loads/builds if missing)`);
   console.log(`    ${col.cyan('ashlr backlog refresh')}           re-scan all enrolled repos and rebuild the backlog`);
   console.log(`    ${col.cyan('phm backlog plan --help')}         offline READY queue planner for the bridge`);
+  console.log(`    ${col.cyan('phm backlog lint --help')}         restock/queuegen admission lint for queue lines`);
   console.log(`    ${col.cyan('ashlr backlog --repo <path>')}     filter to a specific enrolled repo`);
   console.log(`    ${col.cyan('ashlr backlog --source <src>')}    filter by source: ${BACKLOG_SOURCE_FILTER_HELP}`);
   console.log(`    ${col.cyan('ashlr backlog --limit <n>')}       show only the top N items`);
@@ -233,6 +234,10 @@ export async function cmdBacklog(args: string[]): Promise<number> {
   if (args[0] === 'plan') {
     const { cmdBacklogPlan } = await import('./backlog-plan.js');
     return cmdBacklogPlan(args.slice(1));
+  }
+  if (args[0] === 'lint') {
+    const { cmdBacklogLint } = await import('./backlog-lint.js');
+    return cmdBacklogLint(args.slice(1));
   }
   const tty = process.stdout.isTTY === true;
   const col = makeColors(tty);
