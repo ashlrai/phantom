@@ -11,7 +11,7 @@ import { MobileToasts, resetMobileToastsForTest } from './mobile-toast.js';
 import { json, permissionsFor, renderMobile, stubFetch, TOKEN } from './mobile.test-support.js';
 
 const row = { lane: 'codex-personal', target: 24, floor: 0, ceiling: 32, writable: true,
-  running: 2, queued: 1, held: false, heldReason: null };
+  running: 2, queued: 1, held: false, heldReason: null, pausedFrom: null };
 function mount(target = 24, overrides: Parameters<typeof renderMobile>[1] = {}) {
   const done = vi.fn();
   const close = vi.fn();

@@ -81,6 +81,9 @@ describe.each(formats)('%s dispatcher slots', (format) => {
       Object.assign(expectedLanes['codex-cmp'], {
         target, last_change: new Date(time).getTime() / 1000, changed_by: `${actor} ${time}`,
       });
+      const expectedLane = expectedLanes['codex-cmp'] as Record<string, unknown>;
+      if (target === 0) expectedLane.paused_from = 2;
+      else delete expectedLane.paused_from;
       expect(JSON.parse(await readFile(slotsPath, 'utf8'))).toEqual(expected);
       expect(await readFile(settingsPath, 'utf8')).toBe(settings);
     }
