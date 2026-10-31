@@ -39,3 +39,13 @@ export function readFeed(snapshot: unknown) {
     pending: Array.isArray(drop.pending) ? drop.pending.length : null, done: count(drop.done),
     sourceState: typeof sources.runsDir === 'string' ? sources.runsDir : null };
 }
+export function summarizeKinds(items: readonly FeedItem[]): string {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  }
+  if (counts.size === 0) return '';
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([kind, count]) => count + ' ' + (kind + (kind.endsWith('s') ? '' : 's')))
+    .join(' · ');
+}

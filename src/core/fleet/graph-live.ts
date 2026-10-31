@@ -274,6 +274,9 @@ function seatContribution(
   let bindingResetsAtMs: number | null = null;
   let limitReached = false;
   for (const window of seat.windows) {
+    // Claude's old session reading is no longer a subscription capacity window.
+    // Match explicit IDs only: a short reset alone cannot identify this window.
+    if (seat.engine === 'claude' && (window.id === 'five_hour' || window.id === 'session')) continue;
     if (window.limitReached) limitReached = true;
     const pct = clampPercent(window.usedPercent);
     if (pct !== null && (usedPercent === null || pct > usedPercent)) {

@@ -11,7 +11,7 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
-import { filterNotes, filterPasses, groupRejects, ingestTone, passFilterLabel, passSchedule, passSummary } from './leader-journal-model.js';
+import { filterNotes, filterPasses, groupRejects, ingestTone, passFilterLabel, passIngestCounts, passSchedule, passSummary, passWroteText } from './leader-journal-model.js';
 import { leaderJournalQuery } from './leader-journal-queries.js';
 import styles from './leader-journal.module.css';
 
@@ -34,7 +34,14 @@ export function LeaderJournalPane({ visible }: PaneProps) {
   const refresh = useRefresh(leaderJournalQuery);
   usePollWhileVisible(() => { setNowMs(Date.now()); refetch(); }, 30_000, { enabled: visible, refreshOnShow: false });
   const data = read.data;
-  const passes = data ? [...data.passes].sort((a, b) => (Date.parse(b.at) - Date.parse(a.at)) || b.at.localeCompare(a.at)) : [];
+  const passes = data ? [...data.passes].sort((a, b) => {
+    const aTime = Date.parse(a.at);
+    const bTime = Date.parse(b.at);
+    if (!Number.isFinite(aTime)) return Number.isFinite(bTime) ? 1 : b.at.localeCompare(a.at);
+    if (!Number.isFinite(bTime)) return -1;
+    return bTime - aTime || b.at.localeCompare(a.at);
+  }) : [];
+  const ingestCounts = passIngestCounts(passes, data?.ingested ?? [], nowMs);
   const schedule = data ? passSchedule(passes, nowMs) : null;
   const searching = query.trim().length > 0;
   const filtered = filterPasses(passes, query);
@@ -44,7 +51,7 @@ export function LeaderJournalPane({ visible }: PaneProps) {
   return <div className={styles.pane} aria-label="Leader journal">
     <header className={styles.header}>
       <div>
-        {data ? <p className={styles.headline}>{passes.length} {passes.length === 1 ? 'pass' : 'passes'} · last {passes[0] ? formatRelative(passes[0].at, nowMs) || 'unknown' : 'none'}</p> : null}
+        {data ? <p className={styles.headline}>{passes.length} {passes.length === 1 ? 'pass' : 'passes'} · last {passes[0] ? formatRelative(passes[0].at, nowMs) || 'unknown' : 'none'}{passes[0] ? ` · last pass ${passWroteText(ingestCounts.get(passes[0].at) ?? 0).text}` : null}</p> : null}
         {schedule ? <span role="status"><StatusBadge status={schedule.tone} tone={schedule.tone === 'ok' ? 'success' : schedule.tone}>{schedule.text}</StatusBadge></span> : null}
         {data && data.rejectedLastHour !== null && data.rejectedLastHour > 0 ? <StatusBadge status="rejected">{data.rejectedLastHour} rejected in the last hour</StatusBadge> : null}
       </div>
@@ -67,13 +74,15 @@ export function LeaderJournalPane({ visible }: PaneProps) {
               <h3 id="journal-passes">Passes</h3>
               {data.sources.planLog !== 'healthy' ? <p className={styles.note}>Plan log source {data.sources.planLog}.</p> : null}
               {searching ? <p className={styles.note}>{passFilterLabel(filtered.length, passes.length) || `${filtered.length} of ${passes.length} passes`}</p> : null}
-              {filtered.length === 0 ? <p className={styles.note}>{searching ? 'No passes match' : 'No leader passes yet.'}</p> : filtered.map(({ pass, matchedBullets }, index) => <details className={styles.pass} key={`${pass.at}-${index}`} open={searching || index === 0}>
-                <summary><time dateTime={pass.at}>{pass.at}</time>{passSummary(pass) ? <span> · {passSummary(pass)}</span> : null}</summary>
+              {filtered.length === 0 ? <p className={styles.note}>{searching ? 'No passes match' : 'No leader passes yet.'}</p> : filtered.map(({ pass, matchedBullets }, index) => {
+                const wrote = passWroteText(ingestCounts.get(pass.at) ?? 0);
+                return <details className={styles.pass} key={`${pass.at}-${index}`} open={searching || index === 0}>
+                <summary><time dateTime={pass.at}>{pass.at}</time>{passSummary(pass) ? <span> · {passSummary(pass)}</span> : null} <span data-tone={wrote.tone}><StatusBadge status={wrote.tone} tone={wrote.tone}>{wrote.text}</StatusBadge></span></summary>
                 {pass.sections.map((section, sectionIndex) => <div key={`${section.title}-${sectionIndex}`}>
                   <h4>{section.title}</h4>
                   <ul>{section.bullets.map((bullet, bulletIndex) => <li key={bulletIndex} className={matchedBullets.has(bullet) ? styles.match : undefined}><JobRefs text={bullet} onOpenJob={openLog} /></li>)}</ul>
                 </div>)}
-              </details>)}
+              </details>; })}
             </section>
             <section className={styles.section} aria-labelledby="journal-drop">
               <h3 id="journal-drop">Drop funnel</h3>
