@@ -5,8 +5,20 @@ import { promisify } from 'node:util';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { createChannelReceiver } from '../fleet/channel-envelope.js';
+import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead } from './fleet-inbox-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
+
+// passesMutationGate authenticates a single local operator (the x-ashlr-token
+// holder); there is no per-request user identity. The shared channel receiver's
+// canonical sender is therefore this documented server-owned identity. Request
+// fields — including `source` — are never identity.
+const VERSE_INBOX_OPERATOR_ID = 'verse-inbox-operator';
+// The only trusted surface fact is that the request reached this authenticated
+// desktop/mobile console route, so the channel is a fixed server-side mapping.
+const VERSE_INBOX_CHANNEL = 'desktop' as const;
+const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 
 export interface FleetRunsApiDeps {
   readRunsDir?: () => Promise<unknown>;
@@ -82,6 +94,19 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const workers = deps.listWorkers ?? (async () => (await import('../fleet/runs-live-workers.js' as string)).listLiveWorkers());
   const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit }));
   const append = deps.appendInbox ?? (async (text: string, source: string) => (await import('../fleet/mason-inbox.js' as string)).appendInboxEntry(text, { source }));
+  // One receiver per API instance: its normalization/dedupe contract is shared
+  // by every POST below for the process lifetime. `source` stays presentation
+  // metadata — never identity — so it rides to the sink out of band: the
+  // receiver serializes all writes, which keeps the ticket at the head of
+  // pendingSources the one belonging to the request inside receive(). Each
+  // request removes its ticket exactly once (consumed by write, or spliced in
+  // the finally of the POST handler) before the next receive can start.
+  const pendingSources: { source: string }[] = [];
+  const receive = createChannelReceiver({
+    allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID]),
+    now: () => new Date(now()),
+    write: async (envelope) => (await append(envelope.body, pendingSources[0]?.source ?? DEFAULT_INBOX_SOURCE)) as InboxAppendResult,
+  });
   async function build(): Promise<FleetRunsV1> {
     const result: FleetRunsV1 = {
       v: 1, generatedAt: new Date(now()).toISOString(), sources: { runsDir: 'degraded', workers: 'degraded', inbox: 'degraded', codex: 'degraded', merges: 'degraded' },
@@ -138,15 +163,32 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       (body.source !== undefined && (typeof body.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(body.source)))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid inbox body' }); return true;
     }
+    const ticket = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
+    pendingSources.push(ticket);
     try {
-      const value: unknown = await append(body.text.trim(), typeof body.source === 'string' ? body.source : 'Phantom desktop');
-      if (record(value) && value.ok === true) {
-        cached = undefined;
-        sendJson(res, 201, { ok: true, at: new Date(now()).toISOString() });
-      } else if (record(value) && value.ok === false && typeof value.reason === 'string') {
-        sendJson(res, 422, { code: 'INBOX_REFUSED', reason: project(value.reason, 'string') });
-      } else sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' });
+      const result = await receive({ channel: VERSE_INBOX_CHANNEL, verifiedSenderId: VERSE_INBOX_OPERATOR_ID, body: body.text.trim() });
+      if (result.ok) {
+        // Only an accepted persistence invalidates the cached composite; a
+        // duplicate appended nothing, and a refusal changed nothing.
+        if (result.ack.status === 'accepted') cached = undefined;
+        sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
+          ok: true, at: result.envelope.receivedAt,
+          accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
+          // The receiver's key is a bare 64-hex SHA-256 — a secret shape the
+          // response sanitizer would redact — so the wire carries a labeled
+          // 96-bit prefix of the same stable key.
+          dedupeKey: `sha256:${result.ack.dedupeKey.slice(0, 24)}`,
+        });
+      } else if (result.reason === 'write-failed' || typeof result.reason !== 'string' || !result.reason) {
+        sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' });
+      } else {
+        sendJson(res, 422, { code: 'INBOX_REFUSED', reason: project(result.reason, 'string') });
+      }
     } catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
+    finally {
+      const i = pendingSources.indexOf(ticket);
+      if (i >= 0) pendingSources.splice(i, 1);
+    }
     return true;
   };
 }

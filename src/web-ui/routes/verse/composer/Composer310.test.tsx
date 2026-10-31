@@ -118,6 +118,7 @@ function installServer(over: Partial<Pick<FakeServer, 'controls' | 'queue' | 'fi
     const method = init?.method ?? 'GET';
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
     state.calls.push({ method, url, body });
+    if (url === '/api/verse/fleet/runs/inbox') return json({ at: '2026-10-31 00:13' });
     if (url.startsWith('/api/verse/session-controls/')) {
       if (method === 'POST') {
         if (body?.['permissionMode'] === 'bypass' && body['confirmBypass'] !== true) return json({ code: 'VERSE_INVALID', error: 'confirm it' }, 400);
@@ -510,7 +511,7 @@ describe('@ files and / commands', () => {
     expect(p.onStop).not.toHaveBeenCalled();
   });
 
-  it('/ offers the six commands; /plan switches to Plan and clears itself', async () => {
+  it('/ offers the commands; /plan switches to Plan and clears itself', async () => {
     const user = userEvent.setup();
     await renderReady();
     const box = screen.getByRole('textbox', { name: 'Message' });
@@ -518,13 +519,60 @@ describe('@ files and / commands', () => {
     const list = await screen.findByRole('listbox', { name: 'Commands' });
     expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual([
       expect.stringContaining('/handoff'), expect.stringContaining('/compact'), expect.stringContaining('/new'),
-      expect.stringContaining('/plan'), expect.stringContaining('/effort'), expect.stringContaining('/model'),
+      expect.stringContaining('/plan'), expect.stringContaining('/effort'), expect.stringContaining('/model'), expect.stringContaining('/fleet'),
     ]);
     // No handoff wired by the owner: listed, disabled, and says where it is.
     expect(within(list).getAllByRole('option')[0]).toHaveAttribute('aria-disabled', 'true');
     await user.type(box, 'pl{Enter}');
     await waitFor(() => expect(server.posts(/session-controls/).at(-1)!.body).toEqual({ permissionMode: 'plan' }));
     expect(box).toHaveValue('');
+  });
+
+  it('/fleet completion keeps focus and submits to the inbox while a chat turn runs', async () => {
+    const p = props({ running: true });
+    await renderReady(p);
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(box, { target: { value: '/fl', selectionStart: 3 } });
+    await screen.findByRole('listbox', { name: 'Commands' });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(box).toHaveValue('/fleet ');
+    await waitFor(() => expect(box).toHaveFocus());
+    fireEvent.change(box, { target: { value: '/fleet Please prioritize tests' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await screen.findByText('Sent to the leaders · 00:13');
+    expect(server.posts(/fleet\/runs\/inbox/)[0]?.body).toEqual({ text: 'Please prioritize tests', source: 'Phantom desktop chat' });
+    expect(server.posts(/queue/)).toHaveLength(0);
+    expect(p.onSend).not.toHaveBeenCalled();
+    expect(p.onStop).not.toHaveBeenCalled();
+    expect(box).toHaveValue('');
+  });
+
+  it('keeps the fleet draft and displays a failed post inline', async () => {
+    const p = props();
+    await renderReady(p);
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === '/api/verse/fleet/runs/inbox'
+        ? Promise.resolve(json({ error: 'Inbox temporarily held' }, 503))
+        : originalFetch(input, init)));
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(box, { target: { value: '/fleet Please wait' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await screen.findByText('Inbox temporarily held');
+    expect(box).toHaveValue('/fleet Please wait');
+    expect(p.onSend).not.toHaveBeenCalled();
+  });
+
+  it('bare /fleet asks for text without sending a chat turn', async () => {
+    const p = props();
+    await renderReady(p);
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    fireEvent.change(box, { target: { value: '/fleet ' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await screen.findByText('Type what to tell the leaders');
+    expect(box).toHaveValue('/fleet ');
+    expect(p.onSend).not.toHaveBeenCalled();
+    expect(server.posts(/fleet/)).toHaveLength(0);
   });
 
   it('3.15: ! lists playbooks on first use; Enter inserts the macro', async () => {

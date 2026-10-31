@@ -7,6 +7,7 @@ function JournalGlyph({ size = 16 }: { size?: number }) {
 }
 
 registerPane({
+  shortcut: 'mod+alt+j',
   id: 'leader-journal',
   title: 'Leader journal',
   description: 'What the leaders saw and did each pass, and which job files the drop accepted or rejected',

@@ -27,6 +27,13 @@ describe('FleetLedgerCard', () => {
     expect(within(table).getByText('6 000 credits left')).toBeInTheDocument();
     expect(screen.getByText('Gift pool today: 12 runs · 1 error · 48 k tokens out · $3.20')).toBeInTheDocument();
   });
+  it('shows a dead lane and degraded metrics', async () => {
+    const deadSignal = { lane: 'Codex', lastFinishes: 8, emptyFailures: 8, state: 'dead' as const };
+    vi.stubGlobal('fetch', vi.fn(async () => json({ ...fixture, sources: { ...fixture.sources, jobs: 'degraded' }, lanes: [lane({ deadSignal })] })));
+    mount();
+    expect(await screen.findByText('Dead · 8 empty failures')).toBeInTheDocument();
+    expect(screen.getByText('Job metrics are degraded; lane failure signals may be incomplete.')).toBeInTheDocument();
+  });
   it('explains a missing endpoint', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('missing', { status: 404 })));
     mount();

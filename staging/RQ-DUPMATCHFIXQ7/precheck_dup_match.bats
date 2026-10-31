@@ -4,7 +4,7 @@
 #
 # gh is a PATH stub that serves fixture JSON and applies -q/--jq programs with
 # the system jq (gojq-compatible). git runs for real against an empty .git
-# marker so every section-3 probe quietly fails and control reaches GO.
+# marker; no provider or GitHub access occurs.
 # No network, no real home, no real gh auth.
 
 PRECHECK=${PRECHECK:-"$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/precheck.sh"}
@@ -128,28 +128,28 @@ JOB_LOOP='RQ-LOOP-1 (P1, pool=devin, repo=phantom) loop task'
   [ "$status" -eq 0 ]; [[ "$output" == GO* ]]
 }
 
-@test "gh open-list failure fails closed: code 12 PRECHECK_UNSURE" {
+@test "gh open-list failure fails closed: code 75 PRECHECK_UNSURE" {
   export GH_FAIL_STATE=open
   run_pc "$JOB_LOOP"
-  [ "$status" -eq 12 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_open"* ]]
+  [ "$status" -eq 75 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_open"* ]]
 }
 
 @test "gh merged-list failure fails closed first: PRECHECK_UNSURE_merged" {
   export GH_FAIL_STATE=merged
   run_pc "$JOB_LOOP"
-  [ "$status" -eq 12 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_merged"* ]]
+  [ "$status" -eq 75 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_merged"* ]]
 }
 
 @test "malformed list row fails closed: PRECHECK_UNSURE" {
   export GH_GARBAGE=1
   run_pc "$JOB_LOOP"
-  [ "$status" -eq 12 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_merged"* ]]
+  [ "$status" -eq 75 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_merged"* ]]
 }
 
 @test "gh view failure on FIXUP target fails closed" {
   export GH_FAIL_VIEW=1
   run_pc 'RQ-FIXUP-T1 (P1, pool=devin, repo=phantom) FIXUP phantom #1322'
-  [ "$status" -eq 12 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_pr_1322"* ]]
+  [ "$status" -eq 75 ]; [[ "$output" == *"reason=PRECHECK_UNSURE_pr_1322"* ]]
 }
 
 @test "FIXUP target PR open-dirty falls through dup gate (pr set): GO" {
@@ -165,9 +165,9 @@ JOB_LOOP='RQ-LOOP-1 (P1, pool=devin, repo=phantom) loop task'
   [ "$status" -eq 10 ]; [[ "$output" == *"reason=pr_1322_MERGED"* ]]
 }
 
-@test "no id or repo in line: section skipped, GO" {
+@test "missing identifiers are permanently rejected" {
   run_pc 'some line without identifiers'
-  [ "$status" -eq 0 ]; [[ "$output" == "GO "* ]]
+  [ "$status" -eq 64 ]; [[ "$output" == *"reason=invalid_job"* ]]
 }
 
 @test "empty candidate lists: GO" {
@@ -175,9 +175,32 @@ JOB_LOOP='RQ-LOOP-1 (P1, pool=devin, repo=phantom) loop task'
   [ "$status" -eq 0 ]; [[ "$output" == "GO RQ-LOOP-1" ]]
 }
 
-@test "usage error exits 2" {
+@test "invalid job is rejected and unavailable clone is retryable" {
   run bash "$PRECHECK" '' "$TMPD/clone"
-  [ "$status" -eq 2 ]
+  [ "$status" -eq 64 ]
   run bash "$PRECHECK" "$JOB_LOOP" "$TMPD/nope"
-  [ "$status" -eq 2 ]
+  [ "$status" -eq 75 ]
+}
+
+@test "existing source, tests and symbol never establish acceptance" {
+  git -C "$TMPD/clone" init -q
+  printf 'export function existingSymbol() {}\n' > "$TMPD/clone/example.ts"
+  touch "$TMPD/clone/example.test.ts"
+  git -C "$TMPD/clone" add .
+  git -C "$TMPD/clone" -c user.name=Fixture -c user.email=fixture@example.invalid -c core.hooksPath=/dev/null commit -qm fixture
+  git -C "$TMPD/clone" update-ref refs/remotes/origin/main HEAD
+  git -C "$TMPD/clone" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+  run_pc "$JOB_LOOP Fix example.ts and example.test.ts. Acceptance: changed behavior"
+  [ "$status" -eq 0 ]; [[ "$output" == GO* ]]
+  run_pc "$JOB_LOOP Fix \`existingSymbol\`. Acceptance: changed behavior"
+  [ "$status" -eq 0 ]; [[ "$output" == GO* ]]
+}
+
+@test "transient lookup failure recovers on the same job" {
+  export GH_FAIL_STATE=merged
+  run_pc "$JOB_LOOP"
+  [ "$status" -eq 75 ]
+  unset GH_FAIL_STATE
+  run_pc "$JOB_LOOP"
+  [ "$status" -eq 0 ]
 }
