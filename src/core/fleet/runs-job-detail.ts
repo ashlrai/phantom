@@ -365,11 +365,15 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     sources.log = 'degraded'; // a symlink or unreadable file — nothing was read
   }
 
-  // ── state — existence + mtime ordering, per the documented semantics ──────
-  const launchNewerThanPublish = pLaunch.mtimeMs !== null && (pPublish.mtimeMs === null || pLaunch.mtimeMs > pPublish.mtimeMs);
-  const launchNewerThanGz = pLaunch.mtimeMs !== null && pLogGz.mtimeMs !== null && pLaunch.mtimeMs > pLogGz.mtimeMs;
+  // Both retry artifacts must postdate the previous completion artifacts.
+  // Equal mtimes do not establish which attempt is newer.
+  const newerThan = (current: Probe, previous: Probe) =>
+    current.mtimeMs !== null && (previous.mtimeMs === null || current.mtimeMs > previous.mtimeMs);
+  const launchNewerThanGz = pLogGz.mtimeMs !== null && newerThan(pLaunch, pLogGz);
+  const currentAttempt = newerThan(pLaunch, pPublish) && newerThan(pLog, pPublish)
+    && newerThan(pLaunch, pLogGz) && newerThan(pLog, pLogGz);
   const state: FleetJobState =
-    launchNewerThanPublish && exists(pLog) && !exists(pLogGz) ? 'running'
+    currentAttempt ? 'running'
       : exists(pPublish) ? 'published'
         : exists(pLogGz) && !launchNewerThanGz ? 'archived'
           : 'unknown';

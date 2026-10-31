@@ -187,7 +187,7 @@ export interface ReadRunsHistoryOptions { file?: string; hours?: number; now?: (
 
 /**
  * The series for charts and agents: samples with `at` inside the last `hours`
- * hours (clamped 1..168, default 24), in append order. A missing file is
+ * hours (clamped 1..168, default 24), inclusive of both bounds, in append order. A missing file is
  * `sourceState: 'missing'`; malformed lines are skipped and counted in
  * `dropped` (which also flips the state to 'degraded').
  */
@@ -234,7 +234,8 @@ export async function readRunsHistory(opts: ReadRunsHistoryOptions = {}): Promis
     try { row = JSON.parse(line); } catch { history.dropped++; continue; }
     const sample = parseRunsSample(row);
     if (sample === null) { history.dropped++; continue; }
-    if (Date.parse(sample.at) < fromMs) continue;
+    const at = Date.parse(sample.at);
+    if (at < fromMs || at > now) continue;
     history.samples.push(sample);
   }
   if (history.dropped > 0) history.sourceState = 'degraded';
@@ -305,8 +306,8 @@ export interface SampleIfDueOptions {
 
 /**
  * Sample on read, at most once per `minIntervalMs` (default 60 s): reads the
- * last line's `at` and, when it is older than the interval (or absent —
- * missing file, empty, unparseable), takes a sample through `read()` and
+ * last line's `at` and, when it is older than the interval, in the future,
+ * or absent (missing file, empty, unparseable), takes a sample through `read()` and
  * appends it. Returns whether it sampled. An unreadable file counts as absent
  * so a wedged history never stalls the sampler; append errors still throw.
  */
@@ -315,7 +316,8 @@ export async function sampleIfDue(opts: SampleIfDueOptions = {}): Promise<boolea
   const read = opts.read ?? ((clock: () => number) => collectRunsSample({ now: clock }));
   const file = opts.file ?? runsHistoryFile();
   const last = await lastSampleAtMs(file);
-  if (last !== null && now() - last < (opts.minIntervalMs ?? 60_000)) return false;
+  const elapsed = last === null ? null : now() - last;
+  if (elapsed !== null && elapsed >= 0 && elapsed < (opts.minIntervalMs ?? 60_000)) return false;
   await appendRunsSample(await read(now), { file, now });
   return true;
 }

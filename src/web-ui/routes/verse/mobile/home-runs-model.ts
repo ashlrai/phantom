@@ -1,3 +1,4 @@
+import type { FleetRunsMerge } from './runs-queries.js';
 import type { Tone } from './ui-parts.js';
 
 /** The fields Home reads from the fleet endpoint; counts can be unknown. */
@@ -6,7 +7,7 @@ export interface FleetRuns {
   claudeLane: string | null;
   switches: string[];
   lanes: Array<{ lane: string; running: number | null; target: number | null; queued: number | null; held: boolean }>;
-  mergesLastHour: { count: number | null };
+  mergesLastHour: { count: number | null; items?: FleetRunsMerge[] };
   codexPersonal: { usedPct: number | null; resetsAt: string | null } | null;
 }
 
@@ -21,7 +22,10 @@ export function isHomeFleetRuns(v: unknown): v is FleetRuns {
     || !Array.isArray(v['lanes']) || !v['lanes'].every((lane: unknown) => record(lane)
       && typeof lane['lane'] === 'string' && numberOrNull(lane['running']) && numberOrNull(lane['target'])
       && numberOrNull(lane['queued']) && typeof lane['held'] === 'boolean')
-    || !record(v['mergesLastHour']) || !numberOrNull(v['mergesLastHour']['count'])) return false;
+    || !record(v['mergesLastHour']) || !numberOrNull(v['mergesLastHour']['count'])
+    || (v['mergesLastHour']['items'] !== undefined && (!Array.isArray(v['mergesLastHour']['items'])
+      || !v['mergesLastHour']['items'].every((m: unknown) => record(m) && typeof m['repo'] === 'string'
+        && typeof m['number'] === 'number' && Number.isFinite(m['number']) && typeof m['title'] === 'string')))) return false;
   const codex = v['codexPersonal'];
   return codex === null || (record(codex) && numberOrNull(codex['usedPct']) && stringOrNull(codex['resetsAt']));
 }

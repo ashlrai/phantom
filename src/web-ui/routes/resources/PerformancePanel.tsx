@@ -30,7 +30,10 @@ export function PerformancePanel({ report, onSelect }: { report: ResourcePerform
             return <tr key={row.workerId}>
               <th scope="row"><button type="button" className={styles.performanceWorker} onClick={() => onSelect(row.workerId)}>{row.workerId}</button>
                 <small>{row.model}</small><small>{row.counts.completed} completed / {row.counts.total} attempts</small></th>
-              <td>{duration?.samples ?? 0} / {duration?.attempts ?? 0}<small>{duration?.unknownAttempts ?? 0} unmeasured</small></td>
+              <td>{duration?.samples ?? 0} / {duration?.attempts ?? 0}<small>Timing coverage: {duration?.attempts ? `${Math.round(duration.samples / duration.attempts * 100)}%` : 'No attempts'}</small>
+                <small>{duration?.unknownAttempts ?? 0} unmeasured</small>
+                {!duration?.samples ? <small>No timing observations for this outcome.</small>
+                  : duration.samples < 20 ? <small>Small sample: fewer than 20 timing observations; percentiles may be unstable.</small> : null}</td>
               <td>{executionTime(duration?.p50Ms)}</td><td>{executionTime(duration?.p95Ms)}</td>
               <td>{resourceNumber(row.usage.reportedInputTokens)} in / {resourceNumber(row.usage.reportedOutputTokens)} out
                 <small>{row.usage.reportedAttempts} reported / {row.usage.unknownAttempts} unknown</small>
@@ -38,6 +41,6 @@ export function PerformancePanel({ report, onSelect }: { report: ResourcePerform
             </tr>;
           })}</tbody>
         </table>
-      </div><p className={styles.boardNote}>Execution includes adapter preparation and cleanup, but excludes the queue and ledger settlement. p50/p95 use measured samples only; they are not provider latency. Token counters cover their named scope, not billing or all agent activity. Quality and accepted engineering yield remain unmeasured.</p></>}
+      </div><p className={styles.boardNote}>Execution includes adapter preparation and cleanup, but excludes the queue and ledger settlement. p50/p95 use measured samples only; they are not provider latency. The 20-sample caution is a display guideline, not a routing threshold; even larger samples may not be representative. Token counters cover their named scope, not billing or all agent activity. Quality and accepted engineering yield remain unmeasured.</p></>}
   </section>;
 }
