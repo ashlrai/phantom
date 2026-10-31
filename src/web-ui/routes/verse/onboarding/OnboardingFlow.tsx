@@ -67,8 +67,10 @@ import { executeCatalogCommand } from '../shell/run-command.js';
 import { openFleetWorkspace } from '../dock/dock-store.js';
 import { fleetPanesPresent } from '../dock/fleet-workspace-auto.js';
 import { listPanes } from '../panes/index.js';
+import { fleetSourcesQuery } from '../sections/fleet-sources-query.js';
+import { readFleetPresence } from './fleet-presence.js';
 import {
-  FLEET_STEP_POINTS,
+  fleetStepPoints,
   ONBOARDING_STEPS,
   STOP_CONTROLS,
   buildLocalFinding,
@@ -332,7 +334,13 @@ function AutonomyStep() {
 // ---------------------------------------------------------------------------
 
 function FleetStep() {
+  const { data } = useQuery(fleetSourcesQuery);
+  const presence = readFleetPresence(data);
   function openFleet() {
+    if (presence !== 'present') {
+      setVerseSection('settings');
+      return;
+    }
     const panes = fleetPanesPresent(listPanes().map((pane) => pane.id));
     if (panes.length > 0) openFleetWorkspace(panes);
     else setVerseSection('fleet');
@@ -341,14 +349,14 @@ function FleetStep() {
   return (
     <StepBody>
       <ul className={styles.findings}>
-        {FLEET_STEP_POINTS.map((point) => (
+        {fleetStepPoints(presence).map((point) => (
           <li key={point.label} className={styles.finding}>
             <span className={styles.stopName}>{point.label}</span>
             <p className={styles.findingDetail}>{point.detail}</p>
           </li>
         ))}
       </ul>
-      <Button variant="subtle" onClick={openFleet}>Open fleet workspace</Button>
+      <Button variant="subtle" onClick={openFleet}>{presence === 'present' ? 'Open fleet workspace' : 'Open Settings'}</Button>
     </StepBody>
   );
 }
