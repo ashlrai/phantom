@@ -3,10 +3,12 @@ import type { Readable } from 'node:stream';
 import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox read [--json]
+const HELP = `phm comms inbox read [--source <label>] [--limit <1..200>] [--json]
 phm comms inbox post --file <text-file|-> [--json]
 Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
+Read options select the newest matching entries (default limit 50), returned oldest first; source is metadata, not identity.
 The local process owner is the trust boundary; this does not authenticate internet or email senders.
 Input must be an owner-controlled stable regular UTF-8 text file, or stdin with --file - (maximum ${INBOX_MAX_CHARS} characters).
 Duplicate receipts are retained only for the receiver's process lifetime.`;
@@ -43,6 +45,7 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
     let file: string | undefined, json = false;
+    const queryParams = new URLSearchParams();
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i];
       if (arg === '--json' && !json) json = true;
@@ -50,12 +53,20 @@ export function createCommsInboxCommand(options: { runsDir?: string; stdin?: Rea
         const value = rest[++i];
         if (!value || value !== '-' && value.startsWith('-')) return invalid();
         file = value;
+      } else if (verb === 'read' && (arg === '--source' || arg === '--limit')) {
+        const key = arg.slice(2), value = rest[++i];
+        if (value === undefined || ['--source', '--limit', '--json', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
+        queryParams.append(key, value);
       } else return invalid();
     }
     if (verb === 'post' && file === undefined) return invalid();
     if (verb === 'read') {
-      const result = await readInboxEntries(options);
-      console.log(JSON.stringify(result));
+      const query = parseInboxReadQuery(queryParams);
+      if ('error' in query) return invalid();
+      // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
+      const result = await readInboxEntries(queryParams.size ? { ...options, limit: Number.MAX_SAFE_INTEGER } : options);
+      const entries = queryParams.size ? projectInboxRead(result, query)!.entries : result.entries;
+      console.log(JSON.stringify({ ...result, entries }));
       return result.sourceState === 'degraded' ? 1 : 0;
     }
     let text: string;

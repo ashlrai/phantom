@@ -11,13 +11,14 @@ import styles from './fleet-lanes.module.css';
 // All steppers in the pane share the write lock, including before React re-renders.
 let writing = false;
 const listeners = new Set<() => void>();
-function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
-function setWriting(value: boolean) { writing = value; listeners.forEach(listener => listener()); }
+export function subscribeLaneWrite(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
+export function laneWriting() { return writing; }
+export function setLaneWriting(value: boolean) { writing = value; listeners.forEach(listener => listener()); }
 
 export function LaneTargetStepper({ lane }: { lane: string }) {
   const read = useQuery(laneTargetsQuery);
   const hold = useMutationHold();
-  const pending = useSyncExternalStore(subscribe, () => writing, () => false);
+  const pending = useSyncExternalStore(subscribeLaneWrite, () => writing, () => false);
   const [posted, setPosted] = useState<LaneTargetsV1 | null>(null);
   const [confirm, setConfirm] = useState<{ lane: string; until: number } | null>(null);
   const [status, setStatus] = useState('');
@@ -45,7 +46,7 @@ export function LaneTargetStepper({ lane }: { lane: string }) {
       return;
     }
     setConfirm(null);
-    setWriting(true);
+    setLaneWriting(true);
     setStatus('');
     try {
       const response = await postLaneTarget(lane, target);
@@ -59,7 +60,7 @@ export function LaneTargetStepper({ lane }: { lane: string }) {
       const message = reason instanceof ApiError && reason.status === 409
         ? 'Another fleet control action is running, try again in a moment.' : readFailureReason(reason);
       if (active.current) setStatus(message);
-    } finally { setWriting(false); }
+    } finally { setLaneWriting(false); }
   }
 
   return <span className={styles.stepper} title={title}>

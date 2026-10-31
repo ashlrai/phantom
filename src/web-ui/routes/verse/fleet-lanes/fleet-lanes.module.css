@@ -24,3 +24,4 @@ p.burn { margin: 0 0 var(--space-3); }
 .stepper button:hover:not(:disabled) { background: var(--bg-hover); }
 .stepper button:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
 .stepper button:disabled { color: var(--text-tertiary); cursor: not-allowed; }
+.pauseError { color: var(--status-danger-fg); white-space: nowrap; }
