@@ -1916,6 +1916,22 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/job ───────────────────────────────────────────────
+    // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
+    // state, lane/model provenance, publish outcome and a scrubbed bounded
+    // log tail. READ-ONLY; never throws on absent/degraded inputs; same
+    // no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/job' && method === 'GET') {
+      const { getFleetJobDetail, isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobDetail(id));
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
@@ -1943,6 +1959,45 @@ export async function handleApi(
       const { buildOrientation } = await import('../orient.js');
       const repo = getQueryParam(req.url ?? '', 'repo');
       const result = await buildOrientation(cfg, repo);
+      sendJson(res, 200, result);
+      return true;
+    }
+
+    // ── GET /api/onboard/status ── RQ-ONB-2 DETECT: per-catalog-entry rows for
+    // Connect Resources. `which` resolves the binary; the CLI's OWN status
+    // command supplies the login verdict (never token files or ~/.codex
+    // contents). Read-only like /api/orient; probes are bounded.
+    if (path === '/api/onboard/status' && method === 'GET') {
+      const { detectOnboardResources } = await import('../onboard.js');
+      sendJson(res, 200, {
+        generatedAt: new Date().toISOString(),
+        dispatchEnabled: ctx.allowDispatch,
+        resources: await detectOnboardResources(cfg),
+      });
+      return true;
+    }
+
+    // ── POST /api/onboard/plan-tier ── persists a pick to cfg.onboard.planTiers.
+    // Same posture as every mutation route: 404 w/o dispatch, token + JSON required.
+    if (path === '/api/onboard/plan-tier' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return true;
+      }
+      const { persistOnboardPlanTier } = await import('../onboard.js');
+      const result = persistOnboardPlanTier(body);
+      if (!result.ok) {
+        sendJson(res, 400, { error: result.error });
+        return true;
+      }
       sendJson(res, 200, result);
       return true;
     }
