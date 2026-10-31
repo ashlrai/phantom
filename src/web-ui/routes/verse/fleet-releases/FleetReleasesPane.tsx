@@ -4,11 +4,24 @@ import { formatRelative } from '../autonomy/format.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { releasePrQuery } from '../fleet/release-pr-query.js';
 import type { PaneProps } from '../panes/pane-registry.js';
+import { installedDesktopVersion } from '../sections/app-version.js';
+import { compareReleaseTags, releaseGapText, releaseNotesUrl } from '../sections/release-gap-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { orderRepos, releaseLabel, runTone, safeRepoHref } from './fleet-releases-model.js';
 import { opsReleasesQuery } from './fleet-releases-queries.js';
 import { blockerLine, releasePrRows, releaseTellPrefill } from './release-pr-view-model.js';
 import styles from './fleet-releases.module.css';
+
+function installedReleaseLine(installed: string | null, tag: string | null) {
+  if (installed === null) return 'Installed version unknown';
+  if (tag === null) return `This Mac runs v${installed} · no release yet`;
+  const view = compareReleaseTags(installed, tag);
+  const status = view.state === 'latest' ? 'up to date'
+    : view.state === 'behind' ? `behind by ${releaseGapText(view)}`
+    : view.state === 'ahead' ? 'ahead of the newest tag (dev build)'
+    : releaseGapText(view);
+  return <>This Mac runs v{installed} · latest {tag} · {status} · <a href={releaseNotesUrl(tag)} target="_blank" rel="noopener noreferrer">Release notes</a></>;
+}
 
 export function FleetReleasesPane({ visible }: PaneProps) {
   const read = useQuery(opsReleasesQuery, { enabled: visible, freshMs: 0 });
@@ -21,6 +34,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
   if (read.data === null) return <p className={styles.message}>Releases not in this build</p>;
   if (read.data === undefined) return <div className={styles.root} role="status">{read.status === 'error' ? 'Releases are unavailable.' : <><span>Reading releases…</span><SkeletonLine /><SkeletonLine /></>}</div>;
   const data = read.data;
+  const installed = installedDesktopVersion();
   const prRows = releasePrRows(prRead.status === 'error' ? undefined : prRead.data, Date.now());
   return <section className={styles.root} aria-label="Release train">
     <p className={styles.header}>{data.repos.length} repos · read {formatRelative(data.generatedAt)}</p>
@@ -39,9 +53,12 @@ export function FleetReleasesPane({ visible }: PaneProps) {
       const prNotes = pr && 'notes' in pr ? pr.notes : prRead.data?.kind === 'available'
         ? prRead.data.data.repos.find(row => row.repo.toLowerCase() === repo.repo.toLowerCase())?.notes ?? [] : [];
       const tone = run ? runTone(run) : 'neutral';
+      const name = repo.repo.toLowerCase();
+      const phantom = name === 'phantom' || name.endsWith('/phantom');
       return <li key={`${repo.repo}:${index}`} className={styles.row}>
         <div>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{repo.repo}</a> : <span>{repo.repo}</span>}</div>
         <div>Version: {repo.version ?? '—'} · Tag: {repo.latestTag ?? '—'}</div>
+        {phantom && <div>{installedReleaseLine(installed, repo.gh?.latestRelease?.tag ?? repo.latestTag)}</div>}
         {pr && <div className={styles.prBlock}>
           <div className={styles.headline} data-tone={pr.tone}>{'href' in pr && pr.href ? <a href={pr.href} target="_blank" rel="noopener noreferrer">{pr.headline}</a> : pr.headline}</div>
           {line && <><div role="status">{line}</div>{prNumber !== undefined && <Button size="sm" onClick={() => openInterjectDialog({ prefill: releaseTellPrefill(repo.repo, prNumber, line) })}>Tell the leaders</Button>}</>}
