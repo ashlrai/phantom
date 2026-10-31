@@ -24,7 +24,7 @@ export function HomeRuns() {
         <SkeletonList rows={3} label="Loading fleet numbers" />
       ) : <>
         <Row title={view.headline} subtitle={view.tick} onClick={() => navigate({ screen: 'fleet' })} />
-        {view.lanes.map((lane) => <Row key={lane.lane} title={lane.lane} trailing={<Badge tone={lane.tone}>{lane.text}</Badge>} onClick={() => navigate({ screen: 'runs' })} label={`Open Live runs for ${lane.lane}`} />)}
+        {view.lanes.map((lane) => <Row key={lane.lane} title={lane.lane} subtitle={lane.tone === 'danger' ? (lane.heldReason ? `held: ${lane.heldReason.replace(/_/g, ' ')}` : undefined) : (lane.merged24h != null ? `${lane.merged24h} merged today` : undefined)} trailing={<Badge tone={lane.tone}>{lane.text}</Badge>} onClick={() => navigate({ screen: 'runs' })} label={`Open Live runs for ${lane.lane}`} />)}
         <Row title={view.merges} />
         {query.data?.mergesLastHour.items?.map((merge, i) => {
           const url = prUrl(merge);
