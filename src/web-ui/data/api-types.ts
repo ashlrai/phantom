@@ -91,6 +91,8 @@ export type {
  */
 export type {
   Proposal,
+  ApprovalRequest,
+  ApprovalDecision,
   ProposalStatus,
   ProposalKind,
   ProposalVerifyResult,
@@ -413,3 +415,6 @@ export type {
   ServingRuntimeSnapshot,
   ServingRuntimeState,
 } from '../../core/verse/fleet-types.js';
+
+/** RQ-ONB-2 DETECT: GET /api/onboard/status row + report shapes. */
+export type { OnboardResourceStatus, OnboardStatusReport } from '../../core/onboard.js';
