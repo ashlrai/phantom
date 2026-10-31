@@ -23,6 +23,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Drive and watch the fleet from any agent or script | [Fleet API](FLEET-API.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
@@ -137,6 +138,8 @@ inspect both campaign and delivery outcomes and reconcile receipts before retryi
 A local branch is not a merge, release or production acceptance. Keep scope,
 resource reserves and acceptance criteria explicit; routine execution can proceed
 within them without turning discovery or a passing trial into broader authority.
+
+For an opt-in versioned source installation, see [versioned self-swap](https://github.com/ashlrai/phantom/blob/master/docs/SELF-SWAP.md) (source).
 
 To set up and operate Phantom from a cold start, see the [agent operations guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md) (source).
 
