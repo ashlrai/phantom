@@ -30,8 +30,8 @@
  *   queue.v1.json        DRIVER-1 queue document (schema 'queue.v1', jobs[]
  *                        with id/status/pool). When present it is the
  *                        authoritative in-flight (live) view.
- *   jobs.jsonl           Append-only transition ledger. Rows whose `to` /
- *                        `status` / `event` names a merge (land / landed /
+ *   jobs.jsonl           Append-only transition ledger. Rows whose `outcome` /
+ *                        `to` / `status` / `event` names a merge (land / landed /
  *                        merged / pr-merge / auto-merge) count toward
  *                        merges/hour; a `job` id with no `pool` resolves
  *                        through the queue's own job→pool map.
@@ -105,7 +105,7 @@ export interface FleetLaneView {
   queueDepth: number | null;
   /** In-flight jobs in this lane (queue.v1.json authoritative, else active ready.tsv rows; null when no live source). */
   liveJobs: number | null;
-  /** Merge transitions in the trailing window per hour (null when no ledger data exists at all). */
+  /** Unique merged PRs (or legacy job-level merges) in the trailing window per hour. */
   mergesPerHour: number | null;
   credit: FleetLaneCreditView;
 }
@@ -143,7 +143,6 @@ export interface FleetLaneConsoleOptions {
 // ---------------------------------------------------------------------------
 
 const MAX_QUEUE_FILE_BYTES = 4 * 1024 * 1024;
-const MAX_LEDGER_TAIL_BYTES = 1024 * 1024;
 const MAX_LEDGER_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_ROWS = 50_000;
 const DEFAULT_MERGE_WINDOW_MS = 60 * 60_000;
@@ -219,18 +218,6 @@ async function readBounded(path: string, maxBytes: number): Promise<string | nul
     throw new Error(info.size > maxBytes ? 'queue file exceeds read bound' : 'not a regular file');
   }
   return readFile(path, 'utf8');
-}
-
-/** Large ledgers only need their tail for a trailing-window metric; the first partial line is dropped. */
-async function readLedgerTail(path: string): Promise<string> {
-  const info = await stat(path);
-  if (!info.isFile()) throw new Error('not a regular file');
-  if (info.size > MAX_LEDGER_FILE_BYTES) throw new Error('ledger exceeds read bound');
-  const text = await readFile(path, 'utf8');
-  if (text.length <= MAX_LEDGER_TAIL_BYTES) return text;
-  const tail = text.slice(text.length - MAX_LEDGER_TAIL_BYTES);
-  const firstNewline = tail.indexOf('\n');
-  return firstNewline < 0 ? '' : tail.slice(firstNewline + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,14 +363,27 @@ export interface LaneLedgerEvent {
   job: string | null;
   pool: string | null;
   at: string | null;
+  pr: string | null;
   merge: boolean;
+}
+
+function prIdentity(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^https:\/\/github\.com\/([a-z\d_.-]+)\/([a-z\d_.-]+)\/pull\/([1-9]\d*)\/?$/i.exec(value);
+  return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
+}
+
+// An offset is essential: otherwise Date.parse depends on the host timezone.
+function eventTimestamp(value: string | null | undefined): number | null {
+  if (!value || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/i.test(value)) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropped: number } {
   const events: LaneLedgerEvent[] = [];
   let dropped = 0;
   for (const rawLine of text.split('\n')) {
-    if (events.length >= MAX_ROWS) break;
     const line = rawLine.trim();
     if (!line) continue;
     let value: unknown;
@@ -400,14 +400,14 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
     const job = pick('job', 'id', 'jobId');
     const poolRaw = pick('pool', 'lane', 'account');
     const pool = poolRaw && LANE_ID.test(poolRaw) ? poolRaw : null;
-    const at = pick('at', 'ts', 'time', 'timestamp', 'landedAt', 'mergedAt', 'completedAt', 'recordedAt', 'updatedAt');
-    const transition = pick('to', 'status', 'state', 'next', 'newStatus');
+    const at = pick('ts', 'at', 'time', 'timestamp', 'landedAt', 'mergedAt', 'completedAt', 'recordedAt', 'updatedAt');
+    const transition = pick('outcome', 'to', 'status', 'state', 'next', 'newStatus');
     const eventName = pick('event', 'type', 'transition', 'action', 'verb', 'kind');
     const merge =
       (transition !== null && MERGE_WORDS.has(transition.toLowerCase())) ||
       (eventName !== null && MERGE_WORDS.has(eventName.toLowerCase())) ||
       row['landed'] === true || row['merged'] === true;
-    events.push({ job, pool, at, merge });
+    events.push({ job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge });
   }
   return { events, dropped };
 }
@@ -588,7 +588,8 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   // ── 3. jobs.jsonl — merge events in the trailing window ──────────────────
   let ledgerEvents: LaneLedgerEvent[] = [];
   try {
-    const text = await readLedgerTail(join(queueDir, 'jobs.jsonl'));
+    const text = await readBounded(join(queueDir, 'jobs.jsonl'), MAX_LEDGER_FILE_BYTES);
+    if (text === null) throw new Error('ledger unavailable');
     const parsed = parseJobsJsonl(text);
     ledgerEvents = parsed.events;
     sources.ledger = {
@@ -644,24 +645,33 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   for (const pool of Object.keys(budgets.pools)) lanes.add(pool);
 
   const mergeCounts = new Map<string, number>();
+  const candidates: Array<{ pool: string; job: string | null; pr: string | null }> = [];
   let sawMergeEvidence = sources.ledger.state !== 'missing';
   for (const event of ledgerEvents) {
-    if (!event.merge || !validTimestamp(event.at ?? undefined)) continue;
-    const at = Date.parse(event.at!);
-    if (at > now.getTime() || at < cutoff) continue;
+    const at = eventTimestamp(event.at);
+    if (!event.merge || at === null || at > now.getTime() || at < cutoff) continue;
     const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
     if (!pool) continue;
-    mergeCounts.set(pool, (mergeCounts.get(pool) ?? 0) + 1);
+    candidates.push({ pool, job: event.job, pr: event.pr });
   }
   // ready.tsv LAND rows with their own timestamps count too — some routers
   // export the whole queue, lands included, in one file.
   let sawReadyLand = false;
   for (const row of queueRows) {
-    if (!MERGE_WORDS.has(row.status.toLowerCase()) || !validTimestamp(row.at)) continue;
-    const at = Date.parse(row.at);
-    if (at > now.getTime() || at < cutoff) continue;
+    const at = eventTimestamp(row.at);
+    if (!MERGE_WORDS.has(row.status.toLowerCase()) || at === null || at > now.getTime() || at < cutoff) continue;
     sawReadyLand = true;
-    mergeCounts.set(row.pool, (mergeCounts.get(row.pool) ?? 0) + 1);
+    candidates.push({ pool: row.pool, job: row.id, pr: null });
+  }
+  // Prefer PR identity; a legacy job-only observation of that PR is a duplicate.
+  const jobsWithPr = new Set(candidates.filter(c => c.pr && c.job).map(c => c.job!));
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate.pr && candidate.job && jobsWithPr.has(candidate.job)) continue;
+    const key = candidate.pr ? `pr:${candidate.pr}` : candidate.job ? `job:${candidate.job}` : null;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    mergeCounts.set(candidate.pool, (mergeCounts.get(candidate.pool) ?? 0) + 1);
   }
   sawMergeEvidence = sawMergeEvidence || sawReadyLand || mergeCounts.size > 0;
 
