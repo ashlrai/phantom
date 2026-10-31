@@ -38,7 +38,7 @@ function claudeEvents(patch: Record<string, unknown> = {}) {
       cache_creation_input_tokens: 6, cache_read_input_tokens: 8 }, ...patch }];
 }
 function nativeFixture(rows: unknown[] | string, extra = '', exitCode = 0,
-  version = '2.1.309 (Claude Code)', versionExitCode = 0): ResourceBinding {
+  version = '2.1.311 (Claude Code)', versionExitCode = 0): ResourceBinding {
   const script = join(fixtureRoot, `worker-${Math.random().toString(16).slice(2)}.cjs`);
   const transcript = typeof rows === 'string' ? rows : rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
   writeFileSync(script, [
@@ -158,21 +158,21 @@ describe('resource native worker terminal and accounting evidence', () => {
       .toMatchObject({ status: 'uncertain', reason: 'worker-termination-uncertain' });
     expect(run).toHaveBeenCalledTimes(1);
   });
-  it.each(['2.1.308 (Claude Code)', '2.1.309-rc.1 (Claude Code)'])(
+  it.each(['2.1.310 (Claude Code)', '2.1.311-rc.1 (Claude Code)'])(
     'refuses Claude %s before task execution', async version => {
       const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), task());
       expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-outdated',
         output: '', inputTokens: null, outputTokens: null });
       expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
     });
-  it.each([['PRIVATE_DIAGNOSTIC', 0], ['2.1.309 (Claude Code)', 1]] as const)(
+  it.each([['PRIVATE_DIAGNOSTIC', 0], ['2.1.311 (Claude Code)', 1]] as const)(
     'refuses unverified Claude version output %# before task execution', async (version, exitCode) => {
       const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version, exitCode), task());
       expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-unverified',
         output: '', inputTokens: null, outputTokens: null });
       expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
     });
-  it.each(['2.1.309 (Claude Code)', '2.1.310 (Claude Code)'])(
+  it.each(['2.1.311 (Claude Code)', '2.1.312 (Claude Code)'])(
     'admits Claude %s and sends the task only to the execution invocation', async version => {
       const request = task();
       expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), request))
@@ -185,7 +185,7 @@ describe('resource native worker terminal and accounting evidence', () => {
     if (binding.kind !== 'native-cli') throw new Error('Fixture type');
     expect(await executeResourceWorker(worker('claude'), binding, task())).toMatchObject({ status: 'completed' });
     const script = binding.command[1]!;
-    writeFileSync(script, readFileSync(script, 'utf8').replace('2.1.309 (Claude Code)', '2.1.308 (Claude Code)'));
+    writeFileSync(script, readFileSync(script, 'utf8').replace('2.1.311 (Claude Code)', '2.1.310 (Claude Code)'));
     rmSync(join(fixtureRoot, 'invocation.json'));
     expect(await executeResourceWorker(worker('claude'), binding, task()))
       .toMatchObject({ status: 'failed', reason: 'worker-cli-version-outdated' });

@@ -52,6 +52,16 @@ import type { GenAiSpan, RunState, SwarmRun } from '../types.js';
 export function buildGenAiTrace(spans: GenAiSpan[]): object;
 export function spansFromRun(run: RunState): GenAiSpan[];
 export function spansFromSwarm(s: SwarmRun): GenAiSpan[];
+
+// Native-client OTLP ingest (receive side; metadata-only, privacy-preserving):
+export interface ReceivedOtelSpan {
+  source: 'claude-code' | 'xai';
+  event: 'api_request' | 'safety_event';
+  usage: Partial<Record<'input_tokens' | 'output_tokens' | 'cache_read_tokens' |
+    'cache_creation_tokens' | 'cache_creation_5m' | 'cache_creation_1h', number>>;
+  costUsd?: number;   // sender-reported cost when present
+}
+export function parseNativeOtelTrace(payload: unknown): ReceivedOtelSpan[];
 ```
 - `buildGenAiTrace` returns a valid OTLP/HTTP-JSON traces payload:
   `{ resourceSpans: [ { resource:{attributes:[...]}, scopeSpans:[ { scope:{name,version}, spans:[...] } ] } ] }`.
@@ -66,6 +76,28 @@ export function spansFromSwarm(s: SwarmRun): GenAiSpan[];
 - `spansFromRun`/`spansFromSwarm` derive one span per executed task from the
   task `usage` (tokensIn/tokensOut/estCostUsd), `status`, ids, and run/swarm
   `provider`/timestamps. Pure functions; no I/O.
+- `parseNativeOtelTrace` decodes OTLP/HTTP-JSON envelopes from Claude Code /
+  xAI without retaining names, resources, ids, arbitrary attributes or bodies.
+  Usage fields stay absent on malformed values (never coerced to 0). Cache
+  lifetimes remain separate: wire `cache_creation_5m_tokens`/`_1h_tokens`
+  (Claude Code >= 2.1.300; `_input_tokens` and short names accepted as
+  aliases) map to `cache_creation_5m`/`cache_creation_1h`, and
+  `cache_creation_tokens` stays the merged total. Reported cost resolves in
+  order `cost_in_usd_ticks` (xAI) -> `cost_usd` -> `cost_usd_micros`.
+
+### `src/core/observability/otel-cost.ts`
+```ts
+import type { ReceivedOtelSpan } from './otlp.js';
+
+export function receivedCostUsd(span: ReceivedOtelSpan): number | undefined;
+```
+- Best USD figure for a received span: `costUsd` when the sender reported it,
+  else a static-table estimate via `estCostUsd`. `cache_creation_1h` prices at
+  the 1-hour tier (2.0x input), `cache_creation_5m` at the 5-minute tier
+  (1.25x); a merged `cache_creation_tokens` total fills only an omitted
+  lifetime (remainder) and never adds on top of the split. `undefined` when
+  the span carries neither reported cost nor billable usage — unknown stays
+  unknown, never fabricated as $0.
 
 ### `src/core/observability/telemetry-sink.ts`
 ```ts

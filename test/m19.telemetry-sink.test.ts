@@ -24,6 +24,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
 import { parseNativeOtelTrace, type ReceivedOtelSpan } from '../src/core/observability/otlp.js';
+import { receivedCostUsd } from '../src/core/observability/otel-cost.js';
 import { startOtlpReceiver } from '../src/core/observability/otlp-receiver.js';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -673,7 +674,7 @@ function fixture(name: string, attributes: Record<string, string | number> = {})
 }
 const claude = fixture('claude_code.api_request', {
   input_tokens: 12, output_tokens: 9, cache_read_tokens: 80, cache_creation_tokens: 50,
-  cache_creation_5m: '30', cache_creation_1h: '20', cost_usd: 0.12,
+  cache_creation_5m_tokens: '30', cache_creation_1h_tokens: '20', cost_usd: 0.12,
   prompt: 'PRIVATE_CONTENT', 'workspace.host_paths': 'PRIVATE_CONTENT',
 });
 
@@ -726,8 +727,8 @@ describe('native OTLP metadata', () => {
   });
   it('decodes canonical OTLP intValue attributes across resources and scopes', () => {
     const span = { name: 'claude_code.api_request', attributes: [
-      { key: 'cache_creation_5m', value: { intValue: '40' } },
-      { key: 'cache_creation_1h', value: { intValue: '0' } },
+      { key: 'cache_creation_5m_tokens', value: { intValue: '40' } },
+      { key: 'cache_creation_1h_tokens', value: { intValue: '0' } },
     ] };
     const payload = { resourceSpans: [
       { scopeSpans: [{ spans: [span] }, { spans: [span] }] },
@@ -738,6 +739,22 @@ describe('native OTLP metadata', () => {
     expect(result.every(item => item.usage.cache_creation_5m === 40 &&
       item.usage.cache_creation_1h === 0 && item.costUsd === undefined)).toBe(true);
   });
+  it('still accepts the short cache-lifetime aliases and gen_ai.usage prefixes', () => {
+    expect(parseNativeOtelTrace(fixture('claude_code.api_request', {
+      'gen_ai.usage.cache_creation_5m': '10', cache_creation_1h: '5',
+    }))[0]?.usage).toEqual({ cache_creation_5m: 10, cache_creation_1h: 5 });
+  });
+  it('decodes integer cost_usd_micros only when cost_usd is absent', () => {
+    expect(parseNativeOtelTrace(fixture('claude_code.api_request', {
+      cost_usd_micros: '12500',
+    }))[0]?.costUsd).toBe(0.0125);
+    expect(parseNativeOtelTrace(fixture('claude_code.api_request', {
+      cost_usd: 0.5, cost_usd_micros: '12500',
+    }))[0]?.costUsd).toBe(0.5);
+    expect(parseNativeOtelTrace(fixture('claude_code.api_request', {
+      cost_usd_micros: '1.5',
+    }))[0]?.costUsd).toBeUndefined();
+  });
   it.each([-1, 0.5, '9007199254740992', 'NaN'])('keeps invalid xAI cost unknown: %s', value => {
     expect(parseNativeOtelTrace(fixture('chat', {
       'gen_ai.system': 'xai', cost_in_usd_ticks: value,
@@ -747,6 +764,65 @@ describe('native OTLP metadata', () => {
     expect(parseNativeOtelTrace(fixture('PRIVATE_CONTENT'))).toEqual([]);
     expect(() => parseNativeOtelTrace(null)).toThrow('Invalid OTLP');
     expect(parseNativeOtelTrace({ resourceSpans: [null, {}] })).toEqual([]);
+  });
+});
+
+describe('native OTLP cost (1h cache writes priced separately)', () => {
+  const span = (usage: ReceivedOtelSpan['usage'], patch: Partial<ReceivedOtelSpan> = {}): ReceivedOtelSpan =>
+    ({ source: 'claude-code', event: 'api_request', usage, ...patch });
+  const claudeIn = (tokens: number) => (tokens / 1_000_000) * 3;
+
+  it('prefers the reported costUsd over any estimate', () => {
+    expect(receivedCostUsd(span({ input_tokens: 1_000_000 }, { costUsd: 0.12 }))).toBe(0.12);
+  });
+  it('leaves cost unknown when the span carries no billable usage', () => {
+    expect(receivedCostUsd(span({}))).toBeUndefined();
+    expect(receivedCostUsd(span({}, { event: 'safety_event' }))).toBeUndefined();
+  });
+  it('prices 1-hour cache writes at 2.0x, not the 5-minute 1.25x tier', () => {
+    expect(receivedCostUsd(span({ cache_creation_1h: 1_000_000 }))).toBeCloseTo(claudeIn(1_000_000) * 2.0, 10);
+    expect(receivedCostUsd(span({ cache_creation_5m: 1_000_000 }))).toBeCloseTo(claudeIn(1_000_000) * 1.25, 10);
+    // The whole point: equal token counts must not price equally.
+    expect(receivedCostUsd(span({ cache_creation_1h: 1_000_000 })))
+      .toBeGreaterThan(receivedCostUsd(span({ cache_creation_5m: 1_000_000 }))!);
+  });
+  it('prices each declared lifetime at its own tier in one span', () => {
+    // in 1M ($3) + out 1M ($15) + read 500k ($0.15) + 5m 200k ($0.75) + 1h 100k ($0.60)
+    expect(receivedCostUsd(span({ input_tokens: 1_000_000, output_tokens: 1_000_000,
+      cache_read_tokens: 500_000, cache_creation_5m: 200_000, cache_creation_1h: 100_000 })))
+      .toBeCloseTo(19.5, 10);
+  });
+  it('treats a merged cache_creation_tokens total as the default 5-minute tier', () => {
+    expect(receivedCostUsd(span({ cache_creation_tokens: 1_000_000 }))).toBeCloseTo(claudeIn(1_000_000) * 1.25, 10);
+  });
+  it('never adds the merged total on top of the split it already sums', () => {
+    // merged 2M split into 1.2M@5m + 800k@1h; pricing merged again would add $7.50.
+    expect(receivedCostUsd(span({ cache_creation_tokens: 2_000_000,
+      cache_creation_5m: 1_200_000, cache_creation_1h: 800_000 })))
+      .toBeCloseTo(claudeIn(1_200_000) * 1.25 + claudeIn(800_000) * 2.0, 10);
+  });
+  it.each([
+    [{ cache_creation_tokens: 1_000_000, cache_creation_1h: 400_000 }, 'fills 5m'],
+    [{ cache_creation_tokens: 1_000_000, cache_creation_5m: 600_000 }, 'fills 1h'],
+  ])('backfills the omitted lifetime from the merged remainder (%s)', (usage) => {
+    expect(receivedCostUsd(span(usage as ReceivedOtelSpan['usage'])))
+      .toBeCloseTo(claudeIn(600_000) * 1.25 + claudeIn(400_000) * 2.0, 10);
+  });
+  it('prices an inconsistent merged total by the declared split alone', () => {
+    // merged 10 < 5m 30: the explicit split wins, remainder clamps at zero.
+    expect(receivedCostUsd(span({ cache_creation_tokens: 10, cache_creation_5m: 1_000_000 })))
+      .toBeCloseTo(claudeIn(1_000_000) * 1.25, 10);
+  });
+  it('estimates non-Anthropic sources at the conservative fallback table', () => {
+    expect(receivedCostUsd({ source: 'xai', event: 'api_request',
+      usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 } })).toBeCloseTo(18, 10);
+  });
+  it('end-to-end: parsed wire attributes feed the split estimate', () => {
+    const [received] = parseNativeOtelTrace(fixture('claude_code.api_request', {
+      cache_creation_tokens: '1000000', cache_creation_5m_tokens: '600000', cache_creation_1h_tokens: '400000',
+    }));
+    expect(received!.costUsd).toBeUndefined();
+    expect(receivedCostUsd(received!)).toBeCloseTo(claudeIn(600_000) * 1.25 + claudeIn(400_000) * 2.0, 10);
   });
 });
 

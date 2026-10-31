@@ -3,7 +3,8 @@ import { runVerifySubprocessAsync, type VerifySubprocessOptions } from '../run/v
 import { compareCliVersions } from '../verse/model-windows.js';
 
 export const POOL_CLI_MIN_VERSIONS = Object.freeze({
-  claude: Object.freeze({ label: 'Claude Code', minimum: '2.1.309' }),
+  // Claude Code 2.1.311 bundles Agent SDK 0.3.311 — the Agent SDK floor.
+  claude: Object.freeze({ label: 'Claude Code', minimum: '2.1.311' }),
   codex: Object.freeze({ label: 'Codex', minimum: '0.164.0' }),
 });
 export type PoolCliProvider = keyof typeof POOL_CLI_MIN_VERSIONS;

@@ -321,6 +321,22 @@ function receivedNumber(value: unknown, integer: boolean): number | undefined {
 }
 
 /**
+ * Retained usage field → accepted wire attribute names, tried in order.
+ * Claude Code emits `cache_creation_5m_tokens`/`cache_creation_1h_tokens`
+ * (api_request event, since 2.1.300); the usage-block spellings and the
+ * earlier short names stay accepted as aliases. Every name is also probed
+ * under the `gen_ai.usage.` semantic-convention prefix.
+ */
+const USAGE_ATTRIBUTES = [
+  ['input_tokens', 'input_tokens'],
+  ['output_tokens', 'output_tokens'],
+  ['cache_read_tokens', 'cache_read_tokens'],
+  ['cache_creation_tokens', 'cache_creation_tokens'],
+  ['cache_creation_5m', 'cache_creation_5m_tokens', 'cache_creation_5m_input_tokens', 'cache_creation_5m'],
+  ['cache_creation_1h', 'cache_creation_1h_tokens', 'cache_creation_1h_input_tokens', 'cache_creation_1h'],
+] as const;
+
+/**
  * Decode OTLP/HTTP JSON without forwarding names, resources, ids, arbitrary
  * attributes or event bodies. Unknown spans are ignored; malformed envelopes
  * are refused. Cache lifetimes remain separate and are never added twice.
@@ -349,14 +365,17 @@ export function parseNativeOtelTrace(payload: unknown): ReceivedOtelSpan[] {
           usage: {},
         };
         if (!safety) {
-          for (const key of ['input_tokens', 'output_tokens', 'cache_read_tokens',
-            'cache_creation_tokens', 'cache_creation_5m', 'cache_creation_1h'] as const) {
-            const n = receivedNumber(attrs.get(key) ?? attrs.get(`gen_ai.usage.${key}`), true);
-            if (n !== undefined) received.usage[key] = n;
+          for (const [key, ...names] of USAGE_ATTRIBUTES) {
+            for (const name of names) {
+              const n = receivedNumber(attrs.get(name) ?? attrs.get(`gen_ai.usage.${name}`), true);
+              if (n !== undefined) { received.usage[key] = n; break; }
+            }
           }
           const ticks = xai ? receivedNumber(attrs.get('cost_in_usd_ticks'), true) : undefined;
+          const micros = receivedNumber(attrs.get('cost_usd_micros') ?? attrs.get('gen_ai.usage.cost_usd_micros'), true);
           const cost = ticks !== undefined ? ticks / 10_000_000_000 :
-            receivedNumber(attrs.get('cost_usd') ?? attrs.get('gen_ai.usage.cost_usd'), false);
+            receivedNumber(attrs.get('cost_usd') ?? attrs.get('gen_ai.usage.cost_usd'), false) ??
+            (micros !== undefined ? micros / 1_000_000 : undefined);
           if (cost !== undefined) received.costUsd = cost;
         }
         result.push(received);
