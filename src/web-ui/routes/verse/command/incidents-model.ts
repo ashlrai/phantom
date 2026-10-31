@@ -15,10 +15,29 @@ const time = (value: string | null): number | null => {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
+// A failed leader pass logs `LEADER <executor> rc=N`; the rc value itself is
+// unreliable, so the row shape — not the number — marks the failure. Any other
+// LEADER row is a healthy pass.
+const LEADER_FAILED = /^\S+\s+rc=/;
 
 export function incidents(runs: FleetRuns | null, nowMs: number): Incident[] {
   if (!runs || !Number.isFinite(nowMs)) return [];
   const result: Incident[] = [];
+  const leaderRows = runs.events.flatMap((event, index) => {
+    const at = time(event.at);
+    return /^LEADER$/i.test(event.kind) && at !== null && at <= nowMs
+      ? [{ at, atText: event.at, index, failed: LEADER_FAILED.test(event.text) }] : [];
+  }).sort((a, b) => (b.at - a.at) || (b.index - a.index));
+  let leaderStreak = 0;
+  while (leaderRows[leaderStreak]?.failed) leaderStreak++;
+  if (leaderStreak > 0) {
+    const lastHealthy = leaderRows[leaderStreak];
+    const anchor = lastHealthy?.at ?? leaderRows[leaderRows.length - 1]!.at;
+    if (nowMs - anchor >= 30 * MINUTE) {
+      const pass = lastHealthy ? `last healthy pass ${lastHealthy.atText} (${formatMinutes(nowMs - lastHealthy.at)} ago)` : 'no healthy pass in the retained tail';
+      result.push({ id: 'executor-down', severity: 'incident', title: 'Leader executor is failing', detail: `${leaderStreak} failed ${leaderStreak === 1 ? 'row' : 'rows'} in a row; ${pass}.`, fix: null });
+    }
+  }
   const activity = runs.events.filter(event => /LAUNCH|PUBLISH|CLAIM|START/i.test(event.kind));
   const activityTimes = activity.map(event => time(event.at));
   // If no activity is in the retained tail, its oldest event is the only
