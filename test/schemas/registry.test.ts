@@ -5,7 +5,7 @@ import type { ConductorCycleSummary } from '../../src/core/goals/conductor.js';
 
 const ROOT = new URL('../../schemas/', import.meta.url);
 const DIALECT = 'http://json-schema.org/draft-07/schema#';
-const IDS = ['fleet.v1', 'loop.v1', 'ci_time.v1'] as const;
+const IDS = ['fleet.v1', 'loop.v1', 'ci_time.v1', 'ecosystem-changelog.v1'] as const;
 type SchemaId = typeof IDS[number];
 type Row = Record<string, unknown>;
 
@@ -192,6 +192,10 @@ const OBJECT_PATHS: Record<SchemaId, string[]> = {
   ],
   'loop.v1': ['', 'summary', 'summary.goalActivity.0'],
   'ci_time.v1': ['', 'run', 'jobs.0'],
+  'ecosystem-changelog.v1': [
+    '', 'window', 'totals', 'recent14d',
+    'repositories.0', 'repositories.0.sources.0', 'repositories.0.changes.0',
+  ],
 };
 
 describe('required fields and closed nested records', () => {

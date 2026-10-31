@@ -114,7 +114,7 @@ function isDirectory(path: string): boolean {
   }
 }
 
-function nearestRepoRoot(startDir: string): string | null {
+export function nearestRepoRoot(startDir: string): string | null {
   let dir = resolve(startDir);
   const root = resolve('/');
   while (true) {

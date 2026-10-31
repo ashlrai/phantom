@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://phm.dev/schemas/ecosystem-changelog.v1.schema.json",
+  "title": "Ashlr.AI ecosystem changelog document v1",
+  "description": "Rendered cross-repository changelog index: per-repo CHANGELOG.md sections, published GitHub releases and merged pull requests. Entries omit bodies; `url` links to the full text. `complete` reports collection integrity, not correctness; a truncated or unavailable source stays visible under sources. Null dates mark undated (unreleased) changelog sections, which always pass the window filter.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generatedAt", "complete", "window", "totals", "recent14d", "repositories"],
+  "properties": {
+    "schema": { "const": "ecosystem-changelog.v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "complete": {
+      "type": "boolean",
+      "description": "True only when every source of every repository collected completely."
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["since"],
+      "properties": {
+        "since": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Inclusive lower bound applied to dated changes (the --since filter); null means unfiltered. Undated changes always pass."
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositories", "changes", "changelog", "releases", "pullRequests", "crossRepo"],
+      "properties": {
+        "repositories": { "type": "integer", "minimum": 0 },
+        "changes": { "type": "integer", "minimum": 0 },
+        "changelog": { "type": "integer", "minimum": 0 },
+        "releases": { "type": "integer", "minimum": 0 },
+        "pullRequests": { "type": "integer", "minimum": 0 },
+        "crossRepo": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "recent14d": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["days", "since", "changes", "changelogEntries", "releases", "pullRequests", "crossRepo", "repositories"],
+      "description": "Fixed 14-day activity summary over the changes this document contains: every count is derivable from repositories[].changes.",
+      "properties": {
+        "days": { "const": 14 },
+        "since": { "type": "string", "format": "date-time" },
+        "changes": { "type": "integer", "minimum": 0 },
+        "changelogEntries": { "type": "integer", "minimum": 0 },
+        "releases": { "type": "integer", "minimum": 0 },
+        "pullRequests": { "type": "integer", "minimum": 0 },
+        "crossRepo": { "type": "integer", "minimum": 0 },
+        "repositories": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/repository" }
+    }
+  },
+  "definitions": {
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "directory", "tier", "sources", "changes"],
+      "properties": {
+        "repository": { "$ref": "#/definitions/repositoryName" },
+        "directory": { "type": "string", "minLength": 1 },
+        "tier": {
+          "enum": ["core-fleet", "force-multiplier", "inventory", "supporting"]
+        },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/sourceStatus" }
+        },
+        "changes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/change" }
+        }
+      }
+    },
+    "sourceStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "status"],
+      "properties": {
+        "source": { "$ref": "#/definitions/sourceName" },
+        "status": { "enum": ["complete", "missing", "error", "truncated"] },
+        "reason": {
+          "enum": ["unavailable", "invalid-response", "not-public", "page-limit"],
+          "description": "Fixed diagnostic code; transport errors never reach the document."
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repository", "source", "title", "date", "url", "crossRepo", "relatedPullRequests"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable identity: <repository>:<source>:<source-specific key>."
+        },
+        "repository": { "$ref": "#/definitions/repositoryName" },
+        "source": { "$ref": "#/definitions/sourceName" },
+        "title": { "type": "string" },
+        "date": { "type": ["string", "null"], "format": "date-time" },
+        "url": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "number": { "type": "integer", "minimum": 1 },
+        "prerelease": { "type": "boolean" },
+        "unreleased": { "type": "boolean" },
+        "crossRepo": { "type": "boolean" },
+        "relatedPullRequests": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+#[1-9][0-9]*$" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "repositoryName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"
+    },
+    "sourceName": {
+      "enum": ["changelog", "release", "pull-request"]
+    }
+  }
+}

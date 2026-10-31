@@ -19,6 +19,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.30.0] — Unreleased
 
 ### Added
+- `phm ecosystem changelog` renders the cross-repo changelog from sibling
+  CHANGELOG.md files, published releases and merged PRs: an llms-style
+  `ECOSYSTEM_CHANGELOG.md` with a fixed 14-day summary and the
+  `ecosystem-changelog.v1` JSON document (`--since`, `--as-of`, `--write`).
 - `phm autopilot` drives Phantom's own pull requests toward green: it fixes CI,
   answers review, updates the merge base and stops when the PR is not ours.
   Operator credentials stay out of fixer and verify children.
