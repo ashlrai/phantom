@@ -19,17 +19,19 @@ export function whatsNewCopy(presence: FleetPresence): {
 } {
   if (presence === 'present') return {
     bullets: [
-      'Fleet workspace: live jobs, lanes and merges from this Mac',
-      "Leaders' inbox: your prompts land in MASON-INBOX.md",
-      'Ops tray: queue, releases and lane targets',
+      'Open Lanes, Merges and Queue as dock panes with /pane.',
+      'The Inbox pane sends messages to MASON-INBOX.md.',
+      'The notification bell shows fleet, merge and update alerts.',
+      'Pair a device to use the mobile remote at /verse/m/.',
     ],
     primary: { label: 'Open fleet workspace', action: 'fleet-workspace' },
   };
   return {
     bullets: [
-      'Ops tray: queue, releases and lane targets when available',
+      'Open dock panes with /pane; ⌘/ lists keyboard shortcuts.',
+      'The notification bell shows fleet, merge and update alerts.',
+      'Pair a device to use the mobile remote at /verse/m/.',
       'Update now in Settings ▸ Desktop',
-      '⌘/ opens keyboard shortcuts',
     ],
     primary: presence === 'missing'
       ? { label: 'Open Settings ▸ Fleet sources', action: 'fleet-sources' }
