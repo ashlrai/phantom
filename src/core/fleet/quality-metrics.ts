@@ -17,6 +17,7 @@ import { readDecisions } from './decisions-ledger.js';
 import { hasReleasedPostMergeCredit } from './post-merge-credit.js';
 import { canonicalModelTag } from '../run/model-catalog.js';
 import { verifyProducerProvenanceV2 } from '../foundry/provenance.js';
+import { computeCrossReviewShare } from './cross-review-metrics.js';
 
 // ---------------------------------------------------------------------------
 // Trivial-patch heuristics
@@ -146,6 +147,11 @@ export function computeQualityMetrics(
       throw new Error('proposal source incomplete');
     }
     let proposals = proposalRead.proposals;
+    // Reviews in the window can belong to proposals created before it.
+    const reviewProposals = proposals.filter((p) =>
+      (!opts?.repo || p.repo === opts.repo) &&
+      (!opts?.engine || p.engineModel?.startsWith(opts.engine) || p.engineModel === opts.engine),
+    );
 
     // Operational merge facts belong to the witness observation window.
     if (sinceMs !== undefined) {
@@ -273,6 +279,7 @@ export function computeQualityMetrics(
       acceptRate,
       rejectRate,
       verifyPassRate,
+      crossReview: computeCrossReviewShare(reviewProposals, decisions.filter((d) => isInWindow(Date.parse(d.ts), sinceMs))),
       avgDiffLines,
       byEngine: byEngineQuality,
       byRepo,
@@ -378,6 +385,7 @@ function zeroMetrics(window: string): QualityMetrics {
     acceptRate: 0,
     rejectRate: 0,
     verifyPassRate: 0,
+    crossReview: null,
     avgDiffLines: 0,
     byEngine: {},
     byRepo: {},
