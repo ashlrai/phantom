@@ -15,6 +15,34 @@ and `Phantom.app`. The historical 3.25.0 release used `Ashlr.app`; older
 screenshots and references retain their captured names. See
 [the product naming guide](PHANTOM-BRAND.md).
 
+## First local session
+
+From public **Connect**, follow the [Quickstart](QUICKSTART.md#from-public-connect-to-your-first-local-session)
+to install a qualified release, check `phm --version` and open `phm verse`.
+The public experience does not establish a working local account or hosted
+session. `phm doctor` checks the machine, not provider entitlement or quota.
+
+Before sending a task, inspect **Resources** for the intended account's chat
+readiness. Use the provider's own CLI sign-in, a configured API resource or a
+running tool-capable local model. An account saved in Phantom, a listed model
+or a successful connection does not establish usable capacity. Missing, stale
+or unavailable readings do not prove readiness; inspect the hold reason and
+finish setup or choose another eligible resource. API credits, subscription
+allowances and local hardware retain their separate limits and costs.
+
+Choose **Work with me** → **New chat**, select a scratch project or public
+repository you can edit, and confirm the folder. **Automatic** selects an
+eligible resource; **Advanced** lets you choose an account or model. If none is
+eligible, finish resource setup before sending. Saving the project does not
+enroll it for unattended work.
+
+Try: “Fix one typo in README.md, show the diff and report the checks you ran.
+Leave the change uncommitted.” Review the actual diff and verification results;
+a completion message alone does not establish delivery. Fleet activation is
+optional and separate from this interactive session.
+
+## Workspaces and resources
+
 The two primary workspaces are **Work with me** and **Work for me**.
 Work with me opens Chat for interactive engineering: guide a model, inspect
 its tools and context, and review changes beside the conversation. Work for me
@@ -1444,6 +1472,40 @@ binary is installed.
 Setup (plan, training opt-out, GitHub integration, service user, `ashlr devin
 connect`, ACU budget, the CLI) and limits: [`docs/DEVIN.md`](DEVIN.md).
 
+## Watch and steer the fleet (3.30)
+
+Open **Ops ▸ Live runs**, the default Ops view, to watch the fleet on this Mac.
+The tiles show real workers (processes launched by the dispatcher on this Mac),
+merges in the last hour from GitHub (`org:ashlrai`), personal Codex used %
+(read from the Codex CLI's own session logs for the personal account; no auth
+file is opened), and leader passes.
+
+The lanes table lists `codex-cmp`, `codex-personal`, `claude`, `devin`,
+`claude-api` and `codex-local`, with running, target, queued and held counts,
+tokens in 1h and merged in 24h. You can also inspect workers, publishes, the
+event tail and the inbox tail. A dash means **not known**, never zero. A quiet
+“not in this build yet” line means that API family has not landed.
+
+Under **Fleet control** on **Fleet** (⌘2), use **Tell the leaders** to append
+your text to `~/.ashlr-runs/leader/MASON-INBOX.md` under a heading of the form
+`## <date> ET (Mason, Phantom desktop) PRIORITY P0`. Leaders read newest-first.
+Secret-shaped text is refused rather than redacted. The equivalent CLI/API call
+is `POST /api/verse/fleet/runs/inbox` with `{"text": "..."}` and the mutation
+token; the entry is also logged to `dispatch-events.log`.
+
+The view shows kill switches as red chips. Each is a file whose existence stops
+its named activity: `~/.ashlr-runs/HOLD` stops the Claude lane; `PAUSE`,
+`ORCH_OFF`, `OPUS_LEADER_OFF`, `PUBLISH_HOLD`, and `queue/DISABLE` (dispatcher)
+are under `~/.ashlr-runs`. Removing a switch file resumes its activity.
+
+In **Settings ▸ Desktop ▸ Updates**, you can see the running version and short
+commit, how far it is behind or ahead of `origin/master`, whether a fast-forward
+is possible, and the native updater phase. Use **Check now** to refresh. The
+browser never installs anything.
+
+- `GET /api/verse/fleet/runs` reads the fleet runs view.
+- `GET /api/verse/ops/self-update` reads update status.
+
 ## Fleet ▸ Advanced — the daemon cockpit
 
 In 3.10 the V2 Autonomy panels live under **Fleet ▸ Advanced**. They set the
@@ -1906,6 +1968,9 @@ clear it or remove a surviving lease merely to make a status look healthy.
 
 ## Local module map
 
+- `src/core/verse/fleet-runs-api.ts`
+- `src/core/fleet/runs-dir-state.ts`
+
 Open **Wiki → Module map** for an enrolled repository to follow imports between
 modules, find files or exported symbols, and open cited source lines. The map
 uses the existing local scanner and makes no model calls. It labels pattern-based
@@ -1996,3 +2061,12 @@ gate ordinary dispatch.
 Single-producer spend accounting uses the admitted concrete engine, rather than trusting a
 subscription-like tier on a custom engine. An unaccounted interrupted zero-dollar batch or unexpected execution identity
 keeps its journal armed for reconciliation.
+
+### Split agent workspace
+
+In a chat, select **Split** to opt into `agentWorkspace`: the conversation
+stays beside a grid of Terminal, Browser, Computer use and Changes. The choice
+is saved per chat in local storage, alongside the dock's existing persisted
+sizes. Select Split again to return to the standard dock. Narrow windows use the existing
+sheet/tab layout. Computer use reports native desktop control status; the
+window's existing consent and stop controls continue to govern app access.

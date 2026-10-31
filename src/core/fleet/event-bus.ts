@@ -249,7 +249,9 @@ export function onFleetEvent<K extends FleetBusEventKind>(
 // ---------------------------------------------------------------------------
 
 /**
- * Emit a fleet lifecycle event and drain every registered handler in order.
+ * Emit a fleet lifecycle event and drain the handlers registered at the start
+ * in order. Registrations and removals during emission affect later emissions;
+ * a handler removed before its turn still runs in this emission.
  *
  * Gate: when cfg.foundry.eventBus === false, no handlers fire and the
  * function returns immediately — byte-identical to pre-M241.
@@ -269,7 +271,7 @@ export async function emit<K extends FleetBusEventKind>(
     const handlers = _registry.get(kind);
     if (!handlers || handlers.size === 0) return;
 
-    for (const handler of handlers) {
+    for (const handler of [...handlers]) {
       try {
         await handler(payload as FleetBusPayloadMap[FleetBusEventKind], cfg);
       } catch {
@@ -288,15 +290,6 @@ export async function emit<K extends FleetBusEventKind>(
 /** Clear all registered handlers.  For testing only. */
 export function _clearHandlers(): void {
   _registry.clear();
-}
-
-/** Return a snapshot of handler counts per kind.  For testing only. */
-export function _handlerCounts(): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const [kind, set] of _registry) {
-    out[kind] = set.size;
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------

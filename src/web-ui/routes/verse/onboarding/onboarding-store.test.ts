@@ -1,3 +1,4 @@
+import { ONBOARDING_STEPS } from './onboarding-model.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   VERSE_ONBOARDING_STORAGE_KEY,
@@ -115,6 +116,42 @@ describe('onboarding store', () => {
     expect(legacy.getOnboardingState()).toMatchObject({ open: false, expanded: false, step: 0 });
   });
 
+  it.each([
+    [-4, 0],
+    [2.7, 2],
+    [999, ONBOARDING_STEPS.length - 1],
+    [NaN, 0],
+    [Infinity, 0],
+    [-Infinity, 0],
+  ])('clamps step %s before persisting and reloading', async (step, expected) => {
+    setOnboardingStep(step);
+    expect(getOnboardingState().step).toBe(expected);
+    // Ensure the zero cases also exercise a persisted value.
+    expandOnboarding();
+    expect(JSON.parse(localStorage.getItem(VERSE_ONBOARDING_STORAGE_KEY)!)).toMatchObject({ step: expected });
+    vi.resetModules();
+    const fresh = await import('./onboarding-store.js');
+    expect(fresh.getOnboardingState()).toMatchObject({ open: true, expanded: true, step: expected });
+  });
+
+  it.each([null, '2026-09-20T10:00:00.000Z'])('clamps stale stored progress with completedAt=%s after reload', async (completedAt) => {
+    localStorage.setItem(VERSE_ONBOARDING_STORAGE_KEY, JSON.stringify({
+      completedAt, dismissedAt: null, expanded: true, step: 999,
+    }));
+    vi.resetModules();
+    const fresh = await import('./onboarding-store.js');
+    expect(fresh.getOnboardingState()).toMatchObject({
+      open: completedAt === null, completedAt, expanded: true, step: ONBOARDING_STEPS.length - 1,
+    });
+    if (completedAt !== null) {
+      fresh.replayOnboarding();
+      expect(fresh.getOnboardingState()).toMatchObject({ open: true, step: 0, completedAt });
+      vi.resetModules();
+      const reloaded = await import('./onboarding-store.js');
+      expect(reloaded.getOnboardingState()).toMatchObject({ open: false, completedAt });
+    }
+  });
+
   it('keeps the chip / card preference when the tour is answered', () => {
     expandOnboarding();
     dismissOnboarding();
@@ -138,11 +175,10 @@ describe('onboarding store', () => {
     setItem.mockRestore();
   });
 
-  it('survives a malformed stored record', () => {
+  it('survives a malformed stored record without reopening the tour', async () => {
     localStorage.setItem(VERSE_ONBOARDING_STORAGE_KEY, '{not json');
-    // The store reads at module load, so exercise the same path directly:
-    // a broken record must never throw out of a getter.
-    expect(() => JSON.parse(localStorage.getItem(VERSE_ONBOARDING_STORAGE_KEY)!)).toThrow();
-    expect(() => getOnboardingState()).not.toThrow();
+    vi.resetModules();
+    const fresh = await import('./onboarding-store.js');
+    expect(fresh.getOnboardingState()).toMatchObject({ open: false, step: 0 });
   });
 });

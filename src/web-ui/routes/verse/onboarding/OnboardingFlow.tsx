@@ -47,6 +47,8 @@ import {
   IconX,
 } from '../../../components/primitives/icons.js';
 import { useQuery } from '../../../data/hooks.js';
+import { ApiError, readFailureReason } from '../../../data/client.js';
+import { verseBootstrapQuery } from '../verse-bootstrap-query.js';
 import { SECTION_ICON } from '../verse-icons.js';
 import { SECTION_BLURBS } from '../section-blurbs.js';
 import { WORK_MODES } from '../shell/work-mode.js';
@@ -158,9 +160,13 @@ function WelcomeStep() {
  * straight from A2's health report; nothing is run from the tour.
  */
 function AccountsStep() {
+  const read = useQuery(verseBootstrapQuery);
+  const unavailable = read.error instanceof ApiError && read.error.status === 404;
   return (
     <StepBody>
-      <LiveCapacityStrip
+      {read.data === undefined && read.status === 'error' ? (
+        <p role="status">{unavailable ? 'Account information is unavailable in this build.' : `Could not read accounts. ${readFailureReason(read.error)}`}</p>
+      ) : <LiveCapacityStrip
         density="compact"
         headline
         local="collapse"
@@ -176,7 +182,7 @@ function AccountsStep() {
             </p>
           ) : null
         }
-      />
+      />}
       <p className={styles.aside}>
         Check each account’s subscription windows, credits and resets in Resources. Connect and manage supported accounts in Apps &amp; Accounts, under the gear.
       </p>

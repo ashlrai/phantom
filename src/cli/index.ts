@@ -1413,6 +1413,10 @@ async function cmdStatus(args: string[]): Promise<void> {
           `  ${dim('·')}  ${cyan(`${gs.openIssues} open issue${gs.openIssues !== 1 ? 's' : ''}`)}` +
           `  ${dim('·')}  ${ciStr}${repoLabel}`
         );
+        if (gs.repo) {
+          const { collectMergeEtas, formatMergeEta } = await import('../core/merge-eta.js');
+          for (const eta of collectMergeEtas(cwd, gs.repo)) console.log(`    ${formatMergeEta(eta)}`);
+        }
         console.log('');
       }
     }
@@ -1723,21 +1727,21 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 }
 
 async function cmdConfig(args: string[]): Promise<void> {
-  if (wantsHelp(args)) {
-    printCoreUsage('config', 'Read/write config values; no args prints a summary.', [
-      ['phm config get <key>', 'read a dot-path value (sensitive leaves print <redacted>)'],
-      ['phm config set <key> <value>', 'write a scalar; use --json <value> for structured keys'],
-      ['phm config path', 'print the config file path'],
-      ['phm config effective [--json]', 'read-only effective autonomy/daemon/foundry/backend settings'],
-    ]);
-    return;
-  }
   const subCmd = args[0];
+  const CONFIG_USAGE =
+    'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
 
   // `config set <key> --help` (or `set --help <value>`) used to store "--help"
   // as the value or the key. Refuse with the usage line before any config IO.
   if (subCmd === 'set' && (args.includes('--help') || args.includes('-h'))) {
     die('Usage: ashlr config set <key> <value>', 2);
+  }
+
+  if (wantsHelp(args) || subCmd === 'help') {
+    console.log(CONFIG_USAGE);
+    console.log('  (no args) or path  print the config file path');
+    console.log('  list               print a summary of the config');
+    return;
   }
 
   if (subCmd === 'effective') {
@@ -1758,14 +1762,6 @@ async function cmdConfig(args: string[]): Promise<void> {
     return;
   }
 
-  const CONFIG_USAGE =
-    'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
-  if (subCmd === '--help' || subCmd === '-h' || subCmd === 'help') {
-    console.log(CONFIG_USAGE);
-    console.log('  (no args) or path  print the config file path');
-    console.log('  list               print a summary of the config');
-    return;
-  }
   // A typo such as `config gt roots` used to print the summary and exit 0.
   if (subCmd && !['path', 'list', 'show', 'get', 'set'].includes(subCmd)) {
     die(`Unknown config subcommand: ${subCmd}\n${CONFIG_USAGE}`, 2);
@@ -1975,6 +1971,27 @@ async function main(): Promise<void> {
   const cmd  = argv[0] ?? 'help';
   const rest = argv.slice(1);
 
+  // Reject malformed legacy invocations before they load configuration or the index.
+  // Help remains handled by each command so its detailed usage is preserved.
+  const legacyUsage: Record<string, { usage: string; flags: string[]; maxOperands?: number }> = {
+    index: { usage: 'phm index [--refresh]', flags: ['--refresh'], maxOperands: 0 },
+    go: { usage: 'phm go [query] [--open] [--cd]', flags: ['--open', '--cd'] },
+    status: { usage: 'phm status [--json]', flags: ['--json'], maxOperands: 0 },
+    ls: { usage: 'phm ls [category]', flags: [], maxOperands: 1 },
+    open: { usage: 'phm open [query]', flags: [] },
+    tidy: { usage: 'phm tidy [--apply] [--json]', flags: ['--apply', '--json'], maxOperands: 0 },
+  };
+  const legacy = Object.hasOwn(legacyUsage, cmd) ? legacyUsage[cmd] : undefined;
+  if (legacy && !wantsHelp(rest)) {
+    const operands = rest.filter((arg) => !arg.startsWith('-'));
+    if (rest.some((arg) => arg.startsWith('-') && !legacy.flags.includes(arg)) ||
+        (legacy.maxOperands !== undefined && operands.length > legacy.maxOperands)) {
+      console.error(`Usage: ${legacy.usage}`);
+      process.exitCode = 2;
+      return;
+    }
+  }
+
   try {
     switch (cmd) {
       case 'router-calibration': {
@@ -2051,6 +2068,12 @@ async function main(): Promise<void> {
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);
+        break;
+      }
+
+      case 'graph': {
+        const { cmdGraph } = await import('./graph.js');
+        process.exitCode = await cmdGraph(rest);
         break;
       }
 
@@ -2172,6 +2195,11 @@ async function main(): Promise<void> {
       }
       case 'desktop-update': {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
+        break;
+      }
+      case 'self-swap': {
+        const { cmdSelfSwap } = await import('./self-swap.js');
+        process.exitCode = await cmdSelfSwap(rest);
         break;
       }
       // People try `phm upgrade` first; it used to be an unknown command.
