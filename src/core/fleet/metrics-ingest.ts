@@ -6,7 +6,7 @@ const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_JOBS = 100_000;
 const OUTCOMES = ['queued', 'running', 'merged', 'empty', 'failed', 'cancelled'] as const;
 type Outcome = typeof OUTCOMES[number];
-interface Job {
+export interface MetricsJob {
   id: string;
   lane: string;
   tier: string;
@@ -17,6 +17,9 @@ interface Job {
   pr?: string;
   reverted?: boolean;
   impact?: number;
+  retries?: number;
+  recuts?: number;
+  failureClass?: string;
 }
 
 export interface MetricsRollup {
@@ -91,8 +94,15 @@ function timestamp(value: unknown): number {
   if (!Number.isFinite(time) || new Date(time).toISOString() !== value) refuse('Invalid timestamp.');
   return time;
 }
-function fields(row: Record<string, unknown>): Partial<Job> {
-  const result: Partial<Job> = {};
+function fields(row: Record<string, unknown>): Partial<MetricsJob> {
+  const result: Partial<MetricsJob> = {};
+  for (const key of ['retries', 'recuts'] as const) {
+    if (row[key] === undefined) continue;
+    const count = number(row[key]);
+    if (!Number.isSafeInteger(count)) refuse('Retry and recut counts must be safe integers.');
+    result[key] = count;
+  }
+  if (row.failureClass !== undefined) result.failureClass = identifier(row.failureClass);
   if (row.outcome !== undefined) {
     if (!OUTCOMES.includes(row.outcome as Outcome)) refuse('Invalid job outcome.');
     result.outcome = row.outcome as Outcome;
@@ -114,7 +124,7 @@ function fields(row: Record<string, unknown>): Partial<Job> {
   }
   return result;
 }
-const complete = (job: Job): boolean => job.outcome !== undefined && !['queued', 'running'].includes(job.outcome);
+const complete = (job: MetricsJob): boolean => job.outcome !== undefined && !['queued', 'running'].includes(job.outcome);
 const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex');
 function sum(values: number[]): number {
@@ -122,7 +132,7 @@ function sum(values: number[]): number {
   if (!Number.isFinite(total) || total > Number.MAX_SAFE_INTEGER) refuse('Measurement total exceeds safe numeric range.');
   return total;
 }
-function rollup(jobs: Job[]): MetricsRollup {
+function rollup(jobs: MetricsJob[]): MetricsRollup {
   const done = jobs.filter(complete);
   const merged = done.filter(j => j.outcome === 'merged');
   const emptyJobs = done.filter(j => j.outcome === 'empty').length;
@@ -155,7 +165,7 @@ export function parseMetricsFeed(jobsText: string, statusText: string): MetricsF
   // The shared stable reader replaces invalid UTF-8. Refuse replacement
   // characters (including literal U+FFFD) so source digests bind exact bytes.
   if (jobsText.includes('\uFFFD') || statusText.includes('\uFFFD')) refuse('Metrics input must be UTF-8 without replacement characters.');
-  const jobs = new Map<string, Job>();
+  const jobs = new Map<string, MetricsJob>();
   for (const line of jobsText.split('\n')) {
     if (!line.trim()) continue;
     const row = object(parse(line));
@@ -193,14 +203,14 @@ export function parseMetricsFeed(jobsText: string, statusText: string): MetricsF
     }
   }
   const groups = (field: 'lane' | 'tier'): MetricsGroup[] => {
-    const grouped = new Map<string, Job[]>();
+    const grouped = new Map<string, MetricsJob[]>();
     for (const row of rows) {
       const group = grouped.get(row[field]) ?? [];
       group.push(row); grouped.set(row[field], group);
     }
     return [...grouped].sort(([a], [b]) => compare(a, b)).map(([key, group]) => ({ key, ...rollup(group) }));
   };
-  const pairs = new Map<string, Job[]>();
+  const pairs = new Map<string, MetricsJob[]>();
   for (const row of rows) {
     const key = `${row.lane}/${row.tier}`, group = pairs.get(key) ?? [];
     group.push(row); pairs.set(key, group);
