@@ -413,10 +413,14 @@ export function VerseApp() {
   // URL carries one.
   useEffect(() => {
     if (typeof window === 'undefined' || !/[?&](?:chat|pane|terminal)=/.test(window.location.search)) return;
-    void import('./shell/deep-link.js').then(({ consumeDeepLink }) => {
+    void import('./shell/deep-link.js').then(async ({ consumeDeepLink, resolveDeepLinkPane }) => {
       const link = consumeDeepLink();
       if (link?.terminal) window.dispatchEvent(new CustomEvent(VERSE_OPEN_TERMINAL_EVENT, { detail: { ...link.terminal, sessionId: link.sessionId } }));
-      else if (link) openWorkbenchLink(link.sessionId, link.paneId);
+      else if (link) {
+        const registry = link.paneId ? await import('./panes/index.js') : null;
+        const paneId = resolveDeepLinkPane(link.paneId, (id) => registry?.getPane(id) != null);
+        openWorkbenchLink(link.sessionId, paneId);
+      }
     }, () => undefined);
   }, []);
   // "Go to that card": whoever raises it (drawer, Command, Mind), the shell reveals it.
