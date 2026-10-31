@@ -1,3 +1,4 @@
+import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { ago } from '../command/ladder-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -10,7 +11,7 @@ export function BusSection() {
   usePollWhileVisible(refetch, 10_000, { enabled: query.data !== null });
   if (query.data === null || (query.data === undefined && query.status !== 'error')) return null;
   if (query.data === undefined) {
-    return <Section title="Bus" flat><ErrorState title="Couldn’t load bus activity" onRetry={refetch} /></Section>;
+    return <Section title="Bus" flat><ErrorState title="Couldn’t load bus activity" reason={readFailureReason(query.error)} onRetry={refetch} /></Section>;
   }
   const data = query.data;
   const unavailable = (['hops', 'events'] as const).filter((name) => data.sources[name] !== 'healthy');
