@@ -5,6 +5,7 @@ type InboxReadQuery = { limit: number; source: string | null };
 export type FleetInboxReadV1 = {
   v: 1; generatedAt: string; sourceState: 'healthy' | 'degraded' | 'missing';
   limit: number; source: string | null; dropped: number;
+  /** Selected newest matching entries, in oldest-first file order (including timestamp ties). */
   entries: Array<{ at: string; source: string; priority: string | null; text: string }>;
 };
 
@@ -41,6 +42,8 @@ export function projectInboxRead(raw: unknown, query: InboxReadQuery): FleetInbo
     if (at === null || source === null || text === null || (item.text as string).length > 6000 || (item.priority !== null && priority === null)) { dropped++; continue; }
     if (query.source === null || source.toLowerCase() === query.source.toLowerCase()) entries.push({ at, source, priority, text });
   }
+  // The inbox reader supplies newest-first file order; select before reversing
+  // for the oldest-first wire contract used by the phone reader.
   return { v: 1, generatedAt: new Date().toISOString(), sourceState: raw.sourceState as FleetInboxReadV1['sourceState'],
     limit: query.limit, source: query.source === null ? null : scrubSecrets(query.source), dropped, entries: entries.slice(0, query.limit).reverse() };
 }

@@ -24,6 +24,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   DOCK_LAYOUT,
+  DOCK_PANE_IDS,
   VERSE_UI_STORAGE_KEY,
   normalizePaneId,
   sanitizeDockState,
@@ -59,6 +60,7 @@ const NO_REQUESTS: DockRequests = { terminal: null, preview: null, diff: null };
 let snapshot: DockSnapshot | null = null;
 let nonce = 0;
 const listeners = new Set<() => void>();
+let scheduleRegistryPrune: (() => void) | undefined;
 
 function readPersisted(): DockState {
   try {
@@ -102,6 +104,7 @@ export function getDockState(): DockState {
 /** C1 may push the persisted field in (on load, or when another tab wrote it). */
 export function hydrateDockState(raw: unknown): void {
   setState(sanitizeDockState(raw));
+  scheduleRegistryPrune?.();
 }
 
 /** Test seam: back to defaults with no requests; next read re-hydrates from storage. */
@@ -116,6 +119,46 @@ export function resetDockStore(): void {
 // ---------------------------------------------------------------------------
 // Transitions (pure over DockState, exported for tests)
 // ---------------------------------------------------------------------------
+
+/** Remove missing panes from the current layout and every remembered chat. */
+export function withUnknownTabsPruned(state: DockState, known: ReadonlySet<string>): DockState {
+  if (known.size === 0) return state;
+  const builtins = new Set<string>(DOCK_PANE_IDS);
+  const prune = (layout: DockLayout): DockLayout => {
+    const tabs = layout.tabs.filter((id) => known.has(id) || builtins.has(id));
+    const split = layout.splitWith && tabs.includes(layout.splitWith) ? layout.splitWith : null;
+    const active = layout.active && tabs.includes(layout.active) ? layout.active : split ?? tabs[0] ?? null;
+    const splitWith = split === active ? null : split;
+    const open = layout.open && tabs.length > 0;
+    if (tabs.length === layout.tabs.length && active === layout.active && splitWith === layout.splitWith && open === layout.open) return layout;
+    return { ...layout, tabs, active, splitWith, open };
+  };
+  const layout = prune(state);
+  let changed = layout !== state;
+  const byChat = Object.fromEntries(Object.entries(state.byChat).map(([id, saved]) => {
+    const next = prune(saved);
+    if (next !== saved) changed = true;
+    return [id, next];
+  }));
+  return changed ? { ...state, ...layout, byChat } : state;
+}
+
+/** Attach after discovery finishes; batch synchronous registry publications. */
+export function watchDockPaneRegistry(list: () => readonly { id: string }[], subscribe: (listener: () => void) => () => void): void {
+  let queued = false;
+  scheduleRegistryPrune = () => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      const state = current().state;
+      const next = withUnknownTabsPruned(state, new Set(list().map((pane) => pane.id)));
+      if (next !== state) setState(next);
+    });
+  };
+  subscribe(scheduleRegistryPrune);
+  scheduleRegistryPrune();
+}
 
 /** Open `pane` (adding its tab) and make it the visible one. A legacy id opens the pane it became. */
 export function withPaneOpen(state: DockState, requested: DockPaneId): DockState {
