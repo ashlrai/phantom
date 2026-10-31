@@ -1,10 +1,12 @@
 export interface Merged { repo: string; number: number; title: string; href: string | null; job: string | null; lane: string | null; at: string | null }
 export interface Pending { job: string; lane: string | null; href: string | null; at: string }
+/** mergeRate24h is a percentage. */
 export interface Lane { lane: string; merged24h: number | null; mergeRate24h: number | null }
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const count = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-const rate = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
+// Server rollup_24h.by_lane.<lane>.merge_rate: [0, 1] is a fraction, (1, 100] a percentage; other values are unknown.
+const rate = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? (value <= 1 ? value * 100 : value) : null;
 const prHref = (value: unknown): string | null => typeof value === 'string' && /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_][A-Za-z0-9._-]*\/pull\/[1-9][0-9]*$/.test(value) ? value : null;
 
 export function readMerges(snapshot: unknown): { merged: Merged[]; pending: Pending[]; lanes: Lane[]; count: number | null; sourceState: string | null } {
