@@ -72,3 +72,8 @@ export function verdict(pace: number | null, required: number | null): { state: 
   return pace >= required ? { state: 'ahead', text: 'On pace to use it all before the reset' }
     : { state: 'behind', text: `Behind: needs ${required.toFixed(1)} points/h, running ${pace.toFixed(1)}` };
 }
+export function runwayHours(usedPct: number | null, pacePerHour: number | null): number | null {
+  if (pacePerHour === null || pacePerHour <= 0) return null;
+  if (usedPct === null || usedPct >= 100) return 0;
+  return (100 - usedPct) / pacePerHour;
+}
