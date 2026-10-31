@@ -14,7 +14,7 @@ export interface FleetQueueV1 {
   v: 1; generatedAt: string;
   sources: Record<'ready' | 'skips', Source>;
   total: number; ready: number; parked: number; malformed: number;
-  byLane: Array<{ lane: string; ready: number; parked: number }>;
+  byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
   groups: ParkedGroup[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
@@ -26,6 +26,12 @@ const MAX_READY = 2 * 1024 * 1024;
 const MAX_SKIPS = 256 * 1024;
 // eslint-disable-next-line no-control-regex -- public fields must not carry control bytes.
 const UNSAFE_PUBLIC_FIELD = /[/\\\x00-\x1f\x7f]/;
+
+/** Matches the console's queue classification without importing UI code. */
+export function isPhantomJob(item: { lane: string; id?: string | null; repo?: string | null }): boolean {
+  return /^(?:[^/]+\/)?phantom$/i.test(item.repo?.trim() ?? '')
+    || (item.id?.startsWith('RQ-PHX-') ?? false);
+}
 
 export function parseParkedState(state: string): { parked: boolean; reason: string | null; lane: string | null } {
   const match = PARKED.exec(state);
@@ -117,7 +123,8 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   // the shared parser otherwise applies that header to all subsequent rows.
   let header: string | null = null;
   let statusColumn = -1;
-  const parsedRows: Array<{ row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined }> = [];
+  let repoColumn = -1;
+  const parsedRows: Array<{ row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined; unsafeRepo: boolean }> = [];
   let dropped = 0;
   for (const raw of readySource.text.split('\n')) {
     if (parsedRows.length >= 50_000) break; // Match the shared parser's row bound.
@@ -129,6 +136,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     if (names.length >= 2 && names.every((name) => /^(?:id|job|jobid|task|name|status|state|pool|lane|account|repo|repository|project|tier|priority|pri|title|summary|at|ts|time|timestamp|updated|updatedat|createdat|landedat|mergedat|completedat)$/.test(name)) &&
         names.some((name) => /^(?:status|state|pool|lane|account)$/.test(name))) {
       header = line;
+      repoColumn = names.findIndex((name) => /^(?:repo|repository|project)$/.test(name));
       statusColumn = names.findIndex((name) => name === 'status' || name === 'state');
       continue;
     }
@@ -142,20 +150,33 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const originalState = positional
       ? (PARKED.test(first) ? first : cells.find((cell) => /^(?:status|state)=/i.test(cell))?.replace(/^(?:status|state)=/i, ''))
       : cells[statusColumn];
-    parsedRows.push({ row, originalState });
+    const rawCells = line.split('\t');
+    const rawRepo = !positional && repoColumn >= 0 ? rawCells[repoColumn] : undefined;
+    const unsafeRepo = rawRepo !== undefined ? UNSAFE_PUBLIC_FIELD.test(rawRepo)
+      : rawCells.some((cell) => UNSAFE_PUBLIC_FIELD.test(cell));
+    parsedRows.push({ row, originalState, unsafeRepo });
   }
-  const lanes = new Map<string, { lane: string; ready: number; parked: number }>();
+  const lanes = new Map<string, { lane: string; ready: number; parked: number; phantom: number; other: number; otherRepos: Set<string> }>();
   const groups = new Map<string, ParkedGroup>();
   let ready = 0;
   let parked = 0;
   let malformed = dropped;
-  for (const { row, originalState } of parsedRows) {
+  for (const { row, originalState, unsafeRepo } of parsedRows) {
     const state = parseParkedState(originalState?.toUpperCase() === row.status ? originalState : row.status);
     if (!row.id || !JOB_ID.test(row.id) || (row.status !== 'READY' && !state.parked)) { malformed++; continue; }
     const lane = state.lane ?? row.pool;
-    const counts = lanes.get(lane) ?? { lane, ready: 0, parked: 0 };
+    const counts = lanes.get(lane) ?? { lane, ready: 0, parked: 0, phantom: 0, other: 0, otherRepos: new Set<string>() };
     lanes.set(lane, counts);
-    if (!state.parked) { ready++; counts.ready++; continue; }
+    if (!state.parked) {
+      ready++; counts.ready++;
+      if (isPhantomJob({ lane, id: row.id, repo: row.repo ?? null })) counts.phantom++;
+      else {
+        counts.other++;
+        const repo = row.repo?.trim() || 'unknown';
+        if (!unsafeRepo && !UNSAFE_PUBLIC_FIELD.test(repo)) counts.otherRepos.add(scrubSecrets(repo));
+      }
+      continue;
+    }
     parked++; counts.parked++;
     const reason = state.reason!;
     const key = `${reason}\0${lane}`;
@@ -170,7 +191,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   return {
     v: 1, generatedAt: new Date(now).toISOString(), sources: { ready: readySource.state, skips: skipsSource.state },
     total: ready + parked, ready, parked, malformed,
-    byLane: [...lanes.values()].sort((a, b) => a.lane.localeCompare(b.lane)),
+    byLane: [...lanes.values()].map((counts) => ({ ...counts, otherRepos: [...counts.otherRepos].sort().slice(0, 5) })).sort((a, b) => a.lane.localeCompare(b.lane)),
     groups: [...groups.values()].map((group) => ({ ...group, jobs: group.jobs.sort().slice(0, 8) }))
       .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason) || (a.lane ?? '').localeCompare(b.lane ?? '')),
     skips: skips.skips, skipsLast24h: skipsSource.state === 'degraded' && !skipsSource.text ? null : skips.last24h,
