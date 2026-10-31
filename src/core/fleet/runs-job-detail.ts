@@ -106,6 +106,7 @@ const REDACTED_LINE = '[redacted line]';
 const LAUNCHED = /\blaunched\s+([A-Za-z0-9][A-Za-z0-9._-]{1,79})\s+([A-Za-z0-9][A-Za-z0-9._@-]{0,63})\s+pid\s+(\d+)\s+base\s+([0-9a-fA-F]{4,64})\b/g;
 
 export function isFleetJobId(job: string): boolean {
+  if (/[\r\n]+$/.test(job)) return false;
   return JOB_ID.test(job);
 }
 
