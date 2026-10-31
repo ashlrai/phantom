@@ -36,7 +36,7 @@ function Chart({ points, samples, held, label }: { points: SparkPoint[]; samples
   </svg>;
 }
 
-export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
+export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> & Partial<Pick<PaneProps, 'host'>>) {
   const [hours, setHours] = useState<CapacityHours>(24);
   const query = useMemo(() => runsHistoryQuery(hours), [hours]);
   const sectionVisible = useSectionVisible();
@@ -77,7 +77,7 @@ export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
                 return { atMs: Date.parse(sample.at), running: value?.running ?? null, target: value?.target ?? null };
               });
               return <li key={lane.lane} className={styles.lane}>
-                <div className={styles.line}><strong>{lane.lane}</strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min</span></div>
+                <div className={styles.line}><strong><button type="button" className={styles.laneButton} aria-label={`Open ${lane.lane} in Lanes`} onClick={() => host?.openPane('fleet-lanes')}>{lane.lane}</button></strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min</span></div>
                 <Chart points={points} samples={samples} held={lane.lane} label={`${lane.lane}: ran at ${percent(lane.fillPct)} of target, ${format(lane.idleSlotMinutes)} idle slot-minutes`} />
               </li>;
             })}</ul>}

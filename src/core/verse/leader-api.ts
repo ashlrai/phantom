@@ -682,6 +682,15 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
   if (path !== VERSE_LEADER_PATH && !path.startsWith(`${VERSE_LEADER_PATH}/`)) return false;
   const now = hooks.now ?? Date.now;
   try {
+    if (path === `${VERSE_LEADER_PATH}/orders`) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
+      else {
+        const { readOrderTrace } = await import('../fleet/order-trace.js');
+        sendJson(res, 200, await readOrderTrace({ now }));
+      }
+      return true;
+    }
     if (path === `${VERSE_LEADER_PATH}/resources`) {
       if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
       else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
