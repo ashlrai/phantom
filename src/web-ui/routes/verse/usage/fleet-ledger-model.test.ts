@@ -30,6 +30,7 @@ describe('fleet ledger model', () => {
   it('guards the complete versioned wire shape', () => {
     expect(isResourceLedger(fixture)).toBe(true);
     expect(isResourceLedger({ ...fixture, v: 2 })).toBe(false);
+    expect(isResourceLedger({ ...fixture, lanes: [lane({ deadSignal: { lane: 'Codex', lastFinishes: 8, emptyFailures: 9, state: 'dead' } })] })).toBe(false);
     expect(isResourceLedger({ ...fixture, lanes: [{ ...fixture.lanes[0], usedPct: '72' }] })).toBe(false);
     expect(isResourceLedger({ ...fixture, apiSpend: { ...fixture.apiSpend, models: [5] } })).toBe(false);
   });
