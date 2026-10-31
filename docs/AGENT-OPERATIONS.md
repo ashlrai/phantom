@@ -287,6 +287,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm cloud ...` / `phm devin ...` | Claude Code cloud and Devin lanes ([CLOUD.md](CLOUD.md), [DEVIN.md](DEVIN.md)) |
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
+| `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
@@ -595,3 +596,18 @@ Every input degrades independently: a missing file reports `missing`, a
 corrupt one `degraded`, and the affected cells come back null/`unknown` rather
 than fabricated zeros. `test/fixtures/fleet-lanes/` is a captured queue
 directory covering every source.
+
+Proposal apply cleanup and crash-leftover reaping use plain `git worktree remove`,
+which also reclaims ignored build directories such as `node_modules` and `target`. Dirty or locked
+checkouts remain available for recovery. To retain an inbox checkout for a
+FIXUP, put its absolute path in the JSON array at
+`~/.ashlr/kept-worktrees.json`. Exact paths and their filesystem aliases match;
+entries are not glob patterns. A missing file means no pins, while a malformed,
+unreadable or symlinked file stops inbox reaping. These pins apply to proposal
+apply cleanup and the crash-leftover reaper; sandbox and merge terminal cleanup
+have separate retention controls.
+
+The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
+excluding pinned checkouts and symlink targets. It does not delete files or
+measure shared repository objects. A bounded or failed scan reports an unknown
+total; reported logical bytes are not a promise of physical disk space freed.
