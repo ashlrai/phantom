@@ -23,7 +23,7 @@ it('offers fleet navigation only with a present fleet', () => {
   expect(whatsNewCopy('missing').primary).toEqual({ label: 'Open Settings ▸ Fleet sources', action: 'fleet-sources' });
   expect(whatsNewCopy('unknown').primary).toEqual({ label: 'Open Settings', action: 'settings' });
   for (const presence of ['missing', 'unknown'] as const) {
-    expect(whatsNewCopy(presence).bullets.join(' ')).toMatch(/Ops tray.*Update now in Settings ▸ Desktop.*⌘\//);
+    expect(whatsNewCopy(presence).bullets.join(' ')).toMatch(/⌘\/.*Update now in Settings ▸ Desktop/);
     expect(whatsNewCopy(presence).bullets.join(' ')).not.toMatch(/MASON-INBOX|live jobs/);
     expect(fleetStepPoints(presence).map(p => p.detail).join(' ')).not.toMatch(/stop dispatch at once/);
   }
