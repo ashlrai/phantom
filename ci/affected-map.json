@@ -400,6 +400,7 @@
     "test/preparation-workload-lifecycle.test.ts",
     "test/process-liveness-helper.test.ts",
     "test/projection-authority-architecture-contract.test.ts",
+    "test/realio-worker-shadow.test.ts",
     "test/require-built-dist.test.ts",
     "test/setup/git-env.test.ts",
     "test/setup/home-isolation-guard.test.ts",
