@@ -291,6 +291,16 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
+`phm fleet act <pause|resume|kill|reassign|set-slot|vision-edit> --dry-run
+[--path <target>] [--json]` records a proposal only. Each successful call appends
+one versioned intent (id, timestamp, verb, target, dryRun and status) to the
+operator-provisioned `~/.ashlr/router-queue/actions.jsonl`; it does not apply the
+action. The default target is the queue directory. Explicit targets must stay
+inside `~/.ashlr/router-queue/` or `~/.ashlr/vision/leader/`, with no symlink
+components. Unknown verbs, extra arguments and calls without `--dry-run` fail
+before auditing. Audit failures fail the command. No executor consumes these
+intents automatically.
+
 ### Stop and pause
 
 | Control | Effect |

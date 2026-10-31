@@ -2427,6 +2427,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'act') {
+    const { cmdFleetAct } = await import('./fleet-act.js');
+    return cmdFleetAct(args.slice(1));
+  }
   if (args[0] === 'queue') {
     const { cmdRouterQueue } = await import('./router-queue.js');
     return cmdRouterQueue(args.slice(1));
@@ -2532,6 +2536,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
+  console.log('    ashlr fleet act <pause|resume|kill|reassign|set-slot|vision-edit> --dry-run [--path <target>] [--json]');
   console.log(`    ashlr fleet queue merged|read|complete <job-id> [--json]`);
   console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
