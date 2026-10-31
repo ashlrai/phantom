@@ -12,7 +12,8 @@
  *
  * Phase A (parallel): root build (tsc, then the static-asset copy from `npm run build` — see
  * GATE_BUILD_ASSET_SCRIPTS), web typecheck, eslint (cached), the real-io lane guard, the
- * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs),
+ * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs), the quarantine-ledger verifier
+ * (scripts/check-quarantine-ledger.mjs: every added test skip needs a live ledger row),
  * the docs check. Then the web build + first-paint budget. Phase B runs the
  * focused backend and web suites in parallel; a full gate runs them serially
  * so load-sensitive UI timing assertions measure the UI rather than backend work.
@@ -28,8 +29,8 @@
  *     vitest itself would do);
  *   - otherwise → tests whose import graph reaches a changed file, plus the smoke set
  *     (scripts/gate-smoke.json), which always runs.
- * What the import graph cannot see: a test that reads a changed file with fs instead of
- * importing it (fixtures, scripts read as text). `gate:full` covers that.
+ * Explicit mappings cover known tests that read files as text. `gate:full` covers
+ * other dependencies that the import graph and the map cannot see.
  *
  * Known failures (scripts/gate-known-failures.json) supply diagnostic reasons only.
  * Every failing file, unhandled error, missing JSON report, or non-zero Vitest exit
@@ -158,7 +159,7 @@ export const SUITE_TRIGGERS = Object.freeze({
  *   nothing importable changed, so only the smoke files run, without walking the import graph
  *   of every test (the fixed cost of `vitest related`, ~40 s).
  */
-export function planTests({ full, changed, dependencyKeys, lockfileChanged = false, smoke }) {
+export function planTests({ full, changed, dependencyKeys, lockfileChanged = false, smoke, textReads = {} }) {
   const plan = {};
   for (const suite of ['backend', 'web']) {
     let reason = null;
@@ -176,9 +177,11 @@ export function planTests({ full, changed, dependencyKeys, lockfileChanged = fal
     // package.json and the lockfile are dropped here: their dependency content was already
     // compared above, and anything else in them (version, scripts, files) cannot change what
     // a test imports — but vitest would rerun everything for any package.json edit.
-    const related = changed
+    const mapped = changed.flatMap((file) => textReads[file] ?? [])
+      .filter((file) => suite === 'backend' ? file.startsWith('test/') : file.startsWith('src/web-ui/'));
+    const related = [...changed
       .filter((file) => !['package.json', 'package-lock.json'].includes(basename(file)))
-      .filter(isModuleCandidate);
+      .filter(isModuleCandidate), ...mapped];
     if (related.length === 0) {
       plan[suite] = { mode: 'smoke', reason: `no importable change; ${smoke[suite].length} smoke`, files: [...smoke[suite]].sort() };
       continue;
@@ -305,6 +308,17 @@ export function loadSmoke(data = loadJson('scripts/gate-smoke.json')) {
   return { backend: data.backend.map((entry) => entry.file), web: data.web.map((entry) => entry.file) };
 }
 
+export function loadTextReads(data = loadJson('scripts/gate-text-reads.json')) {
+  if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('Invalid text-read map');
+  for (const [source, tests] of Object.entries(data)) {
+    if (!source || !Array.isArray(tests) || !tests.length || tests.some((file) =>
+      typeof file !== 'string' || !/^(?:test\/.*\.test\.ts|src\/web-ui\/.*\.test\.[jt]sx?)$/.test(file) || !existsSync(join(repoRoot, file)))) {
+      throw new Error(`Invalid text-read mapping: ${source}`);
+    }
+  }
+  return data;
+}
+
 export function loadKnownFailures(data = loadJson('scripts/gate-known-failures.json')) {
   return new Map(data.files.map((entry) => [entry.file, entry.reason]));
 }
@@ -387,6 +401,17 @@ function staticSteps() {
   ];
 }
 
+/**
+ * The quarantine verifier in the same static-step shape. With a merge-base it
+ * checks the diff's added skips against queue/quarantine.tsv; in --full there is
+ * no diff, so it validates the ledger itself (shape, expiry, live coverage).
+ */
+function quarantineStep(mergeBase) {
+  const args = ['scripts/check-quarantine-ledger.mjs'];
+  if (mergeBase) args.push('--base', mergeBase);
+  return { name: 'quarantine-ledger', cmd: node, args };
+}
+
 async function runStatic(step) {
   let result = await runCommand(step.name, step.cmd, step.args);
   let durationMs = result.durationMs;
@@ -460,17 +485,19 @@ async function main() {
 
   let smoke;
   let known;
+  let textReads;
   let changes = { mergeBase: null, changed: [], dependencyKeys: [], lockfileChanged: false };
   const baseRef = args.base ?? DEFAULT_BASE_REF;
   try {
     smoke = loadSmoke();
     known = loadKnownFailures();
+    textReads = loadTextReads();
     if (!args.full) changes = resolveChanges(baseRef);
   } catch (err) {
     console.error(`gate: ${err.message}`);
     return 2;
   }
-  const plan = planTests({ ...changes, full: args.full, smoke });
+  const plan = planTests({ ...changes, full: args.full, smoke, textReads });
   say(args.full
     ? 'gate:full — every backend and web test'
     : `gate — base ${baseRef} @ ${changes.mergeBase.slice(0, 10)}, ${changes.changed.length} changed file(s); backend ${plan.backend.mode}, web ${plan.web.mode}`);
@@ -482,8 +509,8 @@ async function main() {
     return step;
   };
 
-  say('phase A: build, typecheck-web, eslint, realio-lane, verse-sync-io, docs (parallel)');
-  const phaseA = await Promise.all(staticSteps().map((step) => runStatic(step).then(record)));
+  say('phase A: build, typecheck-web, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
+  const phaseA = await Promise.all([...staticSteps(), quarantineStep(changes.mergeBase)].map((step) => runStatic(step).then(record)));
   const buildFailed = phaseA.find((step) => step.name === 'build').status === 'fail';
   const phaseAFailed = phaseA.some((step) => step.status === 'fail');
 

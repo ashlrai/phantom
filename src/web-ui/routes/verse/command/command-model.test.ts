@@ -29,7 +29,21 @@ describe('buildKpis', () => {
     expect(green!.value).toBe('96%');
     expect(green!.delta?.unit).toBe('pts');
     expect(cycle!.value).toBe('2h 14m');
+    // The dev-cycle before/after: the live fixture's median is 46 min faster
+    // than the prior week, and a slower week reads as bad (goodWhenPositive).
+    expect(cycle!.delta?.versus).toBe('vs prior 7d');
+    expect(cycle!.delta?.goodWhenPositive).toBe(false);
+    expect(cycle!.delta?.format?.(cycle!.delta!.value)).toBe('−46m');
     expect(lift!.value).toBe('+4.2 pts');
+  });
+
+  it('shows no cycle delta when either week is unknown', () => {
+    const fleet = fleetLive('live', NOW);
+    const sparse = { ...fleet, summary: { ...fleet.summary, dispatchToMergeP50MsPrior7d: null } };
+    const kpis = buildKpis({ fleet: sparse, history: fleetHistory('live', NOW), learning: learningState('live', NOW), policy: null });
+    const cycle = kpis.find((k) => k.id === 'cycle');
+    expect(cycle!.value).toBe('2h 14m');
+    expect(cycle!.delta).toBeNull();
   });
 
   it('is honest when nothing answers: dashes, no deltas', () => {
@@ -97,10 +111,12 @@ describe('seat burn-downs', () => {
     ]);
     const claude = burns[0]!;
     expect(claude.reservePercent).toBe(40);
-    // The 5-hour window binds (74% used): remaining 26, stop line at the 70% ceiling.
-    expect(claude.window).toBe('session');
-    expect(claude.points[0]!.remaining).toBe(26);
-    expect(claude.line).toEqual({ value: 30, label: '5-hour ceiling' });
+    // The server still names the 5-hour window binding (74% used) — but that
+    // window is gone, so the card draws the weekly one: remaining 46, and the
+    // stop line is the weekly reserve, not the session ceiling.
+    expect(claude.window).toBe('weekly');
+    expect(claude.points[0]!.remaining).toBe(46);
+    expect(claude.line).toEqual({ value: 40, label: 'Reserved for you' });
     expect(burns.find((b) => b.seatId === 'grok-a')!.line).toBeNull();
   });
 
@@ -125,8 +141,9 @@ describe('seat burn-downs', () => {
   it('draws the BINDING window\'s own line, never a mix of the two windows', () => {
     const view = budgetView('live', NOW);
     const history = recordReading({}, view);
-    // Claude: the 5-hour window binds at 74% used.
-    expect(seatBurns(view, history).find((b) => b.seatId === 'claude-a')!.points.map((p) => p.remaining)).toEqual([26]);
+    // Claude: a stale session binding is read as the weekly window — the
+    // weekly reading (54% used → 46 left), never the retired window's series.
+    expect(seatBurns(view, history).find((b) => b.seatId === 'claude-a')!.points.map((p) => p.remaining)).toEqual([46]);
     const weekly = budgetView('live', NOW + 60_000);
     weekly.headroom[0] = { ...weekly.headroom[0]!, bindingWindow: 'weekly' };
     const next = recordReading(history, weekly);
@@ -325,13 +342,14 @@ describe('seat burn-downs without a machine reset (Claude)', () => {
     const view = claudeWithoutReset('session');
     const history = recordReading({}, view);
     const claude = seatBurns(view, history, claudeRoster).find((b) => b.seatId === 'claude-a')!;
-    // 5 PM in New York is 6 h after this 11 AM reading — no 5-hour window
-    // resets then, so the words stay words and nothing is placed.
-    expect(claude.resetAt).toBeNull();
-    expect(claude.start).toBeNull();
-    expect(claude.resetFrom).toBeNull();
-    expect(claude.points.map((p) => p.remaining)).toEqual([26]);
-    expect(claude.resetText).toBe('Sep 24 at 5pm (America/New_York)');
+    // A stale session binding is read as the weekly window — the retired
+    // 5-hour window's words can never be picked. Sep 25 at 7pm in New York is
+    // 32 h after this 11 AM reading — inside the week, so it places.
+    expect(claude.resetFrom).toBe('words');
+    expect(claude.resetAt).toBe(Date.parse('2026-09-25T23:00:00.000Z'));
+    expect(claude.start).toBe(claude.resetAt! - 7 * 24 * 3_600_000);
+    expect(claude.points.map((p) => p.remaining)).toEqual([46]);
+    expect(claude.resetText).toBe('Sep 25 at 7pm (America/New_York)');
     const weekly = claudeWithoutReset('weekly');
     const w = seatBurns(weekly, recordReading({}, weekly), claudeRoster).find((b) => b.seatId === 'claude-a')!;
     // The account-wide weekly window — never the per-model (Fable) one beside it.

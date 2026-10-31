@@ -11,9 +11,11 @@
  * centered card Dialog uses by default, but focus trap / Escape / backdrop
  * click / return-focus all come for free.
  */
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Dialog } from '../primitives/Dialog.js';
 import { NotificationItem } from './NotificationItem.js';
+import { groupHeading, groupNotifications } from './notification-groups.js';
+import type { NotificationCategory } from './types.js';
 import { useNotifications } from './useNotifications.js';
 import { useNotificationEngine } from './useNotificationEngine.js';
 import { closePanel, enableDesktopNotifications, disableDesktopNotifications } from './notification-store.js';
@@ -24,6 +26,16 @@ export function NotificationCenter() {
   useNotificationEngine();
   const { items, panelOpen, desktopEnabled, desktopPermission } = useNotifications();
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const [collapsed, setCollapsed] = useState<Set<NotificationCategory>>(() => new Set());
+
+  function toggleGroup(category: NotificationCategory) {
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }
 
   async function toggleDesktop() {
     if (desktopEnabled) {
@@ -69,6 +81,31 @@ export function NotificationCenter() {
         <div className={styles.clear}>
           <strong>Nothing needs you right now.</strong>
           <span>The fleet is operating within its observed authority.</span>
+        </div>
+      ) : items.length > 6 ? (
+        <div className={styles.list}>
+          {groupNotifications(items).map((group) => (
+            <section className={styles.group} key={group.category} aria-labelledby={`notification-group-${group.category}`}>
+              <button
+                type="button"
+                id={`notification-group-${group.category}`}
+                className={styles.groupHead}
+                aria-expanded={!collapsed.has(group.category)}
+                onClick={() => toggleGroup(group.category)}
+              >
+                {groupHeading(group)}
+              </button>
+              {!collapsed.has(group.category) && (
+                <ul className={styles.list}>
+                  {group.items.map((item) => (
+                    <li key={item.id}>
+                      <NotificationItem item={item} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
         </div>
       ) : (
         <ul className={styles.list}>
