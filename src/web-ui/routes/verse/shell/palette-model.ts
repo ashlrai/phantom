@@ -39,6 +39,7 @@ export interface PaletteItem {
   /** Unique across the whole list (React key + active-descendant id). */
   key: string;
   kind: PaletteItemKind;
+  workerState?: PaletteWorker['state'];
   group: PaletteGroupId | 'recent';
   title: string;
   /** Muted second part of the row. */
@@ -57,7 +58,7 @@ export interface PaletteItem {
   /** What Enter does — interpreted by the component. */
   payload:
     | { kind: 'needs-you'; itemId: string }
-    | { kind: 'worker'; job: string; url?: string }
+    | { kind: 'worker'; job: string; url?: string; selectLog?: boolean }
     | { kind: 'chat'; sessionId: string }
     | { kind: 'command'; commandId: string }
     | { kind: 'seat'; seatId: string; label: string }
@@ -71,6 +72,8 @@ export interface PaletteWorker {
   tier: string;
   ageSeconds: number | null;
   prUrl: string | null;
+  state?: 'running' | 'queued' | 'merged';
+  at?: string | null;
 }
 
 export interface PaletteInput {
@@ -275,16 +278,24 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     });
   }
 
-  for (const worker of [...(input.workers ?? [])].sort((a, b) => (b.ageSeconds ?? -1) - (a.ageSeconds ?? -1) || a.job.localeCompare(b.job))) {
+  const workerRank = (worker: PaletteWorker) => worker.state === 'queued' ? 1 : worker.state === 'merged' ? 2 : 0;
+  for (const worker of [...(input.workers ?? [])].sort((a, b) => workerRank(a) - workerRank(b)
+    || (workerRank(a) === 0 ? (b.ageSeconds ?? -1) - (a.ageSeconds ?? -1) : 0) || a.job.localeCompare(b.job))) {
+    const url = safePrUrl(worker.prUrl);
+    const state = worker.state ?? 'running';
+    const subtitle = !worker.state ? `${worker.lane} · ${worker.tier} · ${workerAge(worker.ageSeconds)}`
+      : state === 'running' ? `running · ${workerAge(worker.ageSeconds)} · ${worker.lane}`
+      : state === 'queued' ? `queued · ${[worker.lane, worker.tier].filter(Boolean).join('/')}`
+      : [`merged${worker.at && relative(worker.at, now) ? ` ${relative(worker.at, now)}` : ''}`, url ? prLabel(url) : ''].filter(Boolean).join(' · ');
     const item: PaletteItem = {
-      key: `worker:${worker.job}`, kind: 'worker', group: 'workers', title: worker.job,
-      subtitle: `${worker.lane} · ${worker.tier} · ${workerAge(worker.ageSeconds)}`, shortcut: null, monogram: null,
+      key: `worker:${worker.job}`, kind: 'worker', workerState: worker.state, group: 'workers', title: worker.job,
+      subtitle, shortcut: null, monogram: null,
       engine: null, keywords: [worker.lane, worker.tier, 'worker', 'log'], argument: null,
-      tone: 'running', payload: { kind: 'worker', job: worker.job },
+      tone: state === 'running' ? 'running' : 'neutral',
+      payload: state === 'merged' && url ? { kind: 'worker', job: worker.job, url, selectLog: true } : { kind: 'worker', job: worker.job },
     };
     items.push(item);
-    const url = safePrUrl(worker.prUrl);
-    if (url && new URL(url).protocol === 'https:') items.push({
+    if (state === 'running' && url && new URL(url).protocol === 'https:') items.push({
       ...item, key: `worker-pr:${worker.job}`, title: `Open ${prLabel(url)} for ${worker.job}`,
       keywords: ['pr', 'pull'], tone: 'neutral', payload: { kind: 'worker', job: worker.job, url },
     });
@@ -424,9 +435,9 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
     if (!list || list.length === 0) continue;
     // Chats: running first (SPEC-310C §1), then by match. Everything else by
     // match, with catalog / recency order breaking ties.
-    const runRank = (e: { item: PaletteItem }) => (id === 'chats' && e.item.tone === 'running' ? 0 : 1);
+    const runRank = (e: { item: PaletteItem }) => id === 'workers' ? (e.item.workerState === 'queued' ? 1 : e.item.workerState === 'merged' ? 2 : 0) : (id === 'chats' && e.item.tone === 'running' ? 0 : 1);
     list.sort((a, b) => runRank(a) - runRank(b) || b.score - a.score || a.order - b.order);
-    const cap = prefix && id !== 'workers' ? 50 : GROUP_CAP[id];
+    const cap = prefix && (id !== 'workers' || list.some(e => e.item.workerState !== undefined)) ? 50 : GROUP_CAP[id];
     const shown = list.slice(0, cap);
     for (const e of shown) flatScores.push(e.score);
     out.push({ id, label: GROUP_LABEL[id], items: shown.map((e) => e.item) });

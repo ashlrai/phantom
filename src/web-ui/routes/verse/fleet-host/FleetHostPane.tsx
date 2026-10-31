@@ -30,7 +30,9 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         {data.sources.runsDir !== 'healthy' ? <p className={styles.muted}>Runs directory: {data.sources.runsDir}</p> : null}
         {host.paused === true ? <p className={styles.banner} role="status">Fleet is paused.</p> : null}
         {host.paused === null ? <p className={styles.muted}>Pause status unknown.</p> : null}
+        {host.load.tone === 'bad' ? <p className={styles.banner} role="status">Workers are starving for CPU; lower lane targets in the Lanes pane.</p> : null}
         <div className={styles.metrics}>
+          <div className={styles.metric} data-tone={host.load.tone}><StatTile label="CPU load" value={host.load.text} caption={host.load.caption} /></div>
           <div className={styles.metric} data-tone={host.memory.pct === null ? 'unknown' : host.memory.tone}>
             <Gauge title="Memory free" value={host.memory.pct === null ? null : host.memory.pct / 100} showState={false} caption={host.memory.pct === null ? 'Unknown' : host.memory.tone} size={144} />
           </div>
