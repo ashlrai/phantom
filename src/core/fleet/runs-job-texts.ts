@@ -9,12 +9,13 @@ export interface FleetJobTextV1 {
   job: string;
   kind: 'notes' | 'prompt';
   state: 'ok' | 'missing' | 'unreadable';
+  source: 'notes' | 'body' | null;
   bytes: number | null;
   truncated: boolean;
   text: string;
 }
 
-/** Read only the two whitelisted artifacts, bounded and without following symlinks. */
+/** Read bounded, no-follow artifacts; notes fall back to the retained body only when absent. */
 export async function getFleetJobText(job: string, kind: 'notes' | 'prompt', options: {
   runsDir?: string; maxBytes?: number;
 } = {}): Promise<FleetJobTextV1> {
@@ -24,10 +25,20 @@ export async function getFleetJobText(job: string, kind: 'notes' | 'prompt', opt
   if (!isAbsolute(runsDir)) throw new Error('runsDir must be an absolute path');
   const requested = options.maxBytes ?? 65536;
   const maxBytes = Number.isSafeInteger(requested) && requested >= 0 ? requested : 65536;
-  const result: FleetJobTextV1 = { v: 1, job, kind, state: 'unreadable', bytes: null, truncated: false, text: '' };
+  const result: FleetJobTextV1 = { v: 1, job, kind, state: 'unreadable', source: null, bytes: null, truncated: false, text: '' };
   try {
-    const path = join(runsDir, `${job}.${kind === 'notes' ? 'notes.md' : 'prompt'}`);
-    if (!(await lstat(path)).isFile()) return result;
+    let path = join(runsDir, `${job}.${kind === 'notes' ? 'notes.md' : 'prompt'}`);
+    let source: FleetJobTextV1['source'] = kind === 'notes' ? 'notes' : null;
+    let info;
+    try {
+      info = await lstat(path);
+    } catch (error) {
+      if (kind !== 'notes' || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      path = join(runsDir, `${job}.body.md`);
+      source = 'body';
+      info = await lstat(path);
+    }
+    if (!info.isFile()) return result;
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await handle.stat();
@@ -40,12 +51,14 @@ export async function getFleetJobText(job: string, kind: 'notes' | 'prompt', opt
         .replace(/((?:token=|key=|Bearer ))[^\r\n]*/gi, '$1…')
         .replace(/[A-Za-z0-9_-]{40,}/g, '…');
       result.state = 'ok';
+      result.source = source;
     } finally {
       await handle.close();
     }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     result.state = code === 'ENOENT' || code === 'ENOTDIR' ? 'missing' : 'unreadable';
+    result.source = null;
     result.text = '';
   }
   return result;
