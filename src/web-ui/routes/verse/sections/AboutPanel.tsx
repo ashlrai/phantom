@@ -4,13 +4,27 @@
  */
 import { PRODUCT_COMPANY, PRODUCT_DESCRIPTOR } from '../../../app/product-brand.js';
 import { IconExternalLink } from '../../../components/primitives/icons.js';
-import { Tag } from '../../../components/primitives/index.js';
+import { Button, Tag } from '../../../components/primitives/index.js';
+import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { openPaneInChat } from '../dock/dock-store.js';
+import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { setVerseSection } from '../verse-ui-store.js';
+import { aboutUpdateLines } from './about-update-model.js';
 import { APP_NAME, APP_VERSION, installedDesktopVersion } from './app-version.js';
 import { Panel } from './SettingRow.js';
+import { updateStatusQuery } from './update-status-queries.js';
 import styles from './SettingsSection.module.css';
 
 export function AboutPanel() {
   const desktopVersion = installedDesktopVersion();
+  const visible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  const query = useQuery(updateStatusQuery, { enabled: visible && documentVisible, freshMs: 60_000 });
+  const poll = useRefetch(updateStatusQuery);
+  usePollWhileVisible(poll, 60_000);
+  const observation = query.status === 'error' ? null : query.data ?? null;
+  const status = aboutUpdateLines(observation, Date.now());
+  const serverVersion = observation && !('kind' in observation) ? observation.installedVersion : null;
   return (
     <Panel title="About">
       <div className={`${styles.row} ${styles.rowStacked}`}>
@@ -25,7 +39,18 @@ export function AboutPanel() {
               <span>Interface build</span><Tag mono>v{APP_VERSION}</Tag>
             </p>
           ) : null}
-          <p className={styles.aboutLine}>Build versions identify this interface and desktop shell; release availability is separate.</p>
+          {serverVersion ? <p className={styles.aboutLine}><span>Installed Phantom</span><Tag mono>v{serverVersion}</Tag></p> : null}
+          <p className={styles.aboutLine} aria-live="polite">
+            <Tag size="sm" className={styles[`aboutStatus_${status.tone}`]}>{status.headline}</Tag>
+          </p>
+          {status.rows.map((row) => (
+            <p className={styles.aboutLine} key={row.label}>
+              <span>{row.label}</span>{row.mono ? <Tag mono>{row.value}</Tag> : <span>{row.value}</span>}
+            </p>
+          ))}
+          <p className={styles.aboutLine}>
+            <Button size="sm" onClick={() => { setVerseSection('chat'); openPaneInChat('fleet-releases'); }}>Open Releases pane</Button>
+          </p>
           <p className={styles.aboutLine}>{PRODUCT_DESCRIPTOR} · by {PRODUCT_COMPANY}</p>
           <p className={styles.aboutLine}>
             Work with agents in chat or delegate fleet outcomes. Sessions use the providers and accounts you connect.

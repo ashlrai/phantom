@@ -1,0 +1,7 @@
+338e61bf467005b794895904237e4a90af3e54d120fc858e33c4ad75fb1c2c0c  staging/RQ-SBDENYLSDQ7/precheck.sh
+b648b7e44f702a191bfdfc991f810de8f871d89541542cf730cdaeb3ca6a2ec1  staging/RQ-SBDENYLSDQ7/precheck.sh.diff
+268651819bad68f7d5ed147714d9681a93a38b624d3d6d3b25271281c12c1b15  staging/RQ-SBDENYLSDQ7/precheck_dup_match.bats
+13f4f8bc08f2445832fcbd002873e4ecc9e38fee77efb371dc72a75b0fde8b77  staging/RQ-SBDENYLSDQ7/NOTES.md
+
+## base sha256 (verify live file before install)
+eb0f2b2929ab466dbfaee825ccce860e42ff8354d50c0b3ad0c77823c4c73eb2  ~/.ashlr-runs/bin/precheck.sh (= RQ-CLOSE-NOWT/RQ-EMPTY-SHAPE result)

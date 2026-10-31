@@ -756,7 +756,10 @@ export function genomeHubHealth(): GenomeHealth {
  *
  * Never throws.
  */
-export function genomeHealth(cfg: AshlrConfig): GenomeHealth {
+export function genomeHealth(
+  cfg: AshlrConfig,
+  snapshot?: { ollamaModels: readonly string[] },
+): GenomeHealth {
   // --- Hub store stats (direct file inspection for accuracy) ---
   let hubEntries = 0;
   let sizeBytes = 0;
@@ -799,9 +802,9 @@ export function genomeHealth(cfg: AshlrConfig): GenomeHealth {
   }
 
   // --- Embeddings availability (sync probe via curl) ---
-  const embeddingsAvailable = probeEmbeddingsSync(
-    cfg.models?.ollama ?? 'http://localhost:11434',
-  );
+  const embeddingsAvailable = snapshot
+    ? snapshot.ollamaModels.some(name => EMBED_MODEL_HINTS.some(hint => name.toLowerCase().includes(hint)))
+    : probeEmbeddingsSync(cfg.models?.ollama ?? 'http://localhost:11434');
 
   return {
     totalEntries,

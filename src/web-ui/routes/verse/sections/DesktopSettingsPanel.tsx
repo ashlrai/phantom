@@ -29,6 +29,7 @@ import {
   type DesktopState,
 } from '../../../app/desktop-state.js';
 import { Panel, SettingRow } from './SettingRow.js';
+import { UpdateStatusRow } from './UpdateStatusRow.js';
 import styles from './SettingsSection.module.css';
 
 /** How long to wait for native's answer before saying it did not come. */
@@ -78,6 +79,7 @@ export function DesktopSettingsPanel() {
   if (state === null) {
     return (
       <Panel title="Desktop">
+        <UpdateStatusRow />
         <p className={styles.panelNote} aria-busy={isDesktopShell() || undefined}>
           {isDesktopShell()
             ? 'Reading the desktop app’s settings…'
@@ -106,6 +108,7 @@ export function DesktopSettingsPanel() {
 
   return (
     <Panel title="Desktop">
+      <UpdateStatusRow />
       <SettingRow
         label={`System-wide shortcut (${state.hotkey.accelerator})`}
         description={<span data-tone={hotkeyBroken ? 'warning' : undefined} role={hotkeyBroken ? 'status' : undefined}>{hotkeyNote(state)}</span>}
