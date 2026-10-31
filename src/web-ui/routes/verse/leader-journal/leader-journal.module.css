@@ -18,3 +18,5 @@
 .section .ingest { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
 .ingest li { padding: var(--space-1) var(--space-2); overflow-wrap: anywhere; }
 .ingest li[data-tone='bad'] { color: var(--status-danger-fg); background: var(--status-danger-bg); border-radius: var(--radius-sm); }
+
+.match { background: var(--status-warning-bg); color: var(--text-primary); }
