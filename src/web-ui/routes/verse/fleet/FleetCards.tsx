@@ -6,6 +6,7 @@
  * Every card takes an OptionalRead and draws the designed state for each way
  * a source can be missing (not landed, unrecognised, dark) — never empty axes.
  */
+import { useEffect, type ReactNode } from 'react';
 import type { FleetLaneState, FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
 import type { SeatDecision } from '../../../../core/routing/types.js';
 import type { BudgetView } from '../../../../core/routing/policy.js';
@@ -22,6 +23,8 @@ import { CloudLaneChip } from '../cloud/CloudLaneChip.js';
 import { Card, CardNote, MicroLabel } from '../command/Surface.js';
 import type { OptionalRead } from '../command/surface-data.js';
 import { fleetDarkStatus } from './dark-since.js';
+import { LaneSparkline } from './LaneSparkline.js';
+import { recordLaneSamples } from './lane-history-store.js';
 import { LANE_ENGINE, LANE_LABEL, funnelStages, laneChipText, laneNotes, laneReason, laneRows, latestDecision, parkedGantt, refusalStack, runTone } from './live-model.js';
 import { asSentence, decisionSummary, describeEligibleAgain, eligibleAgain, heldBackText } from './why-seat-model.js';
 import styles from './fleet.module.css';
@@ -50,7 +53,7 @@ export function fleetStatus(read: OptionalRead<FleetLiveSnapshotV1> | undefined,
 /** "Local · off" — the chip is the lane and its slots; its why is one line below the strip (and its title). */
 const STALE_STANDING_LANES = 'No standing tick has reported lanes in the last 10 minutes.';
 
-function LaneChip({ lane }: { lane: FleetLaneState }) {
+function LaneChip({ lane, children }: { lane: FleetLaneState; children?: ReactNode }) {
   const text = laneChipText(lane);
   // The server uses zero slots when the last completed standing snapshot is
   // stale. That is unknown capacity, not an observed disabled lane. Keep the
@@ -67,18 +70,25 @@ function LaneChip({ lane }: { lane: FleetLaneState }) {
         {' · '}
       </span>
       <span className={styles.laneSlots}>{slots}</span>
+      {children}
     </li>
   );
 }
 
 export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
+  const timestamp = live?.generatedAt;
+  useEffect(() => {
+    if (live) recordLaneSamples(live);
+  }, [live, timestamp]);
   if (!live || live.lanes.length === 0) return null;
   const notes = laneNotes(live.lanes);
   return (
     <div className={styles.laneStrip}>
       <ul className={styles.lanes} aria-label="Lanes: busy of slots">
         {live.lanes.map((l) => (
-          <LaneChip key={l.lane} lane={l} />
+          <LaneChip key={l.lane} lane={l}>
+            <LaneSparkline lane={l.lane} />
+          </LaneChip>
         ))}
         <CloudLaneChip classes={{ lane: styles.lane, name: styles.laneName, sep: styles.laneSep, slots: styles.laneSlots }} />
       </ul>
