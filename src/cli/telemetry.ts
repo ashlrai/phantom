@@ -24,6 +24,72 @@ import { ansi as C, makeColors, isTty, pad } from './ui.js';
 
 const { bold, dim, green, yellow, red, cyan, gray } = makeColors(isTty());
 
+/** A routing observation is diagnostic evidence, never a reconstructed choice. */
+export function routingEvidenceAge(at: string | null, nowMs: number): 'observed' | 'stale' | 'absent' | 'unavailable' {
+  if (at === null) return 'absent';
+  const time = Date.parse(at);
+  if (!Number.isFinite(time) || time > nowMs) return 'unavailable';
+  return nowMs - time > 15 * 60_000 ? 'stale' : 'observed';
+}
+
+export async function cmdRoutingObservation(json: boolean): Promise<number> {
+  const nowMs = Date.now();
+  const { readShadowDecisionsChecked } = await import('../core/routing/budget-store.js');
+  const { readExecutionFeedback } = await import('../core/fleet/execution-feedback.js');
+  const history = readShadowDecisionsChecked(50);
+  const latest = history.state === 'ok'
+    ? history.decisions.filter(row => routingEvidenceAge(row.at, nowMs) !== 'unavailable')
+      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] : undefined;
+  const taskFit = {
+    state: history.state === 'unreadable' || !latest && history.decisions.length > 0
+      ? 'unavailable' : routingEvidenceAge(latest?.at ?? null, nowMs),
+    at: latest?.at ?? null,
+    task: latest?.request.task ?? null,
+    difficulty: latest?.request.difficulty ?? null,
+    contextTokens: latest?.request.contextTokens ?? null,
+    candidates: latest?.decision.candidates.length ?? null,
+    exclusions: latest?.decision.exclusions.length ?? null,
+    explanation: 'Recorded shadow eligibility for that request; not measured quality or proof of actual execution.',
+  };
+  let feedback;
+  try {
+    const view = readExecutionFeedback();
+    feedback = {
+      state: view.sourceState === 'missing' ? 'absent'
+        : view.sourceState === 'degraded' && view.observedThrough === null ? 'unavailable'
+        : routingEvidenceAge(view.observedThrough, nowMs),
+      sourceState: view.sourceState, complete: view.complete, coverage: view.coverage, at: view.observedThrough,
+      window: view.window, counts: view.counts, observedCounts: view.observedCounts,
+      explanation: 'Recorded fleet outcomes; partial counts are lower bounds. Not model-specific quality, routing credit or shipping proof.',
+    };
+  } catch {
+    feedback = { state: 'unavailable', explanation: 'Feedback source could not be inspected; totals are unknown.' };
+  }
+  const out = {
+    schemaVersion: 1, sampledAt: new Date(nowMs).toISOString(), taskFit,
+    latency: { state: 'absent', milliseconds: null,
+      explanation: 'These records contain no comparable account/model/task/version latency measurements. Missing latency did not influence a choice.' },
+    feedback,
+    explanation: 'Read-only observations, not a new routing decision. Stale evidence is historical; absent evidence is not a measured zero. No causal contribution is inferred from feedback.',
+  };
+  if (json) process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+  else {
+    console.log('Routing observations');
+    console.log(out.explanation);
+    console.log(`Task fit: ${taskFit.state} (recorded candidates: ${taskFit.candidates ?? 'unknown'}, exclusions: ${taskFit.exclusions ?? 'unknown'})`);
+    console.log(`Recorded request: ${taskFit.task ?? 'unknown'}, difficulty: ${taskFit.difficulty ?? 'unknown'}, at: ${taskFit.at ?? 'unknown'}`);
+    console.log(taskFit.explanation);
+    console.log(`Latency: ${out.latency.state}. ${out.latency.explanation}`);
+    console.log(`Feedback: ${feedback.state}. ${feedback.explanation}`);
+    if ('observedCounts' in feedback) {
+      console.log(`Last recorded outcome: ${feedback.at ?? 'unknown'}; source: ${feedback.sourceState}; complete: ${feedback.complete}`);
+      console.log(`${feedback.counts === null ? 'Observed lower bounds' : 'Recorded counts'}: ${JSON.stringify(feedback.counts ?? feedback.observedCounts)}`);
+    }
+    console.log('Use --json for timestamps, coverage and recorded outcome counts.');
+  }
+  return taskFit.state === 'unavailable' || feedback.state === 'unavailable' ? 1 : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Lazy imports — M19 modules
 // ---------------------------------------------------------------------------
@@ -84,7 +150,7 @@ async function loadConfig(): Promise<AshlrConfig> {
 // ---------------------------------------------------------------------------
 
 interface ParsedTelemetryArgs {
-  sub: 'status' | 'test' | 'help';
+  sub: 'status' | 'test' | 'routing' | 'help';
   json: boolean;
   usageError?: string;
 }
@@ -97,6 +163,9 @@ function parseTelemetryArgs(args: string[]): ParsedTelemetryArgs {
     const arg = args[i]!;
     if (arg === 'status') {
       result.sub = 'status';
+      i++;
+    } else if (arg === 'routing') {
+      result.sub = 'routing';
       i++;
     } else if (arg === 'test') {
       result.sub = 'test';
@@ -166,7 +235,7 @@ function govLevelColor(level: 'ok' | 'warn' | 'over'): (s: string) => string {
 // ---------------------------------------------------------------------------
 
 /**
- * `ashlr telemetry [status|test] [--json]`
+ * `ashlr telemetry [status|test|routing] [--json]`
  *
  * Returns a process exit code: 0 = ok, 1 = error.
  */
@@ -187,6 +256,8 @@ export async function cmdTelemetry(args: string[]): Promise<number> {
     printTelemetryHelp();
     return 0;
   }
+
+  if (parsed.sub === 'routing') return cmdRoutingObservation(parsed.json);
 
   // Load config
   let cfg: AshlrConfig;
@@ -366,6 +437,7 @@ function printTelemetryHelp(): void {
     ['status (default)', 'Show endpoint + PAT configured (booleans only — values never printed),'],
     ['',                 'active sink mode (local/otlp), local telemetry dir + file count,'],
     ['',                 'and spend governance summary.'],
+    ['routing',          'Inspect recorded task fit, latency availability and execution feedback.'],
     ['test',             'Emit a synthetic metadata-only test span via the configured sink'],
     ['',                 'and report the TelemetryEmitResult (ok/detail).'],
   ];

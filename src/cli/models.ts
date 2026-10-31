@@ -4,6 +4,7 @@
  * Subcommands:
  *   (none)           List local models (Ollama + LM Studio) with provider,
  *                    name, size, and active marker.
+ *   routing          Inspect recorded routing evidence without probing providers.
  *   pull <name>      Confirm then pull a model via `ollama pull` (EXPLICIT
  *                    only — large download; honors --yes to skip prompt).
  *   start            Best-effort start a locally-installed Ollama daemon.
@@ -94,7 +95,7 @@ async function loadConfig(): Promise<AshlrConfig> {
 // ---------------------------------------------------------------------------
 
 interface ParsedModelsArgs {
-  subcommand: 'list' | 'pull' | 'start' | 'inventory';
+  subcommand: 'list' | 'pull' | 'start' | 'inventory' | 'routing';
   pullName?: string;
   json: boolean;
   yes: boolean;
@@ -139,13 +140,16 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
       return result;
     }
     result.pullName = name;
+  } else if (sub === 'routing') {
+    result.subcommand = 'routing';
+    if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models routing [--json]';
   } else if (sub === 'inventory') {
     result.subcommand = 'inventory';
     if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models inventory [--json]';
   } else if (sub === 'start') {
     result.subcommand = 'start';
   } else {
-    result.usageError = `unknown subcommand: ${sub}. Use list, inventory, pull <name>, or start.`;
+    result.usageError = `unknown subcommand: ${sub}. Use list, routing, inventory, pull <name>, or start.`;
   }
 
   return result;
@@ -512,6 +516,7 @@ function printModelsHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
+    ['routing', 'Inspect recorded task fit, latency availability and execution feedback (read-only).'],
     ['inventory', 'Measure opt-in loopback models and write fleet.json resources.models.'],
     ['(none) / list',    'List all local models across Ollama and LM Studio.'],
     ['pull <name>',      'Pull a model by name via `ollama pull` (confirms first; large download).'],
@@ -582,6 +587,11 @@ export async function cmdModels(args: string[]): Promise<number> {
     process.stderr.write(`${C.red}error:${C.reset} ${parsed.usageError}\n`);
     process.stderr.write(`Run ${C.cyan}ashlr models --help${C.reset} for usage.\n`);
     return 2;
+  }
+
+  if (parsed.subcommand === 'routing') {
+    const { cmdRoutingObservation } = await import('./telemetry.js');
+    return cmdRoutingObservation(parsed.json);
   }
 
   if (parsed.subcommand === 'inventory') {
