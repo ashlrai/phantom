@@ -9,6 +9,6 @@ const cases: [ApplyOutcome, string, string][] = [
   [{ kind: 'failed', reason: 'Build failed' }, 'Update failed: Build failed', 'danger'],
   [{ kind: 'busy' }, 'An update is already running.', 'info'],
   [{ kind: 'not-in-build' }, 'This build cannot apply updates from here yet. Run `ashlr update` in a terminal.', 'warning'],
-  [{ kind: 'locked' }, 'Unlock mutations in Settings ▸ Connection first.', 'warning'],
+  [{ kind: 'locked' }, 'Unlock in Settings ▸ Connection ▸ Mutation hold, then press Update now again.', 'warning'],
 ];
 it.each(cases)('describes %j', (outcome, text, tone) => { expect(applyOutcomeCopy(outcome)).toEqual({ text, tone }); });

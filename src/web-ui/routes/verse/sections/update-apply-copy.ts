@@ -20,6 +20,6 @@ export function applyOutcomeCopy(outcome: ApplyOutcome): { text: string; tone: '
     case 'failed': return { tone: 'danger', text: `Update failed: ${outcome.reason}` };
     case 'busy': return { tone: 'info', text: 'An update is already running.' };
     case 'not-in-build': return { tone: 'warning', text: 'This build cannot apply updates from here yet. Run `ashlr update` in a terminal.' };
-    case 'locked': return { tone: 'warning', text: 'Unlock mutations in Settings ▸ Connection first.' };
+    case 'locked': return { tone: 'warning', text: 'Unlock in Settings ▸ Connection ▸ Mutation hold, then press Update now again.' };
   }
 }
