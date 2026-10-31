@@ -155,79 +155,6 @@ Every field is enforced:
 | `qwen3.6:35b` | 23 to 24 GB | same digest as `qwen3.6:35b-a3b` (35B-A3B MoE) | [tags](https://ollama.com/library/qwen3.6/tags) |
 | `qwen3-coder:30b` | 19 GB | same digest as `qwen3-coder:30b-a3b-q4_K_M` | [tags](https://ollama.com/library/qwen3-coder/tags) |
 
-## The localInference config
-
-Source only for now: this is on `master` after #917 and #920 and is listed under the unreleased 3.29.15 entry in CHANGELOG.md. npm also reports 3.29.15, so check `phm --version` and the changelog before relying on it.
-
-Labels below: **Ran** means run on a fresh source build of `master` (818152c) with a throwaway `HOME`. **Source** means read from `src/core/run/local-inference.ts`, `src/core/run/local-inference-probe.ts` and their tests (`test/local-inference-loopback.test.ts`, `test/local-inference-probe.test.ts`; 24 tests, all passed on the box).
-
-The block lives in `~/.ashlr/config.json` (Source):
-
-```json
-"localInference": {
-  "provider": "ollama",
-  "baseUrl": "http://127.0.0.1:11434/v1",
-  "models": { "coder": "qwen3.8:27b" },
-  "allowRemote": false,
-  "allowAbliterated": false
-}
-```
-
-- `provider` is `ollama`, `omlx` or `openai-compat`. `baseUrl` defaults to `http://127.0.0.1:11434/v1` (ollama) or `http://127.0.0.1:8000/v1` (omlx) and is required for `openai-compat`. `models` keys are `coder`, `reviewer`, `planner` and `proposalOnly`. Unknown keys are problems (Source).
-- Precedence for the `openai-compat` target: `OPENAI_COMPAT_BASE_URL`, then `localInference.baseUrl`, then the registry default. Every source goes through the same gate (Source).
-- Keys: `ollama` and `omlx` get no key. For `openai-compat`, a `phm_` placeholder or OAuth-shaped token is dropped; a real configured key is sent (Source). Never configure a real provider key for a local URL.
-- Abliterated or uncensored models are refused in `coder`, `reviewer` and `planner`. Only `proposalOnly` may use one, with `allowAbliterated: true` and a `@sha256:` digest pin (Source).
-
-### The loopback gate
-
-Each config below was written to the throwaway `~/.ashlr/config.json` and checked with `phm status --json` and `phm --ashlr-handshake` (Ran):
-
-| baseUrl | allowRemote | Result |
-|---|---|---|
-| `http://127.0.0.1:<port>/v1`, `http://localhost:<port>/v1`, `http://[::1]:<port>/v1` | absent | accepted |
-| `http://0.0.0.0:11434/v1`, `http://127.0.0.2:11434/v1`, `http://localhost.evil.com/v1` | absent | refused: `remote-not-allowed` |
-| `http://example.com/v1` | absent | refused: `remote-not-allowed` |
-| `http://example.com/v1` | `true` | refused: `remote-requires-https` |
-| `https://example.com/v1` | `"true"` (a string) | refused: `allowRemote: must be a boolean` plus `remote-not-allowed` |
-| `https://example.com/v1` | `true` | accepted, with a warning |
-
-The refusal prints on stderr, for example:
-
-```text
-[ashlr] Warning: ~/.ashlr/config.json has an invalid localInference block (localInference.baseUrl: remote-requires-https). openai-compat refuses to run until it is fixed.
-```
-
-and an accepted remote prints:
-
-```text
-[ashlr] Warning: ~/.ashlr/config.json localInference uses a non-loopback endpoint (allowRemote: true). Prompts leave this machine.
-```
-
-Also refused (Source and tests): non-canonical loopback spellings, userinfo, query strings, fragments, dot segments and backslashes. Refusal reasons are fixed codes and never echo the URL.
-
-### Doctor and status probe
-
-`phm doctor` and `phm status --json` send one `GET <baseUrl>/models` to a loopback server: no key or Authorization header, no body, no redirects, 3 s timeout, bounded body, at most 20 model ids. A remote endpoint is never probed (Source).
-
-`phm status --json` adds a `localInference` object (Ran):
-
-```json
-{"status":"reachable","provider":"ollama","loopback":true,"reachable":true,"httpStatus":200,"modelCount":1,"models":["qwen3-0.6b-stub"],"rolesPresent":{"coder":true,"reviewer":false}}
-```
-
-`status` values seen when run: `reachable`, `unreachable` (nothing listening), `config-invalid` and `remote-not-probed`. `bad-response` and `not-configured` come from source. The matching `phm doctor` lines (Ran):
-
-```text
-  ! Local inference                         ollama: reachable, 1 model(s); missing model for reviewer
-  ! Local inference                         ollama: not reachable on loopback
-  ! Local inference                         localInference block is invalid; openai-compat refuses to run
-  ! Local inference                         openai-compat: remote endpoint (allowRemote), not probed
-```
-
-`phm --ashlr-handshake` (Ran) lists `local-inference-probe` among its capabilities and reports a `local-inference-config` check: `ok` for a valid block, `missing` with health `degraded` for an invalid one. It checks the config only; it does not call the server.
-
-What was and was not run: Ollama was not running on the box during this check, so the `reachable` output above came from a small loopback stub server answering `/v1/models` with one model id, not from Ollama. The `unreachable` rows are real runs with nothing listening. The 27B model was not run on the box. The Qwen3-0.6B stand-in mentioned in earlier box notes is a smoke test only and says nothing about speed or quality.
-
 ## Hybrid use
 
 - Use local engines for high-volume loops: edit, test and lint iterations, drafts.
@@ -238,7 +165,7 @@ What was and was not run: Ollama was not running on the box during this check, s
 
 - Bind local servers to loopback (`127.0.0.1`). A server listening on `0.0.0.0` is reachable from your network.
 - Local servers can log prompts. Keep `phm_` placeholders in prompts and never reveal secrets into an agent's context.
-- Never point a real API key at a local URL. `OPENAI_COMPAT_BASE_URL` now goes through the same loopback gate as `localInference.baseUrl` (see below), and the environment alone can never admit a remote URL.
+- Never point a real API key at a local URL. The local inference gate validates target URLs and drops keys for Ollama and oMLX.
 - Abliterated models (third-party weights with refusals removed) are not recommended for any agent that holds credentials or merge rights.
 - `mlx_lm.server` is dev-only by its own docs (above).
 

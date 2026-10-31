@@ -10,12 +10,13 @@
  * ── Route shape ─────────────────────────────────────────────────────────────
  *
  *   GET  /api/verse/mcp              which servers each seat would load
+ *   GET/POST /api/verse/mcp/connectors  managed registry names/state and confirmed toggles
  *   GET  /api/verse/mcp/cli-health   per-account auth, plan and version drift
  *   POST /api/verse/mcp/cli-probe    read the installed CLI versions (SPAWNS)
  *   POST /api/verse/mcp/proposal     validate + disclose a write (writes nothing)
  *   POST /api/verse/mcp/apply        perform the write the digest confirms
  *
- * The two GETs are free: no subprocess, no provider call, no write. Everything
+ * The GETs are free: no subprocess, no provider call, no write. Everything
  * that costs something or changes something is a POST behind
  * `passesMutationGate`, including `cli-probe` — it launches up to four vendor
  * binaries, and a read route that does that is a side effect in disguise.
@@ -55,17 +56,20 @@ import {
   type VerseMcpRefusalResult,
 } from './mcp-mutation.js';
 
+import { listConnectors, setConnectorEnabled } from './connector-manager.js';
+
 const MCP_PREFIX = '/api/verse/mcp';
 
 const MCP_ROUTES = new Set([
   MCP_PREFIX,
+  `${MCP_PREFIX}/connectors`,
   `${MCP_PREFIX}/cli-health`,
   `${MCP_PREFIX}/cli-probe`,
   `${MCP_PREFIX}/proposal`,
   `${MCP_PREFIX}/apply`,
 ]);
 
-/** True for exactly the five MCP-management routes. */
+/** True for the MCP-management routes. */
 export function isVerseMcpPath(path: string): boolean {
   return MCP_ROUTES.has(path);
 }
@@ -205,6 +209,33 @@ export async function handleVerseMcpApi(
   if (!isVerseMcpPath(path)) return false;
 
   try {
+    if (path === `${MCP_PREFIX}/connectors`) {
+      if (method === 'GET') {
+        try { sendJson(res, 200, await listConnectors()); }
+        catch { sendError(res, 'VERSE_UNAVAILABLE', 'Connectors could not be read.'); }
+        return true;
+      }
+      if (method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed.' }); return true; }
+      if (!passesPostGate(ctx, req, res)) return true;
+      const body = await readJsonBody(req, res);
+      if (!body) return true;
+      if (Object.keys(body).some((key) => !['name', 'enabled', 'revision', 'confirm'].includes(key)) ||
+          typeof body.name !== 'string' || body.name.length === 0 || body.name.length > 160 || typeof body.enabled !== 'boolean' ||
+          typeof body.revision !== 'string' || !/^[a-f0-9]{40}$/.test(body.revision) || body.confirm !== true) {
+        sendInvalid(res, 'Invalid connector change.');
+        return true;
+      }
+      const scope = await readVerseMcpScopeGateAsync();
+      if (!scope.allow) { sendError(res, 'VERSE_REFUSED', 'Connector change refused by the identity scope gate.'); return true; }
+      try {
+        const result = await setConnectorEnabled(body.name, body.enabled, body.revision);
+        audit({ action: 'verse.mcp.connector-state', repo: null, sandboxId: null,
+          summary: body.enabled ? 'Enabled a managed connector' : 'Disabled a managed connector', result: 'ok' });
+        sendJson(res, 200, result);
+      }
+      catch { sendError(res, 'VERSE_REFUSED', 'Connector change refused. Refresh and try again.'); }
+      return true;
+    }
     const accountsRoot = accountsRootFor(ctx);
 
     // ── GET /api/verse/mcp ────────────────────────────────────────────────
@@ -367,7 +398,7 @@ export async function handleVerseMcpApi(
       return true;
     }
 
-    /* c8 ignore next 2 -- isVerseMcpPath already narrowed to the five routes. */
+    /* c8 ignore next 2 -- isVerseMcpPath already narrowed to the management routes. */
     sendJson(res, 404, { error: `not found: ${method} ${path}` });
     return true;
   } catch {
