@@ -14,5 +14,6 @@
 .badge { padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--status-unknown-bg); color: var(--status-unknown-fg); overflow-wrap: anywhere; }
 .banner { margin: 0; padding: var(--space-2); background: var(--status-warning-bg); color: var(--status-warning-fg); }
 .line { margin: 0; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .line[data-tone='bad'] { color: var(--status-danger-fg); }
 .muted { margin: 0; color: var(--text-tertiary); }
