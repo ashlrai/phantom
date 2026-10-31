@@ -1916,6 +1916,22 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/job ───────────────────────────────────────────────
+    // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
+    // state, lane/model provenance, publish outcome and a scrubbed bounded
+    // log tail. READ-ONLY; never throws on absent/degraded inputs; same
+    // no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/job' && method === 'GET') {
+      const { getFleetJobDetail, isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobDetail(id));
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
