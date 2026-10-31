@@ -35,12 +35,12 @@ describe('narrowBusLite', () => {
     ]) expect(narrowBusLite(raw)).toBeNull();
   });
 
-  it('keeps only the latest 20 events', () => {
-    const events = Array.from({ length: 25 }, (_, i) => ({ at: new Date(i * 1000).toISOString(), kind: 'launch', text: String(i) }));
+  it('keeps only the latest 50 events', () => {
+    const events = Array.from({ length: 55 }, (_, i) => ({ at: new Date(i * 1000).toISOString(), kind: 'launch', text: String(i) }));
     const data = narrowBusLite({ ...fixture(), events });
-    expect(data?.events).toHaveLength(20);
-    expect(data?.events[0].text).toBe('24');
-    expect(data?.events[19].text).toBe('5');
+    expect(data?.events).toHaveLength(50);
+    expect(data?.events[0].text).toBe('54');
+    expect(data?.events[49].text).toBe('5');
   });
 });
 
@@ -51,7 +51,7 @@ describe('busLiteQuery', () => {
     await expect(busLiteQuery.fetch()).resolves.toBeNull();
     await expect(busLiteQuery.fetch()).resolves.toBeNull();
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch.mock.calls[0]?.[0]).toBe('/api/verse/fleet/live/bus?limit=20');
+    expect(fetch.mock.calls[0]?.[0]).toBe('/api/verse/fleet/live/bus?limit=50');
   });
 
   it('reports malformed responses as errors, not missing routes', async () => {
