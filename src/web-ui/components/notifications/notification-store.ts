@@ -18,6 +18,7 @@
  */
 import type { AppNotification, NotificationCategory } from './types.js';
 import { sortNotifications } from './deriveNotifications.js';
+import { attachNotificationClick, notificationClickTarget } from './desktop-notification-click.js';
 
 const MUTE_STORAGE_KEY = 'ashlr.notifications.mutedCategories.v1'; // gitleaks:allow -- public preference key
 const DESKTOP_PREF_STORAGE_KEY = 'ashlr.notifications.desktopEnabled.v1';
@@ -122,7 +123,14 @@ export function reconcileNotifications(derived: AppNotification[]): void {
       if (previousIds.has(n.id) || everSeenIds.has(n.id)) continue;
       everSeenIds.add(n.id);
       try {
-        void new Notification(n.title, { body: n.detail, tag: n.id });
+        const notification = new Notification(n.title, { body: n.detail, tag: n.id });
+        attachNotificationClick(notification, notificationClickTarget(n, window.location.origin), {
+          focus: () => window.focus(),
+          setHash: (hash) => { window.location.hash = hash; },
+          assign: (url) => window.location.assign(url),
+          openPanel: () => openPanel(),
+          run: n.actionRun,
+        });
       } catch {
         /* best-effort — some browsers throw outside a user gesture context */
       }
