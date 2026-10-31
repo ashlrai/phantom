@@ -33,9 +33,11 @@ import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
 import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
+import { fleetLedgerQuery } from '../../usage/fleet-ledger-queries.js';
 import { decisionPrUrl } from '../decision-link.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
+import { FleetUsageCard } from '../FleetUsageCard.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -121,6 +123,7 @@ export function refreshFleetScreen(): Promise<unknown> {
   return Promise.all([
     refetchQuery(verseControlQuery.key, () => verseControlQuery.fetch(), true),
     refetchQuery(fleetLiveQuery.key, () => fleetLiveQuery.fetch(), true),
+    refetchQuery(fleetLedgerQuery.key, () => fleetLedgerQuery.fetch(), true),
     refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
     refetchQuery(authorityQuery.key, () => authorityQuery.fetch(), true),
     refetchQuery(budgetQuery.key, () => budgetQuery.fetch(), true),
@@ -401,6 +404,7 @@ export function FleetScreen() {
       {fleetCard}
       <MobileSwitches />
       <Section title="Right now" flat>{liveBody}</Section>
+      <FleetUsageCard />
       <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>
