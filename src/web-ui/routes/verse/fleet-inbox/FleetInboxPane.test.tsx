@@ -7,7 +7,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { getPane } from '../panes/pane-registry.js';
 import './fleet-inbox.pane.js';
 import { FleetInboxPane } from './FleetInboxPane.js';
-import { fleetInboxQuery, fleetRunsQuery } from './fleet-inbox-queries.js';
+import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox-queries.js';
 
 const state = vi.hoisted(() => ({ queries: new Map<string, QueryEntry<unknown>>(), refresh: vi.fn() }));
 vi.mock('../../../data/hooks.js', () => ({
@@ -32,6 +32,7 @@ function query(key: string, data: unknown, error?: Error, status: QueryEntry<unk
 beforeEach(() => {
   vi.clearAllMocks();
   query(fleetInboxQuery.key, undefined, missing);
+  query(ordersTraceQuery.key, undefined, missing);
   query(fleetRunsQuery.key, { v: 1, sources: { inbox: 'healthy' }, inbox: entries });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });

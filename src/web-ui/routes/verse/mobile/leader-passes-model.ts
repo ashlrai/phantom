@@ -1,4 +1,5 @@
 import { formatDuration } from '../autonomy/format.js';
+import { etaText, LEADER_PASS_CADENCE_MS, nextPassEta } from '../fleet/next-pass-eta.js';
 import type { Tone } from './ui-parts.js';
 
 type SourceState = 'healthy' | 'degraded' | 'missing' | 'unknown';
@@ -6,7 +7,7 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const source = (value: unknown): SourceState => value === 'healthy' || value === 'degraded' || value === 'missing' ? value : 'unknown';
 
 export function readLeaderPasses(snapshot: unknown, nowMs: number): {
-  headline: string; tone: Tone; passes: Array<{ label: string; age: string }>;
+  headline: string; tone: Tone; passes: Array<{ label: string; age: string; eta: ReturnType<typeof nextPassEta>; dueText: string; tone: 'ok' | 'warning' | 'danger' }>;
   agents: number | null; lastTick: { text: string; ageMinutes: number | null };
   claudeLane: { text: string | null; down: boolean }; sourceState: SourceState;
 } {
@@ -22,8 +23,12 @@ export function readLeaderPasses(snapshot: unknown, nowMs: number): {
     const basename = typeof pass.label === 'string' ? pass.label.split(/[\\/]/).pop() ?? '' : '';
     const label = /^[\w.-]{1,80}$/.test(basename) && basename !== '.' && basename !== '..' ? basename : '—';
     const seconds = pass.ageSeconds;
-    const age = typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0 ? formatDuration(seconds * 1000 + elapsed) : '—';
-    return { label, age };
+    const ageMs = typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 + elapsed : null;
+    const age = ageMs === null ? '—' : formatDuration(ageMs);
+    const eta = nextPassEta(ageMs === null ? null : nowMs - ageMs, nowMs);
+    const dueText = ageMs === null ? 'no pass recorded' : etaText(eta);
+    const tone = eta.kind !== 'overdue' ? 'ok' : ageMs !== null && ageMs - LEADER_PASS_CADENCE_MS > 30 * 60_000 ? 'danger' : 'warning';
+    return { label, age, eta, dueText, tone };
   }) : [];
   const count = data.orchestratorAgents;
   const agents = typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : null;
