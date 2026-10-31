@@ -81,7 +81,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   node: ['bootstrap'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
-  backlog: ['refresh', 'plan'],
+  backlog: ['refresh', 'plan', 'lint'],
   inbox: ['show', 'approve', 'submit', 'reject', 'automerge'],
   daemon: [
     'start', 'stop', 'status', 'activation-preflight', 'activate',
