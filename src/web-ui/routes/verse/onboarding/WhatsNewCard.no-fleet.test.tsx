@@ -18,9 +18,10 @@ it.each(['missing', 'unknown'])('opens Settings without fleet panes when presenc
   render(<WhatsNewCard />);
   expect(screen.queryByText(/Fleet workspace:|Leaders' inbox:/)).toBeNull();
   expect(screen.getByText('Update now in Settings ▸ Desktop')).toBeTruthy();
-  expect(screen.getByText('⌘/ opens keyboard shortcuts')).toBeTruthy();
+  expect(screen.getByText('Open dock panes with /pane; ⌘/ lists keyboard shortcuts.')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: presence === 'missing' ? 'Open Settings ▸ Fleet sources' : 'Open Settings' }));
-  expect(mocks.section).toHaveBeenCalledWith('settings');
+  if (presence === 'missing') expect(mocks.section).toHaveBeenCalledWith('settings', 'fleet-sources');
+  else expect(mocks.section).toHaveBeenCalledWith('settings');
   expect(mocks.open).not.toHaveBeenCalled();
   expect(mocks.seen).toHaveBeenCalledWith(APP_VERSION);
 });

@@ -18,7 +18,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstub
 it('shows the projected exhaustion in the lane and headline', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.includes('/fleet/runs') ? supplyFixture() : ledger)));
   render(<FleetSupplyPane {...props} />);
-  expect(await screen.findByRole('heading', { name: 'Write 5 more job files · active runs out in 4 h' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Write 5 more job files · Shortfall 5 slots · active runs out in 4 h' })).toBeInTheDocument();
   const lane = screen.getByRole('rowheader', { name: /active/ });
   expect(within(lane).getByText(/^runs out ≈ 11:30 .* \(in 4 h\)$/)).toHaveAttribute('data-tone', 'warn');
 });
@@ -27,7 +27,7 @@ it('keeps the original rows and headline when the ledger is missing', async () =
   const fetcher = vi.fn(async (url: string) => url.includes('/fleet/runs') ? Response.json(supplyFixture()) : Response.json({}, { status: 404 }));
   vi.stubGlobal('fetch', fetcher);
   render(<FleetSupplyPane {...props} />);
-  expect(await screen.findByRole('heading', { name: 'Write 5 more job files' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Write 5 more job files · Shortfall 5 slots' })).toBeInTheDocument();
   await screen.findByText('Quota exhausted');
   expect(screen.getByRole('rowheader', { name: 'active' })).toHaveTextContent(/^active$/);
   expect(within(screen.getByRole('table')).getAllByRole('row')[1]?.querySelectorAll('td')).toHaveLength(5);

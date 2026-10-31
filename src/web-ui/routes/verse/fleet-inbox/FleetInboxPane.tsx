@@ -3,10 +3,16 @@ import { Button, EmptyState, Input, SkeletonLine, Tag } from '../../../component
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { refetchQuery } from '../../../data/cache.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { JobRefs } from '../fleet/JobRefs.js';
+import { splitRefs } from '../fleet/job-refs.js';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { filterEntries, groupByDay, quoteForMessage, readInboxEntries } from './fleet-inbox-model.js';
-import { fleetInboxQuery, fleetRunsQuery } from './fleet-inbox-queries.js';
+import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox-queries.js';
+import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } from './order-trace-model.js';
 import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
 import { annotateAck, seenCounts } from './inbox-ack-model.js';
@@ -18,14 +24,18 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const routeInbox = readInboxEntries(route.data, undefined);
   const fallback = routeInbox.origin === 'none' && (route.status === 'error' || route.status === 'success');
   const snapshot = useQuery(fleetRunsQuery);
+  const sectionVisible = useSectionVisible(), documentVisible = useDocumentVisible();
+  const orders = useQuery(ordersTraceQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 10_000 });
+  const trace = orders.error ? null : narrowOrderTrace(orders.data);
+  const refreshOrders = useRefetch(ordersTraceQuery);
   const refreshRoute = useRefetch(fleetInboxQuery), refreshSnapshot = useRefetch(fleetRunsQuery);
   usePollWhileVisible(refreshRoute, 10_000, { enabled: visible });
+  usePollWhileVisible(refreshOrders, 15_000, { enabled: visible });
   const [source, setSource] = useState('');
   const [text, setText] = useState('');
   const [posted, setPosted] = useState<{ text: string; until: number } | null>(null);
   const [postedForAck, setPostedForAck] = useState<string | null>(null);
   const [, setClockTick] = useState(0);
-  const sectionVisible = useSectionVisible(), documentVisible = useDocumentVisible();
   useEffect(() => {
     if (!posted || !visible || !sectionVisible || !documentVisible) return;
     const timer = setTimeout(() => setPosted(null), Math.max(0, posted.until - Date.now()));
@@ -49,6 +59,11 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
         || (entry.at === newest.at && inbox.origin === 'route') ? entry : newest, undefined) : undefined;
   usePollWhileVisible(refreshSnapshot, latestPosted?.ack === 'waiting' ? 15_000 : 10_000, { enabled: visible });
   const loading = inbox.origin === 'none' && (!fallback || snapshot.status === 'idle' || snapshot.status === 'loading');
+  function openLog(id: string) {
+    if (!JOB_ID_RE.test(id)) return;
+    requestWorkerLogJob(id);
+    openDockPane('worker-log');
+  }
   return <div className={styles.pane}>
     <InboxPostBox onPosted={postedText => {
       setSource(''); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
@@ -67,11 +82,25 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     {groups.length === 0 && <EmptyState compact title={inbox.entries.length ? 'No matching orders' : 'No orders yet'} />}
     {groups.map(group => <section key={group.day} aria-label={group.label}>
       <h3 className={styles.day}>{group.label}{group.day !== '—' && ' · ET'}</h3>
-      {group.entries.map((entry, i) => <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
+      {group.entries.map((entry, i) => { const jobs = jobsForEntry(trace, entry.at); return <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
         <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]} data-overdue={entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
         <p className={styles.text}>{entry.text}</p>
+        {jobs.length > 0 && <div className={styles.jobs}>
+          <span>{orderJobsLine(jobs)}</span>
+          {jobs.slice(0, 6).map((job, index) => {
+            const href = githubUrl(job), word = stateWord(job), refs = splitRefs(job.id);
+            return <span className={styles.jobChip} key={`${job.id}-${index}`}>
+              {job.state === 'queued' || !JOB_ID_RE.test(job.id) ? job.id
+                : refs.length === 1 && refs[0]?.kind === 'job' ? <JobRefs text={job.id} onOpenJob={openLog} />
+                  : <button type="button" onClick={() => openLog(job.id)} aria-label={`Open log for ${job.id}`}>{job.id}</button>}
+              {' '}{href && word.startsWith('PR #') ? <a href={href} target="_blank" rel="noreferrer">{word}</a> : word}
+              {href && !word.startsWith('PR #') && <> <a href={href} target="_blank" rel="noreferrer">View on GitHub</a></>}
+            </span>;
+          })}
+          {jobs.length > 6 && <span>+{jobs.length - 6} more</span>}
+        </div>}
         <Button size="sm" onClick={() => host.addToMessage(quoteForMessage(entry))}>Add to message</Button>
-      </article>)}
+      </article>; })}
     </section>)}
     </>}
   </div>;
