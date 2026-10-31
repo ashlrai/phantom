@@ -114,18 +114,24 @@ const QUOTED_SECRET_KEY =
  * Values in CODE that merely reference a secret (a member chain, call, template
  * or env interpolation) rather than contain one. Scrubbed diffs are persisted
  * and applied as proposals, so turning `const GITHUB_TOKEN = process.env.GITHUB_TOKEN`
- * into `GITHUB_TOKEN=[REDACTED]` would corrupt a legitimate change. Applies to
- * the 3.10 suffix rules only — rule 4's historical behaviour is unchanged.
+ * into `GITHUB_TOKEN=[REDACTED]` would corrupt a legitimate change. Quoted
+ * literals are data, even when they look like a member chain or function call.
  */
-function isCodeReference(value: string): boolean {
+function isCodeReference(value: string, quotedLiteral = /^["']/.test(value)): boolean {
   const v = value.replace(/^["']|["']$/g, '');
+  if (/^(?:\$\{|\$[A-Za-z_]|`|<)/.test(v)) return true; // interpolation or placeholder
+  if (quotedLiteral) return false;
   return (
     /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+[)\]]*$/.test(v) || // process.env.X, opts.apiToken
     /^[A-Za-z_$][\w$.]*\(/.test(v) || // getToken(), cfg.read(
-    /^(?:\$\{|\$[A-Za-z_]|`|<)/.test(v) || // ${VAR}, $VAR, `template`, <placeholder>
-    /^[A-Za-z_][\w]*(?:::[A-Za-z_][\w]*)+(?:\(|$)/.test(v) || // std::env::var(, Config::SECRET
-    /^[a-z][a-z0-9_-]*(?::[a-z][a-z0-9_.-]*){2,}$/.test(v) // app:jobs:default (namespaced keys, two or more colons)
+    /^[A-Za-z_][\w]*(?:::[A-Za-z_][\w]*)+(?:\(|$)/.test(v) // std::env::var(, Config::SECRET
   );
+}
+
+/** Namespaced queue/cache identifiers are public keys, not password/token values. */
+function isNamespacedKey(name: string, value: string): boolean {
+  return /^(?:QUEUE|CACHE|REDIS)_KEY$/i.test(name) &&
+    /^[a-z][a-z0-9_-]*(?::[a-z][a-z0-9_.-]*){2,}$/.test(value.replace(/^["']|["']$/g, ''));
 }
 
 /**
@@ -135,6 +141,7 @@ function isCodeReference(value: string): boolean {
  * the SCREAMING env rule still redacts a letters-only `.env` password.
  */
 function isIdentifierOnly(value: string): boolean {
+  if (/^["']/.test(value)) return false;
   const v = value.replace(/^["']|["']$/g, '');
   return !/\d/.test(v) && /^[A-Za-z_$][A-Za-z_$.<>[\]|&?!()]*$/.test(v);
 }
@@ -144,25 +151,29 @@ function isAlreadyRedacted(value: string): boolean {
   return value.replace(/^["']|["']$/g, '') === REDACTED;
 }
 
+/** An unquoted marker followed by code syntax, such as `call(token=[REDACTED])` or a string method. */
+function isRedactedExpression(value: string): boolean {
+  return /^\[REDACTED\](?:[)\]}]+$|\.[A-Za-z_$][\w$]*\()/.test(value);
+}
+
 function redactAssignment(name: string, match: string, value: string, allowIdentifiers: boolean): string {
   // Idempotence: `NAME = "[REDACTED]"` must stay byte-identical on a re-scrub.
-  if (isAlreadyRedacted(value)) return match;
-  if (isCodeReference(value) || isMask(value)) return match;
+  if (isAlreadyRedacted(value) || isRedactedExpression(value)) return match;
+  if (isCodeReference(value) || isNamespacedKey(name, value) || isMask(value)) return match;
   if (allowIdentifiers && isIdentifierOnly(value)) return match;
   return `${name}=${REDACTED}`;
 }
 
 function valueOf(match: string, name: string): string {
-  return match.slice(name.length).replace(/^[ \t]*(?::=|[=:])[ \t]*/, '').replace(/^\s*(?::=|[=:])\s*/, '');
+  return match.slice(name.length).replace(/^[ \t]*(?::=|[=:])[ \t]*/, '');
 }
 
 /**
- * Ordinary words after `Bearer` / `Token` / `Authorization` in prose ("send it as a Bearer token", "the token is
- * rotated", "the Authorization header"). An all-lowercase or Capitalized letters-only word of 2–24 characters is not a
- * credential; tokens essentially always carry digits, symbols or mixed case. Single letters stay redacted.
+ * Recognized grammar after `Bearer` / `Token` / `Authorization` in prose.
+ * Letter case alone cannot distinguish an opaque credential from a word.
  */
 function isProseWord(value: string): boolean {
-  return /^(?:[a-z]{2,24}|[A-Z][a-z]{1,23})$/.test(value);
+  return /^(?:tokens?|headers?|expires|mint|valid|is|count|with|refresh|has|Basic)$/i.test(value);
 }
 
 /** `Basic` header value: base64 of `user:password` with no control characters (UTF-8 bytes above 0x7f allowed). */
@@ -170,7 +181,8 @@ function isBasicCredential(value: string): boolean {
   try {
     const decoded = typeof atob === 'function' ? atob(value) : '';
     const colon = decoded.indexOf(':');
-    if (colon < 1 || colon === decoded.length - 1) return false;
+    // HTTP Basic permits an empty username, password, or both.
+    if (colon < 0) return false;
     for (let i = 0; i < decoded.length; i++) {
       const code = decoded.charCodeAt(i);
       if (code < 0x20 || code === 0x7f) return false;
@@ -241,9 +253,9 @@ function redactProseCredential(span: string): string {
   });
 }
 
-/** Masks and fillers (`********`, `xxxxxxxx`): one repeated character is not a credential. */
+/** Recognized masks (`********`, `xxxxxxxx`); repeated digits/other letters can be real passwords. */
 function isMask(value: string): boolean {
-  return /^(.)\1*$/.test(value.replace(/^["']|["']$/g, ''));
+  return /^(?:\*+|x+|X+)$/.test(value.replace(/^["']|["']$/g, ''));
 }
 
 /** Public digests and keys that look like secrets: content digests (`sha256:…`, SRI `sha512-…`, go.sum `h1:…`) and SSH public keys (`ssh-ed25519 AAAA…`). */
@@ -279,9 +291,14 @@ export function scrubSecrets(text: string): string {
       .replace(/\bgithub_pat_[A-Za-z0-9_]{22,}/g, REDACTED)
       // 3a. HTTP Basic credentials: base64 of `user:password`. Only a value that decodes to printable `x:y` text counts,
       // so "Basic usage" or "Basic AbcDefGh" prose is left alone.
-      .replace(/\b(Basic)\s+([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])/gi, (m: string, word: string, value: string) => (isBasicCredential(value) ? `${word} ${REDACTED}` : m))
+      .replace(/\b(Basic)\s+([A-Za-z0-9+/]{2,}={0,2})(?![A-Za-z0-9+/=])/gi, (m: string, word: string, value: string) => (isBasicCredential(value) ? `${word} ${REDACTED}` : m))
       // 3. Bearer / Token / Authorization header values
-      .replace(/\b(Bearer|Token|Authorization)\s+[A-Za-z0-9\-._~+/]+=*/gi, (m: string, word: string) => (isProseWord(m.slice(word.length).trim().replace(/[.]+$/, '')) ? m : `${word} ${REDACTED}`))
+      .replace(/(?:(?<![\w-])|(?<=--))(Bearer|Token|Authorization)\s+[A-Za-z0-9\-._~+/]+=*/gi, (m: string, word: string, offset: number, whole: string) => {
+        // Explicit HTTP authorization values are credentials even when they are dictionary words.
+        const inHeader = /\b(?:proxy-)?authorization(?:\\?["'])?[ \t]*[=:][ \t]*(?:\\?["'])?$/i.test(whole.slice(Math.max(0, offset - 40), offset));
+        const inFlag = whole.slice(Math.max(0, offset - 2), offset) === '--';
+        return !inHeader && !inFlag && isProseWord(m.slice(word.length).trim().replace(/[.]+$/, '')) ? m : `${word} ${REDACTED}`;
+      })
       // 4. Generic key=value secret patterns. ASHLR_* env vars are only
       // redacted when they look like assignments, not plain audit metadata
       // such as "keys=query".
@@ -290,7 +307,7 @@ export function scrubSecrets(text: string): string {
         (m: string, name: string) => {
           const value = valueOf(m, name);
           // An earlier rule already redacted the value (`api_key="[REDACTED]"`): keep it, so a second pass is a no-op.
-          return value.replace(/^["']/, '').startsWith(REDACTED) || isCodeReference(value) || isMask(value) ? m : `${name}=${REDACTED}`;
+          return isAlreadyRedacted(value) || isRedactedExpression(value) || isCodeReference(value) || isNamespacedKey(name, value) || isMask(value) ? m : `${name}=${REDACTED}`;
         },
       )
       // 4b. A credential stated in prose: "the staging admin password is NDN5KYKdVgt6LN". The value must mix letters and
@@ -304,7 +321,7 @@ export function scrubSecrets(text: string): string {
       // 7. JWTs (eyJ header.payload.sig)
       .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, REDACTED)
       // 8. Bare hex-64 strings (SHA-256 / hex API keys)
-      .replace(/\b[0-9a-fA-F]{64,}\b/g, (m: string, offset: number, whole: string) => (/sha256:$/i.test(whole.slice(Math.max(0, offset - 7), offset)) ? m : REDACTED))
+      .replace(/\b[0-9a-fA-F]{64,}\b/g, (m: string, offset: number, whole: string) => (m.length === 64 && /\bsha256:$/i.test(whole.slice(Math.max(0, offset - 8), offset)) ? m : REDACTED))
       // 9. Other common provider token prefixes.
       .replace(/\bglpat-[A-Za-z0-9_-]{16,}/g, REDACTED)
       .replace(/\bhf_[A-Za-z0-9]{16,}\b/g, REDACTED)
@@ -343,7 +360,7 @@ export function scrubSecrets(text: string): string {
     return out.replace(
       QUOTED_SECRET_KEY,
       (m: string, q: string, name: string, sep: string, vq: string, value: string) =>
-        isAlreadyRedacted(value) || isCodeReference(value) ? m : `${q}${name}${q}${sep}${vq}${REDACTED}${vq}`,
+        isAlreadyRedacted(value) || isCodeReference(value, true) ? m : `${q}${name}${q}${sep}${vq}${REDACTED}${vq}`,
     );
   } catch {
     // Never throws — return original text on unexpected error.
