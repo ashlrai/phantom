@@ -3,7 +3,7 @@ import { graphNeighborhood, type GraphDirection } from '../core/graph/neighborho
 
 const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
        phm graph node <node-id> [--json]
-       phm graph neighbors <node-id> [--direction in|out|both] [--depth 1..4] [--json]
+       phm graph neighbors <node-id> [--direction in|out|both] [--depth 1..4] [--edge-kind can-message|can-delegate|reviews|routes-to] [--json]
 
   nodes       List graph node records.
   node        Retrieve one exact graph node record.
@@ -14,12 +14,14 @@ const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
               Use -- before a node ID that looks like an option (also applies to node).
   --kind      Filter nodes by agent|engine-account|model|mcp, or edges by
               can-message|can-delegate|reviews|routes-to (exact match).
+  --edge-kind Filter neighbors traversal to one exact edge kind (same values as edges --kind).
   --from      Filter edges by exact source ID; use --from=<id> for option-like IDs.
   --to        Filter edges by exact destination ID; use --to=<id> for option-like IDs.
   --json      Emit one versioned JSON object on stdout, including errors.
   --help, -h  Show this help without loading the graph.
 
 Read-only; graph data comes exclusively from the GRAPH-1 loader.
+Neighborhood reachability does not grant dispatch authority.
 Until GRAPH-1 is available, all data commands report GRAPH_UNAVAILABLE.
 Unavailable counts are unknown, never reported as zero.
 Exit codes: 0 success/help, 1 unavailable or loader failure, 2 invalid arguments.
@@ -39,6 +41,7 @@ interface Options {
   direction: GraphDirection;
   depth: number;
   kind: string | null;
+  edgeKind: string | null;
   from: string | null;
   to: string | null;
 }
@@ -48,7 +51,7 @@ function isCommand(value: string): value is GraphCommand {
 }
 
 function parse(args: string[]): Options {
-  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null, from: null, to: null };
+  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null, edgeKind: null, from: null, to: null };
   let directionSeen = false;
   let depthSeen = false;
   for (let i = 0; i < args.length; i++) {
@@ -62,6 +65,10 @@ function parse(args: string[]): Options {
       const kinds: readonly string[] = options.command === 'nodes' ? NODE_KINDS : EDGE_KINDS;
       if (value === undefined || !kinds.includes(value)) throw new Error(`Kind must be ${kinds.join(', ')}.`);
       options.kind = value;
+    } else if (options.command === 'neighbors' && arg === '--edge-kind' && options.edgeKind === null) {
+      const value = args[++i];
+      if (value === undefined || !(EDGE_KINDS as readonly string[]).includes(value)) throw new Error(`Edge kind must be ${EDGE_KINDS.join(', ')}.`);
+      options.edgeKind = value;
     } else if (options.command === 'edges' && /^(--from|--to)(=|$)/.test(arg)) {
       const separator = arg.indexOf('=');
       const key = (separator === -1 ? arg.slice(2) : arg.slice(2, separator)) as 'from' | 'to';
@@ -134,10 +141,14 @@ export async function cmdGraph(args: string[]): Promise<number> {
       return 0;
     }
     if (command === 'neighbors') {
-      const neighborhood = graphNeighborhood(graph, options.nodeId!, options.direction, options.depth);
+      const selectedGraph = options.edgeKind === null ? graph : {
+        ...graph, edges: graph.edges.filter((edge) => edge?.kind === options.edgeKind),
+      };
+      const neighborhood = graphNeighborhood(selectedGraph, options.nodeId!, options.direction, options.depth);
       if (!neighborhood) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Graph node not found.');
       const result = { schemaVersion: 1, command, status: 'ready', ...neighborhood,
-        ...(options.json ? { complete: graph.complete, sources: graph.sources, issues: graph.issues } : {}) };
+        ...(options.edgeKind !== null ? { edgeKind: options.edgeKind } : {}),
+        ...(options.json || options.edgeKind !== null ? { complete: graph.complete, sources: graph.sources, issues: graph.issues } : {}) };
       console.log(JSON.stringify(result, null, options.json ? undefined : 2));
       return 0;
     }
