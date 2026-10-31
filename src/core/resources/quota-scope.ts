@@ -6,7 +6,7 @@ import type { ResourcePool } from './pool-policy.js';
 import type { ResourceBinding } from './worker.js';
 
 export type ResourceQuotaScope = 'codex-general-v1' | 'codex-spark-v1';
-const GENERAL_MODELS = new Set(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+const GENERAL_MODELS = new Set(['gpt-6.1-terra', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
 
 export function validateResourceQuotaScope(provider: string, model: string, scope: unknown): ResourceQuotaScope {
   if (provider === 'codex' && (scope === 'codex-general-v1' && GENERAL_MODELS.has(model) ||
