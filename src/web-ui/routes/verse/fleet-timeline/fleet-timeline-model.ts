@@ -14,6 +14,13 @@ function workerStatus(age: number | null): 'running' | 'slow' | 'stuck' | 'unkno
   return age === null ? 'unknown' : age <= 20 * 60 ? 'running' : age <= 45 * 60 ? 'slow' : 'stuck';
 }
 
+export function stuckWorkers(rows: Worker[]): Array<{ job: string; lane: string; ageSeconds: number }> {
+  return rows.flatMap(({ job, lane, ageSeconds }) =>
+    ageSeconds !== null && ageSeconds > 45 * 60 && JOB_ID_RE.test(job)
+      ? [{ job, lane, ageSeconds }] : [],
+  ).sort((a, b) => b.ageSeconds - a.ageSeconds);
+}
+
 export function groupByLane(rows: Worker[], _nowMs: number): LaneGroup[] {
   const groups = new Map<string, Worker[]>();
   for (const row of rows) {
