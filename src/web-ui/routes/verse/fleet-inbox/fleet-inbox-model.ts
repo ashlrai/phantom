@@ -24,11 +24,11 @@ export function filterEntries(entries: readonly InboxEntry[], filters: { source:
   return entries.filter(e => (!filters.source || e.source === filters.source) && e.text.toLocaleLowerCase().includes(text));
 }
 
-export function groupByDay(entries: readonly InboxEntry[], todayEt: string) {
+export function groupByDay<T extends InboxEntry>(entries: readonly T[], todayEt: string) {
   const yesterday = new Date(`${todayEt}T12:00:00Z`);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   const previous = yesterday.toISOString().slice(0, 10);
-  const groups = new Map<string, { day: string; label: string; entries: InboxEntry[] }>();
+  const groups = new Map<string, { day: string; label: string; entries: T[] }>();
   for (const entry of [...entries].sort((a, b) => (a.at === '—' ? 1 : b.at === '—' ? -1 : b.at.localeCompare(a.at)))) {
     const day = entry.at === '—' ? '—' : entry.at.slice(0, 10);
     if (!groups.has(day)) groups.set(day, { day, label: day === todayEt ? 'Today' : day === previous ? 'Yesterday' : day, entries: [] });
