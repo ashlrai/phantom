@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { parseInboxAt } from '../fleet/interject-ack-model.js';
+import { loadHistory, pushHistory } from '../fleet/interject-history.js';
 import { getMobileFleetClient } from './fleet-client.js';
 import { inboxTailQuery } from './inbox-tail-query.js';
 import { mobileAckLine, mobileTime } from './interject-ack-model.js';
@@ -13,6 +14,9 @@ import { Button } from './ui.js';
 import { Row, Section, ui } from './ui-parts.js';
 
 const POSTED_AT_KEY = 'phantom.mobile.interject.postedAt';
+function readHistory(): string[] {
+  try { return loadHistory(window.localStorage); } catch { return []; }
+}
 function loadPostedAt(): number | null {
   try {
     const value = sessionStorage.getItem(POSTED_AT_KEY);
@@ -32,6 +36,8 @@ export function MobileInterject() {
   const refetch = useRefetch(inboxTailQuery);
   const refresh = useRefresh(inboxTailQuery);
   const [text, setText] = useState('');
+  const [history, setHistory] = useState(readHistory);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [interim, setInterim] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [missingWrite, setMissingWrite] = useState(false);
@@ -53,6 +59,8 @@ export function MobileInterject() {
     savePostedAt(null);
     try {
       const result = await getMobileFleetClient().interject(text.trim());
+      try { pushHistory(window.localStorage, text.trim()); } catch { /* Storage may be unavailable. */ }
+      setHistory(readHistory());
       const now = Date.now();
       const parsedAt = parseInboxAt(result.at, now) ?? Date.parse(result.at);
       const at = Number.isFinite(parsedAt) ? parsedAt : now;
@@ -75,8 +83,19 @@ export function MobileInterject() {
         {canShowActions(permissions) ? (
           <form className={`${ui.stack} ${ui.row}`} onSubmit={(event) => void send(event)}>
             <label className="visually-hidden" htmlFor="mobile-interject">Message to the leaders</label>
+            {!displayedText && history.length > 0 ? (
+              <div className={ui.chips} role="group" aria-label="Recent messages" style={{ flexWrap: 'nowrap', overflowX: 'auto', minWidth: 0 }}>
+                <span style={{ flex: 'none', alignSelf: 'center' }} aria-hidden="true">↑ Recent</span>
+                {history.slice(-5).reverse().map((message, index) => (
+                  <button key={index} type="button" className={ui.chip} style={{ flex: 'none', whiteSpace: 'nowrap' }} disabled={busy}
+                    onClick={() => { setText(message); textareaRef.current?.focus(); }}>
+                    ↑ {message.slice(0, 40)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div className={ui.composerRow}>
-              <textarea id="mobile-interject" className={ui.textarea} maxLength={6000} value={displayedText} disabled={busy}
+              <textarea ref={textareaRef} id="mobile-interject" className={ui.textarea} maxLength={6000} value={displayedText} disabled={busy}
                 placeholder="A prompt, a thought, a correction. The next leader pass reads it."
                 onChange={(event) => { setInterim(''); setText(event.target.value); }} />
               <MicButton size="inline" disabled={busy || !reachable} onInterim={setInterim}

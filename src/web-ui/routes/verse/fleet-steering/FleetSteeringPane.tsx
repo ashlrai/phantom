@@ -9,7 +9,22 @@ import styles from './fleet-steering.module.css';
 import { leaderJournalQuery } from '../leader-journal/leader-journal-queries.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { lastExchange, pendingOrders, pendingText } from './last-exchange-model.js';
-import { buildSteering, fleetSourceHealth, summarizeReaction, type SteeringEntry } from './steering-model.js';
+import { buildSteering, citedJobsLine, fleetSourceHealth, summarizeReaction, type SteeringEntry } from './steering-model.js';
+
+import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
+import { githubUrl, jobsForEntry, narrowOrderTrace, stateWord, type OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
+import { JobRefs } from '../fleet/JobRefs.js';
+import { splitRefs } from '../fleet/job-refs.js';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { openDockPane } from '../dock/dock-store.js';
+import inboxStyles from '../fleet-inbox/fleet-inbox.module.css';
+
+function openLog(id: string) {
+  if (!JOB_ID_RE.test(id)) return;
+  requestWorkerLogJob(id);
+  openDockPane('worker-log');
+}
 
 const PREVIEW_CHARS = 160;
 
@@ -20,7 +35,8 @@ function reactionLine(entry: SteeringEntry): string {
   return `${summary} · leaders reacted in ${minutes < 1 ? '<1' : Math.round(minutes)} min`;
 }
 
-function EntryRow({ entry }: { entry: SteeringEntry }) {
+function EntryRow({ entry, trace }: { entry: SteeringEntry; trace: OrderTraceV1 | null }) {
+  const jobs = jobsForEntry(trace, entry.at);
   const [open, setOpen] = useState(false);
   const preview = entry.text.length > PREVIEW_CHARS ? `${entry.text.slice(0, PREVIEW_CHARS)}…` : entry.text;
   return (
@@ -34,6 +50,20 @@ function EntryRow({ entry }: { entry: SteeringEntry }) {
       </div>
       {preview !== '' && <p className={styles.text}>{preview}</p>}
       <p className={styles.reaction}>{reactionLine(entry)}</p>
+      <p className={styles.reaction}>{citedJobsLine(jobs, entry.firstReactionMinutes)}</p>
+      {jobs.length > 0 && <div className={inboxStyles.jobs}>
+        {jobs.slice(0, 6).map((job, index) => {
+          const href = githubUrl(job), word = stateWord(job), refs = splitRefs(job.id);
+          return <span className={inboxStyles.jobChip} key={`${job.id}-${index}`}>
+            {job.state === 'queued' || !JOB_ID_RE.test(job.id) ? job.id
+              : refs.length === 1 && refs[0]?.kind === 'job' ? <JobRefs text={job.id} onOpenJob={openLog} />
+                : <button type="button" onClick={() => openLog(job.id)} aria-label={`Open log for ${job.id}`}>{job.id}</button>}
+            {' '}{href && word.startsWith('PR #') ? <a href={href} target="_blank" rel="noreferrer">{word}</a> : word}
+            {href && !word.startsWith('PR #') && <> <a href={href} target="_blank" rel="noreferrer">View on GitHub</a></>}
+          </span>;
+        })}
+        {jobs.length > 6 && <span>+{jobs.length - 6} more</span>}
+      </div>}
       {open && (entry.events.length > 0
         ? (
           <ol className={styles.events} aria-label={`Events after ${entry.at}`}>
@@ -53,6 +83,8 @@ function EntryRow({ entry }: { entry: SteeringEntry }) {
 
 export function FleetSteeringPane({ visible }: PaneProps) {
   const read = useQuery(fleetSteeringQuery, { enabled: visible, freshMs: 0 });
+  const orders = useQuery(ordersTraceQuery, { enabled: visible, freshMs: 30_000 });
+  const trace = orders.error ? null : narrowOrderTrace(orders.data);
   const journal = useQuery(leaderJournalQuery, { enabled: visible });
   const refetchJournal = useRefetch(leaderJournalQuery);
   usePollWhileVisible(refetchJournal, 30_000, { enabled: visible });
@@ -93,7 +125,7 @@ export function FleetSteeringPane({ visible }: PaneProps) {
         ? <p className={styles.message}>No orders yet. Use the interject box.</p>
         : (
           <ol className={styles.list} aria-label="Steering orders">
-            {entries.map((entry, index) => <EntryRow key={`${entry.at}:${index}`} entry={entry} />)}
+            {entries.map((entry, index) => <EntryRow key={`${entry.at}:${index}`} entry={entry} trace={trace} />)}
           </ol>
         )}
     </section>
