@@ -1,4 +1,5 @@
 /** Read-only projection of dispatchd's resource ledger and API spend tail. */
+import { quotaEvidence, type QuotaEvidence, type QuotaMeasurement } from './resource-reset-evidence.js';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -14,6 +15,7 @@ export interface ResourceLaneRow {
   usedPct: number | null; creditsRemaining: number | null; resetAt: string | null;
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
   source: string | null; deadSignal: LaneDeadSignal | null;
+  quotaEvidence?: QuotaEvidence;
   observation?: { source: 'codex-personal-sessions'; asOf: string };
 }
 export interface ApiModelUsage {
@@ -159,6 +161,11 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       } catch (e) { result.sources.apiSpend = missing(e) ? 'missing' : 'degraded'; }
     })(),
   ]);
+  const statusMeasurements = new Map(result.lanes.map(row => [row.lane, {
+    lane: row.lane, window: row.window, usedPct: row.usedPct, resetAt: row.resetAt,
+    source: row.source, observedAt: result.asOf,
+  } satisfies QuotaMeasurement]));
+  for (const row of result.lanes) row.quotaEvidence = quotaEvidence(statusMeasurements.get(row.lane)!, null, row.held, now);
   // Both collector slots point at the explicitly personal home. The collector
   // deduplicates them; relabel only that isolated reading before reporting it.
   const personalHome = opts.personalCodexHome ?? join(homedir(), '.codex-2');
@@ -182,6 +189,10 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
           source: null, deadSignal: null };
         result.lanes.push(lane);
       }
+      const measured: QuotaMeasurement = { lane: lane.lane, window: 'weekly',
+        usedPct: personal.weekly.usedPct, resetAt: personal.weekly.resetsAt,
+        source: 'codex-personal-sessions', observedAt: personal.observedAt };
+      lane.quotaEvidence = quotaEvidence(statusMeasurements.get(lane.lane) ?? null, measured, lane.held, now);
       lane.usedPct = personal.weekly.usedPct;
       lane.resetAt = personal.weekly.resetsAt;
       lane.burnPctPerHour = personal.weekly.burnPctPerHour;
