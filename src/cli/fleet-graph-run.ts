@@ -2,7 +2,7 @@ import { graphArgvRun } from '../core/fleet/graph-argv-run.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export async function cmdFleetGraphRun(args: string[]): Promise<number> {
-  let file = '', apply = false, timeout = 900000;
+  let file = '', apply = false, timeout = 900000, concurrency = 1;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -11,10 +11,11 @@ export async function cmdFleetGraphRun(args: string[]): Promise<number> {
     if (arg === '--apply') apply = true;
     else if (arg === '--json') continue;
     else if (arg === '--file') file = args[++i] ?? '';
+    else if (arg === '--concurrency' && /^[1-8]$/.test(args[i + 1] ?? '')) concurrency = Number(args[++i]);
     else if (arg === '--timeout-ms' && /^\d+$/.test(args[i + 1] ?? '')) timeout = Number(args[++i]);
     else return 2;
   }
-  const result = await graphArgvRun(file, apply, timeout);
+  const result = await graphArgvRun(file, apply, timeout, concurrency);
   console.log(JSON.stringify(sanitizePublicJson(result)));
   return result.status === 'invalid' ? 2 : ['preview', 'complete'].includes(result.status) ? 0 : 1;
 }
