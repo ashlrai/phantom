@@ -15,6 +15,30 @@
 import type { CommandId } from './command-catalog.js';
 import { VIEWPORT_BREAKPOINTS } from './viewport.js';
 
+export const DOCK_PANE_GROUPS = [
+  { id: 'fleet', label: 'Fleet' },
+  { id: 'shipping', label: 'Merging and shipping' },
+  { id: 'talk', label: 'Talking to the fleet' },
+  { id: 'agent', label: 'Agent' },
+] as const;
+
+export type DockPaneGroup = (typeof DOCK_PANE_GROUPS)[number]['id'];
+export interface DockPaneCatalogEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly group?: DockPaneGroup;
+}
+
+/** Groups for panes registered outside the built-in catalog. */
+export const REGISTERED_DOCK_PANE_GROUPS: Readonly<Record<string, DockPaneGroup>> = {
+  'fleet-hub': 'fleet', 'fleet-runs': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
+  'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet', 'fleet-workers': 'fleet',
+  'worker-log': 'fleet',
+  'fleet-merges': 'shipping', 'fleet-outcomes': 'shipping', 'fleet-releases': 'shipping', 'fleet-timeline': 'shipping',
+  'fleet-bus': 'talk', 'fleet-inbox': 'talk', 'fleet-channels': 'talk', 'fleet-steering': 'talk',
+  'leader-journal': 'talk', 'fleet-decisions': 'talk', 'fleet-brief': 'talk', 'leader-thread': 'talk',
+};
+
 /**
  * The FIRST-PARTY panes, in the order the dock's menus list them. This is
  * metadata only (no components): the pane REGISTRY (routes/verse/panes/)
@@ -36,6 +60,7 @@ export const DOCK_PANES = [
 ] as const satisfies readonly {
   id: string;
   label: string;
+  group?: DockPaneGroup;
   owner: string;
   /** The catalog command that opens (and focuses) this pane; null = opened from its own affordance. */
   commandId: CommandId | null;
