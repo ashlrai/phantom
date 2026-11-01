@@ -25,7 +25,7 @@ function statusReport(mode: 'preview' | 'apply', status: ScatterStatus, startedA
     concurrency: 0, timeoutMs: 0, intervalMs: BUS_SCATTER_INTERVAL_MS,
     elapsedMs: Math.max(0, Math.floor(performance.now() - startedAt)),
     retained: [], retried: [], expired: [],
-    counts: { total: 0, retained: 0, retried: 0, replied: 0, expired: 0 }, requests: [] };
+    counts: { total: 0, retained: 0, retried: 0, replied: 0, expired: 0 }, requests: [], evidence: [] };
 }
 
 /** Selection summary plus fresh per-request outcomes; reply bodies stay out of text mode. */
@@ -57,20 +57,27 @@ export async function cmdFleetBusScatterRetry(args: string[], options: BusInboxO
   const report = (status: ScatterStatus): BusScatterRetryReport => statusReport(apply ? 'apply' : 'preview', status, start);
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
     output('Usage: ashlr fleet bus-scatter-retry --file <absolute batch JSON> --report <absolute prior report> [--apply] [--timeout-ms <1..60000>] [--concurrency <1..8>] [--json]\n'
-      + 'Retries the unreplied rows of a fleet.bus-scatter.v1 run. --file is the original\n'
+      + 'Retries the unreplied rows of a fleet.bus-scatter.v1 run or of a previous\n'
+      + 'fleet.bus-scatter-retry.v1 run, so a partially recovered fan-out can be retried\n'
+      + 'repeatedly from the immediately previous report. --file is the original\n'
       + '{"version":1,"requests":[...]} batch (at most 256 KiB); --report is the prior run\'s JSON\n'
       + 'report (at most 2 MiB). Both are bounded stable regular files validated fully before any\n'
-      + 'post: every report row must match one batch request\'s id, from, to, priority and ttl\n'
-      + 'exactly once with a recognized outcome — mismatched, duplicated or unknown rows refuse\n'
-      + 'the run. The report only selects what to retry; it is never execution or completion\n'
-      + 'authority. Replied rows are retained; every other original envelope is reposted\n'
-      + 'unchanged — same IDs and TTLs, so transport dedupe applies and late replies still\n'
-      + 'correlate. Reply bodies are never executed. Timestamp policy: a retried row\'s remaining\n'
-      + 'life is its original TTL minus the validated age of its prior post — bound to the live\n'
-      + 'inbox receipt at the report\'s post cursor where available, else to the report file\'s own\n'
-      + 'mtime minus its recorded elapsedMs. A row that cannot prove unexpired life is refused\n'
-      + 'rather than reposted, and the shared wait never exceeds the shortest remaining life.\n'
-      + 'Rows never posted keep their full TTL. Without --apply nothing is posted.');
+      + 'post: every scatter row, or every row of a retry report\'s cumulative evidence array,\n'
+      + 'must match one batch request\'s id, from, to, priority and ttl exactly once with a\n'
+      + 'recognized outcome and (while pending) valid post evidence — mismatched, duplicated,\n'
+      + 'missing or incomplete rows refuse the run, as does retry output lacking evidence.\n'
+      + 'The report only selects what to retry; it is never execution or completion authority.\n'
+      + 'Replied rows are retained across generations; every other live original envelope is\n'
+      + 'reposted unchanged — same IDs and TTLs, so transport dedupe applies and late replies\n'
+      + 'still correlate. Reply bodies are never executed. Timestamp policy: a retried row\'s\n'
+      + 'remaining life is its original TTL minus the validated age of its prior post — bound\n'
+      + 'to the live inbox receipt at the recorded post cursor where available, else to the\n'
+      + 'earliest-post bound carried in the evidence (for a scatter report, its file mtime\n'
+      + 'minus recorded elapsedMs). A later report\'s mtime never refreshes a TTL: a row that\n'
+      + 'cannot prove unexpired life is refused rather than reposted and stays refused in later\n'
+      + 'generations, and the shared wait never exceeds the shortest remaining life. Rows never\n'
+      + 'posted keep their full TTL. Without --apply nothing is posted, and every emitted\n'
+      + 'report carries the evidence needed to feed the next retry.');
     return 0;
   }
   const values: Record<string, string> = {};
@@ -107,13 +114,13 @@ export async function cmdFleetBusScatterRetry(args: string[], options: BusInboxO
     const prior = readStableRegularFile(reportPath, { anchorPath: dirname(reportPath),
       maxFileBytes: BUS_SCATTER_RETRY_MAX_REPORT_BYTES, remainingBytes: BUS_SCATTER_RETRY_MAX_REPORT_BYTES });
     if (!prior.ok) return emit(report('invalid-input'));
-    const selection = parseBusScatterRetryFile(prior.text, parsed.requests);
+    const selection = parseBusScatterRetryFile(prior.text, parsed.requests, prior.mtimeMs);
     if (!selection.ok) return emit(report('invalid-input'));
     const invocation = { list: deps.list, append: deps.append, request: deps.request,
       signal: controller.signal, startedAt: start };
     return emit(apply
-      ? await retryBusScatter(selection.selection, prior.mtimeMs, timeout, concurrency, options, invocation)
-      : previewBusScatterRetry(selection.selection, prior.mtimeMs, timeout, concurrency, options, invocation));
+      ? await retryBusScatter(selection.selection, timeout, concurrency, options, invocation)
+      : previewBusScatterRetry(selection.selection, timeout, concurrency, options, invocation));
   } finally {
     deps.signal?.removeEventListener('abort', stop);
     process.off('SIGINT', stop); process.off('SIGTERM', stop);
