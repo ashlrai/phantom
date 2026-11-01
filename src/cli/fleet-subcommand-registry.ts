@@ -48,6 +48,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'graph-target': () => import('./fleet-graph-target.js'),
   'grok-usage': () => import('./fleet-grok-usage.js'),
   'handoff-receive': () => import('./fleet-handoff-receive.js'),
+  'handoff-reply': () => import('./fleet-handoff-reply.js'),
   'handoff-run': () => import('./fleet-handoff-run.js'),
   'handoff-send': () => import('./fleet-handoff-send.js'),
   'job-read': () => import('./fleet-job-read.js'),
