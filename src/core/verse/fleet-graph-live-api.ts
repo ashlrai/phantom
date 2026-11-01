@@ -39,7 +39,7 @@ import {
   type FleetInventoryRead,
 } from '../fleet/graph-seed.js';
 import { buildRegistryGraph } from '../graph/registry.js';
-import type { GraphIssue, GraphSourceState, RegistryGraph } from '../graph/types.js';
+import type { GraphIssue, GraphSourceState, RegistryEdge, RegistryGraph } from '../graph/types.js';
 import type { GraphLiveProjection, ReadGraphLiveOptions } from '../fleet/graph-live.js';
 import type { AshlrConfig } from '../types.js';
 
@@ -52,6 +52,10 @@ export interface FleetGraphLiveResponseV1 {
   live: GraphLiveProjection;
   /** The resolved per-source read states (the same states graph.sources reports). */
   sources: { fleet: GraphSourceState; seats: GraphSourceState };
+  /** Present only for an agent-scoped response; completeness and issues remain global. */
+  scope?: { kind: 'agent'; agentId: string };
+  /** Direct routes from the selected agent to the returned resource nodes. */
+  edges?: RegistryEdge[];
 }
 
 interface Source { state: GraphSourceState; value?: unknown }
@@ -127,12 +131,16 @@ export function createFleetGraphLiveApi(deps: FleetGraphLiveApiDeps = {}): ApiMo
       sendJson(res, 405, { error: 'method not allowed' });
       return true;
     }
+    let agentId: string | undefined;
     try {
       const params = new URL(req.url ?? path, 'http://localhost').searchParams;
-      if ([...params.keys()].length > 0) {
-        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'this route takes no query parameters' });
+      const entries = [...params.entries()];
+      if (entries.length > 1 || (entries.length === 1 &&
+          (entries[0]![0] !== 'agent' || !/^[A-Za-z0-9][A-Za-z0-9_.:@/+%-]{0,255}$/.test(entries[0]![1])))) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'expected one valid agent identifier' });
         return true;
       }
+      agentId = entries[0]?.[1];
     } catch {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid query string' });
       return true;
@@ -143,12 +151,32 @@ export function createFleetGraphLiveApi(deps: FleetGraphLiveApiDeps = {}): ApiMo
       const seats = await readSeatsSource(ctx.cfg);
       const graph = buildRegistryGraph(fleet.value, seats.value);
       applySourceStates(graph, fleet, seats);
+      const agent = agentId === undefined ? undefined : graph.nodes.find(
+        node => node.kind === 'agent' && node.agentId === agentId,
+      );
+      if (agentId !== undefined && !agent) {
+        sendJson(res, 404, { code: 'agent-not-found', error: 'agent not found in fleet graph' });
+        return true;
+      }
       const body: FleetGraphLiveResponseV1 = {
         v: 1,
         generatedAt: new Date(nowMs).toISOString(),
         live: await readLive(graph, { cfg: ctx.cfg, nowMs }),
         sources: { fleet: graph.sources.fleet, seats: graph.sources.seats },
       };
+      if (agent && agentId !== undefined) {
+        const routes = graph.edges.filter(edge => edge.kind === 'routes-to' && edge.from === agent.id);
+        const ids = new Set([agent.id, ...routes.map(edge => edge.to)]);
+        const nodes = body.live.nodes.filter(node => ids.has(node.id));
+        const returnedIds = new Set(nodes.map(node => node.id));
+        const byState = { ...body.live.counts.byState };
+        for (const state of Object.keys(byState) as Array<keyof typeof byState>) byState[state] = 0;
+        for (const node of nodes) byState[node.live.state]++;
+        body.live = { ...body.live, complete: graph.complete && body.live.complete, nodes,
+          counts: { nodes: nodes.length, byState } };
+        body.scope = { kind: 'agent', agentId };
+        body.edges = routes.filter(edge => returnedIds.has(edge.from) && returnedIds.has(edge.to));
+      }
       sendJson(res, 200, body);
     } catch {
       sendJson(res, 500, { code: 'fleet-graph-live-failed', error: 'the fleet graph live request failed' });
