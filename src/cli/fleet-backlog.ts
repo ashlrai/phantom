@@ -28,12 +28,13 @@ import {
   type FleetPrGhState,
 } from '../core/fleet/fleet-merge-state.js';
 import { planMergeBacklog, type MergeBacklogEntry, type MergeBacklogItem } from '../core/fleet/merge-backlog-plan.js';
+import { renderBacklogRecutJob } from '../core/fleet/backlog-recut-job.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, red } = makeColors(isTty());
 
 export const FLEET_BACKLOG_USAGE =
-  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... (up to 20 distinct) [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json]';
+  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... (up to 20 distinct) [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json] [--recut-job <n>]';
 
 /** The fleet workbench's own backlog when --repo is not given. */
 const DEFAULT_REPO = 'ashlrai/phantom';
@@ -83,9 +84,9 @@ export interface FleetBacklogDeps {
 type GhRead = { ok: true; rows: unknown[] } | { ok: false; reason: string };
 
 /** Read the open-PR page independently of any exact selections. */
-async function readOpenPrs(repo: string, limit: number, gh: CloudGh): Promise<GhRead> {
+async function readOpenPrs(repo: string, limit: number, gh: CloudGh, includeTitle = false): Promise<GhRead> {
   const result = await gh([
-    'pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json', FLEET_PR_GH_VIEW_FIELDS,
+    'pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json', FLEET_PR_GH_VIEW_FIELDS + (includeTitle ? ',title' : ''),
   ]);
   if (!result.ok) {
     const detail = result.stderr.split('\n').map((line) => line.trim()).find(Boolean);
@@ -150,6 +151,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   let limit = DEFAULT_LIMIT;
   const requested = new Set<number>();
   const excluded = new Set<number>();
+  let recutJob: number | undefined;
   // Unbounded defaults: the report classifies the whole page instead of
   // pretending a dispatch pass's lane sizes. --merges/--recuts shape one.
   let merges = Number.MAX_SAFE_INTEGER;
@@ -175,20 +177,27 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       limit = n;
       i++;
       seen.add(arg);
-    } else if (arg === '--pr' || arg === '--exclude-pr') {
+    } else if (arg === '--pr' || arg === '--exclude-pr' || (arg === '--recut-job' && !seen.has(arg))) {
       const n = nonNegativeInt(args[i + 1]);
       if (n === null || n < 1) {
         process.stderr.write(red('error: ') + `${arg} requires a positive safe integer, got: ${args[i + 1] ?? '(missing)'}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
         return 2;
       }
-      (arg === '--pr' ? requested : excluded).add(n);
-      if (requested.size > MAX_SELECTIONS) {
-        process.stderr.write(red('error: ') + `--pr accepts at most ${MAX_SELECTIONS} distinct PR numbers\n`);
-        return 2;
-      }
-      if (excluded.size > MAX_EXCLUSIONS) {
-        process.stderr.write(red('error: ') + `--exclude-pr accepts at most ${MAX_EXCLUSIONS} distinct PR numbers\n`);
-        return 2;
+      if (arg === '--pr') {
+        requested.add(n);
+        if (requested.size > MAX_SELECTIONS) {
+          process.stderr.write(red('error: ') + `--pr accepts at most ${MAX_SELECTIONS} distinct PR numbers\n`);
+          return 2;
+        }
+      } else if (arg === '--exclude-pr') {
+        excluded.add(n);
+        if (excluded.size > MAX_EXCLUSIONS) {
+          process.stderr.write(red('error: ') + `--exclude-pr accepts at most ${MAX_EXCLUSIONS} distinct PR numbers\n`);
+          return 2;
+        }
+      } else {
+        recutJob = n;
+        seen.add(arg);
       }
       i++;
     } else if ((arg === '--merges' || arg === '--recuts') && !seen.has(arg)) {
@@ -213,8 +222,18 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
     }
   }
 
+  if (recutJob !== undefined &&
+      (requested.size > 0 || seen.has('--json') || seen.has('--merges') || seen.has('--recuts'))) {
+    process.stderr.write(red('error: ') + `--recut-job cannot be combined with selection, lane, or JSON options\nusage: ${FLEET_BACKLOG_USAGE}\n`);
+    return 2;
+  }
+  if (recutJob !== undefined && repo.toLowerCase() !== DEFAULT_REPO) {
+    process.stderr.write(red('error: ') + 'recut jobs support only ashlrai/phantom\n');
+    return 2;
+  }
+
   const gh = deps.gh ?? defaultGh;
-  const read = await readOpenPrs(repo, limit, gh);
+  const read = await readOpenPrs(repo, limit, gh, recutJob !== undefined);
   if (!read.ok) {
     process.stderr.write(red('error: ') + `fleet backlog: could not read open PRs for ${repo} — ${read.reason}\n`);
     return 1;
@@ -229,6 +248,22 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   const tracked = items.filter((item) => item.mergeState.state === 'ok').length;
   const unreadable = items.filter((item) => item.github === null).length;
   const complete = read.rows.length < limit;
+  if (recutJob !== undefined) {
+    const matches = items.filter((item) => item.github?.number === recutJob);
+    const plan = planMergeBacklog(matches, { merges: 0, recuts: 1 });
+    const entry = plan.recuts[0];
+    const index = items.indexOf(matches[0]!);
+    const raw = read.rows[index];
+    const title = raw !== null && typeof raw === 'object' && 'title' in raw ? raw.title : undefined;
+    if (excluded.has(recutJob) || !complete || unreadable > 0 || matches.length !== 1 || !entry?.github ||
+        entry.github.baseRef !== 'master' || (entry.mergeState.state === 'ok' && entry.mergeState.record.pr?.ownerLane) ||
+        typeof title !== 'string') {
+      process.stderr.write(red('error: ') + 'recut job refused: excluded, incomplete, ambiguous, unsupported, or not an observed eligible conflict\n');
+      return 1;
+    }
+    console.log(renderBacklogRecutJob(entry.github.number, entry.github.headSha, title));
+    return 0;
+  }
   // A malformed observation with a recognizable number makes that identity
   // ambiguous, even if another row for the same PR parsed successfully.
   const ambiguous = new Set<number>();
