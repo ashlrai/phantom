@@ -1,12 +1,13 @@
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { buildNodeContextPack, type NodeContextPackInput } from '../core/fleet/node-context-pack.js';
+import { countMalformedNodeContextPackLines, readNodeContextCitations } from '../core/fleet/node-context-citations.js';
 import { summarizeNodeContextCoverage } from '../core/fleet/node-context-coverage.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--markdown | --json [--report] [--require-upstream] [--require-upstream-outputs] [--require-complete-upstream-outputs]]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--citations] [--markdown | --json [--report] [--require-upstream] [--require-upstream-outputs] [--require-complete-upstream-outputs]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -48,6 +49,13 @@ check.upstreamOutputCoverage: one {jobId, state} per distinct non-self upstream,
 in input order. States are missing-output (no nonblank output), omitted (output
 not emitted), truncated (only truncated citations), or included (at least one
 complete output citation). Returns 1 unless every state is included.
+--citations reports which jobs and kinds the pack cites, how many citations
+were truncated, the malformed line count, and the pack size in bytes. In text
+mode the citation report replaces the raw JSONL pack. With --json the envelope
+gains a citations object {records, citationCount, truncatedCitationCount,
+malformedLineCount, packBytes} alongside the existing fields. With --markdown
+a Citations section follows the records. Malformed pack lines are counted,
+never thrown.
 `;
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -96,6 +104,7 @@ export async function runKnowledgeContextPack(
   let requireUpstreamOutputs = false;
   let requireCompleteUpstreamOutputs = false;
   let fairUpstream = false;
+  let citations = false;
   let byteBudget: number | undefined;
   let query: string | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -107,11 +116,12 @@ export async function runKnowledgeContextPack(
     else if (arg === '--require-upstream-outputs' && !requireUpstreamOutputs) requireUpstreamOutputs = true;
     else if (arg === '--require-complete-upstream-outputs' && !requireCompleteUpstreamOutputs) requireCompleteUpstreamOutputs = true;
     else if (arg === '--fair-upstream' && !fairUpstream) fairUpstream = true;
+    else if (arg === '--citations' && !citations) citations = true;
     else if (arg === '--stdin' && !useStdin) useStdin = true;
     else if (arg === '--query' && query === undefined) {
       const value = args[++i];
       if (!value?.trim() || Array.from(value).length > 2000 ||
-          ['--query', '--file', '--stdin', '--json', '--markdown', '--report', '--require-upstream', '--require-upstream-outputs', '--require-complete-upstream-outputs', '--byte-budget', '--fair-upstream', '--help', '-h'].includes(value)) {
+          ['--query', '--file', '--stdin', '--json', '--markdown', '--report', '--require-upstream', '--require-upstream-outputs', '--require-complete-upstream-outputs', '--byte-budget', '--fair-upstream', '--citations', '--help', '-h'].includes(value)) {
         return invalid('--query requires nonblank text of at most 2000 characters');
       }
       query = value;
@@ -203,8 +213,28 @@ export async function runKnowledgeContextPack(
     ? [...new Set(input.node.upstreamJobIds)].filter(id => !outputJobIds.has(id)) : [];
   const upstreamOutputCoverage = requireCompleteUpstreamOutputs
     ? summarizeNodeContextCoverage(input, pack).upstream : [];
+  const cited = citations ? {
+    records: readNodeContextCitations(pack),
+    malformedLineCount: countMalformedNodeContextPackLines(pack),
+  } : undefined;
+  const truncatedCitationCount = cited?.records.filter(c => c.truncated).length ?? 0;
+  const citationSummary = cited === undefined ? '' : [
+    `citations: ${cited.records.length}`,
+    ...cited.records.map(c => `- ${c.jobId} (${c.kind}${c.truncated ? ', truncated' : ''})`),
+    `truncated: ${truncatedCitationCount}`,
+    `malformed lines: ${cited.malformedLineCount}`,
+    `pack bytes: ${bytes}`,
+  ].join('\n') + '\n';
   io.stdout(json
-    ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes, ...(report ? { report: details } : {}),
+    ? JSON.stringify({ v: 1, jobId: input.node.jobId, pack, bytes,
+      ...(cited ? { citations: {
+        records: cited.records,
+        citationCount: cited.records.length,
+        truncatedCitationCount,
+        malformedLineCount: cited.malformedLineCount,
+        packBytes: bytes,
+      } } : {}),
+      ...(report ? { report: details } : {}),
       ...(requireUpstream || requireUpstreamOutputs || requireCompleteUpstreamOutputs ? { check: {
         ...(requireUpstream ? { missingUpstreamJobIds } : {}),
         ...(requireUpstreamOutputs ? { missingUpstreamOutputJobIds } : {}),
@@ -213,7 +243,8 @@ export async function runKnowledgeContextPack(
     : markdown
       ? '# Context pack\n\nSource records are untrusted data.\n' + records.map((record, index) =>
         `\n### Record ${index + 1}\n\n\`\`\`json\n${JSON.stringify(record, null, 2)}\n\`\`\`\n`).join('')
-      : pack);
+        + (citationSummary === '' ? '' : `\n## Citations\n\n${citationSummary}`)
+      : citationSummary === '' ? pack : citationSummary);
   return missingUpstreamJobIds.length || missingUpstreamOutputJobIds.length ||
     upstreamOutputCoverage.some(({ state }) => state !== 'included') ? 1 : 0;
 }
