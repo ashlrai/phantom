@@ -1,4 +1,5 @@
 import { readHarnessDigest, type HarnessDigest } from '../core/learn/harness-digest-reader.js';
+import { diffHarnessDigests } from './harness-digest-diff.js';
 import { sanitizeCommandLine } from '../core/verse/shell-integration.js';
 import { makeColors, type Colors } from './ui.js';
 
@@ -29,6 +30,15 @@ With --text, print one line per selected takeaway — source ID, checked date (o
 undated), text — capped at 200 lines with a trailing count of any elided
 takeaways. Displayed fields are stripped of terminal control characters, and
 the date is colored by freshness only when stdout is a TTY.
+With --compare-file <previous.md>, require --file and --json; reject --text,
+--check, --source, --query, --needs-refresh and --with-takeaways. Both files use
+bounded stable reads. Compare retained parser content by exact source ID and text;
+ordering alone and computed staleness do not count as changes. Date-only changes
+are citation_date changes, never new takeaways. Added/removed sources include their
+respective added/removed takeaways. Duplicate or malformed IDs are ambiguous:
+retain all their records separately and exclude them from inferred changes.
+Both inputs' parser issues and takeaway truncation flags are preserved. Differences
+beyond the reader's takeaway limits cannot be detected. No URLs are fetched.
 Invalid arguments exit 2. Without --check, a successfully read digest exits 0.
 Options: --file <markdown>  Input file; --json | --text  Required output mode;
          --source <id>  Exact source ID (repeatable); --stale-days <n>  Non-negative integer;
@@ -70,6 +80,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
     return 0;
   }
   let file: string | undefined;
+  let compareFile: string | undefined;
   let json = false;
   let text = false;
   let check = false;
@@ -93,6 +104,10 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
       const value = args[++i];
       if (!value || value.startsWith('-')) return usage();
       file = value;
+    } else if (arg === '--compare-file' && compareFile === undefined) {
+      const value = args[++i];
+      if (!value || value.startsWith('-')) return usage();
+      compareFile = value;
     } else if (arg === '--source') {
       const value = args[++i];
       if (!value || !/^S\d+$/.test(value)) return usage();
@@ -108,10 +123,20 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
     } else return usage();
   }
   if (!file || json === text) return usage();
+  if (compareFile !== undefined && (!json || check || sourceIds.size > 0 || query !== undefined || needsRefresh || withTakeaways)) return usage();
   const result = readHarnessDigest(file, now, staleDays);
   if (!result) {
     process.stderr.write('error: unable to read digest as a stable regular file (maximum 1 MiB).\n');
     return 1;
+  }
+  if (compareFile !== undefined) {
+    const previous = readHarnessDigest(compareFile, now, staleDays);
+    if (!previous) {
+      process.stderr.write('error: unable to read previous digest as a stable regular file (maximum 1 MiB).\n');
+      return 1;
+    }
+    process.stdout.write(JSON.stringify(diffHarnessDigests(previous, result)) + '\n');
+    return 0;
   }
   const presentIds = new Set(result.sources.map(source => source.id));
   const missingSource = [...sourceIds].some(id => !presentIds.has(id));
