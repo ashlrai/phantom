@@ -114,9 +114,10 @@ describe('agent-first-run-330 documented local bus exchange', () => {
       maxMessages: BUS_INBOX_MAX_MESSAGES, liveCount: 0, expiredCount: BUS_INBOX_MAX_MESSAGES,
     });
 
-    // Nothing is evicted, including expired records: the next post reports full.
+    // Live records are never evicted; expired ones are reclaimed by the next
+    // post, which accepts again and keeps advancing the cursor.
     const file = writeEnvelope(root, 'fake-extra.json', { ...envelope, id: 'fake-extra' });
-    expect(await cmdCommsBus(['post', '--file', file], { root, now: () => 1 })).toBe(1);
-    expect(lastJson(log)).toEqual({ status: 'full' });
+    expect(await cmdCommsBus(['post', '--file', file], { root, now: () => 1 })).toBe(0);
+    expect(lastJson(log)).toEqual({ status: 'posted', id: 'fake-extra', cursor: BUS_INBOX_MAX_MESSAGES + 1 });
   });
 });
