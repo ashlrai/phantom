@@ -39,7 +39,7 @@
  * ATTACHMENTS: [+] / ⌘U, paste or drop. Each becomes a private copy on the
  * server and an `@path` token in the text, which the engine grants with
  * exactly that folder. `@` fuzzy-finds project files; `/` at the start offers
- * handoff, compact, new, plan, effort, model, fleet, lane and pane.
+ * handoff, compact, new, plan, effort, model, fleet, lane, release and pane.
  *
  * At 375px (or a column too narrow for the pickers) the footer folds to
  * [+] [mic] · seat · ⋯ (the pickers in a bottom sheet) · Send.
@@ -55,6 +55,7 @@ import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
 import { readFailureReason } from '../../data/client.js';
 import { refetchQuery } from '../../data/cache.js';
 import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './composer/fleet-interject.js';
+import { runReleaseCommand } from './composer/lane-release-command.js';
 import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
 import { laneTargetsQuery } from './ops/lane-targets-queries.js';
 import { opsRunsQuery } from './ops/ops-runs-queries.js';
@@ -74,6 +75,7 @@ import {
   matchSlashCommands,
   parseFleetCommand,
   parseLaneCommand,
+  parseReleaseCommand,
   parsePaneCommand,
   mentionFor,
   removeAttachmentRef,
@@ -543,11 +545,12 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Fleet, lane, pane and compact insert text; other commands consume their token.
+    // Fleet, lane, release, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
       case 'fleet':
       case 'lane':
+      case 'release':
       case 'pane':
       case 'compact': {
         if (command.id === 'fleet') setFleetStatus({ text: 'Type what to tell the leaders', error: false });
@@ -727,6 +730,27 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
         openDockPane(pane.id);
         setDraft(current => current === text ? '' : current);
         setFleetStatus({ text: `Opened ${pane.title}`, error: false });
+      }
+      return;
+    }
+    const release = parseReleaseCommand(text);
+    if (release) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runReleaseCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) {
+          setDraft(current => current === text ? '' : current);
+          await Promise.all([
+            refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+            refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+          ]);
+        }
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
       }
       return;
     }
