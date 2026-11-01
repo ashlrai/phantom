@@ -23,7 +23,7 @@
  *   - node_modules NOT captured in sandboxDiff (gitignored, not staged)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -68,14 +68,27 @@ async function worktree(): Promise<typeof import('../src/core/sandbox/worktree.j
 // Tmp git repo helpers
 // ---------------------------------------------------------------------------
 
+// The base repo is identical for every caller: build it once and hand each
+// test a private copy (5 git calls per repo -> one copy of a built repo).
+let repoTemplate: string;
+
+beforeAll(() => {
+  repoTemplate = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m286-template-'));
+  execFileSync('git', ['init'], { cwd: repoTemplate, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: repoTemplate, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoTemplate, stdio: 'pipe' });
+  fs.writeFileSync(path.join(repoTemplate, 'README.md'), '# test\n');
+  execFileSync('git', ['add', '.'], { cwd: repoTemplate, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', 'init'], { cwd: repoTemplate, stdio: 'pipe' });
+});
+
+afterAll(() => {
+  fs.rmSync(repoTemplate, { recursive: true, force: true });
+});
+
 function makeTmpRepo(label = 'repo'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ashlr-m286-${label}-`));
-  execFileSync('git', ['init'], { cwd: dir, stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir, stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'pipe' });
-  fs.writeFileSync(path.join(dir, 'README.md'), '# test\n');
-  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'pipe' });
-  execFileSync('git', ['commit', '-m', 'init'], { cwd: dir, stdio: 'pipe' });
+  fs.cpSync(repoTemplate, dir, { recursive: true });
   return dir;
 }
 
