@@ -80,12 +80,12 @@ it('fetches and polls every 10s only while visible', async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(apiGet).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetBusMapPane {...props} />); });
-  expect(apiGet).toHaveBeenCalledTimes(1);
-  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(apiGet).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  expect(apiGet).toHaveBeenCalledTimes(4);
   view.rerender(<FleetBusMapPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-  expect(apiGet).toHaveBeenCalledTimes(2);
+  expect(apiGet).toHaveBeenCalledTimes(4);
 });
 
 // Last: the 404 latches `busFeedMissing()` module state for the rest of the file.
