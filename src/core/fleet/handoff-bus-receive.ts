@@ -7,6 +7,7 @@
  * merged; routing labels are never authenticated identities, and no provider
  * is selected — the action boundary is exactly the caller's argv.
  */
+import { statSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -94,6 +95,8 @@ export interface HandoffBusReceiveOptions {
   to: string;
   /** Absolute path to a NodeContextPackInput JSON whose node.jobId equals the body taskId. */
   snapshot: string;
+  /** Absolute working directory for the worker; omitted inherits process.cwd(). */
+  cwd?: string;
   /** Explicit worker argv; nothing is ever derived from message content. */
   argv: readonly string[];
 }
@@ -113,6 +116,15 @@ export async function receiveHandoffBus(opts: HandoffBusReceiveOptions,
       !opts.argv[0] || opts.argv.some(arg => typeof arg !== 'string' || arg.includes('\0'))) {
     diagnostic('invalid input');
     return 2;
+  }
+  if (opts.cwd !== undefined) {
+    try {
+      if (typeof opts.cwd !== 'string' || !opts.cwd || opts.cwd.includes('\0') ||
+          !isAbsolute(opts.cwd) || !statSync(opts.cwd).isDirectory()) throw new Error('invalid cwd');
+    } catch {
+      diagnostic('invalid input');
+      return 2;
+    }
   }
   let found: Found;
   try {
@@ -147,7 +159,7 @@ export async function receiveHandoffBus(opts: HandoffBusReceiveOptions,
       diagnostic('temporary workspace unavailable');
       return 1;
     }
-    return await runContextWorker({ snapshot: snapshotPath, prompt: promptPath, argv: [...opts.argv] }, io);
+    return await runContextWorker({ snapshot: snapshotPath, prompt: promptPath, cwd: opts.cwd, argv: [...opts.argv] }, io);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
