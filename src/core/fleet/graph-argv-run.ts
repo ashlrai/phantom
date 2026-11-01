@@ -11,6 +11,8 @@ type Row = { id: string; status: string; exitCode: number | null };
 /** A node's terminal row as delivered to the progress hook. */
 export interface GraphArgvNodeResult { id: string; status: string; exitCode: number | null }
 export interface GraphArgvRunOptions {
+  /** Stop launching new nodes after a spawned node fails; running nodes finish. */
+  failFast?: boolean;
   /** Awaited once per node after it reaches a terminal row, strictly one
    * delivery at a time and before any dependent it unblocks is scheduled.
    * A rejection stops new launches (running children still finish and are
@@ -50,7 +52,7 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
   if (!apply) return { status: 'preview', nodes: order.map(id => ({ id, status: 'planned', exitCode: null })) };
   const results = new Map<string, Row>();
   const active = new Map<string, { stop: () => void; done: Promise<void> }>();
-  let cancelled = false, halted = false;
+  let cancelled = false, halted = false, nodeFailed = false;
   const cancel = (): void => { cancelled = true; for (const child of active.values()) child.stop(); };
   process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
   // Terminal rows are delivered to the progress hook one at a time, in record
@@ -75,14 +77,18 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
           await record(id, { id, status: 'blocked', exitCode: null }); continue;
         }
         if (halted) { await record(id, { id, status: 'cancelled', exitCode: null }); continue; }
+        if (options.failFast && nodeFailed) {
+          if (dependencies.some(d => active.has(d))) continue;
+          await record(id, { id, status: 'fail-fast-skipped', exitCode: null }); continue;
+        }
         if (active.size >= concurrency || dependencies.some(d => !results.has(d))) continue;
         const switches = await readRunsSwitches();
         const refused = switches.sourceState === 'degraded' || switches.switches.some(s => s.on && ['ORCH_OFF', 'PAUSE', 'HOLD', 'QUEUE_DISABLE'].includes(s.id));
         const remaining = deadline - performance.now();
         // Cancellation must win even when delivered during the asynchronous control
         // read; the same window can also exhaust the shared deadline.
-        if (cancelled || halted || remaining <= 0 || refused) {
-          await record(id, { id, status: cancelled || halted ? 'cancelled' : remaining <= 0 ? 'deadline-exhausted' : 'refused', exitCode: null }); continue;
+        if (cancelled || halted || remaining <= 0 || (options.failFast && nodeFailed) || refused) {
+          await record(id, { id, status: cancelled || halted ? 'cancelled' : remaining <= 0 ? 'deadline-exhausted' : options.failFast && nodeFailed ? 'fail-fast-skipped' : 'refused', exitCode: null }); continue;
         }
         let stop = (): void => {};
         const done = new Promise<Row>(resolve => {
@@ -95,7 +101,9 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
           child.on('error', () => { failed = true; });
           child.on('close', code => {
             clearTimeout(timer); clearTimeout(escalation);
-            resolve({ id, status: cancelled ? 'cancelled' : timedOut ? 'timeout' : !failed && code === 0 ? 'success' : 'failed', exitCode: code });
+            const status = cancelled ? 'cancelled' : timedOut ? 'timeout' : !failed && code === 0 ? 'success' : 'failed';
+            if (status !== 'success') nodeFailed = true;
+            resolve({ id, status, exitCode: code });
           });
         }).then(row => record(id, row)).then(() => { active.delete(id); });
         active.set(id, { stop, done });
