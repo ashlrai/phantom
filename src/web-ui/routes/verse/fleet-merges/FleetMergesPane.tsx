@@ -14,7 +14,8 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { openToMergeText, readMerges, readMergeSpeed, readOutsidePrs } from './fleet-merges-model.js';
-import { ciRunsQuery, fleetMergesQuery, outsidePrsQuery } from './fleet-merges-queries.js';
+import { ciRunsQuery, fleetMergesQuery, outsidePrsQuery, supersededQuery } from './fleet-merges-queries.js';
+import { parseSuperseded, supersededCounts, supersededLabel } from './superseded-rows-model.js';
 import { ciVerdictCounts, ciVerdictForBranch } from './merges-ci-verdict.js';
 import { mergesMarkdown } from './merges-markdown.js';
 import { collisionHeadline, collisionSteerPrefill, orderOutsidePrs } from './outside-collision-model.js';
@@ -27,9 +28,13 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
   const outside = useQuery(outsidePrsQuery, { enabled: visible, freshMs: 0 });
   const ci = useQuery(ciRunsQuery, { enabled: visible, freshMs: 0 });
   const backlog = useQuery(mergeBacklogQuery, { enabled: visible, freshMs: 0 });
+  const superseded = useQuery(supersededQuery, { enabled: visible, freshMs: 0 });
   const refetchBacklog = useRefetch(mergeBacklogQuery);
-  usePollWhileVisible(refetchBacklog, 60_000, { enabled: visible });
+  const refetchSuperseded = useRefetch(supersededQuery);
+  usePollWhileVisible(() => { refetchBacklog(); refetchSuperseded(); }, 60_000, { enabled: visible });
   const backlogData = backlog.data?.source === 'ok' && Array.isArray(backlog.data.items) ? backlogView(backlog.data, Date.now()) : null;
+  const supersededData = useMemo(() => parseSuperseded(superseded.data), [superseded.data]);
+  const counts = supersededCounts(supersededData, backlogData ? backlog.data!.counts.mergeState.DIRTY ?? 0 : null);
   const refetch = useRefetch(fleetMergesQuery);
   const refetchOutside = useRefetch(outsidePrsQuery);
   const refetchCi = useRefetch(ciRunsQuery);
@@ -71,12 +76,13 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
       <Button size="sm" variant="subtle" aria-label="Copy merges as Markdown" disabled={!data.merged.length && !data.pending.length} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span></div>
     <section aria-label="Backlog"><h3 className={styles.heading}>Backlog</h3>
       {backlog.data?.source === 'gh-failed' ? <p>GitHub read failed: {backlog.data.reason}</p> : backlog.status === 'error' ? <p>GitHub read failed: unavailable</p> : !backlogData ? <p role="status">Reading merge backlog…</p> : <>
-        <p>{backlogData.countsLine}</p>
+        <p>{counts.superseded > 0 ? <>{backlogData.countsLine.replace(`${backlog.data!.counts.mergeState.DIRTY ?? 0} DIRTY`, `${counts.liveDirty} DIRTY`).split(' · ').map((part, index) => <span key={index}>{index > 0 && ' · '}{part}{index === 1 && <> · <span className={styles.ciChip}>{counts.superseded} superseded</span></>}</span>)}</> : backlogData.countsLine}</p>
         {backlogData.hotFilesLine && <p data-tone={backlogData.danger ? 'danger' : undefined} className={backlogData.danger ? styles.danger : undefined}>{backlogData.hotFilesLine}</p>}
         {backlogData.rows.length === 0 ? <p>No open fleet PRs</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => <li className={styles.row} key={row.number}>
           <a href={`https://github.com/${backlog.data!.repo}/pull/${row.number}`} target="_blank" rel="noopener noreferrer">#{row.number}</a>
           {row.job && <JobRefs text={row.job} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}
           <span>· {row.state} {row.ageText} · {row.action}{row.hotFile && ` · ${row.hotFile}`}</span>
+          {supersededData.pairs.filter(pair => pair.open === row.number).map(pair => <a key={pair.open} className={styles.ciChip} style={{ color: 'var(--text-secondary)' }} href={`https://github.com/${backlog.data!.repo}/pull/${pair.mergedBy}`} target="_blank" rel="noopener noreferrer">{supersededLabel(pair)}</a>)}
           {row.action === 'recut' && <a href={paneLinkUrl('fleet-outcomes', null, false) ?? undefined} onClick={event => { event.preventDefault(); host.openPane('fleet-outcomes'); }}>Recut in Outcomes</a>}
         </li>)}</ul>}
       </>}
