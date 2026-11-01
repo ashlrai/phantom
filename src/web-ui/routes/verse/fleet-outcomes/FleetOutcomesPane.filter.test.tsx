@@ -67,9 +67,10 @@ it('falls back to All when a later poll drops the selected outcome', async () =>
       cases: producedCases,
     }),
   });
-  const fetcher = vi.fn()
-    .mockImplementationOnce(async () => Response.json(read()))
-    .mockImplementation(async () => Response.json(withoutFailed));
+  let feedbackReads = 0;
+  const fetcher = vi.fn(async (url: string) => Response.json(
+    url === '/api/verse/fleet/live/feedback' && ++feedbackReads > 1 ? withoutFailed : read(),
+  ));
   vi.stubGlobal('fetch', fetcher);
   const props = { visible: true, host: { openPane: vi.fn() } } as unknown as PaneProps;
   render(<FleetOutcomesPane {...props} />);
@@ -77,7 +78,7 @@ it('falls back to All when a later poll drops the selected outcome', async () =>
   fireEvent.click(group.getByRole('radio', { name: 'Failed 1' }));
   expect(within(screen.getByRole('list', { name: 'Cases' })).getAllByRole('listitem')).toHaveLength(1);
   await act(async () => { invalidate('verse-fleet-outcomes'); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(feedbackReads).toBe(2);
   expect(group.getAllByRole('radio').map(radio => radio.textContent)).toEqual(['All 2', 'Produced 2']);
   expect(group.getByRole('radio', { name: 'All 2' })).toHaveAttribute('aria-checked', 'true');
   expect(within(screen.getByRole('list', { name: 'Cases' })).getAllByRole('listitem')).toHaveLength(2);
