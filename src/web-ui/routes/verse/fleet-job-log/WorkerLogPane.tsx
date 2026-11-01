@@ -3,6 +3,8 @@ import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
+import { steerPrefill } from '../fleet/job-sheet-actions.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { JOB_ID_RE, jobOptions, logHint, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
@@ -93,6 +95,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         if (event.key === 'Escape') { setSearch(''); setSelectedMatch(null); }
       }} /></label>
       <Button size="sm" variant="subtle" aria-label="Copy as Markdown" disabled={!valid || !detail.data} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span>
+      <Button size="sm" variant="subtle" aria-label="Steer this job" disabled={!valid} onClick={() => openInterjectDialog({ prefill: steerPrefill(job, detail.data?.lane ?? runs.data?.workers.find(worker => worker.job === job)?.lane) })}>Steer</Button>
       <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
       <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
       <button type="button" aria-label="Next" disabled={matches.length === 0} onClick={() => moveMatch(1)}>↓</button>

@@ -1,8 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
-import { ApiError } from '../../../data/client.js';
+import { refetchQuery } from '../../../data/cache.js';
+import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import { openDockPane } from '../dock/dock-store.js';
+import { laneWriting, setLaneWriting, subscribeLaneWrite } from '../fleet-lanes/LaneTargetStepper.js';
+import { laneTargetsQuery, postLaneTarget } from '../ops/lane-targets-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { exhaustionByLane, soonestExhaustion } from './supply-exhaustion-model.js';
@@ -10,10 +14,12 @@ import { supplyLedgerQuery } from './supply-ledger-query.js';
 import { fleetSupplyQuery } from './fleet-supply-queries.js';
 import { heldUntilText } from './held-until-text.js';
 import { asRecord, HORIZON_SECONDS, laneSupply, supplyHeadline, totalShortfall, TYPICAL_RUN_SECONDS } from './supply-model.js';
-import { wasteForecast, wasteHeadline } from './waste-forecast-model.js';
+import { suggestedTarget, wasteForecast, wasteHeadline } from './waste-forecast-model.js';
 import styles from './fleet-supply.module.css';
 
 export function FleetSupplyPane({ visible }: PaneProps) {
+  const [notices, setNotices] = useState<Record<string, string>>({});
+  const writing = useSyncExternalStore(subscribeLaneWrite, laneWriting, () => false);
   const read = useQuery(fleetSupplyQuery, { enabled: visible, freshMs: 0 });
   const ledgerQuery = useMemo(() => supplyLedgerQuery(), []);
   const ledger = useQuery(ledgerQuery, { enabled: visible, freshMs: 0 });
@@ -21,6 +27,23 @@ export function FleetSupplyPane({ visible }: PaneProps) {
   const refetch = useRefetch(fleetSupplyQuery);
   usePollWhileVisible(refetch, 10_000, { enabled: visible });
   usePollWhileVisible(refetchLedger, 10_000, { enabled: visible });
+  async function setTarget(lane: string, target: number) {
+    if (laneWriting()) return;
+    setLaneWriting(true);
+    setNotices(current => ({ ...current, [lane]: '' }));
+    try {
+      const response = await postLaneTarget(lane, target);
+      const saved = response.lanes.find(row => row.lane === lane);
+      setNotices(current => ({ ...current, [lane]: saved ? `Lane ${lane}: target ${saved.target} saved` : `Lane ${lane}: target response unavailable` }));
+      await Promise.all([
+        refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+        refetchQuery(fleetSupplyQuery.key, () => fleetSupplyQuery.fetch(), true),
+        refetchQuery(ledgerQuery.key, () => ledgerQuery.fetch(), true),
+      ]);
+    } catch (reason) {
+      setNotices(current => ({ ...current, [lane]: reason instanceof VerseControlLockedError ? reason.message : readFailureReason(reason) }));
+    } finally { setLaneWriting(false); }
+  }
   if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) {
     return <p className={styles.message}>Live runs not in this build</p>;
   }
@@ -37,9 +60,9 @@ export function FleetSupplyPane({ visible }: PaneProps) {
   const now = Date.now();
   const forecasts = (ledger.data?.lanes ?? []).flatMap(lane => {
     const forecast = wasteForecast(lane, now);
-    return forecast ? [forecast] : [];
-  }).sort((a, b) => b.unusedPct - a.unusedPct);
-  const waste = wasteHeadline(forecasts);
+    return forecast ? [{ forecast, lane }] : [];
+  }).sort((a, b) => b.forecast.unusedPct - a.forecast.unusedPct);
+  const waste = wasteHeadline(forecasts.map(item => item.forecast));
   const unreadable = asRecord(data.sources).runsDir !== 'healthy' || data.drop === null;
   const claudeLane = typeof data.claudeLane === 'string' && /down/i.test(data.claudeLane) ? data.claudeLane : null;
   return <section className={styles.root} aria-label="Fleet supply">
@@ -61,9 +84,17 @@ export function FleetSupplyPane({ visible }: PaneProps) {
     {rows.length === 0 && <p className={styles.message}>No lane readings yet.</p>}
     {waste && <section className={styles.waste} aria-label="Waste forecast">
       <h3 className={styles.wasteHeadline}>{waste}</h3>
-      <ul className={styles.wasteList}>{forecasts.map(forecast => <li key={forecast.lane} data-tone={forecast.tone}>
-        <StatusBadge status={forecast.tone} tone={forecast.tone === 'bad' ? 'danger' : forecast.tone === 'warn' ? 'warning' : 'success'}>{forecast.tone === 'bad' ? 'High' : forecast.tone === 'warn' ? 'Watch' : 'On track'}</StatusBadge> {forecast.text}
-      </li>)}</ul>
+      <ul className={styles.wasteList}>{forecasts.map(({ forecast, lane }) => {
+        const row = rows.find(item => item.lane === forecast.lane);
+        const held = row?.held || lane.held === true;
+        const suggestion = row ? suggestedTarget(forecast, { ...row, held: !!held }, lane.burnPctPerHour) : null;
+        return <li key={forecast.lane} data-tone={forecast.tone}>
+          <StatusBadge status={forecast.tone} tone={forecast.tone === 'bad' ? 'danger' : forecast.tone === 'warn' ? 'warning' : 'success'}>{forecast.tone === 'bad' ? 'High' : forecast.tone === 'warn' ? 'Watch' : 'On track'}</StatusBadge> {forecast.text}
+          {held && <> · held: release first</>}
+          {suggestion && <> · needs target {suggestion.target} (now {row!.target}, {new Intl.NumberFormat('en-US', { maximumSignificantDigits: 3 }).format(suggestion.perWorkerPctPerHour)}%/h per worker){suggestion.target * suggestion.perWorkerPctPerHour < forecast.neededBurnPctPerHour && ' · capped at 64; may leave usage unused'} <button type="button" disabled={writing} onClick={() => void setTarget(forecast.lane, suggestion.target)}>Set target {suggestion.target}</button></>}
+          {notices[forecast.lane] && <> · <span role="status">{notices[forecast.lane]}</span></>}
+        </li>;
+      })}</ul>
     </section>}
     <p className={styles.footer}>Next {HORIZON_SECONDS / 60} min · assumes ~{TYPICAL_RUN_SECONDS / 60} min per job. Waiting = pending files + queued jobs.</p>
   </section>;
