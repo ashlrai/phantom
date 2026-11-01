@@ -22,18 +22,19 @@ it('assembles ordered live sections with bounded rows, Python booleans, scrubbed
     writeFile(join(root, 'queue/claude-lane.state'), ' ready \n'),
     writeFile(join(root, 'queue/status.json'), JSON.stringify({ lanes: { a: { running: 1, target: 2, queued: 3, held: true }, b: { held: false } } })),
     writeFile(join(root, 'leader/drop/ingested.tsv'), Array.from({ length: 400 }, (_, i) => `time\tid${i}\twho\tlane\ttier\ttitle${i}\n`).join('')),
-    writeFile(join(root, 'leader/MASON-INBOX.md'), Array.from({ length: 90 }, (_, i) => `inbox${i}\n`).join('')),
+    writeFile(join(root, 'leader/MASON-INBOX.md'), Array.from({ length: 90 }, (_, i) =>
+      `## 2026-01-01 ${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')} ET (Mason, Phantom desktop) PRIORITY P0\ninbox${i}\n`).join('')),
   ]);
   const brief = await buildPlannerBrief({ runsRoot: root, git, note: '\n\t' + 'n'.repeat(600) });
-  expect(brief.sections).toEqual({ usedIds: 300, usedTitles: 60, lanes: 2, inboxLines: 60, merges: 1 });
+  expect(brief.sections).toEqual({ usedIds: 400, usedTitles: 60, lanes: 2, inboxLines: 180, merges: 1 });
   expect(brief.missing).toEqual([]);
   const markers = ['# Orchestrate', 'NOTE FROM TICK:', '## CLAUDE LANE: ready', '## LANES', '## USED IDS', '## USED TITLES', '## RECENT PHANTOM MERGES', '## MASON INBOX (newest last)'];
   const positions = markers.map(marker => brief.text.indexOf(marker));
   expect(positions.every((pos, i) => pos >= 0 && (i === 0 || pos > positions[i - 1]!))).toBe(true);
   expect(brief.text).toContain('a running 1 target 2 queued 3 held True\nb running 0 target 0 queued 0 held False');
-  expect(brief.text).toContain('## USED IDS\nid100 id101');
+  expect(brief.text).toContain('## USED IDS\nid0 id1');
   expect(brief.text).toContain('## USED TITLES\ntitle340\n');
-  expect(brief.text).toContain('## MASON INBOX (newest last)\ninbox30\n');
+  expect(brief.text).toContain('## MASON INBOX (newest last)\n## 2026-01-01 00:00 ET (Mason, Phantom desktop) PRIORITY P0\ninbox0\n');
   expect(brief.text.split('\n').find(line => line.startsWith('NOTE'))).toHaveLength(516);
   expect(brief.text.split('\n').at(-1)).toBe('Now write the job files in your current directory, then stop. Output a one-line summary.');
   const result = writePlannerBrief(root, brief.text);
