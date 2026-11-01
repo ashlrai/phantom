@@ -38,6 +38,15 @@ export function isJobDetail(value: unknown): value is FleetJobDetailV1 {
   return obj(value) && value.schema === 'fleet.job.v1' && detailShape(value);
 }
 
+export function publishFacts(value: unknown): { testLine: string | null; sensitive: string[] | null } {
+  const publish = obj(value) ? value : {};
+  return {
+    testLine: typeof publish.testLine === 'string' ? publish.testLine : null,
+    sensitive: Array.isArray(publish.sensitive) && publish.sensitive.length > 0 && publish.sensitive.every(string)
+      ? publish.sensitive as string[] : null,
+  };
+}
+
 function age(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds)) return 'age unknown';
   const minutes = Math.floor(Math.max(0, seconds) / 60);
@@ -68,6 +77,17 @@ export function metaLine(detail: FleetJobDetailV1, nowMs: number): string {
   return [detail.state ?? 'unknown', [detail.lane, detail.tier].filter(Boolean).join(' ') || null,
     detail.model, Number.isFinite(launched) ? `launched ${age((nowMs - launched) / 1000)} ago` : null,
     url ? prLabel(url) : null].filter(Boolean).join(' · ');
+}
+export function logHint(detail: FleetJobDetailV1, nowMs: number): string | null {
+  const missing = !detail.log || detail.log.source === 'missing';
+  if (detail.state === 'running' && detail.lane === 'devin' && (missing || detail.log?.bytes === 0)) {
+    const launched = detail.launchedAt ? Date.parse(detail.launchedAt) : NaN;
+    const elapsed = Number.isFinite(launched) ? ` (running ${age((nowMs - launched) / 1000)})` : '';
+    return `Devin writes its log when the job ends${elapsed}. Watch the PR link above instead.`;
+  }
+  if (detail.state === 'running' && !missing && detail.log?.bytes === 0) return 'Log is open but empty so far.';
+  if ((detail.state === 'published' || detail.state === 'archived') && missing) return 'This job ended without a log.';
+  return null;
 }
 export function pollMs(detail: FleetJobDetailV1 | null | undefined): number {
   return detail?.state === 'running' ? 4_000 : 15_000;

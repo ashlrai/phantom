@@ -1,5 +1,6 @@
 import type { SwimlaneItem, SwimlaneLane } from '../../../components/charts/Swimlane.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import type { BusEvent } from '../fleet/bus-feed-queries.js';
 import { parseHeldReason } from '../fleet/held-reason.js';
 import { ageText, type FleetRuns } from '../ops/ops-runs-model.js';
 
@@ -59,6 +60,20 @@ export function laneGroupHeadline(group: LaneGroup): string {
 
 export function jobFromItem(item: SwimlaneItem): string | null {
   return JOB_ID_RE.test(item.id) ? item.id : null;
+}
+
+export function isMasonItem(item: SwimlaneItem): boolean {
+  return item.id.startsWith('inbox:');
+}
+
+export function masonLane(events: BusEvent[], from: number, to: number): SwimlaneLane | null {
+  const items = events.flatMap((event): SwimlaneItem[] => {
+    const at = Date.parse(event.at);
+    if (event.kind !== 'inbox' || !Number.isFinite(at) || at < from || at > to) return [];
+    const label = event.text.trim().replace(/^INBOX\b\s*[:-]?\s*/i, '').replace(/^Mason,\s*/i, '').trim().slice(0, 80);
+    return [{ id: `inbox:${event.at}`, label, detail: label, start: at, end: at, status: 'interjection' }];
+  }).sort((a, b) => a.start - b.start);
+  return items.length ? { id: 'mason', label: 'Mason', items } : null;
 }
 
 /** `Nov 1 01:22` in the viewer's local zone (formatToParts keeps no comma). */

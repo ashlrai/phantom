@@ -40,6 +40,49 @@ function check(row: Record<string, unknown>): ReleasePrCheckV1 {
   return { name: text(row.name ?? row.context) ?? 'Unknown check', state, url: githubUrl(row.detailsUrl ?? row.targetUrl) };
 }
 
+export type ReleasePrMergeResult =
+  | { ok: true; sha: string | null }
+  | { ok: false; code: 'not-found' | 'not-green' | 'blocked' | 'gh-failed'; detail: string };
+
+/** `owner/name` — the only repo shape mergeReleasePr will put on a gh argv. */
+export function isReleasePrRepoName(repo: unknown): repo is string {
+  return typeof repo === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+    && !repo.split('/').some((part) => part === '.' || part === '..');
+}
+
+/** The merged head commit, best effort — null when gh cannot answer. Never throws. */
+async function mergeCommitSha(repo: string, number: number, run: OpsRunner): Promise<string | null> {
+  try {
+    const raw = await run('gh', ['pr', 'view', String(number), '--repo', repo, '--json', 'mergeCommit']);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    const oid = record(parsed) && record(parsed.mergeCommit) ? text(parsed.mergeCommit.oid, 64) : null;
+    return oid !== null && /^[0-9a-f]{7,64}$/i.test(oid) ? oid : null;
+  } catch { return null; }
+}
+
+/**
+ * Merge the open release-please PR, re-probed so a row that went red or moved
+ * numbers since the last read is refused instead of merged. `--merge` (not the
+ * fleet's `--squash`): a release-please landing keeps its merge commit. argv
+ * carries only a validated owner/name and a safe integer — never caller text.
+ */
+export async function mergeReleasePr(repo: string, number: number, run: OpsRunner): Promise<ReleasePrMergeResult> {
+  const fail = (code: 'not-found' | 'not-green' | 'blocked' | 'gh-failed', detail: string): ReleasePrMergeResult =>
+    ({ ok: false, code, detail: scrubSecrets(detail).slice(0, 300) });
+  if (!isReleasePrRepoName(repo) || !Number.isSafeInteger(number) || number <= 0) return fail('not-found', 'no such release PR');
+  const pr = await probeReleasePr(repo, run);
+  if (pr === null || pr.number !== number) {
+    return fail('not-found', pr === null ? 'no open release PR found' : `the open release PR is #${pr.number}, not #${number}`);
+  }
+  // Green but unmergeable on git grounds is a different fix than waiting on checks.
+  if (pr.mergeable === 'CONFLICTING') return fail('blocked', `release PR #${number} has merge conflicts — rebase it first`);
+  if (pr.blocked || pr.pending > 0 || pr.failing.length > 0) return fail('not-green', pr.summary);
+  const merged = await run('gh', ['pr', 'merge', String(number), '--repo', repo, '--merge', '--delete-branch=false']);
+  if (merged === null) return fail('gh-failed', `gh pr merge ${number} --repo ${repo} failed`);
+  return { ok: true, sha: await mergeCommitSha(repo, number, run) };
+}
+
 /** Returns null for no matching PR or an unavailable/malformed source. Never throws. */
 export async function probeReleasePr(repo: string, run: OpsRunner): Promise<ReleasePrV1 | null> {
   try {
