@@ -45,6 +45,7 @@ import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
 import { MobileReleaseCard } from '../MobileReleaseCard.js';
 import { homeRunsQuery } from '../home-runs-query.js';
+import { mergeSpeedLines } from '../merge-speed-lines.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -383,6 +384,7 @@ export function FleetScreen() {
   const endedRuns: FleetLiveRun[] = (snapshot?.runs ?? []).filter((r) => r.endedAt && r.outcome && RUN_OUTCOME[r.outcome]).slice(0, DECISION_ROWS);
   const now = Date.now();
   const waste = wasteLines(ledger.data, now);
+  const merges = mergeSpeedLines(runs.status === 'error' ? null : runs.data, now);
   let decisionsBody;
   if (decisions.status === 'loading' && !decisions.data) decisionsBody = <SkeletonList rows={3} label="Loading recent decisions" />;
   else if (decisionList) {
@@ -465,6 +467,11 @@ export function FleetScreen() {
           </>
         )}
       </Section>
+      {merges.length > 0 ? (
+        <Section title="Merges">
+          {merges.map((line) => <div key={line.text} data-tone={line.tone}><Row title={line.text} /></div>)}
+        </Section>
+      ) : null}
       <MobileReleaseCard />
       <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
