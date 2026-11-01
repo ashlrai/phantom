@@ -67,6 +67,7 @@ import {
   type SendPacer,
 } from './telegram-channel.js';
 import { recordTelegramToInbox, TELEGRAM_FLEET_STATUS_RE } from './telegram-inbox-bridge.js';
+import { TELEGRAM_SHIP_RE } from './telegram-ship-command.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
@@ -294,6 +295,14 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
   // M215: "revert:<proposalId>:<repo>" typed (or from an old merge button).
   if (/^\s*revert:[^:]+:/i.test(text)) {
     await handleRevert(text, event, cfg);
+    return;
+  }
+
+  // Ship is an owner-only bridge command, including replies to mapped messages.
+  if (TELEGRAM_SHIP_RE.test(text)) {
+    const inbox = await recordTelegramToInbox(event, text, cfg);
+    if (!inbox.ok && inbox.reason === 'status-send-failed') throw new Error('Telegram ship reply failed');
+    if (!inbox.ok && inbox.reason === 'status-replied') result.resolved++;
     return;
   }
 
