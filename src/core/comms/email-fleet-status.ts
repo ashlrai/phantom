@@ -1,10 +1,12 @@
 /** A counts-only projection of the existing local fleet readers for email. */
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
+import { readStatusSupply, supplyLines, type StatusSupply } from './status-supply-line.js';
 
 export interface EmailFleetStatusReaders {
   runs?: () => Promise<FleetRunsDirState>;
   workers?: () => Promise<LiveWorkersSnapshot>;
+  supply?: () => Promise<StatusSupply>;
 }
 
 const count = (value: number): string => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000 ? String(value) : 'unavailable';
@@ -12,9 +14,10 @@ const count = (value: number): string => Number.isSafeInteger(value) && value >=
 /** Never forward free text, identifiers, paths, diagnostics, or raw reader objects. */
 export async function emailFleetStatus(runsDir: string | undefined, now: () => Date, readers: EmailFleetStatusReaders = {}): Promise<string> {
   const at = now();
-  const [runs, workers] = await Promise.allSettled([
+  const [runs, workers, supply] = await Promise.allSettled([
     Promise.resolve().then(readers.runs ?? (() => readFleetRunsDirState({ runsDir, now: () => at.getTime() }))),
     Promise.resolve().then(readers.workers ?? (() => listLiveWorkers({ now: () => at.getTime() }))),
+    Promise.resolve().then(readers.supply ?? (() => readStatusSupply(runsDir, () => at))),
   ]);
   const lines = [`Phantom fleet status (${at.toISOString()})`];
   if (runs.status !== 'fulfilled' || runs.value.sources.status !== 'healthy') {
@@ -38,5 +41,6 @@ export async function emailFleetStatus(runsDir: string | undefined, now: () => D
     lines.push(`Leader passes: ${count(workers.value.leaders.length)}`);
     lines.push(`Orchestrator agents: ${count(workers.value.orchestratorAgents)}`);
   }
+  lines.push(...(supply.status === 'fulfilled' ? supplyLines(supply.value) : ['Supply: unavailable', 'Planner: unknown (unavailable)']));
   return lines.join('\n');
 }
