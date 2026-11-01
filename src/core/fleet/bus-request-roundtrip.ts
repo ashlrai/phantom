@@ -31,7 +31,7 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
 /** A correlation is untrusted data: routing labels authenticate neither peer nor completion. */
 export async function requestBusRoundtrip(input: unknown, timeoutMs: number, intervalMs: number,
   options: BusInboxOptions = {}, deps: RequestDependencies = {}): Promise<RequestResult> {
-  const start = deps.startedAt ?? performance.now(), deadline = start + timeoutMs;
+  const start = deps.startedAt ?? performance.now();
   let receipt: RequestResult['receipt'] = { status: 'not-attempted' }, cursor = 0;
   const result = (outcome: RequestOutcome, reply: BusInboxReceipt | null = null): RequestResult => ({
     schema: 'fleet.bus-request.v1', correlation: 'untrusted-routing-only', receipt, outcome, reply, cursor, elapsedMs: Math.max(0, Math.floor(performance.now() - start)),
@@ -40,6 +40,7 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
   if (!checked.ok || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000 ||
       !Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs > 60000) return result('invalid-input');
   const request: BusEnvelope = checked.value;
+  const deadline = start + Math.min(timeoutMs, request.ttl);
   const stopped = (): RequestOutcome | null => deps.signal?.aborted ? 'cancelled' : performance.now() >= deadline ? 'timeout' : null;
   const pause = async (): Promise<void> => wait(Math.max(0, Math.min(intervalMs, deadline - performance.now())), deps.signal);
   const list = deps.list ?? listBusInboxAfter;
@@ -52,8 +53,9 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
       if (!Number.isSafeInteger(readStarted) || readStarted < 0) return result('source-unavailable');
       const page = list(cursor, BUS_INBOX_MAX_READ, options);
       const readEnded = (options.now ?? Date.now)();
+      const stopAfterRead = stopped();
+      if (stopAfterRead) return result(stopAfterRead);
       if (!Number.isSafeInteger(readEnded) || readEnded < 0) return result('source-unavailable');
-      if (deps.signal?.aborted) return result('cancelled');
       if (page.status === 'retryable') { await pause(); continue; }
       if (page.status !== 'ok' || !Number.isSafeInteger(page.nextCursor) || page.nextCursor < cursor ||
           page.nextCursor > BUS_INBOX_MAX_MESSAGES || page.messages.length > BUS_INBOX_MAX_READ ||
@@ -65,6 +67,8 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
           const { envelope } = row, body = envelope.body;
           if (envelope.ttl > Math.max(0, readEnded - readStarted) && envelope.from === request.to && envelope.to === request.from && body !== null &&
               typeof body === 'object' && !Array.isArray(body) && Object.hasOwn(body, 'inReplyTo') && body.inReplyTo === request.id) {
+            const stopBeforeReply = stopped();
+            if (stopBeforeReply) return result(stopBeforeReply);
             cursor = row.cursor;
             return result('replied', { ...row, envelope: { ...envelope, ttl: envelope.ttl - Math.max(0, readEnded - readStarted) } });
           }
@@ -76,6 +80,8 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
         const stopBeforePost = stopped();
         if (stopBeforePost) return result(stopBeforePost);
         receipt = (deps.append ?? appendBusInbox)(request, options);
+        const stopAfterPost = stopped();
+        if (stopAfterPost) return result(stopAfterPost);
         if (receipt.status !== 'posted' && receipt.status !== 'duplicate') return result('post-refused');
         if (receipt.status === 'duplicate') cursor = 0;
         beforePost = false;
@@ -83,5 +89,5 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
       }
       if (!advanced || page.messages.length < BUS_INBOX_MAX_READ) await pause();
     }
-  } catch { return result('source-unavailable'); }
+  } catch { return result(stopped() ?? 'source-unavailable'); }
 }
