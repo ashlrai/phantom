@@ -32,7 +32,7 @@ import { makeColors, isTty } from './ui.js';
 const { bold, dim, red } = makeColors(isTty());
 
 export const FLEET_BACKLOG_USAGE =
-  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--merges <n>] [--recuts <n>] [--json]';
+  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... [--merges <n>] [--recuts <n>] [--json]';
 
 /** The fleet workbench's own backlog when --repo is not given. */
 const DEFAULT_REPO = 'ashlrai/phantom';
@@ -125,6 +125,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   const seen = new Set<string>();
   let repo = DEFAULT_REPO;
   let limit = DEFAULT_LIMIT;
+  const requested = new Set<number>();
   // Unbounded defaults: the report classifies the whole page instead of
   // pretending a dispatch pass's lane sizes. --merges/--recuts shape one.
   let merges = Number.MAX_SAFE_INTEGER;
@@ -150,6 +151,14 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       limit = n;
       i++;
       seen.add(arg);
+    } else if (arg === '--pr') {
+      const n = nonNegativeInt(args[i + 1]);
+      if (n === null || n < 1) {
+        process.stderr.write(red('error: ') + `--pr requires a positive safe integer, got: ${args[i + 1] ?? '(missing)'}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
+        return 2;
+      }
+      requested.add(n);
+      i++;
     } else if ((arg === '--merges' || arg === '--recuts') && !seen.has(arg)) {
       const n = nonNegativeInt(args[i + 1]);
       if (n === null) {
@@ -178,10 +187,28 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
     const github: FleetPrGhState | null = parseFleetPrGhState(raw);
     return { repo, mergeState: (github && states.get(github.number)) || missing, github };
   });
-  const plan = planMergeBacklog(items, { merges, recuts });
   const tracked = items.filter((item) => item.mergeState.state === 'ok').length;
   const unreadable = items.filter((item) => item.github === null).length;
   const complete = read.rows.length < limit;
+  // A malformed observation with a recognizable number makes that identity
+  // ambiguous, even if another row for the same PR parsed successfully.
+  const ambiguous = new Set<number>();
+  if (requested.size > 0) {
+    read.rows.forEach((raw, index) => {
+      if (items[index]!.github === null && raw !== null && typeof raw === 'object' && 'number' in raw &&
+          typeof raw.number === 'number' && requested.has(raw.number)) ambiguous.add(raw.number);
+    });
+  }
+  const selected = requested.size === 0 ? items : items.filter((item) =>
+    item.github !== null && requested.has(item.github.number) && !ambiguous.has(item.github.number));
+  const found = new Set(selected.flatMap((item) => item.github ? [item.github.number] : []));
+  const selection = requested.size === 0 ? undefined : {
+    requested: [...requested],
+    found: [...requested].filter((number) => found.has(number)),
+    missing: [...requested].filter((number) => !found.has(number)),
+    complete: [...requested].every((number) => found.has(number)) && unreadable === 0,
+  };
+  const plan = planMergeBacklog(selected, { merges, recuts });
 
   if (seen.has('--json')) {
     console.log(JSON.stringify({
@@ -190,6 +217,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       generatedAt: (deps.now ?? (() => new Date()))().toISOString(),
       open: read.rows.length,
       complete,
+      ...(selection ? { selection } : {}),
       tracked,
       unreadable,
       counts: plan.counts,
@@ -208,6 +236,12 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
     (complete ? '' : ` — page limit ${limit} reached, more may exist`) +
     `, ${tracked} tracked by merge-state records` +
     (unreadable > 0 ? `, ${unreadable} row(s) gh could not describe` : ''));
+  if (selection) {
+    const refs = (numbers: number[]) => numbers.length ? numbers.map((number) => `#${number}`).join(', ') : '—';
+    console.log(`  selection ${selection.complete ? 'complete' : 'incomplete'}: requested ${refs(selection.requested)}; ` +
+      `found ${refs(selection.found)}; missing from fetched page ${refs(selection.missing)}`);
+    if (unreadable > 0) console.log('  selection may be affected by unreadable page rows');
+  }
   console.log(`  ${c.ready} ready, ${c.behind} behind, ${c.conflicting} conflicting, ${c.repair} repair, ${c.waiting} waiting`);
   console.log(`  ${dim('merges (green-ready):')}    ${laneRefs(plan.merges)}`);
   console.log(`  ${dim('recuts (refix):')}        ${laneRefs(plan.recuts)}`);
