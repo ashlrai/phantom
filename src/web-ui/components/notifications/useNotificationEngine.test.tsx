@@ -1,6 +1,7 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
+import { phonePendingQuery } from './phone-pending-query.js';
 import { NOTIFICATION_CATEGORY_LABEL } from './types.js';
 import { evictAll, refetchQuery } from '../../data/cache.js';
 import { markCheckComplete } from '../../data/auth-store.js';
@@ -80,6 +81,7 @@ describe('notification refresh channel', () => {
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
       '/api/verse/fleet/runs': null, '/api/verse/fleet/control/lanes': null, '/api/verse/ops/self-update': quietSelfUpdate(),
       '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
+      '/api/verse/fleet/control/remote-pending': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -88,7 +90,7 @@ describe('notification refresh channel', () => {
 
     expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(Object.keys(sources).sort());
     // The fleet snapshots and three other probes poll at 60 seconds.
-    expect(intervals.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000, 60_000, 60_000]);
+    expect(intervals.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000, 60_000, 60_000, 30_000]);
     expect(getNotificationSnapshot().items).toHaveLength(0);
   });
 
@@ -98,6 +100,7 @@ describe('notification refresh channel', () => {
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
       '/api/verse/fleet/runs': null, '/api/verse/fleet/control/lanes': null, '/api/verse/ops/self-update': quietSelfUpdate(),
       '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
+      '/api/verse/fleet/control/remote-pending': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -124,7 +127,7 @@ describe('notification refresh channel', () => {
       // The fleet projection, self-update, release PR and resource-ledger probes
       // have no SSE event — they are fetched once at mount and not invalidated by
       // these events.
-      const expected = path === '/api/verse/fleet/control/lanes' || path === '/api/verse/fleet/runs' || path === '/api/verse/ops/self-update' || path === '/api/verse/release-pr' || path === '/api/verse/leader/resources' ? 1 : 2;
+      const expected = path === '/api/verse/fleet/control/lanes' || path === '/api/verse/fleet/runs' || path === '/api/verse/ops/self-update' || path === '/api/verse/release-pr' || path === '/api/verse/leader/resources' || path === '/api/verse/fleet/control/remote-pending' ? 1 : 2;
       expect(fetch.mock.calls.filter(([called]) => called === path)).toHaveLength(expected);
     }
   });
@@ -152,6 +155,28 @@ describe('notification refresh channel', () => {
       await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true);
     });
     expect(getNotificationSnapshot().items).toEqual([]);
+  });
+
+  it('adds and clears a pending phone on the next visible poll', async () => {
+    let approvals = [{ id: 'phone-1', label: 'Phone', email: 'person@example.test', deviceType: 'phone', subject: 'fake-credential' }];
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+      if (path === '/api/verse/fleet/control/remote-pending') return Response.json({ v: 1, approvals });
+      const sources: Record<string, unknown> = { '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
+        '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] }, '/api/verse/ops/self-update': quietSelfUpdate(),
+        '/api/verse/leader/resources': quietLedger() };
+      return new Response(JSON.stringify(sources[path]));
+    }));
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    await act(async () => { render(<Harness />); });
+    const item = getNotificationSnapshot().items.find((row) => row.id === 'phone-pending:phone-1');
+    expect(item).toMatchObject({ title: 'Phone waiting for approval', category: 'action-required' });
+    act(() => item?.actionRun?.());
+    expect(getVerseUiState().section).toBe('settings');
+    approvals = [];
+    const tick = intervals.mock.calls.find((call) => call[1] === 30_000)?.[0];
+    expect(tick).toBeTypeOf('function');
+    await act(async () => { (tick as () => void)(); await refetchQuery(phonePendingQuery.key, () => phonePendingQuery.fetch()); });
+    expect(getNotificationSnapshot().items.some((row) => row.id === 'phone-pending:phone-1')).toBe(false);
   });
 
   it('shows merges alongside incidents, sends one desktop alert per merge, and honors fleet mute', async () => {
