@@ -65,6 +65,20 @@ root for the default sink; the default stays hermetic for runsDir-scoped
 receivers that name no `busRoot`, while adapters that pass neither option
 publish to the canonical store.
 
+### Fleet dispatch events
+
+The dispatch log's own events — launches, publishes, lane holds, incidents,
+inbox arrivals and the other kinds the live bus feed parses — are mirrored by
+`mirrorDispatchToBus` as `fleet` → `all` P2 envelopes with body
+`{ kind: 'fleet-event', event, at, text, job?, lane? }`. `event` is the feed
+kind, `at` the log timestamp, `text` bounded to 500 characters, `job` the
+first `RQ-PHX-[A-Z0-9]+` token and `lane` the first known lane name. The bus id
+is `fleet-<kind>-<16 hex of sha256(at + text)>`, so a re-scan of the same rows
+dedupes in the store; a `{at, key}` cursor file skips them earlier. Mirroring
+is bounded and headroom-aware: it stops when the store approaches its caps so
+room remains for agents and Mason, and a failed run leaves the cursor for the
+next pass to retry.
+
 ## Minimal use
 
 The following assumes the adapter has already authenticated the request,
