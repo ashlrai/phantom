@@ -12,8 +12,9 @@ import { compareReleaseTags, releaseGapText, releaseNotesUrl } from '../sections
 import { UpdateNowButton } from '../sections/UpdateNowButton.js';
 import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { dailyCiLine } from './daily-ci-line.js';
 import { orderRepos, releaseLabel, releasePrMergeBlocker, runTone, safeRepoHref } from './fleet-releases-model.js';
-import { opsReleasesQuery, postReleasePrMerge } from './fleet-releases-queries.js';
+import { ciRunsQuery, opsReleasesQuery, postReleasePrMerge } from './fleet-releases-queries.js';
 import { pollingDue, postMergeLine, readyVersion, type MergeNotice } from './post-merge-update-model.js';
 import { blockerLine, releasePrRows, releaseTellPrefill } from './release-pr-view-model.js';
 import styles from './fleet-releases.module.css';
@@ -49,8 +50,10 @@ function MergeReleasePrButton({ repo, pr, onDone }: { repo: string; pr: ReleaseP
 export function FleetReleasesPane({ visible }: PaneProps) {
   const read = useQuery(opsReleasesQuery, { enabled: visible, freshMs: 0 });
   const prRead = useQuery(releasePrQuery, { enabled: visible });
+  const ciRead = useQuery(ciRunsQuery, { enabled: visible });
   const refetch = useRefetch(opsReleasesQuery);
   const refetchPr = useRefetch(releasePrQuery);
+  const refetchCi = useRefetch(ciRunsQuery);
   const [mergeNotices, setMergeNotices] = useState<Record<string, MergeNotice>>({});
   const [now, setNow] = useState(() => Date.now());
   const phantomNotice = Object.entries(mergeNotices).find(([name]) => name === 'phantom' || name.endsWith('/phantom'))?.[1];
@@ -59,6 +62,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
   const refetchUpdate = useRefetch(updateStatusQuery);
   usePollWhileVisible(refetch, 60_000, { enabled: visible });
   usePollWhileVisible(refetchPr, 60_000, { enabled: visible });
+  usePollWhileVisible(() => { setNow(Date.now()); refetchCi(); }, 300_000, { enabled: visible });
   usePollWhileVisible(() => {
     const current = Date.now();
     setNow(current);
@@ -70,6 +74,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
   const data = read.data;
   const installed = installedDesktopVersion();
   const prRows = releasePrRows(prRead.status === 'error' ? undefined : prRead.data, Date.now());
+  const ciLine = dailyCiLine(ciRead.status === 'error' ? undefined : ciRead.data, Date.now());
   return <section className={styles.root} aria-label="Release train">
     <p className={styles.header}>{data.repos.length} repos · read {formatRelative(data.generatedAt)}</p>
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Release data may be incomplete.</p>}
@@ -113,6 +118,10 @@ export function FleetReleasesPane({ visible }: PaneProps) {
           }} />}
           {mergeNotice && (mergeNotice.number === null || releasePr === null || releasePr.number === mergeNotice.number)
             && <div role="status">{mergeNotice.label}</div>}
+        </div>}
+        {phantom && ciLine.tone !== 'none' && <div>
+          <div className={styles.headline} data-tone={ciLine.tone === 'bad' ? 'danger' : ciLine.tone === 'stale' ? 'warn' : 'ok'}>{ciLine.url ? <a href={ciLine.url} target="_blank" rel="noopener noreferrer">{ciLine.text}</a> : ciLine.text}</div>
+          {ciLine.detail && <div className={styles.muted}>{ciLine.detail}</div>}
         </div>}
         {updateLine && <div role="status">{updateLine}{candidate && updateLine.startsWith(`${candidate} is ready`)
           && <UpdateNowButton status={updateStatus} onDone={refetchUpdate} />}</div>}
