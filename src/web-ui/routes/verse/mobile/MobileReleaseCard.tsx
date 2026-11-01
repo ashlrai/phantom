@@ -7,10 +7,12 @@
  */
 import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { ciRunsQuery } from '../fleet-releases/fleet-releases-queries.js';
 import { releasePrQuery, type ReleasePr, type ReleasePrResult } from '../fleet/release-pr-query.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { cx, SkeletonList } from './ui.js';
-import { Row, Section, ui } from './ui-parts.js';
+import { releaseCiRow } from './release-ci-model.js';
+import { Badge, Row, Section, ui } from './ui-parts.js';
 
 const REPO_NAME = 'phantom';
 
@@ -52,12 +54,16 @@ export function MobileReleaseCard() {
   const query = useQuery(releasePrQuery, { freshMs: 0 });
   const refetch = useRefetch(releasePrQuery);
   usePollWhileVisible(refetch, 60_000);
+  const ciQuery = useQuery(ciRunsQuery, { freshMs: 0 });
+  const refetchCi = useRefetch(ciRunsQuery);
+  usePollWhileVisible(refetchCi, 60_000);
 
   const result = query.data;
   if (result?.kind === 'notInBuild') return null;
 
   const pr = result ? releaseRepoPr(result, REPO_NAME) : null;
   const href = pr ? releasePrHref(pr.url) : null;
+  const ci = releaseCiRow(ciQuery.data, Date.now());
 
   return (
     <Section
@@ -75,6 +81,10 @@ export function MobileReleaseCard() {
       ) : (
         <Row title={releaseLine(result, REPO_NAME)} subtitle={pr?.summary} />
       )}
+      {ci ? <Row
+        title={<span data-tone={ci.tone}><Badge tone={ci.tone === 'ok' ? 'success' : ci.tone === 'bad' ? 'danger' : 'neutral'}>{ci.title}</Badge></span>}
+        trailing={ci.href ? <a className={cx(ui.btn, ui.plain)} href={ci.href} target="_blank" rel="noopener noreferrer">Open run</a> : undefined}
+      /> : null}
     </Section>
   );
 }
