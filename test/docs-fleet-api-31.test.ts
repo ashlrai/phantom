@@ -32,6 +32,6 @@ describe('fleet API documentation', () => {
   });
 
   it('is linked from the documentation index', () => {
-    expect(readFileSync(join(root, 'docs/README.md'), 'utf8')).toContain('[Fleet API](FLEET-API.md)');
+    expect(readFileSync(join(root, 'docs/README.md'), 'utf8')).toContain('[Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md)');
   });
 });
