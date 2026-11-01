@@ -4,7 +4,7 @@ import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 import { receiveHandoffBus } from '../core/fleet/handoff-bus-receive.js';
 
 const usage = 'Usage: ashlr fleet handoff-receive --id <message-id> --to <exact-local-address> '
-  + '--snapshot <absolute-json> -- <program> [args...]';
+  + '--snapshot <absolute-json> [--cwd <absolute-directory>] -- <program> [args...]';
 const example = 'Example: ashlr fleet handoff-receive --id handoff-7 --to WORKER-9 '
   + '--snapshot /home/worker/context.json -- node worker.mjs --flag value';
 const token = (value: string): boolean => /^[\x21-\x7e]{1,128}$/.test(value);
@@ -25,13 +25,13 @@ export async function cmdFleetHandoffReceive(args: string[],
   const flags = new Map<string, string>();
   for (let i = 0; i < split; i++) {
     const key = args[i]!, value = i + 1 < split ? args[i + 1] : undefined;
-    if (!['--id', '--to', '--snapshot'].includes(key) || flags.has(key) ||
+    if (!['--id', '--to', '--snapshot', '--cwd'].includes(key) || flags.has(key) ||
         value === undefined || value.includes('\0')) return invalid();
     flags.set(key, value);
     i++;
   }
-  const id = flags.get('--id'), to = flags.get('--to'), snapshot = flags.get('--snapshot');
+  const id = flags.get('--id'), to = flags.get('--to'), snapshot = flags.get('--snapshot'), cwd = flags.get('--cwd');
   if (!id || !token(id) || !to || !token(to) ||
       !snapshot || !isAbsolute(snapshot) || snapshot.includes('\0')) return invalid();
-  return receiveHandoffBus({ id, to, snapshot, argv: args.slice(split + 1) }, options, io);
+  return receiveHandoffBus({ id, to, snapshot, cwd, argv: args.slice(split + 1) }, options, io);
 }
