@@ -52,6 +52,7 @@ function LineView({ line }: { line: MergedLine }) {
         <span className={leaderStyles.avatar} data-from={line.who} aria-hidden="true">{leader ? 'L' : 'M'}</span>
         <span className={leaderStyles.who}>{leader ? 'Leader' : 'You'}</span>
         {leader && channel ? <ChannelBadge channel={channel} /> : <span className={leaderStyles.channel} data-channel={channel ?? undefined} title={`Sent via ${label}`}>{label}</span>}
+        {!leader && line.ack ? <span className={leaderStyles.channel} data-ack={line.ack.state}>{line.ack.text}</span> : null}
         <time className={leaderStyles.time} dateTime={iso ?? undefined} title={iso ? new Date(line.at).toLocaleString('en-US') : 'Time unknown'}>{clock}</time>
       </header>
       <div className={leaderStyles.groupBody}>
@@ -96,7 +97,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const read = thread.data;
   const messages = read?.value?.messages ?? NO_MESSAGES;
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
-  const merged = useMemo(() => mergeThread(messages, inbox, now), [messages, inbox, now]);
+  const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data), [messages, inbox, now, runs.data]);
 
   // One row per line, keeping the conversation's day separators; undated lines go last.
   const items = useMemo(() => {

@@ -1,7 +1,13 @@
 import type { OpsReleasesV1 } from '../../../../core/verse/ops-types.js';
-import { apiGet, ApiError } from '../../../data/client.js';
+import { apiGet, apiPost, ApiError } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { isOpsReleases } from './fleet-releases-model.js';
+
+export interface ReleasePrMergeResult { ok: true; sha: string | null }
+
+export function postReleasePrMerge(repo: string, number: number, token: string): Promise<ReleasePrMergeResult> {
+  return apiPost<ReleasePrMergeResult>('/api/verse/release-pr/merge', { repo, number }, token);
+}
 
 export const opsReleasesQuery: QueryDef<OpsReleasesV1 | null> = {
   key: 'verse-ops-releases',
