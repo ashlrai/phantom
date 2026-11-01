@@ -15,7 +15,11 @@
  * alone — and an unknown state draws nothing at all: no dot is "we do not
  * know", never "zero" (the activity route may not be in this build yet).
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { agentBusPageQuery, agentBusStatusQuery, type AgentBusReceipt } from '../fleet-bus/agent-bus-queries.js';
+import { useDocumentVisible } from './section-visibility.js';
+import { markSeen, readSeenCursor, subscribeSeenCursor } from './bus-seen-store.js';
+import { chipText, unreadForMason } from './bus-unread.js';
 import type {
   VerseActivityResponse,
   VerseAutonomyBadge,
@@ -212,4 +216,43 @@ export function CapacityRing({ badge }: { badge: Pick<VerseCapacityBadge, 'usedP
       />
     </svg>
   );
+}
+
+/** An independent action in the rail; the shell supplies its pane navigation. */
+export function RailBusChip({ openBus }: { openBus: () => void }) {
+  const visible = useDocumentVisible();
+  const seen = useSyncExternalStore(subscribeSeenCursor, readSeenCursor, () => 0);
+  const [receipts, setReceipts] = useState<AgentBusReceipt[]>([]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let active = true;
+    let pending = false;
+    const controller = new AbortController();
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const status = await agentBusStatusQuery.fetch(controller.signal);
+        if (!active) return;
+        if (!status || status.source !== 'available' || status.retainedCount === null) {
+          if (active) setReceipts([]);
+          return;
+        }
+        const page = await agentBusPageQuery(Math.max(0, status.retainedCount - 100), 100).fetch(controller.signal);
+        if (active) setReceipts(page?.messages ?? []);
+      } catch {
+        if (active) setReceipts([]);
+      } finally { pending = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => { void refresh(); }, 15_000);
+    return () => { active = false; controller.abort(); clearInterval(timer); };
+  }, [visible]);
+
+  const unread = unreadForMason(receipts, seen);
+  if (!unread.count || unread.newestCursor === null) return null;
+  const text = chipText(unread.count, unread.newestFrom);
+  return <button type="button" aria-label={text} title={unread.newestAgeText ?? undefined}
+    onClick={() => { openBus(); markSeen(unread.newestCursor!); }}>{text}</button>;
 }

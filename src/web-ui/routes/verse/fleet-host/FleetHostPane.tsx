@@ -8,6 +8,7 @@ import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { hostView } from './fleet-host-model.js';
+import { plannerRows, plannerTell } from './planners-model.js';
 import styles from './fleet-host.module.css';
 
 const CLAUDE_LANE_FIX = '~/.ashlr-runs/bin/fix-claude-lane.sh';
@@ -23,6 +24,9 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
   usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
   const data = read.data;
   const host = hostView(data ?? null, Date.now());
+  const nowMs = Date.now();
+  const planners = plannerRows(data ?? null, nowMs);
+  const tell = plannerTell(data ?? null, nowMs);
   const [copyState, setCopyState] = useState<'copied' | 'failed' | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
@@ -76,6 +80,14 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
               <Button size="sm" onClick={openFixTerminal}>Open terminal</Button>
             </div>
           </> : null}
+        </section>
+        <section className={styles.section} aria-label="Planners">
+          <h3 className={styles.title}>Planners</h3>
+          {planners.length ? <ul className={styles.switches}>{planners.map((row, i) =>
+            <li className={styles.metric} data-tone={row.tone} key={`${row.label}:${i}`}>
+              {row.label}: {row.ageText} ({row.tone})
+            </li>)}</ul> : <p className={styles.muted}>No planner passes recorded</p>}
+          {tell ? <p className={styles.metric} data-tone={tell.tone} role="status">{tell.text}</p> : null}
         </section>
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
