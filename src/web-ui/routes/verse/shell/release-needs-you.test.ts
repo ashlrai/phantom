@@ -19,7 +19,8 @@ describe('deriveReleaseNeedsYou', () => {
     const items = deriveReleaseNeedsYou(result({ ...pr, failing: ['audit', 'test', 'build', 'extra'] }), now);
     expect(items).toEqual([{ id: 'release-blocked:example/repo:42', severity: 'urgent',
       title: 'Release 3.30.0 is blocked', detail: 'audit, test, build failing · open 3 d',
-      nextStep: 'Open the release PR; Merge Gate reruns after the fix lands', target: 'fleet' }]);
+      nextStep: 'Open the release PR; Merge Gate reruns after the fix lands', target: 'fleet',
+      open: { kind: 'pane', paneId: 'fleet-releases' } }]);
   });
   it('marks pending checks and merge conflicts as attention', () => {
     const pending = { ...pr, version: null, checks: [{ name: 'build', state: 'pending' as const, url: null }], failing: [], pending: 1 };
