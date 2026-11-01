@@ -11,3 +11,6 @@
 .interjection { border-left: 2px solid var(--accent-500); padding-left: var(--space-2); }
 .time { color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .text { min-width: 0; overflow-wrap: anywhere; }
+.viewToggle { display: flex; gap: var(--space-1); padding: var(--space-3) var(--space-3) 0; }
+.viewToggle button[aria-pressed='true'] { border-color: var(--accent-500); }
+.envelope { flex-wrap: wrap; }
