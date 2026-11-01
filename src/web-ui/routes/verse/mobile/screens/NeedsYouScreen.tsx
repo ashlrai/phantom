@@ -38,7 +38,8 @@ import {
 } from 'react';
 import type { NeedsYouAction, NeedsYouActionKind, NeedsYouItem, NeedsYouKind, NeedsYouSeverity } from '../../../../../core/verse/workbench-types.js';
 import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
-import { useQuery } from '../../../../data/hooks.js';
+import { refetchQuery } from '../../../../data/cache.js';
+import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QuestionFormStore } from '../../leader/LeaderQuestionForm.js';
 const TypedQuestionForm = lazy(() => import('../../leader/LeaderQuestionForm.js'));
 
@@ -57,17 +58,19 @@ import {
 } from '../../shell/needs-you-model.js';
 import { markResolved, useResolvedIds } from '../../shell/resolved-store.js';
 import type { NeedsYouSplit } from '../../verse-ui-store.js';
-import { useDocumentVisible, useSectionVisible } from '../../shell/section-visibility.js';
+import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../../shell/section-visibility.js';
 import { FleetAttentionCards } from '../FleetAttentionCards.js';
 import { sinceText } from '../connectivity.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { fleetAttention } from '../needs-fleet-model.js';
+import { releaseLaneHold, refreshFleetReads } from '../fleet-actions.js';
+import { heldLaneItems, needsHoldsQuery } from '../needs-holds-model.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { showMobileToast } from '../mobile-toast.js';
 import { BottomSheet } from '../sheet.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, Banner, EmptyState, ErrorState, ui, type Tone } from '../ui-parts.js';
+import { Badge, Banner, EmptyState, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './NeedsYouScreen.module.css';
 
 // ---------------------------------------------------------------------------
@@ -475,12 +478,18 @@ export function NeedsYouScreen() {
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const fleet = useQuery(homeRunsQuery, { enabled: sectionVisible && documentVisible });
+  const holds = useQuery(needsHoldsQuery, { enabled: sectionVisible && documentVisible });
+  const refetchHolds = useRefetch(needsHoldsQuery);
+  usePollWhileVisible(refetchHolds, 15_000);
   const nowMs = Date.now();
+  const heldLanes = heldLaneItems(holds.data ?? null, nowMs);
   const hasFleetAttention = fleetAttention(fleet.data ?? null, nowMs).length > 0;
   const [split, setSplit] = useState<NeedsYouSplit>('all');
   const [undo, setUndo] = useState<{ id: string; title: string } | null>(null);
   const [answering, setAnswering] = useState<NeedsYouItem | null>(null);
   const questionForms = useRef<QuestionFormStore>(new Map());
+  const releasing = useRef(new Set<string>());
+  const [busyLanes, setBusyLanes] = useState<ReadonlySet<string>>(new Set());
 
   const canAct = canShowActions(permissions);
   const offline = reachability === 'offline' || reachability === 'unreachable';
@@ -532,6 +541,30 @@ export function NeedsYouScreen() {
     [openTarget],
   );
 
+  const releaseHold = (lane: string) => {
+    if (!canAct || offline || releasing.current.has(lane)) return;
+    runMobileAction({
+      title: `Release the ${lane} hold?`,
+      consequences: `The dispatcher can launch ${lane} workers again at its next tick.`,
+      confirmLabel: 'Release hold',
+      confirm: false,
+      run: async () => {
+        if (releasing.current.has(lane)) return;
+        releasing.current.add(lane);
+        setBusyLanes(new Set(releasing.current));
+        try {
+          await releaseLaneHold(lane, 'phone');
+          refreshFleetReads();
+          await refetchQuery(needsHoldsQuery.key, () => needsHoldsQuery.fetch(), true);
+        } finally {
+          releasing.current.delete(lane);
+          setBusyLanes(new Set(releasing.current));
+        }
+      },
+      success: `${lane} hold released.`,
+    });
+  };
+
   const onHide = useCallback((item: NeedsYouItem) => {
     hideOnThisPhone(item.id);
     setUndo({ id: item.id, title: needsYouRowView(item).title });
@@ -566,7 +599,7 @@ export function NeedsYouScreen() {
           action={<Button variant="tinted" onClick={() => unhideOnThisPhone(hiddenHere.map((i) => i.id))}>Show hidden</Button>}
         />
       );
-    } else if (coverage.vouched && hasFleetAttention) {
+    } else if (coverage.vouched && (hasFleetAttention || heldLanes.length > 0)) {
       body = null;
     } else if (coverage.vouched) {
       body = (
@@ -634,6 +667,15 @@ export function NeedsYouScreen() {
         </div>
       ) : null}
 
+      {heldLanes.length > 0 ? (
+        <Section title="Held lanes">
+          {heldLanes.map((item) => (
+            <Row key={item.lane} title={item.title} subtitle={item.subtitle} trailing={item.releasable
+              ? <Button aria-label={`Release: ${item.lane}`} disabled={!canAct || offline || busyLanes.has(item.lane)} onClick={() => releaseHold(item.lane)}>Release</Button>
+              : <span>Needs the Mac</span>} />
+          ))}
+        </Section>
+      ) : null}
       <FleetAttentionCards nowMs={nowMs} />
       {body}
 
