@@ -76,6 +76,8 @@ import { emitMerge, emitJudgeVerdict } from '../integrations/fleet-pulse-emit.js
 import { estCostUsd } from '../run/budget.js';
 // M235: recursive self-improvement write-back (fire-and-forget, explicit selfImprove:true only)
 import { learnFromRejection } from './self-improve.js';
+// M243: positive skill-library write-back (fire-and-forget, gated cfg.foundry.skillLibrary !== false, default ON)
+import { learnFromApplied } from './skill-library.js';
 import { recordAgentAction } from './agent-action-ledger.js';
 import { causalMetadataFromProposal } from '../learning/causal.js';
 import { isApprovedRemoteHandoffRetryCandidate } from '../inbox/remote-handoff.js';
@@ -898,6 +900,10 @@ export async function runAutoMergePass(
   for (const proposal of boundedFanoutRecoveryBatch(fanoutRecovery)) {
     if (killSwitchOn()) return out;
     try { replayAuthorizedRealizedMergeFanout(proposal); } catch { /* retry next pass */ }
+    // M243: the replayed applied receipts are the periodic sweep learnFromApplied
+    // was built for — its own persisted-state release check decides whether a
+    // verified SkillCard is written. Fire-and-forget; never alters the pass.
+    try { learnFromApplied(proposal, cfg); } catch { /* best-effort learning */ }
   }
 
   // V3.10 (U3): under a standing grant the standing gates are the ONLY merge
