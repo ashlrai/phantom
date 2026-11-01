@@ -425,9 +425,15 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         if (path === '/verse/m' || path === '/verse/m/') {
           try {
             const html = readFileSync(join(options.assetsDir, 'next', 'index.html'), 'utf8');
-            if (!html.includes('<head>') || !html.includes('</head>') || !html.includes('name="ashlr-remote-gateway"')) {
-              const body = html.replace('<head>', `<head>${REMOTE_MARKER}`);
-              if (body !== html) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(body); return; }
+            const heads = [...html.matchAll(/<\/?head\b/gi)];
+            const head = html.indexOf('<head>');
+            const end = html.indexOf('</head>');
+            const markers = [...html.matchAll(/name="ashlr-remote-gateway"/g)];
+            if (heads.length === 2 && heads[0]?.index === head && heads[1]?.index === end && head >= 0 && end > head
+              && (markers.length === 0 || (markers.length === 1 && html.indexOf(REMOTE_MARKER) > head
+                && html.indexOf(REMOTE_MARKER) + REMOTE_MARKER.length <= end))) {
+              const body = markers.length === 1 ? html : html.replace('<head>', `<head>${REMOTE_MARKER}`);
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(body); return;
             }
           } catch { /* missing build stays denied */ }
           json(res, 503, { code: 'REMOTE_ASSETS_UNAVAILABLE', error: 'Mobile assets unavailable' }); return;
