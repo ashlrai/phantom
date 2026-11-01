@@ -2512,7 +2512,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   oversight:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet oversight [--json]' },
   'judge-traces': { allowed: { flags: ['--json', '--outcome-only'], values: ['--limit', '--proposal'] }, usage: 'ashlr fleet judge-traces [--limit N] [--proposal <id>] [--outcome-only] [--json]' },
   'judge-health': { allowed: { flags: ['--json', '--degradation'] }, usage: 'ashlr fleet judge-health [--degradation] [--json]' },
-  backlog:        { allowed: { flags: ['--json'], values: ['--repo', '--limit', '--merges', '--recuts'] }, usage: 'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--merges <n>] [--recuts <n>] [--json]' },
+  backlog:        { allowed: { flags: ['--json'], values: ['--repo', '--limit', '--pr', '--exclude-pr', '--merges', '--recuts', '--recut-job'] }, usage: 'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... (up to 20 distinct) [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json] [--recut-job <n>]' },
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
