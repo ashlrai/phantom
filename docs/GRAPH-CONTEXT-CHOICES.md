@@ -71,7 +71,14 @@ The caller must supply the IDs and the task/output records, including any
 transitive upstream IDs it wants. Neither the CLI nor the pack builder reads
 GRAPH-1, discovers dependencies, retrieves job outputs, or starts work. The
 `node_context_pack` tool on the separate `phm mcp context` server accepts the
-same conceptual input; it also requires caller-supplied records.
+same caller-supplied records, and additionally prepends unread P0/P1 bus
+notices it reads best-effort from the local durable bus inbox: live envelopes
+addressed to the node (`node.busAddress`, defaulting to `jobId`) or to `all`,
+after the node's own `node.busAfter` cursor (default 0), newest first, within
+the same byte budget. Notice lines carry kind `notice`, the `bus/<envelope-id>`
+citation, sender, channel and time; message bodies stay inside the delimited
+`text` field as untrusted data. A missing or unreadable bus adds nothing and
+never fails the build.
 
 ## Other existing graph APIs
 
