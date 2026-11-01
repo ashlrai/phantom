@@ -195,7 +195,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-usage-audit';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -242,6 +242,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-holds', load: async () => (await import('./fleet-holds-api.js')).handleFleetHoldsApi },
   // Fleet graph live projection: GET /api/verse/fleet/graph/live (core/verse/fleet-graph-live-api.ts); read-only.
   { id: 'fleet-graph-live', load: async () => (await import('./fleet-graph-live-api.js')).handleFleetGraphLiveApi },
+  // Usage meter motion audit; read-only.
+  { id: 'fleet-usage-audit', load: async () => (await import('./fleet-usage-audit-api.js')).handleFleetUsageAuditApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
