@@ -24,6 +24,7 @@ const VERBS = [
   'dispatch-summary',
   'edit-collisions',
   'grok-usage',
+  'job-class-share',
   'job-read',
   'lane-models',
   'lane-truth',

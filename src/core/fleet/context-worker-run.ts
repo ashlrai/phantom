@@ -51,6 +51,9 @@ export interface ContextWorkerOptions {
   snapshot: string; prompt: string; argv: string[]; busAddress?: string; busAfter?: number; timeoutMs?: number;
   /** Selected working directory for the worker; omitted inherits process.cwd(). */
   cwd?: string;
+  /** Programmatic cancel: an already-aborted signal never launches the child;
+   * after launch it drives the same SIGTERM→SIGKILL escalation as an OS signal. */
+  signal?: AbortSignal;
 }
 export interface ContextWorkerIO {
   stdout?: Writable; stderr?: Writable;
@@ -60,9 +63,13 @@ export interface ContextWorkerIO {
 export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWorkerIO = {}): Promise<number> {
   const stderr = io.stderr ?? process.stderr;
   const diagnostic = (text: string): void => { stderr.write(`context-run: ${text}\n`); };
+  // A cancelled run reports the same 128+SIGTERM a terminated child would.
+  const aborted = (): number => { diagnostic('worker launch aborted'); return 128 + (constants.signals.SIGTERM ?? 15); };
+  if (opts.signal?.aborted) return aborted();
   let payload: string;
   try {
     if (!opts.argv.length || opts.argv.some(a => typeof a !== 'string' || a.includes('\0')) || !opts.argv[0] ||
+        (opts.signal !== undefined && !(opts.signal instanceof AbortSignal)) ||
         (opts.busAddress !== undefined && !address(opts.busAddress)) ||
         (opts.busAfter !== undefined && !cursor(opts.busAfter)) ||
         (opts.timeoutMs !== undefined && (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > 3600000)) ||
@@ -89,6 +96,8 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
       diagnostic('launch refused by runs controls'); return 1;
     }
   } catch { diagnostic('invalid or unavailable context input'); return 2; }
+  // An abort landing between the async context reads and here still prevents launch.
+  if (opts.signal?.aborted) return aborted();
 
   return new Promise<number>(resolve => {
     let child: ReturnType<typeof spawn>;
@@ -112,6 +121,10 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
     const int = (): void => interrupt('SIGINT');
     const term = (): void => interrupt('SIGTERM');
     process.on('SIGINT', int); process.on('SIGTERM', term);
+    const abort = (): void => interrupt('SIGTERM');
+    opts.signal?.addEventListener('abort', abort, { once: true });
+    // The abort event only fires on transition; catch a signal that already landed.
+    if (opts.signal?.aborted) abort();
     const fail = (): void => { failed = true; stop('SIGTERM'); };
     child.on('error', () => { diagnostic('worker spawn failed'); failed = true; });
     child.once('spawn', () => {
@@ -130,6 +143,7 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
       if (timer) clearTimeout(timer);
       if (deadline) clearTimeout(deadline);
       process.off('SIGINT', int); process.off('SIGTERM', term);
+      opts.signal?.removeEventListener('abort', abort);
       void Promise.all(transfers).then(() => {
         const ended = interrupted ?? signal;
         if (signal) diagnostic(`worker ended by ${signal}`);
