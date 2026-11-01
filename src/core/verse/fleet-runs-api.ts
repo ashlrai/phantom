@@ -1,3 +1,5 @@
+import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
+import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ApiModule } from './api-modules.js';
@@ -10,6 +12,7 @@ import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
+import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 
 // passesMutationGate authenticates a single local operator (the x-ashlr-token
 // holder); there is no per-request user identity. The shared channel receiver's
@@ -27,8 +30,14 @@ const VERSE_INBOX_MOBILE_OPERATOR_ID = 'verse-operator@mobile';
 const VERSE_INBOX_CHANNEL = 'desktop' as const;
 const VERSE_INBOX_MOBILE_CHANNEL = 'mobile' as const;
 const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
+// The canonical value is exported from fleet/superseded-read.js; repeating it
+// here under the export's own literal type keeps the reader module (and its gh
+// transport) out of this router's load graph until the route is requested.
+const VERSE_FLEET_SUPERSEDED_PATH: typeof import('../fleet/superseded-read.js').VERSE_FLEET_SUPERSEDED_PATH =
+  '/api/verse/fleet/runs/superseded';
 
 export interface FleetRunsApiDeps {
+  laneModels?: () => Promise<LaneModelSnapshot>;
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
@@ -38,6 +47,9 @@ export interface FleetRunsApiDeps {
   mergedLastHour?: () => Promise<unknown>;
   /** Bounded read-only GitHub transport for the default Phantom merge source. */
   mergeWindowRunner?: MergeWindowRunner;
+  /** Superseded-PR report for GET VERSE_FLEET_SUPERSEDED_PATH; the default
+   * lazy-imports the fleet reader so this module never loads gh machinery. */
+  readSuperseded?: () => Promise<SupersededReadV1>;
   now?: () => number;
   /** Runs directory the inbox sink and the channel receipt store root at.
    * Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs — the same resolution
@@ -201,10 +213,28 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     }));
     return result;
   }
+  const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
+  let modelCache: { at: number; value: FleetLaneModelsV1 } | undefined;
+  let modelFlight: Promise<FleetLaneModelsV1> | undefined;
+  async function readModels(): Promise<FleetLaneModelsV1> {
+    try { return toFleetLaneModelsV1(await laneModels(), now()); }
+    catch { return toFleetLaneModelsV1(null, now()); }
+  }
   let cached: { at: number; value: FleetRunsV1 } | undefined;
   let generation = 0;
   let flight: { generation: number; promise: Promise<FleetRunsV1> } | undefined;
   return async (ctx, req, res, path, method) => {
+    if (path === VERSE_FLEET_LANE_MODELS_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!modelFlight && (!modelCache || now() - modelCache.at >= 15_000)) {
+        modelFlight = readModels().then(value => {
+          modelCache = { at: now(), value };
+          return value;
+        }).finally(() => { modelFlight = undefined; });
+      }
+      sendJson(res, 200, modelFlight ? await modelFlight : modelCache!.value);
+      return true;
+    }
     if (method === 'GET' && path === VERSE_FLEET_RUNS_PATH) {
       if (flight?.generation !== generation && (!cached || now() - cached.at >= 2000)) {
         const buildGeneration = generation;
@@ -227,6 +257,17 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       // Filter within the bounded tail before applying the requested result limit.
       try { sendJson(res, 200, projectInboxRead(await inbox(VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX), query)); }
       catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
+      return true;
+    }
+    if (method === 'GET' && path === VERSE_FLEET_SUPERSEDED_PATH) {
+      const read = deps.readSuperseded ?? (async (): Promise<SupersededReadV1> => {
+        const mod: typeof import('../fleet/superseded-read.js') = await import('../fleet/superseded-read.js' as string);
+        return mod.readSuperseded();
+      });
+      try { sendJson(res, 200, await read()); }
+      catch {
+        sendJson(res, 200, { v: 1, generatedAt: new Date(now()).toISOString(), source: 'unavailable', pairs: [], openDirty: 0 } satisfies SupersededReadV1);
+      }
       return true;
     }
     if (method !== 'POST' || path !== VERSE_FLEET_RUNS_INBOX_PATH) return false;

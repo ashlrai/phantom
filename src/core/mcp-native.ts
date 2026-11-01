@@ -23,7 +23,8 @@
  */
 
 import { existsSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } from './types.js';
 import { loadConfig } from './config.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
@@ -44,6 +45,7 @@ import { buildFleetDigest } from './fleet/digest.js';
 import { computeQualityMetrics } from './fleet/quality-metrics.js';
 import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
 import { readDecisions } from './fleet/decisions-ledger.js';
+import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
 import { listProposals } from './inbox/store.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
@@ -169,6 +171,8 @@ interface NativeToolImpl extends NativeToolDef {
   handler: (args: Record<string, unknown>, cfg: AshlrConfig) => Promise<unknown>;
 }
 
+let plannerRunStartedAt: string | null = null;
+
 const TOOLS: NativeToolImpl[] = [
   {
     name: 'phantom_agent_bus_read',
@@ -200,6 +204,58 @@ const TOOLS: NativeToolImpl[] = [
     }, required: ['id', 'from', 'to', 'priority', 'ttl', 'body'], additionalProperties: false },
     safety: 'append',
     handler: async args => (await import('./fleet/bus-inbox.js')).appendBusInbox(args),
+  },
+  {
+    name: 'phantom_fleet_drop_job',
+    description: 'Queue a Phantom fleet job by writing RQ-PHX-<id>.md into the local runs drop folder. Ingest validates it later; nothing launches from this call. The body is a worker prompt and is treated as untrusted text.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string', pattern: '^[A-Z0-9]{3,40}$' },
+      lane: { type: 'string', enum: [...DROP_JOB_LANES] },
+      tier: { type: 'string', enum: [...DROP_JOB_TIERS] },
+      body: { type: 'string', minLength: 1, maxLength: 7800 },
+    }, required: ['id', 'lane', 'tier', 'body'], additionalProperties: false },
+    safety: 'append',
+    handler: async args => {
+      try {
+        const { file, bytes, at } = await writeDropJob(resolveDropJobRoot(), {
+          id: args.id as string, lane: args.lane as string, tier: args.tier as string, body: args.body as string,
+        });
+        return { file, bytes, at };
+      } catch (error) {
+        if (error instanceof DropJobValidationError) return { written: false, reason: 'invalid', reasons: error.reasons };
+        if (error instanceof DropJobExistsError) return { written: false, reason: 'exists', id: error.id };
+        throw error;
+      }
+    },
+  },
+  {
+    name: 'phantom_fleet_planner_run',
+    description: 'Run one fleet planner pass on the declared login slate under the local runs root. Waits up to 20 minutes and writes job files into the drop folder; no jobs launch from this call. No argv, prompt text or environment values are returned.',
+    inputSchema: { type: 'object', properties: {
+      reason: { type: 'string', maxLength: 200 },
+    }, additionalProperties: false },
+    safety: 'append',
+    handler: async () => {
+      if (plannerRunStartedAt !== null) return { started: false, reason: 'pass-in-flight', startedAt: plannerRunStartedAt };
+      const now = Date.now();
+      plannerRunStartedAt = new Date(now).toISOString();
+      try {
+        const runsRoot = join(homedir(), '.ashlr-runs');
+        const { readPlannerCandidates } = await import('./fleet/planner-candidates.js');
+        const slate = await readPlannerCandidates(runsRoot);
+        if (slate.source !== 'ok') return { started: false, reason: 'no-slate', path: slate.path };
+        const { readPlannerPromptPath } = await import('./fleet/planner-prompt.js');
+        const promptPath = await readPlannerPromptPath(runsRoot);
+        if (promptPath === null) return { started: false, reason: 'no-prompt-declared', path: slate.path };
+        const { runPlannerPass } = await import('./fleet/planner-run.js');
+        const { v, provider, outcome, exitCode, startedAt, finishedAt, nextResetAt, planError } = await runPlannerPass({
+          runsRoot, candidates: slate.candidates, lastProvider: slate.lastProvider ?? '', promptPath, now,
+        });
+        return { started: true, v, provider, outcome, exitCode, startedAt, finishedAt, nextResetAt, planError };
+      } finally {
+        plannerRunStartedAt = null;
+      }
+    },
   },
   {
     name: 'phantom_fleet_graph',
@@ -1240,6 +1296,21 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       auditNativeCall(`${tool.name} keys=${argKeys} — bus validation unavailable`, 'error');
       return textResult({ error: 'Bus validation unavailable' }, true);
     }
+  } else if (name === 'phantom_fleet_drop_job') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).some(key => !['id', 'lane', 'tier', 'body'].includes(key)) ||
+      typeof args.id !== 'string' || !/^[A-Z0-9]{3,40}$/.test(args.id) ||
+      typeof args.lane !== 'string' || !DROP_JOB_LANES.some(lane => lane === args.lane) ||
+      typeof args.tier !== 'string' || !DROP_JOB_TIERS.some(tier => tier === args.tier) ||
+      typeof args.body !== 'string' || [...args.body].length < 1 || [...args.body].length > 7800
+      ? 'invalid drop job arguments' : null;
+  } else if (name === 'phantom_fleet_planner_run') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    // eslint-disable-next-line no-control-regex
+    const controlCharacters = /[\u0000-\u001f\u007f-\u009f]/;
+    invalid = !object || Object.keys(args).some(key => key !== 'reason') ||
+      ('reason' in args && (typeof args.reason !== 'string' || [...args.reason].length > 200 || controlCharacters.test(args.reason)))
+      ? 'invalid planner arguments' : null;
   } else if (name === 'phantom_agent_bus_read' || name === 'phantom_agent_bus_status') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const keys = Object.keys(args);
