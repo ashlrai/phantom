@@ -75,12 +75,56 @@ function waitForTick(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Row collections bounded by `--sample`; scalar fields, `sources` and `switches` are not rows. */
+const SAMPLE_MAX = 200;
+const SAMPLE_ROW_KEYS: Record<Verb, readonly string[]> = {
+  runs: ['lanes', 'claimed', 'publishesLastHour', 'events'],
+  journal: ['notes', 'passes', 'ingest', 'ingested'],
+  parked: ['byLane', 'nextUp', 'groups', 'skips'],
+};
+const ISO_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+/** Timestamped streams emit newest first; other row lists keep the projection's order. */
+function newestFirst(rows: readonly unknown[]): unknown[] {
+  const stamp = (row: unknown): number => {
+    const at = typeof row === 'object' && row !== null ? (row as { at?: unknown }).at : undefined;
+    return typeof at === 'string' && ISO_AT.test(at) ? Date.parse(at) : Number.NaN;
+  };
+  return rows.length > 1 && rows.every(row => Number.isFinite(stamp(row)))
+    ? [...rows].sort((a, b) => stamp(b) - stamp(a))
+    : [...rows];
+}
+
+/** Cap each emitted row collection to its newest `n` rows; `truncated` reports rows cut by the bound. */
+function boundSample<T extends object>(state: T, verb: Verb, n: number): T & { sampled: number; truncated: boolean } {
+  let truncated = false;
+  const capped = { ...(state as Record<string, unknown>) };
+  const take = (key: string, rows: unknown[]): void => {
+    if (rows.length > n) truncated = true;
+    capped[key] = newestFirst(rows).slice(0, n);
+  };
+  for (const key of SAMPLE_ROW_KEYS[verb]) {
+    const rows = capped[key];
+    if (Array.isArray(rows)) take(key, rows);
+  }
+  const drop = capped.drop;
+  if (drop !== null && typeof drop === 'object' && !Array.isArray(drop)) {
+    const pending = (drop as { pending?: unknown }).pending;
+    if (Array.isArray(pending)) {
+      if (pending.length > n) truncated = true;
+      capped.drop = { ...(drop as Record<string, unknown>), pending: pending.slice(0, n) };
+    }
+  }
+  return { ...(capped as T), sampled: n, truncated } as T & { sampled: number; truncated: boolean };
+}
+
 /** Read only the host's standard runs directory; callers cannot supply paths. */
 export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
-  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? ' [--rejections-only]' : ' [--lane <lane>]'} [--watch] [--interval-ms <1000..60000>]${verb === 'runs' ? ' [--check-ready]' : ''}`;
+  const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? ' [--rejections-only]' : ' [--lane <lane>]'} [--sample <1..${SAMPLE_MAX}>] [--watch] [--interval-ms <1000..60000>]${verb === 'runs' ? ' [--check-ready]' : ''}`;
   const seen = new Set<string>();
   let lane: string | undefined;
   let interval = 5000;
+  let sample: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     const flag = arg === '-h' ? '--help' : arg;
@@ -94,6 +138,13 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
       // Readiness is evaluated once after argument validation.
     } else if (flag === '--interval-ms' && !seen.has(flag) && /^\d+$/.test(args[i + 1] ?? '') && Number(args[i + 1]) >= 1000 && Number(args[i + 1]) <= 60000) {
       interval = Number(args[++i]);
+    } else if (flag === '--sample' && !seen.has(flag)) {
+      const raw = args[++i] ?? '';
+      if (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > SAMPLE_MAX) {
+        process.stderr.write(`error: --sample requires an integer in 1..${SAMPLE_MAX}\n${usage}\n`);
+        return 2;
+      }
+      sample = Number(raw);
     } else if (!['--json', '--help'].includes(flag) || seen.has(flag)) {
       process.stderr.write(`error: invalid fleet ${verb} arguments\n${usage}\n`);
       return 2;
@@ -101,12 +152,12 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
     seen.add(flag);
   }
   if ((seen.has('--interval-ms') && !seen.has('--watch')) ||
-      (seen.has('--check-ready') && (!seen.has('--json') || seen.has('--watch') || seen.has('--lane')))) {
+      (seen.has('--check-ready') && (!seen.has('--json') || seen.has('--watch') || seen.has('--lane') || seen.has('--sample')))) {
     process.stderr.write(`error: invalid fleet ${verb} arguments\n${usage}\n`);
     return 2;
   }
   if (seen.has('--help')) {
-    console.log(`${usage}${verb === 'journal' ? '\n--rejections-only shows reject and rejected ingest rows; source health and rejectedLastHour remain global. Passes and ingested rows are omitted.' : '\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.'}\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried.${verb === 'runs' ? '\n--check-ready requires --json and cannot be combined with --watch or --lane. It reports one snapshot of directory presence, source health, pause state, reasons and observed unheld lane IDs below target; unknown values remain null. Exit 0 requires healthy sources, an unpaused host and eligible capacity; otherwise exit 1. This is evidence for the leader, not dispatch or authority.' : ''}`);
+    console.log(`${usage}${verb === 'journal' ? '\n--rejections-only shows reject and rejected ingest rows; source health and rejectedLastHour remain global. Passes and ingested rows are omitted.' : '\n--lane filters lane-attributed rows; totals and source health remain global. Rows without lane attribution are omitted.'}\n--watch samples immediately, then every 5000ms by default; --json emits JSONL. Read errors are reported and retried.\n--sample caps each emitted row collection to the newest n rows (newest first) and reports sampled and truncated.${verb === 'runs' ? '\n--check-ready requires --json and cannot be combined with --watch, --lane or --sample. It reports one snapshot of directory presence, source health, pause state, reasons and observed unheld lane IDs below target; unknown values remain null. Exit 0 requires healthy sources, an unpaused host and eligible capacity; otherwise exit 1. This is evidence for the leader, not dispatch or authority.' : ''}`);
     return 0;
   }
   if (seen.has('--check-ready')) {
@@ -120,39 +171,45 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
       return 1;
     }
   }
+  const emit = <T extends object>(value: T, format: (state: T) => string, notice = ''): void => {
+    const emitted: T & { sampled?: number; truncated?: boolean } = sample === undefined ? value : boundSample(value, verb, sample);
+    const bound = emitted.sampled === undefined ? ''
+      : `Sample: newest ${emitted.sampled} rows per collection${emitted.truncated ? ' (truncated)' : ''}\n`;
+    console.log(seen.has('--json') ? JSON.stringify(emitted) : `${notice}${bound}${format(emitted)}`);
+  };
   const readOnce = async (signal?: AbortSignal): Promise<void> => {
     // Each reader returns its existing bounded, scrubbed and versioned projection.
     if (verb === 'runs') {
       const state = await deps.runs();
       if (signal?.aborted) return;
-      if (lane === undefined) console.log(seen.has('--json') ? JSON.stringify(state) : formatRuns(state));
+      if (lane === undefined) emit(state, formatRuns);
       else {
         const filtered = { ...state, lanes: state.lanes.filter(row => row.lane === lane),
           claimed: state.claimed.filter(row => row.lane === lane),
           publishesLastHour: state.publishesLastHour.filter(row => row.lane === lane),
           events: [], drop: { ...state.drop, pending: state.drop.pending.filter(row => row.lane === lane) },
           laneFilter: { lane: sanitizePublicJson(lane), global: ['sources', 'sourceState', 'drop.done', 'other non-row fields', 'switches'], omitted: ['events'] } };
-        console.log(seen.has('--json') ? JSON.stringify(filtered) : `Lane filter: ${filtered.laneFilter.lane}; source health and other non-row values are global; unattributed events omitted\n${formatRuns(filtered)}`);
+        emit(filtered, formatRuns, `Lane filter: ${filtered.laneFilter.lane}; source health and other non-row values are global; unattributed events omitted\n`);
       }
     } else if (verb === 'journal') {
       const state = await deps.journal();
       if (signal?.aborted) return;
-      if (!seen.has('--rejections-only')) console.log(seen.has('--json') ? JSON.stringify(state) : formatJournal(state));
+      if (!seen.has('--rejections-only')) emit(state, formatJournal);
       else {
         const filtered = { ...state, passes: [], ingest: state.ingest.filter(row => /^reject(?:ed)?$/i.test(row.verb)), ingested: [],
           rejectionsFilter: { global: ['sources', 'rejectedLastHour'], omitted: ['passes', 'ingested'] } };
-        console.log(seen.has('--json') ? JSON.stringify(filtered) : `Rejections only; source health and rejected last hour are global; passes and ingested rows omitted\n${formatJournal(filtered)}`);
+        emit(filtered, formatJournal, 'Rejections only; source health and rejected last hour are global; passes and ingested rows omitted\n');
       }
     } else {
       // Match the desktop queue endpoint's additional public-output scrub.
       const state = sanitizePublicJson(await deps.parked()) as FleetQueueV1;
       if (signal?.aborted) return;
-      if (lane === undefined) console.log(seen.has('--json') ? JSON.stringify(state) : formatParked(state));
+      if (lane === undefined) emit(state, formatParked);
       else {
         const filtered = { ...state, byLane: state.byLane.filter(row => row.lane === lane),
           groups: state.groups.filter(row => row.lane === lane), skips: [],
           laneFilter: { lane: sanitizePublicJson(lane), global: ['sources', 'total', 'ready', 'parked', 'malformed', 'skipsLast24h'], omitted: ['skips'] } };
-        console.log(seen.has('--json') ? JSON.stringify(filtered) : `Lane filter: ${filtered.laneFilter.lane}; totals and source health are global; unattributed skips omitted\n${formatParked(filtered)}`);
+        emit(filtered, formatParked, `Lane filter: ${filtered.laneFilter.lane}; totals and source health are global; unattributed skips omitted\n`);
       }
     }
   };

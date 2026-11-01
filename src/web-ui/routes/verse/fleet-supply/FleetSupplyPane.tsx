@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { openDockPane } from '../dock/dock-store.js';
@@ -9,6 +10,7 @@ import { supplyLedgerQuery } from './supply-ledger-query.js';
 import { fleetSupplyQuery } from './fleet-supply-queries.js';
 import { heldUntilText } from './held-until-text.js';
 import { asRecord, HORIZON_SECONDS, laneSupply, supplyHeadline, totalShortfall, TYPICAL_RUN_SECONDS } from './supply-model.js';
+import { wasteForecast, wasteHeadline } from './waste-forecast-model.js';
 import styles from './fleet-supply.module.css';
 
 export function FleetSupplyPane({ visible }: PaneProps) {
@@ -32,6 +34,12 @@ export function FleetSupplyPane({ visible }: PaneProps) {
     return entry ? [[row.lane, entry] as const] : [];
   }));
   const soonest = soonestExhaustion(visibleExhaustion);
+  const now = Date.now();
+  const forecasts = (ledger.data?.lanes ?? []).flatMap(lane => {
+    const forecast = wasteForecast(lane, now);
+    return forecast ? [forecast] : [];
+  }).sort((a, b) => b.unusedPct - a.unusedPct);
+  const waste = wasteHeadline(forecasts);
   const unreadable = asRecord(data.sources).runsDir !== 'healthy' || data.drop === null;
   const claudeLane = typeof data.claudeLane === 'string' && /down/i.test(data.claudeLane) ? data.claudeLane : null;
   return <section className={styles.root} aria-label="Fleet supply">
@@ -51,6 +59,12 @@ export function FleetSupplyPane({ visible }: PaneProps) {
       </table>
     </div>
     {rows.length === 0 && <p className={styles.message}>No lane readings yet.</p>}
+    {waste && <section className={styles.waste} aria-label="Waste forecast">
+      <h3 className={styles.wasteHeadline}>{waste}</h3>
+      <ul className={styles.wasteList}>{forecasts.map(forecast => <li key={forecast.lane} data-tone={forecast.tone}>
+        <StatusBadge status={forecast.tone} tone={forecast.tone === 'bad' ? 'danger' : forecast.tone === 'warn' ? 'warning' : 'success'}>{forecast.tone === 'bad' ? 'High' : forecast.tone === 'warn' ? 'Watch' : 'On track'}</StatusBadge> {forecast.text}
+      </li>)}</ul>
+    </section>}
     <p className={styles.footer}>Next {HORIZON_SECONDS / 60} min · assumes ~{TYPICAL_RUN_SECONDS / 60} min per job. Waiting = pending files + queued jobs.</p>
   </section>;
 }

@@ -1,2 +1,14 @@
 .pane { height: 100%; min-width: 0; box-sizing: border-box; overflow: auto; padding: var(--space-4); color: var(--text-primary); }
 .summary { margin-bottom: var(--space-3); color: var(--text-tertiary); font-size: var(--text-xs-size); }
+.live { margin-top: var(--space-4); font-size: var(--text-xs-size); }
+.live h2 { font-size: inherit; color: var(--text-primary); }
+.live p { color: var(--text-tertiary); }
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) 0; color: inherit; font: inherit; text-align: left; }
+button.row { border: 0; background: transparent; cursor: pointer; }
+button.row:hover, button.row:focus-visible { text-decoration: underline; }
+.chip { border: 1px solid currentColor; border-radius: 999px; padding: 1px 6px; }
+.ok { color: var(--status-success-fg); }
+.warn { color: var(--status-warning-fg); }
+.bad { color: var(--status-danger-fg); }
+.neutral { color: var(--text-tertiary); }
