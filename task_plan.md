@@ -21,3 +21,9 @@ Implement and verify per-pool concurrency floors and ceilings, leaving changes u
 
 ## Status
 Blocked on explicit Tier-1 exception. Baseline 140 tests, typecheck, lint (206 existing warnings), and documentation checks pass after dependency repair. Implementation and acceptance remain incomplete. See BRIDGE_NOTES.md.
+
+# RQ-PHX-RESETWINDOWPLAN31
+- [x] Inspect origin/master and existing ledger/subscription reader.
+- [x] Implement advisory planner, CLI and regression coverage.
+- [x] Acceptance: 14 tests passed; targeted ESLint, docs and CLI help passed.
+- [x] Record full-check limits and finalize bridge notes: full lint/typecheck terminated after prolonged silence under host load above 100; no full-green claim.

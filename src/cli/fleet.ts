@@ -2516,6 +2516,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 
 export async function cmdFleet(args: string[]): Promise<number> {
   if (args[0] === 'bet-trace') return (await import('./fleet-bet-trace.js')).cmdFleetBetTrace(args.slice(1));
+  if (args[0] === 'window-plan') return (await import('./fleet-window-plan.js')).cmdFleetWindowPlan(args.slice(1));
   if (args[0] === 'lane-truth') return (await import('./fleet-lane-truth.js')).cmdFleetLaneTruth(args.slice(1));
   if (args[0] === 'meter-drop') return (await import('./fleet-meter-drop.js')).cmdFleetMeterDrop(args.slice(1));
   if (args[0] === 'merge-throughput') {
@@ -2656,6 +2657,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);
+  console.log(`    ashlr fleet window-plan [--json]`);
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
