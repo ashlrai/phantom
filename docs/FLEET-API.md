@@ -68,6 +68,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/live/queue` | limit | [FleetQueueV1](../src/core/fleet/runs-parked-queue.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/queue'` |
 | GET | `/api/verse/fleet/live/feedback` | none | [ExecutionFeedbackRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback'` |
 | GET | `/api/verse/fleet/live/feedback/cases/` (EXECUTION_FEEDBACK_CASE_PATH) + {caseId} | none | [ExecutionFeedbackCaseRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback/cases/example-case'` |
+| GET | `/api/verse/fleet/graph/live` | none | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
 
 ## Ops
 
