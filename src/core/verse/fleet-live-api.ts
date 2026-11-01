@@ -175,6 +175,8 @@ export interface FleetLiveDeps {
    * incrementally off the loop ({@link DispatchTail.started}).
    */
   dispatchStarts(sinceMs: number): Promise<Map<string, number> | null>;
+  /** GET /live/outside-prs reader. Default: fleet/outside-prs.ts `listOutsidePrs()`. */
+  outsidePrs?(): Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1854,6 +1856,30 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
     const { readFleetQueue } = await import('../fleet/runs-parked-queue.js');
     const { sanitizePublicJson } = await import('../util/public-json.js');
     sendJson(res, 200, sanitizePublicJson(await readFleetQueue({ limit })));
+    return true;
+  }
+  if (path === '/api/verse/fleet/live/outside-prs') {
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' });
+      return true;
+    }
+    try {
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      for (const key of params.keys()) {
+        sendInvalid(res, `unknown query parameter: ${key}`);
+        return true;
+      }
+    } catch {
+      sendInvalid(res, 'invalid query string');
+      return true;
+    }
+    try {
+      const read = deps.outsidePrs ?? (async () => (await import('../fleet/outside-prs.js')).listOutsidePrs());
+      const { sanitizePublicJson } = await import('../util/public-json.js');
+      sendJson(res, 200, sanitizePublicJson(await read()));
+    } catch {
+      sendJson(res, 500, { error: 'outside prs request failed' });
+    }
     return true;
   }
   if (path !== VERSE_FLEET_LIVE_PATH) return false;
