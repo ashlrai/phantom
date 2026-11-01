@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { parseLeaderNotes, readLeaderJournal } from './leader-journal.js';
+import { parseLeaderNotes, readLeaderJournal } from '../src/core/fleet/leader-journal.js';
 
 const fixture = `## Job file
 - Ignore this job.
