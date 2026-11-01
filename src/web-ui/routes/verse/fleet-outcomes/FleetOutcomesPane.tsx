@@ -6,11 +6,14 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { ExecutionFeedbackOutcome } from '../../../../core/fleet/execution-feedback-types.js';
 import { formatRelative } from '../autonomy/format.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
+import { fleetSteeringQuery } from '../fleet-steering/fleet-steering-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { filterCases, outcomeChips, readCase, readOutcomes, wasteLine, wasteSummary, type OutcomesView } from './fleet-outcomes-model.js';
+import { filterCases, outcomeChips, readCase, readOutcomes, recutPrefill, wasteLine, wasteSummary, type OutcomesView } from './fleet-outcomes-model.js';
 import { outcomeCaseQuery, outcomesQuery } from './fleet-outcomes-queries.js';
+import { mergeWaitHref, mergeWaits, mergeWaitSummary, waitDuration } from './merge-wait-model.js';
 import styles from './fleet-outcomes.module.css';
 
 // The server refreshes its own feedback reading every 30 s; polling faster
@@ -63,6 +66,31 @@ function CaseTimeline({ caseId, visible, onClose }: { caseId: string; visible: b
   </section>;
 }
 
+function MergeWaitSection({ visible }: { visible: boolean }) {
+  const runs = useQuery(fleetSteeringQuery, { enabled: visible });
+  const refetch = useRefetch(fleetSteeringQuery);
+  usePollWhileVisible(refetch, POLL_MS, { enabled: visible });
+  const rows = mergeWaits(runs.data, Date.now());
+  const summary = mergeWaitSummary(rows);
+  return <section aria-label="Merge wait (last hour)">
+    <h3 className={styles.heading}>Merge wait (last hour)</h3>
+    {runs.data == null ? <p className={styles.message}>{runs.status === 'error' || runs.data === null ? 'Merge wait is unavailable.' : 'Reading merge wait…'}</p>
+      : <>
+        {runs.status === 'error' && <p className={styles.notice} role="status">Merge wait could not refresh. Showing the last reading.</p>}
+        <p className={styles.header}>{summary.merged} merged, median {summary.medianMergedMs === null ? '—' : waitDuration(summary.medianMergedMs)} · {summary.waiting} waiting, oldest {summary.oldestWaitingMs === null ? '—' : waitDuration(summary.oldestWaitingMs)}</p>
+        {rows.length === 0 ? <p className={styles.message}>No publishes in the last hour.</p>
+          : <ul className={styles.list} aria-label="Merge waits">{rows.map((row, index) => {
+            const href = mergeWaitHref(runs.data, row);
+            return <li className={styles.row} key={`${row.job}:${row.repo}:${row.number}:${index}`}>
+              <span>{row.job}</span>{' '}<span className={styles.dim}>{row.lane ?? 'lane unknown'}</span>{' '}
+              {href ? <><a href={href} target="_blank" rel="noopener noreferrer">#{row.number}</a>{' '}</> : null}
+              <span className={styles.waste} data-tone={row.state === 'waiting' && row.waitMs !== null && row.waitMs > 3_600_000 ? 'bad' : 'neutral'}>{row.text}</span>
+            </li>;
+          })}</ul>}
+      </>}
+  </section>;
+}
+
 export function FleetOutcomesPane({ visible, host }: PaneProps) {
   const read = useQuery(outcomesQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(outcomesQuery);
@@ -98,14 +126,16 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
           categories={['Window']} height={160}
           segments={data.mix.map(row => ({ id: row.outcome, label: row.label, color: toneColor(OUTCOME_TONE[row.outcome]) }))}
           values={[data.mix.map(row => row.total ?? row.observed)]} />}
+    <MergeWaitSection visible={visible} />
     <section>
       <div className={styles.filters} role="radiogroup" aria-label="Filter cases">
         {chips.map(item => <button key={item.outcome} type="button" role="radio" aria-checked={item.outcome === chip.outcome} onClick={() => setOutcome(item.outcome)}>{item.label} {item.count}</button>)}
       </div>
       <h3 className={styles.heading}>Cases</h3>
       {cases.length === 0 ? <p className={styles.message}>{data.cases.length === 0 ? 'No cases recorded in the window.' : `No ${chip.label.toLowerCase()} cases in the window.`}</p>
-        : <ul className={styles.list} aria-label="Cases">{cases.map(item =>
-          <li key={item.caseId}>
+        : <ul className={styles.list} aria-label="Cases">{cases.map(item => {
+          const prefill = recutPrefill(item);
+          return <li key={item.caseId}>
             <button type="button" className={styles.caseRow} title={item.caseId} aria-pressed={selectedCaseId === item.caseId}
               onClick={() => setSelectedCaseId(item.caseId)}>
               <span>{item.label}</span>
@@ -119,7 +149,10 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
               requestWorkerLogJob(item.jobId!);
               host.openPane('worker-log');
             }}>Open worker log</Button> : null}
-          </li>)}</ul>}
+            {prefill !== null ? <Button size="sm" variant="subtle" aria-label={`Order recut of ${item.jobId}`}
+              onClick={() => openInterjectDialog({ prefill })}>Order recut</Button> : null}
+          </li>;
+        })}</ul>}
     </section>
     {selectedCaseId ? <CaseTimeline caseId={selectedCaseId} visible={visible} onClose={() => setSelectedCaseId(null)} /> : null}
   </section>;

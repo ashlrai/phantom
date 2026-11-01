@@ -33,7 +33,7 @@ it('shows live rows worst first and opens usage for a seat', async () => {
   expect(within(rows[1]!).getByText('unmeasured')).toBeInTheDocument();
   expect(within(rows[1]!).getByText('reset unknown')).toBeInTheDocument();
   expect(within(rows[1]!).getByText('no dated reading')).toBeInTheDocument();
-  fireEvent.click(within(rows[0]!).getByRole('button'));
+  fireEvent.click(within(rows[0]!).getByRole('button', { name: /seat-fake exhausted/ }));
   expect(openDockPane).toHaveBeenCalledWith('fleet-usage');
 });
 

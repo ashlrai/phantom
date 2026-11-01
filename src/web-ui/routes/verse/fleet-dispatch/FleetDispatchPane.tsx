@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Button, SkeletonLine, StatusBadge } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
+import { getQuerySnapshot, subscribeQuery, type QueryEntry } from '../../../data/cache.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { NoFleetNotice } from '../fleet/NoFleetNotice.js';
 import { requestLaneFocus } from '../fleet-lanes/lane-focus-request.js';
@@ -11,20 +12,39 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { dispatchTellKinds, dispatchTellPrefill } from './dispatch-tell.js';
 import { readDispatch } from './fleet-dispatch-model.js';
 import { fleetDispatchQuery } from './fleet-dispatch-queries.js';
+import { plannerLine } from './planner-plan-model.js';
+import { plannerPlanQuery, type PlannerPlanView } from './planner-plan-queries.js';
 import styles from './fleet-dispatch.module.css';
+
+const PLANNER_IDLE: QueryEntry<PlannerPlanView | null> = { data: undefined, error: undefined, status: 'idle', updatedAt: null };
 
 export function FleetDispatchPane({ visible, host, roots }: PaneProps) {
   const read = useQuery(fleetDispatchQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(fleetDispatchQuery);
+  const refetchPlan = useRefetch(plannerPlanQuery);
+  // The planner read is slower than the lane poll: the lane poll stays 10 s,
+  // this subscribes without a mount fetch and re-reads every 30 s plus on
+  // show. A pane mounted already visible (the usual case) still fetches at
+  // once; a pane mounted hidden costs nothing until it is shown.
+  const mountedVisible = useRef(visible);
+  useEffect(() => { if (mountedVisible.current) refetchPlan(); }, [refetchPlan]);
+  usePollWhileVisible(refetchPlan, 30_000, { enabled: visible });
+  const plan = useSyncExternalStore(
+    useCallback(listener => (visible ? subscribeQuery(plannerPlanQuery.key, listener) : () => {}), [visible]),
+    () => (visible ? getQuerySnapshot<PlannerPlanView | null>(plannerPlanQuery.key) : PLANNER_IDLE),
+    () => PLANNER_IDLE,
+  );
   const [, setTick] = useState(0);
-  const poll = useCallback(() => { setTick(tick => tick + 1); return refetch(); }, [refetch]);
+  const poll = useCallback(() => { setTick(tick => tick + 1); refetch(); }, [refetch]);
   usePollWhileVisible(poll, 10_000, { enabled: visible });
   const nowMs = Date.now();
   const data = readDispatch(read.data, nowMs);
+  const planner = plannerLine(plan.data, nowMs);
   if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <p className={styles.message}>Live runs not in this build</p>;
   if (read.data === undefined) return <div className={styles.root} role="status">{read.status === 'error' ? 'Live runs are unavailable.' : <><span>Reading live runs…</span><SkeletonLine /><SkeletonLine /></>}</div>;
   if (!data) return <p className={styles.message} role="status">Live runs are unavailable.</p>;
   return <section className={styles.root} aria-label="Dispatch">
+    {planner && <p className={styles.planner} data-tone={planner.tone} role={planner.tone === 'bad' ? 'alert' : 'status'}>{planner.text}</p>}
     <p className={styles.header}>{data.supply.freeSlots} free slots · {data.supply.queued} queued · {data.supply.text}</p>
     {isNoFleet(data.sourceState) ? <NoFleetNotice /> : data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Dispatch data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}

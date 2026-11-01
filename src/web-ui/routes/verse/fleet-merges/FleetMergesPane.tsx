@@ -5,13 +5,15 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { safeHref } from '../cloud/cloud-model.js';
 import { JobRefs } from '../fleet/JobRefs.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { readMerges, readOutsidePrs } from './fleet-merges-model.js';
+import { openToMergeText, readMerges, readMergeSpeed, readOutsidePrs } from './fleet-merges-model.js';
 import { fleetMergesQuery, outsidePrsQuery } from './fleet-merges-queries.js';
 import { mergesMarkdown } from './merges-markdown.js';
+import { collisionHeadline, collisionSteerPrefill, orderOutsidePrs } from './outside-collision-model.js';
 import { recordMergeSample, summariseMerges, useMergeHistory } from './merges-history-store.js';
 import { ReleaseStrip } from './ReleaseStrip.js';
 import styles from './fleet-merges.module.css';
@@ -23,6 +25,7 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
   const refetchOutside = useRefetch(outsidePrsQuery);
   usePollWhileVisible(() => { refetch(); refetchOutside(); }, 10_000, { enabled: visible });
   const data = useMemo(() => readMerges(read.data), [read.data]);
+  const speed = useMemo(() => readMergeSpeed(read.data), [read.data]);
   const outsideData = useMemo(() => readOutsidePrs(outside.data), [outside.data]);
   const history = useMergeHistory();
   const trend = summariseMerges(history, Date.now());
@@ -48,6 +51,7 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
   return <section className={styles.root} aria-label="Merges">
     <ReleaseStrip visible={visible} />
     <div className={styles.headerActions}><p className={styles.header}>{data.count ?? '—'} merged in the last hour · {data.pending.length} publishes waiting</p>
+      <p className={styles.header}>{speed.medianOpenToMergeMs === null && speed.perHour === null ? 'no timing in this snapshot yet' : [speed.medianOpenToMergeMs === null ? null : `median ${openToMergeText(speed.medianOpenToMergeMs)}`, speed.perHour === null ? null : `${speed.perHour}/h`].filter(Boolean).join(' · ')}</p>
       <Button size="sm" variant="subtle" aria-label="Copy merges as Markdown" disabled={!data.merged.length && !data.pending.length} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span></div>
     {trend && <p role="img" aria-label={`Merged per hour trend: ${trend.first} then ${trend.last} over ${trend.spanMinutes} minutes`}>{trend.spark} {trend.first} → {trend.last} merged/h over the last {trend.spanMinutes} min</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Merge data may be incomplete.</p>}
@@ -57,7 +61,7 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
         const href = safeHref(item.href, 'github.com');
         const at = item.at, valid = typeof at === 'string' && Number.isFinite(Date.parse(at));
         const jobId = item.job, showJob = jobId !== null && !item.title.includes(jobId);
-        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span> <span>· {showJob && <><code>{jobId}</code> · </>}{item.lane ?? '—'} · {valid ? <time dateTime={at} title={new Date(at).toLocaleString()}>{formatRelative(at)}</time> : 'time unknown'}</span></li>;
+        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span> <span>· {showJob && <><code>{jobId}</code> · </>}{item.lane ?? '—'} · {valid ? <time dateTime={at} title={new Date(at).toLocaleString()}>{formatRelative(at)}</time> : 'time unknown'}</span> <span className={styles.mergeSpeed}>· {item.openToMergeMs === null ? 'merged' : `open → merge ${openToMergeText(item.openToMergeMs)}`}</span></li>;
       })}</ul>}
     </section>
     <section><h3 className={styles.heading}>Publishes waiting</h3>
@@ -69,17 +73,18 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     {outside.data != null && <section>
       <details open>
         <summary className={styles.heading}>Outside PRs</summary>
+        <p>{collisionHeadline(outsideData.prs, outsideData.sourceState)}</p>
         {outsideData.sourceState === 'missing' ? <p className={styles.message}>Outside PR check unavailable (gh missing).</p> : <>
           {outsideData.sourceState === 'degraded' && <p className={styles.notice} role="status">Outside PR data may be incomplete.</p>}
           {outsideData.prs.length === 0 ? <p className={styles.message}>No outside open PRs on fleet repos.</p> :
-            <ul className={styles.list} aria-label="Outside PRs">{outsideData.prs.map((item, index) => {
+            <ul className={styles.list} aria-label="Outside PRs">{orderOutsidePrs(outsideData.prs).map((item, index) => {
               const href = safeHref(`https://github.com/${item.repo}/pull/${item.number}`, 'github.com');
               const valid = item.at !== null && Number.isFinite(Date.parse(item.at));
               return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>
                 {href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>}
                 {' '}<span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span>
                 {' '}<span>· {item.author} · {valid ? <time dateTime={item.at!} title={new Date(item.at!).toLocaleString()}>{formatRelative(item.at)}</time> : 'age unknown'}</span>
-                {item.overlaps.map(overlap => JOB_ID_RE.test(overlap.job) && <Button key={overlap.job} size="sm" variant="subtle" title={`Overlaps ${overlap.paths.slice(0, 5).join(', ')}`} aria-label={`collides with ${overlap.job} — open job log`} onClick={() => { requestWorkerLogJob(overlap.job); host.openPane('worker-log'); }}>collides with {overlap.job}</Button>)}
+                {item.overlaps.map((overlap, overlapIndex) => <span key={`${overlap.job}:${overlapIndex}`}>{JOB_ID_RE.test(overlap.job) && <Button size="sm" variant="subtle" title={`Overlaps ${overlap.paths.slice(0, 5).join(', ')}`} aria-label={`collides with ${overlap.job} — open job log`} onClick={() => { requestWorkerLogJob(overlap.job); host.openPane('worker-log'); }}>collides with {overlap.job}</Button>} <Button size="sm" variant="subtle" aria-label={`Steer ${overlap.job} about PR #${item.number}`} onClick={() => openInterjectDialog({ prefill: collisionSteerPrefill(item, overlap) })}>Steer {overlap.job}</Button></span>)}
               </li>;
             })}</ul>}
         </>}

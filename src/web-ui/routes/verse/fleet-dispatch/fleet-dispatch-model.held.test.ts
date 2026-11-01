@@ -3,7 +3,7 @@ import { fleetRunsFixture, withLane } from '../fleet/fleet-runs-fixtures.test-su
 import { heldHeadline, laneVerdict } from './fleet-dispatch-model.js';
 
 const nowMs = Date.parse('2026-10-31T13:22:00Z');
-const ctx = { nowMs, lastTickAgeMs: 0, paused: false, claudeLane: null };
+const ctx = { nowMs, lastTickAgeMs: 0, paused: false, claudeLane: null, youngestWorkerAgeMs: new Map<string, number>() };
 const heldLane = (heldReason: string | null) =>
   withLane(fleetRunsFixture(), { lane: 'codex-personal', held: true, heldReason }).lanes[0]!;
 

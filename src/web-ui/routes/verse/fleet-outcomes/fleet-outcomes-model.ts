@@ -77,6 +77,17 @@ export interface WasteSummary {
   byLane: Array<{ lane: string; wasted: number }>;
 }
 
+export function isWasteCase(row: OutcomeCaseRow): boolean {
+  return WASTE_OUTCOMES.some(outcome => outcome === row.outcome);
+}
+
+export function recutPrefill(row: OutcomeCaseRow): string | null {
+  if (!isWasteCase(row) || !row.jobId) return null;
+  const prNumber = row.prLink?.url.match(/\/pull\/(\d+)/)?.[1];
+  const order = `Recut ${row.jobId} (${row.lane || 'lane unknown'}): ${row.failureKind || outcomeLabel(row.outcome)} — ${row.label}. PR ${row.prLink?.label || 'none'}.`;
+  return prNumber ? `${order} Inherit with git fetch origin pull/${prNumber}/head.` : order;
+}
+
 export function wasteSummary(cases: OutcomeCaseRow[], nowMs: number): WasteSummary {
   const hasEndTime = cases.some(item => item.endedAt !== null);
   const finishedCases = hasEndTime ? cases.filter(item => {
@@ -86,7 +97,7 @@ export function wasteSummary(cases: OutcomeCaseRow[], nowMs: number): WasteSumma
   const byOutcome: Record<string, number> = {};
   const lanes = new Map<string, number>();
   for (const item of finishedCases) {
-    if (!WASTE_OUTCOMES.some(outcome => outcome === item.outcome)) continue;
+    if (!isWasteCase(item)) continue;
     byOutcome[item.outcome] = (byOutcome[item.outcome] ?? 0) + 1;
     const lane = item.lane || (item.producer ? `producer ${item.producer}` : 'unrecorded');
     lanes.set(lane, (lanes.get(lane) ?? 0) + 1);
