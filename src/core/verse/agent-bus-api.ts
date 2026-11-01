@@ -13,6 +13,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
@@ -21,10 +22,12 @@ export interface AgentBusApiDeps {
   append?: typeof appendBusInbox;
   list?: typeof listBusInboxAfter;
   inspect?: typeof inspectBusInbox;
+  startMirror?: () => void;
 }
 
 /** Dependencies permit isolated store tests; the public handler uses the default store. */
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
+  let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
     if (path !== PATH && path !== `${PATH}/status`) return false;
     if (method !== 'GET' && !(method === 'POST' && path === PATH)) {
@@ -46,8 +49,14 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     }
     try {
       if (method === 'GET' && path === `${PATH}/status`) {
+        if (ctx.allowDispatch && !mirrorStarted) {
+          mirrorStarted = true;
+          try { (deps.startMirror ?? startBusMirrorLoop)(); }
+          catch { /* a failing mirror must never break the status read */ }
+        }
         const result = (deps.inspect ?? inspectBusInbox)();
-        sendJson(res, result.source === 'unavailable' ? 503 : 200, { v: 1, ...result });
+        sendJson(res, result.source === 'unavailable' ? 503 : 200,
+          { v: 1, ...result, mirror: getBusMirrorState() });
       } else if (method === 'GET') {
         const after = params.get('after') ?? '0', limit = params.get('limit') ?? '50';
         if (![after, limit].every(value => /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value))) ||
