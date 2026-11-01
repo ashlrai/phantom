@@ -227,6 +227,15 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
                 setVerseSection('chat');
                 openDockPane('fleet-merges');
               }}>Open Merges</Button>}
+              {item.id === 'claude-lane-down' && destination?.kind === 'terminal' && <Button size="sm" onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(destination.command);
+                  setClipboard(previous => ({ ...previous, [item.id]: 'copied' }));
+                } catch {
+                  setClipboard(previous => ({ ...previous, [item.id]: 'failed' }));
+                }
+              }}>{clipboard[item.id] === 'copied' ? 'Copied' : 'Copy'}</Button>}
+              {item.id === 'claude-lane-down' && destination?.kind === 'terminal' && <code>{destination.command}</code>}
               <Button size="sm" variant="subtle" aria-label={label} onClick={open}>
                 {label}
               </Button>
