@@ -1,0 +1,8 @@
+cff-version: "1.2.0"
+title: "Phantom"
+message: "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets."
+type: software
+authors:
+  - name: Ashlr.AI
+repository-code: https://github.com/ashlrai/phantom
+license: MIT
