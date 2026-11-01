@@ -121,6 +121,13 @@ export function pinRemoteInboxBody(path: string, parsed: unknown, raw: string): 
   if (path !== REMOTE_INBOX_PATH || !object(parsed) || typeof parsed.text !== 'string') return raw;
   return JSON.stringify({ text: parsed.text, source: 'Phantom mobile' });
 }
+// The paired-phone assertion itself rides an internal header this listener
+// stamps on every forwarded inbox POST. Client headers are never forwarded —
+// forwardMutation builds the upstream header set — so a remote client cannot
+// mint the mobile channel through the gateway.
+function remoteChannelHeaders(target: string): Record<string, string> {
+  return target === REMOTE_INBOX_PATH ? { 'x-ashlr-channel': 'mobile' } : {};
+}
 function staticPath(path: string): boolean {
   return path === '/verse/m' || path === '/verse/m/' || path === '/verse/m/sw.js'
     || /^\/next\/assets\/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8}\.(?:js|css|svg|png|webp|woff2?)$/.test(path)
@@ -219,7 +226,8 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
     if (!options.hub.mutationToken) return null;
     try {
       const response = await fetch(`${hubOrigin}${target}`, { method, redirect: 'manual',
-        headers: { 'Content-Type': 'application/json', 'x-ashlr-token': options.hub.mutationToken, ...extraHeaders },
+        headers: { 'Content-Type': 'application/json', 'x-ashlr-token': options.hub.mutationToken,
+          ...extraHeaders, ...remoteChannelHeaders(target) },
         body: method === 'DELETE' && body === '' ? undefined : body, signal: AbortSignal.timeout(30_000) });
       if (response.status >= 300 && response.status < 400) return null;
       if (response.status === 204) return { status: 204, body: '' };
