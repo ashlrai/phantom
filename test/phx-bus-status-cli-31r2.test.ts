@@ -52,7 +52,7 @@ it('reports exact retained metadata without exposing bodies or changing records 
     retainedCount: 2, retainedBytes: before.length });
 });
 
-it('shows a full retained store even when all records are expired', async () => {
+it('shows a full retained store of expired records until a post reclaims it', async () => {
   const root = setup(), directory = join(root, 'bus-inbox');
   mkdirSync(directory, { mode: 0o700 });
   const rows = Array.from({ length: BUS_INBOX_MAX_MESSAGES }, (_, i) => ({
@@ -64,8 +64,11 @@ it('shows a full retained store even when all records are expired', async () => 
   expect(await cmdCommsBus(['status'], { root, now: () => 1 })).toBe(0);
   expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual({ source: 'available', ...unknown,
     retainedCount: BUS_INBOX_MAX_MESSAGES, retainedBytes: Buffer.byteLength(text), liveCount: 0, expiredCount: BUS_INBOX_MAX_MESSAGES });
-  expect(appendBusInbox(message('fake-extra', 1), { root, now: () => 1 }).status).toBe('full');
-  expect(readFileSync(file, 'utf8')).toBe(text);
+  // Expired rows are reclaimed by the next post, which keeps the cursor going.
+  expect(appendBusInbox(message('fake-extra', 1), { root, now: () => 1 }).status).toBe('posted');
+  const reclaimed = JSON.parse(readFileSync(file, 'utf8')) as { highWater: number; rows: unknown[] };
+  expect(reclaimed.highWater).toBe(BUS_INBOX_MAX_MESSAGES + 1);
+  expect(reclaimed.rows).toHaveLength(1);
 });
 
 it('fails closed for corrupt and inaccessible stores without leaking or changing contents', async () => {
