@@ -91,9 +91,12 @@ describe('fleet bus-claimed-run through the exported CLI, real inbox and claim s
 
   it('keeps contenders out past the original lease while renewal holds it', async () => {
     // Lease and interval must exceed this host's claim-mutation latency for
-    // renewals to land inside their window; only renewal keeps the contender out.
-    const running = run({ leaseMs: 9000, argv: worker(0, 12000) });
-    await delay(10500); // beyond the first 9000ms lease window: only renewals can fence a takeover
+    // renewals to land inside their window; only renewal keeps the contender
+    // out. A mutation is a small JSON write (~ms), and renewal fires every
+    // leaseMs/3, so a 3s lease still leaves ~2s of slack per renewal window —
+    // no need for the original 9s window.
+    const running = run({ leaseMs: 3000, argv: worker(0, 4200) });
+    await delay(3600); // beyond the first 3000ms lease window: only renewals can fence a takeover
     const contender = await run({ replyId: 'reply-2', argv: worker(0) });
     expect(contender).toMatchObject({ code: 1, claim: { status: 'conflict' }, workerExit: { status: 'not-started' } });
     expect(await running).toMatchObject({ code: 0, claim: { status: 'completed' } });
