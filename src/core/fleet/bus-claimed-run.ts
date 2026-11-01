@@ -5,12 +5,13 @@
  * authority — the literal argv is the action boundary, message contents are
  * untrusted data, and routing labels authenticate nobody.
  *
- * Ownership loss cannot undo an already-running child: once renewal or
- * settlement stops proving the lease, this module freezes the claim (never
+ * Ownership loss cannot undo work an already-running child performed, but it
+ * stops the child promptly: once renewal or settlement stops proving the
+ * lease, this module aborts the runner's signal, freezes the claim (never
  * completing, never releasing a successor owner's row) and reports the loss
- * distinctly, but the process may already have run. An AbortSignal cannot
- * reach the existing runner within this file's blast radius, so nothing here
- * implies exactly-once external effects.
+ * distinctly. Prompt termination bounds further work yet cannot retract
+ * external effects already made, so nothing here implies exactly-once
+ * external effects.
  */
 import { dirname, isAbsolute } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
@@ -30,7 +31,8 @@ export interface BusClaimedRunOptions extends ContextWorkerOptions {
 export interface BusClaimedRunClaim {
   /** Terminal store status, refusal, 'invalid' input, or 'ownership-lost'. */
   status: string;
-  /** The store status that proved ownership loss, when status is 'ownership-lost'. */
+  /** The store status that proved ownership loss — or 'expired' when retryable
+   * refusals outlived the last confirmed lease horizon. */
   detail?: string;
   /** Last lease horizon the store confirmed, for observability only. */
   leaseUntil?: number;
@@ -57,7 +59,8 @@ export async function runBusClaimedWork(opts: BusClaimedRunOptions, io: ContextW
   // literal argv, a bounded stable request envelope, and a distinct valid reply id.
   if (!isAbsolute(opts.snapshot) || !isAbsolute(opts.prompt) || !isAbsolute(opts.requestFile) ||
       [opts.snapshot, opts.prompt, opts.requestFile].some(path => path.includes('\0')) ||
-      !opts.argv.length || opts.argv.some(arg => typeof arg !== 'string' || arg.includes('\0')) || !opts.argv[0]) return invalid();
+      !opts.argv.length || opts.argv.some(arg => typeof arg !== 'string' || arg.includes('\0')) || !opts.argv[0] ||
+      (opts.signal !== undefined && !(opts.signal instanceof AbortSignal))) return invalid();
   let requestId: string;
   try {
     const read = readStableRegularFile(opts.requestFile, { anchorPath: dirname(opts.requestFile),
@@ -79,22 +82,31 @@ export async function runBusClaimedWork(opts: BusClaimedRunOptions, io: ContextW
   let leaseUntil = acquired.leaseUntil;
 
   // Renew on a bounded interval while the child runs. Only a proven renewal or
-  // a transient lock refusal keeps the lease alive; anything else freezes it.
+  // a transient lock refusal keeps the lease alive; anything else freezes it
+  // and aborts the child so no worker keeps acting under a successor's claim.
+  // A caller-supplied signal is composed in rather than silently dropped.
   let lost: string | undefined;
+  const controller = new AbortController();
+  const signal = opts.signal === undefined ? controller.signal
+    : AbortSignal.any([controller.signal, opts.signal]);
   const timer = setInterval(() => {
     const renew = mutateBusWorkClaim({ action: 'renew', id: requestId, token, root });
     if (renew.status === 'renewed') {
       if (renew.leaseUntil !== undefined) leaseUntil = renew.leaseUntil;
-    } else if (renew.status !== 'retryable') {
-      lost ??= renew.status;
-      clearInterval(timer);
+      return;
     }
+    // A refused renewal is survivable only while the last confirmed horizon
+    // still holds; past it the lease is dead whatever the store would answer.
+    if (renew.status === 'retryable' && Date.now() < leaseUntil) return;
+    lost ??= renew.status === 'retryable' ? 'expired' : renew.status;
+    clearInterval(timer);
+    controller.abort();
   }, Math.max(1, Math.floor(opts.leaseMs / 3)));
   timer.unref();
 
   let result: ContextReplyResult;
   try {
-    result = await runContextReply(opts, io, bus);
+    result = await runContextReply({ ...opts, signal }, io, bus);
   } catch {
     result = { workerExit: notStarted, replyReceipt: { status: 'unavailable' }, exitCode: 1, reply: null };
   } finally {
