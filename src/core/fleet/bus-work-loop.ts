@@ -1,6 +1,6 @@
 /** Explicit argv authorizes execution; bus addresses and bodies do not. */
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -12,8 +12,15 @@ import type { ContextWorkerOptions } from './context-worker-run.js';
 export interface BusWorkLoopOptions extends BusWaitClaimRequest, ContextWorkerOptions { maxJobs: number }
 export interface BusWorkLoopResult { status: 'invalid' | 'timeout' | 'cancelled' | 'max-jobs' | 'failed'; completed: number }
 
+function validCwd(cwd: unknown): boolean {
+  if (cwd === undefined) return true;
+  if (typeof cwd !== 'string' || !cwd || cwd.includes('\0') || !isAbsolute(cwd)) return false;
+  try { return statSync(cwd).isDirectory(); } catch { return false; }
+}
+
 export function validBusWorkLoopOptions(opts: BusWorkLoopOptions): boolean {
   return validBusWaitClaimRequest(opts) && Number.isSafeInteger(opts.maxJobs) && opts.maxJobs >= 1 && opts.maxJobs <= 16 &&
+    validCwd(opts.cwd) &&
     (opts.timeoutMs === undefined || (Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 1 && opts.timeoutMs <= 3600000)) &&
     [opts.snapshot, opts.prompt].every(p => typeof p === 'string' && isAbsolute(p) && !p.includes('\0')) &&
     Array.isArray(opts.argv) && opts.argv.length > 0 && !!opts.argv[0] &&
@@ -60,6 +67,7 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
         // The child may echo its input or emit arbitrary text; discard both streams.
         const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
         const result = await runContextReply({ snapshot: opts.snapshot, prompt: opts.prompt, argv: opts.argv, requestFile, replyId,
+          ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
           ...(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }) },
           { stdout: sink, stderr: sink }, { root });
         succeeded = result.workerExit.status === 'returned' && result.workerExit.exitCode === 0 &&
