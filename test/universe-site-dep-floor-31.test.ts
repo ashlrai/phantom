@@ -15,6 +15,7 @@
  *     GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26, GHSA-2m5v-pch6-74hx,
  *     GHSA-qrxm-fqhp-jwvm, GHSA-9fm3-97px-rjf6, GHSA-55wc-3pg8-jfw6 —
  *     all range <7.30.1)
+ *   vite >= 8.2.4                 (Dependabot alert 72, high; range <8.2.4)
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -27,6 +28,7 @@ const FLOORS: ReadonlyArray<readonly [string, string]> = [
   ['body-parser', '2.4.0'],
   ['systeminformation', '5.33.16'],
   ['undici', '7.30.1'],
+  ['vite', '8.2.4'],
 ];
 
 function versionParts(version: string): number[] {
