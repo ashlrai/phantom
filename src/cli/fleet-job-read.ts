@@ -15,7 +15,7 @@ interface WatchOptions {
 }
 
 const readers: Readers = { detail: getFleetJobDetail, changes: getFleetJobChanges, text: getFleetJobText };
-const usage = 'Usage: phm fleet job <id> [--json] [--require-published | --changes | --log [--tail-lines N] [--log-find literal [--context-lines N]] | --prompt | --notes] [--watch [--interval-ms N]] [--help]';
+const usage = 'Usage: phm fleet job <id> [--json] [--require-published | --changes | --log [--tail-lines N] [--log-find literal [--context-lines N]] | --prompt | --notes] [--watch [--interval-ms N] [--timeout-ms N]] [--help]';
 const value = (v: string | number | null): string => v === null ? 'unknown' : String(v);
 
 const WATCH_INTERVAL_MIN_MS = 1000;
@@ -65,6 +65,19 @@ function waitForTick(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Stop waiting for an in-flight read or sleep when the watch ends. */
+function untilStopped<T>(promise: Promise<T>, signal: AbortSignal): Promise<{ value: T } | null> {
+  return new Promise((resolve, reject) => {
+    const stop = () => { signal.removeEventListener('abort', stop); resolve(null); };
+    promise.then(
+      value => { signal.removeEventListener('abort', stop); resolve({ value }); },
+      error => { signal.removeEventListener('abort', stop); reject(error); },
+    );
+    if (signal.aborted) { stop(); return; }
+    signal.addEventListener('abort', stop, { once: true });
+  });
+}
+
 /** Tail lines of `current` appended since `previous` was emitted (longest suffix/prefix overlap). */
 function freshTailLines(previous: string[], current: string[]): string[] {
   for (let overlap = Math.min(previous.length, current.length); overlap > 0; overlap--) {
@@ -101,6 +114,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
   let literal: string | undefined;
   let context = 0;
   let intervalMs = WATCH_INTERVAL_DEFAULT_MS;
+  let timeoutMs: number | undefined;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -110,7 +124,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
       seen.add('--log-find');
       const inline = flag.startsWith('--log-find=');
       literal = inline ? flag.slice('--log-find='.length) : args[++i];
-      if (!literal || (!inline && ['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '-h', '--tail-lines', '--log-find', '--context-lines', '--watch', '--interval-ms'].includes(literal))) return invalid();
+      if (!literal || (!inline && ['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '-h', '--tail-lines', '--log-find', '--context-lines', '--watch', '--interval-ms', '--timeout-ms'].includes(literal))) return invalid();
     } else if (flag === '--context-lines') {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
@@ -132,6 +146,13 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
       if (!count || /[^0-9]/.test(count)) return invalid();
       intervalMs = Number(count);
       if (!Number.isSafeInteger(intervalMs) || intervalMs < WATCH_INTERVAL_MIN_MS || intervalMs > WATCH_INTERVAL_MAX_MS) return invalid();
+    } else if (flag === '--timeout-ms') {
+      if (seen.has(flag)) return invalid();
+      seen.add(flag);
+      const count = args[++i];
+      if (!count || /[^0-9]/.test(count)) return invalid();
+      timeoutMs = Number(count);
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) return invalid();
     } else if (['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '--watch'].includes(flag)) {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
@@ -147,16 +168,22 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
   if (seen.has('--log-find') && !seen.has('--log')) return invalid();
   if (seen.has('--context-lines') && !seen.has('--log-find')) return invalid();
   if (seen.has('--interval-ms') && !seen.has('--watch')) return invalid();
+  if (seen.has('--timeout-ms') && !seen.has('--watch')) return invalid();
   if (seen.has('--watch') && ['--changes', '--prompt', '--notes', '--require-published'].some(flag => seen.has(flag))) return invalid();
   if (seen.has('--help')) {
-    output.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts. --tail-lines accepts 1..120 with --log. --log-find searches that tail for case-sensitive literal text; use --log-find=<literal> for a flag as the literal. --context-lines accepts 0..10 with --log-find.\n--require-published requires --json and default detail mode. It adds a published handoff evidence check for a PR URL and test line; exit 1 if either is absent. This does not verify a merge or evidence freshness.\n--watch repeats the detail or --log read every --interval-ms (1000..60000, default 5000) until SIGINT/SIGTERM or a terminal state (published, ended without publish evidence, or no live evidence for 3 consecutive snapshots), then prints one line saying why it stopped. Text snapshots are headed --- <ISO time> snapshot N --- and show only newly appended tail lines; --json emits one object per snapshot, read errors emit fleet.job.error.v1, and 5 consecutive read failures exit 1. --watch cannot combine with --changes, --prompt, --notes or --require-published.\nAgent examples: phm fleet job JOB1 --log --tail-lines 10 --json; phm fleet job JOB1 --require-published --json; phm fleet job JOB1 --watch --interval-ms 2000`);
+    output.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts. --tail-lines accepts 1..120 with --log. --log-find searches that tail for case-sensitive literal text; use --log-find=<literal> for a flag as the literal. --context-lines accepts 0..10 with --log-find.\n--require-published requires --json and default detail mode. It adds a published handoff evidence check for a PR URL and test line; exit 1 if either is absent. This does not verify a merge or evidence freshness.\n--watch repeats the detail or --log read every --interval-ms (1000..60000, default 5000) until SIGINT/SIGTERM or a terminal state (published, ended without publish evidence, or no live evidence for 3 consecutive snapshots), then prints one line saying why it stopped. --timeout-ms bounds a watch to 1..3600000 ms; expiry exits 1 without cancelling the job. Text snapshots are headed --- <ISO time> snapshot N --- and show only newly appended tail lines; --json emits one object per snapshot, read errors emit fleet.job.error.v1, and 5 consecutive read failures exit 1. --watch cannot combine with --changes, --prompt, --notes or --require-published.\nAgent examples: phm fleet job JOB1 --log --tail-lines 10 --json; phm fleet job JOB1 --require-published --json; phm fleet job JOB1 --watch --interval-ms 2000 --timeout-ms 30000 --json`);
     return 0;
   }
   if (!id) return invalid();
   if (seen.has('--watch')) {
     const controller = new AbortController();
     const signal = controller.signal;
-    const stop = () => controller.abort();
+    const deadline = timeoutMs === undefined ? undefined : performance.now() + timeoutMs;
+    let timedOut = false;
+    const expire = () => { if (!signal.aborted) { timedOut = true; controller.abort(); } };
+    const checkDeadline = () => { if (deadline !== undefined && performance.now() >= deadline) expire(); };
+    const stop = () => { checkDeadline(); controller.abort(); };
+    const timer = timeoutMs === undefined ? undefined : setTimeout(expire, timeoutMs);
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
     watch.signal?.addEventListener('abort', stop, { once: true });
@@ -172,15 +199,21 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
       while (!signal.aborted) {
         let job: FleetJobDetailV1;
         try {
-          job = maxTailLines === undefined ? await deps.detail(id) : await deps.detail(id, { maxTailLines });
+          const read = maxTailLines === undefined ? deps.detail(id) : deps.detail(id, { maxTailLines });
+          const result = await untilStopped(read, signal);
+          checkDeadline();
+          if (!result || signal.aborted) break;
+          job = result.value;
         } catch (error) {
+          checkDeadline();
           if (signal.aborted) break;
           failures += 1;
           const message = error instanceof Error ? error.message : String(error);
           if (json) output.log(JSON.stringify({ schema: 'fleet.job.error.v1', job: id, at: new Date().toISOString(), error: message }));
           else output.stderr('error: fleet job unavailable\n');
           if (failures >= WATCH_FAILURE_LIMIT) { code = 1; reason = `${WATCH_FAILURE_LIMIT} consecutive read failures`; break; }
-          if (!signal.aborted) await (watch.wait ?? waitForTick)(intervalMs, signal);
+          if (!signal.aborted) await untilStopped((watch.wait ?? waitForTick)(intervalMs, signal), signal);
+          checkDeadline();
           continue;
         }
         if (signal.aborted) break;
@@ -207,12 +240,15 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
         if (terminal) { reason = terminal; break; }
         deadSnapshots = hasLiveEvidence(job) ? 0 : deadSnapshots + 1;
         if (deadSnapshots >= WATCH_DEAD_SNAPSHOT_LIMIT) { reason = `no live evidence for ${WATCH_DEAD_SNAPSHOT_LIMIT} consecutive snapshots`; break; }
-        if (!signal.aborted) await (watch.wait ?? waitForTick)(intervalMs, signal);
+        if (!signal.aborted) await untilStopped((watch.wait ?? waitForTick)(intervalMs, signal), signal);
+        checkDeadline();
       }
+      if (timedOut) { code = 1; reason = `timeout after ${timeoutMs} ms; completion not established; check the job again`; }
       if (json) output.log(JSON.stringify({ schema: 'fleet.job.watch.stop.v1', job: id, at: new Date().toISOString(), snapshots, reason }));
       else output.log(`watch stopped: ${reason}`);
       return code;
     } finally {
+      if (timer !== undefined) clearTimeout(timer);
       process.removeListener('SIGINT', stop);
       process.removeListener('SIGTERM', stop);
       watch.signal?.removeEventListener('abort', stop);
