@@ -9,6 +9,7 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { burnLine, burnTotals, formatTokens, headline, isPhantomRepo, laneBars, repoMix, repoMixLine, repoShort, workerRows } from './fleet-lanes-model.js';
 import { takeRequestedLane, useRequestedLane } from './lane-focus-request.js';
 import { LanePauseButton } from './LanePauseButton.js';
+import { LaneHoldReleaseButton } from './LaneHoldReleaseButton.js';
 import { LaneTargetStepper } from './LaneTargetStepper.js';
 import styles from './fleet-lanes.module.css';
 
@@ -62,7 +63,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
           <p className={styles.burn}>{burnLine(burnTotals(data))}</p>
           {data.lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>
             {laneBars(data).map((lane) => <li key={lane.lane} className={styles.lane} ref={lane.lane === focusedLane ? scrollToLane : undefined} data-focused={lane.lane === focusedLane ? 'true' : undefined} aria-current={lane.lane === focusedLane ? 'true' : undefined}>
-              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><LaneTargetStepper lane={lane.lane} /><LanePauseButton lane={lane.lane} /><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
+              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><LaneTargetStepper lane={lane.lane} /><LanePauseButton lane={lane.lane} /><LaneHoldReleaseButton lane={lane.lane} heldReason={lane.held ? lane.heldReason : null} heldUntil={null} /><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
               {lane.held ? <p className={styles.muted}>Held: {(lane.heldReason ?? 'reason not reported').replace(/_/g, ' ')}</p> : null}
               <div className={styles.track} role="img" aria-label={`${lane.lane}: ${lane.running} running of ${lane.target} target`}>
                 {lane.fillPct !== null ? <div className={styles.fill} data-tone={lane.tone} style={{ width: `${lane.fillPct}%` }} /> : null}
