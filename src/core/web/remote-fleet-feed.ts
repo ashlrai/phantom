@@ -5,6 +5,7 @@ import type { FleetQueueV1 } from '../fleet/runs-parked-queue.js';
 import type { RunsSwitchesV1 } from '../fleet/runs-switches.js';
 import type { FleetInboxReadV1 } from '../verse/fleet-inbox-read.js';
 import type { FleetRunsV1 } from '../verse/fleet-runs-types.js';
+import type { FleetJobDetailV1 } from '../fleet/runs-job-detail.js';
 
 /** Supply the phone's authenticated gateway transport (remoteApiGet/remoteMutate).
  * Mutations must complete the gateway's CSRF and WebAuthn step-up flow. No
@@ -49,6 +50,17 @@ function limitedPath(path: string, options: RemoteFleetReadOptions): string {
   return options.limit === undefined ? path : `${path}?limit=${options.limit}`;
 }
 
+// Same grammar the Hub applies in runs-job-detail `isFleetJobId` and the
+// gateway applies in remote-gateway-policy FLEET_JOB_ID; duplicated so this
+// module stays free of server-side imports. The explicit CRLF check is load
+// bearing: `$` matches before a trailing line terminator, so JOB_ID alone
+// would accept a newline-suffixed id the Hub rejects.
+const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
+
+function validJobId(id: unknown): id is string {
+  return typeof id === 'string' && !/[\r\n]+$/.test(id) && JOB_ID.test(id);
+}
+
 /** Mobile fleet snapshot, including active jobs, using only reviewed routes.
  * Pause/resume control autonomous dispatch; kill engages the global Stop.
  * Resume does not clear Stop or grant new authority.
@@ -85,6 +97,10 @@ export function createRemoteFleetFeed(transport: RemoteFleetTransport) {
       validateOptions(options, true);
       const source = options.source === undefined ? '' : `&source=${encodeURIComponent(options.source)}`;
       return transport.get<FleetInboxReadV1 | null>(`/api/verse/fleet/runs/inbox?limit=${options.limit ?? 50}${source}`);
+    },
+    job: (id: string) => {
+      if (!validJobId(id)) throw new TypeError('invalid fleet job id');
+      return transport.get<FleetJobDetailV1>(`/api/fleet/job?id=${encodeURIComponent(id)}`);
     },
     queue: (options: RemoteFleetReadOptions = {}) => transport.get<FleetQueueV1>(limitedPath('/api/verse/fleet/live/queue', options)),
     bus: (options: RemoteFleetReadOptions = {}) => transport.get<FleetBusFeedV1>(limitedPath('/api/verse/fleet/live/bus', options)),
