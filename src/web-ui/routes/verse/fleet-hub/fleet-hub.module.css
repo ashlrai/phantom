@@ -4,9 +4,15 @@
 .tile, .primary, .secondary { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--bg-surface); font: inherit; cursor: pointer; }
 .tile { display: flex; flex-direction: column; gap: var(--space-2); text-align: left; }
 .tile[data-tone='warn'] { border-color: var(--status-warning-solid); }
+.tile[data-tone='danger'] { border-color: var(--status-danger-solid); }
 .primary { width: 100%; font-weight: 600; background: var(--bg-hover); }
 .secondary { width: 100%; margin-top: var(--space-2); color: var(--text-secondary); }
 .count { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 .tile:disabled, .primary:disabled, .secondary:disabled { cursor: default; color: var(--text-tertiary); }
 .tile:not(:disabled):hover, .primary:not(:disabled):hover, .secondary:not(:disabled):hover { background: var(--bg-hover); }
 .tile:focus-visible, .primary:focus-visible, .secondary:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.lastOrder { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); overflow-wrap: anywhere; }
+.lastOrder > span:first-child { flex: 1 1 20rem; min-width: 0; }
+.orderButton { padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--bg-surface); font: inherit; cursor: pointer; }
+.orderButton:hover { background: var(--bg-hover); }
+.orderButton:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
