@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeHostLoad, hostLoadTone, readHostLoad } from './host-load.js';
+import { describeHostLoad, hostLoadTone, readHostLoad } from '../src/core/fleet/host-load.js';
 
 describe('host load', () => {
   it('reads all averages and rounds the one-minute load per core', () => {
