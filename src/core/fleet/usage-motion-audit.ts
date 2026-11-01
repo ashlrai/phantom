@@ -75,6 +75,8 @@ export interface UsageMotionAuditView {
 }
 
 export interface UsageMotionAuditOptions {
+  windowMinutes?: number;
+  freshnessMinutes?: number;
   /** Router queue directory. Default `~/.ashlr-runs/queue`. */
   queueDir?: string;
   /** Usage journal path. Default `<queueDir>/usage-readings.log`. */
@@ -177,6 +179,8 @@ const NEXT_ACTION: Record<UsageMotionClassification, string> = {
 /** Read-only audit: snapshot queue/live evidence, reread journal history, classify. Never throws on bad input. */
 export async function auditUsageMotion(options: UsageMotionAuditOptions = {}): Promise<UsageMotionAuditView> {
   const now = options.now?.() ?? new Date();
+  const windowMinutes = options.windowMinutes ?? WINDOW_MINUTES;
+  const freshnessMinutes = options.freshnessMinutes ?? FRESH_MINUTES;
   const queueDir = options.queueDir ?? join(homedir(), '.ashlr-runs', 'queue');
   const journalPath = options.usageLogPath ?? join(queueDir, 'usage-readings.log');
   const [snapshot, journal] = await Promise.all([
@@ -238,15 +242,15 @@ export async function auditUsageMotion(options: UsageMotionAuditOptions = {}): P
         : journal.state === 'degraded' && obs.length === 0 ? 'usage journal is unreadable or over the read bound'
         : obs.length === 0 ? (probeMisses > 0 ? `${probeMisses} probe row(s), none carried a meter reading` : 'no eligible readings in journal')
         : 'only one eligible reading in journal';
-    } else if (staleMin > FRESH_MINUTES) {
+    } else if (staleMin > freshnessMinutes) {
       classification = 'insufficient-evidence';
-      reason = `latest reading is ${staleMin}m old (> ${FRESH_MINUTES}m freshness bound)`;
+      reason = `latest reading is ${staleMin}m old (> ${freshnessMinutes}m freshness bound)`;
     } else if (discontinuous) {
       classification = 'reset-observed';
       reason = 'meter evidence is discontinuous — a reset boundary or falling used-percent lies inside the observed interval';
-    } else if (span! < WINDOW_MINUTES * 60_000) {
+    } else if (span! < windowMinutes * 60_000) {
       classification = 'insufficient-evidence';
-      reason = `eligible readings span ${Math.round(span! / 60_000)}m (< ${WINDOW_MINUTES}m window)`;
+      reason = `eligible readings span ${Math.round(span! / 60_000)}m (< ${windowMinutes}m window)`;
     } else if (last!.pctUsed > first!.pctUsed) {
       classification = 'moving';
       reason = `used-percent rose ${first!.pctUsed}% → ${last!.pctUsed}% over ${Math.round(span! / 60_000)}m`;
@@ -284,8 +288,8 @@ export async function auditUsageMotion(options: UsageMotionAuditOptions = {}): P
   return {
     schema: 'fleet.usage-motion.v1',
     generatedAt: now.toISOString(),
-    windowMinutes: WINDOW_MINUTES,
-    freshnessMinutes: FRESH_MINUTES,
+    windowMinutes,
+    freshnessMinutes,
     sources: {
       queue: snapshot.sources.queue.state,
       queueState: snapshot.sources.queueState.state,
