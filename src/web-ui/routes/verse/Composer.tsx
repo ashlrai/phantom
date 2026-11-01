@@ -58,6 +58,7 @@ import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './compo
 import { runBusCommand } from './composer/bus-post-command.js';
 import { parseJobCommand, runJobCommand } from './composer/job-drop-command.js';
 import { runPlanCommand } from './composer/planner-run-command.js';
+import { decidePlannerWake, getLastPlannerWakeAt, wakePlannerForOrder } from './composer/planner-wake.js';
 import { runReleaseCommand } from './composer/lane-release-command.js';
 import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
 import { laneTargetsQuery } from './ops/lane-targets-queries.js';
@@ -843,7 +844,19 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       try {
         const ack = await postFleetInterjection(fleet.text);
         setDraft((current) => draftAfterSend(ack.outcome, current, text));
-        setFleetStatus({ ...fleetSendLanding(ack), error: false });
+        const landing = fleetSendLanding(ack);
+        const wake = decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
+        const wakingText = `${landing.text} · planner waking`;
+        setFleetStatus({ ...landing, text: wake ? wakingText : landing.text, error: false });
+        if (wake) {
+          void wakePlannerForOrder(fleet.text).then(result => {
+            if (result.kind === 'unavailable') {
+              setFleetStatus(current => current?.text === wakingText ? { ...landing, error: false } : current);
+            } else {
+              setFleetStatus({ text: result.text, error: result.kind === 'failed' || result.kind === 'locked' || result.kind === 'no-slate' });
+            }
+          });
+        }
         await refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true);
       } catch (error) {
         setFleetStatus({ text: readFailureReason(error), error: true });
