@@ -50,6 +50,7 @@ import type { FleetStatus } from '../core/fleet/status.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
+import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -2641,10 +2642,25 @@ export async function cmdFleet(args: string[]): Promise<number> {
       const { cmdFleetBacklog } = await import('./fleet-backlog.js');
       return cmdFleetBacklog(rest);
     }
-    default:
+    default: {
+      // New fleet subcommands need no line here: ship
+      // src/cli/fleet-<name>.ts exporting
+      // cmdFleet<PascalName>(args: string[]): Promise<number>.
+      const resolved = resolveFleetSubcommand(sub);
+      if (resolved) {
+        let loaded;
+        try {
+          loaded = await import(resolved.module);
+        } catch (err) {
+          if (!isModuleNotFound(err, resolved.module)) throw err;
+        }
+        const fn = loaded?.[resolved.exportName];
+        if (typeof fn === 'function') return await fn(rest);
+      }
       process.stderr.write(red('error: ') + `unknown fleet subcommand: ${sub}\n`);
       printFleetHelp();
       return 2;
+    }
   }
 }
 
@@ -2654,6 +2670,7 @@ function printFleetHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
+  console.log('    ashlr fleet <name>   # any src/cli/fleet-<name>.ts module (see fleet-subcommand-resolve.ts)');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
