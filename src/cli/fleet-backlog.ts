@@ -32,12 +32,13 @@ import { makeColors, isTty } from './ui.js';
 const { bold, dim, red } = makeColors(isTty());
 
 export const FLEET_BACKLOG_USAGE =
-  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... [--merges <n>] [--recuts <n>] [--json]';
+  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json]';
 
 /** The fleet workbench's own backlog when --repo is not given. */
 const DEFAULT_REPO = 'ashlrai/phantom';
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 10_000;
+const MAX_EXCLUSIONS = 100;
 /** A rollup for a few hundred PRs is heavier than the tracker's 2 MB view reads. */
 const GH_LIST_MAX_BYTES = 16 * 1024 * 1024;
 const GH_LIST_TIMEOUT_MS = 60_000;
@@ -126,6 +127,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   let repo = DEFAULT_REPO;
   let limit = DEFAULT_LIMIT;
   const requested = new Set<number>();
+  const excluded = new Set<number>();
   // Unbounded defaults: the report classifies the whole page instead of
   // pretending a dispatch pass's lane sizes. --merges/--recuts shape one.
   let merges = Number.MAX_SAFE_INTEGER;
@@ -151,13 +153,17 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       limit = n;
       i++;
       seen.add(arg);
-    } else if (arg === '--pr') {
+    } else if (arg === '--pr' || arg === '--exclude-pr') {
       const n = nonNegativeInt(args[i + 1]);
       if (n === null || n < 1) {
-        process.stderr.write(red('error: ') + `--pr requires a positive safe integer, got: ${args[i + 1] ?? '(missing)'}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
+        process.stderr.write(red('error: ') + `${arg} requires a positive safe integer, got: ${args[i + 1] ?? '(missing)'}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
         return 2;
       }
-      requested.add(n);
+      (arg === '--pr' ? requested : excluded).add(n);
+      if (excluded.size > MAX_EXCLUSIONS) {
+        process.stderr.write(red('error: ') + `--exclude-pr accepts at most ${MAX_EXCLUSIONS} distinct PR numbers\n`);
+        return 2;
+      }
       i++;
     } else if ((arg === '--merges' || arg === '--recuts') && !seen.has(arg)) {
       const n = nonNegativeInt(args[i + 1]);
@@ -170,6 +176,13 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       seen.add(arg);
     } else {
       process.stderr.write(red('error: ') + `invalid fleet backlog argument: ${arg}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
+      return 2;
+    }
+  }
+
+  for (const number of excluded) {
+    if (requested.has(number)) {
+      process.stderr.write(red('error: ') + `PR #${number} cannot be both selected and excluded\n`);
       return 2;
     }
   }
@@ -208,7 +221,17 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
     missing: [...requested].filter((number) => !found.has(number)),
     complete: [...requested].every((number) => found.has(number)) && unreadable === 0,
   };
-  const plan = planMergeBacklog(selected, { merges, recuts });
+  // Only a fully parsed observation identifies an exclusion. Unreadable rows
+  // remain in the plan as unknown rather than silently disappearing.
+  const excludedFound = new Set(items.flatMap((item) =>
+    item.github && excluded.has(item.github.number) ? [item.github.number] : []));
+  const exclusions = excluded.size === 0 ? undefined : {
+    requested: [...excluded],
+    found: [...excluded].filter((number) => excludedFound.has(number)),
+    notFoundInFetchedPage: [...excluded].filter((number) => !excludedFound.has(number)),
+  };
+  const planned = selected.filter((item) => item.github === null || !excluded.has(item.github.number));
+  const plan = planMergeBacklog(planned, { merges, recuts });
 
   if (seen.has('--json')) {
     console.log(JSON.stringify({
@@ -218,6 +241,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       open: read.rows.length,
       complete,
       ...(selection ? { selection } : {}),
+      ...(exclusions ? { exclusions, countsScope: 'planned after exclusions' } : {}),
       tracked,
       unreadable,
       counts: plan.counts,
@@ -242,7 +266,13 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       `found ${refs(selection.found)}; missing from fetched page ${refs(selection.missing)}`);
     if (unreadable > 0) console.log('  selection may be affected by unreadable page rows');
   }
-  console.log(`  ${c.ready} ready, ${c.behind} behind, ${c.conflicting} conflicting, ${c.repair} repair, ${c.waiting} waiting`);
+  if (exclusions) {
+    const refs = (numbers: number[]) => numbers.length ? numbers.map((number) => `#${number}`).join(', ') : '—';
+    console.log(`  exclusions: requested ${refs(exclusions.requested)}; found in fetched page ${refs(exclusions.found)}; ` +
+      `not found in fetched page ${refs(exclusions.notFoundInFetchedPage)}`);
+    if (unreadable > 0) console.log('  exclusions may be affected by unreadable page rows');
+  }
+  console.log(`  ${exclusions ? 'planned after exclusions: ' : ''}${c.ready} ready, ${c.behind} behind, ${c.conflicting} conflicting, ${c.repair} repair, ${c.waiting} waiting`);
   console.log(`  ${dim('merges (green-ready):')}    ${laneRefs(plan.merges)}`);
   console.log(`  ${dim('recuts (refix):')}        ${laneRefs(plan.recuts)}`);
   console.log(`  ${dim('refreshes (re-base):')}  ${laneRefs(plan.refreshes)}`);
