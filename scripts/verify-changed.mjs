@@ -64,10 +64,10 @@ export function copyBuildInfo(source, destination) {
 }
 
 /** Native diagnostics (exit 1/2) are final; only crashes use the JS compiler. */
-export function runNativeTypecheck(root, timeout, spawn = spawnSync, exists = existsSync) {
+export function runNativeTypecheck(root, timeout, spawn = spawnSync, exists = existsSync, config = 'tsconfig.json') {
   const binary = resolve(root, 'node_modules/.bin/tsgo');
   if (!exists(binary)) return null;
-  const result = spawn(binary, ['--noEmit', '-p', 'tsconfig.json'], {
+  const result = spawn(binary, ['--noEmit', '-p', config], {
     cwd: root, stdio: 'inherit', timeout: timeout * 1000, killSignal: 'SIGKILL',
   });
   if (result.error?.code === 'ETIMEDOUT') return false;
@@ -78,11 +78,59 @@ export function runNativeTypecheck(root, timeout, spawn = spawnSync, exists = ex
   return result.status === 0;
 }
 
+/** Run the web compiler with the backend's native-first diagnostic policy. */
+export function runWebTypecheck(root, timeout, run, spawn = spawnSync, exists = existsSync) {
+  const config = 'src/web-ui/tsconfig.json';
+  const native = runNativeTypecheck(root, timeout, spawn, exists, config);
+  if (native === null) return run('web typecheck', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', config], timeout);
+  console.log(`${native ? 'PASS' : 'FAIL'} web typecheck`);
+  return native;
+}
+
+/** Scope the guard's failing file lists while preserving unexpected failures. */
+export function runRealioCheck(root, changed, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['scripts/check-realio-lane-membership.mjs'], {
+    cwd: root, encoding: 'utf8',
+  });
+  if (result.error || result.signal || (result.status !== 0 && result.status !== 1)) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL realio lane lint');
+    return false;
+  }
+  const files = [];
+  let failingSection = false;
+  for (const line of (result.stderr || '').split('\n')) {
+    if (line.startsWith('[check-realio-lane-membership]')) {
+      failingSection = /(?:The following test files|stale KNOWN_FAST_SPAWN_FILES|stale REAL_IO_TEST_FILES)/.test(line);
+    }
+    if (failingSection && /^ {2}test\//.test(line)) files.push(line.slice(2));
+  }
+  if (result.status === 1 && files.length === 0) {
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    console.log('FAIL realio lane lint: unrecognized guard failure');
+    return false;
+  }
+  const changedSet = new Set(changed);
+  const relevant = files.filter((file) => changedSet.has(file));
+  const unrelated = files.filter((file) => !changedSet.has(file));
+  if (unrelated.length) console.warn(`WARN realio lane lint: unchanged files: ${unrelated.join(', ')}`);
+  if (relevant.length) console.error(`Realio lane violations in changed files: ${relevant.join(', ')}`);
+  if (result.status === 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.warn(result.stderr.trimEnd());
+  }
+  console.log(`${relevant.length ? 'FAIL' : 'PASS'} realio lane lint`);
+  return relevant.length === 0;
+}
+
 function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   let selection;
+  let changed;
   try {
-    const changed = collectChangedPaths(root);
+    changed = collectChangedPaths(root);
     const existing = changed.filter((path) => {
       try {
         return statSync(resolve(root, path)).isFile();
@@ -139,16 +187,16 @@ function main() {
         copyBuildInfo(cache.local, cache.shared);
       }
     }
+    if (selection.webTypecheck) {
+      if (!runWebTypecheck(root, timeout, run)) process.exitCode = 1;
+    } else {
+      console.log('PASS web typecheck skipped: no changed path under src/web-ui/');
+    }
   } catch (error) {
     console.error(`FAIL tsc cache: ${error.message}`);
     process.exitCode = 1;
   }
-  if (selection.webTypecheck) {
-    run('web typecheck', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'src/web-ui/tsconfig.json']);
-  } else {
-    console.log('PASS web typecheck skipped: no changed path under src/web-ui/');
-  }
-  run('realio lane lint', 'scripts/check-realio-lane-membership.mjs');
+  if (!runRealioCheck(root, changed)) process.exitCode = 1;
   run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
 }
 
