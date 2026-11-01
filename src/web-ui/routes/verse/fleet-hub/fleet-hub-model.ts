@@ -9,6 +9,11 @@ const panes = [
 
 export const CURATED_FLEET_WORKSPACE = ['fleet-lanes', 'fleet-inbox', 'fleet-merges', 'fleet-bus', 'fleet-releases', 'fleet-usage'] as const;
 
+export function hubEmptyState(runs: FleetRuns | null): { kind: 'no-fleet' | 'not-landed' } | null {
+  if (runs === null || runs.sources.runsDir === 'not-landed') return { kind: 'not-landed' };
+  return runs.sources.runsDir === 'missing' ? { kind: 'no-fleet' } : null;
+}
+
 /** Tile count string: appends "· N held" when any lane has `held === true`. */
 export function lanesTileCount(lanes: { running: number; target: number; held: boolean }[]) {
   const running = lanes.reduce((n, lane) => n + lane.running, 0);
