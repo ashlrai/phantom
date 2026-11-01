@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { taskReadyFrontier } from './task-ready-frontier.js';
 import { readRunsSwitches } from './runs-switches.js';
 
-type Task = { id: string; dependsOn?: string[]; argv: string[] };
+type Task = { id: string; dependsOn?: string[]; argv: string[]; cwd?: string };
 type Row = { id: string; status: string; exitCode: number | null };
 export async function graphArgvRun(file: string, apply = false, timeoutMs = 900000, concurrency = 1): Promise<{ status: string; nodes: Row[] }> {
-  let tasks: Task[], order: string[] = [];
+  let tasks: Task[];
+  const order: string[] = [];
   try {
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8 || !isAbsolute(file) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) throw Error();
     const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: 262144, remainingBytes: 262144 });
@@ -17,9 +19,10 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
     tasks = v.tasks;
     const id = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
     for (const t of tasks) {
-      if (!t || Object.keys(t).some(k => !['id', 'dependsOn', 'argv'].includes(k)) || !id(t.id) ||
+      if (!t || Object.keys(t).some(k => !['id', 'dependsOn', 'argv', 'cwd'].includes(k)) || !id(t.id) ||
         !Array.isArray(t.argv) || !t.argv.length || t.argv.length > 128 || !t.argv[0] ||
         t.argv.some(a => typeof a !== 'string' || a.includes('\0') || a.length > 8192) ||
+        (t.cwd !== undefined && (typeof t.cwd !== 'string' || !t.cwd || t.cwd.includes('\0') || !isAbsolute(t.cwd) || !statSync(t.cwd).isDirectory())) ||
         (t.dependsOn !== undefined && (!Array.isArray(t.dependsOn) || t.dependsOn.length > 32 || !t.dependsOn.every(id)))) throw Error();
     }
     const ids = new Set(tasks.map(t => t.id));
@@ -55,7 +58,7 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
         }
         let stop = (): void => {};
         const done = new Promise<Row>(resolve => {
-          const child = spawn(task.argv[0]!, task.argv.slice(1), { shell: false, detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+          const child = spawn(task.argv[0]!, task.argv.slice(1), { cwd: task.cwd, shell: false, detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
           child.stdout.pipe(process.stderr, { end: false }); child.stderr.pipe(process.stderr, { end: false });
           let timedOut = false, failed = false;
           let escalation: ReturnType<typeof setTimeout> | undefined;
