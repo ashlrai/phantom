@@ -5,6 +5,7 @@
  *   GET  /api/verse/fleet/control               → FleetControlStateV1
  *   GET  /api/verse/fleet/control/queue         → FleetControlQueueV1
  *   GET  /api/verse/fleet/control/runs/<id>/log → FleetRunLogV1
+ *   GET  /api/verse/fleet/control/stray-slots   → StraySlotsV1 (counted slots lost to strays)
  *   POST /api/verse/fleet/control               → one FleetControlAction → FleetControlActionResultV1
  *
  * The operations live in core/fleet/fleet-control.ts (each reuses the one
@@ -44,8 +45,15 @@ import {
   VERSE_FLEET_CONTROL_QUEUE_PATH,
   VERSE_FLEET_CONTROL_RUNS_PREFIX,
 } from '../fleet/fleet-control-types.js';
+import {
+  VERSE_FLEET_CONTROL_STRAY_SLOTS_PATH,
+  type StrayReaders,
+} from '../fleet/stray-slots.js';
 
-type ControlDeps = FleetControlDeps & { remoteDevices?: () => Pick<RemoteDeviceStore, 'list'> };
+type ControlDeps = FleetControlDeps & {
+  remoteDevices?: () => Pick<RemoteDeviceStore, 'list'>;
+  strayReaders?: StrayReaders;
+};
 let deps: ControlDeps | null = null;
 
 /** Test seam: replace the dependencies (null restores the defaults). */
@@ -192,6 +200,20 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
       } else sendJson(res, 405, { error: 'method not allowed' });
     } catch {
       sendJson(res, 500, { code: 'fleet-control-failed', error: 'the fleet control request failed' });
+    }
+    return true;
+  }
+  if (path === VERSE_FLEET_CONTROL_STRAY_SLOTS_PATH) {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    if (!noQuery(req, res)) return true;
+    try {
+      const { readStraySlots, defaultStrayReaders } = await import('../fleet/stray-slots.js');
+      const report = await readStraySlots(deps?.strayReaders ?? defaultStrayReaders);
+      sendJson(res, 200, { v: 1, generatedAt: new Date().toISOString(), source: 'ok', lanes: report.lanes });
+    } catch {
+      // Host evidence is best-effort: an unreadable ps/runs source answers a
+      // degraded report, never a 500.
+      sendJson(res, 200, { v: 1, generatedAt: new Date().toISOString(), source: 'unavailable', lanes: [] });
     }
     return true;
   }
