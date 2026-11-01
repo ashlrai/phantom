@@ -2532,6 +2532,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
     const { cmdFleetJobRead } = await import('./fleet-job-read.js');
     return cmdFleetJobRead(args.slice(1));
   }
+  if (args[0] === 'stray-slots') return (await import('./fleet-stray-slots.js')).cmdFleetStraySlots(args.slice(1));
   if (args[0] === 'workers') {
     const { cmdFleetWorkers } = await import('./fleet-workers.js');
     return cmdFleetWorkers(args.slice(1));
