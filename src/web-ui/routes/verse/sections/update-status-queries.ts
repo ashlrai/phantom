@@ -9,6 +9,7 @@ export interface UpdateServerStatus {
   originSha: string | null; branch: string | null; behind: number | null; ahead: number | null;
   dirty: boolean | null; lastFetchAt: string | null; processStartedAt: string | null;
   uptimeSeconds: number | null; canFastForward: boolean | null;
+  applying?: boolean | { startedAt: string } | null;
   lastApply?: SelfUpdateLastApply | null;
 }
 export type ServerObservation = UpdateServerStatus | { kind: 'notInBuild' } | null;
@@ -26,6 +27,8 @@ function validStatus(value: unknown): value is UpdateServerStatus {
     && (v['dirty'] === null || typeof v['dirty'] === 'boolean') && timestamp(v['lastFetchAt'])
     && timestamp(v['processStartedAt']) && (v['uptimeSeconds'] === null || (typeof v['uptimeSeconds'] === 'number' && Number.isFinite(v['uptimeSeconds']) && v['uptimeSeconds'] >= 0))
     && (v['canFastForward'] === null || typeof v['canFastForward'] === 'boolean')
+    && (v['applying'] === undefined || v['applying'] === null || typeof v['applying'] === 'boolean'
+      || (typeof v['applying'] === 'object' && timestamp((v['applying'] as Record<string, unknown>)['startedAt'])))
     && (v['lastApply'] === undefined || v['lastApply'] === null || lastApplyOf(v) !== null);
 }
 

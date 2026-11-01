@@ -41,9 +41,15 @@ const TypedQuestionForm = lazy(() => import('../../leader/LeaderQuestionForm.js'
 import { answeredQuestions, CHANNEL_LABEL, clockTime, displayThreadText, groupThread, mergeThread, previewText, type ThreadRow } from '../../leader/thread-model.js';
 import { OPERATOR_DIRECTIVE_MAX, type DirectiveChip, type LeaderThreadKind, type LeaderThreadMessage } from '../../leader/thread-types.js';
 import { isApprovable } from '../../mind/leader-model.js';
+import { buildSteering, unansweredHeadline, unansweredOrders } from '../../fleet-steering/steering-model.js';
+import { parseInboxAt } from '../../fleet/interject-ack-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { sinceText } from '../connectivity.js';
 import { homeRunsQuery } from '../home-runs-query.js';
+import { getMobileFleetClient } from '../fleet-client.js';
+import { mobileTime } from '../interject-ack-model.js';
+import { unansweredRows } from '../leader-unanswered-model.js';
+import { showMobileToast } from '../mobile-toast.js';
 import { inboxLinesFor } from '../leader-inbox-lines.js';
 import { LeaderPasses } from '../LeaderPasses.js';
 import { MicButton } from '../MicButton.js';
@@ -52,7 +58,7 @@ import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { BottomSheet } from '../sheet.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, Banner, EmptyState, ErrorState, ui, type Tone } from '../ui-parts.js';
+import { Badge, Banner, EmptyState, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './LeaderScreen.module.css';
 
 export const LEADER_THREAD_POLL_MS = 10_000;
@@ -250,7 +256,8 @@ export function LeaderScreen() {
   const refetchThread = useRefetch(leaderThreadQuery);
   const runs = useQuery(homeRunsQuery, { freshMs: 5_000 });
   const refetchRuns = useRefetch(homeRunsQuery);
-  usePollWhileVisible(refetchRuns, LEADER_THREAD_POLL_MS);
+  const [, setRunsClock] = useState(0);
+  usePollWhileVisible(() => { setRunsClock((tick) => tick + 1); refetchRuns(); }, LEADER_THREAD_POLL_MS);
   const directives = useQuery(leaderDirectivesQuery, { freshMs: 30_000 });
   const refetchDirectives = useRefetch(leaderDirectivesQuery);
   const leader = useQuery(leaderQuery, { freshMs: 30_000 });
@@ -275,6 +282,14 @@ export function LeaderScreen() {
   const [directiveInterim, setDirectiveInterim] = useState('');
   const directiveId = useId();
   const end = useRef<HTMLDivElement>(null);
+  const unansweredTop = useRef<HTMLDivElement>(null);
+  const [blockedOrders, setBlockedOrders] = useState<ReadonlySet<string>>(new Set());
+  const blockedRef = useRef(new Set<string>());
+  const cooldownTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => {
+    const timers = cooldownTimers.current;
+    return () => { timers.forEach(clearTimeout); };
+  }, []);
 
   const canAct = canShowActions(permissions);
   const offline = reachability === 'offline' || reachability === 'unreachable';
@@ -286,6 +301,10 @@ export function LeaderScreen() {
   const messages = useMemo(() => entries.flatMap((e) => (e.type === 'message' ? [e.message] : [])), [entries]);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
   const answered = useMemo(() => answeredQuestions(messages), [messages]);
+  const nowMs = Date.now();
+  const unanswered = unansweredRows(runs.data, nowMs);
+  const hasUnanswered = unanswered.length > 0;
+  const headline = unansweredHeadline(unansweredOrders(buildSteering(runs.data), nowMs, 30));
   const inboxLines = useMemo(() => inboxLinesFor(runs.data, messages, Date.now()), [runs.data, messages]);
   const inboxLabels = useMemo(() => new Map(inboxLines.map(line => [line.key, line.label])), [inboxLines]);
   const conversation = useMemo(() => [
@@ -299,6 +318,10 @@ export function LeaderScreen() {
   const rows = useMemo(() => groupThread(conversation), [conversation]);
   const leaderActions = leader.data?.value?.actions ?? null;
 
+  useLayoutEffect(() => {
+    if (hasUnanswered) unansweredTop.current?.scrollIntoView?.({ block: 'start' });
+  }, [hasUnanswered]);
+
   // A send's echo is dropped once a server read carries it.
   useEffect(() => {
     if (!page || received.length === 0) return;
@@ -309,8 +332,8 @@ export function LeaderScreen() {
   // Follow the conversation to its newest message (not when older pages load above).
   const lastKey = conversation.length ? conversation[conversation.length - 1]!.key : null;
   useLayoutEffect(() => {
-    if (lastKey) end.current?.scrollIntoView?.({ block: 'end' });
-  }, [lastKey]);
+    if (lastKey && !hasUnanswered) end.current?.scrollIntoView?.({ block: 'end' });
+  }, [lastKey, hasUnanswered]);
 
   const refreshThread = useCallback(() => refetchQuery(leaderThreadQuery.key, () => leaderThreadQuery.fetch(), true), []);
   const refreshAll = useCallback(
@@ -335,6 +358,37 @@ export function LeaderScreen() {
           : null;
 
   // ---- writes ---------------------------------------------------------------
+
+  const askAgain = (row: { at: string; askAgain: string }) => {
+    const key = JSON.stringify([row.at, row.askAgain.replace(/^Still unanswered after .*?: /, '')]);
+    if (blockedRef.current.has(key)) return;
+    runMobileAction({
+      title: 'Ask the leaders again',
+      consequences: 'Sends a follow-up to the leaders’ inbox.',
+      confirmLabel: 'Ask again',
+      confirm: false,
+      run: async () => {
+        if (blockedRef.current.has(key)) return;
+        blockedRef.current.add(key);
+        setBlockedOrders(new Set(blockedRef.current));
+        try {
+          const result = await getMobileFleetClient().interject(row.askAgain);
+          const now = Date.now();
+          const at = parseInboxAt(result.at, now) ?? Date.parse(result.at);
+          showMobileToast(`Landed ${mobileTime(new Date(Number.isFinite(at) ? at : now).toISOString())}`, 'success');
+          cooldownTimers.current.push(setTimeout(() => {
+            blockedRef.current.delete(key);
+            setBlockedOrders(new Set(blockedRef.current));
+          }, 60_000));
+          void refetchQuery(homeRunsQuery.key, () => homeRunsQuery.fetch(), true);
+        } catch (error) {
+          blockedRef.current.delete(key);
+          setBlockedOrders(new Set(blockedRef.current));
+          throw error;
+        }
+      },
+    });
+  };
 
   const send = (text: string) => {
     const question = answering;
@@ -525,6 +579,16 @@ export function LeaderScreen() {
         />
       )}
     >
+      {headline ? (
+        <div ref={unansweredTop}><Section title="Unanswered orders" footer={headline}>
+          {unanswered.map((row) => {
+            const key = JSON.stringify([row.at, row.askAgain.replace(/^Still unanswered after .*?: /, '')]);
+            return <Row key={key} title={`${row.age} · ${row.text}`} trailing={canAct ? (
+              <Button variant="tinted" disabled={offline || blockedOrders.has(key)} onClick={() => askAgain(row)}>Ask again</Button>
+            ) : undefined} />;
+          })}
+        </Section></div>
+      ) : null}
       <LeaderPasses />
       {reachability === 'offline' ? (
         <Banner>This phone is offline. Showing the last conversation ({sinceText(thread.updatedAt).toLowerCase()}).</Banner>
