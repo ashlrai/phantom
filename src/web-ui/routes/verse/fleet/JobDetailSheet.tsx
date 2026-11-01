@@ -12,7 +12,9 @@ import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { jobTextQuery } from '../fleet-job-log/job-text-queries.js';
 import { jobChangesQuery } from '../fleet-job-log/worker-changes-queries.js';
-import { changesHeadline, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
+import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
+import { jobBusMentions, mentionSummary } from './job-bus-mentions.js';
+import { changesHeadline, collisionTell, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
 import { openInterjectDialog } from './interject-dialog-store.js';
 import { sheetActions, steerPrefill } from './job-sheet-actions.js';
 import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
@@ -36,10 +38,22 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   const changes = useQuery(changesQuery, { freshMs: 0 });
   const notesQuery = jobTextQuery(job, 'notes');
   const notes = useQuery(notesQuery, { freshMs: 0 });
+  const busStatus = useQuery(agentBusStatusQuery, { freshMs: 10_000 });
+  const busPageQuery = agentBusPageQuery(Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100), 100);
+  const busPage = useQuery(busPageQuery, { freshMs: 10_000, enabled: busStatus.data?.source === 'available' && busStatus.data.retainedCount !== null });
+  usePollWhileVisible(() => {
+    if (agentBusMissing()) return;
+    void runQuery(agentBusStatusQuery.key, () => agentBusStatusQuery.fetch());
+    if (busStatus.data?.source === 'available' && busStatus.data.retainedCount !== null) void runQuery(busPageQuery.key, () => busPageQuery.fetch());
+  }, 10_000);
   usePollWhileVisible(() => { void runQuery(query.key, () => query.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
   usePollWhileVisible(() => { void runQuery(changesQuery.key, () => changesQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
   usePollWhileVisible(() => { void runQuery(notesQuery.key, () => notesQuery.fetch()); }, 10_000, { enabled: read.data?.state === 'running' });
+  const busUnavailable = agentBusMissing() || !!busStatus.error || !!busPage.error || busStatus.data === null
+    || (busStatus.data !== undefined && (busStatus.data.source !== 'available' || busStatus.data.retainedCount === null)) || busPage.data === null;
+  const mentions = jobBusMentions(busPage.data?.messages ?? [], job, Date.now());
   const d = read.data;
+  const collision = changes.data ? collisionTell(changes.data) : null;
   const preview = notes.data?.state === 'ok' ? notesPreview(notes.data.text) : null;
   const issues = notes.data?.state === 'ok' ? closesRefs(notes.data.text) : [];
   const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
@@ -68,7 +82,7 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
       <section aria-label="Changed files">
         <h3>Changed files</h3>
         {changes.error ? <p role="status">Changes unavailable</p> : changes.data === null ? <p>Changes are not in this build yet</p> : !changes.data ? <SkeletonLine /> : <>
-          <p>{changesHeadline(changes.data)}</p>
+          <p>{changesHeadline(changes.data)}{collision === null ? null : <> <StatusBadge status="collision" tone="warning">{collision}</StatusBadge></>}</p>
           {changes.data.state === 'missing' ? <p>Worktree not available</p> : <>
             {changes.data.state === 'degraded' && <p role="status">Changes could not fully refresh.</p>}
             {changes.data.files.length === 0 ? (changes.data.state === 'live' ? <p>No changes yet</p> : null) : <ul>
@@ -89,6 +103,16 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
               ? part : <JobRefs key={index} text={part} onOpenJob={id => { requestWorkerLogJob(id); openDockPane('worker-log'); onClose(); }} />)}</pre>
             {preview.more > 0 && <p>+{preview.more} more lines</p>}
           </> : null}
+        </>}
+      </section>
+      <section aria-label="On the bus">
+        <h3>On the bus</h3>
+        {busUnavailable ? <p role="status" style={{ color: 'var(--text-secondary)' }}>Durable bus unavailable.</p> : !busPage.data ? <SkeletonLine /> : <>
+          <p>{mentionSummary(mentions, 100)}</p>
+          {mentions.length > 0 && <ul>{mentions.map(row => <li key={row.key}>
+            <span>{row.from} → {row.to} · {row.kind} · {row.excerpt}</span>{' '}
+            {row.expired && <span>expired </span>}<time dateTime={row.at}>{row.ageText}</time>
+          </li>)}</ul>}
         </>}
       </section>
       {d.log.source === 'missing' ? <p>No log yet.</p> : <><h3>Log tail ({d.log.source}, {d.log.tail.length} lines{d.log.truncated ? ', truncated' : ''})</h3>

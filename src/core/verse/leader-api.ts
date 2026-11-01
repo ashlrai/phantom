@@ -700,6 +700,15 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
       }
       return true;
     }
+    if (path === `${VERSE_LEADER_PATH}/resources/resets`) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
+      else {
+        const { readUsageResets } = await import('../fleet/usage-reset-detect.js');
+        sendJson(res, 200, await readUsageResets({ now }));
+      }
+      return true;
+    }
     if (await handleThreadRoutes(ctx, req, res, path, method)) return true;
     if (method === 'GET') {
       if ([...new URL(req.url ?? '/', 'http://localhost').searchParams.keys()].length > 0) {
