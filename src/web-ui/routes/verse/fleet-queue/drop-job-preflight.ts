@@ -24,6 +24,44 @@ export function hotFileWarnings(paths: readonly string[], backlog: MergeBacklogR
   }).sort((a, b) => b.dirtyPrs - a.dirtyPrs);
 }
 
+const HOT_TOKEN_BOUNDARY = /[\s'"`()]/;
+
+/**
+ * Hot files the job body names as whole tokens. Unlike extractPaths this does
+ * not depend on the path matching a filename regex — a hot file under .github/
+ * or with an unusual extension still counts — but the exact repo path must be
+ * delimited by whitespace, a quote, a backtick, a parenthesis or a line end so
+ * `src/cli/fleet.ts` inside `src/cli/fleet-verbs.ts` is not a hit.
+ */
+export function hotFileHits(
+  body: string,
+  hotFiles: readonly { path: string; dirtyPrs: number; openPrs: number }[],
+): { path: string; dirtyPrs: number; openPrs: number }[] {
+  const seen = new Set<string>();
+  return hotFiles.filter(file => {
+    if (!file.path || seen.has(file.path)) return false;
+    let index = body.indexOf(file.path);
+    while (index !== -1) {
+      const bounded = (index === 0 || HOT_TOKEN_BOUNDARY.test(body[index - 1]))
+        && (index + file.path.length === body.length || HOT_TOKEN_BOUNDARY.test(body[index + file.path.length]));
+      if (bounded) { seen.add(file.path); return true; }
+      index = body.indexOf(file.path, index + 1);
+    }
+    return false;
+  }).map(file => ({ path: file.path, dirtyPrs: file.dirtyPrs, openPrs: file.openPrs }))
+    .sort((a, b) => b.dirtyPrs - a.dirtyPrs || a.path.localeCompare(b.path));
+}
+
+export interface DropJobPreflight {
+  warnings: { path: string; dirtyPrs: number; prNumbers: number[] }[];
+  hotFiles: { path: string; dirtyPrs: number; openPrs: number }[];
+}
+
+export function dropJobPreflight(body: string, backlog: MergeBacklogReadV1 | null | undefined): DropJobPreflight {
+  const ok = backlog && backlog.source === 'ok' ? backlog : null;
+  return { warnings: hotFileWarnings(extractPaths(body), ok), hotFiles: hotFileHits(body, ok?.hotFiles ?? []) };
+}
+
 function freeSlots(row: LaneWithCounts): number | null {
   if (typeof row.running !== 'number' || !Number.isFinite(row.running) || row.running < 0) return row.target === 0 ? 0 : null;
   return Math.max(0, row.target - row.running);
