@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { StatusBadge, Tag } from '../../../components/primitives/index.js';
 import { copyText } from '../../../components/primitives/clipboard.js';
 import { ApiError } from '../../../data/client.js';
@@ -10,9 +10,15 @@ import { relativeText } from '../ops/ops-runs-model.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { usePanes, type PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { pairedDevicesQuery } from '../sections/paired-devices-query.js';
+import { pendingPhonesQuery } from '../sections/pending-phones-query.js';
+import { setVerseSection } from '../verse-ui-store.js';
 import { curatedWorkspace, hubEmptyState, hubTiles, snapshotAge } from './fleet-hub-model.js';
 import { lastOrderLine } from './hub-last-order.js';
 import { busTile } from './hub-bus-tile.js';
+import { phoneTile } from './hub-phone-tile.js';
+import { hubBacklogQuery } from './hub-backlog-queries.js';
+import { backlogTile } from './hub-backlog-tile.js';
 import styles from './fleet-hub.module.css';
 
 export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -23,6 +29,9 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   const read = useQuery(opsRunsQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 0 });
   const refetch = useRefetch(opsRunsQuery);
   usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
+  const backlogRead = useQuery(hubBacklogQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 60_000 });
+  const refreshBacklog = useRefetch(hubBacklogQuery);
+  usePollWhileVisible(refreshBacklog, 60_000, { enabled: visible });
   const busEnabled = visible && sectionVisible && documentVisible && !agentBusMissing();
   const status = useQuery(agentBusStatusQuery, { enabled: busEnabled, freshMs: 15_000 });
   const after = Math.max(0, (status.data?.retainedCount ?? 0) - 100);
@@ -34,6 +43,12 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   usePollWhileVisible(() => {
     if (!agentBusMissing()) { refreshStatus(); if (pageEnabled) refreshPage(); }
   }, 15_000, { enabled: visible && !agentBusMissing() });
+  const phoneEnabled = visible && sectionVisible && documentVisible;
+  const devices = useQuery(pairedDevicesQuery, { enabled: phoneEnabled, freshMs: 15_000 });
+  const pending = useQuery(pendingPhonesQuery, { enabled: phoneEnabled, freshMs: 15_000 });
+  const refreshDevices = useRefetch(pairedDevicesQuery);
+  const refreshPending = useRefetch(pendingPhonesQuery);
+  usePollWhileVisible(() => { refreshDevices(); refreshPending(); }, 15_000, { enabled: visible });
   const missingBus = agentBusMissing() || [status.error, page.error].some(error => error instanceof ApiError && error.status === 404);
   const bus = missingBus
     ? { title: 'Bus', reading: 'Update the hub for the durable bus', caption: 'Store status unknown', tone: 'unknown' as const }
@@ -45,6 +60,16 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   const workspaceIds = curatedWorkspace(presentIds);
   const empty = hubEmptyState(read.data ?? null);
   const now = Date.now();
+  const phone = devices.data && 'kind' in devices.data ? null
+    : devices.status === 'error' || pending.status === 'error'
+      ? { title: 'Phone', reading: 'Phone status unavailable', detail: 'Phone status unavailable.', tone: 'warn' as const }
+      : phoneTile(devices.data ?? null, pending.data ?? null, now);
+  const backlog = backlogTile(backlogRead.data, now);
+  const backlogButton = backlog && <button type="button" className={styles.tile} data-tone={backlog.tone} onClick={() => openDockPane('fleet-merges')}>
+    <strong>Merge backlog</strong>
+    <span className={styles.count}>{backlog.text}</span>
+    <span className={styles.count}>{backlog.detail}{backlog.stale ? ' · stale' : ''}</span>
+  </button>;
   const lastOrder = lastOrderLine(read.data ?? null, now);
   const orderAt = lastOrder ? parseInboxAt(lastOrder.at, now) : null;
   const runsDir = read.data && 'runsDir' in read.data && typeof read.data.runsDir === 'string' && read.data.runsDir.trim()
@@ -67,11 +92,12 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
       <button type="button" className={styles.orderButton} onClick={() => openDockPane('fleet-inbox')}>Open inbox</button>
     </div>}
     <div className={styles.tiles}>
-      {empty?.kind !== 'no-fleet' && tiles.map((tile) => <button type="button" key={tile.id} className={styles.tile} data-tone={tile.tone} disabled={!tile.present} onClick={() => openDockPane(tile.id)}>
+      {empty?.kind !== 'no-fleet' && tiles.map((tile) => <Fragment key={tile.id}><button type="button" className={styles.tile} data-tone={tile.tone} disabled={!tile.present} onClick={() => openDockPane(tile.id)}>
         <strong>{tile.title}</strong>
         <span className={styles.count}>{tile.count}</span>
         {!tile.present ? <span>not in this build</span> : null}
-      </button>)}
+      </button>{tile.id === 'fleet-merges' ? backlogButton : null}</Fragment>)}
+      {empty?.kind === 'no-fleet' ? backlogButton : null}
       <button type="button" className={styles.tile} data-tone={bus.tone}
         style={{ borderColor: bus.tone === 'warn' ? 'var(--status-warning-solid)' : bus.tone === 'bad' ? 'var(--status-danger-solid)' : undefined }}
         onClick={() => openDockPane('fleet-bus')}>
@@ -79,6 +105,11 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
         <span className={styles.count}>{bus.reading}</span>
         <span className={styles.count}>{bus.caption}</span>
       </button>
+      {phone && <button type="button" className={styles.tile} data-tone={phone.tone} title={phone.detail}
+        onClick={() => setVerseSection('settings', 'fleet-sources')}>
+        <strong>{phone.title}</strong>
+        <span className={styles.count}>{phone.reading}</span>
+      </button>}
     </div>
   </section>;
 }
