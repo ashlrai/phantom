@@ -8,6 +8,7 @@ import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { steerPrefill } from '../fleet/job-sheet-actions.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { requestSteeringFocus } from '../fleet-steering/steering-focus.js';
 import { ageText } from '../ops/ops-runs-model.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
@@ -47,7 +48,10 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
   }
 
   function selectItem(item: SwimlaneItem): void {
-    if (isMasonItem(item)) openDockPane('fleet-inbox');
+    if (isMasonItem(item)) {
+      requestSteeringFocus({ at: item.id.slice('inbox:'.length), label: item.label ?? '' });
+      openDockPane('fleet-steering');
+    }
     else openLog(jobFromItem(item));
   }
 
@@ -83,7 +87,7 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
             <Swimlane title={`${group.lane} workers`} lanes={lanes} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} />
           </section>;
         })}</> : <Swimlane title="Worker timeline" lanes={mason ? [mason, ...timeline.lanes] : timeline.lanes} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} />}
-        <p className={styles.hint}>{mason ? 'Click an interjection to open Inbox or a worker bar to open its log.' : 'Click a bar to open its log.'}</p>
+        <p className={styles.hint}>{mason ? 'Click an interjection to open Steering or a worker bar to open its log.' : 'Click a bar to open its log.'}</p>
       </>}
   </div>;
 }
