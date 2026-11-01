@@ -2516,6 +2516,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 
 export async function cmdFleet(args: string[]): Promise<number> {
   if (args[0] === 'bet-trace') return (await import('./fleet-bet-trace.js')).cmdFleetBetTrace(args.slice(1));
+  if (args[0] === 'dead-heads') return (await import('./fleet-dead-heads.js')).cmdFleetDeadHeads(args.slice(1));
   if (args[0] === 'lane-truth') return (await import('./fleet-lane-truth.js')).cmdFleetLaneTruth(args.slice(1));
   if (args[0] === 'meter-drop') return (await import('./fleet-meter-drop.js')).cmdFleetMeterDrop(args.slice(1));
   if (args[0] === 'merge-throughput') {
@@ -2530,12 +2531,15 @@ export async function cmdFleet(args: string[]): Promise<number> {
     const { cmdFleetRunsRead } = await import('./fleet-runs-read.js');
     return cmdFleetRunsRead(args[0], args.slice(1));
   }
+  if (args[0] === 'wait-jobs') return (await import('./fleet-wait-jobs.js')).cmdFleetWaitJobs(args.slice(1));
+  if (args[0] === 'canary-ladder') return (await import('./fleet-canary-ladder.js')).cmdFleetCanaryLadder(args.slice(1));
   if (args[0] === 'job') {
     const { cmdFleetJobRead } = await import('./fleet-job-read.js');
     return cmdFleetJobRead(args.slice(1));
   }
   if (args[0] === 'stray-slots') return (await import('./fleet-stray-slots.js')).cmdFleetStraySlots(args.slice(1));
   if (args[0] === 'edit-collisions') return (await import('./fleet-edit-collisions.js')).cmdFleetEditCollisions(args.slice(1));
+  if (args[0] === 'ship-gap') return (await import('./fleet-ship-gap.js')).cmdFleetShipGap(args.slice(1));
   if (args[0] === 'workers') {
     const { cmdFleetWorkers } = await import('./fleet-workers.js');
     return cmdFleetWorkers(args.slice(1));
@@ -2662,6 +2666,7 @@ function printFleetHelp(): void {
   console.log(`                          ${cyan('#   + queued work = incident (read-only, RQ-PHX-ZEROWASTEAUDIT31)')}`);
   console.log(`    phm fleet runs [--json]       ${cyan('# host runs and lane state')}`);
   console.log(`    phm fleet workers [--lane ID] [--repo NAME] [--json] ${cyan('# live host processes')}`);
+  console.log(`    phm fleet wait-jobs --job ID --timeout-ms N [--interval-ms N] --json`);
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
@@ -2675,6 +2680,7 @@ function printFleetHelp(): void {
   console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
+  console.log(`    phm fleet canary-ladder [--json] ${cyan('# per-repo auto-merge rung report (read-only)')}`);
   console.log(`    ashlr fleet xreview run|decide --request <file> [--head <sha>] [--json]`);
   console.log(`                          ${cyan('# cross-model review on another pool + SHA-bound merge decision')}`);
   console.log(`    ashlr fleet evidence doctor <source> [--deep] [--json]`);
