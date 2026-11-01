@@ -1,9 +1,11 @@
+import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
+import { reissueRequest, reissueText } from './reissue-action.js';
 import { useMemo, useRef, useState } from 'react';
 import { BarStack } from '../../../components/charts/BarStack.js';
 import { toneColor, type ChartTone } from '../../../components/charts/colors.js';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { invalidate } from '../../../data/cache.js';
-import { ApiError, readFailureReason } from '../../../data/client.js';
+import { apiPost, ApiError, readFailureReason } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
 import type { ExecutionFeedbackOutcome } from '../../../../core/fleet/execution-feedback-types.js';
 import { formatRelative } from '../autonomy/format.js';
@@ -136,6 +138,33 @@ function QueueRecutButton({ row, runs, canQueue }: { row: Parameters<typeof recu
   </>;
 }
 
+function ReissueButton({ row }: { row: Parameters<typeof reissueRequest>[0] }) {
+  const hold = useMutationHold();
+  const lock = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [written, setWritten] = useState(false);
+  const request = reissueRequest(row);
+  if (!request) return null;
+  async function submit() {
+    const token = getMutationToken();
+    if (!request || !token || lock.current || written) return;
+    lock.current = true;
+    setBusy(true);
+    try {
+      const result = await apiPost<{ outcome: string; newId: string; reason?: string }>(request.path, request.body, token);
+      setMessage(reissueText(result));
+      setWritten(result.outcome === 'written');
+      touchMutationHold();
+    } catch (error) { setMessage(readFailureReason(error)); }
+    finally { lock.current = false; setBusy(false); }
+  }
+  return <>
+    <Button size="sm" variant="subtle" disabled={!hold.hasHold || busy || written} onClick={() => void submit()}>Re-issue</Button>
+    {message && <span role="status">{message}</span>}
+  </>;
+}
+
 export function FleetOutcomesPane({ visible, host }: PaneProps) {
   const read = useQuery(outcomesQuery, { enabled: visible, freshMs: 0 });
   const dropJobs = useQuery(recutDropJobsQuery, { enabled: visible });
@@ -201,6 +230,7 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
             }}>Open worker log</Button> : null}
             {prefill !== null ? <Button size="sm" variant="subtle" aria-label={`Order recut of ${item.jobId}`}
               onClick={() => openInterjectDialog({ prefill })}>Order recut</Button> : null}
+            {reissueRequest(item) && <ReissueButton row={item} />}
             {(canQueue || item.prLink) && <QueueRecutButton row={item} runs={runs.data} canQueue={canQueue} />}
           </li>;
         })}</ul>}

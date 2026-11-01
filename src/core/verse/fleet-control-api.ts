@@ -39,6 +39,9 @@ import {
   readFleetRunLog,
   type FleetControlDeps,
 } from '../fleet/fleet-control.js';
+import { readDropJobFates } from '../fleet/drop-job-fate.js';
+export type { DropJobFatesV1 } from '../fleet/drop-job-fate.js';
+
 import { isRunId } from '../fleet/run-cancel.js';
 import {
   VERSE_FLEET_CONTROL_PATH,
@@ -269,6 +272,19 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
     } catch {
       sendJson(res, 500, { code: 'fleet-control-failed', error: 'the fleet control request failed' });
     }
+    return true;
+  }
+  if (path === '/api/verse/fleet/control/drop-fates') {
+    if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+    for (const key of params.keys()) {
+      if (key !== 'limit') { sendInvalid(res, `unknown query parameter: ${key}`); return true; }
+    }
+    const raw = params.get('limit');
+    if (params.getAll('limit').length > 1 || (raw !== null && (!/^[0-9]+$/.test(raw) || Number(raw) < 1 || Number(raw) > 50))) {
+      sendInvalid(res, 'limit must be an integer from 1 to 50'); return true;
+    }
+    sendJson(res, 200, await readDropJobFates({ limit: raw === null ? 20 : Number(raw) }));
     return true;
   }
   if (path === VERSE_FLEET_CONTROL_STRAY_SLOTS_PATH) {
