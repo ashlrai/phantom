@@ -219,6 +219,7 @@ canonical release guide for required hosted qualification and publication.
 - [Overnight Autonomous Buildout — Quality Review Findings](REVIEW-FINDINGS.md)
 - [Personal meter provenance](PERSONAL-METER-PROVENANCE.md)
 - [Phantom Secrets for enrolled repositories](SECRETS-FOR-ENROLLED-REPOS.md)
+- [Composer commands — the prompt box slash commands](COMPOSER-COMMANDS.md)
 - [Phantom console V2 — build contract (formerly Ashlr Verse)](VERSE-CONTRACT-V2.md)
 - [Phantom console V2 — design language](VERSE-DESIGN-V2.md)
 - [Phantom console — real account telemetry (verified on this machine, 2026-09-19)](VERSE-TELEMETRY-V2.md)
