@@ -1,4 +1,5 @@
 import type { FleetRuns } from '../ops/ops-runs-model.js';
+import { formatDateTime } from '../../../components/format/locale-format.js';
 
 export interface Incident {
   id: string;
@@ -9,6 +10,8 @@ export interface Incident {
 }
 
 const MINUTE = 60_000;
+// A weekly window never goes down by burning, so a low reading during an exhaustion hold is a reset.
+export const RESET_IGNORED_USED_PCT_MAX = 25;
 export const formatMinutes = (ms: number): string => `${Math.max(0, Math.floor(ms / MINUTE))} min`;
 const time = (value: string | null): number | null => {
   if (value === null) return null;
@@ -57,11 +60,22 @@ export function incidents(runs: FleetRuns | null, nowMs: number): Incident[] {
   if (runs.claudeLane && /^down/i.test(runs.claudeLane)) {
     result.push({ id: 'claude-lane', severity: 'incident', title: 'Claude lane is down', detail: runs.claudeLane, fix: null });
   }
+  const personal = runs.codexPersonal;
+  const personalAsOf = time(personal?.asOf ?? null);
+  const personalLane = runs.lanes.find(lane => lane.lane === 'codex-personal' && lane.held
+    && /autobackoff|usage|limit|exhaust/i.test(lane.heldReason ?? ''));
+  const resetIgnored = personalLane && personal && typeof personal.usedPct === 'number'
+    && Number.isFinite(personal.usedPct) && personal.usedPct <= RESET_IGNORED_USED_PCT_MAX
+    && personalAsOf !== null && personalAsOf <= nowMs;
+  if (resetIgnored) {
+    const asOf = formatDateTime(personalAsOf, 'en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    result.push({ id: 'reset-ignored', severity: 'incident', title: 'Personal Codex has reset but its lane is still held', detail: `codex-personal reads ${personal.usedPct}% as of ${asOf} (local) · ${personalLane.queued} jobs are waiting on the hold`, fix: 'Release the hold in Fleet ▸ Lanes, or wait for the hold to expire' });
+  }
   if (runs.switches.some(value => value.endsWith('HOLD'))) {
     result.push({ id: 'hold', severity: 'warn', title: 'HOLD is on', detail: 'HOLD is on: nothing launches until it is removed.', fix: null });
   }
   if (runs.paused === true) result.push({ id: 'paused', severity: 'warn', title: 'Dispatcher paused', detail: 'The dispatcher is paused.', fix: null });
-  const held = runs.lanes.filter(lane => lane.held && lane.target > 0);
+  const held = runs.lanes.filter(lane => lane.held && (lane.target > 0 || (resetIgnored && lane === personalLane)));
   if (held.length) {
     const names = held.map(lane => {
       const reason = lane.heldReason?.trim().slice(0, 80);
