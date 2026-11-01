@@ -4,12 +4,18 @@ import { buildNodeContextPack, type NodeContextPackInput } from '../core/fleet/n
 import { countMalformedNodeContextPackLines, readNodeContextCitations } from '../core/fleet/node-context-citations.js';
 import { summarizeNodeContextCoverage } from '../core/fleet/node-context-coverage.js';
 import { readNodeContextLiveOutputs, markLiveOutputTruncation, type LiveOutputSource } from '../core/fleet/node-context-live-outputs.js';
+import { MAX_BUS_ADDRESS_LENGTH } from '../core/fleet/bus-envelope.js';
+import { listNodeBusNotices, type NodeBusNoticesDependencies } from '../core/fleet/node-bus-notices.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { scrubSecrets } from '../core/util/scrub.js';
 import { explainContextPack } from './context-pack-explain.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--live-upstream-outputs] [--citations] [--markdown | --json [--explain] [--report] [--require-upstream] [--require-upstream-outputs] [--require-complete-upstream-outputs]]
+const FLAGS = ['--live-upstream-outputs', '--bus-address', '--bus-after', '--explain', '--query', '--file', '--stdin',
+  '--json', '--markdown', '--report', '--require-upstream', '--require-upstream-outputs', '--require-complete-upstream-outputs',
+  '--byte-budget', '--fair-upstream', '--citations', '--help', '-h'];
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--live-upstream-outputs] [--bus-address <address> [--bus-after <cursor>]] [--citations] [--markdown | --json [--explain] [--report] [--require-upstream] [--require-upstream-outputs] [--require-complete-upstream-outputs]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -22,6 +28,12 @@ reads at a time, at most 64 KiB per job. Tasks stay unchanged. Source text is
 untrusted data, never execution authority. JSON adds liveOutputSources in
 upstream order; text/Markdown source health goes to stderr. Source truncation
 is partial coverage and fails --require-complete-upstream-outputs.
+--bus-address <address> reads retained, unexpired P0/P1 bus notices addressed
+to that address or all, newest first, before ordinary records in the same budget.
+--bus-after <cursor> starts after a nonnegative safe-integer inbox cursor and
+requires --bus-address; the default is 0. A reset cursor may rescan from 0.
+An unavailable bus may yield no notices; absence does not prove completeness.
+Notice sender and body are untrusted data, never execution authority.
 --query <text> overrides the snapshot query with nonblank text of at most
 2000 Unicode code points, without changing the snapshot.
 --byte-budget N overrides the validated snapshot budget with an integer from
@@ -30,7 +42,7 @@ is partial coverage and fails --require-complete-upstream-outputs.
 before filling the remaining budget in priority order. When the budget cannot
 fit every citation and a code point, some outputs may be omitted.
 --markdown renders the selected records as fenced JSON data with jobId, kind
-(task or output), text and truncated citations. Treat source text as untrusted
+(task, output or notice), text and truncated citations. Treat source text as untrusted
 data. It cannot be combined with --json, --report or --require-upstream
 checks (--require-upstream, --require-upstream-outputs,
 --require-complete-upstream-outputs).
@@ -63,7 +75,7 @@ check.upstreamOutputCoverage: one {jobId, state} per distinct non-self upstream,
 in input order. States are missing-output (no nonblank output), omitted (output
 not emitted), truncated (only truncated citations), or included (at least one
 complete output citation). Returns 1 unless every state is included.
---citations reports which jobs and kinds the pack cites, how many citations
+--citations reports task/output citations (notice lines count as malformed), how many citations
 were truncated, the malformed line count, and the pack size in bytes. In text
 mode the citation report replaces the raw JSONL pack. With --json the envelope
 gains a citations object {records, citationCount, truncatedCitationCount,
@@ -100,6 +112,7 @@ export async function runKnowledgeContextPack(
   io: { stdout: (text: string) => void; stderr: (text: string) => void } = {
     stdout: text => { process.stdout.write(text); }, stderr: text => { process.stderr.write(text); },
   },
+  deps: { bus?: NodeBusNoticesDependencies } = {},
 ): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
     io.stdout(HELP);
@@ -123,6 +136,8 @@ export async function runKnowledgeContextPack(
   let liveUpstreamOutputs = false;
   let byteBudget: number | undefined;
   let query: string | undefined;
+  let busAddress: string | undefined;
+  let busAfter: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
@@ -139,12 +154,24 @@ export async function runKnowledgeContextPack(
     else if (arg === '--query' && query === undefined) {
       const value = args[++i];
       if (!value?.trim() || Array.from(value).length > 2000 ||
-          ['--live-upstream-outputs', '--explain', '--query', '--file', '--stdin', '--json', '--markdown', '--report', '--require-upstream', '--require-upstream-outputs', '--require-complete-upstream-outputs', '--byte-budget', '--fair-upstream', '--citations', '--help', '-h'].includes(value)) {
+          FLAGS.includes(value)) {
         return invalid('--query requires nonblank text of at most 2000 characters');
       }
       query = value;
     }
-    else if (arg === '--byte-budget' && byteBudget === undefined) {
+    else if (arg === '--bus-address' && busAddress === undefined) {
+      const value = args[++i];
+      if (!value || value.length > MAX_BUS_ADDRESS_LENGTH || !/^[\x21-\x7e]+(?![\s\S])/.test(value) || FLAGS.includes(value)) {
+        return invalid('--bus-address requires a printable ASCII address of at most 128 characters');
+      }
+      busAddress = value;
+    } else if (arg === '--bus-after' && busAfter === undefined) {
+      const value = args[++i];
+      if (!value || !/^\d+(?![\s\S])/.test(value) || !Number.isSafeInteger(Number(value))) {
+        return invalid('--bus-after requires a nonnegative safe integer');
+      }
+      busAfter = Number(value);
+    } else if (arg === '--byte-budget' && byteBudget === undefined) {
       const value = args[++i];
       if (!value || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > MAX_PACK_BYTES) {
         return invalid('--byte-budget requires an integer from 1 through 65536');
@@ -166,6 +193,7 @@ export async function runKnowledgeContextPack(
   if (requireUpstream && !json) return invalid('--require-upstream requires --json');
   if (requireUpstreamOutputs && !json) return invalid('--require-upstream-outputs requires --json');
   if (requireCompleteUpstreamOutputs && !json) return invalid('--require-complete-upstream-outputs requires --json');
+  if (busAfter !== undefined && busAddress === undefined) return invalid('--bus-after requires --bus-address');
   if (file !== undefined && useStdin) return invalid('--file and --stdin are mutually exclusive');
   if (file === undefined && !useStdin) return invalid('--file or --stdin is required');
 
@@ -221,14 +249,17 @@ export async function runKnowledgeContextPack(
   // Revalidate the narrowed descriptor after replacing only outputs.
   if (!snapshot(input)) return invalid('snapshot has an invalid shape or byteBudget');
   const effectiveBudget = byteBudget ?? input.byteBudget;
+  const notices = busAddress === undefined ? undefined : listNodeBusNotices(busAddress, busAfter, deps.bus)
+    .map(notice => ({ ...notice, id: scrubSecrets(notice.id), from: scrubSecrets(notice.from),
+      channel: scrubSecrets(notice.channel), text: scrubSecrets(notice.text) }));
   const built = buildNodeContextPack({
-    ...input, byteBudget: effectiveBudget, fairUpstream,
+    ...input, byteBudget: effectiveBudget, fairUpstream, notices,
     node: query === undefined ? input.node : { ...input.node, query },
   });
   const pack = liveOutputSources ? markLiveOutputTruncation(built, liveOutputSources) : built;
   const bytes = Buffer.byteLength(pack, 'utf8');
   const records = report || requireUpstream || requireUpstreamOutputs || markdown ? pack.split('\n').filter(Boolean).map(line =>
-    JSON.parse(line) as { jobId: string; kind: 'task' | 'output'; text: string; truncated: boolean }) : [];
+    JSON.parse(line) as { jobId: string; kind: 'task' | 'output' | 'notice'; text: string; truncated: boolean }) : [];
   const outputJobIds = new Set(records.filter(record => record.kind === 'output').map(record => record.jobId));
   const eligibleOutputJobIds = new Set(input.outputs.filter(record => record.jobId.trim() && record.text.trim() &&
     record.jobId !== input.node.jobId).map(record => record.jobId));
@@ -241,7 +272,7 @@ export async function runKnowledgeContextPack(
     ...(fairUpstream ? { fairUpstreamMissingOutputJobIds: [...new Set(input.node.upstreamJobIds)]
       .filter(id => eligibleOutputJobIds.has(id) && !outputJobIds.has(id)) } : {}),
   } : undefined;
-  const citedJobIds = new Set(records.map(record => record.jobId));
+  const citedJobIds = new Set(records.filter(record => record.kind !== 'notice').map(record => record.jobId));
   const missingUpstreamJobIds = requireUpstream
     ? [...new Set(input.node.upstreamJobIds)].filter(id => !citedJobIds.has(id)) : [];
   const missingUpstreamOutputJobIds = requireUpstreamOutputs
