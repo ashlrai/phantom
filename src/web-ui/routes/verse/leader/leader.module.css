@@ -472,6 +472,13 @@
   overflow-wrap: anywhere;
 }
 
+.refs {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  overflow-wrap: anywhere;
+}
+
 .masonItem {
   display: flex;
   flex-direction: column;
