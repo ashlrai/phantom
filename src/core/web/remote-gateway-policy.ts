@@ -77,7 +77,7 @@ const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
 // ids against LANE_ID_RE plus per-lane bounds, so the gateway bounds format.
 const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
 const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
-// Same grammar the Hub applies in runs-job-detail `isFleetJobId`; duplicated
+// Exact JOB_ID_RE from src/web-ui/routes/verse/fleet-job-log/worker-log-model.ts; duplicated
 // so this module stays free of server-side imports. The CRLF check is load
 // bearing: `$` matches before a trailing line terminator, so the bare pattern
 // would accept a newline-suffixed id the Hub rejects.

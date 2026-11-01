@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { BarStack } from '../../../components/charts/BarStack.js';
 import { toneColor, type ChartTone } from '../../../components/charts/colors.js';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
-import { ApiError } from '../../../data/client.js';
-import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { invalidate } from '../../../data/cache.js';
+import { ApiError, readFailureReason } from '../../../data/client.js';
+import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
 import type { ExecutionFeedbackOutcome } from '../../../../core/fleet/execution-feedback-types.js';
 import { formatRelative } from '../autonomy/format.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
@@ -14,6 +15,8 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { filterCases, outcomeChips, readCase, readOutcomes, recutPrefill, wasteLine, wasteSummary, type OutcomesView } from './fleet-outcomes-model.js';
 import { outcomeCaseQuery, outcomesQuery } from './fleet-outcomes-queries.js';
 import { mergeWaitHref, mergeWaits, mergeWaitSummary, waitDuration } from './merge-wait-model.js';
+import { recutJob } from './recut-job-body.js';
+import { queueRecut, recutDropJobsQuery } from './recut-queue-client.js';
 import styles from './fleet-outcomes.module.css';
 
 // The server refreshes its own feedback reading every 30 s; polling faster
@@ -91,8 +94,44 @@ function MergeWaitSection({ visible }: { visible: boolean }) {
   </section>;
 }
 
+function QueueRecutButton({ row }: { row: Parameters<typeof recutJob>[0] }) {
+  const hold = useMutationHold();
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [queuedId, setQueuedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const job = recutJob(row, Date.now());
+  async function queue() {
+    if (!job || !hold.hasHold || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await queueRecut(job);
+      if (result === 'queued') {
+        setQueuedId(job.id);
+        invalidate(recutDropJobsQuery.key);
+      } else setError(result);
+    } catch (reason) {
+      setError(readFailureReason(reason));
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  }
+  if (!job) return null;
+  if (queuedId) return <span className={styles.dim} role="status">Queued as RQ-PHX-{queuedId}</span>;
+  return <>
+    <Button size="sm" variant="subtle" aria-label={`Queue recut of ${row.jobId}`}
+      disabled={!hold.hasHold || busy} busy={busy} onClick={() => void queue()}>Queue recut</Button>
+    {error && <span role="alert">{error}</span>}
+  </>;
+}
+
 export function FleetOutcomesPane({ visible, host }: PaneProps) {
   const read = useQuery(outcomesQuery, { enabled: visible, freshMs: 0 });
+  const dropJobs = useQuery(recutDropJobsQuery, { enabled: visible });
+  const canQueue = dropJobs.data !== undefined && dropJobs.status !== 'error';
   const refetch = useRefetch(outcomesQuery);
   usePollWhileVisible(refetch, POLL_MS, { enabled: visible });
   const data = useMemo(() => readOutcomes(read.data), [read.data]);
@@ -151,6 +190,7 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
             }}>Open worker log</Button> : null}
             {prefill !== null ? <Button size="sm" variant="subtle" aria-label={`Order recut of ${item.jobId}`}
               onClick={() => openInterjectDialog({ prefill })}>Order recut</Button> : null}
+            {canQueue && <QueueRecutButton row={item} />}
           </li>;
         })}</ul>}
     </section>
