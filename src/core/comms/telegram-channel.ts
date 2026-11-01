@@ -394,6 +394,18 @@ export async function drainLeaderThread(cfg: AshlrConfig, pacer: SendPacer, line
 // Inbound: conversation with the Leader
 // ---------------------------------------------------------------------------
 
+export function telegramSourceEventId(event: { updateId?: number }): string | undefined {
+  const id = event.updateId;
+  return typeof id === 'number' && Number.isSafeInteger(id) && id >= 0 ? `telegram:${id}` : undefined;
+}
+
+function rejectTelegramSourceConflict(err: unknown, event: InboundEvent, sourceEventId: string | undefined): boolean {
+  if (!sourceEventId || !(err instanceof Error) || err.name !== 'LeaderThreadError' ||
+      !('code' in err) || err.code !== 409 || err.message !== 'sourceEventId conflicts with an accepted payload') return false;
+  console.warn(`Telegram update ${event.updateId} rejected: source event ID conflicts with an accepted payload`);
+  return true;
+}
+
 /** `html: true` = `text` is already Telegram HTML (every dynamic part escaped by the caller). */
 async function replyTo(event: InboundEvent, text: string, cfg: AshlrConfig, format?: { html: true }): Promise<TelegramSendResult> {
   const opts: TelegramSendOpts = {
@@ -430,7 +442,15 @@ export async function recordMappedTelegramReply(event: InboundEvent, text: strin
   // Redelivery after a transport failure must not append the human message twice.
   if (!lookupTelegramMessage(event.messageId)?.threadId) {
     const body = target.memoId ? `(re: Leader memo ${target.memoId}) ${text}` : text;
-    const { message } = await mod.appendMasonMessage(body, { channel: 'telegram', cfg, recordOnly: true, ...(target.threadId ? { replyTo: target.threadId } : {}) });
+    const sourceEventId = telegramSourceEventId(event);
+    let message: LeaderThreadMessage;
+    try {
+      ({ message } = await mod.appendMasonMessage(body, { channel: 'telegram', cfg, recordOnly: true,
+        ...(sourceEventId ? { sourceEventId } : {}), ...(target.threadId ? { replyTo: target.threadId } : {}) }));
+    } catch (err) {
+      if (rejectTelegramSourceConflict(err, event, sourceEventId)) return true;
+      throw err;
+    }
     if (event.messageId !== undefined) recordTelegramMessages([event.messageId], { threadId: message.id, kind: 'mason' });
   }
   const sent = await replyTo(event, 'Reply recorded. No action was approved. Use /approvals or the memo buttons for actions; /status, /queue and /usage work without the Leader model.', cfg);
@@ -501,11 +521,19 @@ export async function converseWithLeader(event: InboundEvent, text: string, cfg:
       // A reply to a memo the comms queue delivered has no thread id: name
       // the memo so the Leader knows what Mason is answering.
       const body = !repliedTo?.threadId && repliedTo?.memoId ? `(re: Leader memo ${repliedTo.memoId}) ${text}` : text;
-      const res = await mod.appendMasonMessage(body, {
-        channel: 'telegram',
-        cfg,
-        ...(repliedTo?.threadId ? { replyTo: repliedTo.threadId } : {}),
-      });
+      const sourceEventId = telegramSourceEventId(event);
+      let res: Awaited<ReturnType<LeaderThreadModule['appendMasonMessage']>>;
+      try {
+        res = await mod.appendMasonMessage(body, {
+          channel: 'telegram',
+          cfg,
+          ...(sourceEventId ? { sourceEventId } : {}),
+          ...(repliedTo?.threadId ? { replyTo: repliedTo.threadId } : {}),
+        });
+      } catch (err) {
+        if (rejectTelegramSourceConflict(err, event, sourceEventId)) return;
+        throw err;
+      }
       message = res.message;
       reply = res.reply;
       directive = res.directive;
