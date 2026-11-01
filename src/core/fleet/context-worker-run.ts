@@ -47,7 +47,7 @@ function read(path: string, limit: number): string {
 }
 
 export interface ContextWorkerOptions {
-  snapshot: string; prompt: string; argv: string[]; busAddress?: string; busAfter?: number;
+  snapshot: string; prompt: string; argv: string[]; busAddress?: string; busAfter?: number; timeoutMs?: number;
 }
 export interface ContextWorkerIO {
   stdout?: Writable; stderr?: Writable;
@@ -61,7 +61,8 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
   try {
     if (!opts.argv.length || opts.argv.some(a => typeof a !== 'string' || a.includes('\0')) || !opts.argv[0] ||
         (opts.busAddress !== undefined && !address(opts.busAddress)) ||
-        (opts.busAfter !== undefined && !cursor(opts.busAfter))) throw new Error('invalid input');
+        (opts.busAfter !== undefined && !cursor(opts.busAfter)) ||
+        (opts.timeoutMs !== undefined && (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > 3600000))) throw new Error('invalid input');
     const input: unknown = JSON.parse(read(opts.snapshot, 1024 * 1024));
     const prompt = read(opts.prompt, 1024 * 1024);
     if (!valid(input)) throw new Error('invalid input');
@@ -90,30 +91,45 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
     catch { diagnostic('worker spawn failed'); resolve(1); return; }
     let failed = false;
     let interrupted: NodeJS.Signals | undefined;
+    let timedOut = false;
+    let closed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     const stop = (signal: NodeJS.Signals): void => {
+      if (closed) return;
       child.kill(signal);
       timer ??= setTimeout(() => { child.kill('SIGKILL'); }, 1000);
     };
-    const interrupt = (signal: NodeJS.Signals): void => { interrupted ??= signal; stop(signal); };
+    const interrupt = (signal: NodeJS.Signals): void => {
+      if (timedOut) return;
+      interrupted ??= signal; stop(signal);
+    };
     const int = (): void => interrupt('SIGINT');
     const term = (): void => interrupt('SIGTERM');
     process.on('SIGINT', int); process.on('SIGTERM', term);
     const fail = (): void => { failed = true; stop('SIGTERM'); };
     child.on('error', () => { diagnostic('worker spawn failed'); failed = true; });
+    child.once('spawn', () => {
+      if (opts.timeoutMs !== undefined) deadline = setTimeout(() => {
+        if (interrupted || closed) return;
+        timedOut = true; stop('SIGTERM');
+      }, opts.timeoutMs);
+    });
     const transfers = [
       pipeline(Readable.from([payload]), child.stdin!).catch(() => { diagnostic('worker stdin failed'); fail(); }),
       pipeline(child.stdout!, io.stdout ?? process.stdout, { end: false }).catch(fail),
       pipeline(child.stderr!, stderr, { end: false }).catch(fail),
     ];
     child.once('close', (code, signal) => {
+      closed = true;
       if (timer) clearTimeout(timer);
+      if (deadline) clearTimeout(deadline);
       process.off('SIGINT', int); process.off('SIGTERM', term);
       void Promise.all(transfers).then(() => {
         const ended = interrupted ?? signal;
         if (signal) diagnostic(`worker ended by ${signal}`);
         if (interrupted) diagnostic(`runner interrupted by ${interrupted}`);
-        resolve(ended ? 128 + (constants.signals[ended] ?? 1) : code !== null && code > 0 ? code : failed ? 1 : code === 0 ? 0 : 1);
+        resolve(timedOut ? 124 : ended ? 128 + (constants.signals[ended] ?? 1) : code !== null && code > 0 ? code : failed ? 1 : code === 0 ? 0 : 1);
       });
     });
   });
