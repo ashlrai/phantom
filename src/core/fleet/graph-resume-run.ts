@@ -91,14 +91,34 @@ export async function graphResumeRun(file: string, checkpoint: string, apply = f
       ...(task.dependsOn ? { dependsOn: task.dependsOn.filter(id => !done.has(id)) } : {}) }));
     writePrivateFileAtomically(join(scratch, 'graph.tmp'), reduced, JSON.stringify({ version: 1, tasks: retryTasks }), { anchorPath: scratch, label: 'reduced graph' });
     started = true;
-    const run = await graphArgvRun(reduced, true, timeoutMs, concurrency);
+    // Persist a full-schema checkpoint as each node settles so an interrupted
+    // run keeps completed work: retained successes plus every settled row, with
+    // unfinished nodes written as 'cancelled' so validRows accepts the document
+    // while only successes are retained on the next resume. `lastCheckpoint`
+    // tracks the bytes this invocation published so its own writes are not
+    // mistaken for an outside edit; a real replacement refuses the write.
+    const settled = new Map<string, Row>(rows.filter(row => done.has(row.id)).map(row => [row.id, row]));
+    let lastCheckpoint = initial, persistFailed = false;
+    const checkpointNow = (): void => {
+      if (existing(target) !== lastCheckpoint || read(file) !== manifest) throw Error('checkpoint changed');
+      const nodes = order.map(id => settled.get(id) ?? { id, status: 'cancelled', exitCode: null });
+      const text = `${JSON.stringify({ version: 1, digest, nodes })}\n`;
+      writePrivateFileAtomically(join(dirname(target), `.${basename(target)}.${randomBytes(16).toString('hex')}.tmp`), target,
+        text, { anchorPath: dirname(target), label: 'checkpoint' });
+      lastCheckpoint = text;
+    };
+    const run = await graphArgvRun(reduced, true, timeoutMs, concurrency, {
+      onNodeTerminal: row => {
+        settled.set(row.id, row);
+        try { checkpointNow(); } catch (error) { persistFailed = true; throw error; }
+      },
+    });
     if (!['complete', 'failed'].includes(run.status)) return invalid();
     const combined = new Map([...rows.filter(row => done.has(row.id)), ...run.nodes].map(row => [row.id, row]));
     const nodes = order.map(id => combined.get(id)!);
-    if (existing(target) !== initial || read(file) !== manifest) return { status: 'failed', nodes, retained, retried };
-    writePrivateFileAtomically(join(dirname(target), `.${basename(target)}.${randomBytes(16).toString('hex')}.tmp`), target,
-      `${JSON.stringify({ version: 1, digest, nodes })}\n`, { anchorPath: dirname(target), label: 'checkpoint' });
-    return { status: run.status, nodes, retained, retried };
+    if (existing(target) !== lastCheckpoint || read(file) !== manifest) return { status: 'failed', nodes, retained, retried };
+    if (lastCheckpoint !== `${JSON.stringify({ version: 1, digest, nodes })}\n`) checkpointNow();
+    return { status: persistFailed ? 'failed' : run.status, nodes, retained, retried };
   } catch { return started ? { status: 'failed', nodes: [], retained: [], retried: [] } : invalid(); }
   finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
