@@ -51,6 +51,7 @@ import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
+import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -2544,14 +2545,16 @@ export async function cmdFleet(args: string[]): Promise<number> {
   // their existing help and option checks below.
   if (!Object.hasOwn(FLEET_VERB_OPTIONS, sub)
     && !['pause', 'resume', 'grok-usage', 'automerge-canary', 'xreview', 'receipt', 'evidence', 'optimize-prompt'].includes(sub)) {
-    // New fleet subcommands need no line here: ship
-    // src/cli/fleet-<name>.ts exporting
-    // cmdFleet<PascalName>(args: string[]): Promise<number>.
+    // New fleet subcommands ship src/cli/fleet-<name>.ts exporting
+    // cmdFleet<PascalName>(args: string[]): Promise<number>, then register a
+    // literal loader in fleet-subcommand-registry.ts — a computed specifier
+    // cannot be bundled into the compiled sidecar (sidecar-literal-imports-315).
     const resolved = resolveFleetSubcommand(sub);
-    if (resolved) {
-      let loaded;
+    const loader = resolved ? FLEET_SUBCOMMAND_LOADERS[sub] : undefined;
+    if (resolved && loader) {
+      let loaded: Record<string, unknown> | undefined;
       try {
-        loaded = await import(resolved.module);
+        loaded = await loader() as Record<string, unknown>;
       } catch (err) {
         if (!isModuleNotFound(err, resolved.module)) throw err;
       }
@@ -2649,6 +2652,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
     case 'backlog': {
       const { cmdFleetBacklog } = await import('./fleet-backlog.js');
       return cmdFleetBacklog(rest);
+    }
+    case 'lane-models': {
+      const { cmdFleetLaneModels } = await import('./fleet-lane-models.js');
+      return cmdFleetLaneModels(rest);
     }
     default: {
       process.stderr.write(red('error: ') + `unknown fleet subcommand: ${sub}\n`);
