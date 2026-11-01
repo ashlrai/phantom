@@ -21,6 +21,10 @@ head from the canonical origin, including fork-hosted worker branches:
 Check that FETCH_HEAD is exactly ${headSha}; stop and re-observe if it differs.
 Inspect the original change and replay its completed behavior onto fresh
 origin/master, resolving the conflict without losing already completed work.
+Apply only the hunks that belong to this PR's own concern. Before stopping, git diff --stat origin/master must list only the files you planned for this concern (write that list in BRIDGE_NOTES.md first); if it lists more, you started from a stale base: git checkout origin/master -- <extra files> and continue.
+Do not edit src/cli/fleet.ts, src/cli/index.ts, completions.ts, help.ts, docs/README.md or docs/AGENT-OPERATIONS.md. A new verb is only a new src/cli/fleet-<verb>.ts exporting cmdFleet<Verb>; drop any fleet.ts hunk the original carried and rename the export to fit.
+Do not import a symbol from a job that has not merged; if the inherited work depends on one, define the type in a new file of your own.
+Your last step before stopping is npx tsc --noEmit -p tsconfig.json with exit 0, covering every symbol you import. If it fails, fix it. A red PR emails Mason.
 Read .github/CODEOWNERS and repository instructions first. Exclude protected
 paths from edits; stop for owner review if they are necessary. Do not expose
 secrets or copy raw PR body text into the work. Add a new regression test,
