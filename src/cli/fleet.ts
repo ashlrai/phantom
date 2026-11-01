@@ -2515,6 +2515,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'dispatch-proof') {
+    const { cmdFleetDispatchProof } = await import('./fleet-dispatch-proof.js');
+    return cmdFleetDispatchProof(args.slice(1));
+  }
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2652,6 +2656,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
+  console.log(`    ashlr fleet dispatch-proof [--json] [--runs-dir <abs>] (assigned intent versus observed claims)`);
   console.log(`    ashlr fleet usage-audit [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# did each lane\'s usage meter move this hour? unmoving meter')}`);
   console.log(`                          ${cyan('#   + queued work = incident (read-only, RQ-PHX-ZEROWASTEAUDIT31)')}`);
