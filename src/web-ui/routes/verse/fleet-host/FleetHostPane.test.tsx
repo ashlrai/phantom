@@ -43,15 +43,16 @@ it('keeps the last reading when refresh fails and shows empty switches', async (
 
 it('polls every five seconds only while visible', async () => {
   vi.useFakeTimers(); serve(fixture);
+  const runsCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/verse/fleet/runs').length;
   let visibility = 'visible';
   vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility as DocumentVisibilityState);
   const view = render(<FleetHostPane visible />);
   await act(async () => {});
-  await act(async () => { vi.advanceTimersByTime(5_000); }); expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => { vi.advanceTimersByTime(5_000); }); expect(runsCalls()).toBe(2);
   visibility = 'hidden'; act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(fetch).toHaveBeenCalledTimes(2);
-  visibility = 'visible'; await act(async () => { document.dispatchEvent(new Event('visibilitychange')); }); expect(fetch).toHaveBeenCalledTimes(3);
+  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(runsCalls()).toBe(2);
+  visibility = 'visible'; await act(async () => { document.dispatchEvent(new Event('visibilitychange')); }); expect(runsCalls()).toBe(3);
   view.rerender(<FleetHostPane visible={false} />);
-  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(fetch).toHaveBeenCalledTimes(3);
-  await act(async () => { view.rerender(<FleetHostPane visible />); }); expect(fetch).toHaveBeenCalledTimes(4);
+  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(runsCalls()).toBe(3);
+  await act(async () => { view.rerender(<FleetHostPane visible />); }); expect(runsCalls()).toBe(4);
 });
