@@ -1,7 +1,14 @@
 import { getFleetJobDetail, isFleetJobId, type FleetJobDetailV1 } from '../core/fleet/runs-job-detail.js';
+import { getFleetJobText, type FleetJobTextV1 } from '../core/fleet/runs-job-texts.js';
 
-const usage = 'Usage: phm fleet wait-jobs --job ID (repeatable, 1..32 distinct) --timeout-ms N [--interval-ms N] --json';
+const usage = 'Usage: phm fleet wait-jobs --job ID (repeatable, 1..32 distinct) --timeout-ms N [--interval-ms N] [--require-notes] --json';
 type Outcome = 'published' | 'ended-without-publication' | 'timed-out' | 'unavailable' | 'interrupted';
+interface NotesEvidence {
+  state: 'not-checked' | 'missing' | 'empty' | 'ok' | 'unreadable';
+  source: FleetJobTextV1['source'];
+  bytes: number | null;
+  truncated: boolean;
+}
 interface Row {
   job: string;
   state: 'pending' | 'published' | 'ended-without-publication' | 'unavailable';
@@ -9,9 +16,11 @@ interface Row {
   sources: FleetJobDetailV1['sources'] | null;
   prUrl: string | null;
   processLiveness: 'not-checked';
+  notes?: NotesEvidence;
 }
 export interface FleetWaitJobsDeps {
   read?: (job: string, signal: AbortSignal) => Promise<FleetJobDetailV1>;
+  readNotes?: (job: string, signal: AbortSignal) => Promise<FleetJobTextV1>;
   now?: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
@@ -41,7 +50,7 @@ function bounded<T>(read: Promise<T>, signal: AbortSignal): Promise<T | undefine
 export async function cmdFleetWaitJobs(args: string[], deps: FleetWaitJobsDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    output(`${usage}\nTimeout: 1..3600000 ms (required). Interval: 1000..60000 ms (default 5000). Artifact evidence only; process liveness is not checked. No workers or queue state are changed.`);
+    output(`${usage}\nTimeout: 1..3600000 ms (required). Interval: 1000..60000 ms (default 5000). --require-notes waits for nonempty retained notes or body. Artifact evidence only; process liveness is not checked. No workers or queue state are changed.`);
     return 0;
   }
   const jobs: string[] = [];
@@ -53,7 +62,7 @@ export async function cmdFleetWaitJobs(args: string[], deps: FleetWaitJobsDeps =
     const flag = args[i]!;
     if (flag !== '--job' && seen.has(flag)) return invalid();
     seen.add(flag);
-    if (flag === '--json') continue;
+    if (flag === '--json' || flag === '--require-notes') continue;
     const value = args[++i];
     if (flag === '--job') {
       if (!value || !isFleetJobId(value) || jobs.includes(value) || jobs.length === 32) return invalid();
@@ -83,6 +92,9 @@ export async function cmdFleetWaitJobs(args: string[], deps: FleetWaitJobsDeps =
   if (deps.signal?.aborted) interrupt();
   const rows: Row[] = jobs.map(job => ({ job, state: 'pending', artifactState: null, sources: null, prUrl: null, processLiveness: 'not-checked' }));
   const read = deps.read ?? ((job: string) => getFleetJobDetail(job));
+  const requireNotes = seen.has('--require-notes');
+  if (requireNotes) for (const row of rows) row.notes = { state: 'not-checked', source: null, bytes: null, truncated: false };
+  const readNotes = deps.readNotes ?? ((job: string) => getFleetJobText(job, 'notes'));
   try {
     while (!outcome) {
       let cursor = 0;
@@ -92,6 +104,7 @@ export async function cmdFleetWaitJobs(args: string[], deps: FleetWaitJobsDeps =
           if (outcome || cursor >= rows.length) return;
           const row = rows[cursor++]!;
           if (row.state === 'published') continue;
+          let readingNotes = false;
           try {
             const detail = await bounded(read(row.job, signal), signal);
             check();
@@ -99,15 +112,31 @@ export async function cmdFleetWaitJobs(args: string[], deps: FleetWaitJobsDeps =
             row.artifactState = detail.state;
             row.sources = detail.sources;
             row.prUrl = detail.publish?.prUrl ?? null;
+            if (requireNotes) row.notes = { state: 'not-checked', source: null, bytes: null, truncated: false };
             // A stale publish from an earlier attempt must not release a join.
-            if (detail.state === 'published' && detail.sources.publish === 'healthy' && row.prUrl && detail.publish?.testLine) row.state = 'published';
+            if (detail.state === 'published' && detail.sources.publish === 'healthy' && row.prUrl && detail.publish?.testLine) {
+              if (!requireNotes) row.state = 'published';
+              else {
+                readingNotes = true;
+                const notes = await bounded(readNotes(row.job, signal), signal);
+                check();
+                if (!notes || outcome) return;
+                const state = notes.state === 'ok' && !notes.text.trim() ? 'empty' : notes.state;
+                row.notes = { state, source: notes.source, bytes: notes.bytes, truncated: notes.truncated };
+                if (state === 'ok') row.state = 'published';
+                else if (state === 'unreadable') row.state = 'unavailable';
+              }
+            }
             else if (detail.state === 'archived') row.state = 'ended-without-publication';
             else if (Object.values(detail.sources).includes('degraded')) row.state = 'unavailable';
             else if (detail.state === 'published') row.state = 'unavailable';
             if (row.state === 'ended-without-publication' || row.state === 'unavailable') stop(row.state);
           } catch {
             check();
-            if (!outcome) { row.state = 'unavailable'; stop('unavailable'); }
+            if (!outcome) {
+              if (readingNotes) row.notes = { state: 'unreadable', source: null, bytes: null, truncated: false };
+              row.state = 'unavailable'; stop('unavailable');
+            }
           }
         }
       }));
