@@ -4,10 +4,12 @@ import { IconCopy } from '../../../components/primitives/icons.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { busFeedMissing, busFeedQuery } from '../fleet/bus-feed-queries.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { agentBusMapQuery } from './agent-bus-map-queries.js';
+import { agentAddressPrefill } from './agent-address-prefill.js';
 import { buildBusMap, lastHopText, topTalkers, truncateAgentId } from './bus-map-model.js';
 import { buildDurableMap, durableTotalsLine } from './durable-map-model.js';
 import styles from './fleet-bus-map.module.css';
@@ -84,6 +86,8 @@ function DispatchBusMap({ visible }: PaneProps) {
             <span className={styles.agentId} title={agent.id}>{truncateAgentId(agent.id)}</span>
             <span className={styles.agentCounts}>{agent.sent.toLocaleString()} sent · {agent.received.toLocaleString()} received</span>
             <CopyAgentId id={agent.id} />
+            {agent.id !== 'mason' && <Button variant="ghost" size="sm" aria-label={`Tell ${agent.id}`}
+              onClick={() => { const prefill = agentAddressPrefill(agent.id); if (prefill !== null) openInterjectDialog({ prefill }); }}>Tell</Button>}
           </li>)}
           {map.agents.length > agents.length && <li className={styles.agentCounts}>+ {map.agents.length - agents.length} more</li>}
         </ol>
