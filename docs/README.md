@@ -180,6 +180,7 @@ canonical release guide for required hosted qualification and publication.
 
 ## All documents
 
+- [Durable agent bus: read, write, envelope, and conventions](AGENT-BUS.md)
 - [ASHLR Agentic Inference Fabric — Definitive Architecture Specification](SPEC-INFERENCE-FABRIC.md)
 - [Agent OS Doctrine](AGENT-OS-DOCTRINE.md)
 - [Agent OS Observation Sandbox V1](AGENT-OS-OBSERVATION-SANDBOX-V1.md)
