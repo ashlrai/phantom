@@ -1,10 +1,9 @@
-import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { createPhantomMergeWindow, type MergeWindowRunner } from '../fleet/phantom-merge-window.js';
 import { readHostLoad } from '../fleet/host-load.js';
 import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
@@ -37,6 +36,8 @@ export interface FleetRunsApiDeps {
   appendInbox?: (text: string, source: string) => Promise<unknown>;
   codexPersonal?: () => Promise<unknown>;
   mergedLastHour?: () => Promise<unknown>;
+  /** Bounded read-only GitHub transport for the default Phantom merge source. */
+  mergeWindowRunner?: MergeWindowRunner;
   now?: () => number;
   /** Runs directory the inbox sink and the channel receipt store root at.
    * Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs — the same resolution
@@ -133,26 +134,10 @@ async function personal(now: number): Promise<unknown> {
 }
 export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
-  let mergedCache: { at: number; value: unknown } | undefined;
+  const readMergeWindow = createPhantomMergeWindow({ now, runner: deps.mergeWindowRunner });
   const merges = deps.mergedLastHour ?? (async () => {
-    if (mergedCache && now() - mergedCache.at < 60_000) return mergedCache.value;
-    const { stdout } = await promisify(execFile)('gh', ['api', 'search/issues', '-X', 'GET', '-f',
-      'q=org:ashlrai is:pr is:merged merged:>' + new Date(now() - 3_600_000).toISOString(), '-f', 'per_page=30'], { timeout: 15_000, maxBuffer: 1024 * 1024 });
-    const raw: unknown = JSON.parse(stdout);
-    if (!record(raw) || typeof raw.total_count !== 'number' || !Array.isArray(raw.items)) throw new Error('merges');
-    const items = raw.items.map((item: unknown) => {
-      if (!record(item) || typeof item.repository_url !== 'string' || !/^https:\/\/api.github.com\/repos\/ashlrai\/[\w.-]+$/.test(item.repository_url)) throw new Error('repo');
-      const openedAt = typeof item.created_at === 'string' ? item.created_at : null;
-      const mergedAt = record(item.pull_request) && typeof item.pull_request.merged_at === 'string'
-        ? item.pull_request.merged_at : typeof item.closed_at === 'string' ? item.closed_at : null;
-      const duration = openedAt !== null && mergedAt !== null ? Date.parse(mergedAt) - Date.parse(openedAt) : NaN;
-      const openToMergeMs = Number.isFinite(duration) && duration >= 0 ? duration : null;
-      return { repo: item.repository_url.replace('https://api.github.com/repos/', ''), number: item.number, title: item.title, openedAt, mergedAt, openToMergeMs };
-    });
-    const value = { count: raw.total_count, items, ...mergeSpeedFacts(items, raw.total_count) };
-    project(value, mergesShape);
-    mergedCache = { at: now(), value };
-    return value;
+    const sample = await readMergeWindow();
+    return { ...sample, ...mergeSpeedFacts(sample.items, sample.count) };
   });
   const runs = deps.readRunsDir ?? (async () => (await import('../fleet/runs-dir-state.js' as string)).readFleetRunsDirState());
   const workers = deps.listWorkers ?? (async () => (await import('../fleet/runs-live-workers.js' as string)).listLiveWorkers());
@@ -198,7 +183,10 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         // readers may still supply the snapshot array directly.
         if (key === 'inbox' && !Array.isArray(raw) &&
           (!record(raw) || !['healthy', 'missing', 'degraded'].includes(String(raw.sourceState)))) throw new Error('inbox state');
-        const value = project(key === 'inbox' && record(raw) ? raw.entries : key === 'merges' ? normalizeMergeFields(raw) : raw, shape);
+        let value = project(key === 'inbox' && record(raw) ? raw.entries : key === 'merges' ? normalizeMergeFields(raw) : raw, shape);
+        if (key === 'merges' && !deps.mergedLastHour && record(raw) && raw.complete !== undefined) {
+          value = { ...(value as object), complete: project(raw.complete, 'boolean') };
+        }
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
         const claimed = key === 'runsDir' && record(raw) && raw.claimed != null ? project(raw.claimed, claimsShape) : [];

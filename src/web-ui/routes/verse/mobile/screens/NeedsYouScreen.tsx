@@ -65,6 +65,8 @@ import { homeRunsQuery } from '../home-runs-query.js';
 import { fleetAttention } from '../needs-fleet-model.js';
 import { releaseLaneHold, refreshFleetReads } from '../fleet-actions.js';
 import { heldLaneItems, needsHoldsQuery } from '../needs-holds-model.js';
+import { ciNeedsItem } from '../needs-ci-model.js';
+import { needsCiQuery } from '../needs-ci-query.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { showMobileToast } from '../mobile-toast.js';
@@ -418,7 +420,7 @@ function NeedsCard({ item, canAct, offline, reduced, onAction, onOpen, onHide }:
         {...handlers}
       >
         <div className={styles.head}>
-          <Badge tone={SEVERITY_TONE[item.severity]}>{KIND_NAME[item.kind]}</Badge>
+          <Badge tone={SEVERITY_TONE[item.severity]}>{item.id === 'fleet:owner-hold:ci-runs' ? 'CI' : KIND_NAME[item.kind]}</Badge>
           <span className={styles.age} title={row.ageStamp}>{row.age}</span>
         </div>
         <h2 id={titleId} className={styles.title} title={row.fullTitle}>{row.title}</h2>
@@ -479,6 +481,9 @@ export function NeedsYouScreen() {
   const documentVisible = useDocumentVisible();
   const fleet = useQuery(homeRunsQuery, { enabled: sectionVisible && documentVisible });
   const holds = useQuery(needsHoldsQuery, { enabled: sectionVisible && documentVisible });
+  const ci = useQuery(needsCiQuery, { enabled: sectionVisible && documentVisible });
+  const refetchCi = useRefetch(needsCiQuery);
+  usePollWhileVisible(refetchCi, 5 * 60_000);
   const refetchHolds = useRefetch(needsHoldsQuery);
   usePollWhileVisible(refetchHolds, 15_000);
   const nowMs = Date.now();
@@ -494,10 +499,13 @@ export function NeedsYouScreen() {
   const canAct = canShowActions(permissions);
   const offline = reachability === 'offline' || reachability === 'unreachable';
   const data = activity.data;
-  const all = data?.needsYou ?? [];
+  const ciItem = ciNeedsItem(ci.data, nowMs);
+  const all = [...(data?.needsYou ?? []), ...(ciItem ? [ciItem] : [])];
   const waiting = all.filter((item) => !resolved.has(item.id) && !hiddenIds.has(item.id));
   const counts = splitCounts(waiting);
   const shown = itemsForSplit(waiting, split);
+  const shownCi = ciItem && shown.some((item) => item.id === ciItem.id) ? ciItem : null;
+  const shownActivity = shown.filter((item) => item.id !== ciItem?.id);
   const hiddenHere = itemsForSplit(all.filter((item) => hiddenIds.has(item.id) && !resolved.has(item.id)), split);
   const coverage = splitCoverage(data?.sources ?? null, split);
 
@@ -590,8 +598,10 @@ export function NeedsYouScreen() {
     } else {
       body = <ErrorState title="Couldn’t load Needs you" reason={activity.error ?? 'Your Mac did not answer.'} onRetry={() => void refreshActivity()} />;
     }
-  } else if (shown.length === 0) {
-    if (hiddenHere.length > 0) {
+  } else if (shownActivity.length === 0) {
+    if (shownCi) {
+      body = null;
+    } else if (hiddenHere.length > 0) {
       body = (
         <EmptyState
           title="Nothing else waiting"
@@ -618,7 +628,7 @@ export function NeedsYouScreen() {
   } else {
     body = (
       <ul className={styles.list} aria-label={`${SPLIT_LABEL[split]} waiting on you`}>
-        {shown.map((item) => (
+        {shownActivity.map((item) => (
           <NeedsCard key={item.id} item={item} canAct={canAct} offline={offline} reduced={reduced} onAction={onAction} onOpen={openTarget} onHide={onHide} />
         ))}
       </ul>
@@ -675,6 +685,11 @@ export function NeedsYouScreen() {
               : <span>Needs the Mac</span>} />
           ))}
         </Section>
+      ) : null}
+      {shownCi ? (
+        <ul className={styles.list} aria-label="CI waiting on you">
+          <NeedsCard item={shownCi} canAct={canAct} offline={offline} reduced={reduced} onAction={onAction} onOpen={openTarget} onHide={onHide} />
+        </ul>
       ) : null}
       <FleetAttentionCards nowMs={nowMs} />
       {body}

@@ -7,14 +7,14 @@ export interface HotFile {
 }
 
 /** Pure, per-repository hot spots: count each path once per PR, then rank by count and path. */
-export function findHotFiles(openPrFiles: readonly (readonly string[])[]): HotFile[] {
+export function findHotFiles(openPrFiles: readonly (readonly string[])[], minimum = 3, limit = 10): HotFile[] {
   const counts = new Map<string, number>();
   for (const files of openPrFiles) {
     const paths = new Set(files.map(normalizeRepoPath).filter((path): path is string => path !== null));
     for (const path of paths) counts.set(path, (counts.get(path) ?? 0) + 1);
   }
-  return [...counts].filter(([, count]) => count >= 3)
+  return [...counts].filter(([, count]) => count >= minimum)
     .map(([path, count]) => ({ path, count }))
     .sort((a, b) => b.count - a.count || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-    .slice(0, 10);
+    .slice(0, limit);
 }
