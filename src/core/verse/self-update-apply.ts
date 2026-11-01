@@ -156,13 +156,21 @@ export function scheduleRestart(opts: {
 }
 
 let inFlight: Promise<SelfUpdateApplyResult> | null = null;
+let applyingStartedAt: string | null = null;
+
+/** Current apply state, independent of the cached repository status. */
+export function selfUpdateApplyInProgress(): { startedAt: string } | null {
+  return applyingStartedAt === null ? null : { startedAt: applyingStartedAt };
+}
 
 /** Concurrent callers share the single in-flight apply — the same promise. */
 export function applySelfUpdate(deps: SelfUpdateApplyDeps): Promise<SelfUpdateApplyResult> {
   if (inFlight) return inFlight;
   const p = runApply(deps);
   inFlight = p;
-  const clear = (): void => { if (inFlight === p) inFlight = null; };
+  const clear = (): void => {
+    if (inFlight === p) { inFlight = null; applyingStartedAt = null; }
+  };
   p.then(clear, clear);
   return p;
 }
@@ -175,6 +183,7 @@ async function runApply(deps: SelfUpdateApplyDeps): Promise<SelfUpdateApplyResul
   const writeFile = deps.writeFile ?? ((path, text) => fsWriteFile(path, text, { encoding: 'utf8', mode: 0o600 }));
   const resultPath = deps.resultPath ?? join(ashlrHome(), 'verse', 'self-update-last.json');
   const startedAt = new Date(now()).toISOString();
+  applyingStartedAt = startedAt;
   const steps: Step[] = [];
   let fromCommit: string | null = null;
   let toCommit: string | null = null;
