@@ -56,6 +56,12 @@ const runGit: NonNullable<SelfUpdateDeps['runGit']> = (args, cwd) => new Promise
   }, (error, stdout) => done({ code: error ? 1 : 0, stdout }));
 });
 
+let processHeadSha: string | null = null;
+
+export function resetProcessHeadShaForTests(): void {
+  processHeadSha = null;
+}
+
 export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<OpsSelfUpdateWithLastApply> {
   const now = (deps.now ?? Date.now)();
   const uptimeSeconds = process.uptime();
@@ -63,7 +69,7 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
   try { lastApply = (deps.readLastApply ?? readSelfUpdateLastApply)(); } catch { /* History is advisory. */ }
   const result: OpsSelfUpdateWithLastApply = {
     lastApply, v: 1, generatedAt: new Date(now).toISOString(), sourceState: 'healthy',
-    installedVersion: null, repoRoot: false, headSha: null, headAt: null, originSha: null,
+    installedVersion: null, repoRoot: false, headSha: null, processHeadSha, headAt: null, originSha: null,
     branch: null, behind: null, ahead: null, dirty: null, lastFetchAt: null,
     processStartedAt: new Date(now - uptimeSeconds * 1000).toISOString(), uptimeSeconds, pid: process.pid,
     canFastForward: null,
@@ -95,7 +101,8 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
     git(['rev-list', '--left-right', '--count', 'HEAD...origin/master'], (s) => /^\d+\s+\d+$/.test(s) && s.split(/\s+/).every((n) => Number.isSafeInteger(Number(n)))),
     git(['status', '--porcelain'], () => true),
   ]);
-  result.headSha = head; result.headAt = at; result.originSha = origin; result.branch = branch;
+  if (processHeadSha === null && head !== null && /^[a-f0-9]{40}$/.test(head)) processHeadSha = head;
+  result.headSha = head; result.processHeadSha = processHeadSha; result.headAt = at; result.originSha = origin; result.branch = branch;
   if (counts !== null) [result.ahead, result.behind] = counts.split(/\s+/).map(Number) as [number, number];
   result.dirty = status === null ? null : status.length > 0;
   if (result.behind !== null && result.ahead !== null && result.dirty !== null) {
