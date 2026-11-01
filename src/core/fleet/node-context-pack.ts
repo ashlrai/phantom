@@ -1,3 +1,6 @@
+import { fleetEditCollision } from './collision-free-edits.js';
+import type { HotFile } from './hot-files.js';
+
 /** Task/output retrieval only. Code search belongs to grep, not this index. */
 export interface NodeContextRecord {
   jobId: string;
@@ -49,6 +52,8 @@ export interface NodeContextPackInput {
    * never does. A missing or empty list changes nothing.
    */
   notices?: readonly NodeContextNotice[];
+  /** Open-PR collision hot spots; at most ten entries and 1 KiB, off when empty. */
+  hotFiles?: readonly HotFile[];
   byteBudget: number;
   /** Reserve a small first slice for each distinct upstream output job. */
   fairUpstream?: boolean;
@@ -105,18 +110,35 @@ function renderNotices(notices: readonly NodeContextNotice[], budget: number): s
   return pack;
 }
 
+/** Paths stay JSON-escaped data; singleton advice comes from the admission rule. */
+function renderHotFiles(files: readonly HotFile[], budget: number): string {
+  let pack = '';
+  for (const file of files.slice(0, 10)) {
+    if (!Number.isSafeInteger(file.count) || file.count < 3) continue;
+    const collision = fleetEditCollision(file.path);
+    if (collision?.rule === 'unsafe-path') continue;
+    const text = `Collision hot spot: ${JSON.stringify(file.path)} appears in ${file.count} open PRs. Coordinate before editing.` +
+      (collision ? ` ${collision.why}.` : '');
+    const line = fitLine((text, truncated) => JSON.stringify({
+      jobId: 'fleet/hot-files', kind: 'notice', text, truncated,
+    }) + '\n', text, Math.min(1024, budget) - bytes(pack));
+    pack += line;
+  }
+  return pack;
+}
+
 /**
  * Build a deterministic, pure context pack as JSON Lines. Task/output lines
  * contain { jobId, kind, text, truncated }; jobId is always the complete
- * source citation. Notice lines carry the same envelope plus from, channel,
+ * source citation. Bus notice lines carry the same envelope plus from, channel,
  * at and priority for one retained bus envelope, cited as `bus/<id>`.
  * The budget covers the ENTIRE returned UTF-8 string, including JSON escaping
  * and newlines. Invalid/nonpositive budgets return empty; fractions round down.
  * Oversized text is shortened on Unicode code-point boundaries. If even its
  * citation and envelope cannot fit, the entry is omitted, never uncited.
  *
- * Priority: bus notices (supplied order, newest first), then upstream outputs,
- * upstream tasks, the node's task, then lexical matches from unrelated jobs
+ * Priority: bus notices (supplied order, newest first), hot-file notices,
+ * upstream outputs, upstream tasks, the node's task, then lexical matches from unrelated jobs
  * (descending query overlap). Input order breaks ties. Exact jobId/kind/text
  * duplicates retain their first occurrence.
  * No files, embeddings, network, clock, or caller mutation are involved.
@@ -127,7 +149,9 @@ function renderNotices(notices: readonly NodeContextNotice[], budget: number): s
 export function buildNodeContextPack(input: NodeContextPackInput): string {
   if (!Number.isFinite(input.byteBudget) || input.byteBudget <= 0) return '';
   const noticeLines = renderNotices(input.notices ?? [], Math.floor(input.byteBudget));
-  const budget = Math.floor(input.byteBudget) - bytes(noticeLines);
+  const hotFileLines = renderHotFiles(input.hotFiles ?? [], Math.floor(input.byteBudget) - bytes(noticeLines));
+  const prefix = noticeLines + hotFileLines;
+  const budget = Math.floor(input.byteBudget) - bytes(prefix);
   const upstream = new Set(input.node.upstreamJobIds);
   const query = terms(input.node.query ?? '');
   const seen = new Set<string>();
@@ -185,7 +209,7 @@ export function buildNodeContextPack(input: NodeContextPackInput): string {
       lines.set(index, line);
       used += bytes(line) - bytes(previous);
     }
-    return noticeLines + [...lines.entries()].sort(([a], [b]) => a - b).map(([, line]) => line).join('');
+    return prefix + [...lines.entries()].sort(([a], [b]) => a - b).map(([, line]) => line).join('');
   }
 
   let pack = '';
@@ -198,5 +222,5 @@ export function buildNodeContextPack(input: NodeContextPackInput): string {
     pack += line;
     used += bytes(line);
   }
-  return noticeLines + pack;
+  return prefix + pack;
 }
