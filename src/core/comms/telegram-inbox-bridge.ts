@@ -70,6 +70,9 @@ function configuredOwnerIds(cfg: AshlrConfig): number[] {
 
 export type TelegramInboxResult = ChannelReceiveResult | { ok: false; reason: 'status-replied' | 'status-send-failed' };
 
+/** `/fleet-status` (optionally @bot) — the only text the bridge answers itself. */
+export const TELEGRAM_FLEET_STATUS_RE = /^\/fleet-status(?:@\w+)?$/;
+
 export async function recordTelegramToInbox(
   event: InboundEvent,
   text: string,
@@ -79,7 +82,7 @@ export async function recordTelegramToInbox(
   const message = telegramChannelMessage(event, text);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
   const send = deps.send ?? sendTelegramMessage;
-  if (/^\/fleet-status(?:@\w+)?$/.test(text)) {
+  if (TELEGRAM_FLEET_STATUS_RE.test(text)) {
     if (!configuredOwnerIds(cfg).includes(event.senderUserId!)) return { ok: false, reason: 'sender-not-allowed' };
     try {
       const reply = await telegramFleetStatus(deps);

@@ -35,3 +35,7 @@
 .verdict[data-tone='bad'] { color: var(--status-danger-solid); }
 .verdict[data-tone='warn'] { color: var(--status-warning-solid); }
 .verdict[data-tone='ok'] { color: var(--accent-500); }
+.incident { overflow-wrap: anywhere; }
+.incident[data-tone='danger'] { color: var(--status-danger-solid); }
+.incident[data-tone='warn'] { color: var(--status-warning-solid); }
+.incident .verdict { color: inherit; }
