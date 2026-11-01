@@ -11,3 +11,8 @@
 .events { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: var(--space-1) 0 var(--space-1) var(--space-3); border-left: 2px solid var(--border-subtle); }
 .event { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; font-size: var(--text-xs-size); }
 .eventText { min-width: 0; overflow-wrap: anywhere; }
+
+.unanswered { padding: var(--space-2); border-left: 2px solid var(--status-danger-solid); background: var(--status-danger-bg); color: var(--status-danger-fg); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.unanswered p { margin: 0; }
+.unanswered ol { margin: var(--space-1) 0 0; padding-left: var(--space-3); }
+.unanswered a { color: inherit; }
