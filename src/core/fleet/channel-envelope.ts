@@ -14,6 +14,7 @@ export const INBOUND_CHANNELS = ['email', 'telegram', 'mobile', 'desktop', 'page
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
 export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 export const CHANNEL_ACK_TIMEOUT_MS = 2_000;
+export const CHANNEL_PUBLISH_TIMEOUT_MS = 2_000;
 const MAX_TIMER_MS = 2_147_483_647;
 
 export interface ChannelMessage {
@@ -54,10 +55,16 @@ export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDi
    * `publishChannelEnvelope` rooted at `busRoot` — and, to keep test receivers
    * hermetic, runs only when `busRoot` is set or `runsDir` is unset: a
    * runsDir-scoped receiver without `busRoot` never creates the canonical
-   * store. Production adapters pass neither option and reach it. */
+   * store. Production adapters pass neither option and reach it. The wait is
+   * bounded by `publishTimeoutMs`. */
   publish?: ((envelope: ChannelEnvelope) => Promise<void>) | null;
   /** Store root for the default bus publish sink (see `appendBusInbox`). */
   busRoot?: string;
+  /** Maximum mirror wait in milliseconds, a positive timer-safe integer
+   * (default {@link CHANNEL_PUBLISH_TIMEOUT_MS}). Expiry reports publishState
+   * 'failed' and the receipt proceeds to acknowledgement; the attempt itself is
+   * never cancelled or retried here, so a late publication may still complete. */
+  publishTimeoutMs?: number;
 }
 
 /** Rolling window from first successful receipt, including across clock bucket
@@ -68,6 +75,10 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   const ackTimeoutMs = options.acknowledgementTimeoutMs === undefined ? CHANNEL_ACK_TIMEOUT_MS : options.acknowledgementTimeoutMs;
   if (!Number.isInteger(ackTimeoutMs) || ackTimeoutMs < 1 || ackTimeoutMs > MAX_TIMER_MS) {
     throw new RangeError('acknowledgementTimeoutMs must be a positive timer-safe integer');
+  }
+  const publishTimeoutMs = options.publishTimeoutMs === undefined ? CHANNEL_PUBLISH_TIMEOUT_MS : options.publishTimeoutMs;
+  if (!Number.isInteger(publishTimeoutMs) || publishTimeoutMs < 1 || publishTimeoutMs > MAX_TIMER_MS) {
+    throw new RangeError('publishTimeoutMs must be a positive timer-safe integer');
   }
   const allowed = new Set(options.allowedSenderIds);
   const seen = new Map<string, { at: number; key: string }>();
@@ -81,14 +92,22 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     // write committed, before acknowledge, and outside the ack timeout. Its
     // outcome is reported as publishState and never alters the receipt or ack.
     let publishState: ChannelPublishState = 'skipped';
-    if (status === 'accepted') {
-      if (typeof options.publish === 'function') {
-        try { await options.publish({ ...envelope }); publishState = 'published'; }
-        catch { publishState = 'failed'; }
-      } else if (options.publish === undefined &&
-        (options.busRoot !== undefined || options.runsDir === undefined)) {
-        publishState = await publishChannelEnvelope({ ...envelope }, { root: options.busRoot, now: () => at });
-      }
+    const publish = options.publish;
+    const mirrors = status === 'accepted' && (typeof publish === 'function' ||
+      (publish === undefined && (options.busRoot !== undefined || options.runsDir === undefined)));
+    if (mirrors) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const attempt: Promise<ChannelPublishState> = typeof publish === 'function'
+          ? Promise.resolve(publish({ ...envelope })).then((): ChannelPublishState => 'published')
+          : publishChannelEnvelope({ ...envelope }, { root: options.busRoot, now: () => at });
+        // Promise.race also observes a publish rejection after the deadline.
+        publishState = await Promise.race([
+          attempt,
+          new Promise<ChannelPublishState>((resolve) => { timer = setTimeout(() => resolve('failed'), publishTimeoutMs); }),
+        ]);
+      } catch { publishState = 'failed'; }
+      finally { if (timer !== undefined) clearTimeout(timer); }
     }
     if (options.acknowledge) {
       let timer: ReturnType<typeof setTimeout> | undefined;
