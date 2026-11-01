@@ -20,6 +20,8 @@ import { openInterjectDialog } from './interject-dialog-store.js';
 import { sheetActions, steerPrefill } from './job-sheet-actions.js';
 import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
 import { JobRefs } from './JobRefs.js';
+import { jobBacklogQuery, jobBacklogRepo } from './job-backlog-queries.js';
+import { jobBacklogState } from './job-backlog-state.js';
 import { closesRefs, notesHeadline, notesPreview } from './job-notes-model.js';
 import styles from './workers-card.module.css';
 
@@ -39,6 +41,11 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   const changes = useQuery(changesQuery, { freshMs: 0 });
   const notesQuery = jobTextQuery(job, 'notes');
   const notes = useQuery(notesQuery, { freshMs: 0 });
+  const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
+    && repo.split('/').every(part => part !== '.' && part !== '..') ? repo : null;
+  const backlogRepo = jobBacklogRepo(repo, read.data?.publish?.prUrl);
+  const backlog = useQuery(jobBacklogQuery(backlogRepo ?? ''), { enabled: backlogRepo !== null });
+  const prState = backlog.error ? null : jobBacklogState(backlog.data, job);
   const busStatus = useQuery(agentBusStatusQuery, { freshMs: 10_000 });
   const busPageQuery = agentBusPageQuery(Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100), 100);
   const busPage = useQuery(busPageQuery, { freshMs: 10_000, enabled: busStatus.data?.source === 'available' && busStatus.data.retainedCount !== null });
@@ -57,8 +64,6 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   const collision = changes.data ? collisionTell(changes.data) : null;
   const preview = notes.data?.state === 'ok' ? notesPreview(notes.data.text) : null;
   const issues = notes.data?.state === 'ok' ? closesRefs(notes.data.text) : [];
-  const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
-    && repo.split('/').every(part => part !== '.' && part !== '..') ? repo : null;
   const copyBranch = async (branch: string) => {
     try { await navigator.clipboard.writeText(branch); setNotice('Copied'); }
     catch { setNotice('Copy failed'); }
@@ -82,6 +87,8 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
     {notInBuild(read.error) ? <p>Job detail is not in this build yet.</p> : read.error ? <p>Job detail unavailable.</p> : !d ? <SkeletonLine /> : <>
       <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><span aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</span>{label === 'Branch' && value ? <> <Button size="sm" onClick={() => void copyBranch(value)}>Copy</Button> <span role="status">{notice}</span></> : null}</dd></div>)}</dl>
       {d.publish?.prUrl ? <p><a href={d.publish.prUrl} target="_blank" rel="noreferrer">PR for job {job}</a></p> : null}
+      {prState ? <p><StatusBadge status={prState.state} tone={{ danger: 'danger', warn: 'warning', ok: 'success', neutral: 'neutral' }[prState.tone] as Tone}>{prState.text}</StatusBadge></p> : null}
+      {prState?.action === 'recut' ? <p style={{ color: 'var(--text-secondary)' }}>Queue a recut from the Outcomes pane</p> : null}
       {d.publish?.autoMerge != null ? <p>Auto-merge {d.publish.autoMerge ? 'on' : 'off'}</p> : null}
       <section aria-label="Changed files">
         <h3>Changed files</h3>

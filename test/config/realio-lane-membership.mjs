@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/fleet-ci-daily-plan-nov01.test.ts', // Applies generated patches with real git in a temporary repo.
   'test/mcp-gateway-lazy-start.test.ts', // Real stdio gateway + downstream subprocesses.
   // test/integration/lane-membership.mjs DERIVES its view by filtering this
   // array for `test/integration/` — importing it here instead would be a

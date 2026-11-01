@@ -22,6 +22,8 @@ import { formatDateTime } from '../../../components/format/locale-format.js';
 import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { derivePulse, readPulseInput } from '../ops/merge-pulse-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
+import { mergeStallFacts } from './merge-stall-facts.js';
+import { deriveClaudeLaneNeedsYou } from './claude-lane-needs-you.js';
 
 /** The surface an item's "Open" button takes the operator to. */
 export type FleetNeedsYouTarget = 'fleet' | 'ops' | 'settings';
@@ -48,13 +50,6 @@ export const FLEET_NEEDS_YOU_POLL_MS = 15_000;
 export const LEADER_PASS_CADENCE_MS = 15 * 60_000;
 export const LEADER_OVERDUE_MS = 2 * LEADER_PASS_CADENCE_MS;
 
-/**
- * A server status line is printed only when it cannot smuggle a path or a
- * second line onto the screen (the honesty rule: basenames only). A line
- * that fails this is replaced by a fixed sentence.
- */
-const SAFE_STATUS = /^[\w .:()-]{1,160}$/;
-
 /** Below these free readings the host itself is the problem. */
 const LOW_DISK_GB = 10;
 const LOW_MEM_PCT = 10;
@@ -70,18 +65,23 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   const answered = runsDir === 'healthy' || runsDir === 'degraded';
   const items: FleetNeedsYouItem[] = [];
 
-  const lane = snapshot.claudeLane;
-  if (lane !== null && /down/i.test(lane)) {
+  if (mergeStallFacts(snapshot, nowMs)) {
+    const detail = [...snapshot.publishesLastHour]
+      .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0))
+      .slice(0, 3).map(({ job, at }) => {
+        const published = Date.parse(at);
+        const age = Number.isFinite(published) ? `${Math.max(0, Math.floor((nowMs - published) / 60_000))}m ago` : 'age unknown';
+        return `${job} (${age})`;
+      }).join(' · ');
     items.push({
-      id: 'claude-lane-down',
-      open: { kind: 'terminal', command: '~/.ashlr-runs/bin/fix-claude-lane.sh' },
-      severity: 'urgent',
-      title: 'The Claude lane is down',
-      detail: SAFE_STATUS.test(lane) ? `Claude lane: ${lane}` : 'The lane reported itself down.',
-      nextStep: "Run the Claude lane fix script from the runs directory's bin folder, then check Fleet",
-      target: 'fleet',
+      id: 'merge-stall', severity: 'urgent',
+      title: `Merge gate stalled: ${snapshot.publishesLastHour.length} published, 0 merged in the last hour`,
+      detail, nextStep: 'Check the merge gate in Fleet ▸ Merges',
+      open: { kind: 'pane', paneId: 'fleet-merges' }, target: 'fleet',
     });
   }
+
+  items.push(...deriveClaudeLaneNeedsYou(snapshot, nowMs));
 
   if (snapshot.switches.length > 0) {
     items.push({
