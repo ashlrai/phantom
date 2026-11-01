@@ -14,6 +14,7 @@ export interface BusWorkLoopResult { status: 'invalid' | 'timeout' | 'cancelled'
 
 export function validBusWorkLoopOptions(opts: BusWorkLoopOptions): boolean {
   return validBusWaitClaimRequest(opts) && Number.isSafeInteger(opts.maxJobs) && opts.maxJobs >= 1 && opts.maxJobs <= 16 &&
+    (opts.timeoutMs === undefined || (Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 1 && opts.timeoutMs <= 3600000)) &&
     [opts.snapshot, opts.prompt].every(p => typeof p === 'string' && isAbsolute(p) && !p.includes('\0')) &&
     Array.isArray(opts.argv) && opts.argv.length > 0 && !!opts.argv[0] &&
     opts.argv.every(a => typeof a === 'string' && !a.includes('\0'));
@@ -58,7 +59,8 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
         timer.unref();
         // The child may echo its input or emit arbitrary text; discard both streams.
         const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
-        const result = await runContextReply({ snapshot: opts.snapshot, prompt: opts.prompt, argv: opts.argv, requestFile, replyId },
+        const result = await runContextReply({ snapshot: opts.snapshot, prompt: opts.prompt, argv: opts.argv, requestFile, replyId,
+          ...(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }) },
           { stdout: sink, stderr: sink }, { root });
         succeeded = result.workerExit.status === 'returned' && result.workerExit.exitCode === 0 &&
           (result.replyReceipt.status === 'posted' || result.replyReceipt.status === 'duplicate') &&
