@@ -38,6 +38,14 @@ export function narrowAgentBusStatus(x: unknown): AgentBusStatus | null {
 // Once an older hub reports the route missing, do not probe it again this page lifetime.
 let missing: ApiError | null = null;
 export const agentBusMissing = () => missing !== null;
+// Share the newest fetched page with consumers of the rail's existing poll.
+let latestPage: AgentBusPage | null = null;
+const pageListeners = new Set<() => void>();
+export const getLatestAgentBusPage = () => latestPage;
+export function subscribeAgentBusPage(listener: () => void): () => void {
+  pageListeners.add(listener);
+  return () => { pageListeners.delete(listener); };
+}
 async function read(path: string, signal?: AbortSignal): Promise<unknown> {
   if (missing) throw missing;
   try { return await apiGet<unknown>(path, signal); }
@@ -45,7 +53,17 @@ async function read(path: string, signal?: AbortSignal): Promise<unknown> {
 }
 export function agentBusPageQuery(after: number, limit = 50): QueryDef<AgentBusPage | null> {
   return { key: `verse-agent-bus:${after}:${limit}`,
-    fetch: async signal => narrowAgentBusPage(await read(`/api/verse/agent-bus?after=${after}&limit=${limit}`, signal)) };
+    fetch: async signal => {
+      const page = narrowAgentBusPage(await read(`/api/verse/agent-bus?after=${after}&limit=${limit}`, signal));
+      if (page && (!latestPage || page.nextCursor >= latestPage.nextCursor)) {
+        // The API returns remaining TTL, while row projections use TTL from receipt.
+        const now = Date.now();
+        latestPage = { ...page, messages: page.messages.map(row => ({ ...row, envelope: { ...row.envelope,
+          ttl: Math.min(Number.MAX_SAFE_INTEGER, row.envelope.ttl + Math.max(0, now - row.receivedAt)) } })) };
+        for (const listener of pageListeners) listener();
+      }
+      return page;
+    } };
 }
 export const agentBusStatusQuery: QueryDef<AgentBusStatus | null> = {
   key: 'verse-agent-bus-status', fetch: async signal => narrowAgentBusStatus(await read('/api/verse/agent-bus/status', signal)),
