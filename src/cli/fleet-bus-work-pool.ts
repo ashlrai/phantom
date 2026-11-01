@@ -2,7 +2,7 @@ import { runBusWorkPool, validBusWorkPoolOptions, type BusWorkPoolOptions } from
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 
 const usage = 'Usage: ashlr fleet bus-work-pool --to <address> --owner <label> --lease-ms <ms> --wait-ms <ms> --max-jobs <1..16> --concurrency <1..4> --snapshot <absolute> --prompt <absolute> [--root <absolute>] [--timeout-ms <1..3600000>] -- <program> [args...]';
-const note = '--max-jobs is the total pool limit. Fixed quotas can remain unused after a worker fails; external effects are not exactly-once.';
+const note = '--max-jobs is the total pool limit on one-job attempts, including failures and timeouts. Healthy consumers share unattempted capacity; consumer quota reports attempts. External effects are not exactly-once.';
 
 export async function cmdFleetBusWorkPool(args: string[], io: ContextWorkerIO = {}): Promise<number> {
   const out = io.stdout ?? process.stdout, err = io.stderr ?? process.stderr;
