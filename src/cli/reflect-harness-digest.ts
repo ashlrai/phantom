@@ -1,6 +1,8 @@
-import { readHarnessDigest } from '../core/learn/harness-digest-reader.js';
+import { readHarnessDigest, type HarnessDigest } from '../core/learn/harness-digest-reader.js';
+import { sanitizeCommandLine } from '../core/verse/shell-integration.js';
+import { makeColors, type Colors } from './ui.js';
 
-const HELP = `Usage: phm reflect harness-digest --file <markdown> --json [--source <id>]... [--query <text>] [--stale-days <n>] [--needs-refresh] [--with-takeaways] [--check]
+const HELP = `Usage: phm reflect harness-digest --file <markdown> (--json | --text) [--source <id>]... [--query <text>] [--stale-days <n>] [--needs-refresh] [--with-takeaways] [--check]
 Read a local digest (maximum 1 MiB) and emit dated HTTPS citations as JSON.
 Dates are UTC calendar days; older than N days is stale (default 7, boundary is fresh).
 Missing, invalid, or future dates have null checkedAt and stale, with an issue.
@@ -23,14 +25,44 @@ issues, or read failure. Requested IDs are checked before takeaway filtering.
 The check evaluates the selection before --needs-refresh, after --source,
 --with-takeaways and --query. Without --query, issues remain scoped by --source
 and are not filtered by takeaways.
+With --text, print one line per selected takeaway — source ID, checked date (or
+undated), text — capped at 200 lines with a trailing count of any elided
+takeaways. Displayed fields are stripped of terminal control characters, and
+the date is colored by freshness only when stdout is a TTY.
 Invalid arguments exit 2. Without --check, a successfully read digest exits 0.
-Options: --file <markdown>  Input file; --json  Required JSON output;
+Options: --file <markdown>  Input file; --json | --text  Required output mode;
          --source <id>  Exact source ID (repeatable); --stale-days <n>  Non-negative integer;
          --query <text>  Literal title or takeaway substring (case-insensitive);
          --needs-refresh  Filter sources;
          --with-takeaways  Filter sources to those with takeaways;
          --check  Check freshness;
          --help, -h  Show help.`;
+
+/** Maximum lines printed by --text; the last line reports any elided takeaways. */
+const TEXT_LINE_CAP = 200;
+
+/** Untrusted value for one terminal line: no control or bidi characters, no newlines. */
+const displayField = (value: string): string => sanitizeCommandLine(value).replace(/\n+/g, ' ');
+
+/** Terminal-readable rendering of the selected digest: one line per takeaway. Never fetches or executes content. */
+function formatHarnessDigestText(digest: HarnessDigest, color: Colors): string {
+  const lines: string[] = [];
+  for (const source of digest.sources) {
+    const date = source.checkedAt ?? 'undated';
+    const dateField = source.stale === true ? color.red(date) : source.stale === null ? color.yellow(date) : color.dim(date);
+    const stamp = `${color.dim(displayField(source.id))} ${dateField}`;
+    for (const takeaway of source.takeaways ?? []) {
+      const text = displayField(takeaway);
+      if (text) lines.push(`${stamp} ${text}`);
+    }
+  }
+  if (lines.length === 0) return '(no takeaways)\n';
+  if (lines.length > TEXT_LINE_CAP) {
+    // Keep the total at the cap: the last line reports how many takeaways were elided.
+    return [...lines.slice(0, TEXT_LINE_CAP - 1), `(+${lines.length - TEXT_LINE_CAP + 1} more takeaways)`].join('\n') + '\n';
+  }
+  return lines.join('\n') + '\n';
+}
 
 export function cmdReflectHarnessDigest(args: string[], now = new Date()): number {
   if (args.some((arg, i) => (arg === '--help' || arg === '-h') && (i === 0 || args[i - 1] !== '--query'))) {
@@ -39,6 +71,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
   }
   let file: string | undefined;
   let json = false;
+  let text = false;
   let check = false;
   let needsRefresh = false;
   let withTakeaways = false;
@@ -52,6 +85,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--text' && !text) text = true;
     else if (arg === '--check' && !check) check = true;
     else if (arg === '--needs-refresh' && !needsRefresh) needsRefresh = true;
     else if (arg === '--with-takeaways' && !withTakeaways) withTakeaways = true;
@@ -73,7 +107,7 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
       staleDays = Number(value);
     } else return usage();
   }
-  if (!file || !json) return usage();
+  if (!file || json === text) return usage();
   const result = readHarnessDigest(file, now, staleDays);
   if (!result) {
     process.stderr.write('error: unable to read digest as a stable regular file (maximum 1 MiB).\n');
@@ -103,6 +137,8 @@ export function cmdReflectHarnessDigest(args: string[], now = new Date()): numbe
   const output = needsRefresh
     ? { ...selected, sources: selected.sources.filter(source => source.stale !== false || issueIds.has(source.id)) }
     : selected;
-  process.stdout.write(JSON.stringify(output) + '\n');
+  process.stdout.write(json
+    ? JSON.stringify(output) + '\n'
+    : formatHarnessDigestText(output, makeColors(process.stdout.isTTY === true)));
   return check && (missingSource || selected.sources.length === 0 || selected.issues.length > 0 || selected.sources.some(source => source.stale !== false)) ? 1 : 0;
 }

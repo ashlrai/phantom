@@ -5,7 +5,7 @@ import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, safePrUrl, stateTone } from './worker-log-model.js';
+import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
 import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
@@ -74,9 +74,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const moveMatch = (dir: 1 | -1) => setSelectedMatch(nextMatch(matches, current, dir));
   const retained = valid && !options.some(option => option.job === job);
   const url = safePrUrl(detail.data?.publish?.prUrl);
-  const testFact = publishTestFact(detail.data?.publish?.testLine);
-  const sensitiveFact = publishSensitiveFact(detail.data?.publish?.sensitive);
-  const autoMergeOff = detail.data?.publish?.autoMerge === false && url !== null;
+  const { testLine, sensitive } = publishFacts(detail.data?.publish);
   const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
   const state = detail.data?.state ?? 'unknown';
 
@@ -111,10 +109,9 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
       <div className={styles.meta}><StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
         {meta.slice(1).map((part, index) => <span key={`${part}-${index}`}> · {url && index === meta.length - 2 && part === prLabel(url) ? <a href={url} target="_blank" rel="noreferrer">{part}</a> : part}</span>)}
       </div>
-      {(testFact !== null || sensitiveFact !== null || autoMergeOff) && <section aria-label="Publish" className={styles.meta}>
-        {testFact !== null && <p>Tests: <code>{testFact}</code></p>}
-        {sensitiveFact !== null && <p role="note">Touches owner-reviewed paths: {sensitiveFact} — needs an owner review before it can merge</p>}
-        {autoMergeOff && <p>Auto-merge: off</p>}
+      {(testLine !== null || sensitive !== null) && <section aria-label="Publish" className={styles.meta}>
+        {testLine !== null && <p>Tests: <code>{testLine}</code></p>}
+        {sensitive !== null && <p role="note">Touches owner-reviewed paths: {sensitive.join(', ')}</p>}
       </section>}
       {detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
         <div ref={logRef} className={styles.log} role="log" aria-live="polite">{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>}
@@ -151,17 +148,4 @@ function JobText({ job, kind, enabled }: { job: string; kind: 'notes' | 'prompt'
                 : <p>{enabled ? 'Reading…' : 'Select a worker'}</p>}
     </>}
   </details>;
-}
-
-function publishTestFact(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') return null;
-  const collapsed = value.replace(/\s+/g, ' ').trim();
-  if (collapsed === '') return null;
-  return collapsed.length > 200 ? `${collapsed.slice(0, 199)}…` : collapsed;
-}
-
-function publishSensitiveFact(paths: string[] | null | undefined): string | null {
-  if (!paths || paths.length === 0) return null;
-  const shown = paths.slice(0, 5).join(', ');
-  return paths.length > 5 ? `${shown} +${paths.length - 5} more` : shown;
 }
