@@ -31,6 +31,8 @@ import { detectKeyPlatform, findCommand, type WorkbenchCommand } from './command
 import { argumentItems, buildPaletteItems, paletteView, type PaletteItem } from './palette-model.js';
 import { executeCatalogCommand, shellNotify } from './run-command.js';
 import { useActivity } from './useActivity.js';
+import { deriveCiNeedsYou } from './ci-needs-you.js';
+import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './fleet-ci-runs-query.js';
 import styles from './CommandPalette.module.css';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
@@ -63,6 +65,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
   const panes = usePanes();
   useEffect(() => { void import('../panes/index.js'); }, []);
   const activity = useActivity();
+  const ciRead = useQuery(fleetCiRunsQuery, { freshMs: FLEET_CI_RUNS_POLL_MS });
   const sessions = useQuery(verseSessionsQuery);
   const bootstrap = useQuery(verseBootstrapQuery);
   const platform = useMemo(() => detectKeyPlatform(), []);
@@ -92,6 +95,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       workers: paletteWorkers(runs.data),
       lanes: paletteLanes(runs.data, parsePauseRecord(localStorage.getItem(LANE_PAUSE_KEY))),
       needsYou: activity.data?.needsYou ?? [],
+      fleetNeedsYou: deriveCiNeedsYou(ciRead.status === 'error' ? undefined : ciRead.data, Date.now()),
       running: activity.data?.running ?? [],
       sessions: sessions.data ?? bootstrap.data?.sessions ?? [],
       seats: bootstrap.data?.seats ?? [],
@@ -99,7 +103,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       recentActions: ui.recentActions,
       platform,
     }),
-    [panes, runs.data, activity.data, sessions.data, bootstrap.data, ui.recentActions, platform],
+    [panes, runs.data, activity.data, ciRead.data, ciRead.status, sessions.data, bootstrap.data, ui.recentActions, platform],
   );
 
   const view = useMemo(() => {
