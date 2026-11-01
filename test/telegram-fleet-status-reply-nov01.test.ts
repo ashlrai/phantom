@@ -7,6 +7,10 @@ import { readFleetRunsDirState } from '../src/core/fleet/runs-dir-state.js';
 import { listLiveWorkers } from '../src/core/fleet/runs-live-workers.js';
 import type { InboundEvent, TelegramSendOpts, TelegramSendResult } from '../src/core/integrations/telegram.js';
 import type { AshlrConfig } from '../src/core/types.js';
+import { telegramFleetStatus } from '../src/core/comms/telegram-fleet-status.js';
+import type { StatusSupply } from '../src/core/comms/status-supply-line.js';
+// The root Vitest project includes test/ files, so register the colocated suite here.
+import '../src/core/comms/status-supply-line.test.js';
 
 const at = new Date('2026-11-01T04:08:00.000Z');
 const cfg = { comms: { enabled: true, channel: 'telegram', telegram: { botToken: 'fake-token', chatId: '12345' } } } as AshlrConfig;
@@ -31,6 +35,15 @@ function setup() {
 }
 
 describe('Telegram fleet status bridge', () => {
+  it('appends supply and planner projections and contains reader failures', async () => {
+    const deps = setup();
+    const supply: StatusSupply = { v: 1, sourceState: 'healthy', lanes: [{ lane: 'devin', phxReady: 2, fillerReady: 3 }],
+      planner: { status: 'ok', lastGoodPassAt: '2026-11-01T04:07:00.000Z', reason: null } };
+    const body = await telegramFleetStatus({ ...deps, readSupply: async () => supply });
+    expect(body.split('\n').slice(-2)).toEqual(['Supply: devin 2 phantom / 3 filler', 'Planner: last good pass 2026-11-01T04:07:00.000Z']);
+    const failed = await telegramFleetStatus({ ...deps, readSupply: async () => { throw new Error('private'); } });
+    expect(failed.split('\n').slice(-2)).toEqual(['Supply: unavailable', 'Planner: unknown (unavailable)']);
+  });
   it.each([
     { privateChat: false }, { privateChat: undefined }, { senderUserId: undefined }, { senderUserId: 98765 },
   ])('does no reads or sends for unverified or foreign sender: %j', async over => {
