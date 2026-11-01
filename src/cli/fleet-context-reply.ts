@@ -3,7 +3,7 @@ import { runContextReply } from '../core/fleet/context-result-bus.js';
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
 
-const usage = 'Usage: ashlr fleet context-reply --snapshot <absolute-json> --prompt <absolute-text> --request-file <absolute-envelope-json> --reply-id <id> -- <program> [args...]';
+const usage = 'Usage: ashlr fleet context-reply --snapshot <absolute-json> --prompt <absolute-text> --request-file <absolute-envelope-json> --reply-id <id> [--timeout-ms <1..3600000>] -- <program> [args...]';
 export async function cmdFleetContextReply(args: string[], io: ContextWorkerIO = {}, bus: BusInboxOptions = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     (io.stdout ?? process.stdout).write(`${usage}\nExplicit argv authorizes launch. Replies report runner process outcome only; routing is unauthenticated and grants no merge or completion authority.\n`);
@@ -15,13 +15,17 @@ export async function cmdFleetContextReply(args: string[], io: ContextWorkerIO =
   const flags = new Map<string, string>();
   for (let i = 0; i < split; i += 2) {
     const key = args[i]!, value = args[i + 1];
-    if (!['--snapshot', '--prompt', '--request-file', '--reply-id'].includes(key) || flags.has(key) ||
+    if (!['--snapshot', '--prompt', '--request-file', '--reply-id', '--timeout-ms'].includes(key) || flags.has(key) ||
         i + 1 >= split || !value || value.includes('\0')) return invalid();
     flags.set(key, value);
   }
   const snapshot = flags.get('--snapshot'), prompt = flags.get('--prompt'), requestFile = flags.get('--request-file'), replyId = flags.get('--reply-id');
-  if (!snapshot || !prompt || !requestFile || !replyId || ![snapshot, prompt, requestFile].every(isAbsolute)) return invalid();
-  const result = await runContextReply({ snapshot, prompt, requestFile, replyId, argv: args.slice(split + 1) }, io, bus);
+  const timeout = flags.get('--timeout-ms');
+  const timeoutMs = timeout !== undefined && /^\d+(?![\s\S])/.test(timeout) ? Number(timeout) : NaN;
+  if (!snapshot || !prompt || !requestFile || !replyId || ![snapshot, prompt, requestFile].every(isAbsolute) ||
+      (timeout !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000))) return invalid();
+  const result = await runContextReply({ snapshot, prompt, requestFile, replyId, argv: args.slice(split + 1),
+    ...(timeout === undefined ? {} : { timeoutMs }) }, io, bus);
   // Static statuses and numeric codes only: no routing IDs or child/context data.
   (io.stderr ?? process.stderr).write(`${JSON.stringify({ workerExit: result.workerExit, replyReceipt: { status: result.replyReceipt.status } })}\n`);
   return result.exitCode;
