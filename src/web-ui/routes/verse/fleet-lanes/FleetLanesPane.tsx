@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { copyText } from '../../../components/primitives/clipboard.js';
+import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { openDockPane } from '../dock/dock-store.js';
@@ -6,6 +8,7 @@ import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { claudeLaneFix, parseClaudeLane } from './claude-lane-state.js';
 import { burnLine, burnTotals, formatTokens, headline, isPhantomRepo, laneBars, repoMix, repoMixLine, repoShort, workerRows } from './fleet-lanes-model.js';
 import { strayLine, strayTotals, strayTotalsLine } from './stray-slots-model.js';
 import { straySlotsQuery } from './stray-slots-queries.js';
@@ -24,6 +27,12 @@ function pullUrl(repo: string, number: number): string | null {
 
 export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
   const [showAll, setShowAll] = useState(false);
+  const [copyState, setCopyState] = useState<'copied' | 'failed' | null>(null);
+  useEffect(() => {
+    if (!copyState) return;
+    const timer = window.setTimeout(() => setCopyState(null), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const active = visible && sectionVisible && documentVisible;
@@ -71,8 +80,12 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
           <h3 id="fleet-lanes-capacity" className={styles.title}>Lane capacity</h3>
           <p className={styles.burn}>{burnLine(burnTotals(data))}</p>
           {data.lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>
-            {laneBars(data).map((lane) => { const laneStrays = strayLine(lane.lane, strays.data); return <li key={lane.lane} className={styles.lane} ref={lane.lane === focusedLane ? scrollToLane : undefined} data-focused={lane.lane === focusedLane ? 'true' : undefined} aria-current={lane.lane === focusedLane ? 'true' : undefined}>
-              <div className={styles.line}><strong>{lane.lane}</strong>{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><LaneTargetStepper lane={lane.lane} /><LanePauseButton lane={lane.lane} /><LaneHoldReleaseButton lane={lane.lane} heldReason={lane.held ? lane.heldReason : null} heldUntil={null} /><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
+            {laneBars(data).map((lane) => { const laneStrays = strayLine(lane.lane, strays.data); const claude = parseClaudeLane(data.claudeLane, Date.now()); const claudeDown = lane.lane === 'claude' && lane.target > 0 && claude.down; return <li key={lane.lane} className={styles.lane} ref={lane.lane === focusedLane ? scrollToLane : undefined} data-focused={lane.lane === focusedLane ? 'true' : undefined} aria-current={lane.lane === focusedLane ? 'true' : undefined}>
+              <div className={styles.line}><strong>{lane.lane}</strong>{claudeDown ? <span className={styles.badge} data-tone="danger">Down</span> : null}{lane.held ? <span className={styles.badge} title={lane.heldReason ?? undefined}>Held</span> : null}<span className={styles.count}>{lane.running}/{lane.target} · {lane.queued} queued</span><LaneTargetStepper lane={lane.lane} /><LanePauseButton lane={lane.lane} /><LaneHoldReleaseButton lane={lane.lane} heldReason={lane.held ? lane.heldReason : null} heldUntil={null} /><span className={styles.burn}>· {formatTokens(lane.tokensLastHour)} tok/h · {lane.merged24h ?? '—'} merged/24 h</span></div>
+              {claudeDown ? <>
+                <p className={styles.muted}>{[`${Math.max(0, lane.target - lane.running)} slots idle`, claude.reason, claude.sinceText].filter(Boolean).join(' · ')}</p>
+                <p className={styles.muted}>{claudeLaneFix()} <Button size="sm" onClick={() => { void copyText(claudeLaneFix().replace('Run on this Mac: ', '')).then((ok) => setCopyState(ok ? 'copied' : 'failed')); }}>{copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}</Button></p>
+              </> : null}
               {lane.held ? <p className={styles.muted}>Held: {(lane.heldReason ?? 'reason not reported').replace(/_/g, ' ')}</p> : null}
               {laneStrays ? <p className={styles.muted}>{laneStrays}</p> : null}
               <div className={styles.track} role="img" aria-label={`${lane.lane}: ${lane.running} running of ${lane.target} target`}>
