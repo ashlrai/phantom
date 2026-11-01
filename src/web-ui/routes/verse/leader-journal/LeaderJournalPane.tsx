@@ -8,11 +8,14 @@ import { JobRefs } from '../fleet/JobRefs.js';
 import fleetStyles from '../fleet/fleet.module.css';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
 import { filterNotes, filterPasses, groupRejects, ingestTone, passFilterLabel, passIngestCounts, passSchedule, passSummary, passWroteText } from './leader-journal-model.js';
 import { leaderJournalQuery } from './leader-journal-queries.js';
+import { fateLine, passFates } from './pass-fate-model.js';
+import type { DropIngestedRow } from './leader-journal-model.js';
 import styles from './leader-journal.module.css';
 
 function openLog(id: string) {
@@ -21,7 +24,7 @@ function openLog(id: string) {
   openDockPane('worker-log');
 }
 
-export function LeaderJournalPane({ visible }: PaneProps) {
+export function LeaderJournalPane({ visible, host }: PaneProps) {
   const [query, setQuery] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const sectionVisible = useSectionVisible();
@@ -30,9 +33,12 @@ export function LeaderJournalPane({ visible }: PaneProps) {
     if (visible && sectionVisible && documentVisible) setNowMs(Date.now());
   }, [visible, sectionVisible, documentVisible]);
   const read = useQuery(leaderJournalQuery, { enabled: visible, freshMs: 0 });
+  const runsRead = useQuery(opsRunsQuery, { enabled: visible, freshMs: 0 });
+  const refetchRuns = useRefetch(opsRunsQuery);
   const refetch = useRefetch(leaderJournalQuery);
   const refresh = useRefresh(leaderJournalQuery);
   usePollWhileVisible(() => { setNowMs(Date.now()); refetch(); }, 30_000, { enabled: visible, refreshOnShow: false });
+  usePollWhileVisible(refetchRuns, 15_000, { enabled: visible, refreshOnShow: false });
   const data = read.data;
   const passes = data ? [...data.passes].sort((a, b) => {
     const aTime = Date.parse(a.at);
@@ -42,6 +48,13 @@ export function LeaderJournalPane({ visible }: PaneProps) {
     return bTime - aTime || b.at.localeCompare(a.at);
   }) : [];
   const ingestCounts = passIngestCounts(passes, data?.ingested ?? [], nowMs);
+  const ingestedByPass = new Map<string, DropIngestedRow[]>();
+  for (const row of data?.ingested ?? []) {
+    for (const [at, count] of passIngestCounts(passes, [row], nowMs)) {
+      if (count) ingestedByPass.set(at, [...(ingestedByPass.get(at) ?? []), row]);
+    }
+  }
+  const runs = runsRead.status === 'error' ? null : runsRead.data;
   const schedule = data ? passSchedule(passes, nowMs) : null;
   const searching = query.trim().length > 0;
   const filtered = filterPasses(passes, query);
@@ -76,8 +89,10 @@ export function LeaderJournalPane({ visible }: PaneProps) {
               {searching ? <p className={styles.note}>{passFilterLabel(filtered.length, passes.length) || `${filtered.length} of ${passes.length} passes`}</p> : null}
               {filtered.length === 0 ? <p className={styles.note}>{searching ? 'No passes match' : 'No leader passes yet.'}</p> : filtered.map(({ pass, matchedBullets }, index) => {
                 const wrote = passWroteText(ingestCounts.get(pass.at) ?? 0);
+                const fate = runs ? passFates(pass, ingestedByPass.get(pass.at) ?? [], runs) : null;
                 return <details className={styles.pass} key={`${pass.at}-${index}`} open={searching || index === 0}>
-                <summary><time dateTime={pass.at}>{pass.at}</time>{passSummary(pass) ? <span> · {passSummary(pass)}</span> : null} <span data-tone={wrote.tone}><StatusBadge status={wrote.tone} tone={wrote.tone}>{wrote.text}</StatusBadge></span></summary>
+                <summary><time dateTime={pass.at}>{pass.at}</time>{passSummary(pass) ? <span> · {passSummary(pass)}</span> : null} <span data-tone={wrote.tone}><StatusBadge status={wrote.tone} tone={wrote.tone}>{wrote.text}</StatusBadge></span><span style={{ display: 'block' }}>{fate ? fateLine(fate.counts) : 'fleet runs unavailable'}</span></summary>
+                {fate?.chips.length ? <div aria-label="Job fates">{fate.chips.map((chip, chipIndex) => <Button key={`${chip.id}-${chipIndex}`} size="sm" variant="subtle" title={chip.state === 'waiting' ? 'no trace in the last hour' : `${chip.lane} · ${chip.state}`} aria-label={`Open log for ${chip.id} (${chip.state})`} onClick={() => { if (JOB_ID_RE.test(chip.id)) { requestWorkerLogJob(chip.id); host.openPane('worker-log'); } }}>{chip.id} · {chip.state}</Button>)}</div> : null}
                 {pass.sections.map((section, sectionIndex) => <div key={`${section.title}-${sectionIndex}`}>
                   <h4>{section.title}</h4>
                   <ul>{section.bullets.map((bullet, bulletIndex) => <li key={bulletIndex} className={matchedBullets.has(bullet) ? styles.match : undefined}><JobRefs text={bullet} onOpenJob={openLog} /></li>)}</ul>
