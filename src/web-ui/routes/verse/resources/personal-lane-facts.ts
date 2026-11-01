@@ -32,12 +32,12 @@ export function personalLaneFacts(
   const lane = lanes.find(row => row !== null && typeof row === 'object' && typeof row.lane === 'string' && row.lane === laneName);
   if (!lane) return [];
   const queued = count(lane.queued);
-  const lines = [`Lane ${lane.lane}: ${count(lane.running)}/${count(lane.target)} running${queued > 0 ? ` · ${queued} queued` : ''}`];
+  const lines = [`Lane ${lane.lane}: ${count(lane.running)}/${count(lane.target)} running · ${queued} queued`];
   if (lane.held === true) {
     const raw = typeof lane.heldReason === 'string' ? lane.heldReason : null;
     const reason = raw === null ? '' : clean(raw);
     lines.push(usageHeldReason(raw) ? `Held: usage limit${reason !== '' ? ` (${reason})` : ''}`
-      : reason !== '' ? `Held: ${reason}` : 'Held: paused by hand');
+      : reason !== '' ? `Held: ${reason}` : 'Held: reason not reported');
   }
   return lines;
 }
