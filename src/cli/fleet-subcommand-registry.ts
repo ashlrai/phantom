@@ -63,6 +63,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'stray-slots': () => import('./fleet-stray-slots.js'),
   'superseded': () => import('./fleet-superseded.js'),
   'superseded-close': () => import('./fleet-superseded-close.js'),
+  'union-apply': () => import('./fleet-union-apply.js'),
   'union-preview': () => import('./fleet-union-preview.js'),
   'wait-jobs': () => import('./fleet-wait-jobs.js'),
   'window-plan': () => import('./fleet-window-plan.js'),
