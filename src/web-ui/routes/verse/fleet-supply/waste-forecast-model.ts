@@ -10,6 +10,18 @@ export interface WasteForecast {
   text: string;
 }
 
+export function suggestedTarget(
+  forecast: WasteForecast,
+  lane: { running: number; target: number; held: boolean },
+  burnPctPerHour: number | null,
+): { target: number; perWorkerPctPerHour: number } | null {
+  if (!forecast.burnKnown || burnPctPerHour === null || lane.running <= 0 || forecast.tone === 'ok' || lane.held) return null;
+  // Split observed burn evenly across running workers; the forecast re-checks every poll.
+  const perWorkerPctPerHour = burnPctPerHour / lane.running;
+  const target = Math.min(64, Math.max(lane.target, Math.ceil(forecast.neededBurnPctPerHour / perWorkerPctPerHour)));
+  return target <= lane.target ? null : { target, perWorkerPctPerHour };
+}
+
 const format = (value: number): string => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
 
 function resetText(atMs: number, hours: number): string {
