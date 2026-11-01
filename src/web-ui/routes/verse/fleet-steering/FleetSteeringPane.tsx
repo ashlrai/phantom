@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Button, SkeletonLine, Tag } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -9,7 +9,7 @@ import styles from './fleet-steering.module.css';
 import { leaderJournalQuery } from '../leader-journal/leader-journal-queries.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { lastExchange, pendingOrders, pendingText } from './last-exchange-model.js';
-import { buildSteering, citedJobsLine, fleetSourceHealth, summarizeReaction, type SteeringEntry } from './steering-model.js';
+import { buildSteering, citedJobsLine, fleetSourceHealth, orderAge, summarizeReaction, unansweredHeadline, unansweredOrders, type SteeringEntry } from './steering-model.js';
 
 import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
 import { githubUrl, jobsForEntry, narrowOrderTrace, stateWord, type OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
@@ -35,12 +35,12 @@ function reactionLine(entry: SteeringEntry): string {
   return `${summary} · leaders reacted in ${minutes < 1 ? '<1' : Math.round(minutes)} min`;
 }
 
-function EntryRow({ entry, trace }: { entry: SteeringEntry; trace: OrderTraceV1 | null }) {
+function EntryRow({ entry, trace, id }: { entry: SteeringEntry; trace: OrderTraceV1 | null; id: string }) {
   const jobs = jobsForEntry(trace, entry.at);
   const [open, setOpen] = useState(false);
   const preview = entry.text.length > PREVIEW_CHARS ? `${entry.text.slice(0, PREVIEW_CHARS)}…` : entry.text;
   return (
-    <li className={styles.row}>
+    <li id={id} className={styles.row}>
       <div className={styles.meta}>
         <time className={styles.time}>{entry.at}</time>
         <Tag size="sm">{entry.source}</Tag>
@@ -82,6 +82,7 @@ function EntryRow({ entry, trace }: { entry: SteeringEntry; trace: OrderTraceV1 
 }
 
 export function FleetSteeringPane({ visible }: PaneProps) {
+  const idPrefix = useId();
   const read = useQuery(fleetSteeringQuery, { enabled: visible, freshMs: 0 });
   const orders = useQuery(ordersTraceQuery, { enabled: visible, freshMs: 30_000 });
   const trace = orders.error ? null : narrowOrderTrace(orders.data);
@@ -91,7 +92,19 @@ export function FleetSteeringPane({ visible }: PaneProps) {
   const refetch = useRefetch(fleetSteeringQuery);
   usePollWhileVisible(refetch, 10_000, { enabled: visible });
   const entries = useMemo(() => buildSteering(read.data), [read.data]);
+  const indexedEntries = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return entries.map((entry) => {
+      const key = JSON.stringify([entry.at, entry.source]);
+      const occurrence = occurrences.get(key) ?? 0;
+      occurrences.set(key, occurrence + 1);
+      const encoded = Array.from(key, (char) => char.codePointAt(0)!.toString(16)).join('-');
+      return { ...entry, id: `${idPrefix}-${encoded}-${occurrence}` };
+    });
+  }, [entries, idPrefix]);
   const nowMs = Date.now();
+  const unanswered = unansweredOrders(indexedEntries, nowMs);
+  const headline = unansweredHeadline(unanswered);
   const exchange = lastExchange(entries, journal.data, nowMs);
   const pending = pendingText(pendingOrders(read.data, nowMs));
   const missing = read.data === null || (read.error instanceof ApiError && read.error.status === 404);
@@ -107,6 +120,18 @@ export function FleetSteeringPane({ visible }: PaneProps) {
   const degraded = sources.inbox !== 'healthy' || sources.runsDir !== 'healthy';
   return (
     <section className={styles.root} aria-label="Steering">
+      {headline && <section className={styles.unanswered} aria-label="Unanswered orders" data-tone="bad">
+        <p role="status">{headline}</p>
+        <ol>
+          {unanswered.slice(0, 5).map((entry) => <li key={entry.id}>
+            <span>{orderAge(entry.ageMinutes)} · {entry.source} · {entry.text.slice(0, 80)}{entry.text.length > 80 ? '…' : ''}</span>{' '}
+            <a href={`#${entry.id}`} onClick={(event) => {
+              event.preventDefault();
+              document.getElementById(entry.id)?.scrollIntoView({ block: 'start' });
+            }}>Jump</a>
+          </li>)}
+        </ol>
+      </section>}
       <p role="status" aria-label="Pending orders" className={styles.text} data-tone={pending.tone}
         style={{ color: pending.tone === 'danger' ? 'var(--status-danger-fg)' : pending.tone === 'warning' ? 'var(--status-warning-fg)' : undefined }}>
         {pending.text}
@@ -125,7 +150,7 @@ export function FleetSteeringPane({ visible }: PaneProps) {
         ? <p className={styles.message}>No orders yet. Use the interject box.</p>
         : (
           <ol className={styles.list} aria-label="Steering orders">
-            {entries.map((entry, index) => <EntryRow key={`${entry.at}:${index}`} entry={entry} trace={trace} />)}
+            {indexedEntries.map((entry) => <EntryRow key={entry.id} id={entry.id} entry={entry} trace={trace} />)}
           </ol>
         )}
     </section>
