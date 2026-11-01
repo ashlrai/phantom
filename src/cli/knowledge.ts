@@ -15,6 +15,7 @@ import path from 'node:path';
 import { pad, makeColors, isTty } from './ui.js';
 import { isEnrolled } from '../core/sandbox/policy.js';
 import { runKnowledgeContextPack } from './knowledge-context-pack.js';
+import { runKnowledgeEditPreflight } from './knowledge-edit-preflight.js';
 
 /**
  * Resolve user-supplied repo paths to absolute and partition them by enrollment.
@@ -109,6 +110,7 @@ function printKnowledgeHelp(): void {
     ['graph [--repo <path>] [--json]',        'Print the cross-repo knowledge graph (nodes + edges).'],
     ['impact <target> [--repo <path>] [--json]', 'What references/depends on a file or symbol?'],
     ['context-pack --file <snapshot.json> [--json]', 'Build bounded context from a task/output snapshot.'],
+    ['edit-preflight --file <edits.json> [--json]', 'Check edits against the shared-file policy.'],
   ];
   const w = Math.max(...subs.map(([s]) => s.length));
   for (const [sub, desc] of subs) {
@@ -120,7 +122,7 @@ function printKnowledgeHelp(): void {
   const opts: [string, string][] = [
     ['--repo <path>', 'Scope to a single enrolled repo (absolute path or name).'],
     ['--allow-cloud', 'Accepted by build for compatibility; indexing remains local.'],
-    ['--file <path>', 'Read a task/output snapshot for context-pack.'],
+    ['--file <path>', 'Read a JSON input for context-pack or edit-preflight.'],
     ['--json',        'Emit structured JSON instead of human-readable output.'],
     ['--help',        'Show this help.'],
   ];
@@ -598,6 +600,9 @@ async function dispatchKnowledge(args: string[]): Promise<number> {
     case 'context-pack':
       return runKnowledgeContextPack(subArgs);
 
+    case 'edit-preflight':
+      return runKnowledgeEditPreflight(subArgs);
+
     default:
       process.stderr.write(`error: Unknown knowledge subcommand or flag: ${sub}\n`);
       process.stderr.write('Run `ashlr knowledge --help` for usage.\n');
@@ -608,13 +613,16 @@ async function dispatchKnowledge(args: string[]): Promise<number> {
 // Keep stdout machine-readable on failures as well as successful JSON calls.
 async function runCommand(args: string[], run: () => Promise<number>): Promise<number> {
   let code: number;
+  let completed = false;
   try {
     code = await run();
+    completed = true;
   } catch (err) {
     process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
     code = 1;
   }
-  if (code !== 0 && args.includes('--json')) {
+  if (code !== 0 && args.includes('--json') &&
+      !(completed && args[0] === 'edit-preflight' && code === 1)) {
     process.stdout.write(JSON.stringify({ error: true, exitCode: code }) + '\n');
   }
   return code;

@@ -29,6 +29,9 @@ import { deriveNotifications } from './deriveNotifications.js';
 import { deriveFleetRunsNotifications } from './deriveFleetRunsNotifications.js';
 import { deriveFleetLedgerNotifications } from './deriveFleetLedgerNotifications.js';
 import { deriveFleetMergeNotifications } from './deriveFleetMergeNotifications.js';
+import { deriveMeterWatchNotifications } from './deriveMeterWatchNotifications.js';
+import { recordMeterSample, type MeterWatchLog } from './meter-watch-model.js';
+import { loadMeterWatchLog, saveMeterWatchLog } from './meter-watch-store.js';
 import { deriveReleasePrNotifications } from './deriveReleasePrNotifications.js';
 import { deriveUpdateNotifications } from './deriveUpdateNotifications.js';
 import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
@@ -62,6 +65,13 @@ export function useNotificationEngine(): void {
 
   useEffect(() => {
     const now = Date.now();
+    // The ledger is a snapshot; the watch log is Phantom's memory of it.
+    // Record before deriving so this poll's reading joins the evidence.
+    let meterLog: MeterWatchLog = {};
+    if (ledgerData) {
+      meterLog = recordMeterSample(loadMeterWatchLog(), ledgerData, now);
+      saveMeterWatchLog(meterLog);
+    }
     reconcileNotifications(
       deriveNotifications({
         control: controlData,
@@ -72,6 +82,7 @@ export function useNotificationEngine(): void {
         deriveFleetRunsNotifications(fleetRunsData, now),
         deriveFleetMergeNotifications(fleetRunsData, now),
         deriveFleetLedgerNotifications(ledgerData, now),
+        deriveMeterWatchNotifications(meterLog, ledgerData, now),
         deriveUpdateNotifications(updateData ?? null, now, nativeUpdates),
         deriveReleasePrNotifications(releasePrData, now),
       ),

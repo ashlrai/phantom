@@ -4,10 +4,11 @@ import { buildNodeContextPack, type NodeContextPackInput } from '../core/fleet/n
 import { countMalformedNodeContextPackLines, readNodeContextCitations } from '../core/fleet/node-context-citations.js';
 import { summarizeNodeContextCoverage } from '../core/fleet/node-context-coverage.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { explainContextPack } from './context-pack-explain.js';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 const MAX_PACK_BYTES = 65536;
-const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--citations] [--markdown | --json [--report] [--require-upstream] [--require-upstream-outputs] [--require-complete-upstream-outputs]]
+const HELP = `Usage: phm knowledge context-pack (--file <snapshot.json> | --stdin) [--query <text>] [--byte-budget N] [--fair-upstream] [--citations] [--markdown | --json [--explain] [--report] [--require-upstream] [--require-upstream-outputs] [--require-complete-upstream-outputs]]
 
 Build cited JSONL context from an explicit task/output snapshot. The snapshot
 contains node {jobId, upstreamJobIds, query?}, tasks and outputs arrays of
@@ -29,6 +30,12 @@ checks (--require-upstream, --require-upstream-outputs,
 The byte budget applies to JSONL selection, not Markdown framing; Markdown
 output can exceed the budget. No references are fetched or text executed.
 --json wraps the pack and its UTF-8 byte count in a versioned object.
+--explain requires --json and adds bounded upstream selection diagnostics.
+It reports eligible and selected output job IDs, selected kinds, coverage and
+omission reasons without source text or query text. Unsafe identifiers are
+suppressed; at most 100 diagnostics and 16 KiB are emitted, with
+omittedDiagnosticCount counting suppressed entries. Lists cover emitted
+diagnostics only. Self dependencies receive an unknown reason.
 --report requires --json and adds requestedByteBudget, emittedBytes,
 emittedRecordCount, citedJobIds (distinct, in pack order), and
 truncatedRecordCount under report. Counts describe the emitted JSONL pack.
@@ -100,6 +107,7 @@ export async function runKnowledgeContextPack(
   let json = false;
   let markdown = false;
   let report = false;
+  let explain = false;
   let requireUpstream = false;
   let requireUpstreamOutputs = false;
   let requireCompleteUpstreamOutputs = false;
@@ -111,6 +119,7 @@ export async function runKnowledgeContextPack(
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
     else if (arg === '--markdown' && !markdown) markdown = true;
+    else if (arg === '--explain' && !explain) explain = true;
     else if (arg === '--report' && !report) report = true;
     else if (arg === '--require-upstream' && !requireUpstream) requireUpstream = true;
     else if (arg === '--require-upstream-outputs' && !requireUpstreamOutputs) requireUpstreamOutputs = true;
@@ -121,7 +130,7 @@ export async function runKnowledgeContextPack(
     else if (arg === '--query' && query === undefined) {
       const value = args[++i];
       if (!value?.trim() || Array.from(value).length > 2000 ||
-          ['--query', '--file', '--stdin', '--json', '--markdown', '--report', '--require-upstream', '--require-upstream-outputs', '--require-complete-upstream-outputs', '--byte-budget', '--fair-upstream', '--citations', '--help', '-h'].includes(value)) {
+          ['--explain', '--query', '--file', '--stdin', '--json', '--markdown', '--report', '--require-upstream', '--require-upstream-outputs', '--require-complete-upstream-outputs', '--byte-budget', '--fair-upstream', '--citations', '--help', '-h'].includes(value)) {
         return invalid('--query requires nonblank text of at most 2000 characters');
       }
       query = value;
@@ -138,11 +147,12 @@ export async function runKnowledgeContextPack(
       file = value;
     } else return invalid(`Unexpected argument or flag: ${arg}`);
   }
-  if (markdown && (json || report || requireUpstream || requireUpstreamOutputs ||
+  if (markdown && (json || explain || report || requireUpstream || requireUpstreamOutputs ||
       requireCompleteUpstreamOutputs)) {
-    return invalid('--markdown cannot be combined with --json, --report, --require-upstream, ' +
+    return invalid('--markdown cannot be combined with --json, --explain, --report, --require-upstream, ' +
       '--require-upstream-outputs or --require-complete-upstream-outputs');
   }
+  if (explain && !json) return invalid('--explain requires --json');
   if (report && !json) return invalid('--report requires --json');
   if (requireUpstream && !json) return invalid('--require-upstream requires --json');
   if (requireUpstreamOutputs && !json) return invalid('--require-upstream-outputs requires --json');
@@ -235,6 +245,7 @@ export async function runKnowledgeContextPack(
         packBytes: bytes,
       } } : {}),
       ...(report ? { report: details } : {}),
+      ...(explain ? { explain: explainContextPack(input, pack) } : {}),
       ...(requireUpstream || requireUpstreamOutputs || requireCompleteUpstreamOutputs ? { check: {
         ...(requireUpstream ? { missingUpstreamJobIds } : {}),
         ...(requireUpstreamOutputs ? { missingUpstreamOutputJobIds } : {}),
