@@ -20,6 +20,7 @@
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
 
+import { cmdCommsDiagnose } from './comms-diagnose.js';
 import { cmdCommsBus } from './comms-bus.js';
 import { cmdCommsInbox } from './comms-inbox.js';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
@@ -508,7 +509,7 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <inbox|bus|email-drop|status|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|email-drop|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
@@ -519,6 +520,7 @@ function printCommsHelp(): void {
   console.log('    cycle                        run one send-pending + poll-replies pass');
   console.log('    ask "<text>" -o a -o b       post a question with numbered options');
   console.log('    digest [--force]             send what changed since the last digest (silent if nothing)');
+  console.log('    diagnose [--json]            read-only channel diagnostics; never sends');
   console.log('    health [--json]              value-free Telegram poll heartbeat and offset');
   console.log('    ask-vision                   run a Leader tick + deliver the latest memo via the Leader thread');
   console.log('    ask-merges                   post ship proposals for approval + run cycle');
@@ -534,6 +536,7 @@ function printCommsHelp(): void {
  * telegram-brand keeps its own strict parser.
  */
 const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  diagnose:         { allowed: { flags: ['--json'] }, usage: 'usage: phm comms diagnose [--json]' },
   health:           { allowed: { flags: ['--json'] }, usage: 'usage: phm comms health [--json]' },
   status:           { allowed: {}, usage: 'usage: phm comms status' },
   'send-test':      { allowed: {}, usage: 'usage: phm comms send-test' },
@@ -567,6 +570,8 @@ export async function cmdComms(args: string[]): Promise<number> {
   const { sub, text, options } = parseArgs(args);
 
   switch (sub) {
+    case 'diagnose':
+      return cmdCommsDiagnose(args.includes('--json'));
     case 'health': {
       const health = readTelegramHealth(await loadConfig());
       console.log(args.includes('--json') ? JSON.stringify(health) : `Telegram poller: ${health.pollerAlive ? 'alive (recent heartbeat)' : 'stale or never polled'}\nLast poll: ${health.lastPoll ?? 'never'}\nLast update id: ${health.lastUpdateId ?? 'none'}\nToken present: ${health.tokenPresent ? 'yes' : 'no'}\nError: ${health.error ?? 'none'}`);
@@ -590,7 +595,7 @@ export async function cmdComms(args: string[]): Promise<number> {
       return cmdSetupTelegram();
     default:
       console.error(`unknown subcommand: ${sub}`);
-      console.error('usage: phm comms <status|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand|email-drop>');
+      console.error('usage: phm comms <status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand|email-drop>');
       return 2;
   }
 }

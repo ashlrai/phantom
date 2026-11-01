@@ -6,7 +6,7 @@ import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js'
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
+const HELP = `phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 Reads and writes Mason's local inbox. Output is JSON; post returns the receiver acknowledgement.
 --receipt-only on post returns only the acknowledgement status, channel and durable deduplication key, or a failure reason; it excludes message text and private paths.
@@ -18,6 +18,11 @@ When both are supplied, --after must be earlier than --before.
 Ambiguous or nonexistent Eastern times and unparseable timestamps count as undated.
 --watch emits complete snapshots immediately and after each interval (default 1000 ms); stop with SIGINT or SIGTERM.
 Snapshots can repeat entries and do not provide a delivery cursor.
+--new-only requires --watch: emit the initial selection, then observed additions by record multiplicity.
+Each sample reports observation.bounded=true: selection limits and the bounded tail can hide arrivals or rotation.
+observation.selectionReduced signals lost selected occurrences; observation.recovered signals source recovery.
+This is process-local observation, not durable delivery or a replacement for receiver deduplication.
+Identical arrivals can be indistinguishable from rotation when their selected count does not increase.
 The local process owner is the trust boundary; this does not authenticate internet or email senders.
 Input must be an owner-controlled stable regular UTF-8 text file, or stdin with --file - (maximum ${INBOX_MAX_CHARS} characters).
 Default duplicate receipts persist across receiver restarts in the shared runs context.`;
@@ -115,7 +120,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
-    let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, contains: string | undefined, json = false, watch = false, receiptOnly = false;
+    let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, contains: string | undefined, json = false, watch = false, newOnly = false, receiptOnly = false;
     let intervalMs: number | undefined, maxSamples: number | undefined;
     const queryParams = new URLSearchParams();
     for (let i = 0; i < rest.length; i++) {
@@ -123,6 +128,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       if (arg === '--json' && !json) json = true;
       else if (verb === 'post' && arg === '--receipt-only' && !receiptOnly) receiptOnly = true;
       else if (verb === 'read' && arg === '--watch' && !watch) watch = true;
+      else if (verb === 'read' && arg === '--new-only' && !newOnly) newOnly = true;
       else if (verb === 'read' && (arg === '--interval-ms' || arg === '--max-samples')) {
         const value = rest[++i];
         const number = Number(value);
@@ -149,19 +155,19 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
         priority = value;
       } else if (verb === 'read' && (arg === '--source' || arg === '--limit')) {
         const key = arg.slice(2), value = rest[++i];
-        if (value === undefined || ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
+        if (value === undefined || ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--new-only', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
         queryParams.append(key, value);
       } else if (verb === 'read' && arg === '--contains' && contains === undefined) {
         const value = rest[++i];
         if (value === undefined || !value.trim() ||
-          ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value)) return invalid();
+          ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--new-only', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value)) return invalid();
         contains = value;
       } else return invalid();
     }
     if (verb === 'post' && file === undefined) return invalid();
     if (verb === 'read') {
       if (after !== undefined && before !== undefined && !laterThan(before, after)) return invalid();
-      if (!watch && (intervalMs !== undefined || maxSamples !== undefined)) return invalid();
+      if (!watch && (newOnly || intervalMs !== undefined || maxSamples !== undefined)) return invalid();
       const query = parseInboxReadQuery(queryParams);
       if ('error' in query) return invalid();
       // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
@@ -192,12 +198,37 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       const stop = (): void => controller.abort();
       signals.on('SIGINT', stop);
       signals.on('SIGTERM', stop);
+      // The projected records have no identity. Keep only the previous healthy
+      // selection (at most 200 records), counting identical occurrences.
+      let seen = new Map<string, number>();
+      let previousState: 'healthy' | 'missing' | 'degraded' | undefined;
+      let lastState: 'healthy' | 'missing' | 'degraded' = 'healthy';
       try {
         for (let samples = 0; !controller.signal.aborted && (maxSamples === undefined || samples < maxSamples); samples++) {
           const result = await readSnapshot();
           if (controller.signal.aborted) break;
-          console.log(JSON.stringify(result));
-          if (result.sourceState === 'degraded') return 1;
+          lastState = result.sourceState;
+          if (newOnly) {
+            let selectionReduced = false;
+            let entries = result.entries;
+            if (result.sourceState === 'healthy') {
+              const counts = new Map<string, number>();
+              entries = result.entries.filter(entry => {
+                const key = JSON.stringify([entry.at, entry.source, entry.priority, entry.text]);
+                const count = (counts.get(key) ?? 0) + 1;
+                counts.set(key, count);
+                return count > (seen.get(key) ?? 0);
+              });
+              selectionReduced = [...seen].some(([key, count]) => (counts.get(key) ?? 0) < count);
+              seen = counts;
+            }
+            const recovered = result.sourceState === 'healthy' && previousState !== undefined && previousState !== 'healthy';
+            console.log(JSON.stringify({ ...result, entries, observation: { bounded: true, selectionReduced, recovered } }));
+            previousState = result.sourceState;
+          } else {
+            console.log(JSON.stringify(result));
+            if (result.sourceState === 'degraded') return 1;
+          }
           if (maxSamples !== undefined && samples + 1 >= maxSamples) break;
           try {
             await (options.wait ?? ((ms, signal) => delay(ms, undefined, { signal })))(intervalMs ?? 1000, controller.signal);
@@ -205,7 +236,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
             if (!controller.signal.aborted) throw error;
           }
         }
-        return 0;
+        return lastState === 'degraded' ? 1 : 0;
       } finally {
         signals.off('SIGINT', stop);
         signals.off('SIGTERM', stop);
