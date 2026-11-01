@@ -63,6 +63,21 @@ export function copyBuildInfo(source, destination) {
   }
 }
 
+/** Native diagnostics (exit 1/2) are final; only crashes use the JS compiler. */
+export function runNativeTypecheck(root, timeout, spawn = spawnSync, exists = existsSync) {
+  const binary = resolve(root, 'node_modules/.bin/tsgo');
+  if (!exists(binary)) return null;
+  const result = spawn(binary, ['--noEmit', '-p', 'tsconfig.json'], {
+    cwd: root, stdio: 'inherit', timeout: timeout * 1000, killSignal: 'SIGKILL',
+  });
+  if (result.error?.code === 'ETIMEDOUT') return false;
+  if (result.error || result.signal || result.status === null || result.status > 2) {
+    console.warn('Native compiler crashed; falling back to tsc');
+    return null;
+  }
+  return result.status === 0;
+}
+
 function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   let selection;
@@ -109,14 +124,20 @@ function main() {
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
     }
-    const cache = tscCachePaths(root);
-    try {
-      copyBuildInfo(cache.shared, cache.local);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-    if (run('tsc --noEmit', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'tsconfig.json'], timeout)) {
-      copyBuildInfo(cache.local, cache.shared);
+    const native = runNativeTypecheck(root, timeout);
+    if (native !== null) {
+      console.log(`${native ? 'PASS' : 'FAIL'} tsgo --noEmit`);
+      if (!native) process.exitCode = 1;
+    } else {
+      const cache = tscCachePaths(root);
+      try {
+        copyBuildInfo(cache.shared, cache.local);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (run('tsc --noEmit', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'tsconfig.json'], timeout)) {
+        copyBuildInfo(cache.local, cache.shared);
+      }
     }
   } catch (error) {
     console.error(`FAIL tsc cache: ${error.message}`);
