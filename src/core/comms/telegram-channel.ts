@@ -51,6 +51,8 @@ import {
 } from '../integrations/telegram.js';
 import { escapeTelegramHtml, leaderDisplayText } from '../integrations/telegram-format.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { LaneHoldError, releaseLaneHold } from '../fleet/runs-lane-hold.js';
+import { parseReleaseCommand, renderReleaseReply, type ReleaseReply } from './telegram-release-command.js';
 import { cleanOperatorText, OPERATOR_LIMITS } from '../vision/leader-operator.js';
 import type { CommsRequest } from './requests.js';
 import {
@@ -832,6 +834,7 @@ const TELEGRAM_HELP_SECTIONS = [
   ]],
   ['Talk & work', [
     ['/leader <text>', 'message the Leader'],
+    ['/release <lane>', 'release a lane hold (same as the Lanes pane)'],
     ['/task <owner/repo> <what to do>', 'hand work to an enabled Telegram automation'],
     ['build X / fix Y in owner/repo', 'ask the Leader to start work within the grant'],
   ]],
@@ -1003,6 +1006,29 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
   if (!m) return false;
   const cmd = m[1]!.toLowerCase();
   const rest = (m[2] ?? '').trim();
+  if (cmd === 'release') {
+    const request = parseReleaseCommand(text);
+    // The durable Telegram inbox retains exactly the identity evidence checked
+    // by the transport for every command. Fail closed for injected/old events.
+    const chatId = cfg.comms?.telegram?.chatId;
+    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
+    if (request && Number.isSafeInteger(id) && event.fromChatId === chatId &&
+        event.privateChat === true && event.senderUserId === id) {
+      let result: ReleaseReply;
+      try {
+        const state = await releaseLaneHold(request.lane, { reason: 'telegram' });
+        const target = state.sourceState === 'healthy' ? state.lanes.find(row => row.lane === request.lane)?.target : undefined;
+        result = { status: 'released', lane: request.lane, ...(target === undefined ? {} : { target }) };
+      } catch (error) {
+        result = error instanceof LaneHoldError && error.code === 'not-held'
+          ? { status: 'not-held', lane: request.lane }
+          : { status: 'failed', reason: error instanceof LaneHoldError && (error.code === 'manual-hold' || error.code === 'unknown-lane') ? error.code : 'unavailable' };
+      }
+      const sent = await replyTo(event, renderReleaseReply(result), cfg);
+      if (!sent.ok) throw new Error('Telegram acknowledgement failed');
+      return true;
+    }
+  }
   switch (cmd) {
     case 'help':
     case 'start':
