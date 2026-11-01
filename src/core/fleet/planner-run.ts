@@ -11,8 +11,13 @@
  * row to queue/dispatch-events.log — `ok` on exit 0, `rc=<code>` from the
  * close event (never a shell $?) otherwise, `rc=124` on the timeout kill.
  * ORCH_OFF still gates the pass; argv and per-login env are caller data.
- * Never throws: every failure is a PlannerRunResult, with the scrubbed
- * reason left in the run log whenever one could be opened.
+ * planPlannerPass also answers `ready` — the dispatchable frontier of an
+ * optional static task graph via task-ready-frontier (SPEC-310B). A graph
+ * with duplicate task IDs throws DuplicateTaskIdError out of the plan and
+ * runPlannerPass reports `plan-failed` before anything spawns: ambiguous
+ * graphs never dispatch. Never throws otherwise: every failure is a
+ * PlannerRunResult, with the scrubbed reason left in the run log whenever
+ * one could be opened.
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -24,6 +29,7 @@ import { finished } from 'node:stream/promises';
 import { scrubSecrets } from '../util/scrub.js';
 import { readPlannerHealth, selectPlannerRunner, type PlannerCandidate, type PlannerHealth, type PlannerRunnerChoice } from './planner-failover.js';
 import { readRunsSwitches } from './runs-switches.js';
+import { DuplicateTaskIdError, taskReadyFrontier } from './task-ready-frontier.js';
 
 export interface PlanOpts {
   /** Runs root holding queue/ and supervisor/; defaults to ~/.ashlr-runs. */
@@ -32,6 +38,10 @@ export interface PlanOpts {
   candidates: readonly PlannerCandidate[];
   /** Provider that produced the newest LEADER row — its health gates it. */
   lastProvider: string;
+  /** Static task graph for the pass; with `completed`, yields `ready`. */
+  tasks?: readonly { id: string; dependsOn?: readonly string[] }[];
+  /** Task IDs already complete; unfinished dependents stay off `ready`. */
+  completed?: readonly string[];
   now?: number;
 }
 
@@ -65,12 +75,14 @@ export type RunPlannerPassOpts = PlanOpts & {
 export interface PlannerRunResult {
   v: 1;
   provider: string | null;
-  outcome: 'ran' | 'skipped-orch-off' | 'no-runner' | 'spawn-failed';
+  outcome: 'ran' | 'skipped-orch-off' | 'no-runner' | 'plan-failed' | 'spawn-failed';
   exitCode: number | null;
   logPath: string | null;
   startedAt: string;
   finishedAt: string;
   nextResetAt: string | null;
+  /** Scrubbed plan error (e.g. duplicate task IDs) when outcome is plan-failed. */
+  planError: string | null;
 }
 
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000;
@@ -92,15 +104,19 @@ const signalExitCode = (signal: NodeJS.Signals | null): number =>
 /**
  * Plan a pass: the newest health reading is filed under `lastProvider` (the
  * login that ran it), and the first candidate in list order not proven
- * usage-limited wins. No spawning — the pure plan a caller can dry-run.
+ * usage-limited wins. `ready` is the taskReadyFrontier view of the optional
+ * task graph — read-only, [] when no graph is supplied. Duplicate task IDs
+ * throw DuplicateTaskIdError: the plan stops, nothing dispatches. No
+ * spawning — the pure plan a caller can dry-run.
  */
 export async function planPlannerPass(
   opts: PlanOpts,
-): Promise<{ health: PlannerHealth; choice: PlannerRunnerChoice }> {
+): Promise<{ health: PlannerHealth; choice: PlannerRunnerChoice; ready: readonly string[] }> {
   const now = opts.now ?? Date.now();
   const health = await readPlannerHealth(opts.runsRoot, now);
   const choice = selectPlannerRunner(opts.candidates, { [opts.lastProvider]: health }, now);
-  return { health, choice };
+  const ready = taskReadyFrontier(opts.tasks ?? [], opts.completed ?? []);
+  return { health, choice, ready };
 }
 
 /**
@@ -113,7 +129,7 @@ export async function runPlannerPass(opts: RunPlannerPassOpts): Promise<PlannerR
   const clock = (): number => opts.now ?? Date.now();
   const done = (
     outcome: PlannerRunResult['outcome'],
-    fields: { provider?: string | null; exitCode?: number | null; logPath?: string | null; nextResetAt?: string | null } = {},
+    fields: { provider?: string | null; exitCode?: number | null; logPath?: string | null; nextResetAt?: string | null; planError?: string | null } = {},
   ): PlannerRunResult => ({
     v: 1,
     provider: fields.provider ?? null,
@@ -123,13 +139,22 @@ export async function runPlannerPass(opts: RunPlannerPassOpts): Promise<PlannerR
     startedAt: new Date(clock()).toISOString(),
     finishedAt: new Date(clock()).toISOString(),
     nextResetAt: fields.nextResetAt ?? null,
+    planError: fields.planError ?? null,
   });
 
   let provider: string | null = null;
   try {
     const switches = await readRunsSwitches({ runsDir: runsRoot });
     if (switches.switches.some((row) => row.id === 'ORCH_OFF' && row.on)) return done('skipped-orch-off');
-    const { choice } = await planPlannerPass(opts);
+    let choice: PlannerRunnerChoice;
+    try {
+      ({ choice } = await planPlannerPass(opts));
+    } catch (error) {
+      if (error instanceof DuplicateTaskIdError) {
+        return done('plan-failed', { planError: scrubMessage(error) });
+      }
+      throw error;
+    }
     if (!choice.ok) return done('no-runner', { nextResetAt: choice.nextResetAt });
     provider = choice.provider;
 
