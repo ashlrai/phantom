@@ -77,7 +77,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     openDockPane('worker-log');
   }
   return <div className={styles.pane}>
-    <InboxPostBox onPosted={postedText => {
+    <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {
       setSource(''); setChannel(null); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
       void refetchQuery(fleetInboxQuery.key, () => fleetInboxQuery.fetch(), true);
       if (fallback) void refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true);
