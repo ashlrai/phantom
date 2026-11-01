@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { laneDeadSignals, type LaneDeadSignal } from '../core/fleet/lane-dead-signal.js';
 import { readResourceLedger, type ResourceLedgerV1 } from '../core/fleet/runs-resource-ledger.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -9,9 +10,10 @@ const SPEND_GLOBAL = ['rowsToday', 'errorsToday', 'tokensInToday', 'tokensOutTod
 type LedgerView = ResourceLedgerV1 & {
   laneFilter?: { lane: unknown; global: string[] };
   modelFilter?: { model: unknown; displayed: number | null; selectionOmitted: number | null; global: string[] };
+  resetFilter?: { withinSeconds: number; deadline: string; unknownResetLanes: string[]; global: string[] };
 };
 
-function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model: string | undefined): LedgerView {
+function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model: string | undefined, resetSeconds?: number): LedgerView {
   let view: LedgerView = ledger;
   if (lane !== undefined) {
     view = { ...view, lanes: ledger.lanes.filter(row => row.lane === lane),
@@ -24,8 +26,30 @@ function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model:
       modelFilter: { model: sanitizePublicJson(model), displayed: selected?.length ?? null,
         selectionOmitted: selected === undefined ? null : spend!.modelUsageToday.length - selected.length, global: SPEND_GLOBAL } };
   }
+  if (resetSeconds !== undefined) {
+    const start = instant(ledger.generatedAt);
+    const end = start + resetSeconds * 1000;
+    if (!Number.isFinite(start) || !Number.isSafeInteger(end) || !Number.isFinite(new Date(end).getTime())) throw new RangeError('invalid reset deadline');
+    const unknownResetLanes: string[] = [];
+    const lanes = view.lanes.filter(row => {
+      const reset = instant(row.resetAt);
+      if (!Number.isFinite(reset)) { unknownResetLanes.push(row.lane); return false; }
+      return reset > start && reset <= end;
+    });
+    view = { ...view, lanes, resetFilter: { withinSeconds: resetSeconds, deadline: new Date(end).toISOString(),
+      unknownResetLanes, global: ['generatedAt', 'asOf', 'sources', ...(model === undefined ? ['apiSpend'] : SPEND_GLOBAL), 'jobsMalformedRows'] } };
+  }
   return view;
 }
+
+/** Human-friendly summary of a lane's dead signal, for CLI output. */
+export function formatDeadSignal(signal: LaneDeadSignal | null): string {
+  if (signal === null) return 'unknown';
+  return `state=${signal.state}; emptyFailures=${signal.emptyFailures}; lastFinishes=${signal.lastFinishes}`;
+}
+
+export { laneDeadSignals };
+export type { LaneDeadSignal };
 
 function printLedger(ledger: LedgerView): void {
   console.log(`Resource ledger (generated: ${ledger.generatedAt}; observed: ${value(ledger.asOf)})`);
@@ -33,8 +57,12 @@ function printLedger(ledger: LedgerView): void {
     console.log(`Lane filter: ${ledger.laneFilter.lane}; sources and API spend ${ledger.modelFilter ? 'totals are global' : 'are global'}`);
   }
   if (ledger.modelFilter !== undefined) console.log(`Model filter: ${ledger.modelFilter.model}; API spend totals and model list are global`);
+  if (ledger.resetFilter !== undefined) {
+    console.log(`Reset filter: after ${ledger.generatedAt} through ${ledger.resetFilter.deadline} (${ledger.resetFilter.withinSeconds} seconds); sources and API spend totals are global`);
+    console.log(`Unknown or invalid reset lanes in lane scope: ${ledger.resetFilter.unknownResetLanes.join(', ') || 'none'}`);
+  }
   console.log(`Sources: status ${ledger.sources.status}; API spend ${ledger.sources.apiSpend}`);
-  if (ledger.lanes.length === 0) console.log(ledger.laneFilter === undefined ? 'Lanes: none reported' : 'Lanes: none matching lane filter');
+  if (ledger.lanes.length === 0) console.log(ledger.resetFilter !== undefined ? 'Lanes: none matching reset filter' : ledger.laneFilter === undefined ? 'Lanes: none reported' : 'Lanes: none matching lane filter');
   for (const lane of ledger.lanes) {
     console.log(`\n${lane.lane}: running/target ${value(lane.running)}/${value(lane.target)}; held ${value(lane.held)}; window ${lane.window}`);
     if (lane.window === 'weekly') {
@@ -45,6 +73,7 @@ function printLedger(ledger: LedgerView): void {
       console.log('  Usage: unmetered / no reported window');
     }
     console.log(`  Reset: ${value(lane.resetAt)}; source: ${value(lane.source)}`);
+    console.log(`  Dead: ${formatDeadSignal(lane.deadSignal)}`);
     console.log(`  Burn: ${lane.burnPctPerHour === null ? 'unknown' : `${lane.burnPctPerHour}%/hour`}; tokens/hour (6h): ${value(lane.tokensPerHour6h)}; projected exhaustion: ${value(lane.projectedExhaustion)}`);
   }
   const spend = ledger.apiSpend;
@@ -63,6 +92,100 @@ function printLedger(ledger: LedgerView): void {
   }
 }
 
+type HeadroomState = 'ready' | 'unknown' | 'stale' | 'exhausted' | 'held' | 'full';
+
+function instant(input: unknown): number {
+  if (typeof input !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)$/.test(input)) return NaN;
+  const year = Number(input.slice(0, 4));
+  const month = Number(input.slice(5, 7));
+  const day = Number(input.slice(8, 10));
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(year, month - 1, day);
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) return NaN;
+  return Date.parse(input);
+}
+
+function freshTimestamp(input: unknown, wallTime: number): 'fresh' | 'stale' | 'unknown' {
+  const date = instant(input);
+  const age = wallTime - date;
+  if (!Number.isFinite(age) || age < 0) return 'unknown';
+  return age > 300_000 ? 'stale' : 'fresh';
+}
+
+function headroomState(ledger: ResourceLedgerV1, laneName: string, wallTime: number): HeadroomState {
+  if (ledger.sources.status !== 'healthy') return 'unknown';
+  const statusAge = freshTimestamp(ledger.asOf, wallTime);
+  if (statusAge !== 'fresh') return statusAge;
+  const matches = ledger.lanes.filter(row => row.lane === laneName);
+  if (matches.length !== 1) return 'unknown';
+  const row = matches[0]!;
+  if (row.observation !== undefined) {
+    if (row.observation.source !== 'codex-personal-sessions') return 'unknown';
+    const observationAge = freshTimestamp(row.observation.asOf, wallTime);
+    if (observationAge !== 'fresh') return observationAge;
+  } else if (row.source === 'codex-personal-sessions') return 'unknown';
+  if (row.window === 'weekly') {
+    if (typeof row.usedPct !== 'number' || !Number.isFinite(row.usedPct) || row.usedPct < 0) return 'unknown';
+    if (row.usedPct >= 100) return 'exhausted';
+  } else if (row.window === 'credits') {
+    if (typeof row.creditsRemaining !== 'number' || !Number.isFinite(row.creditsRemaining) || row.creditsRemaining < 0) return 'unknown';
+    if (row.creditsRemaining === 0) return 'exhausted';
+  } else if (row.window !== 'none') return 'unknown';
+  if (row.held === true) return 'held';
+  if (row.held !== false || !Number.isSafeInteger(row.running) || !Number.isSafeInteger(row.target) || row.running! < 0 || row.target! < 0) return 'unknown';
+  return row.running! < row.target! ? 'ready' : 'full';
+}
+
+async function waitForHeadroom(read: () => Promise<ResourceLedgerV1>, lane: string, seconds: number,
+  interval: number, json: boolean, signal: AbortSignal | undefined, now: () => number): Promise<number> {
+  const stop = new AbortController();
+  let outcome: 'timeout' | 'aborted' | undefined;
+  const abort = () => { outcome ??= 'aborted'; stop.abort(); };
+  const deadline = performance.now() + seconds * 1000;
+  const timeout = setTimeout(() => { outcome ??= 'timeout'; stop.abort(); }, seconds * 1000);
+  process.on('SIGINT', abort);
+  process.on('SIGTERM', abort);
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  let state: HeadroomState = 'unknown';
+  let result: 'ready' | 'timeout' | 'aborted' | 'read_failed' = 'timeout';
+  // Race each operation against cancellation, removing its listener on either path.
+  const untilStopped = async <T>(operation: Promise<T>): Promise<T | undefined> => {
+    if (stop.signal.aborted) return undefined;
+    let finish: () => void = () => {};
+    const stopped = new Promise<undefined>(resolve => {
+      finish = () => resolve(undefined);
+      stop.signal.addEventListener('abort', finish, { once: true });
+    });
+    try { return await Promise.race([operation, stopped]); }
+    finally { stop.signal.removeEventListener('abort', finish); }
+  };
+  try {
+    while (!stop.signal.aborted && performance.now() < deadline) {
+      let ledger: ResourceLedgerV1 | undefined;
+      try { ledger = await untilStopped(Promise.resolve().then(read)); }
+      catch { result = 'read_failed'; break; }
+      if (stop.signal.aborted || performance.now() >= deadline) break;
+      if (!ledger) { result = 'read_failed'; break; }
+      state = headroomState(ledger, lane, now());
+      if (state === 'ready') { result = 'ready'; break; }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try { await untilStopped(new Promise<void>(resolve => { timer = setTimeout(resolve, Math.min(interval, Math.max(0, deadline - performance.now()))); })); }
+      finally { clearTimeout(timer); }
+    }
+    if (result === 'timeout' && outcome) result = outcome;
+  } finally {
+    clearTimeout(timeout);
+    process.removeListener('SIGINT', abort);
+    process.removeListener('SIGTERM', abort);
+    signal?.removeEventListener('abort', abort);
+  }
+  const report = { v: 1, lane, result, state };
+  if (json) console.log(JSON.stringify(report));
+  else console.log(`Lane ${lane}: ${result} (${state}).`);
+  return result === 'ready' ? 0 : 1;
+}
+
 export async function cmdResourceLedger(
   args: string[],
   read: () => Promise<ResourceLedgerV1> = readResourceLedger,
@@ -78,6 +201,8 @@ export async function cmdResourceLedger(
   let lane: string | undefined;
   let model: string | undefined;
   let freshSeconds: number | undefined;
+  let waitSeconds: number | undefined;
+  let resetSeconds: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
@@ -109,6 +234,23 @@ export async function cmdResourceLedger(
       }
       freshSeconds = parsed;
     }
+    else if (arg === '--resets-within-seconds' && resetSeconds === undefined) {
+      const raw = args[++i];
+      const parsed = Number(raw);
+      if (raw === undefined || !/^\d+$/.test(raw) || !Number.isSafeInteger(parsed)) {
+        process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
+        return 2;
+      }
+      resetSeconds = parsed;
+    }
+    else if (arg === '--wait-headroom-seconds' && waitSeconds === undefined) {
+      const raw = args[++i];
+      if (!raw || !/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > 3600) {
+        process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
+        return 2;
+      }
+      waitSeconds = Number(raw);
+    }
     else if (arg === '--interval-ms' && interval === undefined) {
       const raw = args[++i];
       if (!raw || !/^\d+$/.test(raw) || Number(raw) < 1000 || Number(raw) > 60000) {
@@ -130,12 +272,13 @@ export async function cmdResourceLedger(
       return 2;
     }
   }
-  if (((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json)) || (watch && freshSeconds !== undefined)) {
+  if ((interval !== undefined && !watch && waitSeconds === undefined) || (maxSamples !== undefined && !watch) || (changesOnly && (!watch || !json)) || (watch && (freshSeconds !== undefined || resetSeconds !== undefined)) ||
+      (waitSeconds !== undefined && (lane === undefined || watch || changesOnly || maxSamples !== undefined || model !== undefined || freshSeconds !== undefined || resetSeconds !== undefined))) {
     process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
     return 2;
   }
   if (help) {
-    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--check-fresh-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
+    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--check-fresh-seconds N] [--resets-within-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
     console.log('Read the live resource ledger, including source health and observation time.');
     console.log('Watch reads sequentially (default interval: 5000 ms); JSON output is one object per line.');
     console.log('--max-samples stops after that many successful observations, including suppressed snapshots; read errors do not count.');
@@ -143,12 +286,18 @@ export async function cmdResourceLedger(
     console.log('JSONL example: phm resources ledger --watch --max-samples 2 --json');
     console.log('--lane keeps only matching lane rows; sources, API spend and other fields stay global.');
     console.log('--model selects exact matches from the reader’s model usage rows; API spend totals remain global.');
+    console.log('--resets-within-seconds N selects known resets after generatedAt through the deadline; N is a nonnegative safe integer.');
+    console.log('One snapshot only: unknown or invalid reset lane IDs are listed within the lane filter scope; source health remains global.');
     console.log('Reader omissions are separate from selection omissions; a missing match may be among omitted rows.');
     console.log('--check-fresh-seconds N checks global status asOf against the current clock (N is a nonnegative safe integer).');
     console.log('One-shot only: the versioned freshnessCheck reports age in seconds and pass, stale or unknown.');
     console.log('Exit 1 for stale, missing/invalid or future asOf; the check does not assess individual lanes or API spend.');
+    console.log('--wait-headroom-seconds 1..3600 requires --lane and waits for fresh measured headroom and an unheld open slot.');
+    console.log('Wait uses --interval-ms (default 5000), is read-only, and cannot be combined with watch, model or freshness selection.');
+    console.log('Wait exits 0 when ready, 1 on timeout, read failure or abort, and 2 for invalid arguments.');
     return 0;
   }
+  if (waitSeconds !== undefined) return waitForHeadroom(read, lane!, waitSeconds, interval ?? 5000, json, signal, now);
   if (watch) {
     const stop = new AbortController();
     const abort = () => stop.abort();
@@ -196,7 +345,14 @@ export async function cmdResourceLedger(
     }
   }
   try {
-    const view = selectLedger(await read(), lane, model);
+    const ledger = await read();
+    let view: LedgerView;
+    try { view = selectLedger(ledger, lane, model, resetSeconds); }
+    catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      process.stderr.write('Unable to calculate reset deadline from snapshot and interval.\n');
+      return 1;
+    }
     if (freshSeconds === undefined) {
       if (json) console.log(JSON.stringify(view, null, 2));
       else printLedger(view);

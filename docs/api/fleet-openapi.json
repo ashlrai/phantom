@@ -1,0 +1,917 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Phantom fleet HTTP API",
+    "version": "1.0.0",
+    "description": "Machine-readable contract for the Phantom hub's fleet-facing HTTP API (`phm verse`). Paths cover every route the remote phone gateway admits (src/core/web/remote-gateway-policy.ts) plus hub-only routes under the fleet, leader, release-pr and runs-history prefixes. See docs/FLEET-API.md for the prose guide and docs/api/FLEET-RUNS-V1.md for the runs projection.\n\nAuth: GETs take the read token in `X-Ashlr-Token`; writes take the separate mutation token plus `Content-Type: application/json`. Writes flagged `x-phantom-step-up: true` additionally require a step-up-approved remote session on the phone gateway. Operations flagged `x-phantom-local-only: true` are served by the hub but are deliberately not reachable through the remote gateway. Errors use the `ErrorEnvelope` schema (`{ code, error }`)."
+  },
+  "servers": [
+    { "url": "http://127.0.0.1:7777", "description": "Local hub (`phm verse` loopback)" }
+  ],
+  "security": [{ "readToken": [] }],
+  "paths": {
+    "/api/events": {
+      "get": {
+        "operationId": "streamVerseEvents", "tags": ["events"],
+        "summary": "Server-sent event stream for verse session changes.",
+        "parameters": [
+          { "name": "topics", "in": "query", "required": true, "schema": { "type": "string", "enum": ["verse-sessions"] }, "description": "Remote gateway admits only `verse-sessions`." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/VerseEventStream" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/inbox/{proposalId}/approve": {
+      "post": {
+        "operationId": "approveInboxProposal", "tags": ["inbox"],
+        "summary": "Approve a pending proposal (applies it, confirmed).",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/ProposalId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/InboxDecisionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/inbox/{proposalId}/reject": {
+      "post": {
+        "operationId": "rejectInboxProposal", "tags": ["inbox"],
+        "summary": "Reject a pending proposal.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/ProposalId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/InboxDecisionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/activity": {
+      "get": {
+        "operationId": "getVerseActivity", "tags": ["activity"],
+        "summary": "Merged activity feed (sessions, needs-you items) as VerseActivityResponse.",
+        "parameters": [
+          { "name": "since", "in": "query", "schema": { "type": "string", "pattern": "^v1\\.[0-9a-f]{8}\\.[et]\\.\\d{1,15}$" }, "description": "Opaque cursor from a prior response; remote gateway requires it to be the only parameter." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/VerseActivityResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/activity/seen": {
+      "post": {
+        "operationId": "markActivitySeen", "tags": ["activity"],
+        "summary": "Mark a session's turns as seen.",
+        "x-phantom-step-up": false,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/ActivitySeen" },
+        "responses": { "200": { "$ref": "#/components/responses/VerseSessionMeta" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/agents/{agentId}/plan": {
+      "post": {
+        "operationId": "decideAgentPlan", "tags": ["agents"],
+        "summary": "Approve or discard an agent's proposed plan.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["action"], "properties": { "action": { "type": "string", "enum": ["approve", "discard"] } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/AgentPlanResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/authority": {
+      "get": {
+        "operationId": "getAuthority", "tags": ["authority"],
+        "summary": "Current autonomy authority posture (AuthorityStatusV1).",
+        "responses": { "200": { "$ref": "#/components/responses/AuthorityStatusV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "applyAuthorityAction", "tags": ["authority"],
+        "summary": "Stop the fleet's authority, or switch the autonomy mode. Hub-only extra: `clear-stop`.",
+        "x-phantom-step-up": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["action"], "properties": { "action": { "type": "string", "const": "stop" } } },
+            { "type": "object", "additionalProperties": false, "required": ["action", "to"], "properties": { "action": { "type": "string", "const": "switch" }, "to": { "type": "string", "enum": ["off", "propose", "autonomous"] } } }
+          ] } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/AuthorityStatusV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/authority/ledger": {
+      "get": {
+        "operationId": "getAuthorityLedger", "tags": ["authority"],
+        "summary": "Shadow-decision view of the authority ledger.",
+        "parameters": [
+          { "name": "view", "in": "query", "required": true, "schema": { "type": "string", "const": "decisions" } },
+          { "name": "limit", "in": "query", "required": true, "schema": { "type": "string", "const": "40" }, "description": "Remote gateway admits exactly `40`." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/AuthorityLedgerDecisions" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/bootstrap": {
+      "get": {
+        "operationId": "getVerseBootstrap", "tags": ["verse"],
+        "summary": "Initial console payload (VerseBootstrap).",
+        "responses": { "200": { "$ref": "#/components/responses/VerseBootstrap" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/budget": {
+      "get": {
+        "operationId": "getBudget", "tags": ["control"],
+        "summary": "Current fleet budget posture (BudgetResponse).",
+        "responses": { "200": { "$ref": "#/components/responses/BudgetResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "setBudgetMode", "tags": ["control"],
+        "summary": "Set the fleet budget mode.",
+        "x-phantom-step-up": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["all-in", "balanced", "reserve"] } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/BudgetResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/checkpoints": {
+      "get": {
+        "operationId": "listVerseCheckpoints", "tags": ["checkpoints"],
+        "summary": "Checkpoint turn roots for a chat.",
+        "parameters": [
+          { "name": "chatId", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/CheckpointsRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/checkpoints/diff": {
+      "get": {
+        "operationId": "getCheckpointDiff", "tags": ["checkpoints"],
+        "summary": "Diff a checkpoint turn against its parent (or a single file within it).",
+        "parameters": [
+          { "name": "chatId", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" } },
+          { "name": "turnId", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" } },
+          { "name": "rootId", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{8,64}$" } },
+          { "name": "mode", "in": "query", "required": true, "schema": { "type": "string", "enum": ["since", "turn"] } },
+          { "name": "file", "in": "query", "schema": { "type": "string" }, "description": "Optional repo-relative file path (no absolute paths, `.`/`..` segments or control characters)." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/CheckpointDiffRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/cloud": {
+      "get": {
+        "operationId": "getCloudOverview", "tags": ["cloud"],
+        "summary": "Cloud-lane tasks and budget (CloudOverviewResponse).",
+        "responses": { "200": { "$ref": "#/components/responses/CloudOverviewResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/cloud/previews": {
+      "get": {
+        "operationId": "listCloudPrPreviews", "tags": ["cloud"],
+        "summary": "Cached PR triage previews for cloud tasks (CloudPrPreviewsResponse).",
+        "responses": { "200": { "$ref": "#/components/responses/CloudPrPreviewsResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/cloud/tasks/{taskId}/close": {
+      "post": {
+        "operationId": "closeCloudTaskPr", "tags": ["cloud"],
+        "summary": "Close a cloud task's PR at the pinned head SHA.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/CloudTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaskClose" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/cloud/tasks/{taskId}/dismiss": {
+      "post": {
+        "operationId": "dismissCloudTask", "tags": ["cloud"],
+        "summary": "Dismiss a finished cloud task locally (no GitHub action).",
+        "x-phantom-step-up": false,
+        "parameters": [{ "$ref": "#/components/parameters/CloudTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/cloud/tasks/{taskId}/land": {
+      "post": {
+        "operationId": "landCloudTaskPr", "tags": ["cloud"],
+        "summary": "Land a cloud task's PR at the pinned head SHA.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/CloudTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaskHeadSha" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/cloud/tasks/{taskId}/update-branch": {
+      "post": {
+        "operationId": "updateCloudTaskBranch", "tags": ["cloud"],
+        "summary": "Update a cloud task's PR branch at the pinned head SHA.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/CloudTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaskHeadSha" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/control": {
+      "get": {
+        "operationId": "getVerseControl", "tags": ["control"],
+        "summary": "Hub control snapshot (dispatch posture, caps, runtime).",
+        "responses": { "200": { "$ref": "#/components/responses/VerseControlSnapshot" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/daemon": {
+      "post": {
+        "operationId": "controlVerseDaemon", "tags": ["control"],
+        "summary": "Start, stop, pause or resume the verse daemon. The hub also accepts `once`.",
+        "x-phantom-step-up": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["action"], "properties": { "action": { "type": "string", "enum": ["start", "stop", "pause", "resume"] } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/DaemonActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/devin/previews": {
+      "get": {
+        "operationId": "listDevinPrPreviews", "tags": ["devin"],
+        "summary": "Cached PR triage previews for Devin tasks (same shape as the cloud's).",
+        "responses": { "200": { "$ref": "#/components/responses/CloudPrPreviewsResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/devin/tasks/{taskId}/close": {
+      "post": {
+        "operationId": "closeDevinTaskPr", "tags": ["devin"],
+        "summary": "Close a Devin task's PR at the pinned head SHA.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/DevinTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaskClose" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/devin/tasks/{taskId}/dismiss": {
+      "post": {
+        "operationId": "dismissDevinTask", "tags": ["devin"],
+        "summary": "Dismiss a finished Devin task locally (no GitHub action).",
+        "x-phantom-step-up": false,
+        "parameters": [{ "$ref": "#/components/parameters/DevinTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/devin/tasks/{taskId}/land": {
+      "post": {
+        "operationId": "landDevinTaskPr", "tags": ["devin"],
+        "summary": "Land a Devin task's PR at the pinned head SHA.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/DevinTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaskHeadSha" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/devin/tasks/{taskId}/update-branch": {
+      "post": {
+        "operationId": "updateDevinTaskBranch", "tags": ["devin"],
+        "summary": "Update a Devin task's PR branch at the pinned head SHA.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/DevinTaskId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/TaskHeadSha" },
+        "responses": { "200": { "$ref": "#/components/responses/CloudTaskActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet": {
+      "get": {
+        "operationId": "getFleetSnapshot", "tags": ["fleet"],
+        "summary": "Local-fleet snapshot projected for the fleet panel (FleetSnapshot).",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/FleetSnapshot" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/control": {
+      "get": {
+        "operationId": "getFleetControlState", "tags": ["fleet-control"],
+        "summary": "Fleet daemon control state (FleetControlStateV1).",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/FleetControlStateV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "applyFleetControlAction", "tags": ["fleet-control"],
+        "summary": "Apply one fleet control action; the remote gateway does not forward this route.",
+        "x-phantom-local-only": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["action"], "properties": { "action": { "type": "string", "enum": ["start", "pause", "resume", "stop"] } } },
+            { "type": "object", "additionalProperties": false, "required": ["action", "runId"], "properties": { "action": { "type": "string", "const": "stop-run" }, "runId": { "type": "string" }, "reason": { "type": "string" }, "taskId": { "type": "string" } } },
+            { "type": "object", "additionalProperties": false, "required": ["action", "note"], "properties": { "action": { "type": "string", "const": "interject" }, "note": { "type": "string" }, "runId": { "type": "string" }, "taskId": { "type": "string" }, "repo": { "type": "string" }, "title": { "type": "string" } } },
+            { "type": "object", "additionalProperties": false, "required": ["action", "taskId"], "properties": { "action": { "type": "string", "const": "task-edit" }, "taskId": { "type": "string" }, "value": { "type": "number" }, "repo": { "type": "string" } } },
+            { "type": "object", "additionalProperties": false, "required": ["action", "taskId"], "properties": { "action": { "type": "string", "const": "task-cancel" }, "taskId": { "type": "string" } } },
+            { "type": "object", "additionalProperties": false, "required": ["action", "goalId", "project"], "properties": { "action": { "type": "string", "const": "goal-retarget" }, "goalId": { "type": "string" }, "project": { "type": "string" } } }
+          ], "description": "FleetControlAction union (src/core/fleet/fleet-control-types.ts)." } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/FleetControlActionResultV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/control/holds": {
+      "get": {
+        "operationId": "listFleetLaneHolds", "tags": ["fleet-control"],
+        "summary": "Lane targets including held state (LaneTargetsV1).",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/LaneTargetsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "releaseFleetLaneHold", "tags": ["fleet-control"],
+        "summary": "Release a lane hold (returns updated LaneTargetsV1).",
+        "x-phantom-local-only": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["lane", "action"], "properties": { "lane": { "type": "string" }, "action": { "type": "string", "const": "release" }, "reason": { "type": "string" } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/LaneTargetsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/control/lanes": {
+      "get": {
+        "operationId": "getLaneTargets", "tags": ["fleet-control"],
+        "summary": "Lane dispatch targets (LaneTargetsV1).",
+        "responses": { "200": { "$ref": "#/components/responses/LaneTargetsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "setLaneTarget", "tags": ["fleet-control"],
+        "summary": "Set a lane's concurrency target (0-64).",
+        "x-phantom-step-up": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["lane", "target"], "properties": { "lane": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,40}$" }, "target": { "type": "integer", "minimum": 0, "maximum": 64 } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/LaneTargetsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/control/queue": {
+      "get": {
+        "operationId": "getFleetControlQueue", "tags": ["fleet-control"],
+        "summary": "Queued and parked tasks plus goals (FleetControlQueueV1).",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/FleetControlQueueV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/control/remote-devices": {
+      "get": {
+        "operationId": "listRemoteDevices", "tags": ["fleet-control"],
+        "summary": "Paired remote-device registry, privacy-trimmed.",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/RemoteDevicesRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/control/runs/{runId}/log": {
+      "get": {
+        "operationId": "getFleetRunLog", "tags": ["fleet-control"],
+        "summary": "Tail of a fleet run's captured output (FleetRunLogV1).",
+        "x-phantom-local-only": true,
+        "parameters": [{ "$ref": "#/components/parameters/RunId" }],
+        "responses": { "200": { "$ref": "#/components/responses/FleetRunLogV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/control/switches": {
+      "get": {
+        "operationId": "getRunsSwitches", "tags": ["fleet-control"],
+        "summary": "Dispatch switch states (RunsSwitchesV1).",
+        "responses": { "200": { "$ref": "#/components/responses/RunsSwitchesV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "setRunsSwitch", "tags": ["fleet-control"],
+        "summary": "Flip a dispatch switch on or off.",
+        "x-phantom-step-up": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["id", "on"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{1,40}$" }, "on": { "type": "boolean" } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/RunsSwitchesV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/grok-ultra": {
+      "get": {
+        "operationId": "getGrokUltraRunway", "tags": ["fleet"],
+        "summary": "Grok Ultra usage runway (GrokUltraRunway).",
+        "responses": { "200": { "$ref": "#/components/responses/GrokUltraRunway" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/history": {
+      "get": {
+        "operationId": "getFleetHistory", "tags": ["fleet"],
+        "summary": "Day-bucketed fleet history (FleetHistoryResponse).",
+        "x-phantom-local-only": true,
+        "parameters": [
+          { "name": "days", "in": "query", "schema": { "type": "integer", "minimum": 7, "maximum": 365, "default": 90 } },
+          { "name": "tz", "in": "query", "schema": { "type": "integer" }, "description": "Minutes behind UTC (Date#getTimezoneOffset semantics)." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/FleetHistoryResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/live": {
+      "get": {
+        "operationId": "getFleetLive", "tags": ["fleet"],
+        "summary": "Live fleet snapshot: holds, running lanes, parked queue (FleetLiveSnapshotV1).",
+        "responses": { "200": { "$ref": "#/components/responses/FleetLiveSnapshotV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "resumeFleetRepo", "tags": ["fleet"],
+        "summary": "Resume a held repo. The hub also accepts `pause-repo` locally; the remote gateway forwards only `resume-repo`.",
+        "x-phantom-step-up": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["action", "repo"], "properties": { "action": { "type": "string", "const": "resume-repo" }, "repo": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$" }, "kind": { "type": "string", "enum": ["quarantine", "owner-hold", "leader-pause", "cooldown"] } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/FleetLiveActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/live/bus": {
+      "get": {
+        "operationId": "getFleetBusFeed", "tags": ["fleet"],
+        "summary": "Agent bus message feed (FleetBusFeedV1).",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Hub clamps 1-500 (default 100); remote gateway admits 1-200." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/FleetBusFeedV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/live/feedback": {
+      "get": {
+        "operationId": "getExecutionFeedback", "tags": ["fleet"],
+        "summary": "Execution feedback index (ExecutionFeedbackRead).",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/ExecutionFeedbackRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/live/feedback/cases/{caseId}": {
+      "get": {
+        "operationId": "getExecutionFeedbackCase", "tags": ["fleet"],
+        "summary": "One execution feedback case (ExecutionFeedbackCaseRead).",
+        "x-phantom-local-only": true,
+        "parameters": [{ "$ref": "#/components/parameters/CaseId" }],
+        "responses": { "200": { "$ref": "#/components/responses/ExecutionFeedbackCaseRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/live/queue": {
+      "get": {
+        "operationId": "getFleetLiveQueue", "tags": ["fleet"],
+        "summary": "Parked-run queue (FleetQueueV1).",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Hub clamps 1-200 (default 25); remote gateway admits 1-200." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/FleetQueueV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/runs": {
+      "get": {
+        "operationId": "getFleetRuns", "tags": ["fleet"],
+        "summary": "FleetRunsV1 composite snapshot (docs/api/FLEET-RUNS-V1.md).",
+        "responses": { "200": { "$ref": "#/components/responses/FleetRunsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/runs/inbox": {
+      "get": {
+        "operationId": "readFleetInbox", "tags": ["fleet"],
+        "summary": "Recent operator inbox entries (FleetInboxReadV1, or null when the inbox is missing).",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+          { "name": "source", "in": "query", "schema": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" }, "description": "Optional source label filter (case-insensitive); requires `limit`." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/FleetInboxRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "postFleetInbox", "tags": ["fleet"],
+        "summary": "Append an operator note to the leader inbox. Agents must not post as the operator.",
+        "x-phantom-step-up": false,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "Remote gateway bound (UTF-8 bytes); the hub itself allows 6000 characters after trimming." }, "source": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" } } } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/FleetInboxPostResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader": {
+      "get": {
+        "operationId": "getLeaderState", "tags": ["leader"],
+        "summary": "Leader state projection (LeaderStateV1).",
+        "responses": { "200": { "$ref": "#/components/responses/LeaderStateV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "applyLeaderAction", "tags": ["leader"],
+        "summary": "Veto a Leader action or dismiss a needs-you item. Hub-only extra actions: `run`, `veto-memo`.",
+        "x-phantom-step-up": true,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["action", "actionId"], "properties": { "action": { "type": "string", "const": "veto" }, "actionId": { "type": "string", "maxLength": 128 } } },
+            { "type": "object", "additionalProperties": false, "required": ["action", "itemId"], "properties": { "action": { "type": "string", "const": "dismiss" }, "itemId": { "type": "string", "maxLength": 256 } } }
+          ] } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/LeaderActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/actions/{actionId}/approve": {
+      "post": {
+        "operationId": "approveLeaderAction", "tags": ["leader"],
+        "summary": "Approve a Leader action awaiting operator approval.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/ActionId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/ApproveLeaderActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/directives": {
+      "get": {
+        "operationId": "listLeaderDirectives", "tags": ["leader"],
+        "summary": "Active and recently retired operator directives.",
+        "responses": { "200": { "$ref": "#/components/responses/LeaderDirectivesRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "addLeaderDirective", "tags": ["leader"],
+        "summary": "Add an operator directive (201 on create, 200 on duplicate). The hub also accepts `kind`.",
+        "x-phantom-step-up": false,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 2048 } } } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/LeaderDirectiveWrite" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/directives/{directiveId}": {
+      "delete": {
+        "operationId": "retireLeaderDirective", "tags": ["leader"],
+        "summary": "Retire an operator directive.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/DirectiveId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/LeaderDirectiveDelete" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/memos/{memoId}": {
+      "get": {
+        "operationId": "getLeaderMemo", "tags": ["leader"],
+        "summary": "One Leader memo (LeaderMemo).",
+        "x-phantom-local-only": true,
+        "parameters": [{ "$ref": "#/components/parameters/MemoId" }],
+        "responses": { "200": { "$ref": "#/components/responses/LeaderMemo" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/orders": {
+      "get": {
+        "operationId": "getLeaderOrders", "tags": ["leader"],
+        "summary": "Order trace: directives → leader runs → jobs (OrderTraceV1).",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/OrderTraceV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/questions/{questionId}": {
+      "get": {
+        "operationId": "getLeaderQuestion", "tags": ["leader"],
+        "summary": "One Leader question with typed-form metadata.",
+        "parameters": [{ "$ref": "#/components/parameters/QuestionId" }],
+        "responses": { "200": { "$ref": "#/components/responses/LeaderQuestionRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/questions/{questionId}/answer": {
+      "post": {
+        "operationId": "answerLeaderQuestion", "tags": ["leader"],
+        "summary": "Answer a Leader question, free-text or typed submission.",
+        "x-phantom-step-up": false,
+        "parameters": [{ "$ref": "#/components/parameters/QuestionId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 64000 } } },
+            { "type": "object", "additionalProperties": false, "required": ["submission"], "properties": { "submission": { "$ref": "#/components/schemas/LeaderQuestionSubmission" } } }
+          ] } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/AnswerLeaderQuestionResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/resources": {
+      "get": {
+        "operationId": "getLeaderResources", "tags": ["leader"],
+        "summary": "Leader resource ledger (ResourceLedgerV1).",
+        "responses": { "200": { "$ref": "#/components/responses/ResourceLedgerV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/leader/thread": {
+      "get": {
+        "operationId": "listLeaderThread", "tags": ["leader"],
+        "summary": "Leader↔operator thread messages, oldest first.",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }, "description": "Remote gateway admits exactly `50`." },
+          { "name": "before", "in": "query", "schema": { "type": "string", "maxLength": 64 }, "description": "Message id or ISO time cursor; remote gateway requires `limit=50` alongside." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/LeaderThreadRead" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "appendLeaderThread", "tags": ["leader"],
+        "summary": "Append an operator message to the Leader thread.",
+        "x-phantom-step-up": false,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 16384 }, "replyTo": { "type": "string", "pattern": "^[A-Za-z0-9_:-]{1,128}$" } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/AppendMasonMessageResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/queue/{sessionId}": {
+      "post": {
+        "operationId": "enqueueSessionTurn", "tags": ["sessions"],
+        "summary": "Queue a turn on a session (optionally send immediately).",
+        "x-phantom-step-up": false,
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 64000 }, "sendNow": { "type": "boolean" } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/VerseQueueMutationResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/queue/{sessionId}/{queueId}/send": {
+      "post": {
+        "operationId": "sendQueuedTurn", "tags": ["sessions"],
+        "summary": "Send one held queued turn now.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/QueueId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/VerseQueueMutationResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/release-pr": {
+      "get": {
+        "operationId": "getReleasePr", "tags": ["ops"],
+        "summary": "Release-PR probe across enrolled checkouts (ReleasePrResponseV1).",
+        "responses": { "200": { "$ref": "#/components/responses/ReleasePrResponseV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/runs-history": {
+      "get": {
+        "operationId": "getRunsHistory", "tags": ["fleet"],
+        "summary": "Per-hour run outcome samples (RunsHistory).",
+        "x-phantom-local-only": true,
+        "parameters": [
+          { "name": "hours", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 168, "default": 24 } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/RunsHistory" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/seats": {
+      "get": {
+        "operationId": "listVerseSeats", "tags": ["verse"],
+        "summary": "Discovered engine seats (VerseSeatsResponse).",
+        "responses": { "200": { "$ref": "#/components/responses/VerseSeatsResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/session-meta": {
+      "get": {
+        "operationId": "getSessionMeta", "tags": ["activity"],
+        "summary": "Per-chat sidebar metadata (VerseSessionMetaResponse).",
+        "responses": { "200": { "$ref": "#/components/responses/VerseSessionMetaResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/sessions": {
+      "get": {
+        "operationId": "listVerseSessions", "tags": ["sessions"],
+        "summary": "Live verse sessions.",
+        "responses": { "200": { "$ref": "#/components/responses/VerseSessionList" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "createVerseSession", "tags": ["sessions"],
+        "summary": "Create a session bound to a project path and seat.",
+        "x-phantom-step-up": false,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["projectPath", "seatId"], "properties": { "projectPath": { "type": "string", "minLength": 1, "maxLength": 1024 }, "seatId": { "type": "string", "minLength": 1, "maxLength": 128 }, "model": { "type": "string", "minLength": 1, "maxLength": 128 } } } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/VerseSession" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/sessions/{sessionId}": {
+      "get": {
+        "operationId": "getVerseSession", "tags": ["sessions"],
+        "summary": "Session detail with event tail (VerseSessionDetail).",
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }],
+        "responses": { "200": { "$ref": "#/components/responses/VerseSessionDetail" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/sessions/{sessionId}/cancel": {
+      "post": {
+        "operationId": "cancelSessionTurn", "tags": ["sessions"],
+        "summary": "Cancel the session's running turn.",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/OkResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/sessions/{sessionId}/events": {
+      "get": {
+        "operationId": "streamSessionEvents", "tags": ["sessions"],
+        "summary": "Server-sent event tail for one session.",
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionId" },
+          { "name": "after", "in": "query", "schema": { "type": "string", "pattern": "^\\d{1,15}$" }, "description": "Only events with seq greater than this value." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/VerseEventStream" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/sessions/{sessionId}/terminate": {
+      "post": {
+        "operationId": "terminateVerseSession", "tags": ["sessions"],
+        "summary": "Terminate a Devin-backed session for good (confirmed).",
+        "x-phantom-step-up": true,
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["confirm"], "properties": { "confirm": { "type": "boolean", "const": true } } } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/OkResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/sessions/{sessionId}/turns": {
+      "post": {
+        "operationId": "sendSessionTurn", "tags": ["sessions"],
+        "summary": "Send a turn to a session (202 on acceptance).",
+        "x-phantom-step-up": false,
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }],
+        "security": [{ "mutationToken": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 64000 } } } } }
+        },
+        "responses": { "202": { "$ref": "#/components/responses/VerseTurnResponse" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "readToken": { "type": "apiKey", "in": "header", "name": "X-Ashlr-Token", "description": "Read token printed by `phm verse`, or a browser read session." },
+      "mutationToken": { "type": "apiKey", "in": "header", "name": "X-Ashlr-Token", "description": "Separate mutation token; the read token cannot authorize writes." }
+    },
+    "parameters": {
+      "ActionId": { "name": "actionId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9_:-]{1,128}$" } },
+      "AgentId": { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^ag_[a-z0-9]{8,32}$" } },
+      "CaseId": { "name": "caseId", "in": "path", "required": true, "schema": { "type": "string" } },
+      "CloudTaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^ct_\\d{8}T\\d{4}_[a-z0-9]{6}$" } },
+      "DevinTaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^dv_\\d{8}T\\d{4}_[a-z0-9]{6}$" } },
+      "DirectiveId": { "name": "directiveId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9_:-]{1,128}$" } },
+      "MemoId": { "name": "memoId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^lm-\\d{14}-[a-f0-9]{6}$" } },
+      "ProposalId": { "name": "proposalId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,160}$" } },
+      "QuestionId": { "name": "questionId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^lm-\\d{14}-[a-f0-9]{6}:\\d{1,2}$" } },
+      "QueueId": { "name": "queueId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{12}$" } },
+      "RunId": { "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } },
+      "SessionId": { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" } }
+    },
+    "requestBodies": {
+      "ActivitySeen": {
+        "required": true,
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["sessionId", "turnCount"], "properties": { "sessionId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" }, "turnCount": { "type": "integer", "minimum": 0 } } } } }
+      },
+      "EmptyObject": {
+        "required": true,
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } }
+      },
+      "TaskClose": {
+        "required": true,
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["headSha"], "properties": { "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "reason": { "type": "string", "minLength": 1, "maxLength": 200 } } } } }
+      },
+      "TaskHeadSha": {
+        "required": true,
+        "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["headSha"], "properties": { "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" } } } } }
+      }
+    },
+    "responses": {
+      "AgentPlanResult": { "description": "{ agent } — see src/core/verse/agents-api.ts.", "content": { "application/json": { "schema": { "type": "object", "required": ["agent"], "properties": { "agent": { "type": "object" } } } } }},
+      "AnswerLeaderQuestionResult": { "description": "AnswerLeaderQuestionResult | SubmitLeaderQuestionResult — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "AppendMasonMessageResult": { "description": "AppendMasonMessageResult — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "ApproveLeaderActionResult": { "description": "ApproveLeaderActionResult — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "AuthorityLedgerDecisions": { "description": "Shadow-decision ledger view — see readShadowDecisions in src/core/verse/authority-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "AuthorityStatusV1": { "description": "AuthorityStatusV1 plus the action result — see src/core/verse/authority-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "BudgetResponse": { "description": "BudgetResponse — see src/core/verse/routing/budget-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "CheckpointsRead": { "description": "Checkpoint turn roots — see VerseCheckpointTurnRoot in src/core/verse/checkpoint-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "CheckpointDiffRead": { "description": "Checkpoint diff — see src/core/verse/checkpoints-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "CloudOverviewResponse": { "description": "CloudOverviewResponse — see src/core/cloud/cloud-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "CloudPrPreviewsResponse": { "description": "CloudPrPreviewsResponse { generatedAt, previews } — see src/core/cloud/pr-preview.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "CloudTaskActionResult": { "description": "{ ok, task, message? } — see landCloudPr/closeCloudPr in src/core/cloud/pr-actions.ts.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "task": { "type": "object" }, "message": { "type": "string" } } } } }},
+      "DaemonActionResult": { "description": "Daemon action outcome — see runVerseDaemonAction via src/core/verse/control-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "Error": { "description": "Error envelope.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }},
+      "ExecutionFeedbackCaseRead": { "description": "ExecutionFeedbackCaseRead — see src/core/verse/execution-feedback-api-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "ExecutionFeedbackRead": { "description": "ExecutionFeedbackRead — see src/core/verse/execution-feedback-api-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetBusFeedV1": { "description": "FleetBusFeedV1 — see src/core/fleet/bus-feed.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetControlActionResultV1": { "description": "FleetControlActionResultV1 { ok, action, did, needs, mode?, state } — see src/core/fleet/fleet-control-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetControlQueueV1": { "description": "FleetControlQueueV1 — see src/core/fleet/fleet-control-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetControlStateV1": { "description": "FleetControlStateV1 — see src/core/fleet/fleet-control-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetHistoryResponse": { "description": "FleetHistoryResponse — see src/core/verse/fleet-history-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetInboxPostResult": { "description": "{ ok, at, accepted, duplicate, dedupeKey } — 201 on first post, 200 with duplicate:true inside the dedupe window.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "at": { "type": "string" }, "accepted": { "type": "boolean" }, "duplicate": { "type": "boolean" }, "dedupeKey": { "type": "string" } } } } }},
+      "FleetInboxRead": { "description": "FleetInboxReadV1 or null — see src/core/verse/fleet-inbox-read.ts.", "content": { "application/json": { "schema": { "type": ["object", "null"] } } }},
+      "FleetLiveActionResult": { "description": "FleetLiveActionResult { ok, note, changes, snapshot } — see src/core/verse/fleet-live-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetLiveSnapshotV1": { "description": "FleetLiveSnapshotV1 — see src/core/fleet/fleet-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetQueueV1": { "description": "FleetQueueV1 — see src/core/fleet/runs-parked-queue.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetRunLogV1": { "description": "FleetRunLogV1 — see src/core/fleet/fleet-control-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetRunsV1": { "description": "FleetRunsV1 — see src/core/verse/fleet-runs-types.ts.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FleetRunsV1" } } }},
+      "FleetSnapshot": { "description": "FleetSnapshot — see src/core/verse/fleet-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "GrokUltraRunway": { "description": "GrokUltraRunway — see src/core/fleet/grok-ultra-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "InboxDecisionResult": { "description": "The decided proposal object — see POST /api/inbox/:id/(approve|reject) in src/core/web/api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LaneTargetsV1": { "description": "LaneTargetsV1 — see src/core/fleet/runs-lane-targets.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderActionResult": { "description": "Action-dependent result ({ result, state } for veto, { dismissed } for dismiss) — see src/core/verse/leader-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderDirectiveDelete": { "description": "{ directive: OperatorDirective } — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderDirectiveWrite": { "description": "{ directive: OperatorDirective, duplicate } — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderDirectivesRead": { "description": "{ directives, retired } of OperatorDirective — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderMemo": { "description": "LeaderMemo — see src/core/vision/leader-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderQuestionRead": { "description": "{ question: LeaderQuestionProjection, typedQuestionsSupported } — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderStateV1": { "description": "LeaderStateV1 — see src/core/vision/leader-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LeaderThreadRead": { "description": "{ messages: LeaderThreadMessage[] } — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "OkResult": { "description": "{ ok: true }.", "content": { "application/json": { "schema": { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean" } } } } }},
+      "OrderTraceV1": { "description": "OrderTraceV1 — see src/core/fleet/order-trace.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "ReleasePrResponseV1": { "description": "ReleasePrResponseV1 { v, generatedAt, sourceState, repos } — see src/core/verse/ops-release-pr-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "RemoteDevicesRead": { "description": "{ v, generatedAt, sourceState, devices } — see src/core/verse/fleet-control-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "ResourceLedgerV1": { "description": "ResourceLedgerV1 — see src/core/fleet/runs-resource-ledger.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "RunsHistory": { "description": "RunsHistory — see src/core/fleet/runs-history.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "RunsSwitchesV1": { "description": "RunsSwitchesV1 — see src/core/fleet/runs-switches.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseActivityResponse": { "description": "VerseActivityResponse — see src/core/verse/activity.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseBootstrap": { "description": "VerseBootstrap — see src/core/verse/types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseControlSnapshot": { "description": "buildVerseControlSnapshot result — see src/core/verse/control-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseEventStream": { "description": "text/event-stream of verse events — see src/core/verse/verse-stream.ts.", "content": { "text/event-stream": { "schema": { "type": "string" } } }},
+      "VerseQueueMutationResult": { "description": "VerseQueueResponse plus sentTurnId when a turn was sent — see src/core/verse/session-controls-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseSeatsResponse": { "description": "VerseSeatsResponse — see src/core/verse/seats.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseSession": { "description": "VerseSession — see src/core/verse/types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseSessionDetail": { "description": "VerseSessionDetail — see src/core/verse/types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseSessionList": { "description": "VerseSession[].", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object" } } } }},
+      "VerseSessionMeta": { "description": "VerseSessionMeta — see src/core/verse/session-meta.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseSessionMetaResponse": { "description": "VerseSessionMetaResponse — see src/core/verse/session-meta.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseTurnResponse": { "description": "VerseTurnResponse — see src/core/verse/types.ts.", "content": { "application/json": { "schema": { "type": "object" } } } }
+    },
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "Most routes answer { code, error }; a few answer { code, reason } or { error } alone.",
+        "properties": {
+          "code": { "type": "string", "description": "Machine code such as VERSE_INVALID, INBOX_REFUSED, LEADER_BUSY." },
+          "error": { "type": "string", "description": "Plain-language explanation." },
+          "reason": { "type": "string", "description": "Refusal reason on routes that use it (e.g. INBOX_REFUSED)." }
+        },
+        "additionalProperties": true
+      },
+      "FleetRunsV1": {
+        "type": "object",
+        "description": "Contract documented field-by-field in docs/api/FLEET-RUNS-V1.md and schema/fleet-runs.v1.schema.json.",
+        "required": ["v", "generatedAt", "sources"],
+        "properties": {
+          "v": { "type": "integer", "const": 1 },
+          "generatedAt": { "type": "string", "format": "date-time" },
+          "sources": { "type": "object", "description": "Per-source state: healthy | degraded | missing | not-landed." },
+          "lastTick": { "type": ["string", "null"] },
+          "paused": { "type": ["boolean", "null"] },
+          "memFreePct": { "type": ["number", "null"] },
+          "diskFreeGb": { "type": ["number", "null"] },
+          "switches": { "type": "array", "items": { "type": "string" } },
+          "claudeLane": { "type": ["string", "null"] },
+          "lanes": { "type": "array", "items": { "type": "object" } },
+          "workers": { "type": "array", "items": { "type": "object" } },
+          "leaders": { "type": "array", "items": { "type": "object" } },
+          "orchestratorAgents": { "type": ["integer", "null"] },
+          "publishesLastHour": { "type": "array", "items": { "type": "object" } },
+          "mergesLastHour": { "type": "object" },
+          "events": { "type": "array", "items": { "type": "object" } },
+          "codexPersonal": { "type": ["object", "null"] },
+          "inbox": { "type": ["object", "null"] },
+          "drop": { "type": ["object", "null"] }
+        }
+      },
+      "LeaderQuestionSubmission": {
+        "type": "object",
+        "description": "Typed question submission — parseLeaderQuestionSubmission in src/core/vision/leader-question-submission.ts. Exactly one of the two shapes, no extra keys.",
+        "oneOf": [
+          { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "formRevision", "kind", "optionIndices"], "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "formRevision": { "type": "string", "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{8}){7}$" }, "kind": { "type": "string", "const": "options" }, "optionIndices": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 9 }, "minItems": 1, "maxItems": 10, "uniqueItems": true } } },
+          { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "formRevision", "kind", "text"], "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "formRevision": { "type": "string", "pattern": "^[a-f0-9]{8}(?:-[a-f0-9]{8}){7}$" }, "kind": { "type": "string", "const": "text" }, "text": { "type": "string", "minLength": 1, "maxLength": 2000 } } }
+        ]
+      }
+    }
+  }
+}

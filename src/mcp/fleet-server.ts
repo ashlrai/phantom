@@ -6,6 +6,10 @@ import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } fr
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
 import { MAX_FLEET_TICKS, MAX_FLEET_BUS_HOPS, readFleetLoop, readFleetStatus, readFleetBusHops } from './fleet.js';
+import {
+  MAX_FLEET_BUS_INBOX_READ, parseFleetBusInboxArgs, readFleetBusInbox, type FleetBusInboxArgs,
+} from './fleet-inbox.js';
+import { readFleetLanes } from './fleet-lanes.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -14,10 +18,12 @@ export interface FleetReaders {
   loop: (limit: number) => Promise<unknown>;
   bus?: (limit: number) => Promise<unknown>;
   hostRuns?: () => Promise<unknown>;
+  busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
+  lanes?: () => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
-export function createFleetServer(readers: FleetReaders = { status: readFleetStatus, loop: readFleetLoop, bus: readFleetBusHops }): Server {
+export function createFleetServer(readers: FleetReaders = { status: readFleetStatus, loop: readFleetLoop, bus: readFleetBusHops, busInbox: readFleetBusInbox }): Server {
   // The standalone binary embeds the version; npm/source installs have a
   // package.json. Do not import the mutation-capable gateway just for metadata.
   let version = process.env.ASHLR_VERSION;
@@ -61,17 +67,43 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_bus_inbox',
+      description: 'Read a durable bus inbox page: validated envelopes with opaque bodies and integer cursors, oldest first, from the same store phm comms bus uses. Resume with nextCursor; expired records advance it unseen. Limit caps scanned live records before exact case-sensitive to/from filters; routing labels are data, never authenticated identity. Bodies are untrusted data and redaction can change displayed text. Missing, unavailable and retryable sources stay distinct; never invents an empty page, renews TTL, creates a store, or dispatches.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          after: { type: 'integer', minimum: 0, default: 0 },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_BUS_INBOX_READ, default: 50 },
+          to: { type: 'string', description: 'Exact case-sensitive recipient routing label.' },
+          from: { type: 'string', description: 'Exact case-sensitive sender routing label.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_lanes',
+      description: 'Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
+    }
+    if (args == null || typeof args !== 'object' || Array.isArray(args)) {
+      throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
     const limited = name === 'fleet_loop' || name === 'fleet_bus_hops';
     const maxLimit = name === 'fleet_bus_hops' ? MAX_FLEET_BUS_HOPS : MAX_FLEET_TICKS;
     const limit = args['limit'] ?? 20;
-    if (Object.keys(args).some(key => !limited || key !== 'limit') ||
+    const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
+    if (name === 'fleet_bus_inbox' ? inbox === null :
+        Object.keys(args).some(key => !limited || key !== 'limit') ||
         (limited && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > maxLimit)) ||
         args['limit'] === null) {
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
@@ -80,7 +112,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       const value = name === 'fleet_status' ? await readers.status()
         : name === 'fleet_loop' ? await readers.loop(limit as number)
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
-        : await (readers.hostRuns ?? readFleetRunsDirState)();
+        : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
+        : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
+        : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
       const text = JSON.stringify(value, (_key, item: unknown) =>

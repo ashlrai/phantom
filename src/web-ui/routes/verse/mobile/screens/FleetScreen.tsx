@@ -8,6 +8,7 @@
  * Command views and this screen never disagree):
  *   control    GET /api/verse/control              daemon, pause, kill switch
  *   live       GET /api/verse/fleet/live           state, summary, lanes, runs
+ *   runs       GET /api/verse/fleet/runs           Mac host numbers
  *   authority  GET /api/verse/authority            switch, grant
  *   budget     GET /api/verse/budget               mode
  *   decisions  GET /api/verse/authority/ledger?view=decisions
@@ -17,7 +18,7 @@
  * `ashlr fleet resume`), sign or widen a grant (Touch ID on the Mac), or
  * raise the budget above the grant's ceiling. Each says so where it applies.
  */
-import { lazy, Suspense, useCallback, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useState } from 'react';
 import type { BudgetMode } from '../../../../../core/routing/types.js';
 import type { AutonomySwitch } from '../../../../../core/authority/types.js';
 import type { FleetLiveRun } from '../../../../../core/fleet/fleet-types.js';
@@ -31,13 +32,19 @@ import { BUDGET_MODE_OPTIONS, modeAboveCeiling } from '../../budget/budget-model
 import { decisionsQuery } from '../../command/ladder-queries.js';
 import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-model.js';
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
+import { releasePrQuery } from '../../fleet/release-pr-query.js';
+import { hostView } from '../../fleet-host/fleet-host-model.js';
 import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
+import { isFleetRuns } from '../../ops/ops-runs-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { fleetLedgerQuery } from '../../usage/fleet-ledger-queries.js';
 import { decisionPrUrl } from '../decision-link.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
+import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
+import { MobileReleaseCard } from '../MobileReleaseCard.js';
+import { homeRunsQuery } from '../home-runs-query.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -123,7 +130,9 @@ export function refreshFleetScreen(): Promise<unknown> {
   return Promise.all([
     refetchQuery(verseControlQuery.key, () => verseControlQuery.fetch(), true),
     refetchQuery(fleetLiveQuery.key, () => fleetLiveQuery.fetch(), true),
+    refetchQuery(homeRunsQuery.key, () => homeRunsQuery.fetch(), true),
     refetchQuery(fleetLedgerQuery.key, () => fleetLedgerQuery.fetch(), true),
+    refetchQuery(releasePrQuery.key, () => releasePrQuery.fetch(), true),
     refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
     refetchQuery(authorityQuery.key, () => authorityQuery.fetch(), true),
     refetchQuery(budgetQuery.key, () => budgetQuery.fetch(), true),
@@ -152,21 +161,27 @@ export function FleetScreen() {
   const { activity, permissions, reachability, navigate } = useMobile();
   const control = useQuery(verseControlQuery);
   const live = useQuery(fleetLiveQuery);
+  const runs = useQuery(homeRunsQuery);
+  const ledger = useQuery(fleetLedgerQuery);
   const authority = useQuery(authorityQuery);
   const budget = useQuery(budgetQuery);
   const decisions = useQuery(decisionsQuery);
   const refetchControl = useRefetch(verseControlQuery);
   const refetchLive = useRefetch(fleetLiveQuery);
+  const refetchRuns = useRefetch(homeRunsQuery);
+  const refetchLedger = useRefetch(fleetLedgerQuery);
   const refetchAuthority = useRefetch(authorityQuery);
   const refetchBudget = useRefetch(budgetQuery);
   const refetchDecisions = useRefetch(decisionsQuery);
   const poll = useCallback(() => {
     refetchControl();
     refetchLive();
+    refetchRuns();
+    refetchLedger();
     refetchAuthority();
     refetchBudget();
     refetchDecisions();
-  }, [refetchControl, refetchLive, refetchAuthority, refetchBudget, refetchDecisions]);
+  }, [refetchControl, refetchLive, refetchRuns, refetchLedger, refetchAuthority, refetchBudget, refetchDecisions]);
   usePollWhileVisible(poll, FLEET_POLL_MS);
   const [reposOpen, setReposOpen] = useState(false);
 
@@ -348,9 +363,26 @@ export function FleetScreen() {
     );
   }
 
+  const hostRuns = runs.status !== 'error' && isFleetRuns(runs.data) ? runs.data : null;
+  const host = hostView(hostRuns, Date.now());
+  const load = hostRuns?.host?.load1 ?? null;
+  const hostUnavailable = load === null || host.memory.pct === null || host.disk.gb === null || host.tick.ageSeconds === null;
+  const tickSeconds = host.tick.ageSeconds === null ? null : Math.floor(host.tick.ageSeconds);
+  const tickAge = tickSeconds === null ? null : tickSeconds < 60 ? `${tickSeconds} s`
+    : tickSeconds < 3600 ? `${Math.floor(tickSeconds / 60)} min` : `${Math.floor(tickSeconds / 3600)} h`;
+  const hostParts = [
+    load === null ? null : { key: 'load', content: `load ${load}` },
+    host.memory.pct === null ? null : { key: 'memory', content: host.memory.pct < 10
+      ? <span data-tone="warning"><Badge tone="warning">mem {host.memory.pct}% free</Badge></span> : `mem ${host.memory.pct}% free` },
+    host.disk.gb === null ? null : { key: 'disk', content: host.disk.gb < 10
+      ? <span data-tone="warning"><Badge tone="warning">disk {host.disk.text} free</Badge></span> : `disk ${host.disk.text} free` },
+    tickAge === null ? null : { key: 'tick', content: `read ${tickAge} ago` },
+  ].filter((part) => part !== null);
+
   const decisionList = decisions.data?.value?.decisions ?? null;
   const endedRuns: FleetLiveRun[] = (snapshot?.runs ?? []).filter((r) => r.endedAt && r.outcome && RUN_OUTCOME[r.outcome]).slice(0, DECISION_ROWS);
   const now = Date.now();
+  const waste = wasteLines(ledger.data, now);
   let decisionsBody;
   if (decisions.status === 'loading' && !decisions.data) decisionsBody = <SkeletonList rows={3} label="Loading recent decisions" />;
   else if (decisionList) {
@@ -403,8 +435,37 @@ export function FleetScreen() {
     <Screen title="Fleet" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshFleetScreen} header={header} label="Fleet">
       {fleetCard}
       <MobileSwitches />
+      <Section title="This Mac" flat>
+        {runs.status === 'idle' || runs.status === 'loading' ? <SkeletonList rows={1} label="Loading Mac host numbers" /> : (
+          <div className={cx(ui.card, ui.stack)}>
+            {hostParts.length > 0 ? <p className={styles.detail}>
+              {hostParts.map((part, index) => <Fragment key={part.key}>{index > 0 ? ' · ' : null}{part.content}</Fragment>)}
+            </p> : null}
+            {hostUnavailable ? <p className={ui.muted}>Mac host numbers unavailable</p> : null}
+          </div>
+        )}
+      </Section>
       <Section title="Right now" flat>{liveBody}</Section>
       <FleetUsageCard />
+      <Section title="Waste forecast">
+        {ledger.status === 'error' ? (
+          <ErrorState title="Couldn’t read waste forecast" reason={readFailureReason(ledger.error)} onRetry={refetchLedger} />
+        ) : ledger.status === 'idle' || ledger.status === 'loading' ? (
+          <SkeletonList rows={2} label="Loading waste forecast" />
+        ) : !ledger.data ? (
+          <Row title="Ledger not readable from this Mac yet" />
+        ) : !ledger.data.lanes.some((lane) => lane.window === 'weekly') ? (
+          <Row title="No weekly windows reported" />
+        ) : waste.headline === null ? (
+          <Row title="Weekly forecast unavailable" />
+        ) : (
+          <>
+            <Row title={waste.headline} />
+            {waste.rows.map((row, index) => <div key={`${row.lane}-${index}`} data-tone={row.tone}><Row title={row.text} /></div>)}
+          </>
+        )}
+      </Section>
+      <MobileReleaseCard />
       <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>

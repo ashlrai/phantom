@@ -91,6 +91,8 @@ export const REAL_IO_TEST_FILES = [
   'test/remote-gateway-auth.test.ts', // real loopback gateway and Mac-only Unix socket pairing ceremony
   'test/remote-admin-race.test.ts', // real owned Unix socket child killed to reproduce stale-admin startup races
   'test/remote-gateway-http.test.ts', // real loopback Hub and gateway servers, Access assertion and SSE lifecycle
+  'test/remote-gateway-inbox-source-pin-nov1.test.ts', // real loopback Hub and gateway servers through the mutation-token boundary
+  'test/remote-inbox-mobile-channel-31.test.ts', // real loopback Hub and gateway servers plus the durable channel receipt and bus stores
   'test/remote-fleet-feed.test.ts', // real paired-device gateway and loopback fleet feed
   'test/api-error-no-echo.test.ts', // one real loopback web server per test sweeping the /api error paths
   'test/builtin-activity-pgid-reuse.test.ts', // private activity journals with synthetic identity reuse probes

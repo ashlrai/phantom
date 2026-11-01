@@ -1,5 +1,8 @@
 # Fleet HTTP API
 
+The machine-readable contract for this surface is [docs/api/fleet-openapi.json](api/fleet-openapi.json) (OpenAPI 3.1).
+`test/fleet-openapi-coverage.test.ts` keeps it aligned with the remote gateway's reviewed route policy.
+
 Phantom's fleet coordinates and observes local agent work, queues, controls,
 and the Leader. These loopback endpoints expose projections used by the desktop
 and phone. On the Mac, run records and the leader inbox normally live in
@@ -65,6 +68,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/live/queue` | limit | [FleetQueueV1](../src/core/fleet/runs-parked-queue.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/queue'` |
 | GET | `/api/verse/fleet/live/feedback` | none | [ExecutionFeedbackRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback'` |
 | GET | `/api/verse/fleet/live/feedback/cases/` (EXECUTION_FEEDBACK_CASE_PATH) + {caseId} | none | [ExecutionFeedbackCaseRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback/cases/example-case'` |
+| GET | `/api/verse/fleet/graph/live` | none | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
 
 ## Ops
 

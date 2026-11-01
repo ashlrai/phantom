@@ -17,6 +17,8 @@ export interface OutcomeCaseRow {
   caseId: string;
   endedAt: string | null;
   outcome: ExecutionFeedbackOutcome;
+  lane?: string;
+  producer?: string;
   label: string;
   failureKind: string | null;
   proposalRecorded: boolean;
@@ -63,6 +65,63 @@ const OUTCOME_ORDER: readonly ExecutionFeedbackOutcome[] = [
 ];
 const OUTCOMES = new Set<string>(OUTCOME_ORDER);
 const MAX_CASES = 100;
+const WASTE_OUTCOMES = ['empty-diff', 'refused', 'failed', 'cancelled'] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface WasteSummary {
+  /** Hours in the window, or zero when no case has an end time. */
+  window: number;
+  finished: number;
+  wasted: number;
+  byOutcome: Record<string, number>;
+  byLane: Array<{ lane: string; wasted: number }>;
+}
+
+export function isWasteCase(row: OutcomeCaseRow): boolean {
+  return WASTE_OUTCOMES.some(outcome => outcome === row.outcome);
+}
+
+export function recutPrefill(row: OutcomeCaseRow): string | null {
+  if (!isWasteCase(row) || !row.jobId) return null;
+  const prNumber = row.prLink?.url.match(/\/pull\/(\d+)/)?.[1];
+  const order = `Recut ${row.jobId} (${row.lane || 'lane unknown'}): ${row.failureKind || outcomeLabel(row.outcome)} — ${row.label}. PR ${row.prLink?.label || 'none'}.`;
+  return prNumber ? `${order} Inherit with git fetch origin pull/${prNumber}/head.` : order;
+}
+
+export function wasteSummary(cases: OutcomeCaseRow[], nowMs: number): WasteSummary {
+  const hasEndTime = cases.some(item => item.endedAt !== null);
+  const finishedCases = hasEndTime ? cases.filter(item => {
+    const ended = Date.parse(item.endedAt ?? '');
+    return ended >= nowMs - DAY_MS && ended <= nowMs;
+  }) : cases;
+  const byOutcome: Record<string, number> = {};
+  const lanes = new Map<string, number>();
+  for (const item of finishedCases) {
+    if (!isWasteCase(item)) continue;
+    byOutcome[item.outcome] = (byOutcome[item.outcome] ?? 0) + 1;
+    const lane = item.lane || (item.producer ? `producer ${item.producer}` : 'unrecorded');
+    lanes.set(lane, (lanes.get(lane) ?? 0) + 1);
+  }
+  return {
+    window: hasEndTime ? 24 : 0,
+    finished: finishedCases.length,
+    wasted: Object.values(byOutcome).reduce((sum, count) => sum + count, 0),
+    byOutcome,
+    byLane: [...lanes].map(([lane, wasted]) => ({ lane, wasted }))
+      .sort((a, b) => b.wasted - a.wasted || a.lane.localeCompare(b.lane)),
+  };
+}
+
+export function wasteLine(summary: WasteSummary): string | null {
+  if (summary.finished === 0) return null;
+  const reasons = WASTE_OUTCOMES.filter(outcome => summary.byOutcome[outcome])
+    .map(outcome => `${summary.byOutcome[outcome]} ${outcome.replace('-', ' ')}`);
+  const top = summary.byLane.find(item => item.lane !== 'unrecorded');
+  const unrecorded = summary.byLane.find(item => item.lane === 'unrecorded');
+  const location = [top ? `Most ${unrecorded ? 'recorded ' : ''}on ${top.lane} (${top.wasted}).` : '',
+    unrecorded ? `Lane or producer not recorded (${unrecorded.wasted}).` : ''].filter(Boolean).join(' ');
+  return `Waste, ${summary.window ? `last ${summary.window} h` : 'all available cases'}: ${summary.wasted} of ${summary.finished} finished cases produced nothing${reasons.length ? ` (${reasons.join(', ')})` : ''}.${location ? ` ${location}` : ''}`;
+}
 
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -93,6 +152,20 @@ export function outcomeLabel(outcome: string): string {
   if (outcome === 'producer-succeeded') return 'Produced';
   if (outcome === 'empty-diff') return 'Empty diff';
   return outcome ? outcome[0]!.toUpperCase() + outcome.slice(1) : 'Unknown';
+}
+
+export function filterCases(view: OutcomesView, outcome: ExecutionFeedbackOutcome | 'all'): OutcomeCaseRow[] {
+  return outcome === 'all' ? view.cases : view.cases.filter(item => item.outcome === outcome);
+}
+
+export function outcomeChips(view: OutcomesView): Array<{ outcome: ExecutionFeedbackOutcome | 'all'; label: string; count: number }> {
+  const chips: Array<{ outcome: ExecutionFeedbackOutcome | 'all'; label: string; count: number }> =
+    [{ outcome: 'all', label: 'All', count: view.cases.length }];
+  for (const row of view.mix) {
+    const count = row.total ?? row.observed;
+    if (count > 0) chips.push({ outcome: row.outcome, label: row.label, count });
+  }
+  return chips;
 }
 
 export function stageLabel(stage: string): string {
@@ -131,6 +204,8 @@ export function readOutcomes(value: unknown): OutcomesView | null {
     if (!caseId) return [];
     const outcome = readOutcome(item.outcome);
     return [{ caseId, endedAt: text(item.endedAt), outcome, label: outcomeLabel(outcome),
+      ...(text(item.lane) ? { lane: text(item.lane)! } : {}),
+      ...(text(item.producer) ? { producer: text(item.producer)! } : {}),
       failureKind: text(item.failureKind), proposalRecorded: item.proposalRecorded === true,
       jobId: JOB_ID_RE.test(caseId) ? caseId : null, prLink: pullRequestLink(item) }];
   }).sort((a, b) => byNewest(a.endedAt, b.endedAt)).slice(0, MAX_CASES);

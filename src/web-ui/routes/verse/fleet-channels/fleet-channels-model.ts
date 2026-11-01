@@ -1,3 +1,6 @@
+import { seenCounts } from '../fleet-inbox/inbox-ack-model.js';
+import type { AnnotatedEntry } from '../fleet-inbox/inbox-ack-model.js';
+
 export const KNOWN_CHANNELS = ['telegram', 'desktop', 'page', 'terminal', 'email', 'fleet-say', 'mobile'] as const;
 export type ChannelKey = typeof KNOWN_CHANNELS[number] | 'other';
 
@@ -19,6 +22,61 @@ export function channelKey(source: string): ChannelKey {
 }
 
 export function channelLabel(key: ChannelKey): string { return labels[key]; }
+
+/**
+ * Verbatim usage lines from src/cli/comms.ts (EMAIL_DROP_USAGE, and the
+ * setup-telegram spec entry). The browser bundle cannot import the CLI
+ * module, so they are mirrored here — keep byte-identical.
+ */
+export const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--once | --watch <seconds>] [--json]';
+export const SETUP_TELEGRAM_USAGE = 'usage: phm comms setup-telegram';
+
+export interface ChannelSetupHint {
+  /** Verbatim CLI usage line shown under the row. */
+  command: string;
+  /** `command` without the `usage: ` prefix — the runnable line the copy button puts on the clipboard. */
+  runCommand: string;
+  /** Muted line: where the drop folder is, where acks land. */
+  detail: string;
+  /** Noun phrase for the copy control's accessible name, e.g. 'the email drop command'. */
+  copyWhat: string;
+}
+
+/**
+ * For a channel that has never delivered (row.total === 0), the setup hint
+ * that turns it on. Null once a single message has landed — silence then is
+ * a freshness question, not a setup question — and for channels with nothing
+ * to enable.
+ */
+export function channelSetupHint(channel: ChannelKey, row: ChannelRow): ChannelSetupHint | null {
+  if (row.total > 0) return null;
+  if (channel === 'email') return {
+    command: EMAIL_DROP_USAGE,
+    runCommand: EMAIL_DROP_USAGE.replace(/^usage: /, ''),
+    detail: 'Drop .eml files into <inboxDir> — any folder your mail path fills; handled mail moves to <inboxDir>/../processed. Acks are written as reply .eml files to <inboxDir>/../outbox. --from is required: unlisted senders are refused.',
+    copyWhat: 'the email drop command',
+  };
+  if (channel === 'telegram') return {
+    command: SETUP_TELEGRAM_USAGE,
+    runCommand: SETUP_TELEGRAM_USAGE.replace(/^usage: /, ''),
+    detail: 'Prints the bot-token setup steps and discovers your chat id.',
+    copyWhat: 'the Telegram setup command',
+  };
+  return null;
+}
+
+/** Per-channel ack rollup for the Channels pane: how many of Mason's messages still wait on a leader pass. */
+export function ackByChannel(entries: readonly AnnotatedEntry[]): Map<ChannelKey, { waiting: number; seen: number; overdue: boolean }> {
+  const groups = new Map<ChannelKey, AnnotatedEntry[]>();
+  for (const entry of entries) {
+    const key = channelKey(entry.source);
+    const group = groups.get(key);
+    if (group) group.push(entry); else groups.set(key, [entry]);
+  }
+  const result = new Map<ChannelKey, { waiting: number; seen: number; overdue: boolean }>();
+  for (const [key, group] of groups) result.set(key, seenCounts(group));
+  return result;
+}
 
 export interface ChannelRow {
   key: ChannelKey; label: string; lastAt: string | null; preview: string | null;

@@ -153,13 +153,24 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
 
   const personal = snapshot.codexPersonal;
   const personalLane = snapshot.lanes.find((l) => l.lane === 'codex-personal');
-  const heldForLimit = personalLane?.held && /usage|limit/i.test(personalLane.heldReason ?? '');
+  const heldForLimit = personalLane?.held && /autobackoff|usage|limit|exhaust/i.test(personalLane.heldReason ?? '');
   const used = personal?.usedPct;
+  const asOf = personal?.asOf ? Date.parse(personal.asOf) : NaN;
   const resetMs = personal?.resetsAt ? Date.parse(personal.resetsAt) : NaN;
   const reset = Number.isFinite(resetMs)
     ? formatDateTime(resetMs, 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
     : null;
-  if ((used != null && used >= 100) || heldForLimit) {
+  if (heldForLimit && used != null && Number.isFinite(used) && used <= 25 && Number.isFinite(asOf) && asOf <= nowMs) {
+    items.push({
+      id: 'supply-personal-reset',
+      open: { kind: 'pane', paneId: 'fleet-lanes' },
+      severity: personalLane.queued > 0 ? 'urgent' : 'attention',
+      title: 'Personal Codex has reset; its lane is still held',
+      detail: `Reads ${used}% as of ${formatDateTime(asOf, 'en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })} · ${personalLane.queued} jobs waiting`,
+      nextStep: 'Release the hold in Fleet ▸ Lanes, or wait for it to expire',
+      target: 'fleet',
+    });
+  } else if ((used != null && used >= 100) || (heldForLimit && (used == null || used >= 90))) {
     items.push({
       id: 'supply-personal-out',
       open: { kind: 'pane', paneId: 'fleet-supply' },
@@ -170,7 +181,6 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       target: 'fleet',
     });
   } else if (used != null && used >= 90) {
-    const asOf = personal?.asOf ? Date.parse(personal.asOf) : NaN;
     const minutes = Number.isFinite(asOf) && asOf <= nowMs
       ? Math.max(0, Math.round((asOf + (100 - used) / 4 * 3_600_000 - nowMs) / 60_000))
       : null;
@@ -213,6 +223,32 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
       title: 'This Mac is under pressure',
       detail: pressure.join(' · '),
       nextStep: 'Free disk space or memory on this Mac — Ops shows the numbers',
+      target: 'ops',
+    });
+  }
+
+  for (const l of snapshot.lanes) {
+    if (l.running !== 0 || l.target <= 0 || l.queued <= 0 || l.held) continue;
+    items.push({
+      id: `lane-idle:${l.lane}`,
+      open: { kind: 'pane', paneId: 'fleet-lanes' },
+      severity: 'attention',
+      title: `Lane ${l.lane} is idle`,
+      detail: `${l.queued} queued jobs but nothing is running.`,
+      nextStep: `Lane ${l.lane} has ${l.queued} queued and nothing running; check its hold and target in Lanes`,
+      target: 'fleet',
+    });
+  }
+
+  const pendingDrop = snapshot.drop?.pending.length ?? 0;
+  if (pendingDrop > 0) {
+    items.push({
+      id: 'drop-pending',
+      open: { kind: 'pane', paneId: 'leader-journal' },
+      severity: 'attention',
+      title: 'Leader jobs awaiting ingest',
+      detail: `${pendingDrop} pending drop ${pendingDrop === 1 ? 'file' : 'files'}.`,
+      nextStep: `${pendingDrop} pending drop ${pendingDrop === 1 ? 'file' : 'files'}; ingest sweeps every few minutes`,
       target: 'ops',
     });
   }

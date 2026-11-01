@@ -35,7 +35,7 @@ import styles from './CommandPalette.module.css';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
-import { openDockPane } from '../dock/dock-store.js';
+import { revealDockPane } from '../dock/reveal-pane.js';
 import { usePanes } from '../panes/pane-registry.js';
 import { paletteWorkers } from './palette-workers.js';
 
@@ -45,6 +45,9 @@ import { laneTargetsQuery, postLaneTarget } from '../ops/lane-targets-queries.js
 import { laneWriting, setLaneWriting } from '../fleet-lanes/LaneTargetStepper.js';
 import { refetchQuery } from '../../../data/cache.js';
 import { readFailureReason } from '../../../data/client.js';
+import { VerseControlLockedError } from '../autonomy/control-queries.js';
+import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
+import { isLaneTargets } from '../ops/lane-targets-model.js';
 
 // Dictation (voice/): lazy, so the palette opens as fast as before.
 const VoiceInput = lazy(() => import('../voice/VoiceInput.js'));
@@ -170,11 +173,40 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     } finally { setLaneWriting(false); }
   }
 
+  async function releaseLane(lane: PaletteLane) {
+    if (laneWriting()) return;
+    setLaneWriting(true);
+    try {
+      const result = await postReleaseHold(lane.lane, 'Phantom palette');
+      if (!isLaneTargets(result)) {
+        shellNotify('The server returned an invalid lane response.', 'danger');
+        return;
+      }
+      const row = result.lanes.find((item) => item.lane === lane.lane);
+      if (!row || row.held) {
+        shellNotify('The server did not confirm the lane release.', 'danger');
+        return;
+      }
+      shellNotify(`Released ${lane.lane}.`, 'success');
+      await Promise.all([
+        refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+        refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+      ]);
+    } catch (error) {
+      shellNotify(error instanceof VerseControlLockedError ? error.message : readFailureReason(error), 'danger');
+    } finally { setLaneWriting(false); }
+  }
+
   function run(item: PaletteItem | undefined) {
     if (!item) return;
     const payload = item.payload;
     if (payload.kind === 'lane') {
       void changeLane(payload.lane);
+      onClose();
+      return;
+    }
+    if (payload.kind === 'lane-release') {
+      void releaseLane(payload.lane);
       onClose();
       return;
     }
@@ -190,7 +222,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       return;
     }
     if (payload.kind === 'pane') {
-      openDockPane(payload.paneId);
+      revealDockPane(payload.paneId);
       recordVerseAction(`pane.${payload.paneId}`);
       onClose();
       return;
@@ -199,7 +231,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       if (payload.url) window.open(payload.url, '_blank', 'noopener,noreferrer');
       if (!payload.url || payload.selectLog) {
         requestWorkerLogJob(payload.job);
-        openDockPane('worker-log');
+        revealDockPane('worker-log');
       }
       recordVerseAction(payload.url ? 'worker.pr' : 'worker.log');
       onClose();

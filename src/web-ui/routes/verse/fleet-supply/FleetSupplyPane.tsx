@@ -1,16 +1,25 @@
-import { useMemo } from 'react';
-import { ApiError } from '../../../data/client.js';
+import { useMemo, useState, useSyncExternalStore } from 'react';
+import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
+import { refetchQuery } from '../../../data/cache.js';
+import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import { openDockPane } from '../dock/dock-store.js';
+import { laneWriting, setLaneWriting, subscribeLaneWrite } from '../fleet-lanes/LaneTargetStepper.js';
+import { laneTargetsQuery, postLaneTarget } from '../ops/lane-targets-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { exhaustionByLane, soonestExhaustion } from './supply-exhaustion-model.js';
 import { supplyLedgerQuery } from './supply-ledger-query.js';
 import { fleetSupplyQuery } from './fleet-supply-queries.js';
+import { heldUntilText } from './held-until-text.js';
 import { asRecord, HORIZON_SECONDS, laneSupply, supplyHeadline, totalShortfall, TYPICAL_RUN_SECONDS } from './supply-model.js';
+import { suggestedTarget, wasteForecast, wasteHeadline } from './waste-forecast-model.js';
 import styles from './fleet-supply.module.css';
 
 export function FleetSupplyPane({ visible }: PaneProps) {
+  const [notices, setNotices] = useState<Record<string, string>>({});
+  const writing = useSyncExternalStore(subscribeLaneWrite, laneWriting, () => false);
   const read = useQuery(fleetSupplyQuery, { enabled: visible, freshMs: 0 });
   const ledgerQuery = useMemo(() => supplyLedgerQuery(), []);
   const ledger = useQuery(ledgerQuery, { enabled: visible, freshMs: 0 });
@@ -18,6 +27,23 @@ export function FleetSupplyPane({ visible }: PaneProps) {
   const refetch = useRefetch(fleetSupplyQuery);
   usePollWhileVisible(refetch, 10_000, { enabled: visible });
   usePollWhileVisible(refetchLedger, 10_000, { enabled: visible });
+  async function setTarget(lane: string, target: number) {
+    if (laneWriting()) return;
+    setLaneWriting(true);
+    setNotices(current => ({ ...current, [lane]: '' }));
+    try {
+      const response = await postLaneTarget(lane, target);
+      const saved = response.lanes.find(row => row.lane === lane);
+      setNotices(current => ({ ...current, [lane]: saved ? `Lane ${lane}: target ${saved.target} saved` : `Lane ${lane}: target response unavailable` }));
+      await Promise.all([
+        refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+        refetchQuery(fleetSupplyQuery.key, () => fleetSupplyQuery.fetch(), true),
+        refetchQuery(ledgerQuery.key, () => ledgerQuery.fetch(), true),
+      ]);
+    } catch (reason) {
+      setNotices(current => ({ ...current, [lane]: reason instanceof VerseControlLockedError ? reason.message : readFailureReason(reason) }));
+    } finally { setLaneWriting(false); }
+  }
   if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) {
     return <p className={styles.message}>Live runs not in this build</p>;
   }
@@ -31,6 +57,12 @@ export function FleetSupplyPane({ visible }: PaneProps) {
     return entry ? [[row.lane, entry] as const] : [];
   }));
   const soonest = soonestExhaustion(visibleExhaustion);
+  const now = Date.now();
+  const forecasts = (ledger.data?.lanes ?? []).flatMap(lane => {
+    const forecast = wasteForecast(lane, now);
+    return forecast ? [{ forecast, lane }] : [];
+  }).sort((a, b) => b.forecast.unusedPct - a.forecast.unusedPct);
+  const waste = wasteHeadline(forecasts.map(item => item.forecast));
   const unreadable = asRecord(data.sources).runsDir !== 'healthy' || data.drop === null;
   const claudeLane = typeof data.claudeLane === 'string' && /down/i.test(data.claudeLane) ? data.claudeLane : null;
   return <section className={styles.root} aria-label="Fleet supply">
@@ -43,13 +75,27 @@ export function FleetSupplyPane({ visible }: PaneProps) {
       <table className={styles.table} aria-label="Job supply per lane">
         <thead><tr><th scope="col">Lane</th><th scope="col">Running/target</th><th scope="col">Free now</th><th scope="col">Freeing ≤{HORIZON_SECONDS / 60} m</th><th scope="col">Waiting</th><th scope="col">Shortfall</th></tr></thead>
         <tbody>{rows.map((row, index) => <tr key={`${row.lane}-${index}`}>
-          <th scope="row"><button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-lanes')} aria-label={`Open Lanes pane (${row.lane})`}>{row.lane}</button>{row.held && <span className={styles.held}>{row.heldReason || 'Held'}</span>}{exhaustion.has(row.lane) && <button type="button" className={`${styles.linkButton} ${styles.exhaustion}`} onClick={() => openDockPane('fleet-usage')} data-tone={exhaustion.get(row.lane)?.tone}>{exhaustion.get(row.lane)?.text}</button>}</th>
+          <th scope="row"><button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-lanes')} aria-label={`Open Lanes pane (${row.lane})`}>{row.lane}</button>{row.held && <span className={styles.held} title={row.heldReason ?? undefined}>{heldUntilText(row.heldReason, Date.now())}</span>}{exhaustion.has(row.lane) && <button type="button" className={`${styles.linkButton} ${styles.exhaustion}`} onClick={() => openDockPane('fleet-usage')} data-tone={exhaustion.get(row.lane)?.tone}>{exhaustion.get(row.lane)?.text}</button>}</th>
           <td>{row.running}/{row.target}</td><td>{row.freeNow}</td><td>{row.freeingSoon}</td>
           <td>{row.pendingFiles + row.queued}</td><td>{row.shortfall > 0 ? <strong>{row.shortfall}</strong> : row.shortfall}</td>
         </tr>)}</tbody>
       </table>
     </div>
     {rows.length === 0 && <p className={styles.message}>No lane readings yet.</p>}
+    {waste && <section className={styles.waste} aria-label="Waste forecast">
+      <h3 className={styles.wasteHeadline}>{waste}</h3>
+      <ul className={styles.wasteList}>{forecasts.map(({ forecast, lane }) => {
+        const row = rows.find(item => item.lane === forecast.lane);
+        const held = row?.held || lane.held === true;
+        const suggestion = row ? suggestedTarget(forecast, { ...row, held: !!held }, lane.burnPctPerHour) : null;
+        return <li key={forecast.lane} data-tone={forecast.tone}>
+          <StatusBadge status={forecast.tone} tone={forecast.tone === 'bad' ? 'danger' : forecast.tone === 'warn' ? 'warning' : 'success'}>{forecast.tone === 'bad' ? 'High' : forecast.tone === 'warn' ? 'Watch' : 'On track'}</StatusBadge> {forecast.text}
+          {held && <> · held: release first</>}
+          {suggestion && <> · needs target {suggestion.target} (now {row!.target}, {new Intl.NumberFormat('en-US', { maximumSignificantDigits: 3 }).format(suggestion.perWorkerPctPerHour)}%/h per worker){suggestion.target * suggestion.perWorkerPctPerHour < forecast.neededBurnPctPerHour && ' · capped at 64; may leave usage unused'} <button type="button" disabled={writing} onClick={() => void setTarget(forecast.lane, suggestion.target)}>Set target {suggestion.target}</button></>}
+          {notices[forecast.lane] && <> · <span role="status">{notices[forecast.lane]}</span></>}
+        </li>;
+      })}</ul>
+    </section>}
     <p className={styles.footer}>Next {HORIZON_SECONDS / 60} min · assumes ~{TYPICAL_RUN_SECONDS / 60} min per job. Waiting = pending files + queued jobs.</p>
   </section>;
 }

@@ -1,5 +1,7 @@
 import { apiGet, ApiError } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
+import type { SelfUpdateLastApply } from '../../../../core/verse/self-update-last.js';
+import { lastApplyOf } from './about-update-model.js';
 
 export interface UpdateServerStatus {
   v: 1; sourceState: 'healthy' | 'degraded' | 'unavailable';
@@ -7,6 +9,8 @@ export interface UpdateServerStatus {
   originSha: string | null; branch: string | null; behind: number | null; ahead: number | null;
   dirty: boolean | null; lastFetchAt: string | null; processStartedAt: string | null;
   uptimeSeconds: number | null; canFastForward: boolean | null;
+  applying?: boolean | { startedAt: string } | null;
+  lastApply?: SelfUpdateLastApply | null;
 }
 export type ServerObservation = UpdateServerStatus | { kind: 'notInBuild' } | null;
 const nullableString = (value: unknown) => value === null || typeof value === 'string';
@@ -22,7 +26,10 @@ function validStatus(value: unknown): value is UpdateServerStatus {
     && sha(v['originSha']) && nullableString(v['branch']) && nullableCount(v['behind']) && nullableCount(v['ahead'])
     && (v['dirty'] === null || typeof v['dirty'] === 'boolean') && timestamp(v['lastFetchAt'])
     && timestamp(v['processStartedAt']) && (v['uptimeSeconds'] === null || (typeof v['uptimeSeconds'] === 'number' && Number.isFinite(v['uptimeSeconds']) && v['uptimeSeconds'] >= 0))
-    && (v['canFastForward'] === null || typeof v['canFastForward'] === 'boolean');
+    && (v['canFastForward'] === null || typeof v['canFastForward'] === 'boolean')
+    && (v['applying'] === undefined || v['applying'] === null || typeof v['applying'] === 'boolean'
+      || (typeof v['applying'] === 'object' && timestamp((v['applying'] as Record<string, unknown>)['startedAt'])))
+    && (v['lastApply'] === undefined || v['lastApply'] === null || lastApplyOf(v) !== null);
 }
 
 export const updateStatusQuery: QueryDef<Exclude<ServerObservation, null>> = {

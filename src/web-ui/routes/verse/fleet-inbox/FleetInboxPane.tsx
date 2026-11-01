@@ -4,6 +4,7 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { refetchQuery } from '../../../data/cache.js';
 import { openDockPane } from '../dock/dock-store.js';
+import { channelKey, channelLabel, type ChannelKey } from '../fleet-channels/fleet-channels-model.js';
 import { JobRefs } from '../fleet/JobRefs.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { splitRefs } from '../fleet/job-refs.js';
@@ -18,6 +19,7 @@ import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
 import { annotateAck, seenCounts } from './inbox-ack-model.js';
 import { canResend, resendPrefill } from './inbox-resend.js';
+import { takeRequestedInboxChannel, useRequestedInboxChannel } from './inbox-source-request.js';
 import styles from './fleet-inbox.module.css';
 
 const notFound = (error: unknown) => error instanceof ApiError && error.status === 404;
@@ -34,6 +36,13 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   usePollWhileVisible(refreshRoute, 10_000, { enabled: visible });
   usePollWhileVisible(refreshOrders, 15_000, { enabled: visible });
   const [source, setSource] = useState('');
+  const [channel, setChannel] = useState<ChannelKey | null>(null);
+  const requestedChannel = useRequestedInboxChannel();
+  useEffect(() => {
+    if (requestedChannel === null) return;
+    const requested = takeRequestedInboxChannel();
+    if (requested !== null) { setSource(''); setChannel(requested); }
+  }, [requestedChannel]);
   const [text, setText] = useState('');
   const [posted, setPosted] = useState<{ text: string; until: number } | null>(null);
   const [postedForAck, setPostedForAck] = useState<string | null>(null);
@@ -45,7 +54,8 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   }, [posted, visible, sectionVisible, documentVisible]);
   const inbox = readInboxEntries(route.data, fallback ? snapshot.data : undefined);
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  const annotated = annotateAck(filterEntries(inbox.entries, { source, text }), snapshot.data, Date.now());
+  const entries = channel === null ? inbox.entries : inbox.entries.filter(entry => channelKey(entry.source) === channel);
+  const annotated = annotateAck(filterEntries(entries, { source, text }), snapshot.data, Date.now());
   const groups = groupByDay(annotated, today);
   const { waiting, overdue } = seenCounts(annotated);
   usePollWhileVisible(() => setClockTick(tick => tick + 1), 10_000, { enabled: visible && waiting > 0 });
@@ -67,11 +77,12 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     openDockPane('worker-log');
   }
   return <div className={styles.pane}>
-    <InboxPostBox onPosted={postedText => {
-      setSource(''); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
+    <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {
+      setSource(''); setChannel(null); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
       void refetchQuery(fleetInboxQuery.key, () => fleetInboxQuery.fetch(), true);
       if (fallback) void refetchQuery(fleetRunsQuery.key, () => fleetRunsQuery.fetch(), true);
     }} />
+    {channel !== null && <p><Tag>Filtered to {channelLabel(channel)} · <Button size="sm" onClick={() => { setChannel(null); setSource(''); }}>Clear</Button></Tag></p>}
     {loading ? <div role="status" aria-label="Loading inbox"><SkeletonLine /><SkeletonLine /><SkeletonLine /></div>
       : inbox.origin === 'none' ? <EmptyState compact title={notFound(route.error) && notFound(snapshot.error) ? 'Inbox not in this build' : 'Inbox unavailable'} /> : <>
     {(inbox.sourceState !== 'healthy' || (route.error && !notFound(route.error)) || (fallback && snapshot.error)) &&
@@ -79,7 +90,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     {waiting > 0 && <p role="status">{waiting} waiting for a leader pass{overdue && ' · leader pass overdue'}</p>}
     <Input aria-label="Filter inbox text" placeholder="Filter orders…" value={text} onChange={e => setText(e.target.value)} />
     <div className={styles.filters} aria-label="Filter by source">
-      {['', ...new Set(inbox.entries.map(e => e.source))].map(s => <Button key={s} size="sm" aria-pressed={source === s} onClick={() => setSource(s)}>{s || 'All sources'}</Button>)}
+      {['', ...new Set(inbox.entries.map(e => e.source))].map(s => <Button key={s} size="sm" aria-pressed={channel === null && source === s} onClick={() => { setChannel(null); setSource(s); }}>{s || 'All sources'}</Button>)}
     </div>
     {groups.length === 0 && <EmptyState compact title={inbox.entries.length ? 'No matching orders' : 'No orders yet'} />}
     {groups.map(group => <section key={group.day} aria-label={group.label}>

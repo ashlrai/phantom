@@ -237,7 +237,7 @@ export interface OpsLeaderPostBody {
 export interface OpsSelfUpdateV1 {
   v: 1; generatedAt: string; sourceState: 'healthy' | 'degraded' | 'unavailable';
   installedVersion: string | null; repoRoot: boolean;
-  headSha: string | null; headAt: string | null; originSha: string | null; branch: string | null;
+  headSha: string | null; processHeadSha: string | null; headAt: string | null; originSha: string | null; branch: string | null;
   behind: number | null; ahead: number | null; dirty: boolean | null; lastFetchAt: string | null;
   processStartedAt: string; uptimeSeconds: number; pid: number; canFastForward: boolean | null;
 }

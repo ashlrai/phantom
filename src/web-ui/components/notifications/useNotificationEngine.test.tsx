@@ -44,6 +44,15 @@ function quietSelfUpdate() {
   };
 }
 
+/** A valid resource ledger with no lanes — the quiet baseline. */
+function quietLedger() {
+  return {
+    v: 1, generatedAt: '2026-09-06T12:00:00.000Z',
+    sources: { status: 'healthy', apiSpend: 'healthy', jobs: 'healthy' },
+    asOf: '2026-09-06T12:00:00.000Z', lanes: [], apiSpend: null,
+  };
+}
+
 describe('notification refresh channel', () => {
   beforeEach(async () => {
     // Keep the recorded failure inside the production 24-hour notification
@@ -69,8 +78,8 @@ describe('notification refresh channel', () => {
     const sources: Record<string, unknown> = {
       '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
-      '/api/verse/fleet/runs': null, '/api/verse/ops/self-update': quietSelfUpdate(),
-      '/api/verse/release-pr': quietReleasePr(),
+      '/api/verse/fleet/runs': null, '/api/verse/fleet/control/lanes': null, '/api/verse/ops/self-update': quietSelfUpdate(),
+      '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -78,8 +87,8 @@ describe('notification refresh channel', () => {
     await act(async () => { render(<Harness />); });
 
     expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(Object.keys(sources).sort());
-    // Both probes without SSE events poll at 60 seconds.
-    expect(intervals.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000]);
+    // The fleet snapshots and three other probes poll at 60 seconds.
+    expect(intervals.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000, 60_000, 60_000]);
     expect(getNotificationSnapshot().items).toHaveLength(0);
   });
 
@@ -87,8 +96,8 @@ describe('notification refresh channel', () => {
     const sources: Record<string, unknown> = {
       '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
-      '/api/verse/fleet/runs': null, '/api/verse/ops/self-update': quietSelfUpdate(),
-      '/api/verse/release-pr': quietReleasePr(),
+      '/api/verse/fleet/runs': null, '/api/verse/fleet/control/lanes': null, '/api/verse/ops/self-update': quietSelfUpdate(),
+      '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -112,9 +121,10 @@ describe('notification refresh channel', () => {
       'next-action-check-output', 'proposal-backlog', 'run-failed-failed-run', 'security-critical',
     ]);
     for (const path of Object.keys(sources)) {
-      // The fleet projection, self-update and release PR probes have no SSE event —
-      // they are fetched once at mount and not invalidated by these events.
-      const expected = path === '/api/verse/fleet/runs' || path === '/api/verse/ops/self-update' || path === '/api/verse/release-pr' ? 1 : 2;
+      // The fleet projection, self-update, release PR and resource-ledger probes
+      // have no SSE event — they are fetched once at mount and not invalidated by
+      // these events.
+      const expected = path === '/api/verse/fleet/control/lanes' || path === '/api/verse/fleet/runs' || path === '/api/verse/ops/self-update' || path === '/api/verse/release-pr' || path === '/api/verse/leader/resources' ? 1 : 2;
       expect(fetch.mock.calls.filter(([called]) => called === path)).toHaveLength(expected);
     }
   });
@@ -128,7 +138,7 @@ describe('notification refresh channel', () => {
           claudeLane: 'down', lanes: [], workers: [], mergesLastHour: { count: null }, drop: null, events: [] }));
       const sources: Record<string, unknown> = { '/api/control': healthyControl(),
         '/api/fleet': { nextActions: [] }, '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
-        '/api/verse/ops/self-update': quietSelfUpdate() };
+        '/api/verse/ops/self-update': quietSelfUpdate(), '/api/verse/leader/resources': quietLedger() };
       return new Response(JSON.stringify(sources[path]));
     }));
     await act(async () => { render(<Harness />); });
@@ -154,7 +164,7 @@ describe('notification refresh channel', () => {
       drop: null, events: [] };
     const sources: Record<string, unknown> = { '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] }, '/api/verse/fleet/runs': fleetSnapshot,
-      '/api/verse/ops/self-update': quietSelfUpdate() };
+      '/api/verse/ops/self-update': quietSelfUpdate(), '/api/verse/leader/resources': quietLedger() };
     vi.stubGlobal('fetch', vi.fn(async (path: string) => Response.json(sources[path])));
     await act(async () => { render(<Harness />); });
     expect(getNotificationSnapshot().items.map((item) => item.id)).toEqual([
@@ -181,6 +191,7 @@ describe('notification refresh channel', () => {
       '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
       '/api/verse/fleet/runs': null, '/api/verse/ops/self-update': ready,
+      '/api/verse/leader/resources': quietLedger(),
     };
     vi.stubGlobal('fetch', vi.fn(async (path: string) => Response.json(sources[path])));
     await act(async () => { render(<Harness />); });

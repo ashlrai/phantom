@@ -10,7 +10,7 @@
  * field-by-field (like fleet-events-model) so a drifted or partial body
  * degrades to nothing rather than throwing at render time.
  */
-import type { Account, AccountProvider, AccountsSnapshot } from '../usage/usage-contract.js';
+import type { Account, AccountCredits, AccountProvider, AccountsSnapshot } from '../usage/usage-contract.js';
 import { visibleWindows, windowNote } from '../usage/provider-windows.js';
 import { formatRelative } from '../autonomy/format.js';
 import { usedPercentText } from '../percent-text.js';
@@ -41,6 +41,17 @@ export interface UsageRow {
   windows: UsageWindowRow[];
   /** One line when the provider retired a window (Claude's lifted 5-hour limit). */
   note: string | null;
+  /**
+   * When this account's reading was taken — the fact that separates a stale
+   * figure from a live one. Optional so row literals built by older tests
+   * keep compiling; rowsFromAccounts always fills it (null when absent).
+   */
+  observedAt?: string | null;
+  /** Codex-style credits: a 100%-used week with a spendable balance is NOT blocked. */
+  credits?: AccountCredits | null;
+  /** Already sanitized by the server (and re-checked by the contract); null when nothing safe to show. */
+  reconnectCommand?: string | null;
+  planType?: string | null;
 }
 
 const PROVIDER_RANK: Record<AccountProvider, number> = { claude: 0, codex: 1, grok: 2 };
@@ -64,6 +75,10 @@ export function rowsFromAccounts(snapshot: AccountsSnapshot | null): UsageRow[] 
         measured: w.measured,
       })),
       note: windowNote(account.provider),
+      observedAt: account.observedAt,
+      credits: account.credits,
+      reconnectCommand: account.reconnectCommand,
+      planType: account.planType,
     }))
     .sort((a, b) => PROVIDER_RANK[a.provider] - PROVIDER_RANK[b.provider] || a.label.localeCompare(b.label));
 }

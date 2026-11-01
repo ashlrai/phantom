@@ -4,11 +4,12 @@
  * or the general /api/* router.
  *
  * Reviewed fleet surface for the mobile remote: GET fleet/runs,
- * fleet/control/switches and fleet/control/lanes; GET fleet/runs/inbox with a
- * bounded limit and optional source filter; GET fleet/live/bus and
- * fleet/live/queue bare or with a bounded limit; POST fleet/runs/inbox
- * {text, source?} without step-up (a message, not a control); POST
- * fleet/control/switches {id, on} and fleet/control/lanes {lane, target}
+ * fleet/control/switches, fleet/control/lanes and fleet/control/holds; GET
+ * fleet/runs/inbox with a bounded limit and optional source filter; GET
+ * fleet/live/bus and fleet/live/queue bare or with a bounded limit; POST
+ * fleet/runs/inbox {text, source?} without step-up (a message, not a
+ * control); POST fleet/control/switches {id, on}, fleet/control/lanes
+ * {lane, target} and fleet/control/holds {lane, action:'release', reason?}
  * behind step-up. Every path and body shape is exact — no wildcards.
  */
 import { timingSafeEqual } from 'node:crypto';
@@ -44,6 +45,8 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/fleet/live/queue',
   '/api/verse/fleet/control/switches',
   '/api/verse/fleet/control/lanes',
+  '/api/verse/fleet/control/holds',
+  '/api/verse/release-pr',
 ]);
 
 export type RemoteRouteDecision =
@@ -105,6 +108,7 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     if (path === '/api/verse/daemon' || path === '/api/verse/budget' || path === '/api/verse/authority'
       || path === '/api/verse/fleet/live'
       || path === '/api/verse/fleet/control/switches' || path === '/api/verse/fleet/control/lanes'
+      || path === '/api/verse/fleet/control/holds'
       || path === '/api/verse/leader') return { kind: 'write', path, stepUp: true };
     const inbox = /^\/api\/inbox\/([^/]+)\/(approve|reject)$/.exec(path);
     if (inbox && PROPOSAL_ID.test(inbox[1]!)) return { kind: 'write', path, stepUp: true };
@@ -220,6 +224,11 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
   if (path === '/api/verse/fleet/control/lanes') return keys(body, ['lane', 'target'])
     && typeof body.lane === 'string' && FLEET_LANE_ID.test(body.lane)
     && Number.isSafeInteger(body.target) && (body.target as number) >= 0 && (body.target as number) <= 64;
+  // Release is the only action; the Hub refuses any hold a person placed.
+  if (path === '/api/verse/fleet/control/holds') return keys(body, ['lane', 'action', 'reason'])
+    && typeof body.lane === 'string' && FLEET_LANE_ID.test(body.lane)
+    && body.action === 'release'
+    && (body.reason === undefined || (typeof body.reason === 'string' && body.reason.length <= 120));
   if (path === '/api/verse/leader/thread') return keys(body, ['text', 'replyTo'])
     && boundedText(body.text, 16_384)
     && (body.replyTo === undefined || (typeof body.replyTo === 'string' && THREAD_ID.test(body.replyTo)));

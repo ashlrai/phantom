@@ -7,6 +7,7 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readHostLoad } from '../fleet/host-load.js';
 import { createChannelReceiver } from '../fleet/channel-envelope.js';
+import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
@@ -16,9 +17,16 @@ import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INB
 // canonical sender is therefore this documented server-owned identity. Request
 // fields — including `source` — are never identity.
 const VERSE_INBOX_OPERATOR_ID = 'verse-inbox-operator';
+// A write forwarded by the paired-phone gateway carries the gateway's own
+// channel assertion, so the mobile channel gets its own verified sender id:
+// phone and desktop copies of one text dedupe per channel, and bus envelopes
+// read mason-mobile-… instead of mason-desktop-….
+const VERSE_INBOX_MOBILE_OPERATOR_ID = 'verse-operator@mobile';
 // The only trusted surface fact is that the request reached this authenticated
-// desktop/mobile console route, so the channel is a fixed server-side mapping.
+// route and which channel the serving adapter asserted, so the channel is a
+// fixed server-side mapping — never parsed from the client body.
 const VERSE_INBOX_CHANNEL = 'desktop' as const;
+const VERSE_INBOX_MOBILE_CHANNEL = 'mobile' as const;
 const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 
 export interface FleetRunsApiDeps {
@@ -30,6 +38,18 @@ export interface FleetRunsApiDeps {
   codexPersonal?: () => Promise<unknown>;
   mergedLastHour?: () => Promise<unknown>;
   now?: () => number;
+  /** Runs directory the inbox sink and the channel receipt store root at.
+   * Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs — the same resolution
+   * runs-switches.ts and runs-lane-targets.ts use. */
+  runsDir?: string;
+  /** Receipt store shared by every API instance rooted at the same runsDir,
+   * so a repost after a Hub restart dedupes. Default: the local receipt file. */
+  receiptStore?: ChannelDedupeStore;
+}
+
+/** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention. */
+function defaultRunsDir(): string {
+  return process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 }
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const unavailable = (e: unknown) => record(e) && ['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND'].includes(String(e.code));
@@ -104,7 +124,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const runs = deps.readRunsDir ?? (async () => (await import('../fleet/runs-dir-state.js' as string)).readFleetRunsDirState());
   const workers = deps.listWorkers ?? (async () => (await import('../fleet/runs-live-workers.js' as string)).listLiveWorkers());
   const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit }));
-  const append = deps.appendInbox ?? (async (text: string, source: string) => (await import('../fleet/mason-inbox.js' as string)).appendInboxEntry(text, { source }));
+  const append = deps.appendInbox ?? (async (text: string, source: string) => (await import('../fleet/mason-inbox.js' as string)).appendInboxEntry(text, { source, runsDir: deps.runsDir ?? defaultRunsDir() }));
   // One receiver per API instance: its normalization/dedupe contract is shared
   // by every POST below for the process lifetime. `source` stays presentation
   // metadata — never identity — so it rides to the sink out of band: the
@@ -114,8 +134,15 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // the finally of the POST handler) before the next receive can start.
   const pendingSources: { source: string }[] = [];
   const receive = createChannelReceiver({
-    allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID]),
+    allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID, VERSE_INBOX_MOBILE_OPERATOR_ID]),
     now: () => new Date(now()),
+    // Durable receipts only when the caller declared a runsDir (or its own
+    // store): a resend after a Hub restart then dedupes instead of landing
+    // twice in MASON-INBOX.md. An injected-deps instance without a runsDir
+    // stays memory-only — it never claimed a durable context to share, and
+    // two such instances must not dedupe across each other. The shipped
+    // handleFleetRunsApi below passes the resolved default runsDir.
+    receiptStore: deps.receiptStore ?? (deps.runsDir === undefined ? undefined : createLocalChannelDedupeStore(deps.runsDir)),
     write: async (envelope) => (await append(envelope.body, pendingSources[0]?.source ?? DEFAULT_INBOX_SOURCE)) as InboxAppendResult,
   });
   async function build(): Promise<FleetRunsV1> {
@@ -194,7 +221,19 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     const ticket = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
     pendingSources.push(ticket);
     try {
-      const result = await receive({ channel: VERSE_INBOX_CHANNEL, verifiedSenderId: VERSE_INBOX_OPERATOR_ID, body: body.text.trim() });
+      // x-ashlr-channel is trusted only because this route sits on loopback
+      // behind the mutation token — the same authority that fixes the
+      // operator id above. The remote gateway strips and re-serializes every
+      // forwarded request and stamps the header itself, so a remote client
+      // cannot mint the mobile assertion through the gateway; a direct
+      // loopback caller still needs the token to reach this line at all.
+      // Any other value, or none, keeps the desktop mapping.
+      const mobile = req.headers['x-ashlr-channel'] === 'mobile';
+      const result = await receive({
+        channel: mobile ? VERSE_INBOX_MOBILE_CHANNEL : VERSE_INBOX_CHANNEL,
+        verifiedSenderId: mobile ? VERSE_INBOX_MOBILE_OPERATOR_ID : VERSE_INBOX_OPERATOR_ID,
+        body: body.text.trim(),
+      });
       if (result.ok) {
         // Only an accepted persistence invalidates the cached composite; a
         // duplicate appended nothing, and a refusal changed nothing.
@@ -207,6 +246,10 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
           // 96-bit prefix of the same stable key.
           dedupeKey: `sha256:${result.ack.dedupeKey.slice(0, 24)}`,
         });
+      } else if (result.reason === 'dedupe-store-unavailable') {
+        // Fail closed: the receipt store could not be read, so the inbox entry
+        // was never written and the request must not look accepted.
+        sendJson(res, 503, { code: 'INBOX_RECEIPTS_UNREADABLE' });
       } else if (result.reason === 'write-failed' || typeof result.reason !== 'string' || !result.reason) {
         sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' });
       } else {
@@ -220,4 +263,6 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     return true;
   };
 }
-export const handleFleetRunsApi: ApiModule = createFleetRunsApi();
+// The deployed Hub instance: receipts persist under the resolved runs dir, so
+// a phone/console retry that arrives after a restart is still a duplicate.
+export const handleFleetRunsApi: ApiModule = createFleetRunsApi({ runsDir: defaultRunsDir() });

@@ -3,9 +3,11 @@ import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
+import { steerPrefill } from '../fleet/job-sheet-actions.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, safePrUrl, stateTone } from './worker-log-model.js';
+import { JOB_ID_RE, jobOptions, logHint, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
 import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
@@ -74,7 +76,9 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const moveMatch = (dir: 1 | -1) => setSelectedMatch(nextMatch(matches, current, dir));
   const retained = valid && !options.some(option => option.job === job);
   const url = safePrUrl(detail.data?.publish?.prUrl);
+  const { testLine, sensitive } = publishFacts(detail.data?.publish);
   const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
+  const hint = detail.data ? logHint(detail.data, Date.now()) : null;
   const state = detail.data?.state ?? 'unknown';
 
   return <div className={styles.pane} aria-label="Worker log">
@@ -91,6 +95,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         if (event.key === 'Escape') { setSearch(''); setSelectedMatch(null); }
       }} /></label>
       <Button size="sm" variant="subtle" aria-label="Copy as Markdown" disabled={!valid || !detail.data} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span>
+      <Button size="sm" variant="subtle" aria-label="Steer this job" disabled={!valid} onClick={() => openInterjectDialog({ prefill: steerPrefill(job, detail.data?.lane ?? runs.data?.workers.find(worker => worker.job === job)?.lane) })}>Steer</Button>
       <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
       <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
       <button type="button" aria-label="Next" disabled={matches.length === 0} onClick={() => moveMatch(1)}>↓</button>
@@ -108,7 +113,11 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
       <div className={styles.meta}><StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
         {meta.slice(1).map((part, index) => <span key={`${part}-${index}`}> · {url && index === meta.length - 2 && part === prLabel(url) ? <a href={url} target="_blank" rel="noreferrer">{part}</a> : part}</span>)}
       </div>
-      {detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
+      {(testLine !== null || sensitive !== null) && <section aria-label="Publish" className={styles.meta}>
+        {testLine !== null && <p>Tests: <code>{testLine}</code></p>}
+        {sensitive !== null && <p role="note">Touches owner-reviewed paths: {sensitive.join(', ')}</p>}
+      </section>}
+      {hint ? <p className={styles.hint}>{hint}</p> : detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
         <div ref={logRef} className={styles.log} role="log" aria-live="polite">{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>}
       {changes.data && <section aria-label="Changes" className={styles.changes}>
         <div>{changesHeadline(changes.data)}</div>
