@@ -22,8 +22,13 @@ it('renders counts, parked groups and precheck skips', async () => {
   expect(await screen.findByText('3 jobs · 1 ready · 2 parked · 1 precheck skips in 24 h')).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'By lane' })).getByText('a: 1 ready · 2 parked')).toBeInTheDocument();
   expect(screen.getByText('Parked by hand · a · 2')).toBeInTheDocument();
-  expect(screen.getByText('RQ-1, RQ-2')).toBeInTheDocument();
-  expect(screen.getByText('RQ-3 · other · Already queued')).toBeInTheDocument();
+  const parked = screen.getByRole('region', { name: 'Parked groups' });
+  expect(parked).toHaveTextContent('RQ-1, RQ-2');
+  expect(within(parked).getByRole('button', { name: 'Open log for RQ-1' })).toBeInTheDocument();
+  expect(within(parked).getByRole('button', { name: 'Open log for RQ-2' })).toBeInTheDocument();
+  const skips = screen.getByRole('region', { name: 'Precheck skips' });
+  expect(skips).toHaveTextContent('RQ-3 · other · Already queued');
+  expect(within(skips).getByRole('button', { name: 'Open log for RQ-3' })).toBeInTheDocument();
 });
 
 it('reports a missing endpoint', async () => {
