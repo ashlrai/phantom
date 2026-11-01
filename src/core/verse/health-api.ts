@@ -5,6 +5,14 @@
  *   GET  /api/verse/health            → VerseHealthResponse
  *   POST /api/verse/health/refresh    → VerseHealthResponse (runs a sweep now)
  *   POST /api/verse/health/reconnect  { seatId } → 202 { ok, seatId }
+ *   GET  /api/verse/health/recut-loop → RecutLoopState (fleet recut loop)
+ *
+ * The GET also arms the fleet recut loop once per process while dispatch is
+ * allowed — the desktop polls this route while the app is open, so it is the
+ * heartbeat that turns backlog watches into dropped recut jobs. The arm uses
+ * the same guard ops-api.ts uses for the reset-release loop
+ * (ctx.allowDispatch && !process.env.VITEST) and a dynamic import so this
+ * module keeps no runtime dependency on the loop when it is off.
  *
  * The module also OWNS the health service: the background sweep
  * (account-health.ts) plus a cached seat discovery. `startVerseHealth(cfg)`
@@ -50,6 +58,7 @@ import {
 
 export const VERSE_HEALTH_REFRESH_PATH = `${VERSE_HEALTH_PATH}/refresh`;
 export const VERSE_HEALTH_RECONNECT_PATH = `${VERSE_HEALTH_PATH}/reconnect`;
+export const VERSE_HEALTH_RECUT_LOOP_PATH = `${VERSE_HEALTH_PATH}/recut-loop`;
 
 /** Seat identity (accounts, Ollama tags) is re-discovered at most this often. */
 const DISCOVERY_MAX_AGE_MS = 60_000;
@@ -288,7 +297,21 @@ export const handleHealthApi: ApiModule = async (ctx, req, res, path, method) =>
       sendJson(res, 405, { error: `method not allowed: ${method} ${path}` });
       return true;
     }
+    if (ctx.allowDispatch && !process.env.VITEST) {
+      const { startRecutLoop } = await import('../fleet/recut-loop.js');
+      startRecutLoop();
+    }
     sendJson(res, 200, await healthBody(rt));
+    return true;
+  }
+
+  if (path === VERSE_HEALTH_RECUT_LOOP_PATH) {
+    if (method !== 'GET') {
+      sendJson(res, 405, { error: `method not allowed: ${method} ${path}` });
+      return true;
+    }
+    const { getRecutLoopState } = await import('../fleet/recut-loop.js');
+    sendJson(res, 200, getRecutLoopState());
     return true;
   }
 
