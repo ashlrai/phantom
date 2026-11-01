@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -48,6 +49,8 @@ function read(path: string, limit: number): string {
 
 export interface ContextWorkerOptions {
   snapshot: string; prompt: string; argv: string[]; busAddress?: string; busAfter?: number; timeoutMs?: number;
+  /** Selected working directory for the worker; omitted inherits process.cwd(). */
+  cwd?: string;
 }
 export interface ContextWorkerIO {
   stdout?: Writable; stderr?: Writable;
@@ -62,7 +65,9 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
     if (!opts.argv.length || opts.argv.some(a => typeof a !== 'string' || a.includes('\0')) || !opts.argv[0] ||
         (opts.busAddress !== undefined && !address(opts.busAddress)) ||
         (opts.busAfter !== undefined && !cursor(opts.busAfter)) ||
-        (opts.timeoutMs !== undefined && (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > 3600000))) throw new Error('invalid input');
+        (opts.timeoutMs !== undefined && (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > 3600000)) ||
+        (opts.cwd !== undefined && (typeof opts.cwd !== 'string' || !opts.cwd || opts.cwd.includes('\0') ||
+          !isAbsolute(opts.cwd) || !statSync(opts.cwd).isDirectory()))) throw new Error('invalid input');
     const input: unknown = JSON.parse(read(opts.snapshot, 1024 * 1024));
     const prompt = read(opts.prompt, 1024 * 1024);
     if (!valid(input)) throw new Error('invalid input');
@@ -87,7 +92,7 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
 
   return new Promise<number>(resolve => {
     let child: ReturnType<typeof spawn>;
-    try { child = spawn(opts.argv[0]!, opts.argv.slice(1), { shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    try { child = spawn(opts.argv[0]!, opts.argv.slice(1), { cwd: opts.cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch { diagnostic('worker spawn failed'); resolve(1); return; }
     let failed = false;
     let interrupted: NodeJS.Signals | undefined;
