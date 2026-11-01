@@ -9,8 +9,15 @@
  * A sampling failure NEVER fails the read — the existing series is served.
  *
  *   GET /api/verse/runs-history[?hours=1..168]  → RunsHistory (default 24 h)
- *   any other method on the path                → 405
+ *   GET /api/verse/runs-history/lane-truth      → LaneTruth (see below)
+ *   any other method on either path             → 405
  *   any other path                              → false (next module runs)
+ *
+ * The lane-truth route serves the same verdict `ashlr fleet lane-truth`
+ * computes (core/fleet/lane-truth.ts): per lane, held_with_capacity /
+ * reset_detected / idle_with_work / ok / unknown, with the newest meter
+ * sample that informed it. A reader failure answers 200 with
+ * `source: 'unavailable'` and no lanes — half-evidence is never truth.
  *
  * Read-only: no dispatch gate, no mutation surface. The response carries
  * counts and timestamps only — never paths, job ids or error text.
@@ -26,14 +33,23 @@ import {
   RUNS_HISTORY_MIN_HOURS,
   type RunsHistory,
 } from '../fleet/runs-history.js';
+import {
+  defaultLaneTruthReaders,
+  LANE_TRUTH_MAX_AGE_MS,
+  readLaneTruthReport,
+  type LaneTruthReaders,
+} from '../fleet/lane-truth.js';
 
 export const VERSE_RUNS_HISTORY_PATH = '/api/verse/runs-history';
+export const VERSE_RUNS_HISTORY_LANE_TRUTH_PATH = '/api/verse/runs-history/lane-truth';
 
 export interface RunsHistoryApiDeps {
   /** Defaults to sampleIfDue on the resolved history file. */
   sample?: () => Promise<unknown>;
   /** Defaults to readRunsHistory on the resolved history file. */
   readHistory?: (hours: number) => Promise<RunsHistory>;
+  /** Defaults to defaultLaneTruthReaders() built per request. */
+  laneTruth?: LaneTruthReaders;
 }
 
 export function createRunsHistoryApi(deps: RunsHistoryApiDeps = {}): ApiModule {
@@ -44,6 +60,24 @@ export function createRunsHistoryApi(deps: RunsHistoryApiDeps = {}): ApiModule {
   const sample = () => (sampling ??= take().finally(() => { sampling = undefined; }));
 
   return async (_ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
+    if (path === VERSE_RUNS_HISTORY_LANE_TRUTH_PATH) {
+      if (method !== 'GET') {
+        sendJson(res, 405, { error: `method not allowed: ${method} ${path}` });
+        return true;
+      }
+      const unknown = [...new URL(req.url ?? '/', 'http://localhost').searchParams.keys()][0];
+      if (unknown !== undefined) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: `unknown parameter: ${unknown.slice(0, 64)}` });
+        return true;
+      }
+      try {
+        const lanes = await readLaneTruthReport(deps.laneTruth ?? defaultLaneTruthReaders());
+        sendJson(res, 200, { v: 1, generatedAt: new Date().toISOString(), source: 'ok', maxAgeMs: LANE_TRUTH_MAX_AGE_MS, lanes });
+      } catch {
+        sendJson(res, 200, { v: 1, generatedAt: new Date().toISOString(), source: 'unavailable', maxAgeMs: LANE_TRUTH_MAX_AGE_MS, lanes: [] });
+      }
+      return true;
+    }
     if (path !== VERSE_RUNS_HISTORY_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: `method not allowed: ${method} ${path}` });

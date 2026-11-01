@@ -678,6 +678,14 @@
         "responses": { "200": { "$ref": "#/components/responses/RunsHistory" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/verse/runs-history/lane-truth": {
+      "get": {
+        "operationId": "getRunsHistoryLaneTruth", "tags": ["fleet"],
+        "summary": "Per-lane truth verdicts (held with capacity / reset detected / idle with work / ok / unknown) with the newest meter sample.",
+        "x-phantom-local-only": true,
+        "responses": { "200": { "$ref": "#/components/responses/LaneTruth" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/verse/seats": {
       "get": {
         "operationId": "listVerseSeats", "tags": ["verse"],
@@ -843,6 +851,7 @@
       "LeaderDirectiveDelete": { "description": "{ directive: OperatorDirective } — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "LeaderDirectiveWrite": { "description": "{ directive: OperatorDirective, duplicate } — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "LeaderDirectivesRead": { "description": "{ directives, retired } of OperatorDirective — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "LaneTruth": { "description": "LaneTruth — see src/core/fleet/lane-truth.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "LeaderMemo": { "description": "LeaderMemo — see src/core/vision/leader-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "LeaderQuestionRead": { "description": "{ question: LeaderQuestionProjection, typedQuestionsSupported } — see src/core/vision/leader-thread-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "LeaderStateV1": { "description": "LeaderStateV1 — see src/core/vision/leader-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},

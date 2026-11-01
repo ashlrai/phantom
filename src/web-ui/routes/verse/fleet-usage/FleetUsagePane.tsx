@@ -19,6 +19,7 @@ import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { formatTokens } from '../fleet-lanes/fleet-lanes-model.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -26,6 +27,7 @@ import { creditsSpendable } from '../usage/accounts-model.js';
 import { projectAccountsSnapshot, type AccountCredits } from '../usage/usage-contract.js';
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import { fleetUsageRunsQuery } from './fleet-usage-queries.js';
+import { auditSteerPrefill, auditSteerVisible } from './audit-steer-prefill.js';
 import {
   codexPersonalRow,
   degradedSources,
@@ -209,6 +211,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
 
   const accountsMissing = read !== undefined && !read.available;
   const runsMissing = runsRead.data === null || (runsRead.error instanceof ApiError && runsRead.error.status === 404);
+  const auditLanes = new Map(auditRead.data?.lanes.map(lane => [lane.lane, lane]));
 
   const hasContent = rows.length > 0 || personal !== null || lanes.length > 0;
   const waiting = read === undefined || (runsRead.data === undefined && runsRead.error === undefined);
@@ -267,14 +270,23 @@ export function FleetUsagePane({ visible }: PaneProps) {
           <>
             <p>{auditHeadline(auditRead.data)}</p>
             <ul className={styles.rows}>
-              {auditRows(auditRead.data).map(row => (
-                <li key={row.lane} title={row.nextAction} className={styles.auditRow}>
-                  <span>{row.lane}</span>{' '}
-                  <span className={styles.verdict} data-tone={row.tone}>{row.verdict}</span>{' '}
-                  <span>{row.deltaText}</span>{' '}
-                  <span className={styles.reason}>{row.reason}</span>
-                </li>
-              ))}
+              {auditRows(auditRead.data).map(row => {
+                const lane = auditLanes.get(row.lane);
+                return (
+                  <li key={row.lane} title={row.nextAction} className={styles.auditRow}>
+                    <span>{row.lane}</span>{' '}
+                    <span className={styles.verdict} data-tone={row.tone}>{row.verdict}</span>{' '}
+                    <span>{row.deltaText}</span>{' '}
+                    <span className={styles.reason}>{row.reason}</span>
+                    {lane && auditSteerVisible(lane) && (
+                      <Button variant="subtle" size="sm" aria-label={`Steer ${row.lane}`}
+                        onClick={() => openInterjectDialog({ prefill: auditSteerPrefill(lane, new Date().toISOString()) })}>
+                        Steer
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </>
         ) : <p className={styles.message}>Reading zero-waste audit…</p>}

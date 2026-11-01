@@ -55,6 +55,7 @@ import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
 import { readFailureReason } from '../../data/client.js';
 import { refetchQuery } from '../../data/cache.js';
 import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './composer/fleet-interject.js';
+import { runBusCommand } from './composer/bus-post-command.js';
 import { runReleaseCommand } from './composer/lane-release-command.js';
 import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
 import { laneTargetsQuery } from './ops/lane-targets-queries.js';
@@ -73,6 +74,7 @@ import {
   applyCompletion,
   insertAttachmentRef,
   matchSlashCommands,
+  parseBusCommand,
   parseFleetCommand,
   parseLaneCommand,
   parseReleaseCommand,
@@ -324,7 +326,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const queueFull = (queue?.items.length ?? 0) >= VERSE_QUEUE_MAX;
   const hasText = text.trim().length > 0;
   const blockedByUpload = attachments.uploading;
-  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/fleet(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
+  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/(?:bus|fleet)(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
   const showHint = !hintSeen && !sentHere;
   const showHandoffHelp = handoffDraft && !sentHere && hasText;
   const cost = useMemo(
@@ -545,9 +547,10 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Fleet, lane, release, pane and compact insert text; other commands consume their token.
+    // Bus, fleet, lane, release, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
+      case 'bus':
       case 'fleet':
       case 'lane':
       case 'release':
@@ -789,6 +792,19 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       return;
     }
     laneConfirmation.current = null;
+    if (parseBusCommand(text)) {
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runBusCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
     const fleet = parseFleetCommand(text);
     if (fleet || /^\/fleet\s*$/.test(text)) {
       if (!fleet) {
