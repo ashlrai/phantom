@@ -42,6 +42,7 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/cloud/previews',
   '/api/verse/devin/previews',
   '/api/verse/fleet/runs',
+  '/api/verse/fleet/ci-runs',
   '/api/verse/fleet/live/bus',
   '/api/verse/fleet/live/queue',
   '/api/verse/fleet/control/switches',
@@ -76,13 +77,14 @@ const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
 // ids against LANE_ID_RE plus per-lane bounds, so the gateway bounds format.
 const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
 const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
-// Same grammar the Hub applies in runs-job-detail `isFleetJobId`; duplicated
+// Exact JOB_ID_RE from src/web-ui/routes/verse/fleet-job-log/worker-log-model.ts; duplicated
 // so this module stays free of server-side imports. The CRLF check is load
 // bearing: `$` matches before a trailing line terminator, so the bare pattern
 // would accept a newline-suffixed id the Hub rejects.
 const FLEET_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
 const isFleetJobIdParam = (v: string): boolean => !/[\r\n]+$/.test(v) && FLEET_JOB_ID.test(v);
 const FLEET_READ_LIMIT = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 200;
+const FLEET_CI_HOURS = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 168;
 
 function exactParams(params: URLSearchParams, shape: Record<string, (value: string) => boolean>): boolean {
   const keys = [...params.keys()];
@@ -163,6 +165,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     exactParams(params, { limit: FLEET_READ_LIMIT })
     || exactParams(params, { limit: FLEET_READ_LIMIT, source: (v) => FLEET_INBOX_SOURCE.test(v) })
   )) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/ci-runs'
+    && exactParams(params, { hours: FLEET_CI_HOURS })) return { kind: 'read', path };
   if ((path === '/api/verse/fleet/live/bus' || path === '/api/verse/fleet/live/queue')
     && exactParams(params, { limit: FLEET_READ_LIMIT })) return { kind: 'read', path };
   if (path === '/api/fleet/job'
