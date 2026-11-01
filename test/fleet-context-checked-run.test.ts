@@ -33,7 +33,7 @@ function passGate(): { exec: ReturnType<typeof vi.fn>; deps: LocalGateDeps } {
     events.push(`gate:${command}`);
     return { ok: true, stdout: command === 'git' ? sha(argv[0] === 'rev-parse' ? 'a' : 'b') : '', stderr: '' };
   });
-  return { exec, deps: { exec, metricsPath: join(root, 'metrics', 'local-gate.jsonl') } };
+  return { exec, deps: { exec, cwd: root, metricsPath: join(root, 'metrics', 'local-gate.jsonl') } };
 }
 
 beforeEach(async () => {
@@ -76,9 +76,9 @@ describe('fleet context-checked-run', () => {
     expect(events[0]).toBe('worker:stdout');
     expect(exec).toHaveBeenCalledTimes(4);
     expect(exec.mock.calls.map(call => [call[0], call[1][0]])).toEqual([
-      ['git', 'rev-parse'], ['git', 'merge-base'], ['npx', 'tsc'], ['node', 'scripts/verify-changed.mjs'],
+      ['git', 'rev-parse'], ['git', 'merge-base'], ['node', join(root, 'node_modules', 'typescript', 'bin', 'tsc')], ['node', 'scripts/verify-changed.mjs'],
     ]);
-    expect(events.filter(e => e.startsWith('gate:'))).toEqual(['gate:git', 'gate:git', 'gate:npx', 'gate:node']);
+    expect(events.filter(e => e.startsWith('gate:'))).toEqual(['gate:git', 'gate:git', 'gate:node', 'gate:node']);
     expect(events.at(-1)).toBe('result');
     expect(err).toBe('context-checked-run: {"workerExit":0,"gateVerdict":"pass"}\n');
     const rows = await metricRows();
