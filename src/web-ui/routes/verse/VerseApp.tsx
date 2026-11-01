@@ -59,6 +59,7 @@ import { useResourcesUi } from './resources/resources-store.js';
 import { commandChord, detectKeyPlatform, formatChord, matchKey } from './shell/command-keys.js';
 import { useGuardState } from './shell/guard-store.js';
 import { gearUpdateSpoken } from './shell/gear-update-dot.js';
+import { useAutoSelfUpdate } from './sections/useAutoSelfUpdate.js';
 import { useSelfUpdateBadge } from './shell/self-update-badge.js';
 import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
@@ -315,6 +316,7 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 }
 
 export function VerseApp() {
+  useAutoSelfUpdate();
   useWindowTitle();
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
