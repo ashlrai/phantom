@@ -58,7 +58,8 @@
  * A load that FAILED (not merely "no files yet") still throws: activity then
  * reports `sources.leader: 'error'`, never a false all-clear on broken state.
  */
-import { readFile } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -92,6 +93,9 @@ import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js'
 import { runPlannerPass, type RunPlannerPassOpts, type PlannerRunResult } from '../fleet/planner-run.js';
 import { readPlannerCandidates } from '../fleet/planner-candidates.js';
 import { readPlannerPromptPath } from '../fleet/planner-prompt.js';
+import { composePlannerSlate, resolvePlannerPreset, PLANNER_SLATE_PRESETS, type PlannerPresetId, plannerBriefPaths, briefCandidates, defaultPlannerBriefPath } from '../fleet/planner-slate-presets.js';
+import { parsePlannerSlate, writePlannerSlate } from '../fleet/planner-slate-write.js';
+import { readSource } from '../fleet/runs-parked-queue.js';
 import type { PlannerHealth } from '../fleet/planner-failover.js';
 
 // ---------------------------------------------------------------------------
@@ -815,6 +819,61 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
       else {
         const { readUsageResets } = await import('../fleet/usage-reset-detect.js');
         sendJson(res, 200, await readUsageResets({ now }));
+      }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/slate`) {
+      if (method !== 'GET' && method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const body = method === 'POST' ? await readMutationBody(ctx, req, res, false) : null;
+      if (method === 'POST' && !body) return true;
+      if ((req.url ?? '').includes('?')) { sendInvalid(res, 'this route takes no query parameters'); return true; }
+      const runsRoot = hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs');
+      const context = { home: homedir(), runsRoot };
+      // Gather metadata asynchronously; composition itself only sees an in-memory lookup.
+      const briefs = plannerBriefPaths(runsRoot);
+      const metadata = new Map<string, Stats>();
+      for (const brief of briefs) {
+        try { metadata.set(brief, await stat(brief)); } catch { /* absent or inaccessible */ }
+      }
+      const availableBriefs = briefCandidates(runsRoot, path => {
+        const info = metadata.get(path);
+        if (!info) throw new Error('unavailable');
+        return info;
+      });
+      if (body) {
+        const ids = body['presets'];
+        if (hasOnlyKeys(body, ['presets', 'promptPath']) || !Array.isArray(ids) || ids.length < 1 || ids.length > 8 ||
+            ids.some(id => typeof id !== 'string' || !PLANNER_SLATE_PRESETS.includes(id as PlannerPresetId)) || new Set(ids).size !== ids.length ||
+            (Object.hasOwn(body, 'promptPath') && !parsePlannerSlate(Buffer.from(JSON.stringify({ v: 1, candidates: [{ provider: 'validation', argv: ['validation'] }], promptPath: body['promptPath'] }))))) {
+          sendInvalid(res, 'invalid presets or promptPath'); return true;
+        }
+        const promptPath = body['promptPath'] as string | undefined ?? defaultPlannerBriefPath(runsRoot, path => metadata.get(path)?.isFile() ?? false);
+        if (promptPath === null) { sendJson(res, 409, { error: 'no-brief', checked: briefs }); return true; }
+        let slate;
+        try { slate = composePlannerSlate(ids as string[], promptPath, context); }
+        catch { sendInvalid(res, 'invalid preset paths'); return true; }
+        if ('error' in slate) { sendJson(res, 409, { error: 'preset-unavailable', preset: slate.preset }); return true; }
+        const status = writePlannerSlate(runsRoot, slate);
+        sendJson(res, status === 'refused' ? 409 : 200, { v: 1, status, candidateCount: slate.candidates.length, promptPath });
+      } else {
+        const path = join(runsRoot, 'queue', 'planner-candidates.json');
+        const input = await readSource(path, 64 * 1024, false);
+        const slate = input.state === 'healthy' ? parsePlannerSlate(Buffer.from(input.text)) : null;
+        const promptPath = slate?.promptPath ?? null;
+        let promptInfo = null;
+        try { if (promptPath) promptInfo = await stat(promptPath); } catch { /* missing prompt */ }
+        const presets = PLANNER_SLATE_PRESETS.map(id => resolvePlannerPreset(id, context));
+        sendJson(res, 200, {
+          v: 1, generatedAt: new Date(now()).toISOString(), source: input.state === 'missing' ? 'missing' : slate ? 'ok' : 'invalid', path,
+          candidates: (slate?.candidates ?? []).map(candidate => ({
+            provider: candidate.provider,
+            preset: presets.find(preset => preset.provider === candidate.provider && JSON.stringify(preset.argv) === JSON.stringify(candidate.argv))?.id ?? null,
+            argvLength: candidate.argv.length,
+          })), promptPath, promptExists: promptInfo?.isFile() ?? false,
+          promptAgeSeconds: promptInfo?.isFile() ? Math.max(0, (now() - promptInfo.mtimeMs) / 1000) : null,
+          presets: presets.map(({ id, provider, available, binary, dropDir }) => ({ id, provider, available, binary, dropDir })),
+          briefCandidates: availableBriefs,
+        });
       }
       return true;
     }
