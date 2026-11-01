@@ -436,6 +436,7 @@ export const REAL_IO_TEST_FILES = [
   'test/h5.leak-containment.test.ts', // real subprocess/fs work (marker-detected or measured) — 30.6s slowest test in the quiet baseline
   'test/m518.goal-timestamp-repair-faults.test.ts', // real subprocess/fs work (marker-detected or measured) — 3.5s slowest test in the quiet baseline
   'test/m522.production-promotion-admission.test.ts', // spawns a real Node child to validate immutable promotion admission
+  'test/fleet-ci-daily-plan-nov01.test.ts', // seeds a real temp git repo and runs real `git apply --check`/`git apply` on the emitted patch
 
   // --- special cases: fast on a quiet machine but genuinely real I/O, so still contention-prone ---
   'test/local-runtime-acceptance.test.ts', // pinned archives, real installed Node smoke and durable selection failure recovery
