@@ -13,6 +13,8 @@ import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
+import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
+import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
 
 // passesMutationGate authenticates a single local operator (the x-ashlr-token
 // holder); there is no per-request user identity. The shared channel receiver's
@@ -58,6 +60,8 @@ export interface FleetRunsApiDeps {
   /** Receipt store shared by every API instance rooted at the same runsDir,
    * so a repost after a Hub restart dedupes. Default: the local receipt file. */
   receiptStore?: ChannelDedupeStore;
+  /** One-job stop behind POST .../runs/stop. Injected so tests never signal a real process. */
+  stopJob?: (id: string, opts: StopJobOptions) => Promise<JobStopResult>;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention. */
@@ -268,6 +272,23 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       catch {
         sendJson(res, 200, { v: 1, generatedAt: new Date(now()).toISOString(), source: 'unavailable', pairs: [], openDirty: 0 } satisfies SupersededReadV1);
       }
+      return true;
+    }
+    if (path === VERSE_FLEET_RUNS_STOP_PATH) {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!record(body) || Object.keys(body).some(k => k !== 'id') ||
+        typeof body.id !== 'string' || !STRAY_ID_PATTERN.test(body.id)) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid job id' }); return true;
+      }
+      try {
+        const stop = deps.stopJob ?? stopJob;
+        const result = await stop(body.id, { runsDir: deps.runsDir ?? defaultRunsDir() });
+        sendJson(res, result.outcome === 'not-running' ? 409 : result.outcome === 'refused' ? 400 : 202, result);
+      } catch { sendJson(res, 503, { code: 'JOB_STOP_UNAVAILABLE' }); }
       return true;
     }
     if (method !== 'POST' || path !== VERSE_FLEET_RUNS_INBOX_PATH) return false;
