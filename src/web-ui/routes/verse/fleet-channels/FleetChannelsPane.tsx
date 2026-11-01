@@ -7,8 +7,9 @@ import type { InboxEntry } from '../fleet-inbox/fleet-inbox-model.js';
 import { requestInboxChannel } from '../fleet-inbox/inbox-source-request.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { CopyPill } from '../apps/CopyPill.js';
 import { channelPresenceLine, deriveChannelPresence, leaderPassMs, presenceForChannel } from './channel-last-seen.js';
-import { ackByChannel, KNOWN_CHANNELS, rollupChannels } from './fleet-channels-model.js';
+import { ackByChannel, channelSetupHint, KNOWN_CHANNELS, rollupChannels } from './fleet-channels-model.js';
 import { fleetChannelsQuery } from './fleet-channels-queries.js';
 import styles from './fleet-channels.module.css';
 
@@ -45,6 +46,7 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
     <ul className={styles.list} aria-label="Channels">{data.rows.map(row => {
       const counts = ack.get(row.key);
+      const hint = channelSetupHint(row.key, row);
       const ackLine = !counts || (counts.waiting === 0 && counts.seen === 0) ? null
         : counts.waiting > 0 ? `${counts.waiting} waiting for a leader pass${counts.overdue ? ' · overdue' : ''}`
         : `All ${counts.seen} seen by a leader`;
@@ -54,6 +56,7 @@ export function FleetChannelsPane({ visible, host }: PaneProps) {
       <p className={styles.presence}>{channelPresenceLine(presenceForChannel(presence, row.key, KNOWN_CHANNELS), passMs)}</p>
       {ackLine !== null && <p className={styles.presence} data-testid="channel-ack">{ackLine}</p>}
       {row.preview !== null && <p className={styles.preview}>{row.preview}</p>}
+      {hint !== null && <p className={styles.presence} data-testid="channel-setup-hint">{hint.detail} <CopyPill text={hint.runCommand} label={hint.command} what={hint.copyWhat} /></p>}
       <Button size="sm" onClick={() => { requestInboxChannel(row.key); host.openPane('fleet-inbox'); }}>Open inbox</Button>
     </li>;
     })}</ul>

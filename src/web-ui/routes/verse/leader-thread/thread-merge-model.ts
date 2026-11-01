@@ -5,6 +5,7 @@
  * answer sits under the words it answered. Pure; the tests feed the shapes.
  */
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
+import { annotateAck } from '../fleet-inbox/inbox-ack-model.js';
 import { parseInboxAt, sourceChip } from '../fleet/interject-ack-model.js';
 import { CHANNEL_LABEL, displayThreadText } from '../leader/thread-model.js';
 import { LEADER_THREAD_CHANNELS, type LeaderThreadChannel, type LeaderThreadMessage } from '../leader/thread-types.js';
@@ -20,6 +21,7 @@ export interface MergedLine {
   source: string;
   text: string;
   id: string;
+  ack: { state: 'seen' | 'waiting'; text: string } | null;
 }
 
 export interface MergedThread {
@@ -34,10 +36,15 @@ function inboxMs(at: string, nowMs: number): number {
   return parseInboxAt(at, nowMs) ?? Date.parse(at);
 }
 
-export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number): MergedThread {
+export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number, runs?: unknown): MergedThread {
   // An interjection relayed into the thread lands there verbatim; the inbox
   // copy is dropped so the message shows once, still attributed to Mason.
   const relayed = new Set(thread.filter(m => m.from === 'mason').map(m => m.text.trim()));
+  const annotated = annotateAck(inbox.map(entry => ({ ...entry, priority: '—' })), runs, nowMs);
+  const ackFor = (index: number): MergedLine['ack'] => {
+    const entry = annotated[index];
+    return entry && entry.ack !== 'unknown' ? { state: entry.ack, text: entry.ackLabel } : null;
+  };
   // All inbox entries sort before all thread posts at a shared timestamp —
   // Mason's words, then the answer to them.
   const dated: { line: MergedLine; order: number }[] = [];
@@ -49,10 +56,14 @@ export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRuns
   };
   inbox.forEach((entry, index) => {
     if (relayed.has(entry.text.trim())) return;
-    push({ at: inboxMs(entry.at, nowMs), who: 'mason', source: entry.source, text: entry.text, id: `inbox-${index}` });
+    push({ at: inboxMs(entry.at, nowMs), who: 'mason', source: entry.source, text: entry.text, id: `inbox-${index}`, ack: entry.source === 'system' ? null : ackFor(index) });
   });
   for (const message of thread) {
-    push({ at: Date.parse(message.at), who: message.from, source: message.channel, text: displayThreadText(message), id: message.id });
+    // Only attribute a relayed entry when its text identifies exactly one inbox row.
+    const matches = message.from === 'mason' && message.channel !== 'system'
+      ? inbox.flatMap((entry, index) => entry.text.trim() === message.text.trim() ? [index] : []) : [];
+    push({ at: Date.parse(message.at), who: message.from, source: message.channel, text: displayThreadText(message), id: message.id,
+      ack: matches.length === 1 ? ackFor(matches[0]!) : null });
   }
   dated.sort((a, b) => a.line.at - b.line.at || a.order - b.order);
   return { lines: dated.map(d => d.line), undated };
