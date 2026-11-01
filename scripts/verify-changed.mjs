@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,6 +24,19 @@ export function collectChangedPaths(root) {
     ...git('diff', '--name-only', '--no-renames', '-z', '--').split('\0'),
     ...git('ls-files', '--others', '--exclude-standard', '-z').split('\0'),
   ].filter(Boolean);
+}
+
+/** Preflight check that a local eslint install is complete. */
+export function eslintPreflight(root, exists = existsSync) {
+  const binPath = resolve(root, 'node_modules/eslint/bin/eslint.js');
+  const libPath = resolve(root, 'node_modules/eslint/lib/cli.js');
+  if (exists(binPath) && exists(libPath)) {
+    return { ok: true };
+  }
+  if (!exists(binPath)) {
+    return { ok: false, reason: 'node_modules/eslint/bin/eslint.js is absent; run npm ci to restore it' };
+  }
+  return { ok: false, reason: 'node_modules/eslint/lib/cli.js is absent; run npm ci to restore it' };
 }
 
 function main() {
@@ -53,7 +66,10 @@ function main() {
     if (result.error) console.error(result.error.message);
     if (!passed) process.exitCode = 1;
   };
-  if (selection.lintFiles.length) {
+  const preflight = eslintPreflight(root);
+  if (!preflight.ok) {
+    console.log(`SKIP eslint: ${preflight.reason}; Merge Gate lints on CI`);
+  } else if (selection.lintFiles.length) {
     // ESLint applies its own config/ignores; explicit ignored paths are silent.
     run('eslint changed files', 'node_modules/eslint/bin/eslint.js', ['--no-warn-ignored', '--', ...selection.lintFiles.map((path) => `./${path}`)]);
   } else {
