@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import { realSupplyBriefLines, type RealSupplyV1 } from './planner-real-supply.js';
 import { readSource } from './runs-parked-queue.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -14,6 +15,12 @@ export interface PlannerBriefOptions {
   note?: string;
   now?: number;
   git?: PlannerBriefGit;
+  /**
+   * Injected real-supply read (live Dependabot alerts, red scheduled suites
+   * and open issues across the fleet's repos). When absent the brief carries
+   * no REAL SUPPLY section; when it throws, the section reads unavailable.
+   */
+  realSupply?: () => Promise<RealSupplyV1>;
 }
 const lines = (text: string): string[] => text === '' ? [] : text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -65,6 +72,15 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     mergeText = UNAVAILABLE;
     missing.push('git log origin/master');
   }
+  let realSupply: string[] | null = null;
+  if (opts.realSupply !== undefined) {
+    try {
+      realSupply = realSupplyBriefLines(await opts.realSupply());
+    } catch {
+      realSupply = ['(unavailable: real supply read failed)'];
+      missing.push('real-supply');
+    }
+  }
   // eslint-disable-next-line no-control-regex -- tick notes must remain a single printable line.
   const note = opts.note?.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 500);
   const text = scrubSecrets([
@@ -72,13 +88,14 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     ...(opts.note !== undefined ? [`NOTE FROM TICK: ${note}`] : []),
     `## CLAUDE LANE: ${claude.trim() || 'unknown'}`,
     '## LANES', ...laneLines,
+    ...(realSupply === null ? [] : ['## REAL SUPPLY', ...realSupply]),
     '## USED IDS', ids.join(' '),
     '## USED TITLES', ...titles,
     '## RECENT PHANTOM MERGES', mergeText,
     '## MASON INBOX (newest last)', ...inboxLines,
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
-  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: titles.length, lanes: laneLines.length, inboxLines: inboxLines.length, merges: merges.length }, missing };
+  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: titles.length, lanes: laneLines.length, inboxLines: inboxLines.length, merges: merges.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }) }, missing };
 }
 
 /** Publish only a prompt the planner's bounded input reader can consume. */
