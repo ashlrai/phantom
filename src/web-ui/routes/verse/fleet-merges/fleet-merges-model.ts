@@ -2,6 +2,8 @@ export interface Merged { repo: string; number: number; title: string; href: str
 export interface Pending { job: string; lane: string | null; href: string | null; at: string }
 /** mergeRate24h is a percentage. */
 export interface Lane { lane: string; merged24h: number | null; mergeRate24h: number | null }
+export interface OutsideOverlap { job: string; paths: string[] }
+export interface OutsidePr { repo: string; number: number; title: string; author: string; head: string; at: string | null; files: number; overlaps: OutsideOverlap[] }
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const count = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -33,4 +35,32 @@ export function readMerges(snapshot: unknown): { merged: Merged[]; pending: Pend
     return typeof item.lane === 'string' ? [{ lane: item.lane, merged24h: count(item.merged24h), mergeRate24h: rate(item.mergeRate24h) }] : [];
   }).sort((a, b) => a.merged24h === null ? (b.merged24h === null ? 0 : 1) : b.merged24h === null ? -1 : b.merged24h - a.merged24h);
   return { merged, pending, lanes, count: count(merges.count), sourceState: typeof sources.merges === 'string' ? sources.merges : null };
+}
+
+const repoName = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(value) ? value : null;
+const text = (value: unknown, max = 300): string | null => typeof value === 'string' && value.trim().length > 0 && value.length <= max ? value : null;
+
+export function readOutsidePrs(snapshot: unknown): { prs: OutsidePr[]; sourceState: string | null } {
+  const data = record(snapshot);
+  const prs: OutsidePr[] = (Array.isArray(data.repos) ? data.repos : []).flatMap(raw => {
+    const repo = record(raw), name = repoName(repo.repo);
+    if (name === null) return [];
+    return (Array.isArray(repo.prs) ? repo.prs : []).flatMap(entry => {
+      const pr = record(entry), number = count(pr.number);
+      if (number === null || number === 0 || text(pr.title) === null || text(pr.author) === null) return [];
+      const overlaps: OutsideOverlap[] = (Array.isArray(pr.overlaps) ? pr.overlaps : []).flatMap(item => {
+        const overlap = record(item);
+        return text(overlap.job) === null ? [] : [{
+          job: overlap.job as string,
+          paths: Array.isArray(overlap.paths) ? overlap.paths.filter((p): p is string => text(p, 512) !== null).slice(0, 50) : [],
+        }];
+      });
+      return [{
+        repo: name, number, title: pr.title as string, author: pr.author as string,
+        head: text(pr.head) ?? '', at: text(pr.updatedAt, 64),
+        files: Array.isArray(pr.files) ? pr.files.length : 0, overlaps,
+      }];
+    });
+  }).sort((a, b) => b.number - a.number);
+  return { prs, sourceState: typeof data.sourceState === 'string' ? data.sourceState : null };
 }

@@ -17,9 +17,16 @@ import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INB
 // canonical sender is therefore this documented server-owned identity. Request
 // fields — including `source` — are never identity.
 const VERSE_INBOX_OPERATOR_ID = 'verse-inbox-operator';
+// A write forwarded by the paired-phone gateway carries the gateway's own
+// channel assertion, so the mobile channel gets its own verified sender id:
+// phone and desktop copies of one text dedupe per channel, and bus envelopes
+// read mason-mobile-… instead of mason-desktop-….
+const VERSE_INBOX_MOBILE_OPERATOR_ID = 'verse-operator@mobile';
 // The only trusted surface fact is that the request reached this authenticated
-// desktop/mobile console route, so the channel is a fixed server-side mapping.
+// route and which channel the serving adapter asserted, so the channel is a
+// fixed server-side mapping — never parsed from the client body.
 const VERSE_INBOX_CHANNEL = 'desktop' as const;
+const VERSE_INBOX_MOBILE_CHANNEL = 'mobile' as const;
 const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 
 export interface FleetRunsApiDeps {
@@ -127,7 +134,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // the finally of the POST handler) before the next receive can start.
   const pendingSources: { source: string }[] = [];
   const receive = createChannelReceiver({
-    allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID]),
+    allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID, VERSE_INBOX_MOBILE_OPERATOR_ID]),
     now: () => new Date(now()),
     // Durable receipts only when the caller declared a runsDir (or its own
     // store): a resend after a Hub restart then dedupes instead of landing
@@ -214,7 +221,19 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     const ticket = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
     pendingSources.push(ticket);
     try {
-      const result = await receive({ channel: VERSE_INBOX_CHANNEL, verifiedSenderId: VERSE_INBOX_OPERATOR_ID, body: body.text.trim() });
+      // x-ashlr-channel is trusted only because this route sits on loopback
+      // behind the mutation token — the same authority that fixes the
+      // operator id above. The remote gateway strips and re-serializes every
+      // forwarded request and stamps the header itself, so a remote client
+      // cannot mint the mobile assertion through the gateway; a direct
+      // loopback caller still needs the token to reach this line at all.
+      // Any other value, or none, keeps the desktop mapping.
+      const mobile = req.headers['x-ashlr-channel'] === 'mobile';
+      const result = await receive({
+        channel: mobile ? VERSE_INBOX_MOBILE_CHANNEL : VERSE_INBOX_CHANNEL,
+        verifiedSenderId: mobile ? VERSE_INBOX_MOBILE_OPERATOR_ID : VERSE_INBOX_OPERATOR_ID,
+        body: body.text.trim(),
+      });
       if (result.ok) {
         // Only an accepted persistence invalidates the cached composite; a
         // duplicate appended nothing, and a refusal changed nothing.

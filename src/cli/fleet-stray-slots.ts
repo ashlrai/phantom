@@ -15,7 +15,11 @@ export interface StrayReaders {
   readJobs: () => Promise<StrayJob[]>;
 }
 const run = promisify(execFile);
-const usage = 'Usage: ashlr fleet stray-slots [--json]';
+const usage = `Usage: ashlr fleet stray-slots [--json] [--check] [--lane NAME ...]
+  --lane NAME  Select an exact lane; repeat to select multiple lanes (default: all).
+  --check      Exit 1 for observed lost slots or unavailable evidence, 0 otherwise.
+No matching jobs means no observed stray slots, not proof a provider is available.
+Observation only: never sends signals, mutates slot counts, launches work or releases holds.`;
 const idPattern = /^[A-Za-z0-9._-]{1,80}$/;
 
 function inside(path: string, root: string): boolean {
@@ -31,11 +35,12 @@ function commandInside(command: string, root: string): boolean {
   return [...matches].some(match => inside(match[1], root));
 }
 
-export async function readStraySlots(readers: StrayReaders = defaultReaders) {
+export async function readStraySlots(readers: StrayReaders = defaultReaders, selectedLanes?: ReadonlySet<string>) {
   const [processes, jobs] = await Promise.all([readers.readProcesses(), readers.readJobs()]);
   const live = new Set(parsePsTable(processes.map(p => `${p.pid} ${p.elapsed} ${p.command}`).join('\n')).workers.map(p => p.job));
   const lanes = new Map<string, { lane: string; slotsLost: number; strays: Array<{ job: string; pid: number; ageSeconds: number | null }> }>();
   for (const job of new Map(jobs.map(job => [job.id, job])).values()) {
+    if (selectedLanes && !selectedLanes.has(job.lane)) continue;
     if (!idPattern.test(job.id) || !idPattern.test(job.lane) || !isAbsolute(job.worktree) || normalize(job.worktree) === '/') continue;
     let lane = lanes.get(job.lane);
     if (!lane) { lane = { lane: scrubSecrets(job.lane), slotsLost: 0, strays: [] }; lanes.set(job.lane, lane); }
@@ -109,14 +114,26 @@ const defaultReaders: StrayReaders = {
 
 export async function cmdFleetStraySlots(args: string[], readers: StrayReaders = defaultReaders): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) { console.log(usage); return 0; }
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) {
-    process.stderr.write(`${usage}\n`); return 2;
+  let json = false;
+  let check = false;
+  const selectedLanes = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--json' && !json) json = true;
+    else if (arg === '--check' && !check) check = true;
+    else if (arg === '--lane' && i + 1 < args.length && !args[i + 1].startsWith('--') && idPattern.test(args[i + 1])) selectedLanes.add(args[++i]);
+    else { process.stderr.write(`${usage}\n`); return 2; }
   }
   try {
-    const report = await readStraySlots(readers);
-    console.log(args.includes('--json') ? JSON.stringify(report) : report.lanes.map(lane =>
-      `${lane.lane}: ${lane.slotsLost} slots lost\n${lane.strays.map(p => `  ${p.job} pid=${p.pid} age=${p.ageSeconds ?? 'unknown'}s`).join('\n')}`).join('\n'));
-    return 0;
+    const report = await readStraySlots(readers, selectedLanes.size ? selectedLanes : undefined);
+    const slotsLost = report.lanes.reduce((sum, lane) => sum + lane.slotsLost, 0);
+    const summary = { slotsLost, selectedLanes: [...selectedLanes].sort().map(scrubSecrets), passed: slotsLost === 0 };
+    const details = report.lanes.map(lane =>
+      `${lane.lane}: ${lane.slotsLost} slots lost\n${lane.strays.map(p => `  ${p.job} pid=${p.pid} age=${p.ageSeconds ?? 'unknown'}s`).join('\n')}`).join('\n');
+    console.log(json ? JSON.stringify(check ? { ...report, summary } : report) : check
+      ? `${details}${details ? '\n' : ''}Observed ${slotsLost} lost slot(s): ${summary.passed ? 'PASS' : 'FAIL'}.\nNo matching jobs means no observed stray slots, not proof a provider is available.`
+      : details);
+    return check && slotsLost > 0 ? 1 : 0;
   } catch {
     process.stderr.write('error: fleet stray-slots unavailable\n'); return 1;
   }

@@ -2515,7 +2515,9 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'bet-trace') return (await import('./fleet-bet-trace.js')).cmdFleetBetTrace(args.slice(1));
   if (args[0] === 'lane-truth') return (await import('./fleet-lane-truth.js')).cmdFleetLaneTruth(args.slice(1));
+  if (args[0] === 'meter-drop') return (await import('./fleet-meter-drop.js')).cmdFleetMeterDrop(args.slice(1));
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2533,6 +2535,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
     return cmdFleetJobRead(args.slice(1));
   }
   if (args[0] === 'stray-slots') return (await import('./fleet-stray-slots.js')).cmdFleetStraySlots(args.slice(1));
+  if (args[0] === 'edit-collisions') return (await import('./fleet-edit-collisions.js')).cmdFleetEditCollisions(args.slice(1));
   if (args[0] === 'workers') {
     const { cmdFleetWorkers } = await import('./fleet-workers.js');
     return cmdFleetWorkers(args.slice(1));
