@@ -22,6 +22,7 @@ import { formatDateTime } from '../../../components/format/locale-format.js';
 import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.js';
 import { derivePulse, readPulseInput } from '../ops/merge-pulse-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
+import { mergeStallFacts } from './merge-stall-facts.js';
 
 /** The surface an item's "Open" button takes the operator to. */
 export type FleetNeedsYouTarget = 'fleet' | 'ops' | 'settings';
@@ -69,6 +70,22 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   const runsDir = snapshot.sources.runsDir;
   const answered = runsDir === 'healthy' || runsDir === 'degraded';
   const items: FleetNeedsYouItem[] = [];
+
+  if (mergeStallFacts(snapshot, nowMs)) {
+    const detail = [...snapshot.publishesLastHour]
+      .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0))
+      .slice(0, 3).map(({ job, at }) => {
+        const published = Date.parse(at);
+        const age = Number.isFinite(published) ? `${Math.max(0, Math.floor((nowMs - published) / 60_000))}m ago` : 'age unknown';
+        return `${job} (${age})`;
+      }).join(' · ');
+    items.push({
+      id: 'merge-stall', severity: 'urgent',
+      title: `Merge gate stalled: ${snapshot.publishesLastHour.length} published, 0 merged in the last hour`,
+      detail, nextStep: 'Check the merge gate in Fleet ▸ Merges',
+      open: { kind: 'pane', paneId: 'fleet-merges' }, target: 'fleet',
+    });
+  }
 
   const lane = snapshot.claudeLane;
   if (lane !== null && /down/i.test(lane)) {

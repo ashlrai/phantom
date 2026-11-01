@@ -19,6 +19,7 @@ export function attentionAction(open: unknown): FleetAttention['action'] {
   if (!('kind' in open) || open.kind !== 'pane' || !('paneId' in open)) return undefined;
   switch (open.paneId) {
     case 'fleet-lanes': return { kind: 'screen', screen: 'runs', label: 'Open runs' };
+    case 'fleet-merges':
     case 'fleet-supply':
     case 'fleet-host': return { kind: 'screen', screen: 'fleet', label: 'Open fleet' };
     case 'leader-journal': return { kind: 'screen', screen: 'leader', label: 'Open leader' };
