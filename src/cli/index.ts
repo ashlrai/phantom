@@ -66,7 +66,7 @@ import { DEVIN_CHAT_TURN_FLAG } from '../core/devin/chat-turn-invocation.js';
 import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocation.js';
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
-import { pick } from './picker.js';
+import { pick, selectionFailure } from './picker.js';
 import { classifyRepos, printStatusJson } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
@@ -1118,7 +1118,13 @@ async function cmdGo(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const pool = candidates.length > 0 ? candidates : idx.items;
+    const failure = selectionFailure('go', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: pool.length,
+    });
+    die(failure.message, failure.code);
   }
 
   if (openFlag) {
@@ -1584,7 +1590,12 @@ async function cmdOpen(args: string[]): Promise<void> {
   }
 
   if (!chosen) {
-    die('Nothing selected.', 1);
+    const failure = selectionFailure('open', {
+      headless: process.stdin.isTTY !== true || process.stdout.isTTY !== true,
+      query,
+      itemCount: idx.items.length,
+    });
+    die(failure.message, failure.code);
   }
 
   openInEditor(chosen.path, cfg);
