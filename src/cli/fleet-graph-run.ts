@@ -1,7 +1,20 @@
 import { graphArgvRun } from '../core/fleet/graph-argv-run.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
+const usage = 'Usage: ashlr fleet graph-run --file <absolute manifest> [--apply] [--concurrency <1..8>] [--timeout-ms <1..3600000>] [--json]';
+const help = `${usage}\n` +
+  'Runs an explicit argv task graph, or previews it with zero effects when --apply is omitted.\n' +
+  '--timeout-ms is the whole apply budget, not a per-node timeout: one monotonic deadline is\n' +
+  'shared by control reads and every child. After it expires no node launches, active children\n' +
+  'are stopped with the usual TERM then KILL escalation and awaited, and nodes that never\n' +
+  'started are reported as deadline-exhausted. --concurrency only bounds how many children may\n' +
+  'be active at once; it never extends or resets the budget.';
+
 export async function cmdFleetGraphRun(args: string[]): Promise<number> {
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
+    console.log(help);
+    return 0;
+  }
   let file = '', apply = false, timeout = 900000, concurrency = 1;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
