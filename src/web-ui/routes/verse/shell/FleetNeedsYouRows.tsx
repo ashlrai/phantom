@@ -32,6 +32,9 @@ import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 import { normalizePaneId } from './dock-catalog.js';
 import { setFocusMode } from './focus-mode.js';
+import { deriveLaneStreakNeedsYou } from './lane-streak-needs-you.js';
+import { laneStreaksQuery } from './lane-streak-query.js';
+import { isFleetRuns } from '../ops/ops-runs-model.js';
 import { derivePhoneNeedsYou, PHONE_CONNECTION_PANE } from './phone-needs-you.js';
 import { phonePendingQuery } from './phone-pending-query.js';
 import { deriveReleaseNeedsYou } from './release-needs-you.js';
@@ -134,6 +137,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   const releaseRead = useQuery(releasePrQuery);
   const refetchRelease = useRefetch(releasePrQuery);
   usePollWhileVisible(refetchRelease, FLEET_NEEDS_YOU_POLL_MS, { enabled: releaseRead.data?.kind !== 'notInBuild' });
+  const laneStreaksRead = useQuery(laneStreaksQuery);
+  const refetchLaneStreaks = useRefetch(laneStreaksQuery);
+  usePollWhileVisible(refetchLaneStreaks, FLEET_NEEDS_YOU_POLL_MS, { enabled: laneStreaksRead.data?.kind !== 'notInBuild' });
   const notFound = read.error instanceof ApiError && read.error.status === 404;
   usePollWhileVisible(refetch, FLEET_NEEDS_YOU_POLL_MS, { enabled: !notFound });
 
@@ -147,12 +153,16 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     () => deriveReleaseNeedsYou(releaseRead.status === 'error' ? undefined : releaseRead.data, nowMs),
     [releaseRead.data, releaseRead.status, nowMs],
   );
+  const laneStreakItems = useMemo(
+    () => deriveLaneStreakNeedsYou(laneStreaksRead.status === 'error' ? undefined : laneStreaksRead.data, isFleetRuns(read.data) ? read.data : null, nowMs),
+    [laneStreaksRead.data, laneStreaksRead.status, read.data, nowMs],
+  );
   const resetItems = useMemo(() => deriveResetNeedsYou(resetsRead.status === 'error' ? null : resetsRead.data, nowMs),
     [resetsRead.data, resetsRead.status, nowMs]);
   const phoneItems = useMemo(() => derivePhoneNeedsYou(phoneRead.status === 'error' ? undefined : phoneRead.data),
     [phoneRead.data, phoneRead.status]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...phoneItems] }, resetItems),
-    [result, releaseItems, phoneItems, resetItems]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...laneStreakItems, ...phoneItems] }, resetItems),
+    [result, releaseItems, laneStreakItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
