@@ -1,3 +1,5 @@
+import { realpathSync, statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { runContextWorker, type ContextWorkerIO, type ContextWorkerOptions } from './context-worker-run.js';
 import { runLocalGate, type LocalGateDeps } from './local-gate.js';
 
@@ -27,14 +29,41 @@ function resultLine(workerExit: number, gateVerdict: ContextCheckedRunGateVerdic
  */
 export async function runContextCheckedRun(opts: ContextCheckedRunOptions, io: ContextCheckedRunIO = {}): Promise<number> {
   const stderr = io.stderr ?? process.stderr;
-  const workerExit = await runContextWorker(opts, io);
+  let cwd: string;
+  try {
+    const selected = opts.cwd === undefined ? process.cwd() : opts.cwd;
+    if (typeof selected !== 'string' || !selected || selected.includes('\0') || !isAbsolute(selected)) throw new Error();
+    cwd = realpathSync(selected);
+    if (!statSync(cwd).isDirectory()) throw new Error();
+  } catch {
+    stderr.write('context-checked-run: invalid working directory\n');
+    stderr.write(resultLine(2, 'skipped'));
+    return 2;
+  }
+  if (io.gate?.cwd !== undefined) {
+    let gateCwd: string;
+    try {
+      if (typeof io.gate.cwd !== 'string' || !isAbsolute(io.gate.cwd)) throw new Error();
+      gateCwd = realpathSync(io.gate.cwd);
+    } catch {
+      stderr.write('context-checked-run: gate working directory conflicts with worker\n');
+      stderr.write(resultLine(2, 'skipped'));
+      return 2;
+    }
+    if (gateCwd !== cwd) {
+      stderr.write('context-checked-run: gate working directory conflicts with worker\n');
+      stderr.write(resultLine(2, 'skipped'));
+      return 2;
+    }
+  }
+  const workerExit = await runContextWorker({ ...opts, cwd }, io);
   if (workerExit !== 0) {
     stderr.write(resultLine(workerExit, 'skipped'));
     return workerExit;
   }
   let gateVerdict: ContextCheckedRunGateVerdict;
   try {
-    gateVerdict = (await runLocalGate(opts.budgetSeconds, io.gate)).verdict;
+    gateVerdict = (await runLocalGate(opts.budgetSeconds, { ...io.gate, cwd })).verdict;
   } catch {
     gateVerdict = 'error';
   }
