@@ -51,6 +51,7 @@ import {
 } from '../fleet/stray-slots.js';
 
 type ControlDeps = FleetControlDeps & {
+  remoteAdmin?: (input: unknown) => Promise<unknown>;
   remoteDevices?: () => Pick<RemoteDeviceStore, 'list'>;
   strayReaders?: StrayReaders;
 };
@@ -114,10 +115,77 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
   return parsed as Record<string, unknown>;
 }
 
+/** Bound reads separately from the visible Mac confirmation wait. */
+async function remoteCommand(input: unknown, timeout: number): Promise<Record<string, unknown>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const run = deps?.remoteAdmin ?? (await import('../web/remote-admin.js')).sendRemoteAdminCommand;
+    const result = await Promise.race([
+      run(input),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error('Remote command timed out'), { code: 'ETIMEDOUT' })), timeout);
+      }),
+    ]);
+    if (!result || typeof result !== 'object' || Array.isArray(result) || 'error' in result) throw new Error('Remote command failed');
+    return result as Record<string, unknown>;
+  } finally { clearTimeout(timer); }
+}
+
+function remoteUnavailable(error: unknown): boolean {
+  return ['ENOENT', 'ECONNREFUSED', 'ETIMEDOUT'].includes((error as NodeJS.ErrnoException)?.code ?? '');
+}
+
 /** One action at a time: a double-click must not interleave Start with Stop. */
 let actionInFlight: Promise<unknown> | null = null;
 
 export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, method) => {
+  if (path === '/api/verse/fleet/control/remote-phone' || path === '/api/verse/fleet/control/remote-pending'
+    || path === '/api/verse/fleet/control/remote-pairing') {
+    const pairing = path.endsWith('/remote-pairing');
+    if (method !== (pairing ? 'POST' : 'GET')) { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    if (!noQuery(req, res)) return true;
+    try {
+      if (pairing) {
+        const body = await readMutationBody(ctx, req, res);
+        if (!body) return true;
+        if ((body.action !== 'approve' && body.action !== 'deny') || typeof body.id !== 'string'
+          || !/^[0-9a-f-]{36}$/.test(body.id)) { sendInvalid(res, 'invalid pairing action or id'); return true; }
+        const result = await remoteCommand({ action: body.action, id: body.id }, 70_000);
+        // Project the operator result; never forward arbitrary socket fields.
+        sendJson(res, 200, { v: 1, result: body.action === 'deny' ? { denied: result.denied === true }
+          : { approved: result.approved === true, ...(typeof result.deviceId === 'string' ? { deviceId: result.deviceId.slice(0, 200) } : {}) } });
+      } else {
+        const phone = path.endsWith('/remote-phone');
+        let result: Record<string, unknown> = {};
+        let gateway = 'running';
+        try { result = await remoteCommand({ action: phone ? 'info' : 'pending' }, 3_000); }
+        catch (error) { if (!remoteUnavailable(error)) throw error; gateway = 'not-running'; }
+        const base = { v: 1, generatedAt: new Date().toISOString(), gateway };
+        if (phone) {
+          let devices = result.devices;
+          if (gateway === 'not-running') {
+            const { createRemoteDeviceStore } = await import('../web/remote-device-store.js');
+            const all = (deps?.remoteDevices?.() ?? createRemoteDeviceStore()).list();
+            devices = { active: all.filter(d => d.revokedAt === null).length, revoked: all.filter(d => d.revokedAt !== null).length };
+          }
+          const counts = devices as { active: number; revoked: number };
+          const publicOrigin = typeof result.publicOrigin === 'string' ? result.publicOrigin : null;
+          sendJson(res, 200, { ...base, phoneUrl: publicOrigin === null ? null : publicOrigin + '/verse/m', publicOrigin,
+            pending: typeof result.pending === 'number' ? result.pending : 0,
+            devices: { active: counts.active, revoked: counts.revoked } });
+        } else {
+          const text = (value: unknown) => typeof value === 'string' ? value.slice(0, 200) : '';
+          const approvals = Array.isArray(result.approvals) ? result.approvals : [];
+          sendJson(res, 200, { ...base, approvals: approvals.map((a: Record<string, unknown>) => ({
+            id: text(a.id), label: text(a.label), email: text(a.email), subject: text(a.subject), deviceType: text(a.deviceType),
+          })) });
+        }
+      }
+    } catch {
+      sendJson(res, 502, { code: 'remote-pairing-failed', error: 'the remote operator request failed' });
+    }
+    return true;
+  }
   if (path === '/api/verse/fleet/control/remote-devices') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
     if (!noQuery(req, res)) return true;
