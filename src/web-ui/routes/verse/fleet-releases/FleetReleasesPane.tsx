@@ -17,6 +17,7 @@ import { orderRepos, releaseLabel, releasePrMergeBlocker, runTone, safeRepoHref 
 import { ciRunsQuery, opsReleasesQuery, postReleasePrMerge } from './fleet-releases-queries.js';
 import { pollingDue, postMergeLine, readyVersion, type MergeNotice } from './post-merge-update-model.js';
 import { blockerLine, releasePrRows, releaseTellPrefill } from './release-pr-view-model.js';
+import { releaseVersionGuard, treeVersionFor } from './release-version-guard.js';
 import styles from './fleet-releases.module.css';
 
 function installedReleaseLine(installed: string | null, tag: string | null) {
@@ -30,12 +31,12 @@ function installedReleaseLine(installed: string | null, tag: string | null) {
   return <>This Mac runs v{installed} · latest {tag} · {status} · <a href={releaseNotesUrl(tag)} target="_blank" rel="noopener noreferrer">Release notes</a></>;
 }
 
-function MergeReleasePrButton({ repo, pr, onDone }: { repo: string; pr: ReleasePr; onDone: (notice: MergeNotice) => void }) {
+function MergeReleasePrButton({ repo, pr, blockMerge, onDone }: { repo: string; pr: ReleasePr; blockMerge: boolean; onDone: (notice: MergeNotice) => void }) {
   const hold = useMutationHold();
   const [busy, setBusy] = useState(false);
-  const blocker = releasePrMergeBlocker(pr);
+  const blocker = blockMerge ? 'blocked: version downgrade' : releasePrMergeBlocker(pr);
   async function merge() {
-    if (!hold.token || busy) return;
+    if (!hold.token || busy || blocker !== null) return;
     setBusy(true);
     try {
       const result = await postReleasePrMerge(repo, pr.number, hold.token);
@@ -57,7 +58,7 @@ export function FleetReleasesPane({ visible }: PaneProps) {
   const [mergeNotices, setMergeNotices] = useState<Record<string, MergeNotice>>({});
   const [now, setNow] = useState(() => Date.now());
   const phantomNotice = Object.entries(mergeNotices).find(([name]) => name === 'phantom' || name.endsWith('/phantom'))?.[1];
-  const updateRead = useQuery(updateStatusQuery, { enabled: visible && pollingDue(phantomNotice, Date.now()), freshMs: 0 });
+  const updateRead = useQuery(updateStatusQuery, { enabled: visible && (pollingDue(phantomNotice, Date.now()) || (prRead.data?.kind === 'available' && prRead.data.data.repos.some(row => row.pr !== null))), freshMs: 0 });
   const updateStatus = updateRead.data ?? (phantomNotice ? getQuerySnapshot<Awaited<ReturnType<typeof updateStatusQuery.fetch>>>(updateStatusQuery.key).data : undefined);
   const refetchUpdate = useRefetch(updateStatusQuery);
   usePollWhileVisible(refetch, 60_000, { enabled: visible });
@@ -86,15 +87,18 @@ export function FleetReleasesPane({ visible }: PaneProps) {
       const release = repo.gh?.latestRelease ? releaseLabel(repo.gh.latestRelease) : null;
       const run = repo.gh?.latestRun;
       const name = repo.repo.toLowerCase();
+      const phantom = name === 'phantom' || name.endsWith('/phantom');
       const pr = prRows.get(name);
-      const line = pr && 'checks' in pr ? blockerLine(pr) : null;
       const prRepoRow = prRead.data?.kind === 'available'
         ? prRead.data.data.repos.find(row => row.repo.toLowerCase() === name) : undefined;
       const releasePr = prRepoRow?.pr ?? null;
+      const candidateVersion = updateStatus && 'candidateVersion' in updateStatus && typeof updateStatus.candidateVersion === 'string'
+        ? updateStatus.candidateVersion : null;
+      const guard = releasePr ? releaseVersionGuard(releasePr, treeVersionFor(prRepoRow, phantom ? candidateVersion : null), now) : null;
+      const line = guard?.line ?? (pr && 'checks' in pr ? blockerLine(pr) : null);
       const prNumber = releasePr?.number;
       const prNotes = pr && 'notes' in pr ? pr.notes : prRepoRow?.notes ?? [];
       const tone = run ? runTone(run) : 'neutral';
-      const phantom = name === 'phantom' || name.endsWith('/phantom');
       const mergeNotice = mergeNotices[name];
       const updateLine = phantom ? postMergeLine(mergeNotice, updateStatus, now) : null;
       const candidate = readyVersion(updateStatus);
@@ -104,14 +108,14 @@ export function FleetReleasesPane({ visible }: PaneProps) {
         {phantom && <div>{installedReleaseLine(installed, repo.gh?.latestRelease?.tag ?? repo.latestTag)}</div>}
         {pr && <div className={styles.prBlock}>
           <div className={styles.headline} data-tone={pr.tone}>{'href' in pr && pr.href ? <a href={pr.href} target="_blank" rel="noopener noreferrer">{pr.headline}</a> : pr.headline}</div>
-          {line && <><div role="status">{line}</div>{prNumber !== undefined && <Button size="sm" onClick={() => openInterjectDialog({ prefill: releaseTellPrefill(repo.repo, prNumber, line) })}>Tell the leaders</Button>}</>}
+          {line && <><div role="status" className={styles.headline} data-tone={guard?.blockMerge ? 'warn' : undefined}>{line}</div>{prNumber !== undefined && <Button size="sm" onClick={() => openInterjectDialog({ prefill: releaseTellPrefill(repo.repo, prNumber, line) })}>Tell the leaders</Button>}</>}
           {'checks' in pr && pr.checks.length > 0 && <div className={styles.checks} aria-label="Release PR checks">{pr.checks.map((check, checkIndex) => {
             const label = `${check.name} · ${check.state}`;
             const className = `${styles.chip} ${styles[check.state]}`;
             return check.href ? <a key={checkIndex} className={className} href={check.href} target="_blank" rel="noopener noreferrer">{label}</a> : <span key={checkIndex} className={className}>{label}</span>;
           })}</div>}
           {prNotes.length > 0 && <ul className={styles.notes}>{prNotes.map((note, noteIndex) => <li key={noteIndex}>{note}</li>)}</ul>}
-          {releasePr && <MergeReleasePrButton repo={repo.repo} pr={releasePr} onDone={(notice) => {
+          {releasePr && <MergeReleasePrButton repo={repo.repo} pr={releasePr} blockMerge={guard?.blockMerge ?? false} onDone={(notice) => {
             setMergeNotices(prev => ({ ...prev, [name]: notice }));
             setNow(Date.now());
             if (notice.number !== null) refetchPr();
