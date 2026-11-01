@@ -7,3 +7,10 @@
 .row a { color: var(--accent-500); }
 .mergeSpeed { color: var(--text-secondary); }
 .headerActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.ciChip { border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+.row .ok { color: var(--status-success-fg); background: var(--status-success-bg); }
+.row .artifact { color: var(--status-warning-fg); background: var(--status-warning-bg); }
+.row .code { color: var(--status-danger-fg); background: var(--status-danger-bg); }
+.row .running { color: var(--status-info-fg); background: var(--status-info-bg); }
+
+.danger { color: var(--status-danger-fg); }
