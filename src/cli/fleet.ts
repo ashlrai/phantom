@@ -2516,10 +2516,6 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
-  if (args[0] === 'bet-trace') return (await import('./fleet-bet-trace.js')).cmdFleetBetTrace(args.slice(1));
-  if (args[0] === 'dead-heads') return (await import('./fleet-dead-heads.js')).cmdFleetDeadHeads(args.slice(1));
-  if (args[0] === 'lane-truth') return (await import('./fleet-lane-truth.js')).cmdFleetLaneTruth(args.slice(1));
-  if (args[0] === 'meter-drop') return (await import('./fleet-meter-drop.js')).cmdFleetMeterDrop(args.slice(1));
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2532,25 +2528,35 @@ export async function cmdFleet(args: string[]): Promise<number> {
     const { cmdFleetRunsRead } = await import('./fleet-runs-read.js');
     return cmdFleetRunsRead(args[0], args.slice(1));
   }
-  if (args[0] === 'wait-jobs') return (await import('./fleet-wait-jobs.js')).cmdFleetWaitJobs(args.slice(1));
-  if (args[0] === 'canary-ladder') return (await import('./fleet-canary-ladder.js')).cmdFleetCanaryLadder(args.slice(1));
   if (args[0] === 'job') {
     const { cmdFleetJobRead } = await import('./fleet-job-read.js');
     return cmdFleetJobRead(args.slice(1));
-  }
-  if (args[0] === 'stray-slots') return (await import('./fleet-stray-slots.js')).cmdFleetStraySlots(args.slice(1));
-  if (args[0] === 'dispatch-summary') return (await import('./fleet-dispatch-summary.js')).cmdFleetDispatchSummary(args.slice(1));
-  if (args[0] === 'edit-collisions') return (await import('./fleet-edit-collisions.js')).cmdFleetEditCollisions(args.slice(1));
-  if (args[0] === 'ship-gap') return (await import('./fleet-ship-gap.js')).cmdFleetShipGap(args.slice(1));
-  if (args[0] === 'workers') {
-    const { cmdFleetWorkers } = await import('./fleet-workers.js');
-    return cmdFleetWorkers(args.slice(1));
   }
   const [sub, ...rest] = args;
 
   if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
     printFleetHelp();
     return 0;
+  }
+
+  // Convention verbs own their help and flags; built-in switch cases keep
+  // their existing help and option checks below.
+  if (!Object.hasOwn(FLEET_VERB_OPTIONS, sub)
+    && !['pause', 'resume', 'grok-usage', 'automerge-canary', 'xreview', 'receipt', 'evidence', 'optimize-prompt'].includes(sub)) {
+    // New fleet subcommands need no line here: ship
+    // src/cli/fleet-<name>.ts exporting
+    // cmdFleet<PascalName>(args: string[]): Promise<number>.
+    const resolved = resolveFleetSubcommand(sub);
+    if (resolved) {
+      let loaded;
+      try {
+        loaded = await import(resolved.module);
+      } catch (err) {
+        if (!isModuleNotFound(err, resolved.module)) throw err;
+      }
+      const fn = loaded?.[resolved.exportName];
+      if (typeof fn === 'function') return await fn(rest);
+    }
   }
 
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
@@ -2644,20 +2650,6 @@ export async function cmdFleet(args: string[]): Promise<number> {
       return cmdFleetBacklog(rest);
     }
     default: {
-      // New fleet subcommands need no line here: ship
-      // src/cli/fleet-<name>.ts exporting
-      // cmdFleet<PascalName>(args: string[]): Promise<number>.
-      const resolved = resolveFleetSubcommand(sub);
-      if (resolved) {
-        let loaded;
-        try {
-          loaded = await import(resolved.module);
-        } catch (err) {
-          if (!isModuleNotFound(err, resolved.module)) throw err;
-        }
-        const fn = loaded?.[resolved.exportName];
-        if (typeof fn === 'function') return await fn(rest);
-      }
       process.stderr.write(red('error: ') + `unknown fleet subcommand: ${sub}\n`);
       printFleetHelp();
       return 2;
