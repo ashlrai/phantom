@@ -1,6 +1,6 @@
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../core/fleet/runs-live-workers.js';
 
-const usage = 'Usage: phm fleet workers [--lane ID] [--repo NAME] [--older-than-seconds N] [--watch [--interval-ms N] [--max-samples N]] [--json]';
+const usage = 'Usage: phm fleet workers [--lane ID] [--repo NAME] [--older-than-seconds N] [--expect-min N] [--watch [--interval-ms N] [--max-samples N]] [--json]';
 const MAX_CONSECUTIVE_ERRORS = 3;
 
 /** Wait for an operation or a signal, removing the abort listener in either case. */
@@ -24,6 +24,7 @@ export async function cmdFleetWorkers(args: string[]): Promise<number> {
   let lane: string | undefined;
   let repo: string | undefined;
   let olderThanSeconds: number | undefined;
+  let expectMin: number | undefined;
   let intervalMs = 1000;
   let maxSamples: number | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -38,6 +39,10 @@ export async function cmdFleetWorkers(args: string[]): Promise<number> {
     else if (flag === '--repo' && !value.startsWith('--') && /^[a-z0-9._-]{1,64}$/.test(value)) repo = args[++i];
     else if (flag === '--older-than-seconds' && /^\d+$/.test(value) && Number.isSafeInteger(Number(value))) {
       olderThanSeconds = Number(value);
+      i++;
+    }
+    else if (flag === '--expect-min' && /^\d+$/.test(value) && Number.isSafeInteger(Number(value))) {
+      expectMin = Number(value);
       i++;
     }
     else if ((flag === '--interval-ms' || flag === '--max-samples') && /^\d+$/.test(value) &&
@@ -56,10 +61,15 @@ export async function cmdFleetWorkers(args: string[]): Promise<number> {
     process.stderr.write(`error: invalid fleet workers arguments\n${usage}\n`);
     return 2;
   }
+  if (expectMin !== undefined && !seen.has('--json')) {
+    process.stderr.write(`error: --expect-min requires --json\n${usage}\n`);
+    return 2;
+  }
   if (seen.has('--help')) {
     console.log(`${usage}\nFilters apply to worker rows; leaders and orchestrator agents remain global.\n` +
       '--older-than-seconds accepts a nonnegative safe integer; only ages strictly greater than N match. ' +
       'Unknown ages do not match and are counted after lane/repo filtering (null when the source is unavailable).\n' +
+      '--expect-min accepts a nonnegative safe integer and requires --json; it checks the filtered live worker count.\n' +
       'Watch samples immediately, then every --interval-ms (1000..60000, default 1000); ' +
       '--max-samples (1..10000) counts healthy observations. Watch stops after 3 consecutive errors.\n' +
       'Watch JSON emits snapshots or {\"v\":1,\"error\":\"fleet workers unavailable\",\"sourceState\":\"unavailable\"} per line.');
@@ -77,7 +87,11 @@ export async function cmdFleetWorkers(args: string[]): Promise<number> {
     const result = filtered ? { ...snapshot, workers, workerFilter: { lane: lane ?? null, repo: repo ?? null,
       ...(olderThanSeconds === undefined ? {} : { olderThanSeconds, unknownAgeCount }),
       global: ['sourceState', 'leaders', 'orchestratorAgents'] } } : snapshot;
-    if (seen.has('--json')) console.log(JSON.stringify(result));
+    const check = expectMin === undefined ? undefined : {
+      v: 1, expected: expectMin, observed: snapshot.sourceState === 'healthy' ? workers.length : null,
+      passed: snapshot.sourceState === 'healthy' && workers.length >= expectMin, sourceState: snapshot.sourceState,
+    };
+    if (seen.has('--json')) console.log(JSON.stringify(check === undefined ? result : { ...result, expectMinCheck: check }));
     else {
       const lines = [
         `Fleet workers: ${snapshot.sourceState}`,
@@ -92,7 +106,7 @@ export async function cmdFleetWorkers(args: string[]): Promise<number> {
       ];
       console.log(lines.join('\n'));
     }
-    return snapshot.sourceState === 'healthy' ? 0 : 1;
+    return snapshot.sourceState === 'healthy' && (check === undefined || check.passed) ? 0 : 1;
   };
 
   if (!seen.has('--watch')) {
