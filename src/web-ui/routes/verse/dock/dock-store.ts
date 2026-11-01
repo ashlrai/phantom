@@ -207,6 +207,16 @@ export function withTabClosed(state: DockState, pane: DockPaneId): DockState {
   };
 }
 
+/** Swap a tab with its neighbour, leaving the visible panes unchanged. */
+export function withTabMoved(state: DockState, pane: DockPaneId, delta: -1 | 1): DockState {
+  const index = state.tabs.indexOf(pane);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= state.tabs.length) return state;
+  const tabs = [...state.tabs];
+  [tabs[index], tabs[target]] = [tabs[target]!, tabs[index]!];
+  return { ...state, tabs };
+}
+
 /**
  * Close several tabs at once — a tab's "Close other panes" / "Close all
  * panes" folds withTabClosed over the list, so the active-handover rule is
@@ -304,6 +314,12 @@ export function closeDock(): void {
 
 export function closeDockTab(pane: DockPaneId): void {
   setState(withTabClosed(current().state, pane));
+}
+
+export function moveDockTab(pane: DockPaneId, delta: -1 | 1): void {
+  const state = current().state;
+  const next = withTabMoved(state, pane, delta);
+  if (next !== state) setState(next);
 }
 
 export function closeDockTabs(panes: readonly DockPaneId[]): void {
