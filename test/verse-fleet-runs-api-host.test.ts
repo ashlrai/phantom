@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createFleetRunsApi } from './fleet-runs-api.js';
-import { VERSE_FLEET_RUNS_PATH } from './fleet-runs-types.js';
-import type { VerseApiContext } from './verse-api.js';
+import { createFleetRunsApi } from '../src/core/verse/fleet-runs-api.js';
+import { VERSE_FLEET_RUNS_PATH } from '../src/core/verse/fleet-runs-types.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
 async function snapshot(readHostLoad: () => unknown) {
   const fail = async () => { throw new Error('unavailable'); };

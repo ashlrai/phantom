@@ -3,12 +3,13 @@ import type { Readable } from 'node:stream';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { appendBusInbox, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
+import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json|->
 phm comms bus status
-phm comms bus read [--after <cursor>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
-phm comms bus watch [--after <cursor>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>]
+phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
+phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
@@ -24,6 +25,10 @@ Request/reply example: a reply body {"inReplyTo":"request-1"} matches phm comms 
 Use --id=<id>, --in-reply-to=<id>, --to=<address>, --from=<address> or --exclude-from=<address> for values that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
+--checkpoint stores only version, scan cursor and canonical filters in an existing private directory.
+Missing state starts at zero; corrupt state or changed filters fail. Use one consumer per checkpoint.
+Checkpoint advances after stdout delivery, including empty filtered pages. A crash between stdout
+and persistence can replay a page: at-least-once delivery, without handler acknowledgements.
 Limit: 1..100 (default 50). Store: 1 MiB / 1024 records, then full; no eviction.
 Status reports metadata only; expired records still occupy retained capacity. It never resets cursors.
 Missing or unavailable stores have unknown counts and bytes (null); unavailable exits 1.
@@ -35,13 +40,15 @@ Use --timeout-ms 1..3600000 to bound observation time (default: unlimited). Reac
 deadline completes observation successfully; it does not guarantee a reply.
 Watch retries retryable contention after the interval; other failures emit their status and exit 1.
 SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0. Invalid options exit 2.
+An already-started delivery must settle before watch stops; cancellation cannot undo delivered data.
+Rejected asynchronous delivery stops watch with exit 1 without advancing its cursor.
 Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
 
 export interface CommsBusDependencies {
   signal?: AbortSignal;
   stdin?: Readable;
   list?: typeof listBusInboxAfter;
-  emit?: (json: string) => void;
+  emit?: (json: string) => void | Promise<void>;
 }
 
 type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string };
@@ -83,9 +90,34 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): void | Promise<void> {
+  if (deps.emit) return deps.emit(json);
+  if (!checkpoint) { console.log(json); return; }
+  return new Promise<void>((resolve, reject) => {
+    const fail = (error: Error): void => { reject(error); };
+    process.stdout.once('error', fail);
+    try {
+      process.stdout.write(json + '\n', error => {
+        if (error) reject(error); else resolve();
+        // Keep the error listener through the write error event.
+        setImmediate(() => process.stdout.off('error', fail));
+      });
+    } catch (error) {
+      process.stdout.off('error', fail);
+      reject(error);
+    }
+  });
+}
+
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
-  const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
+  const list = deps.list ?? listBusInboxAfter;
+  const deliverPage = (json: string): void | Promise<boolean> => {
+    const pending = deliver(json, deps, checkpoint);
+    if (pending && typeof pending.then === 'function') {
+      return pending.then(() => true, () => { console.error('bus watch: delivery failed'); return false; });
+    }
+  };
   const deadline = timeout === undefined ? undefined : performance.now() + timeout;
   const expired = (): boolean => deadline !== undefined && performance.now() >= deadline;
   const timer = timeout === undefined ? undefined : setTimeout(stop, timeout);
@@ -98,14 +130,19 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       const page = list(after, limit, options);
       if (controller.signal.aborted) break;
       if (page.status !== 'ok' && page.status !== 'retryable') {
-        if (!expired()) emit(JSON.stringify(page));
+        if (!expired()) {
+          const pending = deliverPage(JSON.stringify(page));
+          if (pending) await pending;
+        }
         return 1;
       }
       if (expired()) break;
       if (page.status === 'ok') {
         const output = JSON.stringify(filterPage(page, filters));
         if (expired()) break;
-        emit(output);
+        const pending = deliverPage(output);
+        if (pending && !await pending) return 1;
+        checkpoint?.save(page.nextCursor);
         after = page.nextCursor;
         if (++pages === maxPages) return 0;
       }
@@ -137,7 +174,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     const token = rest[i]!, inline = /^(--id|--in-reply-to|--to|--from|--exclude-from)=(.*)$/s.exec(token);
     const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
     const label = key === '--id' || key === '--in-reply-to' || key === '--to' || key === '--from' || key === '--exclude-from';
-    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'] : ['--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'];
+    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'];
     if (!flags.includes(key) || values.has(key) || !value || (label ? !inline && (flags.includes(value) || /^(--id|--in-reply-to|--to|--from|--exclude-from)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
     values.set(key, value);
   }
@@ -151,30 +188,44 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   for (const label of [filters.id, filters.inReplyTo, filters.to, filters.from, filters.excludeFrom]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
-  const after = Number(values.get('--after') ?? 0), limit = Number(values.get('--limit') ?? 50);
+  if (values.has('--checkpoint') && values.has('--after')) return invalid();
+  let after = Number(values.get('--after') ?? 0);
+  const limit = Number(values.get('--limit') ?? 50);
   if (limit < 1 || limit > 100) return invalid();
-  if (verb === 'watch') {
-    const interval = Number(values.get('--interval-ms') ?? 1000);
-    if (interval < 100 || interval > 60000) return invalid();
-    const maxPages = values.has('--max-pages') ? Number(values.get('--max-pages')) : undefined;
-    if (maxPages !== undefined && (maxPages < 1 || maxPages > 10000)) return invalid();
-    const timeout = values.has('--timeout-ms') ? Number(values.get('--timeout-ms')) : undefined;
-    if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
-    return watch(after, limit, interval, maxPages, timeout, filters, options, deps);
-  }
-  let result;
-  if (verb === 'post') {
-    const input = values.get('--file')!;
-    let text: string | null;
-    if (input === '-') text = await readStdin(deps.stdin ?? process.stdin);
-    else {
-      const file = resolve(input);
-      const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
-      text = read.ok ? read.text : null;
+  let checkpoint: ReturnType<typeof openBusCheckpoint> | undefined;
+  try {
+    if (values.has('--checkpoint')) {
+      checkpoint = openBusCheckpoint(values.get('--checkpoint')!, filters);
+      after = checkpoint.cursor;
     }
-    const parsed = text === null ? null : parseBusEnvelope(text);
-    result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
-  } else result = filterPage(listBusInboxAfter(after, limit, options), filters);
-  console.log(JSON.stringify(result));
-  return busStatusExitCode(result.status);
+    if (verb === 'watch') {
+      const interval = Number(values.get('--interval-ms') ?? 1000);
+      if (interval < 100 || interval > 60000) return invalid();
+      const maxPages = values.has('--max-pages') ? Number(values.get('--max-pages')) : undefined;
+      if (maxPages !== undefined && (maxPages < 1 || maxPages > 10000)) return invalid();
+      const timeout = values.has('--timeout-ms') ? Number(values.get('--timeout-ms')) : undefined;
+      if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
+      return await watch(after, limit, interval, maxPages, timeout, filters, options, deps, checkpoint);
+    }
+    let result;
+    if (verb === 'post') {
+      const input = values.get('--file')!;
+      let text: string | null;
+      if (input === '-') text = await readStdin(deps.stdin ?? process.stdin);
+      else {
+        const file = resolve(input);
+        const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
+        text = read.ok ? read.text : null;
+      }
+      const parsed = text === null ? null : parseBusEnvelope(text);
+      result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
+    } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters);
+    await deliver(JSON.stringify(result), deps, checkpoint);
+    if (result.status === 'ok' && verb === 'read') checkpoint?.save((result as BusInboxPage & { status: 'ok' }).nextCursor);
+    return busStatusExitCode(result.status);
+  } catch (error) {
+    if (!values.has('--checkpoint')) throw error;
+    console.error(`bus checkpoint: ${error instanceof Error ? error.message : 'delivery or persistence failed'}`);
+    return 1;
+  } finally { checkpoint?.close(); }
 }

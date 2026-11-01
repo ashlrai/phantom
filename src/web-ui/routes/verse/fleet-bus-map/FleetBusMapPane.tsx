@@ -7,7 +7,9 @@ import { busFeedMissing, busFeedQuery } from '../fleet/bus-feed-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { agentBusMapQuery } from './agent-bus-map-queries.js';
 import { buildBusMap, lastHopText, topTalkers, truncateAgentId } from './bus-map-model.js';
+import { buildDurableMap, durableTotalsLine } from './durable-map-model.js';
 import styles from './fleet-bus-map.module.css';
 
 const count = (value: number | null) => value === null ? '—' : value.toLocaleString();
@@ -33,7 +35,7 @@ function CopyAgentId({ id }: { id: string }) {
   </>;
 }
 
-export function FleetBusMapPane({ visible }: PaneProps) {
+function DispatchBusMap({ visible }: PaneProps) {
   const read = useQuery(busFeedQuery, { enabled: visible && !busFeedMissing(), freshMs: 0 });
   const refetch = useRefetch(busFeedQuery);
   usePollWhileVisible(() => { if (!busFeedMissing()) refetch(); }, 10_000, { enabled: visible && !busFeedMissing() });
@@ -88,4 +90,43 @@ export function FleetBusMapPane({ visible }: PaneProps) {
       </div>
     </>}
   </section>;
+}
+
+function DurableBusMap({ visible }: PaneProps) {
+  const read = useQuery(agentBusMapQuery, { enabled: visible, freshMs: 0 });
+  const refetch = useRefetch(agentBusMapQuery);
+  usePollWhileVisible(refetch, 10_000, { enabled: visible });
+  const map = useMemo(() => read.data ? buildDurableMap(read.data) : null, [read.data]);
+  const totals = map && durableTotalsLine(map, Date.now());
+  return <section className={styles.root} aria-label="Durable bus">
+    <h3 className={styles.sectionTitle}>Durable bus</h3>
+    {read.data === null ? <p className={styles.message}>Durable bus unavailable (dispatch off or store missing).</p>
+      : !map ? <p className={styles.message}>{read.status === 'error' ? 'Durable bus could not be read.' : 'Reading durable bus…'}</p>
+        : <>
+          {read.status === 'error' && <p className={styles.notice}>Durable bus could not refresh. Showing the last reading.</p>}
+          {totals ? <p className={styles.header}>{totals}</p> : <p className={styles.message}>No durable bus traffic in this page.</p>}
+          {read.data?.messages.length === 100 && <p className={styles.message}>Showing the first 100 live envelopes.</p>}
+          {map.pairs.length > 0 && <div className={styles.tableWrap}>
+            <table className={styles.table} aria-label="Durable bus traffic by agent pair">
+              <thead><tr><th scope="col">Pair</th><th scope="col" className={styles.num}>Envelopes</th><th scope="col">Share</th></tr></thead>
+              <tbody>{map.pairs.map(pair => <tr key={JSON.stringify([pair.from, pair.to])}>
+                <th scope="row" className={styles.pair}>
+                  <span className={styles.agentId} title={pair.from}>{truncateAgentId(pair.from)}</span>
+                  <span aria-hidden="true"> → </span>
+                  <span className={styles.agentId} title={pair.to}>{truncateAgentId(pair.to)}</span>
+                </th>
+                <td className={styles.num}>{pair.hops.toLocaleString()}</td>
+                <td><div className={styles.share}>
+                  <div className={styles.shareTrack}><div className={styles.shareFill} style={{ width: `${pair.share * 100}%` }} aria-label={`${shareText(pair.share)} of envelopes`} /></div>
+                  <span className={styles.shareText}>{shareText(pair.share)}</span>
+                </div></td>
+              </tr>)}</tbody>
+            </table>
+          </div>}
+        </>}
+  </section>;
+}
+
+export function FleetBusMapPane(props: PaneProps) {
+  return <><DispatchBusMap {...props} /><DurableBusMap {...props} /></>;
 }

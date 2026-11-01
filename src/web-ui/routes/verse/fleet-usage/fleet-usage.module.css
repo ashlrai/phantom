@@ -29,3 +29,9 @@
 .table th { padding: 0 var(--space-2) var(--space-1) 0; color: var(--text-tertiary); font-weight: 400; text-align: left; }
 .table td { padding: 0 var(--space-2) 0 0; font-variant-numeric: tabular-nums; }
 .num { text-align: right; }
+
+.auditRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); overflow-wrap: anywhere; }
+.verdict { border: 1px solid currentColor; border-radius: var(--radius-full); padding: 0 var(--space-2); color: var(--text-secondary); }
+.verdict[data-tone='bad'] { color: var(--status-danger-solid); }
+.verdict[data-tone='warn'] { color: var(--status-warning-solid); }
+.verdict[data-tone='ok'] { color: var(--accent-500); }
