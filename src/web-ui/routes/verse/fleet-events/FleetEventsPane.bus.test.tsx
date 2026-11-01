@@ -52,6 +52,21 @@ it('counts bus arrivals while paused and preserves them on resume', async () => 
   expect(rows()[0]).toHaveTextContent('new arrival');
 });
 
+it('filters CI incidents and links to the GitHub run', async () => {
+  const url = 'https://github.com/ashlrai/phantom/actions/runs/123/attempts/2';
+  const incident = { cursor: 3, receivedAt: 1, envelope: { id: 'ci-123', from: 'system:ci', to: 'mason', priority: 'P1', ttl: 5000,
+    body: { kind: 'ci.failed-scheduled-run', repo: 'ashlrai/phantom', runId: 123, attempt: 2, url, workflow: 'CI', failedJobCount: 1, jobs: [{ name: 'build' }] } } };
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/agent-bus?')
+    ? { ...bus, messages: [...bus.messages, incident], nextCursor: 3 } : runs)));
+  render(<FleetEventsPane {...props} />);
+  const chip = await screen.findByRole('button', { name: 'ci' });
+  fireEvent.click(chip);
+  expect(chip).toHaveAttribute('aria-pressed', 'true');
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent('CI failed: ashlrai/phantom CI run 123, attempt 2 · 1 job(s): build');
+  expect(within(rows()[0]!).getByRole('link', { name: /GitHub run for/ })).toHaveAttribute('href', url);
+});
+
 it('keeps fleet events visible and remembers a missing bus route', async () => {
   const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).includes('/agent-bus?')
     ? Response.json({}, { status: 404 }) : Response.json(runs));
