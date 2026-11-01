@@ -542,6 +542,7 @@ export const REAL_IO_TEST_FILES = [
   'test/confine-autonomous-darwin-310b.test.ts', // real sandbox-exec children + a real net server as an egress target
   'test/engines-judges-310b.test.ts', // execs the grok-cli launcher (fake pinned binary in a seat fixture) exactly as the fleet would, to inspect env scrubbing
   'test/fleet-live-api-310b.test.ts', // real web server bind for /api/verse/fleet/live
+  'test/fleet-live-api-drop-jobs.test.ts', // real web server bind for /api/verse/fleet/live/drop-jobs
   'test/overnight-api-310b.test.ts', // real web server bind for /api/verse/overnight
   'test/w1.post-merge-halt.test.ts', // real git in h1 fixture repos for the post-merge halt
   // Added at the 3.10 protected-infra pass (R3e): two the guard flagged, one it cannot see.

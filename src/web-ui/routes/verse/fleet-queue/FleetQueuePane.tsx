@@ -16,12 +16,19 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { heldLaneLine, laneHoldsQuery, queuedBehindHold } from './queue-holds-model.js';
 import { laneDrainText } from './queue-lane-drain.js';
 import { restockNotice } from './queue-repo-mix.js';
+import { DropJobSheet } from './DropJobSheet.js';
+import { dropJobsQuery } from './drop-job-queries.js';
+import { waitingRows } from './drop-job-model.js';
 import styles from './fleet-queue.module.css';
 
 export function FleetQueuePane({ visible, host }: PaneProps) {
   const read = useQuery(opsQueueQuery, { enabled: visible, freshMs: 0 });
   const snapshot = useQuery(fleetSupplyQuery, { enabled: visible, freshMs: 0 });
   const holds = useQuery(laneHoldsQuery, { enabled: visible, freshMs: 0 });
+  const drops = useQuery(dropJobsQuery, { enabled: visible, freshMs: 0 });
+  const refetchDrops = useRefetch(dropJobsQuery);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  usePollWhileVisible(refetchDrops, 15_000, { enabled: visible });
   const refetch = useRefetch(opsQueueQuery);
   const refetchSnapshot = useRefetch(fleetSupplyQuery);
   const refetchHolds = useRefetch(laneHoldsQuery);
@@ -61,6 +68,7 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
   const waiting = queuedBehindHold(data.byLane, holds.data);
   return <section className={styles.root} aria-label="Queue">
     <p className={styles.header}>{data.total} jobs · {data.ready} ready · {data.parked} parked · {data.skipsLast24h ?? '—'} precheck skips in 24 h{waiting > 0 && ` · ${waiting} queued lines wait on held lanes`}</p>
+    <Button size="sm" disabled={drops.data === null || drops.data === undefined} title={drops.data === null ? 'Update Phantom to write jobs from here' : undefined} onClick={() => setSheetOpen(true)}>New job</Button>
     {notice && <p className={styles.notice} role="status">{notice}</p>}
     {holds.status === 'error' && <p className={styles.notice} role="alert">Lane holds could not refresh.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Queue could not refresh. Showing the last reading.</p>}
@@ -84,5 +92,10 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
         <span><JobRefs text={`${skip.job} · ${skip.code} · ${explainSkip(skip.code, skip.reason)}`} onOpenJob={openJob} /></span> <time className={styles.muted} dateTime={skip.at}>{formatRelative(skip.at)}</time>
       </li>)}</ul>}
     </section>
+    {drops.data && <section aria-label="Waiting in drop"><h3 className={styles.heading}>Waiting in drop</h3>
+      <ul className={styles.list}>{waitingRows(drops.data.items, Date.now()).map(row => <li className={styles.row} key={row.id}>{row.id} · {row.lane} · {row.tier} · {row.title} · {row.age}</li>)}</ul>
+    </section>}
+    {drops.status === 'error' && <p aria-live="polite">Waiting in drop could not refresh.</p>}
+    <DropJobSheet open={visible && sheetOpen && drops.data !== null} onClose={() => setSheetOpen(false)} />
   </section>;
 }

@@ -2540,6 +2540,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
     return cmdFleetJobRead(args.slice(1));
   }
   if (args[0] === 'stray-slots') return (await import('./fleet-stray-slots.js')).cmdFleetStraySlots(args.slice(1));
+  if (args[0] === 'dispatch-summary') return (await import('./fleet-dispatch-summary.js')).cmdFleetDispatchSummary(args.slice(1));
   if (args[0] === 'edit-collisions') return (await import('./fleet-edit-collisions.js')).cmdFleetEditCollisions(args.slice(1));
   if (args[0] === 'ship-gap') return (await import('./fleet-ship-gap.js')).cmdFleetShipGap(args.slice(1));
   if (args[0] === 'workers') {
