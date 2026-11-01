@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Gauge } from '../../../components/charts/Gauge.js';
 import { StatTile } from '../../../components/charts/StatTile.js';
 import { Button } from '../../../components/primitives/index.js';
-import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
+import { useMutationHold, useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { openDockPane, requestTerminal } from '../dock/dock-store.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
 import { hostView } from './fleet-host-model.js';
 import { plannerRows, plannerTell } from './planners-model.js';
+import { releaseRows, resetLoopLine, unreleasedResets } from './reset-loop-model.js';
+import { resetLoopQuery } from './reset-loop-query.js';
 import styles from './fleet-host.module.css';
 
 const CLAUDE_LANE_FIX = '~/.ashlr-runs/bin/fix-claude-lane.sh';
@@ -90,8 +93,37 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
             </li>)}</ul> : <p className={styles.muted}>No planner passes recorded</p>}
           {tell ? <p className={styles.metric} data-tone={tell.tone} role="status">{tell.text}</p> : null}
         </section>
+        <ResetReleasesSection visible={visible} />
         <DropQueueCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
   </div>;
+}
+
+function ResetReleasesSection({ visible }: { visible: boolean }) {
+  const sectionVisible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  const active = visible && sectionVisible && documentVisible;
+  const { hasHold } = useMutationHold();
+  const read = useQuery(resetLoopQuery, { enabled: active, freshMs: 0 });
+  const resets = useQuery(usageResetsQuery, { enabled: active, freshMs: 0 });
+  const refetch = useRefetch(resetLoopQuery);
+  const refetchResets = useRefetch(usageResetsQuery);
+  usePollWhileVisible(refetch, 30_000, { enabled: visible, refreshOnShow: false });
+  usePollWhileVisible(refetchResets, 30_000, { enabled: visible, refreshOnShow: false });
+  const now = Date.now();
+  const line = read.data ? resetLoopLine(read.data, now, hasHold) : null;
+  const rows = read.data ? releaseRows(read.data, now) : [];
+  const incidents = read.status !== 'error' && resets.status !== 'error'
+    ? unreleasedResets(resets.data ?? null, read.data ?? null, now) : [];
+  return <section className={styles.section} aria-label="Reset releases">
+    <h3 className={styles.title}>Reset releases</h3>
+    {line ? <p className={styles.metric} data-tone={line.tone}>{line.text}</p>
+      : <p className={styles.muted}>{read.data === null || read.status === 'error' ? 'Reset loop unavailable' : 'Reading reset loop…'}</p>}
+    {read.status === 'error' && read.data ? <p className={styles.muted} role="status">Reset loop could not refresh. Showing the last reading.</p> : null}
+    {read.data?.loop.lastError ? <p className={styles.line} data-tone="bad">Reset loop error: {read.data.loop.lastError}</p> : null}
+    {rows.length ? <ul>{rows.map((row, i) => <li className={styles.line} key={`${row}:${i}`}>{row}</li>)}</ul> : null}
+    {resets.data === null || resets.status === 'error' ? <p className={styles.muted}>Reset detection unavailable</p> : null}
+    {incidents.map(({ lane, sinceText }) => <p className={styles.line} data-tone="bad" role="alert" key={lane}>Reset detected on {lane} {sinceText} but the lane is still held</p>)}
+  </section>;
 }
