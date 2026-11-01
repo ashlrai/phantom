@@ -1,3 +1,4 @@
+import { mergeStallFacts } from '../../routes/verse/shell/merge-stall-facts.js';
 import { paneLinkUrl } from '../../routes/verse/dock/pane-link.js';
 import type { AppNotification } from './types.js';
 
@@ -6,9 +7,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
 
 /** Surface a sustained mismatch between publishes and confirmed merges. */
 export function deriveMergeStallNotification(data: unknown, nowMs: number): AppNotification[] {
-  if (!Number.isFinite(new Date(nowMs).getTime()) || !record(data) || !record(data.sources) || data.sources.merges !== 'healthy'
-    || !record(data.mergesLastHour) || data.mergesLastHour.count !== 0
-    || !Array.isArray(data.publishesLastHour) || data.publishesLastHour.length < 3) return [];
+  if (!mergeStallFacts(data, nowMs)) return [];
 
   const detail = data.publishesLastHour.slice(0, 3).map((publish: unknown) => {
     const job = record(publish) && typeof publish.job === 'string' ? publish.job : 'Unknown job';
