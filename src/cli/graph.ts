@@ -1,8 +1,10 @@
 /** Read-only GRAPH-1 CLI. Exit codes: 0 success/help, 1 unavailable/error, 2 usage. */
 import { graphNeighborhood, type GraphDirection } from '../core/graph/neighborhood.js';
+import { delegationCycles } from '../core/graph/delegation-cycles.js';
 import { renderMermaid, MermaidLimitError } from './graph-mermaid.js';
 
 const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
+       phm graph cycles [--json]
        phm graph <nodes|edges> [--agent <bare-agent-id>] [--json]
        phm graph export --format mermaid [--from <id>] [--to <id>]
        phm graph node <node-id> [--json]
@@ -12,6 +14,8 @@ const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
   node        Retrieve one exact graph node record.
   edges       List graph edge records.
   status      Report graph availability and node/edge counts.
+  cycles      Report cyclic can-delegate components and their edge evidence.
+              The current inventory loader does not establish delegation coverage.
   export      Export the loaded graph as Mermaid flowchart text.
               Example: phm graph export --format mermaid > handoff-graph.mmd
               A small export might contain:
@@ -45,7 +49,7 @@ Exit codes: 0 success/help, 1 unavailable or loader failure, 2 invalid arguments
 Node and neighbors also exit 1 when the node is not found.
 `;
 
-type GraphCommand = 'nodes' | 'node' | 'edges' | 'status' | 'neighbors' | 'export';
+type GraphCommand = 'nodes' | 'node' | 'edges' | 'status' | 'neighbors' | 'export' | 'cycles';
 type ErrorCode = 'GRAPH_USAGE' | 'GRAPH_UNAVAILABLE' | 'GRAPH_LOAD_FAILED' | 'GRAPH_NODE_NOT_FOUND' | 'GRAPH_EXPORT_LIMIT';
 const NODE_KINDS = ['agent', 'engine-account', 'model', 'mcp'] as const;
 const EDGE_KINDS = ['can-message', 'can-delegate', 'reviews', 'routes-to'] as const;
@@ -66,7 +70,7 @@ interface Options {
 }
 
 function isCommand(value: string): value is GraphCommand {
-  return value === 'nodes' || value === 'node' || value === 'edges' || value === 'status' || value === 'neighbors' || value === 'export';
+  return value === 'nodes' || value === 'node' || value === 'edges' || value === 'status' || value === 'neighbors' || value === 'export' || value === 'cycles';
 }
 
 function parse(args: string[]): Options {
@@ -163,6 +167,24 @@ export async function cmdGraph(args: string[]): Promise<number> {
       throw new Error('Invalid graph snapshot');
     }
     const command = options.command!;
+    if (command === 'cycles') {
+      const components = delegationCycles(graph);
+      const acyclic = components.length ? false : null;
+      if (options.json) {
+        console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', components, acyclic,
+          delegationCoverage: 'unknown', complete: graph.complete ?? null,
+          sources: graph.sources ?? null, issues: graph.issues ?? null }));
+      } else {
+        console.log(`Delegation cycles: ${components.length}`);
+        for (const component of components) {
+          console.log(`Agents that may deadlock through delegation: ${component.nodeIds.join(', ')}`);
+          for (const edge of component.edges) console.log(`  ${edge.from} -> ${edge.to} (${edge.id})`);
+        }
+        console.log(`Graph complete: ${graph.complete === undefined ? 'unknown' : graph.complete}; issues: ${graph.issues?.length ?? 'unknown'}.`);
+        console.log('Delegation coverage is unknown; an empty result cannot prove acyclicity.');
+      }
+      return 0;
+    }
     if (command === 'export') {
       try {
         console.log(renderMermaid(graph, { from: options.from, to: options.to }));

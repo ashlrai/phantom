@@ -1,5 +1,6 @@
 .pane { padding: var(--space-4); color: var(--text-primary); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }
+.empty { margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); }
 .tile, .primary, .secondary { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--bg-surface); font: inherit; cursor: pointer; }
 .tile { display: flex; flex-direction: column; gap: var(--space-2); text-align: left; }
 .primary { width: 100%; font-weight: 600; background: var(--bg-hover); }
