@@ -18,6 +18,7 @@
 import type { ControlSnapshot, FleetStatus, RunState } from '../../data/api-types.js';
 import type { InboxProposal } from '../../data/queries.js';
 import type { AppNotification, NotificationSeverity } from './types.js';
+import { deriveMergeStallNotification } from './deriveMergeStallNotification.js';
 
 export interface DeriveInputs {
   control?: ControlSnapshot;
@@ -45,7 +46,7 @@ function fleetActionHref(id: string): string {
   return '/control/daemon';
 }
 
-export function deriveNotifications(input: DeriveInputs): AppNotification[] {
+export function deriveNotifications(input: DeriveInputs, fleetRuns?: unknown): AppNotification[] {
   const out: AppNotification[] = [];
   const now = Date.now();
 
@@ -230,6 +231,7 @@ export function deriveNotifications(input: DeriveInputs): AppNotification[] {
     }
   }
 
+  out.push(...deriveMergeStallNotification(fleetRuns, now));
   return out;
 }
 
