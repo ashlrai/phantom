@@ -2679,6 +2679,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
+  console.log(`    ashlr fleet class-share [--hours N] [--json]`);
   console.log(`    ashlr fleet usage-audit [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# did each lane\'s usage meter move this hour? unmoving meter')}`);
   console.log(`                          ${cyan('#   + queued work = incident (read-only, RQ-PHX-ZEROWASTEAUDIT31)')}`);
