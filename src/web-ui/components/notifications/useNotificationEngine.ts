@@ -39,6 +39,8 @@ import { recordMeterSample, type MeterWatchLog } from './meter-watch-model.js';
 import { loadMeterWatchLog, saveMeterWatchLog } from './meter-watch-store.js';
 import { deriveReleasePrNotifications } from './deriveReleasePrNotifications.js';
 import { deriveUpdateNotifications } from './deriveUpdateNotifications.js';
+import { derivePhonePendingNotifications } from './derivePhonePendingNotifications.js';
+import { phonePendingQuery } from './phone-pending-query.js';
 import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
 import { reconcileNotifications } from './notification-store.js';
 
@@ -58,6 +60,7 @@ export function useNotificationEngine(): void {
   const releasePr = useQuery(releasePrQuery);
   const ledger = useQuery(fleetLedgerQuery);
   const nativeUpdates = useDesktopUpdates();
+  const phonePending = useQuery(phonePendingQuery);
   usePollWhileVisible(() => {
     void refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch()).then(() =>
       refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch()));
@@ -65,6 +68,7 @@ export function useNotificationEngine(): void {
   usePollWhileVisible(useRefetch(updateStatusQuery), NOTIFY_POLL_MS);
   usePollWhileVisible(useRefetch(releasePrQuery), NOTIFY_POLL_MS);
   usePollWhileVisible(useRefetch(fleetLedgerQuery), NOTIFY_POLL_MS);
+  usePollWhileVisible(useRefetch(phonePendingQuery), 30_000);
 
   const controlData = control.data;
   const fleetData = fleet.data;
@@ -75,6 +79,7 @@ export function useNotificationEngine(): void {
   const updateData = update.data;
   const releasePrData = releasePr.data;
   const ledgerData = ledger.data;
+  const phonePendingData = phonePending.data;
 
   useEffect(() => {
     const now = Date.now();
@@ -108,7 +113,8 @@ export function useNotificationEngine(): void {
         deriveMeterWatchNotifications(meterLog, ledgerData, now),
         deriveUpdateNotifications(updateData ?? null, now, nativeUpdates),
         deriveReleasePrNotifications(releasePrData, now),
+        derivePhonePendingNotifications({ approvals: phonePendingData, nowMs: now }),
       ),
     );
-  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates]);
+  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates, phonePendingData]);
 }
