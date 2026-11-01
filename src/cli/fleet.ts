@@ -2505,6 +2505,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   graph:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'phantom fleet graph [--json] [--queue-dir <abs>]' },
   lanes:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'ashlr fleet lanes [--json] [--queue-dir <abs>]' },
   'usage-audit':  { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'ashlr fleet usage-audit [--json] [--queue-dir <abs>]' },
+  'lane-models':  { allowed: { flags: ['--json'], values: ['--runs-dir', '--models'] }, usage: 'ashlr fleet lane-models [--json] [--runs-dir <abs>] [--models <abs>]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
   doctor:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet doctor [--json]' },
@@ -2681,6 +2682,9 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet usage-audit [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# did each lane\'s usage meter move this hour? unmoving meter')}`);
   console.log(`                          ${cyan('#   + queued work = incident (read-only, RQ-PHX-ZEROWASTEAUDIT31)')}`);
+  console.log(`    ashlr fleet lane-models [--json] [--runs-dir <abs>] [--models <abs>]`);
+  console.log(`                          ${cyan('# effective model per lane+tier; flags a lane whose last launch')}`);
+  console.log(`                          ${cyan('#   ran another model (read-only, RQ-PHX-LANEMODELVIEW31)')}`);
   console.log(`    phm fleet runs [--json]       ${cyan('# host runs and lane state')}`);
   console.log(`    phm fleet workers [--lane ID] [--repo NAME] [--json] ${cyan('# live host processes')}`);
   console.log(`    phm fleet wait-jobs --job ID --timeout-ms N [--interval-ms N] --json`);
