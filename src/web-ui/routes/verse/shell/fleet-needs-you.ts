@@ -35,7 +35,7 @@ export interface FleetNeedsYouItem {
   /** The plain next step, in operator language — never a path. */
   nextStep: string;
   target: FleetNeedsYouTarget;
-  open?: { kind: 'pane'; paneId: string } | { kind: 'terminal'; command: string };
+  open?: { kind: 'pane'; paneId: string } | { kind: 'terminal'; command: string } | { kind: 'copy'; command: string };
 }
 
 export interface FleetNeedsYouResult {
@@ -44,8 +44,7 @@ export interface FleetNeedsYouResult {
   items: FleetNeedsYouItem[];
 }
 
-/** The drawer's poll cadence while it is open. */
-export const FLEET_NEEDS_YOU_POLL_MS = 15_000;
+export { FLEET_NEEDS_YOU_POLL_MS } from './fleet-needs-you-query.js';
 export const LEADER_PASS_CADENCE_MS = 15 * 60_000;
 export const LEADER_OVERDUE_MS = 2 * LEADER_PASS_CADENCE_MS;
 
