@@ -4,6 +4,7 @@
  *   ashlr knowledge build [--repo <path>] [--allow-cloud]
  *   ashlr knowledge graph [--json]
  *   ashlr knowledge impact <file|symbol> [--repo <path>] [--json]
+ *   ashlr knowledge handoff --file <handoff.json> [--json]
  *
  * Graph and impact are read-only and local. Indexing/embedding run locally;
  * --allow-cloud does not change the behavior of knowledge build.
@@ -16,6 +17,7 @@ import { pad, makeColors, isTty } from './ui.js';
 import { isEnrolled } from '../core/sandbox/policy.js';
 import { runKnowledgeContextPack } from './knowledge-context-pack.js';
 import { runKnowledgeEditPreflight } from './knowledge-edit-preflight.js';
+import { runKnowledgeHandoff } from './knowledge-handoff.js';
 
 /**
  * Resolve user-supplied repo paths to absolute and partition them by enrollment.
@@ -111,6 +113,7 @@ function printKnowledgeHelp(): void {
     ['impact <target> [--repo <path>] [--json]', 'What references/depends on a file or symbol?'],
     ['context-pack --file <snapshot.json> [--json]', 'Build bounded context from a task/output snapshot.'],
     ['edit-preflight --file <edits.json> [--json]', 'Check edits against the shared-file policy.'],
+    ['handoff --file <handoff.json> [--json]', 'Validate and render a planner-to-worker prompt.'],
   ];
   const w = Math.max(...subs.map(([s]) => s.length));
   for (const [sub, desc] of subs) {
@@ -122,7 +125,7 @@ function printKnowledgeHelp(): void {
   const opts: [string, string][] = [
     ['--repo <path>', 'Scope to a single enrolled repo (absolute path or name).'],
     ['--allow-cloud', 'Accepted by build for compatibility; indexing remains local.'],
-    ['--file <path>', 'Read a JSON input for context-pack or edit-preflight.'],
+    ['--file <path>', 'Read a JSON input for context-pack, edit-preflight or handoff.'],
     ['--json',        'Emit structured JSON instead of human-readable output.'],
     ['--help',        'Show this help.'],
   ];
@@ -571,6 +574,7 @@ async function runImpact(subArgs: string[]): Promise<number> {
  *   build [--repo <path>] [--allow-cloud]  — index enrolled repos
  *   graph [--json]                         — print knowledge graph
  *   impact <target> [--repo <path>]        — reference + dependency analysis
+ *   handoff --file <handoff.json> [--json] — render a validated worker prompt
  *
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
@@ -603,6 +607,9 @@ async function dispatchKnowledge(args: string[]): Promise<number> {
     case 'edit-preflight':
       return runKnowledgeEditPreflight(subArgs);
 
+    case 'handoff':
+      return runKnowledgeHandoff(subArgs);
+
     default:
       process.stderr.write(`error: Unknown knowledge subcommand or flag: ${sub}\n`);
       process.stderr.write('Run `ashlr knowledge --help` for usage.\n');
@@ -622,7 +629,7 @@ async function runCommand(args: string[], run: () => Promise<number>): Promise<n
     code = 1;
   }
   if (code !== 0 && args.includes('--json') &&
-      !(completed && args[0] === 'edit-preflight' && code === 1)) {
+      !(completed && (args[0] === 'edit-preflight' || args[0] === 'handoff') && code === 1)) {
     process.stdout.write(JSON.stringify({ error: true, exitCode: code }) + '\n');
   }
   return code;
