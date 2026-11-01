@@ -2429,6 +2429,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   oversight:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet oversight [--json]' },
   'judge-traces': { allowed: { flags: ['--json', '--outcome-only'], values: ['--limit', '--proposal'] }, usage: 'ashlr fleet judge-traces [--limit N] [--proposal <id>] [--outcome-only] [--json]' },
   'judge-health': { allowed: { flags: ['--json', '--degradation'] }, usage: 'ashlr fleet judge-health [--degradation] [--json]' },
+  backlog:        { allowed: { flags: ['--json'], values: ['--repo', '--limit', '--merges', '--recuts'] }, usage: 'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--merges <n>] [--recuts <n>] [--json]' },
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
@@ -2543,6 +2544,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
       return cmdFleetJudgeHealth(rest);
     case 'optimize-prompt':
       return cmdFleetOptimizePrompt(rest);
+    case 'backlog': {
+      const { cmdFleetBacklog } = await import('./fleet-backlog.js');
+      return cmdFleetBacklog(rest);
+    }
     default:
       process.stderr.write(red('error: ') + `unknown fleet subcommand: ${sub}\n`);
       printFleetHelp();
@@ -2592,6 +2597,8 @@ function printFleetHelp(): void {
   console.log(`                          ` + cyan('# judge calibration: kappa + dark-current + degradation (M145)'));
   console.log(`    ashlr fleet optimize-prompt --target judge|strategist [--rounds N] [--dry-run]`);
   console.log(`                          ` + cyan('# GEPA offline prompt optimizer — outputs candidate to ~/.ashlr/optimizer/ (M150)'));
+  console.log(`    ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--json]`);
+  console.log(`                          ` + cyan('# read-only triage of open PRs: ready/behind/conflicted/waiting, never merges'));
   console.log('');
 }
 
