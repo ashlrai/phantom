@@ -23,6 +23,7 @@ import { newestLeaderPassMs, parseInboxAt } from '../fleet/interject-ack-model.j
 import { derivePulse, readPulseInput } from '../ops/merge-pulse-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
 import { mergeStallFacts } from './merge-stall-facts.js';
+import { deriveClaudeLaneNeedsYou } from './claude-lane-needs-you.js';
 
 /** The surface an item's "Open" button takes the operator to. */
 export type FleetNeedsYouTarget = 'fleet' | 'ops' | 'settings';
@@ -47,13 +48,6 @@ export interface FleetNeedsYouResult {
 export { FLEET_NEEDS_YOU_POLL_MS } from './fleet-needs-you-query.js';
 export const LEADER_PASS_CADENCE_MS = 15 * 60_000;
 export const LEADER_OVERDUE_MS = 2 * LEADER_PASS_CADENCE_MS;
-
-/**
- * A server status line is printed only when it cannot smuggle a path or a
- * second line onto the screen (the honesty rule: basenames only). A line
- * that fails this is replaced by a fixed sentence.
- */
-const SAFE_STATUS = /^[\w .:()-]{1,160}$/;
 
 /** Below these free readings the host itself is the problem. */
 const LOW_DISK_GB = 10;
@@ -86,18 +80,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
     });
   }
 
-  const lane = snapshot.claudeLane;
-  if (lane !== null && /down/i.test(lane)) {
-    items.push({
-      id: 'claude-lane-down',
-      open: { kind: 'terminal', command: '~/.ashlr-runs/bin/fix-claude-lane.sh' },
-      severity: 'urgent',
-      title: 'The Claude lane is down',
-      detail: SAFE_STATUS.test(lane) ? `Claude lane: ${lane}` : 'The lane reported itself down.',
-      nextStep: "Run the Claude lane fix script from the runs directory's bin folder, then check Fleet",
-      target: 'fleet',
-    });
-  }
+  items.push(...deriveClaudeLaneNeedsYou(snapshot, nowMs));
 
   if (snapshot.switches.length > 0) {
     items.push({
