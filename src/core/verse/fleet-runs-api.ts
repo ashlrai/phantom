@@ -1,11 +1,10 @@
-import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readHostLoad } from '../fleet/host-load.js';
+import { createPhantomMergeWindow, type MergeWindowRunner } from '../fleet/phantom-merge-window.js';
 import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
@@ -36,7 +35,11 @@ export interface FleetRunsApiDeps {
   readInbox?: (limit: number) => Promise<unknown>;
   appendInbox?: (text: string, source: string) => Promise<unknown>;
   codexPersonal?: () => Promise<unknown>;
+  /** Complete, already validated merge snapshot; injected readers retain the existing projection contract.
+   * Throw on failure, or return { count: null, items: [], sourceState: 'degraded' } when unavailable. */
   mergedLastHour?: () => Promise<unknown>;
+  /** Override only the bounded read-only gh transport used by the default merge source. */
+  mergeWindowRunner?: MergeWindowRunner;
   now?: () => number;
   /** Runs directory the inbox sink and the channel receipt store root at.
    * Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs — the same resolution
@@ -106,21 +109,7 @@ async function personal(now: number): Promise<unknown> {
 }
 export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
-  let mergedCache: { at: number; value: unknown } | undefined;
-  const merges = deps.mergedLastHour ?? (async () => {
-    if (mergedCache && now() - mergedCache.at < 60_000) return mergedCache.value;
-    const { stdout } = await promisify(execFile)('gh', ['api', 'search/issues', '-X', 'GET', '-f',
-      'q=org:ashlrai is:pr is:merged merged:>' + new Date(now() - 3_600_000).toISOString(), '-f', 'per_page=30'], { timeout: 15_000, maxBuffer: 1024 * 1024 });
-    const raw: unknown = JSON.parse(stdout);
-    if (!record(raw) || typeof raw.total_count !== 'number' || !Array.isArray(raw.items)) throw new Error('merges');
-    const value = { count: raw.total_count, items: raw.items.map((item: unknown) => {
-      if (!record(item) || typeof item.repository_url !== 'string' || !/^https:\/\/api.github.com\/repos\/ashlrai\/[\w.-]+$/.test(item.repository_url)) throw new Error('repo');
-      return { repo: item.repository_url.replace('https://api.github.com/repos/', ''), number: item.number, title: item.title };
-    }) };
-    project(value, mergesShape);
-    mergedCache = { at: now(), value };
-    return value;
-  });
+  const merges = deps.mergedLastHour ?? createPhantomMergeWindow({ now, runner: deps.mergeWindowRunner });
   const runs = deps.readRunsDir ?? (async () => (await import('../fleet/runs-dir-state.js' as string)).readFleetRunsDirState());
   const workers = deps.listWorkers ?? (async () => (await import('../fleet/runs-live-workers.js' as string)).listLiveWorkers());
   const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit }));
