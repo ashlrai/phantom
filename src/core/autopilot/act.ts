@@ -9,8 +9,10 @@
  *   recut           the conflicting lane's changes replayed onto the current
  *                   base (`git merge --squash <head>` on a fresh checkout of
  *                   origin/<base>), pushed as `<head>-recut`, then opened as a
- *                   replacement PR. The old PR is never closed here — only
- *                   after the recut merges does `close-superseded` close it.
+ *                   replacement PR and requeued through the merge queue when
+ *                   the lane itself was queued. The old PR is never closed
+ *                   here — only after the recut merges does `close-superseded`
+ *                   close it.
  *   merge-base      `git merge origin/<base>`, on a head a strict base would
  *                   refuse as behind; conflicts go to the fixer, and every
  *                   conflict marker must be gone before anything commits
@@ -67,7 +69,7 @@ import {
   type Observation,
   type Plan,
 } from './diagnose.js';
-import { closePr, commentOnPr, createPr, defaultGh, observe, readPr, readPrByBranch, rerunJob, type Gh } from './github.js';
+import { closePr, commentOnPr, createPr, defaultGh, observe, queuePrMerge, readPr, readPrByBranch, rerunJob, type Gh } from './github.js';
 import type { PrView } from './diagnose.js';
 
 const mergeKey = (obs: Observation) => `merge-base:${obs.pr.headSha}:${obs.pr.baseSha}`;
@@ -128,8 +130,8 @@ export interface TickResult {
   headSha: string;
   plan: Plan['action'];
   reason: string;
-  /** What happened when acting: pushed, recut (branch pushed and its PR opened), closed a superseded PR, rerun, refused, verify-failed, no-change, error, or `planned` without --apply. */
-  result: 'planned' | 'pushed' | 'recut' | 'closed' | 'rerun' | 'refused' | 'verify-failed' | 'no-change' | 'error' | 'none';
+  /** What happened when acting: pushed, recut (branch pushed and its PR opened), requeued a recut onto the merge queue, closed a superseded PR, rerun, refused, verify-failed, no-change, error, or `planned` without --apply. */
+  result: 'planned' | 'pushed' | 'recut' | 'requeued' | 'closed' | 'rerun' | 'refused' | 'verify-failed' | 'no-change' | 'error' | 'none';
   detail: string[];
   newHead: string | null;
 }
@@ -143,7 +145,7 @@ export function loadState(repo: string, n: number): AutopilotState {
     const base = emptyState();
     const r = raw.recut && typeof raw.recut === 'object' ? raw.recut : null;
     const recut = r && typeof r.branch === 'string' && r.branch && typeof r.fromHead === 'string' && r.fromHead
-      ? { branch: r.branch, number: Number.isSafeInteger(r.number) ? r.number! : 0, fromHead: r.fromHead }
+      ? { branch: r.branch, number: Number.isSafeInteger(r.number) ? r.number! : 0, fromHead: r.fromHead, ...(r.queued === true ? { queued: true } : {}) }
       : undefined;
     return {
       pushes: Number.isSafeInteger(raw.pushes) ? raw.pushes! : 0,
@@ -288,6 +290,45 @@ function recutSpec(pr: PrView, branch: string): { title: string; head: string; b
   };
 }
 
+const RECUT_QUEUE_ATTEMPTS = 3;
+
+/**
+ * Put a pushed recut back on the merge queue when the lane it replaces was
+ * queued — the conflicting PR's auto-merge was armed, so its replacement goes
+ * through the same sanctioned entry (`gh pr merge --auto --squash
+ * --match-head-commit`): required checks and branch protection still decide.
+ * `state.recut.queued` makes it once-only, so a repeated event never queues
+ * twice. Bounded retries while the queue call keeps failing, then the line
+ * says a person queues it. An unqueued lane's recut is never queued for it.
+ */
+async function requeueRecut(opts: TickOptions, obs: Observation, state: AutopilotState, gh: Gh): Promise<{ line: string; queued: boolean } | null> {
+  const recut = state.recut;
+  if (!recut?.number || recut.queued === true || !obs.pr.autoMerge) return null;
+  const key = `recut-queue:${recut.branch}`;
+  if ((state.attempts[key] ?? 0) >= RECUT_QUEUE_ATTEMPTS) return null;
+  let head: string;
+  try {
+    const live = await readPr(opts.repo, recut.number, gh);
+    if (live.state !== 'open') return null;
+    head = live.headSha;
+  } catch {
+    return null; // unreadable this tick; the next one re-reads — no attempt spent
+  }
+  const stopped = await stopNow(opts);
+  if (stopped) return { line: `${stopped}; recut #${recut.number} is open but not requeued`, queued: false };
+  state.attempts[key] = (state.attempts[key] ?? 0) + 1;
+  saveState(opts.repo, opts.number, state);
+  try {
+    await queuePrMerge(opts.repo, recut.number, head, gh);
+    recut.queued = true;
+    saveState(opts.repo, opts.number, state);
+    return { line: `requeued recut #${recut.number} onto the merge queue (auto-merge pinned to ${head.slice(0, 8)}; required checks still decide)`, queued: true };
+  } catch (err) {
+    const last = (state.attempts[key] ?? 0) >= RECUT_QUEUE_ATTEMPTS;
+    return { line: `could not requeue recut #${recut.number} on the merge queue: ${err instanceof Error ? err.message : String(err)}${last ? '; no more retries — a person queues it' : ''}`, queued: false };
+  }
+}
+
 export async function tick(opts: TickOptions): Promise<TickResult> {
   const now = opts.now ?? (() => new Date());
   const gh = opts.gh ?? defaultGh;
@@ -319,6 +360,17 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     const row: TickResult = { ...base, headSha: obs.pr.headSha, plan: p.action, reason: p.reason };
     if ('failures' in p && p.failures) row.detail.push(...p.failures.map((f) => `${f.cause}: ${f.why}`));
     row.detail.push(...(obs.droppedReviews ?? []));
+
+    // A queued lane's replacement belongs back on the merge queue as soon as
+    // its PR exists — whatever this tick's plan is for the superseded PR —
+    // so a queue a crashed or refused tick left pending is finished here.
+    if (opts.apply && !['done', 'stop'].includes(p.action)) {
+      const requeued = await requeueRecut(opts, obs, state, gh);
+      if (requeued) {
+        row.detail.push(requeued.line);
+        if (requeued.queued && row.result === 'none') row.result = 'requeued';
+      }
+    }
 
     if (!['merge-base', 'fix-ci', 'address-review', 'rerun', 'recut', 'close-superseded'].includes(p.action)) { record(row, now()); return row; }
     if (!opts.apply) { row.result = 'planned'; record(row, now()); return row; }
@@ -376,6 +428,8 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
         saveState(opts.repo, opts.number, state);
         row.result = 'recut';
         row.detail.push(`opened #${state.recut.number} on ${state.recut.branch}`);
+        const requeued = await requeueRecut(opts, obs, state, gh);
+        if (requeued) row.detail.push(requeued.line);
       } catch (err) {
         row.result = 'error';
         row.detail.push(`could not open the recut's PR: ${err instanceof Error ? err.message : String(err)}`);
@@ -407,6 +461,8 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
           state.recut.number = await createPr(opts.repo, recutSpec(obs.pr, outcome.recutBranch), gh);
           row.result = 'recut';
           row.detail.push(`opened #${state.recut.number} on ${outcome.recutBranch}`);
+          const requeued = await requeueRecut(opts, obs, state, gh);
+          if (requeued) row.detail.push(requeued.line);
         } catch (err) {
           row.result = 'error';
           row.detail.push(`the recut branch ${outcome.recutBranch} is pushed but its PR could not be opened: ${err instanceof Error ? err.message : String(err)}`);

@@ -62,6 +62,7 @@ export async function readPr(repo: string, number: number, gh: Gh = defaultGh): 
     baseSha: str(base['sha']),
     mergeable: typeof raw['mergeable'] === 'boolean' ? raw['mergeable'] : null,
     mergeableState: str(raw['mergeable_state']),
+    autoMerge: raw['auto_merge'] !== null && typeof raw['auto_merge'] === 'object',
   };
 }
 
@@ -263,6 +264,18 @@ export async function createPr(repo: string, pr: { title: string; head: string; 
   const number = Number(raw['number']);
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error('GitHub did not return a PR number');
   return number;
+}
+
+/**
+ * Send a PR through the sanctioned merge queue: `gh pr merge --auto` — the same
+ * call `phm improve promote --queue-merge` makes. The head is pinned by
+ * `--match-head-commit`, and required checks plus branch protection still
+ * decide the merge; this is never a direct or admin merge.
+ */
+export async function queuePrMerge(repo: string, number: number, headSha: string, gh: Gh = defaultGh): Promise<void> {
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number.');
+  if (!/^[0-9a-f]{40}$/i.test(headSha)) throw new Error('Invalid head commit.');
+  await gh(['pr', 'merge', String(number), '--repo', assertRepo(repo), '--squash', '--auto', '--match-head-commit', headSha]);
 }
 
 /** Leave one comment on a PR's conversation (the issues endpoint covers PRs). */
