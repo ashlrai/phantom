@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { refreshDesktopUpdates, useDesktopUpdates } from '../../../app/desktop-updates.js';
-import { Button, StatusBadge } from '../../../components/primitives/index.js';
+import { Button, StatusBadge, Switch } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { APP_VERSION, installedDesktopVersion } from './app-version.js';
@@ -10,6 +10,9 @@ import { describeUpdateStatus } from './update-status-model.js';
 import { updateStatusQuery } from './update-status-queries.js';
 import { fetchOriginNow } from './update-fetch-client.js';
 import { useFetchOriginOnFocus } from './update-fetch-on-focus.js';
+
+import { useAutoUpdatePolicy, useAutoUpdateSentence } from './useAutoSelfUpdate.js';
+import { writeAutoUpdatePolicy } from './update-auto-model.js';
 
 function checkedAgo(at: number | null): string {
   if (at === null) return 'not checked this session';
@@ -21,6 +24,8 @@ function checkedAgo(at: number | null): string {
 }
 
 export function UpdateStatusRow() {
+  const policy = useAutoUpdatePolicy();
+  const autoSentence = useAutoUpdateSentence();
   const [checking, setChecking] = useState(false);
   const [fetchFailed, setFetchFailed] = useState(false);
   const native = useDesktopUpdates();
@@ -48,10 +53,15 @@ export function UpdateStatusRow() {
     }
   }
   return (
+    <>
     <SettingRow label="Updates" description={<span aria-live="polite">{checking ? 'Checking origin…' : status.headline} · {checkedAgo(lastFetchAt)}<br />{status.detail}{fetchFailed && !checking ? ' · fetch failed' : ''}</span>}>
       <StatusBadge status={status.tone} tone={status.tone} />
       <Button size="sm" busy={checking} onClick={() => void checkNow()}>Check now</Button>
       <UpdateNowButton status={query.data} onDone={refresh} />
     </SettingRow>
+    <SettingRow label="Update automatically when the fleet is quiet (10 min)" description={<span aria-live="polite">{policy.enabled ? autoSentence : 'Auto-update off'}</span>}>
+      <Switch aria-label="Update automatically when the fleet is quiet (10 min)" checked={policy.enabled} onChange={enabled => writeAutoUpdatePolicy({ enabled, quietMinutes: 10 })} />
+    </SettingRow>
+    </>
   );
 }

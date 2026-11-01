@@ -25,6 +25,7 @@ export const VERSE_OPS_RELEASES_PATH = `${VERSE_OPS_PATH}/releases`;
 export const VERSE_OPS_SELF_UPDATE_PATH = `${VERSE_OPS_PATH}/self-update`;
 export const VERSE_OPS_LEADERS_PATH = `${VERSE_OPS_PATH}/leaders`;
 export const VERSE_OPS_LEADERS_MESSAGES_PATH = `${VERSE_OPS_PATH}/leaders/messages`;
+export const VERSE_OPS_RESET_RELEASES_PATH = `${VERSE_OPS_PATH}/reset-releases`;
 
 /** The bus channel the Leaders view reads and posts to. */
 export const OPS_LEADERS_CHANNEL = 'leaders';
