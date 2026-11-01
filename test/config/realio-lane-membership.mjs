@@ -692,4 +692,9 @@ export const REAL_IO_TEST_FILES = [
   'test/collision-free-edits.test.ts', // real temp git repos: init/commit/branch/merge fixtures for the concurrent-fragment merge cases
   'test/improve-reverted.test.ts', // real temp git repo fixture (init/commit/revert) for the revert-detection case
   'test/desktop-nightly-build.test.ts', // real `node <script> --check` and `tar` children plus an on-disk .app.tar.gz fixture
+  'test/fleet-bus-work-claims-01.test.ts', // spawnSync runs fleet-bus-work-claims as a real child
+  'test/fleet-context-run-solu3.test.ts', // execFileSync runs fleet-context-run-solu3 example as a real child
+  'test/fleet-dirty-union-preview-nov01.test.ts', // spawnSync drives a real git fixture (dirty union preview)
+  'test/remote-gateway-bus-read-session-nov01.test.ts', // binds a real loopback HTTP server (remote-gateway bus read session)
+  'test/verify-changed-tsc-cache.test.ts', // spawnSync node scripts/verify-changed.mjs --tsc-cache as a real child
 ];
