@@ -21,6 +21,7 @@
  * answers cannot drift.
  */
 
+import { findHotFiles } from './hot-files.js';
 import { tmpdir } from 'node:os';
 
 import { defaultGitRunner } from '../verse/git-ops.js';
@@ -36,7 +37,7 @@ import {
 import { planMergeBacklog, type MergeBacklogItem } from './merge-backlog-plan.js';
 
 /** The console view needs the title and update time on top of the planner's fields. */
-const MERGE_BACKLOG_GH_FIELDS = `${FLEET_PR_GH_VIEW_FIELDS},title,updatedAt`;
+const MERGE_BACKLOG_GH_FIELDS = `${FLEET_PR_GH_VIEW_FIELDS},title,updatedAt,files`;
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -71,9 +72,11 @@ export interface MergeBacklogReadItem {
   /** The planner's class for this PR (`green-ready`, `conflicted`, …) and its reason. */
   classification: FleetPrClassification;
   suggestedAction: MergeBacklogAction;
+  files?: string[];
 }
 
 export interface MergeBacklogReadV1 {
+  hotFiles?: { path: string; dirtyPrs: number; openPrs: number }[];
   v: 1;
   /** Canonical owner/name this read describes. */
   repo: string;
@@ -81,6 +84,8 @@ export interface MergeBacklogReadV1 {
   source: 'ok' | 'gh-failed';
   /** Fixed machine token when source is 'gh-failed'; never gh's stderr. */
   reason?: string;
+  /** Same bounded reason for the console HTTP client on a 503 response. */
+  error?: string;
   items: MergeBacklogReadItem[];
   counts: {
     /** Per mergeStateStatus — e.g. { DIRTY: 1, BLOCKED: 1, CLEAN: 1 }. */
@@ -182,7 +187,7 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
   const read = await listOpenPrs(repo, limit, input.gh ?? defaultGh);
   if (!read.ok) {
     return {
-      v: 1, repo, generatedAt, source: 'gh-failed', reason: read.reason,
+      v: 1, repo, generatedAt, source: 'gh-failed', reason: read.reason, error: read.reason,
       items: [], counts: { mergeState: {}, actions: emptyActions() },
     };
   }
@@ -190,7 +195,7 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
   const states = (input.states ?? readMergeBacklogStates)(repo);
   const missing: FleetMergeStateRead = { state: 'missing' };
   const kept: { raw: Record<string, unknown>; item: MergeBacklogItem }[] = [];
-  for (const raw of read.rows) {
+  for (const raw of read.rows.slice(0, limit)) {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const row = raw as Record<string, unknown>;
     const github = parseFleetPrGhState(row);
@@ -222,6 +227,7 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
 
   const counts: MergeBacklogReadV1['counts'] = { mergeState: {}, actions: emptyActions() };
   const items: MergeBacklogReadItem[] = [];
+  const fileLists: string[][] = [], dirtyFileLists: string[][] = [];
   for (const { raw, item } of kept) {
     const title = boundText(raw['title']);
     const headRef = boundText(item.github?.headRef ?? raw['headRefName']);
@@ -235,7 +241,12 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
     const outcome = (item.github !== null ? outcomeByGh.get(item.github) : unreadableOutcome) ?? fallbackOutcome;
     counts.mergeState[mergeStateStatus] = (counts.mergeState[mergeStateStatus] ?? 0) + 1;
     counts.actions[outcome.action] += 1;
+    const files = (Array.isArray(raw['files']) ? raw['files'].slice(0, 300) : [])
+      .flatMap((file: unknown) => file && typeof file === 'object' && 'path' in file && typeof file.path === 'string' ? [file.path] : []);
+    fileLists.push(files);
+    if (mergeStateStatus === 'DIRTY') dirtyFileLists.push(files);
     items.push({
+      files: files.slice(0, 30),
       number: (item.github?.number ?? raw['number']) as number,
       title,
       headRef,
@@ -248,5 +259,9 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
     });
   }
 
-  return { v: 1, repo, generatedAt, source: 'ok', items, counts };
+  const open = new Map(findHotFiles(fileLists, 1, Infinity).map(file => [file.path, file.count]));
+  const hotFiles = findHotFiles(dirtyFileLists, 1, Infinity)
+    .map(file => ({ path: file.path, dirtyPrs: file.count, openPrs: open.get(file.path) ?? 0 }))
+    .sort((a, b) => b.dirtyPrs - a.dirtyPrs || b.openPrs - a.openPrs || a.path.localeCompare(b.path)).slice(0, 8);
+  return { v: 1, repo, generatedAt, source: 'ok', items, counts, hotFiles };
 }
