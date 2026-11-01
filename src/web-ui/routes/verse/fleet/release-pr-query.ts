@@ -1,4 +1,5 @@
 import { ApiError, apiGet } from '../../../data/client.js';
+import { parseReleaseVersion } from '../fleet-releases/release-version-guard.js';
 import type { QueryDef } from '../../../data/queries.js';
 
 export type ReleaseCheckState = 'pass' | 'fail' | 'pending' | 'skipped';
@@ -10,7 +11,7 @@ export interface ReleasePr {
 }
 export interface ReleasePrData {
   v: 1; generatedAt: string; sourceState: 'healthy' | 'degraded';
-  repos: { repo: string; path: string; pr: ReleasePr | null; notes: string[] }[];
+  repos: { repo: string; path: string; pr: ReleasePr | null; notes: string[]; treeVersion?: string | null; versionVerdict?: 'match' | 'downgrade' | 'ahead' | 'unknown' }[];
 }
 export type ReleasePrResult = { kind: 'available'; data: ReleasePrData } | { kind: 'notInBuild' };
 
@@ -41,6 +42,11 @@ export const releasePrQuery: QueryDef<ReleasePrResult> = {
     try {
       const data = await apiGet<unknown>('/api/verse/release-pr', signal);
       if (!isReleasePrData(data)) throw new Error('Invalid release PR response');
+      // Optional fields from newer servers must never invalidate the base response.
+      for (const repo of data.repos) {
+        if (repo.treeVersion !== null && !parseReleaseVersion(repo.treeVersion)) delete repo.treeVersion;
+        if (!['match', 'downgrade', 'ahead', 'unknown'].includes(repo.versionVerdict ?? '')) delete repo.versionVerdict;
+      }
       return { kind: 'available', data };
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) return { kind: 'notInBuild' };
