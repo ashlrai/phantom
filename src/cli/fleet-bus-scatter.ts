@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, linkSync, lstatSync, openSync, realpathSync, unlinkSync, type BigIntStats } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { type Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { type BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { BUS_SCATTER_DEFAULT_CONCURRENCY, BUS_SCATTER_DEFAULT_TIMEOUT_MS, BUS_SCATTER_INTERVAL_MS,
@@ -14,7 +15,43 @@ import { writePrivateFileAtomically } from '../core/util/private-file-write.js';
 import { assurePrivateStoragePath } from '../core/util/private-storage.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
-interface Dependencies extends ScatterDependencies { output?: (text: string) => void }
+interface Dependencies extends ScatterDependencies { output?: (text: string) => void; input?: Readable & { isTTY?: boolean } }
+
+/** Wait for EOF without retaining bytes beyond the batch limit or owning the stream. */
+function readInput(input: Readable & { isTTY?: boolean }, deadline: number, signal: AbortSignal): Promise<string | null> {
+  if (input.isTTY || input.readableEnded || input.destroyed || signal.aborted || performance.now() >= deadline) return Promise.resolve(null);
+  return new Promise(resolve => {
+    const chunks: Buffer[] = [];
+    let size = 0, finished = false;
+    const finish = (text: string | null): void => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      input.removeListener('data', onData); input.removeListener('end', onEnd);
+      input.removeListener('error', onFailure); input.removeListener('close', onFailure);
+      signal.removeEventListener('abort', onFailure);
+      input.pause();
+      resolve(text);
+    };
+    const onFailure = (): void => finish(null);
+    const onData = (chunk: unknown): void => {
+      if (performance.now() >= deadline || (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array)) ||
+          chunk.byteLength > BUS_SCATTER_MAX_BYTES - size) return onFailure();
+      size += chunk.byteLength;
+      chunks.push(Buffer.from(chunk));
+    };
+    const onEnd = (): void => {
+      if (!size || performance.now() >= deadline) return onFailure();
+      try { finish(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size))); }
+      catch { onFailure(); }
+    };
+    const timer = setTimeout(onFailure, Math.max(0, deadline - performance.now()));
+    input.on('data', onData); input.once('end', onEnd);
+    input.once('error', onFailure); input.once('close', onFailure);
+    signal.addEventListener('abort', onFailure, { once: true });
+    if (input.readableEnded || input.destroyed || signal.aborted) onFailure();
+  });
+}
 
 const MAX_REPORT_BYTES = 2 * 1024 * 1024;
 interface Reservation { path: string; parent: string; parentStat: BigIntStats; fd: number; stat: BigIntStats }
@@ -122,7 +159,7 @@ function formatScatterText(report: BusScatterReport): string {
 /** Convention-resolved CLI entry: fans out a validated batch under one shared deadline. */
 export async function cmdFleetBusScatter(args: string[], options: BusInboxOptions = {}, deps: Dependencies = {}): Promise<number> {
   const start = performance.now(), output = deps.output ?? console.log;
-  let json = false, apply = false, reservation: Reservation | undefined;
+  let json = false, apply = false, stdin = false, reservation: Reservation | undefined;
   const emit = (report: BusScatterReport): number => {
     try {
       const safe = sanitizePublicJson(redactFields(report)) as BusScatterReport;
@@ -138,9 +175,10 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
   };
   const report = (status: BusScatterReport['status']): BusScatterReport => statusReport(apply ? 'apply' : 'preview', status, start);
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    output('Usage: ashlr fleet bus-scatter --file <absolute JSON file> [--output <absolute new file>] [--apply] [--timeout-ms <1..60000>] [--concurrency <1..8>] [--json]\n'
+    output('Usage: ashlr fleet bus-scatter (--file <absolute JSON file> | --stdin) [--output <absolute new file>] [--apply] [--timeout-ms <1..60000>] [--concurrency <1..8>] [--json]\n'
       + 'Input is {"version":1,"requests":[<envelope>...]} with 1..16 requests (at most 256 KiB). Without --apply the batch is\n'
       + 'validated and routing metadata is shown; no posts are made. Apply posts every request under one shared deadline.\n'
+      + '--stdin reads one UTF-8 JSON batch, requires EOF, and shares the timeout deadline with execution.\n'
       + 'Routing labels and correlation are untrusted; reply bodies are never executed.\n'
       + '--output saves the sanitized JSON report in a new private file under a private directory.\n'
       + 'Handled SIGINT/SIGTERM save partial results; abrupt process death can leave an empty reservation without a report.');
@@ -151,6 +189,7 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
     const arg = args[i]!;
     if (arg === '--json' && !json) { json = true; continue; }
     if (arg === '--apply' && !apply) { apply = true; continue; }
+    if (arg === '--stdin' && !stdin) { stdin = true; continue; }
     const match = /^(--file|--output|--timeout-ms|--concurrency)(?:=(.*))?$/.exec(arg);
     if (!match || Object.hasOwn(values, match[1]!)) return emit(report('invalid-input'));
     const value = match[2] ?? args[++i];
@@ -161,14 +200,14 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
   const timeout = values['--timeout-ms'] === undefined ? BUS_SCATTER_DEFAULT_TIMEOUT_MS : number(values['--timeout-ms']);
   const concurrency = values['--concurrency'] === undefined ? BUS_SCATTER_DEFAULT_CONCURRENCY : number(values['--concurrency']);
   const file = values['--file'];
-  if (!file || !isAbsolute(file) ||
+  if (stdin === (file !== undefined) || file !== undefined && !isAbsolute(file) ||
       values['--output'] !== undefined && (!isAbsolute(values['--output']) || resolve(values['--output']) !== values['--output'] ||
-        values['--output'] === resolve(file)) ||
+        file !== undefined && values['--output'] === resolve(file)) ||
       !Number.isSafeInteger(timeout) || timeout < BUS_SCATTER_MIN_TIMEOUT_MS || timeout > BUS_SCATTER_MAX_TIMEOUT_MS ||
       !Number.isSafeInteger(concurrency) || concurrency < BUS_SCATTER_MIN_CONCURRENCY || concurrency > BUS_SCATTER_MAX_CONCURRENCY) {
     return emit(report('invalid-input'));
   }
-  if (values['--output'] !== undefined) {
+  if (!stdin && values['--output'] !== undefined) {
     try { reservation = reserveOutput(resolve(values['--output'])); }
     catch { return emit(report('invalid-input')); }
   }
@@ -179,17 +218,32 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
     if (deps.signal?.aborted) stop();
     if (controller.signal.aborted) return emit(report('cancelled'));
     const deadline = start + timeout;
-    let read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: BUS_SCATTER_MAX_BYTES, remainingBytes: BUS_SCATTER_MAX_BYTES });
-    while (!read.ok && read.reason === 'changed-during-read') {
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) return emit(report('invalid-input'));
-      try { await delay(Math.min(BUS_SCATTER_INTERVAL_MS, remaining), undefined, { signal: controller.signal }); }
-      catch { return emit(report('cancelled')); }
-      read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: BUS_SCATTER_MAX_BYTES, remainingBytes: BUS_SCATTER_MAX_BYTES });
+    let text: string;
+    if (stdin) {
+      const input = await readInput(deps.input ?? process.stdin, deadline, controller.signal);
+      if (controller.signal.aborted) return emit(report('cancelled'));
+      if (input === null) return emit(report('invalid-input'));
+      text = input;
+    } else {
+      const path = file!;
+      let read = readStableRegularFile(path, { anchorPath: dirname(path), maxFileBytes: BUS_SCATTER_MAX_BYTES, remainingBytes: BUS_SCATTER_MAX_BYTES });
+      while (!read.ok && read.reason === 'changed-during-read') {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) return emit(report('invalid-input'));
+        try { await delay(Math.min(BUS_SCATTER_INTERVAL_MS, remaining), undefined, { signal: controller.signal }); }
+        catch { return emit(report('cancelled')); }
+        read = readStableRegularFile(path, { anchorPath: dirname(path), maxFileBytes: BUS_SCATTER_MAX_BYTES, remainingBytes: BUS_SCATTER_MAX_BYTES });
+      }
+      if (!read.ok) return emit(report('invalid-input'));
+      text = read.text;
     }
-    if (!read.ok) return emit(report('invalid-input'));
-    const parsed = parseBusScatterFile(read.text);
+    const parsed = parseBusScatterFile(text);
     if (!parsed.ok) return emit(report('invalid-input'));
+    if (stdin && performance.now() >= deadline) return emit(report('invalid-input'));
+    if (stdin && values['--output'] !== undefined) {
+      try { reservation = reserveOutput(resolve(values['--output'])); }
+      catch { return emit(report('invalid-input')); }
+    }
     const invocation = { list: deps.list, append: deps.append, request: deps.request, signal: controller.signal, startedAt: start };
     return emit(apply
       ? await scatterBusRequests(parsed.requests, timeout, concurrency, options, invocation)
