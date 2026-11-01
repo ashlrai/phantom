@@ -25,9 +25,9 @@ const page = () => listBusInboxAfter(0, 50, { root: busRoot });
 const gate = (fail = false) => {
   let calls = 0, gates = 0;
   const deps: LocalGateDeps = {
-    exec: async (command) => {
+    exec: async (command, args) => {
       calls++;
-      return { ok: !(fail && command === 'npx'), stdout: command === 'git' ? 'a'.repeat(40) : secretText, stderr: secretText };
+      return { ok: !(fail && args.includes('--noEmit')), stdout: command === 'git' ? 'a'.repeat(40) : secretText, stderr: secretText };
     },
     appendMetric: async () => { gates++; throw new Error(secretText); },
     warn: () => { throw new Error('gate warning escaped'); },
@@ -52,7 +52,7 @@ it.each([false, true])('CLI waits for the real gate and publishes its fixed verd
   const entered = new Promise<void>(resolve => { reached = resolve; });
   const blocked = new Promise<void>(resolve => { release = resolve; });
   const exec = g.deps.exec!;
-  g.deps.exec = async (...params) => { if (params[0] === 'npx') { reached(); await blocked; } return exec(...params); };
+  g.deps.exec = async (...params) => { if (params[1].includes('--noEmit')) { reached(); await blocked; } return exec(...params); };
   const running = cmdFleetContextReply(args(['--check', '--budget-seconds', '10']), io(g.deps), { root: busRoot });
   await entered;
   expect(page()).toMatchObject({ status: 'ok', messages: [] });
@@ -113,7 +113,7 @@ it('publishes nothing if the request expires while the gate runs', async () => {
   const g = gate(), exec = g.deps.exec!;
   const start = performance.now();
   let enteredAt = 0;
-  g.deps.exec = async (...params) => { if (params[0] === 'npx') { enteredAt = performance.now(); await new Promise(resolve => setTimeout(resolve, 10100)); } return exec(...params); };
+  g.deps.exec = async (...params) => { if (params[1].includes('--noEmit')) { enteredAt = performance.now(); await new Promise(resolve => setTimeout(resolve, 10100)); } return exec(...params); };
   const result = await runContextReply({ ...options(), check: {} }, io(g.deps), { root: busRoot });
   expect(enteredAt - start).toBeLessThan(10000);
   expect(result).toMatchObject({ workerExit: { status: 'returned', exitCode: 0 }, verification: 'pass', exitCode: 1,
