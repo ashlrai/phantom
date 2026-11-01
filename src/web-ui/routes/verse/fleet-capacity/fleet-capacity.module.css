@@ -18,6 +18,7 @@
 .paused { fill: var(--text-tertiary); opacity: .12; }
 .held { fill: var(--status-unknown-solid); opacity: .2; }
 .muted { margin: 0; color: var(--text-tertiary); }
+.stall { margin: 0; color: var(--status-warning-fg); }
 .truth { margin: 0; color: var(--text-tertiary); }
 .truth[data-tone='warn'] { color: var(--status-warning-fg); }
 .truth[data-tone='bad'] { color: var(--status-danger-fg); }
