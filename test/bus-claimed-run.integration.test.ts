@@ -67,10 +67,14 @@ describe('fleet bus-claimed-run through the exported CLI, real inbox and claim s
     expect(result).toMatchObject({ code: 0, claim: { status: 'completed' },
       workerExit: { status: 'returned', exitCode: 0 }, replyReceipt: { status: 'posted' } });
     expect(spawnCount()).toBe(1);
-    // No token or request body ever leaves the process boundary or the report.
+    // No claim token ever leaves the process boundary or the report. The
+    // request body reaches the worker only as untrusted stdin data inside its
+    // delimited section — never argv, and never the report stream.
     expect(result.cap.out + result.cap.err).not.toMatch(/[a-f0-9]{64}/);
     expect(result.cap.out).toContain('fake prompt');
-    expect(result.cap.out).not.toContain('fake request body never executed');
+    expect(result.cap.out).toContain('BEGIN UNTRUSTED BUS REQUEST JSON');
+    expect(result.cap.out).toContain('fake request body never executed');
+    expect(result.cap.err).not.toContain('fake request body never executed');
     const rows = JSON.parse(readFileSync(claimsFile(), 'utf8')) as { id: string; owner: string; completedAt: number | null }[];
     expect(rows).toEqual([expect.objectContaining({ id: 'req-1', owner: 'worker-a', completedAt: expect.any(Number) })]);
     const page = listBusInboxAfter(0, 50, { root: busRoot });
@@ -91,9 +95,12 @@ describe('fleet bus-claimed-run through the exported CLI, real inbox and claim s
 
   it('keeps contenders out past the original lease while renewal holds it', async () => {
     // Lease and interval must exceed this host's claim-mutation latency for
-    // renewals to land inside their window; only renewal keeps the contender out.
-    const running = run({ leaseMs: 9000, argv: worker(0, 12000) });
-    await delay(10500); // beyond the first 9000ms lease window: only renewals can fence a takeover
+    // renewals to land inside their window; only renewal keeps the contender
+    // out. A mutation is a small JSON write (~ms), and renewal fires every
+    // leaseMs/3, so a 3s lease still leaves ~2s of slack per renewal window —
+    // no need for the original 9s window.
+    const running = run({ leaseMs: 3000, argv: worker(0, 4200) });
+    await delay(3600); // beyond the first 3000ms lease window: only renewals can fence a takeover
     const contender = await run({ replyId: 'reply-2', argv: worker(0) });
     expect(contender).toMatchObject({ code: 1, claim: { status: 'conflict' }, workerExit: { status: 'not-started' } });
     expect(await running).toMatchObject({ code: 0, claim: { status: 'completed' } });
