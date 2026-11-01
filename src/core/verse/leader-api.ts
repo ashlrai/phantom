@@ -60,6 +60,8 @@
  */
 import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
+import { join, sep } from 'node:path';
 
 import type { ApiModule } from './api-modules.js';
 import type { VerseApiContext } from './verse-api.js';
@@ -87,6 +89,7 @@ import {
   syncLeaderMemosToThread,
 } from '../vision/leader-thread.js';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import type { PlannerHealth } from '../fleet/planner-failover.js';
 
 // ---------------------------------------------------------------------------
 // Needs-you (pure builder + cache)
@@ -431,6 +434,8 @@ type ApplyModule = typeof import('../vision/leader-apply.js');
 interface LeaderApiHooks {
   loadRunDeps?: (ctx: VerseApiContext) => Promise<import('../vision/leader.js').LeaderRunDeps>;
   now?: () => number;
+  /** Test seam for the planner-plan route: the runs root to read. */
+  plannerRunsRoot?: () => string;
 }
 
 let hooks: LeaderApiHooks = {};
@@ -678,6 +683,105 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Planner plan preview (which login the next planner pass would run on)
+// ---------------------------------------------------------------------------
+
+export interface PlannerHealthRow extends PlannerHealth {
+  /** The login this reading belongs to (the file's lastProvider); null when none is declared. */
+  provider: string | null;
+}
+export interface PlannerLimitedRow {
+  provider: string;
+  /** Why the login cannot run — 'usage-limit' today; free-form for forward readers. */
+  status: string;
+  /** Advertised reset (local ISO), null when none was read. */
+  until: string | null;
+}
+export interface PlannerPlanV1 {
+  v: 1;
+  generatedAt: string;
+  /** The candidates file this plan was read from (home collapses to ~ on the wire). */
+  path: string;
+  /** 'ok' slate read; 'missing'/'invalid' candidates file; 'unavailable' health read. */
+  source: 'ok' | 'missing' | 'invalid' | 'unavailable';
+  /** The login the next pass would run on plus its health reason, or null. */
+  choice: { provider: string; reason: string } | null;
+  /** Earliest advertised reset among limited candidates; null when none. */
+  nextResetAt: string | null;
+  limited: PlannerLimitedRow[];
+  health: PlannerHealthRow[];
+}
+
+export interface PlannerPlanDeps {
+  runsRoot?: string;
+  now?: number;
+}
+
+/**
+ * The Dispatch pane's planner preview: read the declared slate
+ * (planner-candidates.ts) and plan ONE pass over it (planner-run.ts
+ * planPlannerPass — health read + runner choice only, never a spawn).
+ * A missing or malformed slate still returns the health rows so the pane can
+ * say which is wrong. Never throws: source 'unavailable' when the plan read
+ * itself fails.
+ */
+export async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<PlannerPlanV1> {
+  const now = deps.now ?? Date.now();
+  const runsRoot = deps.runsRoot ?? join(homedir(), '.ashlr-runs');
+  const { readPlannerCandidates } = await import('../fleet/planner-candidates.js');
+  const { isProviderLimited } = await import('../fleet/planner-failover.js');
+  const { planPlannerPass } = await import('../fleet/planner-run.js');
+  const slate = await readPlannerCandidates(runsRoot);
+  const home = homedir();
+  const out: PlannerPlanV1 = {
+    v: 1,
+    generatedAt: new Date(now).toISOString(),
+    // The console prints this path on the missing-file line; home collapses
+    // to ~ for readability, like the shell does.
+    path: slate.path.startsWith(`${home}${sep}`) ? `~${slate.path.slice(home.length)}` : slate.path,
+    source: 'unavailable',
+    choice: null,
+    nextResetAt: null,
+    limited: [],
+    health: [],
+  };
+  try {
+    // planPlannerPass files the newest health under lastProvider, so that
+    // login is the only candidate a reading can prove limited — the failover
+    // contract. No tasks: this preview does not answer the frontier.
+    const { health, choice } = await planPlannerPass({
+      runsRoot,
+      candidates: slate.candidates,
+      lastProvider: slate.lastProvider ?? '',
+      now,
+    });
+    const healthByProvider: Record<string, PlannerHealth> = { [slate.lastProvider ?? '']: health };
+    const limited: PlannerLimitedRow[] = [];
+    const seen = new Set<string>();
+    for (const c of slate.candidates) {
+      if (!isProviderLimited(healthByProvider[c.provider], now) || seen.has(c.provider)) continue;
+      seen.add(c.provider);
+      limited.push({ provider: c.provider, status: health.reason ?? health.status, until: health.resetAt });
+    }
+    const chosenHealth = choice.ok ? healthByProvider[choice.provider] : undefined;
+    const resets = limited
+      .map((row) => Date.parse(row.until ?? ''))
+      .filter((ms) => Number.isFinite(ms) && ms > now);
+    out.source = slate.source;
+    out.choice = choice.ok
+      ? { provider: choice.provider, reason: chosenHealth?.reason ?? chosenHealth?.status ?? 'unread' }
+      : null;
+    out.nextResetAt = resets.length > 0 ? new Date(Math.min(...resets)).toISOString() : null;
+    out.limited = limited;
+    out.health = [{ provider: slate.lastProvider, ...health }];
+    return out;
+  } catch {
+    out.source = 'unavailable';
+    return out;
+  }
+}
+
 export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_LEADER_PATH && !path.startsWith(`${VERSE_LEADER_PATH}/`)) return false;
   const now = hooks.now ?? Date.now;
@@ -707,6 +811,12 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
         const { readUsageResets } = await import('../fleet/usage-reset-detect.js');
         sendJson(res, 200, await readUsageResets({ now }));
       }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/plan`) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
+      else sendJson(res, 200, await buildPlannerPlan({ runsRoot: hooks.plannerRunsRoot?.(), now: now() }));
       return true;
     }
     if (await handleThreadRoutes(ctx, req, res, path, method)) return true;
