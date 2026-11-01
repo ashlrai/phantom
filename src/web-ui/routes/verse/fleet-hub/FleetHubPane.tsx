@@ -1,13 +1,17 @@
 import { useMemo, useState } from 'react';
+import { StatusBadge, Tag } from '../../../components/primitives/index.js';
 import { copyText } from '../../../components/primitives/clipboard.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { openDockPane, openFleetWorkspace } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
+import { parseInboxAt } from '../fleet/interject-ack-model.js';
+import { relativeText } from '../ops/ops-runs-model.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { usePanes, type PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { curatedWorkspace, hubEmptyState, hubTiles, snapshotAge } from './fleet-hub-model.js';
+import { lastOrderLine } from './hub-last-order.js';
 import { busTile } from './hub-bus-tile.js';
 import styles from './fleet-hub.module.css';
 
@@ -40,6 +44,9 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   const presentIds = tiles.filter((tile) => tile.present).map((tile) => tile.id);
   const workspaceIds = curatedWorkspace(presentIds);
   const empty = hubEmptyState(read.data ?? null);
+  const now = Date.now();
+  const lastOrder = lastOrderLine(read.data ?? null, now);
+  const orderAt = lastOrder ? parseInboxAt(lastOrder.at, now) : null;
   const runsDir = read.data && 'runsDir' in read.data && typeof read.data.runsDir === 'string' && read.data.runsDir.trim()
     ? read.data.runsDir : '~/.ashlr-runs';
 
@@ -54,6 +61,11 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
       <code>ashlr fleet init</code>
       <button type="button" className={styles.secondary} onClick={() => { void copyText('ashlr fleet init').then((copied) => setCopyLabel(copied ? 'Copied' : 'Copy failed')); }}>{copyLabel}</button>
     </div> : null}
+    {lastOrder && <div className={styles.lastOrder}>
+      <span><strong>Your last order</strong> · <Tag>{lastOrder.sourceLabel}</Tag> · {relativeText(orderAt === null ? null : new Date(orderAt).toISOString(), now)}: {lastOrder.excerpt}</span>
+      <StatusBadge status={lastOrder.ack} tone={lastOrder.tone}>{lastOrder.label}</StatusBadge>
+      <button type="button" className={styles.orderButton} onClick={() => openDockPane('fleet-inbox')}>Open inbox</button>
+    </div>}
     <div className={styles.tiles}>
       {empty?.kind !== 'no-fleet' && tiles.map((tile) => <button type="button" key={tile.id} className={styles.tile} data-tone={tile.tone} disabled={!tile.present} onClick={() => openDockPane(tile.id)}>
         <strong>{tile.title}</strong>
