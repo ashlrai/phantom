@@ -16,12 +16,20 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { heldLaneLine, laneHoldsQuery, queuedBehindHold } from './queue-holds-model.js';
 import { laneDrainText } from './queue-lane-drain.js';
 import { restockNotice } from './queue-repo-mix.js';
+import { DropJobSheet } from './DropJobSheet.js';
+import { dropJobsQuery } from './drop-job-queries.js';
+import { waitingRows } from './drop-job-model.js';
+import { fillerFirst, nextUpCaption, nextUpClasses } from './next-up-class-model.js';
 import styles from './fleet-queue.module.css';
 
 export function FleetQueuePane({ visible, host }: PaneProps) {
   const read = useQuery(opsQueueQuery, { enabled: visible, freshMs: 0 });
   const snapshot = useQuery(fleetSupplyQuery, { enabled: visible, freshMs: 0 });
   const holds = useQuery(laneHoldsQuery, { enabled: visible, freshMs: 0 });
+  const drops = useQuery(dropJobsQuery, { enabled: visible, freshMs: 0 });
+  const refetchDrops = useRefetch(dropJobsQuery);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  usePollWhileVisible(refetchDrops, 15_000, { enabled: visible });
   const refetch = useRefetch(opsQueueQuery);
   const refetchSnapshot = useRefetch(fleetSupplyQuery);
   const refetchHolds = useRefetch(laneHoldsQuery);
@@ -61,6 +69,7 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
   const waiting = queuedBehindHold(data.byLane, holds.data);
   return <section className={styles.root} aria-label="Queue">
     <p className={styles.header}>{data.total} jobs · {data.ready} ready · {data.parked} parked · {data.skipsLast24h ?? '—'} precheck skips in 24 h{waiting > 0 && ` · ${waiting} queued lines wait on held lanes`}</p>
+    <Button size="sm" disabled={drops.data === null || drops.data === undefined} title={drops.data === null ? 'Update Phantom to write jobs from here' : undefined} onClick={() => setSheetOpen(true)}>New job</Button>
     {notice && <p className={styles.notice} role="status">{notice}</p>}
     {holds.status === 'error' && <p className={styles.notice} role="alert">Lane holds could not refresh.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Queue could not refresh. Showing the last reading.</p>}
@@ -70,7 +79,11 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
         const drain = laneDrainText(lane, snapshotLanes.find((snapshotLane) => snapshotLane.lane === lane.lane));
         const held = heldLaneLine(holds.data?.lanes.find((row) => row.lane === lane.lane), Date.now());
         const next = data.nextUp?.find((entry) => entry.lane === lane.lane);
-        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{held && <><span className={styles.muted}>{held}</span><Button size="sm" aria-label={`Release hold on ${lane.lane}`} busy={pending} onClick={() => void release(lane.lane)}>Release hold</Button></>}{error?.lane === lane.lane && <span role="status">{error.message}</span>}{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <span className={styles.muted} data-testid="lane-next">Next: <JobRefs text={next.jobs.join(', ')} onOpenJob={openJob} /></span>}</li>;
+        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{held && <><span className={styles.muted}>{held}</span><Button size="sm" aria-label={`Release hold on ${lane.lane}`} busy={pending} onClick={() => void release(lane.lane)}>Release hold</Button></>}{error?.lane === lane.lane && <span role="status">{error.message}</span>}{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <>
+          <span className={`${styles.muted} ${styles.nextLine}`} data-testid="lane-next">Next: {nextUpClasses(next.jobs).map(({ job, cls, label }, index) => <span key={`${job}:${index}`}>{index > 0 && ', '}<JobRefs text={job} onOpenJob={openJob} /> <span className={styles.chip} data-class={cls}>{label}</span></span>)}</span>
+          <span className={`${styles.muted} ${styles.nextLine}`}>{nextUpCaption(lane.lane, next.jobs)}</span>
+          {fillerFirst(next.jobs) && <span className={`${styles.warning} ${styles.nextLine}`} role="status">filler launches before Phantom work on {lane.lane}</span>}
+        </>}</li>;
       })}</ul>}
     </section>
     <section aria-label="Parked groups"><h3 className={styles.heading}>Parked groups</h3>
@@ -84,5 +97,10 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
         <span><JobRefs text={`${skip.job} · ${skip.code} · ${explainSkip(skip.code, skip.reason)}`} onOpenJob={openJob} /></span> <time className={styles.muted} dateTime={skip.at}>{formatRelative(skip.at)}</time>
       </li>)}</ul>}
     </section>
+    {drops.data && <section aria-label="Waiting in drop"><h3 className={styles.heading}>Waiting in drop</h3>
+      <ul className={styles.list}>{waitingRows(drops.data.items, Date.now()).map(row => <li className={styles.row} key={row.id}>{row.id} · {row.lane} · {row.tier} · {row.title} · {row.age}</li>)}</ul>
+    </section>}
+    {drops.status === 'error' && <p aria-live="polite">Waiting in drop could not refresh.</p>}
+    <DropJobSheet open={visible && sheetOpen && drops.data !== null} onClose={() => setSheetOpen(false)} />
   </section>;
 }
