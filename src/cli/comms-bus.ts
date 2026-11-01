@@ -40,6 +40,8 @@ Use --timeout-ms 1..3600000 to bound observation time (default: unlimited). Reac
 deadline completes observation successfully; it does not guarantee a reply.
 Watch retries retryable contention after the interval; other failures emit their status and exit 1.
 SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0. Invalid options exit 2.
+An already-started delivery must settle before watch stops; cancellation cannot undo delivered data.
+Rejected asynchronous delivery stops watch with exit 1 without advancing its cursor.
 Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
 
 export interface CommsBusDependencies {
@@ -88,10 +90,10 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): Promise<void> {
-  if (deps.emit) await deps.emit(json);
-  else if (!checkpoint) console.log(json);
-  else await new Promise<void>((resolve, reject) => {
+function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): void | Promise<void> {
+  if (deps.emit) return deps.emit(json);
+  if (!checkpoint) { console.log(json); return; }
+  return new Promise<void>((resolve, reject) => {
     const fail = (error: Error): void => { reject(error); };
     process.stdout.once('error', fail);
     try {
@@ -109,7 +111,13 @@ async function deliver(json: string, deps: CommsBusDependencies, checkpoint?: Re
 
 async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
-  const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
+  const list = deps.list ?? listBusInboxAfter;
+  const deliverPage = (json: string): void | Promise<boolean> => {
+    const pending = deliver(json, deps, checkpoint);
+    if (pending && typeof pending.then === 'function') {
+      return pending.then(() => true, () => { console.error('bus watch: delivery failed'); return false; });
+    }
+  };
   const deadline = timeout === undefined ? undefined : performance.now() + timeout;
   const expired = (): boolean => deadline !== undefined && performance.now() >= deadline;
   const timer = timeout === undefined ? undefined : setTimeout(stop, timeout);
@@ -123,8 +131,8 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       if (controller.signal.aborted) break;
       if (page.status !== 'ok' && page.status !== 'retryable') {
         if (!expired()) {
-          if (checkpoint) await deliver(JSON.stringify(page), deps, checkpoint);
-          else emit(JSON.stringify(page));
+          const pending = deliverPage(JSON.stringify(page));
+          if (pending) await pending;
         }
         return 1;
       }
@@ -132,8 +140,8 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       if (page.status === 'ok') {
         const output = JSON.stringify(filterPage(page, filters));
         if (expired()) break;
-        if (checkpoint) await deliver(output, deps, checkpoint);
-        else emit(output);
+        const pending = deliverPage(output);
+        if (pending && !await pending) return 1;
         checkpoint?.save(page.nextCursor);
         after = page.nextCursor;
         if (++pages === maxPages) return 0;
