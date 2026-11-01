@@ -2530,6 +2530,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
     const { cmdFleetRunsRead } = await import('./fleet-runs-read.js');
     return cmdFleetRunsRead(args[0], args.slice(1));
   }
+  if (args[0] === 'wait-jobs') return (await import('./fleet-wait-jobs.js')).cmdFleetWaitJobs(args.slice(1));
   if (args[0] === 'job') {
     const { cmdFleetJobRead } = await import('./fleet-job-read.js');
     return cmdFleetJobRead(args.slice(1));
@@ -2662,6 +2663,7 @@ function printFleetHelp(): void {
   console.log(`                          ${cyan('#   + queued work = incident (read-only, RQ-PHX-ZEROWASTEAUDIT31)')}`);
   console.log(`    phm fleet runs [--json]       ${cyan('# host runs and lane state')}`);
   console.log(`    phm fleet workers [--lane ID] [--repo NAME] [--json] ${cyan('# live host processes')}`);
+  console.log(`    phm fleet wait-jobs --job ID --timeout-ms N [--interval-ms N] --json`);
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
