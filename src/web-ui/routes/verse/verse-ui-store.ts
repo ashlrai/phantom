@@ -39,7 +39,7 @@ import {
   type WorkbenchSectionId,
 } from '../../../core/verse/workbench-types.js';
 import { getDockState, subscribeDockState } from './dock/dock-store.js';
-import { VERSE_UI_STORAGE_KEY as V3_KEY, VERSE_UI_STORAGE_KEY_V2 as V2_KEY } from './shell/dock-catalog.js';
+import { normalizePaneId, VERSE_UI_STORAGE_KEY as V3_KEY, VERSE_UI_STORAGE_KEY_V2 as V2_KEY } from './shell/dock-catalog.js';
 import {
   cycleRecent,
   pushNav,
@@ -227,11 +227,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function stringList(value: unknown, limit: number, re: RegExp): string[] {
+function stringList(value: unknown, limit: number, re: RegExp, normalize: (id: string) => string = (id) => id): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
   for (const v of value) {
-    if (typeof v === 'string' && re.test(v) && !out.includes(v)) out.push(v);
+    if (typeof v !== 'string' || !re.test(v)) continue;
+    const id = normalize(v);
+    if (!out.includes(id)) out.push(id);
     if (out.length >= limit) break;
   }
   return out;
@@ -292,7 +294,11 @@ export function loadVerseUi(options: LoadOptions = {}): VerseUiState {
     sidebarCollapsed: src['sidebarCollapsed'] === true,
     resourcesOpen: src['resourcesOpen'] !== false,
     resourcesWidth: clampWidth(src['resourcesWidth'], VERSE_RESOURCES),
-    recentActions: stringList(src['recentActions'], RECENT_ACTIONS_LIMIT, /^[a-z][a-z0-9.-]{0,63}$/),
+    recentActions: stringList(src['recentActions'], RECENT_ACTIONS_LIMIT, /^[a-z][a-z0-9.-]{0,63}$/, (id) => {
+      if (!id.startsWith('pane.')) return id;
+      const paneId = normalizePaneId(id.slice('pane.'.length));
+      return paneId === null ? id : `pane.${paneId}`;
+    }),
     recentChats: stringList(src['recentChats'], RECENT_CHATS_LIMIT, /^[\w.-]{1,200}$/),
     mounted: [section],
     overlay,
