@@ -4,6 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { defaultGitRunner, parseNumstatZ, parsePorcelainV2, type GitRunner } from '../verse/git-ops.js';
+import { fleetEditRefusals } from './collision-free-edits.js';
 import { isFleetJobId } from './runs-job-detail.js';
 
 export interface FleetJobChangesV1 {
@@ -17,6 +18,8 @@ export interface FleetJobChangesV1 {
   files: Array<{ path: string; added: number | null; removed: number | null; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' }>;
   totals: { files: number; added: number; removed: number };
   truncated: boolean;
+  /** Changed paths the fleet admission rule refuses (singletons, agent guides, lockfiles). */
+  refusals: { path: string; rule: string }[];
 }
 export interface FleetJobChangesOptions {
   runsDir?: string;
@@ -46,7 +49,7 @@ export function getFleetJobChanges(job: string, opts: FleetJobChangesOptions = {
   return value;
 }
 async function project(job: string, runs: string, home: string, runner: GitRunner): Promise<FleetJobChangesV1> {
-  const result: FleetJobChangesV1 = { schema: 'fleet.job.changes.v1', generatedAt: new Date().toISOString(), job, state: 'missing', baseSha: null, files: [], totals: { files: 0, added: 0, removed: 0 }, truncated: false };
+  const result: FleetJobChangesV1 = { schema: 'fleet.job.changes.v1', generatedAt: new Date().toISOString(), job, state: 'missing', baseSha: null, files: [], totals: { files: 0, added: 0, removed: 0 }, truncated: false, refusals: [] };
   let worktree: string;
   try {
     const path = join(runs, `${job}.base`);
@@ -98,6 +101,7 @@ async function project(job: string, runs: string, home: string, runner: GitRunne
     result.truncated ||= result.files.length > 200;
     result.files = result.files.slice(0, 200);
     result.totals = result.files.reduce((sum, file) => ({ files: sum.files + 1, added: sum.added + (file.added ?? 0), removed: sum.removed + (file.removed ?? 0) }), { files: 0, added: 0, removed: 0 });
+    result.refusals = fleetEditRefusals(result.files.map(file => file.path)).map(({ path, rule }) => ({ path, rule }));
   } catch { result.state = 'degraded'; }
   return result;
 }
