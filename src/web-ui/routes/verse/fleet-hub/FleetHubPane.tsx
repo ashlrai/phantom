@@ -55,7 +55,7 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
       <button type="button" className={styles.secondary} onClick={() => { void copyText('ashlr fleet init').then((copied) => setCopyLabel(copied ? 'Copied' : 'Copy failed')); }}>{copyLabel}</button>
     </div> : null}
     <div className={styles.tiles}>
-      {empty?.kind !== 'no-fleet' && tiles.map((tile) => <button type="button" key={tile.id} className={styles.tile} disabled={!tile.present} onClick={() => openDockPane(tile.id)}>
+      {empty?.kind !== 'no-fleet' && tiles.map((tile) => <button type="button" key={tile.id} className={styles.tile} data-tone={tile.tone} disabled={!tile.present} onClick={() => openDockPane(tile.id)}>
         <strong>{tile.title}</strong>
         <span className={styles.count}>{tile.count}</span>
         {!tile.present ? <span>not in this build</span> : null}
