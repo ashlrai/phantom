@@ -1,14 +1,17 @@
 import { useState } from 'react';
+import { Button } from '../../../components/primitives/Button.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { countdownLabel, formatRelative } from '../autonomy/format.js';
 import { JobRefs } from '../fleet/JobRefs.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { opsFleetQuery } from '../ops/ops-queries.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { decisionPr, decisionRows, decisionSummary, holdRows, normalizeQuery, repeatedSkips, searchRows, stallNote, type Filter } from './fleet-decisions-model.js';
+import { holdSteerPrefill, repeatSteerPrefill } from './decision-steer-prefill.js';
 import styles from './fleet-decisions.module.css';
 
 export function FleetDecisionsPane({ visible, host }: PaneProps) {
@@ -45,6 +48,7 @@ export function FleetDecisionsPane({ visible, host }: PaneProps) {
         <div><JobRefs text={r.title} onOpenJob={openJob} /></div>
         <div>skipped {r.runs} ticks in a row since <time dateTime={r.since}>{formatRelative(r.since)}</time></div>
         <div><JobRefs text={r.reason} onOpenJob={openJob} /></div>
+        <Button size="sm" aria-label={`Steer bet ${r.title}`} onClick={() => openInterjectDialog({ prefill: repeatSteerPrefill(r) })}>Steer</Button>
       </li>)}</ul>
     </section>}
     <ul className={styles.list} aria-label="Decisions">{decisions.map(d => { const pr = d.launched ? decisionPr(d.title, snapshot.data ?? undefined) : null; return <li key={d.key} className={styles.row}>
@@ -58,6 +62,7 @@ export function FleetDecisionsPane({ visible, host }: PaneProps) {
       <ul className={styles.list} aria-label="Held items">{held.map(h => <li key={h.key} className={styles.row}>
         <div>{h.repo} · <JobRefs text={h.title} onOpenJob={openJob} /></div><div>{h.holdKind} · <JobRefs text={h.reason} onOpenJob={openJob} /></div>
         <div>{h.nextEligibleAt ? <>lifts <time dateTime={h.nextEligibleAt}>{countdownLabel(Number.isFinite(Date.parse(h.nextEligibleAt)) ? Date.parse(h.nextEligibleAt) : null, Date.now())}</time></> : 'no lift time'}</div>
+        <Button size="sm" aria-label={`Steer bet ${h.title}`} onClick={() => openInterjectDialog({ prefill: holdSteerPrefill(h) })}>Steer</Button>
       </li>)}</ul>
       {held.length === 0 && <p className={styles.message}>{normalized === '' ? 'No held items reported.' : <>No held items match "{normalized}". <button type="button" onClick={() => setQuery('')}>Clear search</button></>}</p>}
     </section>
