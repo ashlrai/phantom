@@ -30,11 +30,15 @@ import { MessageMarkdown } from '../MessageMarkdown.js';
 import type { SurfaceActions } from '../command/actions.js';
 import { ActionRow } from '../command/LeaderCard.js';
 import { scrollToAnchor } from '../command/nav.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { JobRefs } from '../fleet/JobRefs.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import commandStyles from '../command/command.module.css';
 import { expectedDeltaText, memoActions } from '../mind/leader-model.js';
 import { LeaderComposer } from './LeaderComposer.js';
 import { CHANNEL_LABEL, clockTime, displayThreadText, previewText, type PendingMessage, type ThreadEntry, type ThreadRow } from './thread-model.js';
 import type { LeaderThreadChannel, LeaderThreadMessage } from './thread-types.js';
+import { hasThreadRefs, threadRefs } from './thread-refs.js';
 import styles from './leader.module.css';
 
 export function ChannelBadge({ channel }: { channel: LeaderThreadChannel }) {
@@ -85,6 +89,17 @@ export interface ThreadContext {
   /** Autonomy is off: memos are dry runs. */
   dormant: boolean;
   questionFormProps?: (question: LeaderThreadMessage) => LeaderQuestionFormProps;
+}
+
+function ThreadRefsRow({ text }: { text: string }) {
+  if (!hasThreadRefs(text)) return null;
+  const { jobs, prs } = threadRefs(text);
+  const refsLine = [...jobs, ...prs.map((number) => `#${number}`)].join(' · ');
+  function openLog(id: string) {
+    requestWorkerLogJob(id);
+    openDockPane('worker-log');
+  }
+  return <div className={styles.refs} aria-label="Referenced jobs and PRs"><JobRefs text={refsLine} onOpenJob={openLog} /></div>;
 }
 
 /** The question an answer closes, by its id or the message it replies to. */
@@ -149,6 +164,7 @@ function MemoCard({ message, ctx }: { message: LeaderThreadMessage; ctx: ThreadC
           <MessageMarkdown text={displayThreadText(message)} />
         </div>
       )}
+      {message.from === 'leader' ? <ThreadRefsRow text={message.text} /> : null}
       {list.length ? (
         <ul className={`${commandStyles.actionList} ${styles.memoActions}`} aria-label="Memo actions">
           {list.map((a) => (
@@ -182,6 +198,7 @@ function QuestionCard({ message, ctx }: { message: LeaderThreadMessage; ctx: Thr
       <div className={styles.prose}>
         <MessageMarkdown text={message.text} />
       </div>
+      {message.from === 'leader' ? <ThreadRefsRow text={message.text} /> : null}
       {message.questionForm && ctx.questionFormProps ? (
         <Suspense fallback={<p role="status">Reading the current question…</p>}>
           <TypedQuestionForm key={message.questionId ?? message.id} {...ctx.questionFormProps(message)} />
@@ -216,6 +233,7 @@ function ActionNote({ message, ctx }: { message: LeaderThreadMessage; ctx: Threa
       <div className={styles.prose}>
         <MessageMarkdown text={displayThreadText(message)} />
       </div>
+      <ThreadRefsRow text={message.text} />
       {list.length ? (
         <ul className={`${commandStyles.actionList} ${styles.memoActions}`} aria-label="Actions">
           {list.map((a) => (
@@ -290,6 +308,7 @@ function EntryView({ entry, ctx }: { entry: ThreadEntry; ctx: ThreadContext }) {
           <div className={styles.prose}>
             <MessageMarkdown text={m.text} />
           </div>
+          <ThreadRefsRow text={m.text} />
           <DeliveryNote message={m} />
         </div>
       );
