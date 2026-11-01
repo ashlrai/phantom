@@ -89,7 +89,34 @@ const workersShape: Shape = {
 const claimsShape: Shape = [{ job: 'string', lane: 'string', tier: 'string', at: 'string' }];
 const dropShape: Shape = { pending: [{ lane: 'string', file: 'string' }], done: 'number' };
 const codexShape: Shape = { usedPct: 'number?', resetsAt: 'string?', asOf: 'string?' };
-const mergesShape: Shape = { count: 'number?', items: [{ repo: 'string', number: 'number', title: 'string' }] };
+const mergesShape: Shape = {
+  count: 'number?', perHour: 'number?', medianOpenToMergeMs: 'number?',
+  items: [{ repo: 'string', number: 'number', title: 'string', openedAt: 'string?', mergedAt: 'string?', openToMergeMs: 'number?' }],
+};
+
+export function mergeSpeedFacts(items: ReadonlyArray<{ openToMergeMs: number | null }>, count: number | null): { perHour: number | null; medianOpenToMergeMs: number | null } {
+  const durations = items.flatMap(item => item.openToMergeMs === null ? [] : [item.openToMergeMs]).sort((a, b) => a - b);
+  const middle = Math.floor(durations.length / 2);
+  const medianOpenToMergeMs = durations.length === 0 ? null : durations.length % 2 === 1
+    ? durations[middle]!
+    : (durations[middle - 1]! + durations[middle]!) / 2;
+  return { perHour: count, medianOpenToMergeMs };
+}
+
+// Older injected readers predate the speed fields; retain the strict projection
+// for present values while treating absent additions as unknown.
+function normalizeMergeFields(value: unknown): unknown {
+  if (!record(value)) return value;
+  return {
+    ...value, perHour: value.perHour === undefined ? null : value.perHour,
+    medianOpenToMergeMs: value.medianOpenToMergeMs === undefined ? null : value.medianOpenToMergeMs,
+    items: Array.isArray(value.items) ? value.items.map((item: unknown) => record(item) ? {
+      ...item, openedAt: item.openedAt === undefined ? null : item.openedAt,
+      mergedAt: item.mergedAt === undefined ? null : item.mergedAt,
+      openToMergeMs: item.openToMergeMs === undefined ? null : item.openToMergeMs,
+    } : item) : value.items,
+  };
+}
 
 async function personal(now: number): Promise<unknown> {
   const { collectCodexSessionUsages, buildCodexResourceReport } = await import('../fleet/codex-session-usage.js');
@@ -113,10 +140,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       'q=org:ashlrai is:pr is:merged merged:>' + new Date(now() - 3_600_000).toISOString(), '-f', 'per_page=30'], { timeout: 15_000, maxBuffer: 1024 * 1024 });
     const raw: unknown = JSON.parse(stdout);
     if (!record(raw) || typeof raw.total_count !== 'number' || !Array.isArray(raw.items)) throw new Error('merges');
-    const value = { count: raw.total_count, items: raw.items.map((item: unknown) => {
+    const items = raw.items.map((item: unknown) => {
       if (!record(item) || typeof item.repository_url !== 'string' || !/^https:\/\/api.github.com\/repos\/ashlrai\/[\w.-]+$/.test(item.repository_url)) throw new Error('repo');
-      return { repo: item.repository_url.replace('https://api.github.com/repos/', ''), number: item.number, title: item.title };
-    }) };
+      const openedAt = typeof item.created_at === 'string' ? item.created_at : null;
+      const mergedAt = record(item.pull_request) && typeof item.pull_request.merged_at === 'string'
+        ? item.pull_request.merged_at : typeof item.closed_at === 'string' ? item.closed_at : null;
+      const duration = openedAt !== null && mergedAt !== null ? Date.parse(mergedAt) - Date.parse(openedAt) : NaN;
+      const openToMergeMs = Number.isFinite(duration) && duration >= 0 ? duration : null;
+      return { repo: item.repository_url.replace('https://api.github.com/repos/', ''), number: item.number, title: item.title, openedAt, mergedAt, openToMergeMs };
+    });
+    const value = { count: raw.total_count, items, ...mergeSpeedFacts(items, raw.total_count) };
     project(value, mergesShape);
     mergedCache = { at: now(), value };
     return value;
@@ -165,7 +198,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         // readers may still supply the snapshot array directly.
         if (key === 'inbox' && !Array.isArray(raw) &&
           (!record(raw) || !['healthy', 'missing', 'degraded'].includes(String(raw.sourceState)))) throw new Error('inbox state');
-        const value = project(key === 'inbox' && record(raw) ? raw.entries : raw, shape);
+        const value = project(key === 'inbox' && record(raw) ? raw.entries : key === 'merges' ? normalizeMergeFields(raw) : raw, shape);
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
         const claimed = key === 'runsDir' && record(raw) && raw.claimed != null ? project(raw.claimed, claimsShape) : [];
