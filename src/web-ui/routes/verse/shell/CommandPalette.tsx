@@ -37,6 +37,7 @@ import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { revealDockPane } from '../dock/reveal-pane.js';
 import { usePanes } from '../panes/pane-registry.js';
+import { paletteBacklogQuery } from './palette-backlog-queries.js';
 import { paletteWorkers } from './palette-workers.js';
 
 import { paletteLanes, type PaletteLane } from './palette-lanes.js';
@@ -60,6 +61,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
   const ui = useVerseUi();
   const open = ui.overlay === 'palette';
   const runs = useQuery(opsRunsQuery, { enabled: open, freshMs: 0 });
+  const backlog = useQuery(paletteBacklogQuery, { enabled: open, freshMs: 0 });
   const panes = usePanes();
   useEffect(() => { void import('../panes/index.js'); }, []);
   const activity = useActivity();
@@ -90,6 +92,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     () => ({
       panes: [...panes].sort((a, b) => a.title.localeCompare(b.title)),
       workers: paletteWorkers(runs.data),
+      backlog: backlog.data ?? [],
       lanes: paletteLanes(runs.data, parsePauseRecord(localStorage.getItem(LANE_PAUSE_KEY))),
       needsYou: activity.data?.needsYou ?? [],
       running: activity.data?.running ?? [],
@@ -99,7 +102,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       recentActions: ui.recentActions,
       platform,
     }),
-    [panes, runs.data, activity.data, sessions.data, bootstrap.data, ui.recentActions, platform],
+    [panes, runs.data, backlog.data, activity.data, sessions.data, bootstrap.data, ui.recentActions, platform],
   );
 
   const view = useMemo(() => {
@@ -115,6 +118,14 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
   // refresh under an unchanged query only keeps the highlight on a real row,
   // so it never yanks a highlight the operator arrowed to.
   const highlightBestRef = useRef(query !== '');
+  const manuallySelectedRef = useRef(false);
+  const hadBacklogDataRef = useRef(backlog.data !== undefined);
+  useEffect(() => {
+    if (!hadBacklogDataRef.current && backlog.data !== undefined && !manuallySelectedRef.current && query.trim()) {
+      highlightBestRef.current = true;
+    }
+    if (backlog.data !== undefined) hadBacklogDataRef.current = true;
+  }, [backlog.data, query]);
   // A spoken command while the palette is already open replaces the query.
   useEffect(() => {
     function onSpoken(event: Event) {
@@ -124,6 +135,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       setArgFor(null);
       setQuery(spoken);
       highlightBestRef.current = true;
+      manuallySelectedRef.current = false;
       inputRef.current?.focus();
     }
     window.addEventListener(PALETTE_QUERY_EVENT, onSpoken);
@@ -134,6 +146,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     const node = inputRef.current;
     setQuery((current) => insertDictation(current, chunk.replace(/[.!?]+$/, ''), node?.selectionStart ?? null, node?.selectionEnd ?? null).value);
     highlightBestRef.current = true;
+    manuallySelectedRef.current = false;
   }, []);
   useEffect(() => {
     if (highlightBestRef.current) {
@@ -227,6 +240,11 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       onClose();
       return;
     }
+    if (payload.kind === 'backlog') {
+      window.open(payload.url, '_blank', 'noopener,noreferrer');
+      onClose();
+      return;
+    }
     if (payload.kind === 'worker') {
       if (payload.url) window.open(payload.url, '_blank', 'noopener,noreferrer');
       if (!payload.url || payload.selectLog) {
@@ -269,17 +287,21 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     }
     switch (key) {
       case 'ArrowDown':
+        manuallySelectedRef.current = true;
         event.preventDefault();
         if (count > 0) setActive((i) => (i + 1) % count);
         return;
       case 'ArrowUp':
+        manuallySelectedRef.current = true;
         event.preventDefault();
         if (count > 0) setActive((i) => (i - 1 + count) % count);
         return;
       case 'Home':
+        manuallySelectedRef.current = true;
         if (count > 0) { event.preventDefault(); setActive(0); }
         return;
       case 'End':
+        manuallySelectedRef.current = true;
         if (count > 0) { event.preventDefault(); setActive(count - 1); }
         return;
       case 'Enter':
@@ -345,6 +367,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
             onChange={(e) => {
               setQuery(e.target.value);
               highlightBestRef.current = true;
+              manuallySelectedRef.current = false;
             }}
             onKeyDown={onKeyDown}
           />
@@ -375,7 +398,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
                       aria-selected={i === active}
                       className={styles.item}
                       data-tone={item.tone}
-                      onMouseMove={() => i !== active && setActive(i)}
+                      onMouseMove={() => { if (i !== active) { manuallySelectedRef.current = true; setActive(i); } }}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => run(item)}
                     >
