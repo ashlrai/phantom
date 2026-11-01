@@ -12,7 +12,7 @@ import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { jobTextQuery } from '../fleet-job-log/job-text-queries.js';
 import { jobChangesQuery } from '../fleet-job-log/worker-changes-queries.js';
-import { changesHeadline, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
+import { changesHeadline, collisionTell, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
 import { openInterjectDialog } from './interject-dialog-store.js';
 import { sheetActions, steerPrefill } from './job-sheet-actions.js';
 import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
@@ -40,6 +40,7 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   usePollWhileVisible(() => { void runQuery(changesQuery.key, () => changesQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
   usePollWhileVisible(() => { void runQuery(notesQuery.key, () => notesQuery.fetch()); }, 10_000, { enabled: read.data?.state === 'running' });
   const d = read.data;
+  const collision = changes.data ? collisionTell(changes.data) : null;
   const preview = notes.data?.state === 'ok' ? notesPreview(notes.data.text) : null;
   const issues = notes.data?.state === 'ok' ? closesRefs(notes.data.text) : [];
   const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
@@ -68,7 +69,7 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
       <section aria-label="Changed files">
         <h3>Changed files</h3>
         {changes.error ? <p role="status">Changes unavailable</p> : changes.data === null ? <p>Changes are not in this build yet</p> : !changes.data ? <SkeletonLine /> : <>
-          <p>{changesHeadline(changes.data)}</p>
+          <p>{changesHeadline(changes.data)}{collision === null ? null : <> <StatusBadge status="collision" tone="warning">{collision}</StatusBadge></>}</p>
           {changes.data.state === 'missing' ? <p>Worktree not available</p> : <>
             {changes.data.state === 'degraded' && <p role="status">Changes could not fully refresh.</p>}
             {changes.data.files.length === 0 ? (changes.data.state === 'live' ? <p>No changes yet</p> : null) : <ul>
