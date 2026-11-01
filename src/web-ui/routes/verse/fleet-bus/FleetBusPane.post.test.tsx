@@ -40,3 +40,25 @@ it('replies to a sender and refreshes the posted envelope', async () => {
   await waitFor(() => expect(within(list).getByText('On it')).toBeInTheDocument());
   expect(vi.mocked(fetch).mock.calls.filter(([path]) => String(path).endsWith('/status')).length).toBeGreaterThanOrEqual(2);
 });
+
+it('opens the durable bus for a job request and clears its context on post or reply', async () => {
+  const { requestBusPost } = await import('./bus-post-request.js');
+  render(<FleetBusPane {...({ visible: true } as PaneProps)} />);
+  const { act } = await import('@testing-library/react');
+  act(() => requestBusPost({ to: 'RQ-PHX-FOO', quote: 'RQ-PHX-FOO · running · no PR yet', text: '' }));
+  expect(await screen.findByText('About: RQ-PHX-FOO · running · no PR yet')).toBeVisible();
+  const message = screen.getByRole('textbox', { name: 'Message' });
+  expect(message).toHaveFocus();
+  expect(screen.getByRole('combobox', { name: 'To' })).toHaveValue('RQ-PHX-FOO');
+  fireEvent.change(message, { target: { value: 'Please merge' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await screen.findByText(/Posted/);
+  expect(posts).toEqual([expect.objectContaining({ from: 'mason', to: 'RQ-PHX-FOO', body: expect.objectContaining({ text: 'Please merge' }) })]);
+  expect(screen.queryByText(/^About:/)).not.toBeInTheDocument();
+  act(() => requestBusPost({ to: 'RQ-PHX-FOO', quote: 'Job context', text: '' }));
+  expect(await screen.findByText('About: Job context')).toBeVisible();
+  const list = await screen.findByRole('list', { name: 'Durable bus envelopes' });
+  fireEvent.click(within(list).getByRole('button', { name: 'Reply' }));
+  expect(screen.queryByText(/^About:/)).not.toBeInTheDocument();
+  expect(screen.getByText('Replying to: Please check this')).toBeVisible();
+});

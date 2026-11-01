@@ -66,6 +66,8 @@ named nested type. Relative source links refer to the source checkout.
 | POST | `/api/verse/fleet/live` | none | [FleetLiveActionResult](../src/core/verse/fleet-live-api.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"action":"pause-repo","repo":"ashlrai/example","reason":"Review"}' 'http://127.0.0.1:7777/api/verse/fleet/live'` |
 | GET | `/api/verse/fleet/live/bus` | limit | [FleetBusFeedV1](../src/core/fleet/bus-feed.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/bus'` |
 | GET | `/api/verse/fleet/live/queue` | limit | [FleetQueueV1](../src/core/fleet/runs-parked-queue.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/queue'` |
+| GET | `/api/verse/fleet/live/drop-jobs` | none | [inline {v, items: DropJobListItem[]}](../src/core/fleet/drop-job-writer.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/drop-jobs'` |
+| POST | `/api/verse/fleet/live/drop-jobs` | none | [inline {v, status, file, bytes, at} (201)](../src/core/fleet/drop-job-writer.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"id":"EXAMPLE01","lane":"claude","tier":"work","body":"Summarize the merge backlog."}' 'http://127.0.0.1:7777/api/verse/fleet/live/drop-jobs'` |
 | GET | `/api/verse/fleet/live/feedback` | none | [ExecutionFeedbackRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback'` |
 | GET | `/api/verse/fleet/live/feedback/cases/` (EXECUTION_FEEDBACK_CASE_PATH) + {caseId} | none | [ExecutionFeedbackCaseRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback/cases/example-case'` |
 | GET | `/api/verse/fleet/graph/live` | none | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
@@ -123,6 +125,19 @@ filter of 1–40 letters, digits, spaces, dots, underscores or hyphens. Bus
 consult [the thread limits](../src/core/vision/leader-thread.ts) for
 bounds. History accepts `days` and `tz` (Date#getTimezoneOffset minutes); Ops `team` selects a valid team ID. Refer to each linked handler for
 request body validation and action-specific responses.
+
+GET `/api/verse/fleet/live/drop-jobs` takes no parameters and lists the job
+files waiting in the dispatchd drop lane. It answers `{v:1, items:[{id, lane,
+tier, title, bytes, ageSeconds}]}` — `lane`/`tier`/`title` null when a file
+cannot be parsed — or `{v:1, items:[]}` when the lane is empty.
+
+POST `/api/verse/fleet/live/drop-jobs` takes a JSON body `{id, lane, tier,
+body}` — the id after `RQ-PHX-`, an allow-listed lane and tier, and the
+prompt body — and publishes the validated job file into the drop lane. It
+answers 201 `{v:1, status:'written', file, bytes, at}` on success, 400
+`{status:'invalid', reasons}` on a contract violation, 409 `{status:'exists'}`
+when the id is already spent, 507 `{status:'full'}` when the prompt queue
+holds forty or more jobs, or 503 when the write fails.
 
 A `400` with `VERSE_INVALID` indicates invalid input on routes using that code;
 some handlers return a plain error instead. `401` means read or mutation
