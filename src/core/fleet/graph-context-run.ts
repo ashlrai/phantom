@@ -1,4 +1,5 @@
 import { dirname, isAbsolute } from 'node:path';
+import { Writable } from 'node:stream';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { taskReadyFrontier } from './task-ready-frontier.js';
 import { readRunsSwitches } from './runs-switches.js';
@@ -10,17 +11,19 @@ const id = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9_-]
 const path = (s: unknown): s is string => typeof s === 'string' && isAbsolute(s) && !s.includes('\0') && s.length <= 4096;
 
 /**
- * Sequential dependency-graph runner whose nodes launch through the existing
- * context worker: every ready node's literal argv runs with the bounded cited
- * pack on stdin, resolved live at launch time. Validation of the whole
- * manifest happens before any child; a failed prerequisite blocks only its
- * descendants. dependsOn orders execution; the snapshot file owns which
- * upstream jobs are cited — graph data never becomes a command.
+ * Dependency-graph runner whose nodes launch through the existing context
+ * worker: every ready node's literal argv runs with the bounded cited pack on
+ * stdin, resolved live at launch time. Validation of the whole manifest
+ * happens before any child; a failed prerequisite blocks only its descendants.
+ * dependsOn orders admission; the snapshot file owns which upstream jobs are
+ * cited — graph data never becomes a command. Independent nodes run
+ * concurrently up to the concurrency bound; 1 preserves sequential behavior.
  */
-export async function graphContextRun(file: string, apply = false, io: ContextWorkerIO = {}): Promise<{ status: string; nodes: Row[] }> {
-  let tasks: Task[], order: string[] = [];
+export async function graphContextRun(file: string, apply = false, io: ContextWorkerIO = {}, concurrency = 1): Promise<{ status: string; nodes: Row[] }> {
+  let tasks: Task[];
+  const order: string[] = [];
   try {
-    if (!path(file)) throw Error();
+    if (!path(file) || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw Error();
     const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: 262144, remainingBytes: 262144 });
     if (!read.ok) throw Error();
     const v = JSON.parse(read.text);
@@ -43,27 +46,52 @@ export async function graphContextRun(file: string, apply = false, io: ContextWo
   } catch { return { status: 'invalid', nodes: [] }; }
   if (!apply) return { status: 'preview', nodes: order.map(id => ({ id, status: 'planned', exitCode: null })) };
 
-  // Worker output and diagnostics stay off the JSON result stream.
-  const workerIO: ContextWorkerIO = { stdout: io.stderr ?? process.stderr, stderr: io.stderr ?? process.stderr };
+  // Worker output and diagnostics stay off the JSON result stream. Each worker
+  // gets its own relay so parallel pipelines never stack listeners on one sink.
+  const workerIO = (): ContextWorkerIO => {
+    const target = io.stderr ?? process.stderr;
+    const relay = (): Writable => new Writable({ write(chunk, _encoding, done) { target.write(chunk, done); } });
+    return { stdout: relay(), stderr: relay() };
+  };
   const results = new Map<string, Row>();
+  const active = new Map<string, Promise<void>>();
   let cancelled = false;
   const cancel = (): void => { cancelled = true; };
   process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
   try {
-    for (const nodeId of order) {
-      const task = tasks.find(t => t.id === nodeId)!;
-      if (cancelled) { results.set(nodeId, { id: nodeId, status: 'cancelled', exitCode: null }); continue; }
-      if ((task.dependsOn ?? []).some(d => results.get(d)?.status !== 'success')) {
-        results.set(nodeId, { id: nodeId, status: 'blocked', exitCode: null }); continue;
+    while (results.size < order.length) {
+      for (const nodeId of order) {
+        if (results.has(nodeId) || active.has(nodeId)) continue;
+        const task = tasks.find(t => t.id === nodeId)!;
+        const dependencies = task.dependsOn ?? [];
+        if (cancelled) { results.set(nodeId, { id: nodeId, status: 'cancelled', exitCode: null }); continue; }
+        if (dependencies.some(d => results.has(d) && results.get(d)!.status !== 'success')) {
+          results.set(nodeId, { id: nodeId, status: 'blocked', exitCode: null }); continue;
+        }
+        if (active.size >= concurrency || dependencies.some(d => !results.has(d))) continue;
+        const switches = await readRunsSwitches();
+        const refused = switches.sourceState === 'degraded' || switches.switches.some(s => s.on && ['ORCH_OFF', 'PAUSE', 'HOLD', 'QUEUE_DISABLE'].includes(s.id));
+        // Cancellation must win even when delivered during the asynchronous control read.
+        if (cancelled || refused) {
+          results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : 'refused', exitCode: null }); continue;
+        }
+        // The worker resolves snapshot, prompt and cited live outputs itself at
+        // launch; nothing about the context is precomputed by this scheduler.
+        const done = runContextWorker({ snapshot: task.snapshot, prompt: task.prompt, argv: task.argv }, workerIO())
+          .then(exitCode => {
+            results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : exitCode === 0 ? 'success' : 'failed', exitCode });
+            active.delete(nodeId);
+          }, () => {
+            results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : 'failed', exitCode: null });
+            active.delete(nodeId);
+          });
+        active.set(nodeId, done);
       }
-      const switches = await readRunsSwitches();
-      const refused = switches.sourceState === 'degraded' || switches.switches.some(s => s.on && ['ORCH_OFF', 'PAUSE', 'HOLD', 'QUEUE_DISABLE'].includes(s.id));
-      // Cancellation must win even when delivered during the asynchronous control read.
-      if (cancelled || refused) {
-        results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : 'refused', exitCode: null }); continue;
-      }
-      const exitCode = await runContextWorker({ snapshot: task.snapshot, prompt: task.prompt, argv: task.argv }, workerIO);
-      results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : exitCode === 0 ? 'success' : 'failed', exitCode });
+      // A worker can close during a later node's control read. Revisit newly ready
+      // work before waiting on the remaining workers when capacity is available.
+      if (active.size < concurrency && tasks.some(task => !results.has(task.id) && !active.has(task.id) &&
+        (task.dependsOn ?? []).every(d => results.get(d)?.status === 'success'))) continue;
+      if (active.size) await Promise.race(active.values());
     }
   } finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
   const nodes = order.map(nodeId => results.get(nodeId)!);
