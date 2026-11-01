@@ -18,6 +18,19 @@ export interface RemoteFleetTransport {
 export interface RemoteFleetReadOptions { limit?: number }
 export interface RemoteFleetInboxOptions extends RemoteFleetReadOptions { source?: string }
 
+// These match the remote gateway's body grammar; the Hub also checks known
+// switches, known lanes, and each lane's current bounds.
+const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
+const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
+
+function validateLane(lane: string): void {
+  if (typeof lane !== 'string' || !FLEET_LANE_ID.test(lane)) throw new TypeError('invalid lane');
+}
+
+function rejectExtraArguments(extra: never[]): void {
+  if (extra.length > 0) throw new TypeError('unsupported fleet action options');
+}
+
 function validateOptions(options: RemoteFleetInboxOptions, allowSource: boolean): void {
   if (options === null || typeof options !== 'object' || Array.isArray(options)
     || Object.keys(options).some((key) => key !== 'limit' && !(allowSource && key === 'source'))) {
@@ -46,6 +59,28 @@ export function createRemoteFleetFeed(transport: RemoteFleetTransport) {
     runs: () => transport.get<FleetRunsV1>('/api/verse/fleet/runs'),
     laneTargets: () => transport.get<LaneTargetsV1>('/api/verse/fleet/control/lanes'),
     switches: () => transport.get<RunsSwitchesV1>('/api/verse/fleet/control/switches'),
+    readLaneHolds: (...extra: never[]) => {
+      rejectExtraArguments(extra);
+      return transport.get<LaneTargetsV1>('/api/verse/fleet/control/holds');
+    },
+    setLaneTarget: (lane: string, target: number, ...extra: never[]) => {
+      rejectExtraArguments(extra);
+      validateLane(lane);
+      if (!Number.isSafeInteger(target) || target < 0 || target > 64) throw new RangeError('invalid lane target');
+      return transport.mutate<LaneTargetsV1>('POST', '/api/verse/fleet/control/lanes', { lane, target });
+    },
+    setSwitch: (id: string, on: boolean, ...extra: never[]) => {
+      rejectExtraArguments(extra);
+      if (typeof id !== 'string' || !FLEET_SWITCH_ID.test(id) || typeof on !== 'boolean') throw new TypeError('invalid switch');
+      return transport.mutate<RunsSwitchesV1>('POST', '/api/verse/fleet/control/switches', { id, on });
+    },
+    releaseLaneHold: (lane: string, reason?: string, ...extra: never[]) => {
+      rejectExtraArguments(extra);
+      validateLane(lane);
+      if (reason !== undefined && (typeof reason !== 'string' || reason.length > 120)) throw new TypeError('invalid hold release reason');
+      return transport.mutate<LaneTargetsV1>('POST', '/api/verse/fleet/control/holds',
+        reason === undefined ? { lane, action: 'release' } : { lane, action: 'release', reason });
+    },
     inbox: (options: RemoteFleetInboxOptions = {}) => {
       validateOptions(options, true);
       const source = options.source === undefined ? '' : `&source=${encodeURIComponent(options.source)}`;
