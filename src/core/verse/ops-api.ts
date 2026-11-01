@@ -51,7 +51,7 @@ import { createCompanionCoordinator } from '../proactive/coordination.js';
 import type { CompanionList, CompanionTask } from '../proactive/coordination-types.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { fetchOrigin, readSelfUpdateStatus, type SelfUpdateDeps } from './self-update-status.js';
-import { applySelfUpdate, detectRestartMode, scheduleRestart, realSelfUpdateRunner, type SelfUpdateApplyResult } from './self-update-apply.js';
+import { applySelfUpdate, detectRestartMode, scheduleRestart, realSelfUpdateRunner, selfUpdateApplyInProgress, type SelfUpdateApplyResult } from './self-update-apply.js';
 import { probeReleases, type OpsReleaseProbeDeps } from './ops-releases.js';
 import {
   OPS_BOARD_JOURNAL_WINDOW_MS,
@@ -76,10 +76,13 @@ import {
   type OpsLeadersV1,
   type OpsReleasesV1,
   type OpsRouteDecision,
+  type OpsSelfUpdateV1,
   type OpsSourceState,
   type OpsTaskRow,
   type OpsTaskSource,
 } from './ops-types.js';
+
+export type OpsSelfUpdateWithApplying = OpsSelfUpdateV1 & { applying: { startedAt: string } | null };
 
 /** Test seams : production defaults are the real buses, never fixtures. */
 export interface OpsApiDeps {
@@ -465,7 +468,8 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
         statusCache = entry;
         void entry.value.then(() => { entry.at = now(); });
       }
-      sendJson(res, 200, await statusCache.value);
+      const status = await statusCache.value;
+      sendJson(res, 200, { ...status, applying: selfUpdateApplyInProgress() } satisfies OpsSelfUpdateWithApplying);
       return true;
     }
     if (path === '/api/verse/ops/leader-journal' && method === 'GET') {
