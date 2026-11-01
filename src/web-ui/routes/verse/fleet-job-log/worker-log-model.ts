@@ -38,6 +38,15 @@ export function isJobDetail(value: unknown): value is FleetJobDetailV1 {
   return obj(value) && value.schema === 'fleet.job.v1' && detailShape(value);
 }
 
+export function publishFacts(value: unknown): { testLine: string | null; sensitive: string[] | null } {
+  const publish = obj(value) ? value : {};
+  return {
+    testLine: typeof publish.testLine === 'string' ? publish.testLine : null,
+    sensitive: Array.isArray(publish.sensitive) && publish.sensitive.length > 0 && publish.sensitive.every(string)
+      ? publish.sensitive as string[] : null,
+  };
+}
+
 function age(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds)) return 'age unknown';
   const minutes = Math.floor(Math.max(0, seconds) / 60);
