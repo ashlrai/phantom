@@ -69,6 +69,9 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/live/feedback` | none | [ExecutionFeedbackRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback'` |
 | GET | `/api/verse/fleet/live/feedback/cases/` (EXECUTION_FEEDBACK_CASE_PATH) + {caseId} | none | [ExecutionFeedbackCaseRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback/cases/example-case'` |
 | GET | `/api/verse/fleet/graph/live` | none | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
+| GET | `/api/verse/github/fleet-backlog` (VERSE_GITHUB_FLEET_BACKLOG_ROUTE) | repo (required) | [MergeBacklogReadV1](../src/core/fleet/merge-backlog-read.ts) | [source](../src/core/verse/github-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/github/fleet-backlog?repo=owner/example'` |
+
+`GET /api/verse/github/fleet-backlog?repo=<owner/name>` returns one enrolled repo's open-PR merge backlog — items shaped `{number, title, headRef, updatedAt, mergeStateStatus, isDraft, job, classification, suggestedAction}` plus per-merge-state and per-action counts — cached for 60 s per repo. `suggestedAction` is `merge`, `recut`, `refresh`, `wait` or `none` from the merge-backlog planner; a `503` with `source: "gh-failed"` means gh could not answer and `items` is empty.
 
 ## Ops
 
@@ -108,7 +111,8 @@ control run prefix. Ops paths use `VERSE_OPS_BOARD_PATH`,
 `VERSE_OPS_LEADERS_MESSAGES_PATH`, and `VERSE_OPS_SELF_UPDATE_PATH` in
 [ops-types.ts](../src/core/verse/ops-types.ts). `THREAD_PATH` and
 `DIRECTIVES_PATH` are built from `VERSE_LEADER_PATH`; the feedback case prefix
-is `EXECUTION_FEEDBACK_CASE_PATH`. Leader IDs are validated by the
+is `EXECUTION_FEEDBACK_CASE_PATH`; `VERSE_GITHUB_FLEET_BACKLOG_ROUTE` is the
+merge-backlog read. Leader IDs are validated by the
 [handler](../src/core/verse/leader-api.ts), and case IDs by the
 [feedback handler](../src/core/verse/execution-feedback-api.ts).
 
