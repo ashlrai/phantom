@@ -89,6 +89,9 @@ import {
   syncLeaderMemosToThread,
 } from '../vision/leader-thread.js';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import { runPlannerPass, type RunPlannerPassOpts, type PlannerRunResult } from '../fleet/planner-run.js';
+import { readPlannerCandidates } from '../fleet/planner-candidates.js';
+import { readPlannerPromptPath } from '../fleet/planner-prompt.js';
 import type { PlannerHealth } from '../fleet/planner-failover.js';
 
 // ---------------------------------------------------------------------------
@@ -436,9 +439,11 @@ interface LeaderApiHooks {
   now?: () => number;
   /** Test seam for the planner-plan route: the runs root to read. */
   plannerRunsRoot?: () => string;
+  plannerRun?: (opts: RunPlannerPassOpts) => Promise<PlannerRunResult>;
 }
 
 let hooks: LeaderApiHooks = {};
+let plannerRunStartedAt: string | null = null;
 
 /** Test hook: inject deps (fakes for the ledger, seats, …). Pass {} to restore. */
 export function setLeaderApiHooksForTest(next: LeaderApiHooks): void {
@@ -463,7 +468,7 @@ function hasOnlyKeys(body: Record<string, unknown>, allowed: readonly string[]):
   return null;
 }
 
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
+async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, allowEmpty = true): Promise<Record<string, unknown> | null> {
   if (!ctx.allowDispatch) {
     sendJson(res, 404, { error: 'not found' });
     return null;
@@ -478,7 +483,7 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
   }
   let parsed: unknown;
   try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
+    parsed = raw.length === 0 && allowEmpty ? {} : (JSON.parse(raw) as unknown);
   } catch {
     sendInvalid(res, 'invalid JSON body');
     return null;
@@ -811,6 +816,35 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
         const { readUsageResets } = await import('../fleet/usage-reset-detect.js');
         sendJson(res, 200, await readUsageResets({ now }));
       }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/run`) {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const body = await readMutationBody(ctx, req, res, false);
+      if (!body) return true;
+      if (hasOnlyKeys(body, ['reason']) || (body['reason'] !== undefined
+        && (typeof body['reason'] !== 'string' || body['reason'].length > 200))) {
+        sendInvalid(res, 'body must contain only an optional reason of at most 200 characters');
+        return true;
+      }
+      if (plannerRunStartedAt !== null) {
+        sendJson(res, 409, { error: 'pass-in-flight', startedAt: plannerRunStartedAt });
+        return true;
+      }
+      const timestamp = now();
+      plannerRunStartedAt = new Date(timestamp).toISOString();
+      try {
+        const runsRoot = hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs');
+        const slate = await readPlannerCandidates(runsRoot);
+        if (slate.source !== 'ok') { sendJson(res, 409, { error: 'no-slate', path: slate.path }); return true; }
+        const promptPath = await readPlannerPromptPath(runsRoot);
+        if (promptPath === null) { sendJson(res, 409, { error: 'no-prompt-declared', path: slate.path }); return true; }
+        const result = await (hooks.plannerRun ?? runPlannerPass)({
+          runsRoot, candidates: slate.candidates, lastProvider: slate.lastProvider ?? '', promptPath, now: timestamp,
+        });
+        const { v, provider, outcome, exitCode, logPath, startedAt, finishedAt, nextResetAt, planError } = result;
+        sendJson(res, 200, { v, provider, outcome, exitCode, logPath, startedAt, finishedAt, nextResetAt, planError });
+      } finally { plannerRunStartedAt = null; }
       return true;
     }
     if (path === `${VERSE_LEADER_PATH}/planner/plan`) {
