@@ -51,6 +51,7 @@ import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
+import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -2548,10 +2549,11 @@ export async function cmdFleet(args: string[]): Promise<number> {
     // src/cli/fleet-<name>.ts exporting
     // cmdFleet<PascalName>(args: string[]): Promise<number>.
     const resolved = resolveFleetSubcommand(sub);
-    if (resolved) {
-      let loaded;
+    const loader = resolved ? FLEET_SUBCOMMAND_LOADERS[sub] : undefined;
+    if (resolved && loader) {
+      let loaded: Record<string, unknown> | undefined;
       try {
-        loaded = await import(resolved.module);
+        loaded = await loader();
       } catch (err) {
         if (!isModuleNotFound(err, resolved.module)) throw err;
       }
