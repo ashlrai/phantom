@@ -8,7 +8,7 @@ afterEach(() => vi.restoreAllMocks());
 it.each([
   'bet-trace', 'dead-heads', 'lane-truth', 'meter-drop', 'wait-jobs',
   'canary-ladder', 'stray-slots', 'edit-collisions', 'ship-gap', 'workers',
-  'dispatch-summary', 'runs-read', 'job-read',
+  'dispatch-summary', 'dispatch-proof', 'runs-read', 'job-read',
 ])('%s resolves to an existing module with the convention export', async verb => {
   const exportName = 'cmdFleet' + verb.split('-').map(part => part[0].toUpperCase() + part.slice(1)).join('');
   const resolved = resolveFleetSubcommand(verb);
