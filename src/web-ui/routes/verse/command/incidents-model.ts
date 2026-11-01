@@ -1,5 +1,6 @@
 import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { formatDateTime } from '../../../components/format/locale-format.js';
+import { CLAUDE_LANE_FIX_COMMAND } from '../shell/claude-lane-needs-you.js';
 
 export interface Incident {
   id: string;
@@ -58,7 +59,7 @@ export function incidents(runs: FleetRuns | null, nowMs: number): Incident[] {
     result.push({ id: 'tick-stale', severity: 'incident', title: 'Dispatcher tick is stale', detail: `dispatchd last ticked ${formatMinutes(nowMs - tick)} ago`, fix: null });
   }
   if (runs.claudeLane && /^down/i.test(runs.claudeLane)) {
-    result.push({ id: 'claude-lane', severity: 'incident', title: 'Claude lane is down', detail: runs.claudeLane, fix: null });
+    result.push({ id: 'claude-lane', severity: 'incident', title: 'Claude lane is down', detail: runs.claudeLane, fix: CLAUDE_LANE_FIX_COMMAND });
   }
   const personal = runs.codexPersonal;
   const personalAsOf = time(personal?.asOf ?? null);
