@@ -1,3 +1,6 @@
+import { paneLinkUrl } from '../dock/pane-link.js';
+import { backlogView } from './merge-backlog-model.js';
+import { mergeBacklogQuery } from './merge-backlog-queries.js';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
@@ -11,7 +14,8 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { openToMergeText, readMerges, readMergeSpeed, readOutsidePrs } from './fleet-merges-model.js';
-import { fleetMergesQuery, outsidePrsQuery } from './fleet-merges-queries.js';
+import { ciRunsQuery, fleetMergesQuery, outsidePrsQuery } from './fleet-merges-queries.js';
+import { ciVerdictCounts, ciVerdictForBranch } from './merges-ci-verdict.js';
 import { mergesMarkdown } from './merges-markdown.js';
 import { collisionHeadline, collisionSteerPrefill, orderOutsidePrs } from './outside-collision-model.js';
 import { recordMergeSample, summariseMerges, useMergeHistory } from './merges-history-store.js';
@@ -21,12 +25,23 @@ import styles from './fleet-merges.module.css';
 export function FleetMergesPane({ visible, host }: PaneProps) {
   const read = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 0 });
   const outside = useQuery(outsidePrsQuery, { enabled: visible, freshMs: 0 });
+  const ci = useQuery(ciRunsQuery, { enabled: visible, freshMs: 0 });
+  const backlog = useQuery(mergeBacklogQuery, { enabled: visible, freshMs: 0 });
+  const refetchBacklog = useRefetch(mergeBacklogQuery);
+  usePollWhileVisible(refetchBacklog, 60_000, { enabled: visible });
+  const backlogData = backlog.data?.source === 'ok' && Array.isArray(backlog.data.items) ? backlogView(backlog.data, Date.now()) : null;
   const refetch = useRefetch(fleetMergesQuery);
   const refetchOutside = useRefetch(outsidePrsQuery);
+  const refetchCi = useRefetch(ciRunsQuery);
   usePollWhileVisible(() => { refetch(); refetchOutside(); }, 10_000, { enabled: visible });
+  usePollWhileVisible(refetchCi, 300_000, { enabled: visible });
   const data = useMemo(() => readMerges(read.data), [read.data]);
   const speed = useMemo(() => readMergeSpeed(read.data), [read.data]);
   const outsideData = useMemo(() => readOutsidePrs(outside.data), [outside.data]);
+  const ciFacts = ci.status !== 'error' && ci.data?.available === true ? ci.data : undefined;
+  const verdicts = outsideData.prs.map(item => ciVerdictForBranch(
+    ciFacts?.repo?.toLowerCase() === item.repo.toLowerCase() ? ciFacts.recent : undefined, item.head, item.number,
+  ));
   const history = useMergeHistory();
   const trend = summariseMerges(history, Date.now());
   useEffect(() => {
@@ -52,7 +67,20 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
     <ReleaseStrip visible={visible} />
     <div className={styles.headerActions}><p className={styles.header}>{data.count ?? '—'} merged in the last hour · {data.pending.length} publishes waiting</p>
       <p className={styles.header}>{speed.medianOpenToMergeMs === null && speed.perHour === null ? 'no timing in this snapshot yet' : [speed.medianOpenToMergeMs === null ? null : `median ${openToMergeText(speed.medianOpenToMergeMs)}`, speed.perHour === null ? null : `${speed.perHour}/h`].filter(Boolean).join(' · ')}</p>
+      {verdicts.some(verdict => verdict.runId !== null) && <p className={styles.header}>{ciVerdictCounts(verdicts)}</p>}
       <Button size="sm" variant="subtle" aria-label="Copy merges as Markdown" disabled={!data.merged.length && !data.pending.length} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span></div>
+    <section aria-label="Backlog"><h3 className={styles.heading}>Backlog</h3>
+      {backlog.data?.source === 'gh-failed' ? <p>GitHub read failed: {backlog.data.reason}</p> : backlog.status === 'error' ? <p>GitHub read failed: unavailable</p> : !backlogData ? <p role="status">Reading merge backlog…</p> : <>
+        <p>{backlogData.countsLine}</p>
+        {backlogData.hotFilesLine && <p data-tone={backlogData.danger ? 'danger' : undefined} className={backlogData.danger ? styles.danger : undefined}>{backlogData.hotFilesLine}</p>}
+        {backlogData.rows.length === 0 ? <p>No open fleet PRs</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => <li className={styles.row} key={row.number}>
+          <a href={`https://github.com/${backlog.data!.repo}/pull/${row.number}`} target="_blank" rel="noopener noreferrer">#{row.number}</a>
+          {row.job && <JobRefs text={row.job} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}
+          <span>· {row.state} {row.ageText} · {row.action}{row.hotFile && ` · ${row.hotFile}`}</span>
+          {row.action === 'recut' && <a href={paneLinkUrl('fleet-outcomes', null, false) ?? undefined} onClick={event => { event.preventDefault(); host.openPane('fleet-outcomes'); }}>Recut in Outcomes</a>}
+        </li>)}</ul>}
+      </>}
+    </section>
     {trend && <p role="img" aria-label={`Merged per hour trend: ${trend.first} then ${trend.last} over ${trend.spanMinutes} minutes`}>{trend.spark} {trend.first} → {trend.last} merged/h over the last {trend.spanMinutes} min</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Merge data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
@@ -80,10 +108,13 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
             <ul className={styles.list} aria-label="Outside PRs">{orderOutsidePrs(outsideData.prs).map((item, index) => {
               const href = safeHref(`https://github.com/${item.repo}/pull/${item.number}`, 'github.com');
               const valid = item.at !== null && Number.isFinite(Date.parse(item.at));
+              const verdict = ciVerdictForBranch(ciFacts?.repo?.toLowerCase() === item.repo.toLowerCase() ? ciFacts.recent : undefined, item.head, item.number);
+              const ciHref = safeHref(verdict.url, 'github.com');
               return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>
                 {href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>}
                 {' '}<span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span>
                 {' '}<span>· {item.author} · {valid ? <time dateTime={item.at!} title={new Date(item.at!).toLocaleString()}>{formatRelative(item.at)}</time> : 'age unknown'}</span>
+                {verdict.tone !== 'none' && (ciHref ? <a className={`${styles.ciChip} ${styles[verdict.tone]}`} href={ciHref} target="_blank" rel="noopener noreferrer">{verdict.label}</a> : <span className={`${styles.ciChip} ${styles[verdict.tone]}`}>{verdict.label}</span>)}
                 {item.overlaps.map((overlap, overlapIndex) => <span key={`${overlap.job}:${overlapIndex}`}>{JOB_ID_RE.test(overlap.job) && <Button size="sm" variant="subtle" title={`Overlaps ${overlap.paths.slice(0, 5).join(', ')}`} aria-label={`collides with ${overlap.job} — open job log`} onClick={() => { requestWorkerLogJob(overlap.job); host.openPane('worker-log'); }}>collides with {overlap.job}</Button>} <Button size="sm" variant="subtle" aria-label={`Steer ${overlap.job} about PR #${item.number}`} onClick={() => openInterjectDialog({ prefill: collisionSteerPrefill(item, overlap) })}>Steer {overlap.job}</Button></span>)}
               </li>;
             })}</ul>}

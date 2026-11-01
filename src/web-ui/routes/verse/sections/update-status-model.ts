@@ -1,5 +1,6 @@
 import { describeDesktopUpdateReason } from '../../../app/desktop-update-reasons.js';
 import type { DesktopUpdateState } from '../../../app/desktop-updates.js';
+import { newerVersion } from '../fleet-releases/post-merge-update-model.js';
 import { lastApplyOf } from './about-update-model.js';
 import type { ServerObservation } from './update-status-queries.js';
 
@@ -24,6 +25,8 @@ export function describeUpdateStatus({ native, server, appVersion, desktopVersio
   let tone: Tone = 'neutral';
   const version = native?.version ?? 'update';
   const readyVersion = native?.version ? ` ${native.version}` : '';
+  const candidate = (facts as { candidateVersion?: unknown } | null)?.candidateVersion;
+  const newerCandidate = typeof candidate === 'string' && newerVersion(candidate, appVersion) ? candidate : null;
   switch (native?.phase) {
     case 'installing': headline = `Installing ${version}…`; tone = 'success'; break;
     case 'installed': headline = `Installed ${version}; restarts when idle`; tone = 'success'; break;
@@ -39,10 +42,10 @@ export function describeUpdateStatus({ native, server, appVersion, desktopVersio
     default:
       if (native?.phase === 'available') { headline = `Update${readyVersion} available · downloads when idle`; tone = 'info'; }
       else if (facts?.sourceState === 'unavailable') headline = 'Not running from a git checkout';
-      else if (facts?.behind != null && facts.behind > 0 && facts.canFastForward) { headline = `${commits(facts.behind)} behind ${facts.branch ?? 'master'} · ready to fast-forward`; tone = 'info'; }
-      else if (facts?.behind != null && facts.behind > 0 && facts.dirty) { headline = `${facts.behind} behind · local changes block the update`; tone = 'warning'; }
+      else if (facts?.behind != null && facts.behind > 0 && facts.canFastForward) { headline = newerCandidate ? `${newerCandidate} ready · ${commits(facts.behind)} behind ${facts.branch ?? 'master'} · fast-forward` : `${commits(facts.behind)} behind ${facts.branch ?? 'master'} · ready to fast-forward`; tone = 'info'; }
+      else if (facts?.behind != null && facts.behind > 0 && facts.dirty) { headline = `${newerCandidate ? `${newerCandidate} available · ` : ''}${facts.behind} behind · local changes block the update`; tone = 'warning'; }
       else if (facts?.behind != null && facts.behind > 0 && facts.canFastForward === false && facts.ahead != null && facts.ahead > 0) { headline = `${facts.behind} behind · ${facts.ahead} local commit${facts.ahead === 1 ? '' : 's'} ahead · diverged, update by hand`; tone = 'warning'; }
-      else if (facts?.behind != null && facts.behind > 0) { headline = `${facts.behind} behind · fast-forward unavailable`; tone = 'warning'; }
+      else if (facts?.behind != null && facts.behind > 0) { headline = `${newerCandidate ? `${newerCandidate} available · ` : ''}${facts.behind} behind · fast-forward unavailable`; tone = 'warning'; }
       else if (facts?.behind === 0) { headline = `Up to date with ${facts.branch ?? 'master'}`; tone = 'success'; }
       else if (server && 'kind' in server) headline = 'Update status is not in this build yet';
   }
