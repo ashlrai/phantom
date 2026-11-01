@@ -5,6 +5,10 @@
  *   POST /api/verse/fleet/live  → FleetLiveActionResult, after ONE of
  *                                   {action:'pause-repo', repo, reason}
  *                                 | {action:'resume-repo', repo, kind?}
+ *   GET  /api/verse/fleet/live/drop-jobs   → {v:1, items: DropJobListItem[]}
+ *   POST /api/verse/fleet/live/drop-jobs   → {v:1, status:'written', file, bytes, at}
+ *                                 — writes a validated RQ-PHX job file into the
+ *                                   dispatchd drop lane (core/fleet/drop-job-writer.ts)
  *   needsYouItems()             → R1 (SPEC-310BC-COORD §4): owner-hold and
  *                                 quarantined repos, reverts in the last 24 h,
  *                                 open owner-lane PRs.
@@ -1674,7 +1678,7 @@ function sendInvalid(res: ServerResponse, message: string): void {
   sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
 }
 
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
+async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, maxBytes?: number): Promise<Record<string, unknown> | null> {
   if (!ctx.allowDispatch) {
     sendJson(res, 404, { error: 'not found' });
     return null;
@@ -1682,7 +1686,7 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
   if (!passesMutationGate(req, res, ctx.token)) return null;
   let raw: string;
   try {
-    raw = await readBody(req);
+    raw = await readBody(req, maxBytes);
   } catch {
     sendJson(res, 413, { code: 'VERSE_TOO_LARGE', error: 'request body too large' });
     return null;
@@ -1803,6 +1807,100 @@ async function applyAction(res: ServerResponse, body: Record<string, unknown>): 
   sendJson(res, ok ? 200 : 409, { ok, note, changes, snapshot } satisfies FleetLiveActionResult);
 }
 
+// ---------------------------------------------------------------------------
+// Drop jobs (RQ-PHX-DROPJOBAPI31)
+// ---------------------------------------------------------------------------
+
+const DROP_JOBS_PATH = '/api/verse/fleet/live/drop-jobs';
+/** The {id, lane, tier, body} JSON envelope; the job file itself caps at 8 KB. */
+const DROP_JOB_BODY_MAX_BYTES = 16 * 1024;
+const DROP_JOB_KEYS = ['id', 'lane', 'tier', 'body'] as const;
+
+/**
+ * POST /api/verse/fleet/live/drop-jobs — hand the fleet a Phantom job. The
+ * body is validated byte-for-byte against the ingest contract before anything
+ * is written (drop-job-writer.ts), a used id conflicts, a full prompt queue
+ * sheds load with 507, and the publish itself is atomic and never clobbers.
+ */
+async function applyDropJob(res: ServerResponse, body: Record<string, unknown>): Promise<void> {
+  const writer = await import('../fleet/drop-job-writer.js');
+  const extraKeys = Object.keys(body).filter((key) => !(DROP_JOB_KEYS as readonly string[]).includes(key));
+  const verdict = writer.validateDropJob({
+    id: body['id'], lane: body['lane'], tier: body['tier'], body: body['body'],
+  });
+  const reasons = [...(verdict.ok ? [] : verdict.reasons), ...(extraKeys.length > 0 ? ['unexpected-keys'] : [])];
+  if (reasons.length > 0) {
+    sendJson(res, 400, { status: 'invalid', reasons });
+    return;
+  }
+  const input = body as unknown as { id: string; lane: string; tier: string; body: string };
+  let root: string;
+  try {
+    root = writer.resolveDropJobRoot();
+  } catch {
+    sendJson(res, 503, { status: 'unavailable' });
+    return;
+  }
+  try {
+    if (await writer.dropJobExists(root, input.id)) {
+      sendJson(res, 409, { status: 'exists' });
+      try { audit({ action: 'verse:fleet:drop-job', repo: 'ashlrai/phantom', sandboxId: null, summary: `drop job ${input.id} refused: already exists`, result: 'refused' }); } catch { /* audit is best effort */ }
+      return;
+    }
+    if (await writer.countQueuedDropJobPrompts(root) >= writer.DROP_JOB_QUEUE_LIMIT) {
+      sendJson(res, 507, { status: 'full' });
+      try { audit({ action: 'verse:fleet:drop-job', repo: 'ashlrai/phantom', sandboxId: null, summary: `drop job ${input.id} refused: prompt queue full`, result: 'refused' }); } catch { /* audit is best effort */ }
+      return;
+    }
+    const written = await writer.writeDropJob(root, input);
+    try { audit({ action: 'verse:fleet:drop-job', repo: 'ashlrai/phantom', sandboxId: null, summary: `drop job ${input.id} written (${written.bytes} bytes)`, result: 'ok' }); } catch { /* audit is best effort */ }
+    sendJson(res, 201, {
+      v: 1,
+      status: 'written',
+      file: `leader/drop/claude/${writer.DROP_JOB_FILE_PREFIX}${input.id}.md`,
+      bytes: written.bytes,
+      at: written.at,
+    });
+  } catch (e) {
+    if (e instanceof writer.DropJobExistsError) {
+      sendJson(res, 409, { status: 'exists' });
+      return;
+    }
+    sendJson(res, 503, { status: 'failed' });
+  }
+}
+
+async function handleDropJobs(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, method: string): Promise<true> {
+  if (method === 'GET') {
+    try {
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      for (const key of params.keys()) {
+        sendInvalid(res, `unknown query parameter: ${key}`);
+        return true;
+      }
+    } catch {
+      sendInvalid(res, 'invalid query string');
+      return true;
+    }
+    try {
+      const { listDropJobs, resolveDropJobRoot } = await import('../fleet/drop-job-writer.js');
+      const { sanitizePublicJson } = await import('../util/public-json.js');
+      sendJson(res, 200, { v: 1, items: sanitizePublicJson(await listDropJobs(resolveDropJobRoot())) });
+    } catch {
+      sendJson(res, 503, { error: 'drop-jobs store unavailable' });
+    }
+    return true;
+  }
+  if (method === 'POST') {
+    const body = await readMutationBody(ctx, req, res, DROP_JOB_BODY_MAX_BYTES);
+    if (!body) return true;
+    await applyDropJob(res, body);
+    return true;
+  }
+  sendJson(res, 405, { error: 'method not allowed' });
+  return true;
+}
+
 /**
  * The Fleet live route family. Owns exactly `/api/verse/fleet/live` — never
  * `/api/verse/fleet/history` (Track A's module). Returns false for anything
@@ -1882,6 +1980,7 @@ export const handleFleetLiveApi: ApiModule = async (ctx, req, res, path, method)
     }
     return true;
   }
+  if (path === DROP_JOBS_PATH) return handleDropJobs(ctx, req, res, method);
   if (path !== VERSE_FLEET_LIVE_PATH) return false;
   try {
     if (method === 'GET') {
