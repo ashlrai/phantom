@@ -5,6 +5,11 @@
  * dedupe and deletion semantics are exactly the single-record path's, and no
  * worker argv is ever executed. Reports names and status counts only — never
  * envelope bodies, raw reply ids or filesystem paths.
+ *
+ * `afterRecord` resumes a bounded sweep past records an earlier batch already
+ * covered, so a retained failure can no longer starve the replies sorted
+ * behind it; `nextRecord` reports the resume point and is null at end of
+ * sweep (never a wrap-around to the first record).
  */
 import { lstatSync, opendirSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -20,6 +25,8 @@ export const DRAIN_MAX_LIMIT = SPOOL_MAX_RECORDS;
 /** Bound on directory entries inspected, including non-record surprises. */
 export const DRAIN_SCAN_CAP = 2048;
 const RECORD_PATTERN = /^reply-[0-9a-f]{32}\.json$/;
+/** Lowest possible record name; a resume cursor that claims no coverage. */
+const FIRST_RECORD_NAME = `reply-${'0'.repeat(32)}.json`;
 
 export interface ContextSpoolDrainReport {
   status: 'ok' | 'invalid' | 'unsafe';
@@ -40,11 +47,27 @@ export interface ContextSpoolDrainReport {
   counts: Partial<Record<ContextDeliveryStatus, number>>;
   /** Apply mode: selected names still on disk after the run. */
   retained: string[];
+  /** Resume cursor for a later `afterRecord` call: the last hashed name this
+   * batch covered (attempted, retained or not). Null only at the end of a
+   * fully scanned sweep — the cursor never wraps to the start. When the scan
+   * cap cut enumeration off, unscanned entries may sort anywhere, so the
+   * cursor stays at the last certainly-covered name instead of implying
+   * coverage of records the scan never saw. */
+  nextRecord: string | null;
   /** 0 complete, 1 incomplete but retryable, 2 invalid or refused. */
   exitCode: number;
 }
 
-export interface ContextSpoolDrainOptions { spoolDir: string; apply?: boolean; limit?: number }
+export interface ContextSpoolDrainOptions {
+  spoolDir: string;
+  apply?: boolean;
+  limit?: number;
+  /** Resume a bounded sweep: only scanned record names lexically after this
+   * hashed record name are selected. Must match the record-name shape; it is
+   * never treated as a path, and a name absent from disk still works because
+   * selection is a pure lexical comparison. */
+  afterRecord?: string;
+}
 
 /** Mirrors the spool module's own directory gate (its check stays private). */
 function safeSpoolDirectory(dir: string): boolean {
@@ -75,20 +98,30 @@ function scanSpoolDirectory(dir: string): { names: string[]; scanned: number; ov
 
 export function drainContextReplySpool(opts: ContextSpoolDrainOptions, bus: BusInboxOptions = {}): ContextSpoolDrainReport {
   const limit = opts.limit ?? DRAIN_MAX_LIMIT;
-  const refuse = (status: 'invalid' | 'unsafe'): ContextSpoolDrainReport => ({
+  const after = opts.afterRecord;
+  const refuse = (status: 'invalid' | 'unsafe', nextRecord: string | null = null): ContextSpoolDrainReport => ({
     status, mode: opts.apply ? 'apply' : 'preview', scanned: 0, matched: 0, selected: 0,
-    truncated: false, overflow: false, records: [], counts: {}, retained: [], exitCode: 2,
+    truncated: false, overflow: false, records: [], counts: {}, retained: [], nextRecord, exitCode: 2,
   });
   if (!isAbsolute(opts.spoolDir) || opts.spoolDir.includes('\0') ||
-    !Number.isSafeInteger(limit) || limit < 1 || limit > DRAIN_MAX_LIMIT) return refuse('invalid');
-  if (!safeSpoolDirectory(opts.spoolDir)) return refuse('unsafe');
+    !Number.isSafeInteger(limit) || limit < 1 || limit > DRAIN_MAX_LIMIT ||
+    (after !== undefined && !RECORD_PATTERN.test(after))) return refuse('invalid');
+  if (!safeSpoolDirectory(opts.spoolDir)) return refuse('unsafe', after ?? null);
   let scan: ReturnType<typeof scanSpoolDirectory>;
-  try { scan = scanSpoolDirectory(opts.spoolDir); } catch { return refuse('unsafe'); }
-  const selected = scan.names.slice(0, limit);
-  const truncated = scan.names.length > selected.length;
+  try { scan = scanSpoolDirectory(opts.spoolDir); } catch { return refuse('unsafe', after ?? null); }
+  const remaining = after === undefined ? scan.names : scan.names.filter(name => name > after);
+  const selected = remaining.slice(0, limit);
+  const truncated = remaining.length > selected.length;
+  // A null cursor is the explicit end of sweep and never wraps. Under overflow
+  // unscanned entries may sort anywhere, so only the incoming cursor (or the
+  // lowest record name, claiming nothing) is honest; otherwise the cursor is
+  // the last selected name, which advances past retained records too.
+  const nextRecord = scan.overflow ? (after ?? FIRST_RECORD_NAME)
+    : truncated ? (selected.at(-1) ?? null)
+    : null;
   const base = {
     status: 'ok' as const, scanned: scan.scanned, matched: scan.names.length,
-    selected: selected.length, truncated, overflow: scan.overflow,
+    selected: selected.length, truncated, overflow: scan.overflow, nextRecord,
   };
   if (!opts.apply) {
     return { ...base, mode: 'preview', records: selected, counts: {}, retained: [], exitCode: 0 };
