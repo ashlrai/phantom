@@ -1,3 +1,5 @@
+import { failedBusBatch, MAX_BUS_BATCH_BYTES, postBusBatch } from '../core/fleet/bus-batch-post.js';
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
@@ -7,11 +9,17 @@ import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
 
 const HELP = `phm comms bus post --file <envelope.json|->
+phm comms bus post-batch --file <batch.json|->
 phm comms bus status
 phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
 phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
+Post-batch accepts a JSON array of 1..32 envelopes, maximum 256 KiB. All rows validate before writes.
+Its version:1 receipt includes accepted {id,cursor,status}, failure {index,status} (zero-based),
+unattempted IDs and complete. Appends are sequential, not atomic; durable messages are never rolled back.
+Retry the suffix starting at failure.index; exact replay dedupes, changed content with the same ID conflicts.
+No internal retries, TTL renewal, skipped failures or external publication. Exit 0 complete, 1 storage/transport, 2 invalid.
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
 --exclude-from omits envelopes with that sender routing label.
 ID filters match envelope IDs exactly and case-sensitively; IDs are transport data, not authentication.
@@ -40,6 +48,8 @@ Use --timeout-ms 1..3600000 to bound observation time (default: unlimited). Reac
 deadline completes observation successfully; it does not guarantee a reply.
 Watch retries retryable contention after the interval; other failures emit their status and exit 1.
 SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0. Invalid options exit 2.
+An already-started delivery must settle before watch stops; cancellation cannot undo delivered data.
+Rejected asynchronous delivery stops watch with exit 1 without advancing its cursor.
 Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
 
 export interface CommsBusDependencies {
@@ -51,20 +61,78 @@ export interface CommsBusDependencies {
 
 type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string };
 
-async function readStdin(stdin: Readable): Promise<string | null> {
+async function readStdin(stdin: Readable, maxBytes = MAX_BUS_ENVELOPE_BYTES, signal?: AbortSignal, onReadError?: () => void): Promise<string | null> {
   const chunks: Buffer[] = [];
   let bytes = 0;
+  const stop = (): void => { stdin.destroy(new Error('Cancelled')); };
+  if (signal?.aborted) return null;
+  signal?.addEventListener('abort', stop, { once: true });
   try {
     for await (const chunk of stdin) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       bytes += buffer.length;
-      if (bytes > MAX_BUS_ENVELOPE_BYTES) return null;
+      if (bytes > maxBytes) return null;
       chunks.push(buffer);
     }
-    return Buffer.concat(chunks, bytes).toString('utf8');
+    if (!onReadError) return Buffer.concat(chunks, bytes).toString('utf8');
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)); }
+    catch { return null; }
   } catch {
+    onReadError?.();
     return null;
+  } finally { signal?.removeEventListener('abort', stop); }
+}
+
+// The stable reader returns decoded text. Compare bounded raw bytes as well so
+// malformed UTF-8 cannot silently become replacement characters in a batch.
+function batchFileUtf8Matches(file: string, text: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    if (!fstatSync(fd).isFile()) return false;
+    const expected = Buffer.from(text, 'utf8');
+    if (expected.length > MAX_BUS_BATCH_BYTES) return false;
+    const actual = Buffer.alloc(expected.length + 1);
+    let size = 0;
+    while (size < actual.length) {
+      const count = readSync(fd, actual, size, actual.length - size, size);
+      if (count === 0) break;
+      size += count;
+    }
+    return size === expected.length && actual.subarray(0, size).equals(expected);
+  } catch { return false; }
+  finally { if (fd !== undefined) { try { closeSync(fd); } catch { /* best-effort close */ } } }
+}
+
+async function postBatch(args: string[], options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+  let receipt = failedBusBatch('invalid');
+  if (args.length === 2 && args[0] === '--file' && args[1] && (args[1] === '-' || !args[1].startsWith('-'))) {
+    const controller = new AbortController(), stop = (): void => controller.abort();
+    deps.signal?.addEventListener('abort', stop, { once: true });
+    process.on('SIGINT', stop); process.on('SIGTERM', stop);
+    try {
+      if (deps.signal?.aborted) stop();
+      let text: string | null = null;
+      if (!controller.signal.aborted) {
+        if (args[1] === '-') text = await readStdin(deps.stdin ?? process.stdin, MAX_BUS_BATCH_BYTES, controller.signal, () => { receipt = failedBusBatch('unavailable'); });
+        else {
+          const file = resolve(args[1]);
+          const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_BATCH_BYTES, remainingBytes: MAX_BUS_BATCH_BYTES });
+          if (read.ok) {
+            if (batchFileUtf8Matches(file, read.text)) text = read.text;
+          }
+          else if (read.reason !== 'per-file-byte-limit' && read.reason !== 'byte-limit') receipt = failedBusBatch('unavailable');
+        }
+      }
+      if (controller.signal.aborted) receipt = failedBusBatch('unavailable');
+      else if (text !== null) receipt = postBusBatch(text, options);
+    } finally {
+      deps.signal?.removeEventListener('abort', stop);
+      process.off('SIGINT', stop); process.off('SIGTERM', stop);
+    }
   }
+  try { await deliver(JSON.stringify(receipt), deps); } catch { return 1; }
+  return receipt.complete ? 0 : receipt.status === 'invalid' ? 2 : 1;
 }
 
 function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
@@ -88,10 +156,10 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): Promise<void> {
-  if (deps.emit) await deps.emit(json);
-  else if (!checkpoint) console.log(json);
-  else await new Promise<void>((resolve, reject) => {
+function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): void | Promise<void> {
+  if (deps.emit) return deps.emit(json);
+  if (!checkpoint) { console.log(json); return; }
+  return new Promise<void>((resolve, reject) => {
     const fail = (error: Error): void => { reject(error); };
     process.stdout.once('error', fail);
     try {
@@ -109,7 +177,13 @@ async function deliver(json: string, deps: CommsBusDependencies, checkpoint?: Re
 
 async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
-  const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
+  const list = deps.list ?? listBusInboxAfter;
+  const deliverPage = (json: string): void | Promise<boolean> => {
+    const pending = deliver(json, deps, checkpoint);
+    if (pending && typeof pending.then === 'function') {
+      return pending.then(() => true, () => { console.error('bus watch: delivery failed'); return false; });
+    }
+  };
   const deadline = timeout === undefined ? undefined : performance.now() + timeout;
   const expired = (): boolean => deadline !== undefined && performance.now() >= deadline;
   const timer = timeout === undefined ? undefined : setTimeout(stop, timeout);
@@ -123,8 +197,8 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       if (controller.signal.aborted) break;
       if (page.status !== 'ok' && page.status !== 'retryable') {
         if (!expired()) {
-          if (checkpoint) await deliver(JSON.stringify(page), deps, checkpoint);
-          else emit(JSON.stringify(page));
+          const pending = deliverPage(JSON.stringify(page));
+          if (pending) await pending;
         }
         return 1;
       }
@@ -132,8 +206,8 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       if (page.status === 'ok') {
         const output = JSON.stringify(filterPage(page, filters));
         if (expired()) break;
-        if (checkpoint) await deliver(output, deps, checkpoint);
-        else emit(output);
+        const pending = deliverPage(output);
+        if (pending && !await pending) return 1;
         checkpoint?.save(page.nextCursor);
         after = page.nextCursor;
         if (++pages === maxPages) return 0;
@@ -150,9 +224,10 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
 
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
-    args.length === 2 && ['post', 'read', 'watch', 'status'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
+    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
+  if (args[0] === 'post-batch') return postBatch(args.slice(1), options, deps);
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
   if (verb === 'status') {
