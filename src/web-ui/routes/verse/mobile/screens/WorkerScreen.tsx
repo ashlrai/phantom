@@ -24,8 +24,8 @@ export function WorkerScreen({ job }: { job: string }) {
   const refetch = useRefetch(def);
   const detail = query.data;
   const failed = query.status === 'error';
-  const gatewayUnavailable = (query.error instanceof ApiError && [401, 403].includes(query.error.status))
-    || (isRemoteMobileMode() && failed);
+  const gatewayUnavailable = query.error instanceof ApiError && query.error.status === 403
+    || (isRemoteMobileMode() && detail === null);
   const snapshotQuery = useQuery(homeRunsQuery, { enabled: gatewayUnavailable || detail === null });
   const refetchSnapshot = useRefetch(homeRunsQuery);
   usePollWhileVisible(refetchSnapshot, 15_000, { enabled: gatewayUnavailable || detail === null });
@@ -58,7 +58,7 @@ export function WorkerScreen({ job }: { job: string }) {
           ? <ErrorState title="Couldn’t load fleet snapshot" reason={readFailureReason(snapshotQuery.error)} onRetry={refetchSnapshot} />
           : <EmptyState title="This job is not in the current fleet snapshot." />}
       {detail === null && !gatewayUnavailable ? <p className={ui.muted}>Job detail is not in this build yet</p> : null}
-      <p className={ui.muted}>Worker logs are not available through this gateway yet. Open Phantom on your Mac.</p>
+      {gatewayUnavailable ? <p className={ui.muted}>Worker logs are not available through this gateway yet. Open Phantom on your Mac.</p> : null}
     </>;
   } else if (failed) {
     body = <ErrorState title="Couldn’t load worker" reason={readFailureReason(query.error)} onRetry={refetch} />;
@@ -81,7 +81,7 @@ export function WorkerScreen({ job }: { job: string }) {
       </Section>
     </>;
   }
-  return <Screen title={job} onBack={() => navigate({ screen: 'runs' })} onRefresh={gatewayUnavailable || detail === null ? refetchSnapshot : refetch}>{body}{tell ? <TellLeaders key={job} prefill={workerTellPrefill(tell)} /> : null}</Screen>;
+  return <Screen title={job} onBack={() => navigate({ screen: 'runs' })} onRefresh={() => { refetch(); if (gatewayUnavailable || detail === null) refetchSnapshot(); }}>{body}{tell ? <TellLeaders key={job} prefill={workerTellPrefill(tell)} /> : null}</Screen>;
 }
 
 function TellLeaders({ prefill }: { prefill: string }) {
