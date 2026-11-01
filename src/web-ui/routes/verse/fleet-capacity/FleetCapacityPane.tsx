@@ -6,7 +6,7 @@ import { isNoFleet } from '../fleet/no-fleet.js';
 import { fleetUsageRunsQuery } from '../fleet-usage/fleet-usage-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { headline, laneSeries, launchGaps, MAX_GAP_MS, sparkPath, type SparkPoint } from './capacity-model.js';
+import { headline, laneSeries, launchGaps, MAX_GAP_MS, sparkPath, stallHeadline, type SparkPoint } from './capacity-model.js';
 import { runsHistoryQuery, type CapacityHours } from './capacity-queries.js';
 import styles from './fleet-capacity.module.css';
 import { laneHeldText } from './lane-held-text.js';
@@ -67,6 +67,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
   const samples = data ? [...data.samples].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) : [];
   const noFleet = !!data && samples.length === 0 && isNoFleet(data.sourceState);
   const lanes = data ? laneSeries(data, now) : [];
+  const stall = stallHeadline(lanes, now);
   const gaps = data ? launchGaps(data) : [];
   const truthLanes = truth.data?.source === 'ok' ? truth.data.lanes : [];
   const truthHeadlineText = truthHeadline(truthLanes);
@@ -89,6 +90,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
         {samples.length > 0 ? <>
           <p className={styles.muted}>Solid: running · dashed: target · shaded: held · muted band: paused. Breaks indicate missing observations.</p>
           <p className={styles.muted}>Observed: {new Date(samples[0].at).toLocaleString()} – {new Date(samples[samples.length - 1].at).toLocaleString()}</p>
+          {stall ? <p className={styles.stall} role="status">{stall}</p> : null}
           <section className={styles.section} aria-labelledby="capacity-lanes"><h3 id="capacity-lanes" className={styles.title}>Lane capacity</h3>
             {lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>{lanes.map((lane) => {
               const points = samples.map((sample) => {
@@ -100,7 +102,7 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
               const truthRow = truthLanes.find((row) => row.lane === lane.lane);
               const truthLine = truthRow ? verdictText(truthRow) : null;
               return <li key={lane.lane} className={styles.lane}>
-                <div className={styles.line}><strong><button type="button" className={styles.laneButton} aria-label={`Open ${lane.lane} in Lanes`} onClick={() => host?.openPane('fleet-lanes')}>{lane.lane}</button></strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min</span></div>
+                <div className={styles.line}><strong><button type="button" className={styles.laneButton} aria-label={`Open ${lane.lane} in Lanes`} onClick={() => host?.openPane('fleet-lanes')}>{lane.lane}</button></strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min{lane.stallMinutes > 0 ? ` · ${format(lane.stallMinutes)} min stalled` : ''}</span></div>
                 <Chart points={points} samples={samples} held={lane.lane} label={`${lane.lane}: ran at ${percent(lane.fillPct)} of target, ${format(lane.idleSlotMinutes)} idle slot-minutes`} />
                 {heldText ? <p className={styles.muted} data-testid="lane-held">{heldText}</p> : null}
                 {truthLine ? <p className={styles.truth} data-tone={verdictTone(truthRow!.verdict) ?? undefined} data-testid="lane-truth">{truthLine}</p> : null}
