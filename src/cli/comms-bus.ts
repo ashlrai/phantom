@@ -13,7 +13,7 @@ phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> 
 phm comms bus post-batch --file <batch.json|->
 phm comms bus status
 phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
-phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>]
+phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
 Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
 Compose replies to one retained live parent; body is {"inReplyTo":<id>,"text":<text>}.
@@ -50,8 +50,16 @@ emits one JSON page, including empty pages, and resumes from its emitted nextCur
 Use --max-pages 1..10000 to stop after that many successful pages (default: unlimited).
 Use --timeout-ms 1..3600000 to bound observation time (default: unlimited). Reaching the
 deadline completes observation successfully; it does not guarantee a reply.
+--until-reply requires --in-reply-to and --timeout-ms and rejects --max-pages. In this mode
+watch emits no ordinary pages: it keeps scanning until a page contains an envelope passing
+every supplied filter, emits that filtered page, and exits 0 only after stdout delivery and
+any checkpoint save succeed. The checkpoint still tracks scan position; a matching cursor
+persists only after its delivery, so a crash or failed sink replays it (at-least-once).
+Deadline or cancellation without a delivered match exits 1. This is observation over
+routing labels only: nothing is consumed, deleted, published or dispatched, and exit 0
+asserts a filter match, not an authenticated reply.
 Watch retries retryable contention after the interval; other failures emit their status and exit 1.
-SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0. Invalid options exit 2.
+SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0 (1 under --until-reply). Invalid options exit 2.
 An already-started delivery must settle before watch stops; cancellation cannot undo delivered data.
 Rejected asynchronous delivery stops watch with exit 1 without advancing its cursor.
 Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
@@ -205,7 +213,7 @@ function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnTy
   });
 }
 
-async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): Promise<number> {
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const list = deps.list ?? listBusInboxAfter;
   const deliverPage = (json: string): void | Promise<boolean> => {
@@ -234,17 +242,24 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       }
       if (expired()) break;
       if (page.status === 'ok') {
-        const output = JSON.stringify(filterPage(page, filters));
-        if (expired()) break;
-        const pending = deliverPage(output);
-        if (pending && !await pending) return 1;
-        checkpoint?.save(page.nextCursor);
-        after = page.nextCursor;
-        if (++pages === maxPages) return 0;
+        const filtered = filterPage(page, filters);
+        if (untilReply && filtered.status === 'ok' && filtered.messages.length === 0) {
+          // Unrelated page: advance the scan position without emitting output.
+          checkpoint?.save(page.nextCursor);
+          after = page.nextCursor;
+        } else {
+          const output = JSON.stringify(filtered);
+          if (expired()) break;
+          const pending = deliverPage(output);
+          if (pending && !await pending) return 1;
+          checkpoint?.save(page.nextCursor);
+          after = page.nextCursor;
+          if (untilReply || ++pages === maxPages) return 0;
+        }
       }
       await waitForPoll(interval, controller.signal);
     }
-    return 0;
+    return untilReply ? 1 : 0;
   } finally {
     clearTimeout(timer);
     deps.signal?.removeEventListener('abort', stop);
@@ -269,10 +284,13 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
   if (verb !== 'post' && verb !== 'read' && verb !== 'watch') return invalid();
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i]!, inline = /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=(.*)$/s.exec(token);
-    const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
+    const key = inline?.[1] ?? token;
     const label = key === '--id' || key === '--in-reply-to' || key === '--reply-to' || key === '--to' || key === '--from' || key === '--exclude-from' || key === '--text';
-    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'];
-    if (!flags.includes(key) || values.has(key) || !value || (label ? !inline && (flags.includes(value) || /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
+    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'];
+    if (!flags.includes(key) || values.has(key)) return invalid();
+    if (key === '--until-reply') { values.set(key, 'true'); continue; }
+    const value = inline ? inline[2] : rest[++i];
+    if (!value || (label ? !inline && (flags.includes(value) || /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
     values.set(key, value);
   }
   if (verb === 'post' && (values.has('--file') ? values.size !== 1 : !['--reply-to', '--id', '--from', '--text'].every(key => values.has(key)))) return invalid();
@@ -302,7 +320,9 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
       if (maxPages !== undefined && (maxPages < 1 || maxPages > 10000)) return invalid();
       const timeout = values.has('--timeout-ms') ? Number(values.get('--timeout-ms')) : undefined;
       if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
-      return await watch(after, limit, interval, maxPages, timeout, filters, options, deps, checkpoint);
+      const untilReply = values.has('--until-reply');
+      if (untilReply && (filters.inReplyTo === undefined || timeout === undefined || maxPages !== undefined)) return invalid();
+      return await watch(after, limit, interval, maxPages, timeout, filters, options, deps, checkpoint, untilReply);
     }
     let result;
     if (verb === 'post') {
