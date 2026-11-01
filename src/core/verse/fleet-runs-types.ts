@@ -11,7 +11,7 @@ export interface FleetRunsV1 {
   claimed?: Array<{ job: string; lane: string; tier: string; at: string }>;
   leaders: Array<{ label: string; ageSeconds: number|null }>; orchestratorAgents: number|null;
   publishesLastHour: Array<{ job: string; lane: string|null; url: string|null; at: string }>;
-  mergesLastHour: { count: number|null; items: Array<{ repo: string; number: number; title: string }> };
+  mergesLastHour: { count: number|null; perHour?: number|null; medianOpenToMergeMs?: number|null; items: Array<{ repo: string; number: number; title: string; openedAt?: string|null; mergedAt?: string|null; openToMergeMs?: number|null }> };
   events: Array<{ at: string; kind: string; text: string }>;
   codexPersonal: { usedPct: number|null; resetsAt: string|null; asOf: string|null } | null;
   inbox: Array<{ at: string; source: string; text: string }>;
