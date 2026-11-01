@@ -1,11 +1,15 @@
 import { getFleetJobDetail, isFleetJobId, type FleetJobDetailV1 } from '../core/fleet/runs-job-detail.js';
 import { getFleetJobChanges, type FleetJobChangesV1 } from '../core/fleet/runs-job-changes.js';
 import { getFleetJobText } from '../core/fleet/runs-job-texts.js';
+import { BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxReceipt } from '../core/fleet/bus-inbox.js';
+import { sanitizePublicJson } from '../core/util/public-json.js';
 
 interface Readers {
   detail: typeof getFleetJobDetail;
   changes: typeof getFleetJobChanges;
   text?: typeof getFleetJobText;
+  inspectBus?: typeof inspectBusInbox;
+  listBus?: typeof listBusInboxAfter;
   output?: { log: (text: string) => void; stdout: (text: string) => void; stderr: (text: string) => void };
 }
 
@@ -15,7 +19,7 @@ interface WatchOptions {
 }
 
 const readers: Readers = { detail: getFleetJobDetail, changes: getFleetJobChanges, text: getFleetJobText };
-const usage = 'Usage: phm fleet job <id> [--json] [--require-published | --changes | --log [--tail-lines N] [--log-find literal [--context-lines N]] | --prompt | --notes] [--watch [--interval-ms N] [--timeout-ms N]] [--help]';
+const usage = 'Usage: phm fleet job <id> [--json] [--require-published | --changes | --log [--tail-lines N] [--log-find literal [--context-lines N]] | --prompt | --notes | --bus [--after N] [--limit N]] [--watch [--interval-ms N] [--timeout-ms N]] [--help]';
 const value = (v: string | number | null): string => v === null ? 'unknown' : String(v);
 
 const WATCH_INTERVAL_MIN_MS = 1000;
@@ -98,6 +102,39 @@ function hasLiveEvidence(job: FleetJobDetailV1): boolean {
   return job.state === 'running' || job.launchedAt !== null || job.log.source === 'live';
 }
 
+/** Scan only the retained snapshot; cursor and hasMore refer to scanned rows, not matches. */
+function readJobBus(id: string, after: number, limit: number, deps: Readers) {
+  const inspection = (deps.inspectBus ?? inspectBusInbox)();
+  const base = { schema: 'fleet.job.bus.v1', job: id, source: inspection.source,
+    scannedThrough: after, hasMore: false, truncated: false, messages: [] as Array<BusInboxReceipt & { category: 'direct' | 'broadcast' }> };
+  if (inspection.source === 'unavailable') return { code: 1, result: base };
+  const end = inspection.retainedCount ?? 0;
+  if (after > end) return { code: 2, result: base };
+  let cursor = after;
+  while (cursor < end) {
+    const page = (deps.listBus ?? listBusInboxAfter)(cursor, BUS_INBOX_MAX_READ);
+    if (page.status !== 'ok' || page.nextCursor <= cursor) {
+      return { code: 1, result: { ...base, source: 'unavailable' as const, messages: [] } };
+    }
+    for (const row of page.messages) {
+      if (row.cursor > end) break;
+      const { envelope } = row;
+      if (envelope.to !== id && envelope.from !== id && envelope.to !== 'all') continue;
+      base.messages.push({ ...row, category: envelope.to === 'all' ? 'broadcast' : 'direct' });
+      if (base.messages.length === limit) {
+        cursor = row.cursor;
+        break;
+      }
+    }
+    if (base.messages.length === limit) break;
+    cursor = Math.min(page.nextCursor, end);
+  }
+  base.scannedThrough = cursor;
+  base.hasMore = cursor < end;
+  base.truncated = base.hasMore;
+  return { code: 0, result: base };
+}
+
 /** Read the host's existing job projections; no path options are accepted. */
 export async function cmdFleetJobRead(args: string[], deps: Readers = readers, watch: WatchOptions = {}): Promise<number> {
   const output = deps.output ?? {
@@ -115,6 +152,8 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
   let context = 0;
   let intervalMs = WATCH_INTERVAL_DEFAULT_MS;
   let timeoutMs: number | undefined;
+  let after = 0;
+  let limit = 50;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -124,7 +163,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
       seen.add('--log-find');
       const inline = flag.startsWith('--log-find=');
       literal = inline ? flag.slice('--log-find='.length) : args[++i];
-      if (!literal || (!inline && ['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '-h', '--tail-lines', '--log-find', '--context-lines', '--watch', '--interval-ms', '--timeout-ms'].includes(literal))) return invalid();
+      if (!literal || (!inline && ['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '-h', '--tail-lines', '--log-find', '--context-lines', '--watch', '--interval-ms', '--timeout-ms', '--bus', '--after', '--limit'].includes(literal))) return invalid();
     } else if (flag === '--context-lines') {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
@@ -139,6 +178,13 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
       if (!count || /[^0-9]/.test(count)) return invalid();
       maxTailLines = Number(count);
       if (!Number.isSafeInteger(maxTailLines) || maxTailLines < 1 || maxTailLines > 120) return invalid();
+    } else if (flag === '--after' || flag === '--limit') {
+      if (seen.has(flag)) return invalid();
+      seen.add(flag);
+      const count = args[++i];
+      if (!count || !/^(0|[1-9][0-9]*)$/.test(count) || !Number.isSafeInteger(Number(count))) return invalid();
+      if (flag === '--after') after = Number(count);
+      else { limit = Number(count); if (limit < 1 || limit > BUS_INBOX_MAX_READ) return invalid(); }
     } else if (flag === '--interval-ms') {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
@@ -153,7 +199,7 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
       if (!count || /[^0-9]/.test(count)) return invalid();
       timeoutMs = Number(count);
       if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) return invalid();
-    } else if (['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '--watch'].includes(flag)) {
+    } else if (['--json', '--require-published', '--changes', '--log', '--prompt', '--notes', '--help', '--watch', '--bus'].includes(flag)) {
       if (seen.has(flag)) return invalid();
       seen.add(flag);
     } else if (!id && isFleetJobId(arg)) {
@@ -162,16 +208,17 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
       return invalid();
     }
   }
-  if (['--changes', '--log', '--prompt', '--notes'].filter(flag => seen.has(flag)).length > 1) return invalid();
-  if (seen.has('--require-published') && (!seen.has('--json') || ['--changes', '--log', '--prompt', '--notes'].some(flag => seen.has(flag)))) return invalid();
+  if (['--changes', '--log', '--prompt', '--notes', '--bus'].filter(flag => seen.has(flag)).length > 1) return invalid();
+  if (seen.has('--require-published') && (!seen.has('--json') || ['--changes', '--log', '--prompt', '--notes', '--bus'].some(flag => seen.has(flag)))) return invalid();
+  if ((seen.has('--after') || seen.has('--limit')) && !seen.has('--bus')) return invalid();
   if (seen.has('--tail-lines') && !seen.has('--log')) return invalid();
   if (seen.has('--log-find') && !seen.has('--log')) return invalid();
   if (seen.has('--context-lines') && !seen.has('--log-find')) return invalid();
   if (seen.has('--interval-ms') && !seen.has('--watch')) return invalid();
   if (seen.has('--timeout-ms') && !seen.has('--watch')) return invalid();
-  if (seen.has('--watch') && ['--changes', '--prompt', '--notes', '--require-published'].some(flag => seen.has(flag))) return invalid();
+  if (seen.has('--watch') && ['--changes', '--prompt', '--notes', '--require-published', '--bus'].some(flag => seen.has(flag))) return invalid();
   if (seen.has('--help')) {
-    output.log(`${usage}\nReads host run artifacts; --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts. --tail-lines accepts 1..120 with --log. --log-find searches that tail for case-sensitive literal text; use --log-find=<literal> for a flag as the literal. --context-lines accepts 0..10 with --log-find.\n--require-published requires --json and default detail mode. It adds a published handoff evidence check for a PR URL and test line; exit 1 if either is absent. This does not verify a merge or evidence freshness.\n--watch repeats the detail or --log read every --interval-ms (1000..60000, default 5000) until SIGINT/SIGTERM or a terminal state (published, ended without publish evidence, or no live evidence for 3 consecutive snapshots), then prints one line saying why it stopped. --timeout-ms bounds a watch to 1..3600000 ms; expiry exits 1 without cancelling the job. Text snapshots are headed --- <ISO time> snapshot N --- and show only newly appended tail lines; --json emits one object per snapshot, read errors emit fleet.job.error.v1, and 5 consecutive read failures exit 1. --watch cannot combine with --changes, --prompt, --notes or --require-published.\nAgent examples: phm fleet job JOB1 --log --tail-lines 10 --json; phm fleet job JOB1 --require-published --json; phm fleet job JOB1 --watch --interval-ms 2000 --timeout-ms 30000 --json`);
+    output.log(`${usage}\nReads host run artifacts; --bus reads retained messages addressed to or from the exact job label, plus broadcasts to all. Labels do not authenticate senders. --after is a scan cursor; --limit is 1..100 matching messages (default 50). hasMore/truncated mean retained rows remain unscanned, not necessarily matching; resume with scannedThrough. --bus cannot combine with --watch. --changes reads the bounded worktree change projection; --log reads the scrubbed log tail; --prompt and --notes read scrubbed worker artifacts. --tail-lines accepts 1..120 with --log. --log-find searches that tail for case-sensitive literal text; use --log-find=<literal> for a flag as the literal. --context-lines accepts 0..10 with --log-find.\n--require-published requires --json and default detail mode. It adds a published handoff evidence check for a PR URL and test line; exit 1 if either is absent. This does not verify a merge or evidence freshness.\n--watch repeats the detail or --log read every --interval-ms (1000..60000, default 5000) until SIGINT/SIGTERM or a terminal state (published, ended without publish evidence, or no live evidence for 3 consecutive snapshots), then prints one line saying why it stopped. --timeout-ms bounds a watch to 1..3600000 ms; expiry exits 1 without cancelling the job. Text snapshots are headed --- <ISO time> snapshot N --- and show only newly appended tail lines; --json emits one object per snapshot, read errors emit fleet.job.error.v1, and 5 consecutive read failures exit 1. --watch cannot combine with --changes, --prompt, --notes or --require-published.\nAgent examples: phm fleet job JOB1 --log --tail-lines 10 --json; phm fleet job JOB1 --require-published --json; phm fleet job JOB1 --watch --interval-ms 2000 --timeout-ms 30000 --json`);
     return 0;
   }
   if (!id) return invalid();
@@ -255,7 +302,19 @@ export async function cmdFleetJobRead(args: string[], deps: Readers = readers, w
     }
   }
   try {
-    if (seen.has('--prompt') || seen.has('--notes')) {
+    if (seen.has('--bus')) {
+      const job = await deps.detail(id);
+      const known = Object.values(job.sources).some(state => state === 'healthy') || job.promptBytes !== null || job.notes.hasNotes || job.notes.hasBody;
+      if (!known) { output.stderr('error: unknown fleet job or evidence unavailable\n'); return 1; }
+      const { code, result } = readJobBus(id, after, limit, deps);
+      if (code === 2) return invalid();
+      const safe = sanitizePublicJson(result);
+      if (seen.has('--json')) output.log(JSON.stringify(safe));
+      else {
+        output.log(`Fleet job bus (routing labels are not authenticated): ${JSON.stringify(safe, null, 2)}`);
+      }
+      return code;
+    } else if (seen.has('--prompt') || seen.has('--notes')) {
       const kind = seen.has('--prompt') ? 'prompt' : 'notes';
       const artifact = await (deps.text ?? getFleetJobText)(id, kind);
       if (seen.has('--json')) {
