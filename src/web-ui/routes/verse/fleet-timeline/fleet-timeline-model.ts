@@ -2,6 +2,7 @@ import type { SwimlaneItem, SwimlaneLane } from '../../../components/charts/Swim
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import type { BusEvent } from '../fleet/bus-feed-queries.js';
 import { parseHeldReason } from '../fleet/held-reason.js';
+import { splitRefs } from '../fleet/job-refs.js';
 import { ageText, type FleetRuns } from '../ops/ops-runs-model.js';
 
 const HOUR = 3_600_000;
@@ -74,6 +75,24 @@ export function masonLane(events: BusEvent[], from: number, to: number): Swimlan
     return [{ id: `inbox:${event.at}`, label, detail: label, start: at, end: at, status: 'interjection' }];
   }).sort((a, b) => a.start - b.start);
   return items.length ? { id: 'mason', label: 'Mason', items } : null;
+}
+
+export function mergesLane(runs: FleetRuns, from: number, to: number): { lane: SwimlaneLane | null; unplaced: number } {
+  let unplaced = 0;
+  const items = runs.mergesLastHour.items.flatMap((merge): SwimlaneItem[] => {
+    const at = Date.parse(merge.mergedAt ?? '');
+    if (!Number.isFinite(at)) { unplaced++; return []; }
+    if (at < from || at > to) return [];
+    const opened = Date.parse(merge.openedAt ?? '');
+    const validSpan = Number.isFinite(opened) && opened <= at;
+    const job = splitRefs(merge.title).find((part) => part.kind === 'job')?.value;
+    return [{
+      id: `merge:${merge.repo}#${merge.number}`, label: `#${merge.number} ${job ?? merge.title}`,
+      start: validSpan && opened >= from ? opened : at, end: at, status: 'merged',
+      detail: validSpan ? `${merge.repo} · open → merge ${ageText((at - opened) / 1000)}` : merge.repo,
+    }];
+  }).sort((a, b) => (a.end ?? 0) - (b.end ?? 0));
+  return { lane: items.length ? { id: 'merges', label: 'Merges', items } : null, unplaced };
 }
 
 /** `Nov 1 01:22` in the viewer's local zone (formatToParts keeps no comma). */
