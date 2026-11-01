@@ -15,6 +15,7 @@ import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
 import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
 import { jobTextQuery } from './job-text-queries.js';
+import { livenessText, livenessTone, newLinesLabel, trackGrowth, type TrackedLog } from './log-liveness-model.js';
 import styles from './worker-log.module.css';
 
 const EMPTY_LINES: string[] = [];
@@ -61,6 +62,26 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   };
   const [follow, setFollow] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
+  const tracked = useRef<{ job: string; value: TrackedLog | null }>({ job, value: null });
+  const [liveness, setLiveness] = useState<TrackedLog | null>(null);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (tracked.current.job !== job) tracked.current = { job, value: null };
+    if (!detail.data) { setLiveness(null); return; }
+    const value = trackGrowth(tracked.current.value, { ...detail.data, follow }, Date.now());
+    tracked.current.value = value;
+    setLiveness(value);
+  }, [job, detail.data, follow]);
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [active]);
+  const clearUnseen = () => {
+    if (!tracked.current.value?.unseenLines) return;
+    tracked.current.value = { ...tracked.current.value, unseenLines: 0 };
+    setLiveness(tracked.current.value);
+  };
   const [search, setSearch] = useState('');
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
   const lines = detail.data?.log?.tail ?? EMPTY_LINES;
@@ -111,6 +132,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     {valid && detail.status === 'error' && <p role="status">Job detail could not refresh.</p>}
     {valid && detail.data && <>
       <div className={styles.meta}><StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
+        {' '}<StatusBadge status="output" tone={livenessTone(liveness?.lastGrowthAt ?? null, state, now)}>{livenessText(liveness?.lastGrowthAt ?? null, state, now)}</StatusBadge>
         {meta.slice(1).map((part, index) => <span key={`${part}-${index}`}> · {url && index === meta.length - 2 && part === prLabel(url) ? <a href={url} target="_blank" rel="noreferrer">{part}</a> : part}</span>)}
       </div>
       {(testLine !== null || sensitive !== null) && <section aria-label="Publish" className={styles.meta}>
@@ -118,7 +140,16 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         {sensitive !== null && <p role="note">Touches owner-reviewed paths: {sensitive.join(', ')}</p>}
       </section>}
       {hint ? <p className={styles.hint}>{hint}</p> : detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
-        <div ref={logRef} className={styles.log} role="log" aria-live="polite">{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>}
+        <div className={styles.logWrap}>
+          <div ref={logRef} className={styles.log} role="log" aria-live="polite" onScroll={event => {
+            const log = event.currentTarget;
+            if (log.scrollTop + log.clientHeight >= log.scrollHeight - 1) clearUnseen();
+          }}>{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>
+          {!follow && (liveness?.unseenLines ?? 0) > 0 && <button type="button" className={styles.newLines} onClick={() => {
+            if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+            clearUnseen(); setFollow(true);
+          }}>{newLinesLabel(liveness?.unseenLines ?? 0)} ↓</button>}
+        </div>}
       {changes.data && <section aria-label="Changes" className={styles.changes}>
         <div>{changesHeadline(changes.data)}</div>
         {changes.data.state === 'missing' ? <p>Worktree not available</p> : <>
