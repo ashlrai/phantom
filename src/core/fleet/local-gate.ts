@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -35,6 +36,20 @@ async function appendMetric(path: string, row: string): Promise<void> {
   await appendFile(path, row, { encoding: 'utf8', mode: 0o600 });
 }
 
+/**
+ * Compiler argv for the typecheck step, resolved against the gate's working
+ * tree before launch. An already-installed tsgo under cwd's node_modules wins;
+ * otherwise the installed tsc entrypoint runs under node. Selection is
+ * absence-only: a chosen compiler that errors, exits nonzero or cannot launch
+ * is the gate's typecheck failure — never retried against the other compiler,
+ * and never resolved through npx, a shell or the network.
+ */
+function typecheckCommand(cwd: string): readonly [command: string, args: string[]] {
+  const tsgo = resolve(cwd, 'node_modules', '.bin', 'tsgo');
+  if (existsSync(tsgo)) return [tsgo, ['--noEmit', '-p', 'tsconfig.json']];
+  return ['node', [resolve(cwd, 'node_modules', 'typescript', 'bin', 'tsc'), '--noEmit', '-p', 'tsconfig.json']];
+}
+
 /** Measures the current working tree, including uncommitted edits; SHAs identify its ancestry only. */
 export async function runLocalGate(budgetSeconds = 180, deps: LocalGateDeps = {}): Promise<LocalGateReport> {
   if (!Number.isFinite(budgetSeconds) || budgetSeconds <= 0) throw new Error('budget-seconds must be positive and finite');
@@ -59,8 +74,9 @@ export async function runLocalGate(budgetSeconds = 180, deps: LocalGateDeps = {}
   const headSha = await sha(['rev-parse', 'HEAD']);
   const baseSha = await sha(['merge-base', 'HEAD', 'origin/master']);
   if (!headSha || !baseSha) steps.push({ name: 'git identity', ok: false, seconds: now() - start });
+  const [typecheckCmd, typecheckArgs] = typecheckCommand(cwd);
   for (const [name, command, args] of [
-    ['typecheck', 'npx', ['tsc', '--noEmit', '-p', 'tsconfig.json']],
+    ['typecheck', typecheckCmd, typecheckArgs],
     ['verify-changed', 'node', ['scripts/verify-changed.mjs']],
   ] as const) {
     const stepStart = now();
