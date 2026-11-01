@@ -67,10 +67,14 @@ describe('fleet bus-claimed-run through the exported CLI, real inbox and claim s
     expect(result).toMatchObject({ code: 0, claim: { status: 'completed' },
       workerExit: { status: 'returned', exitCode: 0 }, replyReceipt: { status: 'posted' } });
     expect(spawnCount()).toBe(1);
-    // No token or request body ever leaves the process boundary or the report.
+    // No claim token ever leaves the process boundary or the report. The
+    // request body reaches the worker only as untrusted stdin data inside its
+    // delimited section — never argv, and never the report stream.
     expect(result.cap.out + result.cap.err).not.toMatch(/[a-f0-9]{64}/);
     expect(result.cap.out).toContain('fake prompt');
-    expect(result.cap.out).not.toContain('fake request body never executed');
+    expect(result.cap.out).toContain('BEGIN UNTRUSTED BUS REQUEST JSON');
+    expect(result.cap.out).toContain('fake request body never executed');
+    expect(result.cap.err).not.toContain('fake request body never executed');
     const rows = JSON.parse(readFileSync(claimsFile(), 'utf8')) as { id: string; owner: string; completedAt: number | null }[];
     expect(rows).toEqual([expect.objectContaining({ id: 'req-1', owner: 'worker-a', completedAt: expect.any(Number) })]);
     const page = listBusInboxAfter(0, 50, { root: busRoot });

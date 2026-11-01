@@ -63,6 +63,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'post-merge-verify': () => import('./fleet-post-merge-verify.js'),
   'ready-supply': () => import('./fleet-ready-supply.js'),
   'real-supply': () => import('./fleet-real-supply.js'),
+  'red-fix': () => import('./fleet-red-fix.js'),
   'reassign': () => import('./fleet-reassign.js'),
   'reset-release': () => import('./fleet-reset-release.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
