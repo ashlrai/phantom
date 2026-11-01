@@ -10,6 +10,8 @@ import { headline, laneSeries, launchGaps, MAX_GAP_MS, sparkPath, type SparkPoin
 import { runsHistoryQuery, type CapacityHours } from './capacity-queries.js';
 import styles from './fleet-capacity.module.css';
 import { laneHeldText } from './lane-held-text.js';
+import { truthHeadline, verdictText, verdictTone } from './lane-truth-model.js';
+import { laneTruthQuery } from './lane-truth-queries.js';
 
 const WIDTH = 240;
 const HEIGHT = 48;
@@ -46,11 +48,14 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
   const active = visible && sectionVisible && documentVisible;
   const read = useQuery(query, { enabled: active, freshMs: 0 });
   const snapshot = useQuery(fleetUsageRunsQuery, { enabled: active });
+  const truth = useQuery(laneTruthQuery, { enabled: active });
   const refetchSnapshot = useRefetch(fleetUsageRunsQuery);
   const refreshSnapshot = useRefresh(fleetUsageRunsQuery);
+  const refetchTruth = useRefetch(laneTruthQuery);
+  const refreshTruth = useRefresh(laneTruthQuery);
   const refetch = useRefetch(query);
   const refresh = useRefresh(query);
-  usePollWhileVisible(() => { refetch(); refetchSnapshot(); }, 60_000, { enabled: visible, refreshOnShow: false });
+  usePollWhileVisible(() => { refetch(); refetchSnapshot(); refetchTruth(); }, 60_000, { enabled: visible, refreshOnShow: false });
   const data = read.data;
   const runs = snapshot.data && typeof snapshot.data === 'object' && !Array.isArray(snapshot.data)
     ? snapshot.data as Record<string, unknown> : {};
@@ -63,13 +68,16 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
   const noFleet = !!data && samples.length === 0 && isNoFleet(data.sourceState);
   const lanes = data ? laneSeries(data, now) : [];
   const gaps = data ? launchGaps(data) : [];
+  const truthLanes = truth.data?.source === 'ok' ? truth.data.lanes : [];
+  const truthHeadlineText = truthHeadline(truthLanes);
   const workerPoints = samples.map((sample) => ({ atMs: Date.parse(sample.at), running: sample.workers, target: sample.leaders }));
 
   return <div className={styles.pane} aria-label="Capacity">
     <header className={styles.header}>
       <p className={styles.headline}>{data && !noFleet ? headline(data, now) : 'Fleet capacity history'}</p>
-      <button type="button" className={styles.button} onClick={() => { refresh(); refreshSnapshot(); }}>Refresh</button>
+      <button type="button" className={styles.button} onClick={() => { refresh(); refreshSnapshot(); refreshTruth(); }}>Refresh</button>
     </header>
+    {truthHeadlineText ? <p className={styles.truth} data-testid="lane-truth-headline">{truthHeadlineText}</p> : null}
     <div className={styles.controls} role="group" aria-label="History window">
       {([6, 24, 72] as const).map((value) => <button type="button" className={styles.button} aria-pressed={hours === value} key={value} onClick={() => setHours(value)}>{value} h</button>)}
     </div>
@@ -89,10 +97,13 @@ export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> 
               });
               const live = liveLanes.find((item: unknown) => item && typeof item === 'object' && 'lane' in item && item.lane === lane.lane) as Record<string, unknown> | undefined;
               const heldText = live ? laneHeldText({ lane: lane.lane, held: live.held === true, heldReason: typeof live.heldReason === 'string' ? live.heldReason : null }, { resetsAt }) : null;
+              const truthRow = truthLanes.find((row) => row.lane === lane.lane);
+              const truthLine = truthRow ? verdictText(truthRow) : null;
               return <li key={lane.lane} className={styles.lane}>
                 <div className={styles.line}><strong><button type="button" className={styles.laneButton} aria-label={`Open ${lane.lane} in Lanes`} onClick={() => host?.openPane('fleet-lanes')}>{lane.lane}</button></strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min</span></div>
                 <Chart points={points} samples={samples} held={lane.lane} label={`${lane.lane}: ran at ${percent(lane.fillPct)} of target, ${format(lane.idleSlotMinutes)} idle slot-minutes`} />
                 {heldText ? <p className={styles.muted} data-testid="lane-held">{heldText}</p> : null}
+                {truthLine ? <p className={styles.truth} data-tone={verdictTone(truthRow!.verdict) ?? undefined} data-testid="lane-truth">{truthLine}</p> : null}
               </li>;
             })}</ul>}
           </section>
