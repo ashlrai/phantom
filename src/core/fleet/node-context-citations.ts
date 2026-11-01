@@ -7,6 +7,14 @@ interface RawLine {
   truncated?: unknown;
 }
 
+/** A parsed JSONL object carrying every field a citation needs. */
+interface CitationRecord extends RawLine {
+  jobId: string;
+  kind: 'task' | 'output';
+  text: string;
+  truncated: boolean;
+}
+
 /** Parse a single JSONL line; returns parsed object or `null` on failure. */
 function tryParse(line: string): RawLine | null {
   try {
@@ -15,6 +23,15 @@ function tryParse(line: string): RawLine | null {
   } catch {
     return null;
   }
+}
+
+/** Whether a parsed JSONL object is a usable citation record. */
+function isCitationRecord(raw: RawLine | null): raw is CitationRecord {
+  return raw !== null &&
+    typeof raw.jobId === 'string' && raw.jobId.length > 0 &&
+    (raw.kind === 'task' || raw.kind === 'output') &&
+    typeof raw.text === 'string' &&
+    typeof raw.truncated === 'boolean';
 }
 
 /**
@@ -42,31 +59,38 @@ export function readNodeContextCitations(
     if (trimmed === '') continue;
 
     const raw = tryParse(trimmed);
-    if (raw === null) continue;
+    if (!isCitationRecord(raw)) continue;
 
-    const jobId = raw.jobId;
-    const kind = raw.kind;
-    const text = raw.text;
-    const truncated = raw.truncated;
-
-    if (typeof jobId !== 'string' || jobId.length === 0) continue;
-    if (kind !== 'task' && kind !== 'output') continue;
-    if (typeof text !== 'string') continue;
-    if (typeof truncated !== 'boolean') continue;
-
-    const key = `${jobId}::${kind}`;
+    const key = `${raw.jobId}::${raw.kind}`;
     if (seen.has(key)) {
       // Update truncation flag: later `true` overrides.
       const existing = results.find(
-        r => r.jobId === jobId && r.kind === kind,
+        r => r.jobId === raw.jobId && r.kind === raw.kind,
       );
-      if (existing && truncated) existing.truncated = true;
+      if (existing && raw.truncated) existing.truncated = true;
       continue;
     }
 
     seen.add(key);
-    results.push({ jobId, kind, truncated });
+    results.push({ jobId: raw.jobId, kind: raw.kind, truncated: raw.truncated });
   }
 
   return results;
+}
+
+/**
+ * Count nonblank lines of a `buildNodeContextPack` JSONL string that are not
+ * usable citation records: unparseable JSON, non-object JSON, or objects
+ * lacking a nonempty `jobId`, a `'task'`/`'output'` kind, a string `text`,
+ * or a boolean `truncated`. Malformed lines are counted, never thrown.
+ * No I/O, dependencies, or network.
+ */
+export function countMalformedNodeContextPackLines(pack: string): number {
+  let malformed = 0;
+  for (const line of pack.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    if (!isCitationRecord(tryParse(trimmed))) malformed++;
+  }
+  return malformed;
 }
