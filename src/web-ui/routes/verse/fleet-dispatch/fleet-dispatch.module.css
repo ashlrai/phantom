@@ -11,3 +11,5 @@
 .laneButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
 .laneButton:hover { text-decoration: underline; }
 .laneButton:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+
+.mixHeading { margin: 0 0 var(--space-1); font-size: var(--text-xs-size); color: var(--text-primary); }
