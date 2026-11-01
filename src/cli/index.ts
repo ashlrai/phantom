@@ -1739,8 +1739,13 @@ async function cmdConfig(args: string[]): Promise<void> {
     'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
 
   // `config set <key> --help` (or `set --help <value>`) used to store "--help"
-  // as the value or the key. Refuse with the usage line before any config IO.
+  // as the value or the key. If the flag is the first operand (no key given),
+  // print usage to stdout and exit 0; otherwise refuse with exit 2.
   if (subCmd === 'set' && (args.includes('--help') || args.includes('-h'))) {
+    if (args[1] === '--help' || args[1] === '-h') {
+      console.log('Usage: ashlr config set <key> <value>');
+      return;
+    }
     die('Usage: ashlr config set <key> <value>', 2);
   }
 
