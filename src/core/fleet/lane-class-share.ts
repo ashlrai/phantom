@@ -12,7 +12,7 @@ export interface LaneClassShare {
 export function classifyLaneJob(id: string): LaneJobClass {
   if (/^RQ-FIXUP(?:-|$)/.test(id) || /^FIXUP(?:-|$)/.test(id)) return 'fixup';
   if (/^RQ-PHX(?:-|$)/.test(id)) return 'phx';
-  if (/^RQ-[A-Z]+\d+A\d{8}Q8$/.test(id)) return 'filler';
+  if (/^RQ-FILL-\d+$/.test(id) || /^RQ-[A-Z]+\d+A\d{8}Q8$/.test(id)) return 'filler';
   return 'other';
 }
 

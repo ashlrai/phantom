@@ -28,6 +28,7 @@ import { projectAccountsSnapshot, type AccountCredits } from '../usage/usage-con
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import { fleetUsageRunsQuery } from './fleet-usage-queries.js';
 import { auditSteerPrefill, auditSteerVisible } from './audit-steer-prefill.js';
+import { claudeIdle } from './claude-idle-model.js';
 import {
   codexPersonalRow,
   degradedSources,
@@ -160,7 +161,7 @@ function AccountFacts({ row, nowMs }: { row: UsageRow; nowMs: number }) {
   );
 }
 
-function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
+function AccountRow({ row, nowMs, incident }: { row: UsageRow; nowMs: number; incident: ReturnType<typeof claudeIdle> }) {
   const planType = row.planType ?? null;
   const hasFacts = row.observedAt != null || row.credits != null || row.reconnectCommand != null;
   return (
@@ -174,8 +175,9 @@ function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
           <li className={styles.reason}>{row.reason ?? STATE_FALLBACK[row.state]}</li>
           {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
           <AccountFacts row={row} nowMs={nowMs} />
+          {incident && <li className={styles.incident} data-tone={incident.tone}><span className={styles.verdict}>Incident</span> {incident.text}</li>}
         </ul>
-      ) : row.windows.length === 0 && row.note === null && !hasFacts ? (
+      ) : row.windows.length === 0 && row.note === null && !hasFacts && !incident ? (
         <span className={styles.reason}>—</span>
       ) : (
         <ul className={styles.windows}>
@@ -183,6 +185,7 @@ function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
           {row.windows.length === 0 && row.note === null ? <li className={styles.reason}>—</li> : null}
           {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
           <AccountFacts row={row} nowMs={nowMs} />
+          {incident && <li className={styles.incident} data-tone={incident.tone}><span className={styles.verdict}>Incident</span> {incident.text}</li>}
         </ul>
       )}
     </li>
@@ -207,6 +210,8 @@ export function FleetUsagePane({ visible }: PaneProps) {
   const lanes = useMemo(() => laneTokens(runsRead.data ?? null), [runsRead.data]);
   const degraded = useMemo(() => degradedSources(runsRead.data ?? null), [runsRead.data]);
   const nowMs = Date.now();
+  const runs = runsRead.data && typeof runsRead.data === 'object' && !Array.isArray(runsRead.data)
+    ? runsRead.data as Record<string, unknown> : null;
   const disagreement = personalDisagreement(rows, personal, personalCodexAccount(snapshot?.accounts ?? [])?.observedAt ?? null, nowMs);
 
   const accountsMissing = read !== undefined && !read.available;
@@ -232,7 +237,15 @@ export function FleetUsagePane({ visible }: PaneProps) {
 
       {(rows.length > 0 || personal !== null) && (
         <ul className={styles.rows} aria-label="Provider usage">
-          {rows.map((row) => <AccountRow key={row.id} row={row} nowMs={nowMs} />)}
+          {rows.map((row) => {
+            const weekly = row.windows.filter((window) => /weekly|seven[\s_-]*day|7[\s_-]*(?:day|d)\b/i.test(window.label));
+            const window = weekly.length === 1 ? weekly[0] : weekly.length === 0 && row.windows.length === 1 ? row.windows[0] : null;
+            const incident = row.provider === 'claude' ? claudeIdle({
+              claudeLane: runs?.['claudeLane'], lanes, usedPercent: window?.measured && !window.limitReached ? window.usedPercent : null,
+              resetsAt: window?.resetsAt ?? null, nowMs,
+            }) : null;
+            return <AccountRow key={row.id} row={row} nowMs={nowMs} incident={incident} />;
+          })}
           {personal !== null && (
             <li className={styles.row}>
               <span className={styles.account}>Codex personal</span>
