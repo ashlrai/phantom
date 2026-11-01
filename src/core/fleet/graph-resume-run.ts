@@ -44,13 +44,13 @@ function validRows(value: unknown, digest: string, order: string[], tasks: Task[
   if (Object.keys(doc).sort().join(',') !== 'digest,nodes,version' || doc.version !== 1 || doc.digest !== digest ||
     !Array.isArray(doc.nodes) || doc.nodes.length !== order.length) throw Error('invalid checkpoint');
   const rows = doc.nodes as Row[];
-  const allowed = ['success', 'failed', 'blocked', 'cancelled', 'timeout', 'refused'];
+  const allowed = ['success', 'failed', 'blocked', 'cancelled', 'timeout', 'refused', 'deadline-exhausted'];
   for (const row of rows) {
     if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).sort().join(',') !== 'exitCode,id,status' ||
       !order.includes(row.id) || !allowed.includes(row.status) ||
       !(row.exitCode === null || (Number.isInteger(row.exitCode) && row.exitCode >= 0 && row.exitCode <= 255)) ||
       (row.status === 'success' && row.exitCode !== 0) || (row.status === 'failed' && row.exitCode === 0) ||
-      (['blocked', 'refused'].includes(row.status) && row.exitCode !== null)) throw Error('invalid row');
+      (['blocked', 'refused', 'deadline-exhausted'].includes(row.status) && row.exitCode !== null)) throw Error('invalid row');
   }
   const byId = new Map(rows.map(row => [row.id, row]));
   if (byId.size !== order.length || tasks.some(task => byId.get(task.id)?.status === 'success' &&
