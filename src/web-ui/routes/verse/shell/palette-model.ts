@@ -13,7 +13,7 @@
  * catalog's order breaks ties — so "stop" puts "Stop running chats…" above a
  * chat that merely contains an s, t, o and p.
  */
-import { laneItemTitle, type PaletteLane } from './palette-lanes.js';
+import { laneItemTitle, releaseItemTitle, type PaletteLane } from './palette-lanes.js';
 import { prLabel, safePrUrl } from '../fleet-job-log/worker-log-model.js';
 import type { VerseProject, VerseSeat, VerseSession } from '../../../data/api-types.js';
 import {
@@ -62,6 +62,7 @@ export interface PaletteItem {
     | { kind: 'pane'; paneId: string }
     | { kind: 'worker'; job: string; url?: string; selectLog?: boolean }
     | { kind: 'lane'; lane: PaletteLane }
+    | { kind: 'lane-release'; lane: PaletteLane }
     | { kind: 'chat'; sessionId: string }
     | { kind: 'command'; commandId: string }
     | { kind: 'seat'; seatId: string; label: string }
@@ -276,6 +277,12 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       title: laneItemTitle(lane), subtitle: null, shortcut: null,
       monogram: null, engine: null, keywords: ['lane', 'pause', 'resume', lane.lane],
       argument: null, tone: 'neutral', payload: { kind: 'lane', lane },
+    });
+    if (lane.held) items.push({
+      key: `lane-release:${lane.lane}`, kind: 'lane', group: 'lanes',
+      title: releaseItemTitle(lane), subtitle: null, shortcut: null,
+      monogram: null, engine: null, keywords: ['release', 'hold', 'unhold', lane.lane],
+      argument: null, tone: 'neutral', payload: { kind: 'lane-release', lane },
     });
   }
 
