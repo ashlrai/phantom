@@ -16,8 +16,8 @@ describe('personalLaneFacts', () => {
       .toEqual(['Lane codex-personal: 3/12 running · 14 queued']);
   });
 
-  it('omits the queued part when nothing is queued', () => {
-    expect(personalLaneFacts([lane({ running: 3 })])).toEqual(['Lane codex-personal: 3/12 running']);
+  it('reports when nothing is queued', () => {
+    expect(personalLaneFacts([lane({ running: 3 })])).toEqual(['Lane codex-personal: 3/12 running · 0 queued']);
   });
 
   it('returns nothing without the lane or without lanes at all', () => {
@@ -27,27 +27,32 @@ describe('personalLaneFacts', () => {
     expect(personalLaneFacts([lane({ lane: 'claude-main' })])).toEqual([]);
   });
 
-  it('skips rows missing a string lane and ignores malformed counts', () => {
-    const malformed = [{ running: 4, target: 9, queued: 2, held: false }, lane({ running: Number.NaN })] as unknown as PersonalLaneRow[];
-    expect(personalLaneFacts(malformed)).toEqual(['Lane codex-personal: 0/12 running']);
-    expect(personalLaneFacts([null, lane()] as unknown as PersonalLaneRow[])).toEqual(['Lane codex-personal: 0/12 running']);
+  it('selects an explicitly named lane', () => {
+    expect(personalLaneFacts([lane({ lane: 'other', queued: 1 })], 'other'))
+      .toEqual(['Lane other: 0/12 running · 1 queued']);
   });
 
-  it('names a hand pause and falls back when the reason is absent or blank', () => {
+  it('skips rows missing a string lane and ignores malformed counts', () => {
+    const malformed = [{ running: 4, target: 9, queued: 2, held: false }, lane({ running: Number.NaN })] as unknown as PersonalLaneRow[];
+    expect(personalLaneFacts(malformed)).toEqual(['Lane codex-personal: 0/12 running · 0 queued']);
+    expect(personalLaneFacts([null, lane()] as unknown as PersonalLaneRow[])).toEqual(['Lane codex-personal: 0/12 running · 0 queued']);
+  });
+
+  it('reports a manual hold and falls back when the reason is absent or blank', () => {
     expect(personalLaneFacts([lane({ held: true, heldReason: 'maintenance window' })]))
-      .toEqual(['Lane codex-personal: 0/12 running', 'Held: maintenance window']);
+      .toEqual(['Lane codex-personal: 0/12 running · 0 queued', 'Held: maintenance window']);
     expect(personalLaneFacts([lane({ held: true, heldReason: null })]))
-      .toEqual(['Lane codex-personal: 0/12 running', 'Held: paused by hand']);
+      .toEqual(['Lane codex-personal: 0/12 running · 0 queued', 'Held: reason not reported']);
     expect(personalLaneFacts([lane({ held: true })]))
-      .toEqual(['Lane codex-personal: 0/12 running', 'Held: paused by hand']);
+      .toEqual(['Lane codex-personal: 0/12 running · 0 queued', 'Held: reason not reported']);
     expect(personalLaneFacts([lane({ held: true, heldReason: '   ' })]))
-      .toEqual(['Lane codex-personal: 0/12 running', 'Held: paused by hand']);
+      .toEqual(['Lane codex-personal: 0/12 running · 0 queued', 'Held: reason not reported']);
   });
 
   it('caps a long reason at 120 characters and strips control characters', () => {
     const reason = 'weekly quota reached '.repeat(15).trim();
     const [first, second] = personalLaneFacts([lane({ held: true, heldReason: `${reason}\u0007\u001b` })]);
-    expect(first).toBe('Lane codex-personal: 0/12 running');
+    expect(first).toBe('Lane codex-personal: 0/12 running · 0 queued');
     expect(second).toBe(`Held: usage limit (${reason.slice(0, 120)})`);
     expect(second!.length).toBeLessThanOrEqual('Held: usage limit ()'.length + 120);
     expect(second).not.toMatch(/[\p{Cc}]/u);
