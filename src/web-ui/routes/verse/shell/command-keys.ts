@@ -169,6 +169,15 @@ const KEYS = {
     // refuses one that collides with any chord here). NOT ⇧⌘E (composer
     // effort) and NOT ⇧⌘R (a browser's hard reload).
     'dock.toggle': 'mod+\\',
+    'dock.tab-1': 'mod+alt+1',
+    'dock.tab-2': 'mod+alt+2',
+    'dock.tab-3': 'mod+alt+3',
+    'dock.tab-4': 'mod+alt+4',
+    'dock.tab-5': 'mod+alt+5',
+    'dock.tab-6': 'mod+alt+6',
+    'dock.tab-7': 'mod+alt+7',
+    'dock.tab-8': 'mod+alt+8',
+    'dock.tab-9': 'mod+alt+9',
     'dock.terminal': 'ctrl+`',
     'dock.terminal-new': 'ctrl+shift+`',
     'dock.preview': 'mod+shift+b',

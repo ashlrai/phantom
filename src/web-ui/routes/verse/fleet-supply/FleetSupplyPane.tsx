@@ -13,6 +13,7 @@ import { exhaustionByLane, soonestExhaustion } from './supply-exhaustion-model.j
 import { supplyLedgerQuery } from './supply-ledger-query.js';
 import { fleetSupplyQuery } from './fleet-supply-queries.js';
 import { heldUntilText } from './held-until-text.js';
+import { laneYield, yieldRanking, yieldText } from './lane-yield-model.js';
 import { asRecord, HORIZON_SECONDS, laneSupply, supplyHeadline, totalShortfall, TYPICAL_RUN_SECONDS } from './supply-model.js';
 import { suggestedTarget, wasteForecast, wasteHeadline } from './waste-forecast-model.js';
 import styles from './fleet-supply.module.css';
@@ -50,6 +51,10 @@ export function FleetSupplyPane({ visible }: PaneProps) {
   if (read.data === undefined) return <p className={styles.message} role="status">{read.status === 'error' ? 'Live runs are unavailable.' : 'Reading live runs…'}</p>;
   const data = asRecord(read.data);
   const rows = laneSupply(data);
+  const lanes = Array.isArray(data.lanes) ? data.lanes.map(asRecord) : [];
+  const yieldLanes = lanes.filter(lane => ['tokensLastHour', 'merged24h', 'mergeRate24h'].some(key => key in lane));
+  const yields = new Map(yieldLanes.map(lane => [lane.lane, laneYield(lane)]));
+  const ranking = yieldRanking(yieldLanes);
   const shortfall = totalShortfall(rows);
   const exhaustion = exhaustionByLane(ledger.data, Date.now());
   const visibleExhaustion = new Map(rows.flatMap(row => {
@@ -71,11 +76,17 @@ export function FleetSupplyPane({ visible }: PaneProps) {
     {claudeLane && <p className={styles.message}>{claudeLane}</p>}
     {ledger.status === 'error' && <p className={styles.message} role="status">Resource ledger could not refresh{ledger.data ? '. Showing the last reading.' : '.'}</p>}
     {read.status === 'error' && <p className={styles.message} role="status">Live runs could not refresh. Showing the last reading.</p>}
+    {ranking.length > 0 && <section className={styles.waste} aria-labelledby="supply-yield-heading">
+      <h3 id="supply-yield-heading" className={styles.wasteHeadline}>Where tokens go</h3>
+      <ul className={styles.wasteList}>{ranking.map((item, index) => <li key={`${item.lane}-${index}`}>
+        {item.lane}: {yieldText(item)} · {item.hint}
+      </li>)}</ul>
+    </section>}
     <div className={styles.scroll}>
       <table className={styles.table} aria-label="Job supply per lane">
         <thead><tr><th scope="col">Lane</th><th scope="col">Running/target</th><th scope="col">Free now</th><th scope="col">Freeing ≤{HORIZON_SECONDS / 60} m</th><th scope="col">Waiting</th><th scope="col">Shortfall</th></tr></thead>
         <tbody>{rows.map((row, index) => <tr key={`${row.lane}-${index}`}>
-          <th scope="row"><button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-lanes')} aria-label={`Open Lanes pane (${row.lane})`}>{row.lane}</button>{row.held && <span className={styles.held} title={row.heldReason ?? undefined}>{heldUntilText(row.heldReason, Date.now())}</span>}{exhaustion.has(row.lane) && <button type="button" className={`${styles.linkButton} ${styles.exhaustion}`} onClick={() => openDockPane('fleet-usage')} data-tone={exhaustion.get(row.lane)?.tone}>{exhaustion.get(row.lane)?.text}</button>}</th>
+          <th scope="row"><button type="button" className={styles.linkButton} onClick={() => openDockPane('fleet-lanes')} aria-label={`Open Lanes pane (${row.lane})`}>{row.lane}</button>{yields.has(row.lane) && <span className={styles.held} data-testid="lane-yield">{yieldText(yields.get(row.lane)!)}</span>}{row.held && <span className={styles.held} title={row.heldReason ?? undefined}>{heldUntilText(row.heldReason, Date.now())}</span>}{exhaustion.has(row.lane) && <button type="button" className={`${styles.linkButton} ${styles.exhaustion}`} onClick={() => openDockPane('fleet-usage')} data-tone={exhaustion.get(row.lane)?.tone}>{exhaustion.get(row.lane)?.text}</button>}</th>
           <td>{row.running}/{row.target}</td><td>{row.freeNow}</td><td>{row.freeingSoon}</td>
           <td>{row.pendingFiles + row.queued}</td><td>{row.shortfall > 0 ? <strong>{row.shortfall}</strong> : row.shortfall}</td>
         </tr>)}</tbody>
