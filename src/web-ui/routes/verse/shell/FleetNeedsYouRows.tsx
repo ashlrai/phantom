@@ -32,6 +32,8 @@ import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 import { normalizePaneId } from './dock-catalog.js';
 import { setFocusMode } from './focus-mode.js';
+import { derivePhoneNeedsYou, PHONE_CONNECTION_PANE } from './phone-needs-you.js';
+import { phonePendingQuery } from './phone-pending-query.js';
 import { deriveReleaseNeedsYou } from './release-needs-you.js';
 import { deriveResetNeedsYou, mergeNeedsYou } from './reset-needs-you.js';
 import { usageResetsQuery } from './usage-resets-query.js';
@@ -70,6 +72,7 @@ const SURFACE_NAME: Readonly<Record<FleetNeedsYouItem['target'], string>> = {
 const PANE_NAME: Readonly<Record<string, string>> = {
   'fleet-lanes': 'Lanes', 'fleet-supply': 'Supply', 'fleet-host': 'Mac host',
   'fleet-releases': 'Releases', 'leader-journal': 'Leader journal',
+  [PHONE_CONNECTION_PANE]: 'Connection',
 };
 
 function revealPane(paneId: string): void {
@@ -125,6 +128,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   const refreshRuns = useRefresh(fleetRunsNeedsYouQuery);
   const refreshResets = useRefresh(usageResetsQuery);
   usePollWhileVisible(refetchResets, FLEET_NEEDS_YOU_POLL_MS);
+  const phoneRead = useQuery(phonePendingQuery);
+  const refetchPhone = useRefetch(phonePendingQuery);
+  usePollWhileVisible(refetchPhone, FLEET_NEEDS_YOU_POLL_MS);
   const releaseRead = useQuery(releasePrQuery);
   const refetchRelease = useRefetch(releasePrQuery);
   usePollWhileVisible(refetchRelease, FLEET_NEEDS_YOU_POLL_MS, { enabled: releaseRead.data?.kind !== 'notInBuild' });
@@ -143,8 +149,10 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   );
   const resetItems = useMemo(() => deriveResetNeedsYou(resetsRead.status === 'error' ? null : resetsRead.data, nowMs),
     [resetsRead.data, resetsRead.status, nowMs]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems] }, resetItems),
-    [result, releaseItems, resetItems]);
+  const phoneItems = useMemo(() => derivePhoneNeedsYou(phoneRead.status === 'error' ? undefined : phoneRead.data),
+    [phoneRead.data, phoneRead.status]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...phoneItems] }, resetItems),
+    [result, releaseItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
@@ -179,6 +187,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
               setClipboard(previous => ({ ...previous, [item.id]: 'failed' }));
             }
             revealPane(TERMINAL_PANE_ID);
+          } else if (paneId === PHONE_CONNECTION_PANE) {
+            closeVerseOverlay();
+            setVerseSection('settings', 'fleet-sources');
           } else if (paneId) {
             closeVerseOverlay();
             revealPane(paneId);

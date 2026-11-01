@@ -4,7 +4,7 @@ import { fleetRunsFixture, withLane } from '../fleet/fleet-runs-fixtures.test-su
 import { laneVerdict, readDispatch, supplySummary, tickAgeMs } from './fleet-dispatch-model.js';
 
 const nowMs = Date.parse('2026-10-31T05:09:00Z');
-const ctx = { nowMs, lastTickAgeMs: 0, paused: false, claudeLane: null };
+const ctx = { nowMs, lastTickAgeMs: 0, paused: false, claudeLane: null, youngestWorkerAgeMs: new Map([['codex-personal', 180_000]]) };
 const lane = (overrides = {}) => ({ ...withLane(fleetRunsFixture(), { lane: 'codex-personal', running: 0, target: 4, queued: 17 }).lanes[0]!, ...overrides });
 
 describe('laneVerdict', () => {

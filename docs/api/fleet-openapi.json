@@ -20,6 +20,16 @@
         "responses": { "200": { "$ref": "#/components/responses/VerseEventStream" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/fleet/job": {
+      "get": {
+        "operationId": "getFleetJob", "tags": ["fleet"],
+        "summary": "Fleet job detail (FleetJobDetailV1).",
+        "parameters": [
+          { "name": "id", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" }, "description": "Fleet job id; the remote gateway admits exactly one well-formed id." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/FleetJobDetailV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/inbox/{proposalId}/approve": {
       "post": {
         "operationId": "approveInboxProposal", "tags": ["inbox"],
@@ -838,6 +848,7 @@
       "FleetHistoryResponse": { "description": "FleetHistoryResponse — see src/core/verse/fleet-history-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "FleetInboxPostResult": { "description": "{ ok, at, accepted, duplicate, dedupeKey } — 201 on first post, 200 with duplicate:true inside the dedupe window.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" }, "at": { "type": "string" }, "accepted": { "type": "boolean" }, "duplicate": { "type": "boolean" }, "dedupeKey": { "type": "string" } } } } }},
       "FleetInboxRead": { "description": "FleetInboxReadV1 or null — see src/core/verse/fleet-inbox-read.ts.", "content": { "application/json": { "schema": { "type": ["object", "null"] } } }},
+      "FleetJobDetailV1": { "description": "FleetJobDetailV1 — see src/core/fleet/runs-job-detail.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "FleetLiveActionResult": { "description": "FleetLiveActionResult { ok, note, changes, snapshot } — see src/core/verse/fleet-live-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "FleetLiveSnapshotV1": { "description": "FleetLiveSnapshotV1 — see src/core/fleet/fleet-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "FleetQueueV1": { "description": "FleetQueueV1 — see src/core/fleet/runs-parked-queue.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
