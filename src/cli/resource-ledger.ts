@@ -1,3 +1,4 @@
+import { compareLedgers, readLedgerBaseline } from './resource-ledger-diff.js';
 import { isDeepStrictEqual } from 'node:util';
 import { laneDeadSignals, type LaneDeadSignal } from '../core/fleet/lane-dead-signal.js';
 import { readResourceLedger, type ResourceLedgerV1 } from '../core/fleet/runs-resource-ledger.js';
@@ -80,6 +81,7 @@ export async function cmdResourceLedger(
   signal?: AbortSignal,
   now: () => number = Date.now,
 ): Promise<number> {
+  let compareFile: string | undefined;
   let json = false;
   let help = false;
   let watch = false;
@@ -95,6 +97,7 @@ export async function cmdResourceLedger(
     else if ((arg === '--help' || arg === '-h') && !help) help = true;
     else if (arg === '--watch' && !watch) watch = true;
     else if (arg === '--changes-only' && !changesOnly) changesOnly = true;
+    else if (arg === '--compare-file' && compareFile === undefined && args[i + 1] && !args[i + 1]!.startsWith('--')) compareFile = args[++i];
     else if (arg === '--lane' && lane === undefined) {
       const raw = args[++i];
       if (raw === undefined || !LANE.test(raw)) {
@@ -141,12 +144,16 @@ export async function cmdResourceLedger(
       return 2;
     }
   }
-  if (((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json)) || (watch && freshSeconds !== undefined)) {
+  if ((compareFile !== undefined && (!json || watch || lane !== undefined || model !== undefined)) || ((interval !== undefined || maxSamples !== undefined) && !watch) || (changesOnly && (!watch || !json)) || (watch && freshSeconds !== undefined)) {
     process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
     return 2;
   }
   if (help) {
-    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--check-fresh-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
+    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--compare-file <snapshot.json>] [--check-fresh-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
+    console.log('--compare-file <snapshot.json> requires one-shot --json without lane/model filters; adds comparison and keeps the full current ledger.');
+    console.log('Capture: phm resources ledger --json > snapshot.json');
+    console.log('Compare: phm resources ledger --json --compare-file snapshot.json');
+    console.log('Comparison v1 uses a 5-minute observation age bound (baseline at capture time); unknown evidence never becomes zero.');
     console.log('Read the live resource ledger, including source health and observation time.');
     console.log('Watch reads sequentially (default interval: 5000 ms); JSON output is one object per line.');
     console.log('--max-samples stops after that many successful observations, including suppressed snapshots; read errors do not count.');
@@ -207,7 +214,9 @@ export async function cmdResourceLedger(
     }
   }
   try {
-    const view = selectLedger(await read(), lane, model);
+    const baseline = compareFile === undefined ? undefined : await readLedgerBaseline(compareFile);
+    const current = await read();
+    const view = { ...selectLedger(current, lane, model), ...(baseline ? { comparison: compareLedgers(baseline, current, now()) } : {}) };
     if (freshSeconds === undefined) {
       if (json) console.log(JSON.stringify(view, null, 2));
       else printLedger(view);
@@ -226,7 +235,7 @@ export async function cmdResourceLedger(
     }
     return result === 'pass' ? 0 : 1;
   } catch {
-    process.stderr.write('Unable to read resource ledger.\n');
+    process.stderr.write(compareFile === undefined ? 'Unable to read resource ledger.\n' : 'Unable to read resource ledger or comparison baseline.\n');
     return 1;
   }
 }
