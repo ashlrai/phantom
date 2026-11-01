@@ -3,7 +3,7 @@ import type { BusInboxOptions, listBusInboxAfter } from '../core/fleet/bus-inbox
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 import { runThreadWorker, THREAD_RUN_MAX_BYTE_BUDGET } from '../core/fleet/thread-worker-run.js';
 
-const usage = 'Usage: ashlr fleet thread-run --id <root message id> --snapshot <absolute JSON path> --prompt <absolute text path> --byte-budget <1..65536> -- <program> [args...]';
+const usage = 'Usage: ashlr fleet thread-run --id <root message id> --snapshot <absolute JSON path> --prompt <absolute text path> --byte-budget <1..65536> [--cwd <absolute existing directory>] [--timeout-ms <1..3600000>] -- <program> [args...]';
 
 export interface ThreadRunIO extends ContextWorkerIO {
   /** Injectable inbox reader for tests; defaults to the durable local bus inbox. */
@@ -21,15 +21,18 @@ export async function cmdFleetThreadRun(args: string[], options: BusInboxOptions
   const flags = new Map<string, string>();
   for (let i = 0; i < split; i += 2) {
     const key = args[i]!, value = args[i + 1];
-    if (!['--id', '--snapshot', '--prompt', '--byte-budget'].includes(key) || flags.has(key) ||
+    if (!['--id', '--snapshot', '--prompt', '--byte-budget', '--cwd', '--timeout-ms'].includes(key) || flags.has(key) ||
         value === undefined || i + 1 >= split || !value || value.includes('\0')) return invalid();
     flags.set(key, value);
   }
   const id = flags.get('--id'), snapshot = flags.get('--snapshot');
   const prompt = flags.get('--prompt'), budget = flags.get('--byte-budget');
+  const cwd = flags.get('--cwd'), timeout = flags.get('--timeout-ms');
   const parsed = budget !== undefined && /^\d+$/.test(budget) ? Number(budget) : NaN;
+  const timeoutMs = timeout === undefined ? undefined : /^\d+$/.test(timeout) ? Number(timeout) : NaN;
   if (!id || !snapshot || !prompt || !isAbsolute(snapshot) || !isAbsolute(prompt) ||
-      !Number.isSafeInteger(parsed) || parsed < 1 || parsed > THREAD_RUN_MAX_BYTE_BUDGET) return invalid();
-  return runThreadWorker({ id, snapshot, prompt, byteBudget: parsed, argv: args.slice(split + 1) },
+      !Number.isSafeInteger(parsed) || parsed < 1 || parsed > THREAD_RUN_MAX_BYTE_BUDGET ||
+      (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000))) return invalid();
+  return runThreadWorker({ id, snapshot, prompt, byteBudget: parsed, argv: args.slice(split + 1), cwd, timeoutMs },
     options, { stdout: io.stdout, stderr: io.stderr }, { list: io.list });
 }
