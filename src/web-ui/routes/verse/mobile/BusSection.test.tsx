@@ -29,11 +29,11 @@ describe('BusSection', () => {
     expect(within(section).getByText('Check the lane').compareDocumentPosition(within(section).getByText('Worker launched')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('hides the section when the route is missing', async () => {
+  it('hides hop activity when its route is missing', async () => {
     const { calls } = stubFetch({});
-    const { container } = render(<BusSection />);
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
-    await vi.waitFor(() => expect(container).toBeEmptyDOMElement());
+    render(<BusSection />);
+    await vi.waitFor(() => expect(calls.filter(call => call.url.startsWith('/api/verse/fleet/live/bus'))).toHaveLength(1));
+    await vi.waitFor(() => expect(screen.queryByRole('region', { name: 'Bus' })).not.toBeInTheDocument());
   });
 
   it('shows the empty state and incomplete sources', async () => {
