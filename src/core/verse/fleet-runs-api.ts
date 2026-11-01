@@ -1,3 +1,5 @@
+import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
+import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ApiModule } from './api-modules.js';
@@ -29,6 +31,7 @@ const VERSE_INBOX_MOBILE_CHANNEL = 'mobile' as const;
 const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 
 export interface FleetRunsApiDeps {
+  laneModels?: () => Promise<LaneModelSnapshot>;
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
@@ -201,10 +204,28 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     }));
     return result;
   }
+  const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
+  let modelCache: { at: number; value: FleetLaneModelsV1 } | undefined;
+  let modelFlight: Promise<FleetLaneModelsV1> | undefined;
+  async function readModels(): Promise<FleetLaneModelsV1> {
+    try { return toFleetLaneModelsV1(await laneModels(), now()); }
+    catch { return toFleetLaneModelsV1(null, now()); }
+  }
   let cached: { at: number; value: FleetRunsV1 } | undefined;
   let generation = 0;
   let flight: { generation: number; promise: Promise<FleetRunsV1> } | undefined;
   return async (ctx, req, res, path, method) => {
+    if (path === VERSE_FLEET_LANE_MODELS_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!modelFlight && (!modelCache || now() - modelCache.at >= 15_000)) {
+        modelFlight = readModels().then(value => {
+          modelCache = { at: now(), value };
+          return value;
+        }).finally(() => { modelFlight = undefined; });
+      }
+      sendJson(res, 200, modelFlight ? await modelFlight : modelCache!.value);
+      return true;
+    }
     if (method === 'GET' && path === VERSE_FLEET_RUNS_PATH) {
       if (flight?.generation !== generation && (!cached || now() - cached.at >= 2000)) {
         const buildGeneration = generation;

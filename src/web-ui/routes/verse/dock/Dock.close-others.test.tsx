@@ -66,7 +66,7 @@ describe('Dock — a tab\'s close menu', () => {
     render(<Harness width={1440} />);
     fireEvent.contextMenu(screen.getByRole('tab', { name: 'Bravo' }));
     expect(screen.getByRole('menu', { name: 'Bravo pane' })).toBeInTheDocument();
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Close Bravo', 'Close other panes', 'Close all panes']);
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Move left', 'Move right', 'Close Bravo', 'Close other panes', 'Close all panes']);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Close other panes' }));
     expect(screen.queryByRole('menu')).toBeNull();
     expect(getDockState().tabs).toEqual(['bravo']);
