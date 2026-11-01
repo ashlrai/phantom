@@ -2516,6 +2516,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 
 export async function cmdFleet(args: string[]): Promise<number> {
   if (args[0] === 'bet-trace') return (await import('./fleet-bet-trace.js')).cmdFleetBetTrace(args.slice(1));
+  if (args[0] === 'class-share') return (await import('./fleet-class-share.js')).cmdFleetClassShare(args.slice(1));
   if (args[0] === 'lane-truth') return (await import('./fleet-lane-truth.js')).cmdFleetLaneTruth(args.slice(1));
   if (args[0] === 'meter-drop') return (await import('./fleet-meter-drop.js')).cmdFleetMeterDrop(args.slice(1));
   if (args[0] === 'merge-throughput') {
@@ -2659,6 +2660,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
+  console.log(`    ashlr fleet class-share [--hours N] [--json]`);
   console.log(`    ashlr fleet usage-audit [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# did each lane\'s usage meter move this hour? unmoving meter')}`);
   console.log(`                          ${cyan('#   + queued work = incident (read-only, RQ-PHX-ZEROWASTEAUDIT31)')}`);
