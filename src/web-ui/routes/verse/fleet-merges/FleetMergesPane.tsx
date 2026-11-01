@@ -1,3 +1,6 @@
+import { paneLinkUrl } from '../dock/pane-link.js';
+import { backlogView } from './merge-backlog-model.js';
+import { mergeBacklogQuery } from './merge-backlog-queries.js';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
@@ -23,6 +26,10 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
   const read = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 0 });
   const outside = useQuery(outsidePrsQuery, { enabled: visible, freshMs: 0 });
   const ci = useQuery(ciRunsQuery, { enabled: visible, freshMs: 0 });
+  const backlog = useQuery(mergeBacklogQuery, { enabled: visible, freshMs: 0 });
+  const refetchBacklog = useRefetch(mergeBacklogQuery);
+  usePollWhileVisible(refetchBacklog, 60_000, { enabled: visible });
+  const backlogData = backlog.data?.source === 'ok' && Array.isArray(backlog.data.items) ? backlogView(backlog.data, Date.now()) : null;
   const refetch = useRefetch(fleetMergesQuery);
   const refetchOutside = useRefetch(outsidePrsQuery);
   const refetchCi = useRefetch(ciRunsQuery);
@@ -62,6 +69,18 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
       <p className={styles.header}>{speed.medianOpenToMergeMs === null && speed.perHour === null ? 'no timing in this snapshot yet' : [speed.medianOpenToMergeMs === null ? null : `median ${openToMergeText(speed.medianOpenToMergeMs)}`, speed.perHour === null ? null : `${speed.perHour}/h`].filter(Boolean).join(' · ')}</p>
       {verdicts.some(verdict => verdict.runId !== null) && <p className={styles.header}>{ciVerdictCounts(verdicts)}</p>}
       <Button size="sm" variant="subtle" aria-label="Copy merges as Markdown" disabled={!data.merged.length && !data.pending.length} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span></div>
+    <section aria-label="Backlog"><h3 className={styles.heading}>Backlog</h3>
+      {backlog.data?.source === 'gh-failed' ? <p>GitHub read failed: {backlog.data.reason}</p> : backlog.status === 'error' ? <p>GitHub read failed: unavailable</p> : !backlogData ? <p role="status">Reading merge backlog…</p> : <>
+        <p>{backlogData.countsLine}</p>
+        {backlogData.hotFilesLine && <p data-tone={backlogData.danger ? 'danger' : undefined} className={backlogData.danger ? styles.danger : undefined}>{backlogData.hotFilesLine}</p>}
+        {backlogData.rows.length === 0 ? <p>No open fleet PRs</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => <li className={styles.row} key={row.number}>
+          <a href={`https://github.com/${backlog.data!.repo}/pull/${row.number}`} target="_blank" rel="noopener noreferrer">#{row.number}</a>
+          {row.job && <JobRefs text={row.job} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}
+          <span>· {row.state} {row.ageText} · {row.action}{row.hotFile && ` · ${row.hotFile}`}</span>
+          {row.action === 'recut' && <a href={paneLinkUrl('fleet-outcomes', null, false) ?? undefined} onClick={event => { event.preventDefault(); host.openPane('fleet-outcomes'); }}>Recut in Outcomes</a>}
+        </li>)}</ul>}
+      </>}
+    </section>
     {trend && <p role="img" aria-label={`Merged per hour trend: ${trend.first} then ${trend.last} over ${trend.spanMinutes} minutes`}>{trend.spark} {trend.first} → {trend.last} merged/h over the last {trend.spanMinutes} min</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Merge data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
