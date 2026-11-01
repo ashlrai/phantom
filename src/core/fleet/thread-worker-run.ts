@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -93,6 +94,10 @@ export interface ThreadWorkerRunOptions {
   byteBudget: number;
   /** Explicit worker argv; nothing is ever derived from retained messages. */
   argv: readonly string[];
+  /** Absolute existing directory for the worker; omitted inherits the caller's cwd. */
+  cwd?: string;
+  /** Worker deadline in milliseconds, 1..3600000. */
+  timeoutMs?: number;
 }
 
 export interface ThreadWorkerRunDependencies {
@@ -118,11 +123,20 @@ export async function runThreadWorker(
 ): Promise<number> {
   const stderr = io.stderr ?? process.stderr;
   const diagnostic = (text: string): void => { stderr.write(`thread-run: ${text}\n`); };
+  let validCwd = true;
+  if (opts.cwd !== undefined) {
+    try {
+      validCwd = typeof opts.cwd === 'string' && isAbsolute(opts.cwd) &&
+        !opts.cwd.includes('\0') && statSync(opts.cwd).isDirectory();
+    } catch { validCwd = false; }
+  }
   if (typeof opts.id !== 'string' ||
       !validateBusEnvelope({ id: opts.id, from: 'x', to: 'x', priority: 'P3', ttl: 1, body: null }).ok ||
       !isAbsolute(opts.snapshot) || opts.snapshot.includes('\0') ||
       !isAbsolute(opts.prompt) || opts.prompt.includes('\0') ||
       !Number.isSafeInteger(opts.byteBudget) || opts.byteBudget < 1 || opts.byteBudget > THREAD_RUN_MAX_BYTE_BUDGET ||
+      !validCwd || (opts.timeoutMs !== undefined &&
+        (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > 3600000)) ||
       !opts.argv.length || opts.argv.some(arg => typeof arg !== 'string' || arg.includes('\0')) || !opts.argv[0]) {
     diagnostic('invalid input');
     return 2;
@@ -159,7 +173,7 @@ export async function runThreadWorker(
       return 1;
     }
     return await runContextWorker(
-      { snapshot: opts.snapshot, prompt: promptPath, argv: [...opts.argv] }, io);
+      { snapshot: opts.snapshot, prompt: promptPath, argv: [...opts.argv], cwd: opts.cwd, timeoutMs: opts.timeoutMs }, io);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
