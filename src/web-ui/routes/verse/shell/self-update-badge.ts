@@ -36,10 +36,13 @@ export function readSelfUpdate(raw: unknown): SelfUpdateStatus | null {
 }
 
 export function updateEntryLabel(status: SelfUpdateStatus): string | null {
-  if (status.sourceState === 'unavailable'
-    || !(status.canFastForward === true || (status.behind !== null && status.behind > 0 && status.dirty === false))) return null;
-  if (status.behind === null) return 'Update available';
-  return `Update available · ${status.behind} ${status.behind === 1 ? 'commit' : 'commits'} behind`;
+  if (status.sourceState === 'unavailable' || status.behind === null || status.behind === 0) return null;
+  if (status.canFastForward === true && status.dirty !== true) {
+    return `Update available · ${status.behind} ${status.behind === 1 ? 'commit' : 'commits'} behind`;
+  }
+  if (status.dirty === true) return 'Update blocked · local changes';
+  if (status.ahead !== null && status.ahead > 0) return 'Update blocked · diverged';
+  return 'Update blocked · open Settings';
 }
 
 export function nativeUpdateLabel(state: DesktopUpdateState | null): string | null {
