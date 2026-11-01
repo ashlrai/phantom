@@ -9,6 +9,7 @@ export interface UpdateServerStatus {
   originSha: string | null; branch: string | null; behind: number | null; ahead: number | null;
   dirty: boolean | null; lastFetchAt: string | null; processStartedAt: string | null;
   uptimeSeconds: number | null; canFastForward: boolean | null;
+  behindSubjects?: string[] | null;
   applying?: boolean | { startedAt: string } | null;
   lastApply?: SelfUpdateLastApply | null;
 }
