@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -49,6 +50,8 @@ export interface HandoffWorkerRunOptions {
   busAfter?: number;
   /** Context pack byte cap, 1..65536; default 16384. */
   byteBudget?: number;
+  /** Selected worker directory; omitted inherits the current working directory. */
+  cwd?: string;
   /** Explicit worker argv; nothing is ever derived from handoff or retained text. */
   argv: readonly string[];
   /** Worker wall-clock deadline in milliseconds, 1..3600000; absent means unbounded. */
@@ -77,6 +80,13 @@ export async function runHandoffWorker(opts: HandoffWorkerRunOptions, io: Contex
       !Number.isSafeInteger(byteBudget) || byteBudget < 1 || byteBudget > HANDOFF_RUN_MAX_BYTE_BUDGET ||
       (opts.timeoutMs !== undefined &&
         (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > HANDOFF_RUN_MAX_TIMEOUT_MS))) {
+    diagnostic('invalid input');
+    return 2;
+  }
+  try {
+    if (opts.cwd !== undefined && (typeof opts.cwd !== 'string' || !opts.cwd || opts.cwd.includes('\0') ||
+        !isAbsolute(opts.cwd) || !statSync(opts.cwd).isDirectory())) throw new Error('invalid input');
+  } catch {
     diagnostic('invalid input');
     return 2;
   }
@@ -126,7 +136,8 @@ export async function runHandoffWorker(opts: HandoffWorkerRunOptions, io: Contex
       diagnostic('temporary workspace unavailable');
       return 1;
     }
-    return await runContextWorker({ snapshot: snapshotPath, prompt: promptPath, argv: [...opts.argv], timeoutMs: opts.timeoutMs }, io);
+    return await runContextWorker({ snapshot: snapshotPath, prompt: promptPath, argv: [...opts.argv],
+      cwd: opts.cwd, timeoutMs: opts.timeoutMs }, io);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
