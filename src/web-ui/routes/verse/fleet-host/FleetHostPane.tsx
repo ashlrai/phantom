@@ -7,6 +7,7 @@ import { openDockPane, requestTerminal } from '../dock/dock-store.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { DropQueueCard } from './DropQueueCard.js';
 import { hostView } from './fleet-host-model.js';
 import { plannerRows, plannerTell } from './planners-model.js';
 import styles from './fleet-host.module.css';
@@ -89,6 +90,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
             </li>)}</ul> : <p className={styles.muted}>No planner passes recorded</p>}
           {tell ? <p className={styles.metric} data-tone={tell.tone} role="status">{tell.text}</p> : null}
         </section>
+        <DropQueueCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
   </div>;
