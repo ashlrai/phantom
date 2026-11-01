@@ -12,6 +12,7 @@ import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { jobTextQuery } from '../fleet-job-log/job-text-queries.js';
 import { jobChangesQuery } from '../fleet-job-log/worker-changes-queries.js';
+import { busTellPrefill, requestBusPost } from '../fleet-bus/bus-post-request.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { jobBusMentions, mentionSummary } from './job-bus-mentions.js';
 import { changesHeadline, collisionTell, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
@@ -74,6 +75,9 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
           else { openInterjectDialog({ prefill: steerPrefill(job, d?.lane) }); }
           onClose();
         }}>{action.label}</Button>)}
+      <Button size="sm" disabled={agentBusMissing()} title={agentBusMissing() ? 'Durable bus is missing' : undefined} onClick={() => {
+        requestBusPost(busTellPrefill(job, d)); openDockPane('fleet-bus'); onClose();
+      }}>Tell on bus</Button>
     </div>
     {notInBuild(read.error) ? <p>Job detail is not in this build yet.</p> : read.error ? <p>Job detail unavailable.</p> : !d ? <SkeletonLine /> : <>
       <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><span aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</span>{label === 'Branch' && value ? <> <Button size="sm" onClick={() => void copyBranch(value)}>Copy</Button> <span role="status">{notice}</span></> : null}</dd></div>)}</dl>
