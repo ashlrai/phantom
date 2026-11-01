@@ -7,6 +7,8 @@
  * fleet/control/switches, fleet/control/lanes and fleet/control/holds; GET
  * fleet/runs/inbox with a bounded limit and optional source filter; GET
  * fleet/live/bus and fleet/live/queue bare or with a bounded limit; GET
+ * fleet/live/drop-jobs and agent-bus (the latter with bounded after/limit);
+ * POST fleet/live/drop-jobs behind step-up and agent-bus without step-up; GET
  * fleet/job with a single id matching the fleet job grammar; POST
  * fleet/runs/inbox {text, source?} without step-up (a message, not a
  * control); POST fleet/control/switches {id, on}, fleet/control/lanes
@@ -14,6 +16,8 @@
  * behind step-up. Every path and body shape is exact — no wildcards.
  */
 import { timingSafeEqual } from 'node:crypto';
+import { validateBusEnvelope } from '../fleet/bus-envelope.js';
+import { validateDropJob } from '../fleet/drop-job-writer.js';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
 
 export interface RemoteRequest {
@@ -42,8 +46,11 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/cloud/previews',
   '/api/verse/devin/previews',
   '/api/verse/fleet/runs',
+  '/api/verse/fleet/ci-runs',
   '/api/verse/fleet/live/bus',
   '/api/verse/fleet/live/queue',
+  '/api/verse/fleet/live/drop-jobs',
+  '/api/verse/agent-bus',
   '/api/verse/fleet/control/switches',
   '/api/verse/fleet/control/lanes',
   '/api/verse/fleet/control/holds',
@@ -83,6 +90,7 @@ const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
 const FLEET_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
 const isFleetJobIdParam = (v: string): boolean => !/[\r\n]+$/.test(v) && FLEET_JOB_ID.test(v);
 const FLEET_READ_LIMIT = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 200;
+const FLEET_CI_HOURS = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 168;
 
 function exactParams(params: URLSearchParams, shape: Record<string, (value: string) => boolean>): boolean {
   const keys = [...params.keys()];
@@ -111,9 +119,9 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     if (method !== 'POST') return { kind: 'deny' };
     if (path === '/api/verse/activity/seen' || path === '/api/verse/sessions'
       || path === '/api/verse/leader/thread' || path === '/api/verse/leader/directives'
-      || path === '/api/verse/fleet/runs/inbox') return { kind: 'write', path, stepUp: false };
+      || path === '/api/verse/fleet/runs/inbox' || path === '/api/verse/agent-bus') return { kind: 'write', path, stepUp: false };
     if (path === '/api/verse/daemon' || path === '/api/verse/budget' || path === '/api/verse/authority'
-      || path === '/api/verse/fleet/live'
+      || path === '/api/verse/fleet/live' || path === '/api/verse/fleet/live/drop-jobs'
       || path === '/api/verse/fleet/control/switches' || path === '/api/verse/fleet/control/lanes'
       || path === '/api/verse/fleet/control/holds'
       || path === '/api/verse/leader') return { kind: 'write', path, stepUp: true };
@@ -163,8 +171,16 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     exactParams(params, { limit: FLEET_READ_LIMIT })
     || exactParams(params, { limit: FLEET_READ_LIMIT, source: (v) => FLEET_INBOX_SOURCE.test(v) })
   )) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/ci-runs'
+    && exactParams(params, { hours: FLEET_CI_HOURS })) return { kind: 'read', path };
   if ((path === '/api/verse/fleet/live/bus' || path === '/api/verse/fleet/live/queue')
     && exactParams(params, { limit: FLEET_READ_LIMIT })) return { kind: 'read', path };
+  if (path === '/api/verse/agent-bus') {
+    const after = (v: string): boolean => /^[0-9]{1,12}(?![\s\S])/.test(v);
+    const limit = (v: string): boolean => /^[0-9]+(?![\s\S])/.test(v) && FLEET_READ_LIMIT(v);
+    if (exactParams(params, { after }) || exactParams(params, { limit })
+      || exactParams(params, { after, limit })) return { kind: 'read', path };
+  }
   if (path === '/api/fleet/job'
     && exactParams(params, { id: isFleetJobIdParam })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints'
@@ -221,6 +237,9 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
     && body.action === 'resume-repo' && typeof body.repo === 'string' && REPO.test(body.repo)
     && (body.kind === undefined || (typeof body.kind === 'string'
       && ['quarantine', 'owner-hold', 'leader-pause', 'cooldown'].includes(body.kind)));
+  if (path === '/api/verse/fleet/live/drop-jobs') return keys(body, ['id', 'lane', 'tier', 'body'])
+    && validateDropJob({ id: body.id, lane: body.lane, tier: body.tier, body: body.body }).ok;
+  if (path === '/api/verse/agent-bus') return validateBusEnvelope(body).ok;
   if (path === '/api/verse/leader') return (keys(body, ['action', 'actionId'])
     && body.action === 'veto' && boundedText(body.actionId, 128))
     || (keys(body, ['action', 'itemId']) && body.action === 'dismiss' && boundedText(body.itemId, 256));
