@@ -1,7 +1,11 @@
-import { SkeletonLine } from '../../../components/primitives/index.js';
+import { useRef, useState } from 'react';
+import { Button, SkeletonLine } from '../../../components/primitives/index.js';
+import { refetchQuery } from '../../../data/cache.js';
+import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { JobRefs } from '../fleet/JobRefs.js';
 import { fleetSupplyQuery } from '../fleet-supply/fleet-supply-queries.js';
 import { laneSupply } from '../fleet-supply/supply-model.js';
@@ -9,6 +13,7 @@ import { explainReason, explainSkip, laneRows } from '../ops/ops-queue-model.js'
 import { opsQueueQuery } from '../ops/ops-queue-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { heldLaneLine, laneHoldsQuery, queuedBehindHold } from './queue-holds-model.js';
 import { laneDrainText } from './queue-lane-drain.js';
 import { restockNotice } from './queue-repo-mix.js';
 import styles from './fleet-queue.module.css';
@@ -16,10 +21,35 @@ import styles from './fleet-queue.module.css';
 export function FleetQueuePane({ visible, host }: PaneProps) {
   const read = useQuery(opsQueueQuery, { enabled: visible, freshMs: 0 });
   const snapshot = useQuery(fleetSupplyQuery, { enabled: visible, freshMs: 0 });
+  const holds = useQuery(laneHoldsQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(opsQueueQuery);
   const refetchSnapshot = useRefetch(fleetSupplyQuery);
+  const refetchHolds = useRefetch(laneHoldsQuery);
+  const pendingRef = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<{ lane: string; message: string } | null>(null);
   usePollWhileVisible(refetch, 15_000, { enabled: visible });
   usePollWhileVisible(refetchSnapshot, 15_000, { enabled: visible });
+  usePollWhileVisible(refetchHolds, 15_000, { enabled: visible });
+
+  async function release(lane: string) {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      await postReleaseHold(lane, 'queue pane');
+      await Promise.all([
+        refetchQuery(laneHoldsQuery.key, () => laneHoldsQuery.fetch(), true),
+        refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
+      ]);
+    } catch (reason) {
+      setError({ lane, message: reason instanceof Error && !(reason instanceof ApiError) ? reason.message : readFailureReason(reason) });
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  }
   const data = read.data;
   const openJob = (job: string) => { requestWorkerLogJob(job); host.openPane('worker-log'); };
 
@@ -28,16 +58,19 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
 
   const notice = restockNotice(data.byLane);
   const snapshotLanes = laneSupply(snapshot.data);
+  const waiting = queuedBehindHold(data.byLane, holds.data);
   return <section className={styles.root} aria-label="Queue">
-    <p className={styles.header}>{data.total} jobs · {data.ready} ready · {data.parked} parked · {data.skipsLast24h ?? '—'} precheck skips in 24 h</p>
+    <p className={styles.header}>{data.total} jobs · {data.ready} ready · {data.parked} parked · {data.skipsLast24h ?? '—'} precheck skips in 24 h{waiting > 0 && ` · ${waiting} queued lines wait on held lanes`}</p>
     {notice && <p className={styles.notice} role="status">{notice}</p>}
+    {holds.status === 'error' && <p className={styles.notice} role="alert">Lane holds could not refresh.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Queue could not refresh. Showing the last reading.</p>}
     {Object.values(data.sources).some((source) => source !== 'healthy') && <p className={styles.notice} role="status">Queue data may be incomplete.</p>}
     <section aria-label="By lane"><h3 className={styles.heading}>By lane</h3>
       {data.byLane.length === 0 ? <p className={styles.message}>No lane counts available.</p> : <ul className={styles.list}>{laneRows(data).map((lane) => {
         const drain = laneDrainText(lane, snapshotLanes.find((snapshotLane) => snapshotLane.lane === lane.lane));
+        const held = heldLaneLine(holds.data?.lanes.find((row) => row.lane === lane.lane), Date.now());
         const next = data.nextUp?.find((entry) => entry.lane === lane.lane);
-        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <span className={styles.muted} data-testid="lane-next">Next: <JobRefs text={next.jobs.join(', ')} onOpenJob={openJob} /></span>}</li>;
+        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{held && <><span className={styles.muted}>{held}</span><Button size="sm" aria-label={`Release hold on ${lane.lane}`} busy={pending} onClick={() => void release(lane.lane)}>Release hold</Button></>}{error?.lane === lane.lane && <span role="status">{error.message}</span>}{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <span className={styles.muted} data-testid="lane-next">Next: <JobRefs text={next.jobs.join(', ')} onOpenJob={openJob} /></span>}</li>;
       })}</ul>}
     </section>
     <section aria-label="Parked groups"><h3 className={styles.heading}>Parked groups</h3>

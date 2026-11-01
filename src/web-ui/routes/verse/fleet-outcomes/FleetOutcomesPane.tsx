@@ -6,10 +6,11 @@ import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { ExecutionFeedbackOutcome } from '../../../../core/fleet/execution-feedback-types.js';
 import { formatRelative } from '../autonomy/format.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { filterCases, outcomeChips, readCase, readOutcomes, wasteLine, wasteSummary, type OutcomesView } from './fleet-outcomes-model.js';
+import { filterCases, outcomeChips, readCase, readOutcomes, recutPrefill, wasteLine, wasteSummary, type OutcomesView } from './fleet-outcomes-model.js';
 import { outcomeCaseQuery, outcomesQuery } from './fleet-outcomes-queries.js';
 import styles from './fleet-outcomes.module.css';
 
@@ -104,8 +105,9 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
       </div>
       <h3 className={styles.heading}>Cases</h3>
       {cases.length === 0 ? <p className={styles.message}>{data.cases.length === 0 ? 'No cases recorded in the window.' : `No ${chip.label.toLowerCase()} cases in the window.`}</p>
-        : <ul className={styles.list} aria-label="Cases">{cases.map(item =>
-          <li key={item.caseId}>
+        : <ul className={styles.list} aria-label="Cases">{cases.map(item => {
+          const prefill = recutPrefill(item);
+          return <li key={item.caseId}>
             <button type="button" className={styles.caseRow} title={item.caseId} aria-pressed={selectedCaseId === item.caseId}
               onClick={() => setSelectedCaseId(item.caseId)}>
               <span>{item.label}</span>
@@ -119,7 +121,10 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
               requestWorkerLogJob(item.jobId!);
               host.openPane('worker-log');
             }}>Open worker log</Button> : null}
-          </li>)}</ul>}
+            {prefill !== null ? <Button size="sm" variant="subtle" aria-label={`Order recut of ${item.jobId}`}
+              onClick={() => openInterjectDialog({ prefill })}>Order recut</Button> : null}
+          </li>;
+        })}</ul>}
     </section>
     {selectedCaseId ? <CaseTimeline caseId={selectedCaseId} visible={visible} onClose={() => setSelectedCaseId(null)} /> : null}
   </section>;
