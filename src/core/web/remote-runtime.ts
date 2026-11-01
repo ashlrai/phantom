@@ -53,7 +53,7 @@ export async function startRemoteRuntime(configPath: string, hub: { port: number
   } catch (error) { push.close(); throw error; }
   let admin: Awaited<ReturnType<typeof startRemoteAdminSocket>> | null = null;
   try {
-    admin = await startRemoteAdminSocket(pairing, devices);
+    admin = await startRemoteAdminSocket(pairing, devices, undefined, undefined, { publicOrigin: access.publicOrigin });
     const readLocal = async (target: string): Promise<unknown> => {
       const response = await fetch(`http://127.0.0.1:${hub.port}${target}`, {
         headers: { 'x-ashlr-token': hub.readToken }, redirect: 'manual', signal: AbortSignal.timeout(5_000),
