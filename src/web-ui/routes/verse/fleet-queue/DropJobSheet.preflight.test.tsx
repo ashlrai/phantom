@@ -32,11 +32,26 @@ it('warns about collisions and holds without blocking Write, and updates after e
   expect(await screen.findByText(/src\/cli\/fleet.ts is in 8 open PRs \(#100, #101, #102, #103, #104, …\)/)).toBeInTheDocument();
   expect(await screen.findByText('codex-personal is held until 20:02 (autobackoff); devin has 2 free slots')).toBeInTheDocument();
   const list = screen.getByRole('list', { name: 'Preflight' });
-  expect(screen.getByRole('button', { name: 'Write' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Drop anyway' })).toBeEnabled();
   fireEvent.change(screen.getByLabelText('Lane'), { target: { value: 'devin' } });
   expect(within(list).queryByText(/is held/)).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'Update src/new.ts carefully' } });
   await waitFor(() => expect(screen.queryByRole('list', { name: 'Preflight' })).not.toBeInTheDocument());
+  expect(screen.getByRole('button', { name: 'Write' })).toBeEnabled();
+});
+it('shows hot-file conflict counts and arms Drop anyway', async () => {
+  render(<DropJobSheet open onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'Update src/cli/fleet.ts carefully' } });
+  expect(await screen.findByText('src/cli/fleet.ts is in 8 conflicting PRs (8 open)')).toBeInTheDocument();
+  expect(screen.getByLabelText('I will keep edits to these files to one hunk')).not.toBeChecked();
+  expect(screen.getByRole('button', { name: 'Drop anyway' })).toBeEnabled();
+});
+it('restores the Write label once the one-hunk pledge is ticked', async () => {
+  render(<DropJobSheet open onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Body'), { target: { value: 'Update src/cli/fleet.ts carefully' } });
+  const pledge = await screen.findByLabelText('I will keep edits to these files to one hunk');
+  expect(screen.getByRole('button', { name: 'Drop anyway' })).toBeEnabled();
+  fireEvent.click(pledge);
   expect(screen.getByRole('button', { name: 'Write' })).toBeEnabled();
 });
 it('hides failed reads and leaves validation in control', async () => {
