@@ -12,10 +12,10 @@ const runs: FleetRuns = {
 const now = Date.parse('2026-10-31T12:00:00Z');
 
 it('formats a full brief with the newest inbox entry and held reason', () => {
-  expect(fleetBriefText(runs, now)).toBe('Phantom fleet 12:00 UTC\nLanes: codex-personal 18/24 (held: budget)\nMerged last hour: 1\n- fake/repo #12 A change\nClaude lane: busy\nTick: 01:00\nSwitches: safe\nInbox newest: 11:50 fake: Latest');
+  expect(fleetBriefText(runs, now)).toBe('Phantom fleet 12:00 UTC\nLanes: codex-personal 18/24 (held: budget)\nMerged last hour: 1\nMerges: 1 in the last hour\n- fake/repo #12 A change\nClaude lane: busy\nTick: 01:00\nSwitches: safe\nInbox newest: 11:50 fake: Latest');
 });
 it('handles empty collections and missing values', () => {
-  expect(fleetBriefText({ ...runs, lanes: [], mergesLastHour: { count: 0, items: [] }, inbox: [], switches: [], claudeLane: null, lastTick: null }, now)).toBe('Phantom fleet 12:00 UTC\nLanes: none\nMerged last hour: 0\nClaude lane: ok\nTick: —\nSwitches: none');
+  expect(fleetBriefText({ ...runs, lanes: [], mergesLastHour: { count: 0, items: [] }, inbox: [], switches: [], claudeLane: null, lastTick: null }, now)).toBe('Phantom fleet 12:00 UTC\nLanes: none\nMerged last hour: 0\nMerges: 0 in the last hour\nClaude lane: ok\nTick: —\nSwitches: none');
   expect(fleetBriefText({ ...runs, lanes: [{ ...runs.lanes[0]!, heldReason: null }] }, now)).toContain('(held: unspecified)');
 });
 it('caps output by removing merges before truncating inbox', () => {
