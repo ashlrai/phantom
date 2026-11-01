@@ -1,25 +1,31 @@
+/** Split into lines that keep their terminators; the last line may lack one. */
+export function unionLines(text: string): string[] {
+  return text === '' ? [] : text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+}
+
+/** Lines in `text` not consumed matching `original` in order; null when an original line is missing. */
+export function unionAddedLines(original: string, text: string): string[] | null {
+  const originalLines = unionLines(original);
+  const added: string[] = [];
+  let i = 0;
+  for (const line of unionLines(text)) {
+    if (i < originalLines.length && line === originalLines[i]) i++;
+    else added.push(line);
+  }
+  return i === originalLines.length ? added : null;
+}
+
 /** Conservative classification of a single diff3 conflict hunk. */
 export function classifyUnionConflict(base: string, ours: string, theirs: string): 'union-safe' | 'needs-model' {
-  const lines = (text: string): string[] => text === '' ? [] : text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
-  const original = lines(base);
-  const additions = (text: string): string[] | null => {
-    const added: string[] = [];
-    let i = 0;
-    for (const line of lines(text)) {
-      if (i < original.length && line === original[i]) i++;
-      else added.push(line);
-    }
-    return i === original.length ? added : null;
-  };
-  const left = additions(ours);
-  const right = additions(theirs);
+  const left = unionAddedLines(base, ours);
+  const right = unionAddedLines(base, theirs);
   return left && right && left.length > 0 && right.length > 0 && JSON.stringify(left) !== JSON.stringify(right)
     ? 'union-safe' : 'needs-model';
 }
 
 /** Inspect all diff3 hunks in a file; malformed or ambiguous markers fail closed. */
 export function classifyDiff3(text: string): 'union-safe' | 'needs-model' {
-  const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  const lines = unionLines(text);
   let state: 'outside' | 'ours' | 'base' | 'theirs' = 'outside';
   let ours = '', base = '', theirs = '', count = 0;
   for (const line of lines) {

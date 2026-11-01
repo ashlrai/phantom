@@ -1,7 +1,7 @@
 import { scrubSecrets } from '../util/scrub-secrets.js';
 
 /** The caller supplies a validated PR number and SHA from a single backlog observation. */
-export function renderBacklogRecutJob(number: number, headSha: string, title: string): string {
+export function renderBacklogRecutJob(number: number, headSha: string, title: string, opts: { unionSafe?: boolean } = {}): string {
   // Titles are untrusted display text, never shell input or instructions. Scrub
   // before bounding so truncation cannot expose a prefix of a known secret.
   const safeTitle = scrubSecrets(title).replace(/[^\p{L}\p{N} .,_-]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -19,6 +19,9 @@ Work from a fresh origin/master in an isolated worktree. Fetch the original PR
 head from the canonical origin, including fork-hosted worker branches:
   git fetch origin pull/${number}/head
 Check that FETCH_HEAD is exactly ${headSha}; stop and re-observe if it differs.
+${opts.unionSafe ? `The fleet union preview marks this PR fully union-safe, so the recut is a mechanical apply: run
+  ashlr fleet union-apply --pr ${number} --out <dir>
+to write the resolved files plus a patch into a directory you name, then apply that output instead of re-deriving the merge.\n` : ''}
 Inspect the original change and replay its completed behavior onto fresh
 origin/master, resolving the conflict without losing already completed work.
 Apply only the hunks that belong to this PR's own concern. Before stopping, git diff --stat origin/master must list only the files you planned for this concern (write that list in BRIDGE_NOTES.md first); if it lists more, you started from a stale base: git checkout origin/master -- <extra files> and continue.
