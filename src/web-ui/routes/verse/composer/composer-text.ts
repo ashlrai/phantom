@@ -84,7 +84,7 @@ export function mentionFor(match: VerseFileMatch, primaryRoot: string | null): s
 // Slash commands
 // ---------------------------------------------------------------------------
 
-export type SlashCommandId = 'fleet' | 'lane' | 'release' | 'pane' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
+export type SlashCommandId = 'bus' | 'fleet' | 'lane' | 'release' | 'pane' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
 
 export interface SlashCommand {
   id: SlashCommandId;
@@ -100,6 +100,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'plan', title: '/plan', description: 'Switch this chat to Plan mode — nothing is edited' },
   { id: 'effort', title: '/effort', description: 'Choose the reasoning effort' },
   { id: 'model', title: '/model', description: 'Choose the model' },
+  { id: 'bus', title: '/bus', description: 'Post to the agent bus: /bus <to> <text> (to = leaders, an agent name, or a job id)' },
   { id: 'fleet', title: '/fleet', description: 'Send a message to the fleet leaders’ inbox' },
   { id: 'lane', title: '/lane', description: 'Set a fleet lane’s worker target: /lane <lane> <n>' },
   { id: 'release', title: '/release', description: 'Release a fleet lane hold: /release <lane> [reason]' },
@@ -159,6 +160,19 @@ export function readFileAsBase64(file: Blob): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+/** Parse a bus command without sending malformed input as a chat turn. */
+export function parseBusCommand(draft: string): { to: string; text: string } | { error: string } | null {
+  if (!/^\/bus(?=\s|$)/.test(draft)) return null;
+  const args = draft.slice('/bus'.length).trim();
+  if (!args) return { error: 'Use /bus <to> <text> to post to the agent bus.' };
+  const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(args)!;
+  const to = match[1]!;
+  if (to.length > 128 || !/^[\x21-\x7e]+$/.test(to)) return { error: 'Enter a printable ASCII recipient of at most 128 characters.' };
+  const text = (match[2] ?? '').trim();
+  if (!text) return { error: 'Enter a message to post to the agent bus.' };
+  return { to, text };
 }
 
 /** Parse only a leading fleet command; the inbox bounds the trimmed payload. */
