@@ -9,7 +9,7 @@ import { formatRelative } from '../autonomy/format.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { filterCases, outcomeChips, readCase, readOutcomes, type OutcomesView } from './fleet-outcomes-model.js';
+import { filterCases, outcomeChips, readCase, readOutcomes, wasteLine, wasteSummary, type OutcomesView } from './fleet-outcomes-model.js';
 import { outcomeCaseQuery, outcomesQuery } from './fleet-outcomes-queries.js';
 import styles from './fleet-outcomes.module.css';
 
@@ -84,8 +84,11 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
   // A later poll can drop the outcome a chip was filtering on; fall back to All.
   const chip = chips.find(item => item.outcome === outcome) ?? chips[0]!;
   const cases = filterCases(data, chip.outcome);
+  const waste = wasteSummary(data.cases, Date.now());
+  const line = wasteLine(waste);
   return <section className={styles.root} aria-label="Outcomes">
     <p className={styles.header}>{data.cases.length} cases since {formatRelative(data.since)} · {countOf(data, 'producer-succeeded')} produced · {countOf(data, 'failed')} failed{data.refreshedAt !== null ? ` · refreshed ${formatRelative(data.refreshedAt)}` : ''}</p>
+    {line && <p className={styles.waste} data-tone={waste.wasted * 2 >= waste.finished ? 'bad' : waste.wasted * 4 >= waste.finished ? 'warn' : 'neutral'}>{line}</p>}
     {data.state === 'stale' && <p className={styles.notice} role="status">Showing the last reading.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Outcomes could not refresh. Showing the last reading.</p>}
     {data.notes.map(note => <p key={note} className={styles.notice} role="status">{note}</p>)}
