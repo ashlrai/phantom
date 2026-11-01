@@ -110,9 +110,10 @@ function creditBalanceText(credits: AccountCredits): string {
  * not spendable gets the honest sentence instead.
  */
 function creditUsabilityNote(credits: AccountCredits): string {
-  if (creditsSpendable(credits)) return 'credits keep this account usable past the weekly limit';
   if (credits.spendControlReached === true) return 'the provider reports credit spending held';
-  return 'no spendable credit balance is reported';
+  if (!creditsSpendable(credits)) return 'no spendable credit balance is reported';
+  if (credits.spendControlReached !== false) return 'credit spending control is unconfirmed';
+  return 'credits keep this account usable past the weekly limit';
 }
 
 /**
@@ -136,7 +137,7 @@ function AccountFacts({ row, nowMs }: { row: UsageRow; nowMs: number }) {
         </li>
       )}
       {credits !== null && (
-        <li className={styles.asOf}>Credits {creditBalanceText(credits)} — {creditUsabilityNote(credits)}</li>
+        <li className={styles.asOf}>credits: {creditBalanceText(credits)} — {creditUsabilityNote(credits)}</li>
       )}
       {reconnectCommand !== null && (
         <li className={styles.asOf}>
