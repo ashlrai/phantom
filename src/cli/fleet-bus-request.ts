@@ -30,12 +30,12 @@ export async function cmdFleetBusRequest(args: string[], options: BusInboxOption
     return result.outcome === 'replied' ? 0 : result.outcome === 'invalid-input' ? 2 : 1;
   };
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    try { (deps.output ?? console.log)(`ashlr fleet bus-request --file <absolute-path|-> --timeout-ms <ms> [--interval-ms <ms>]\nUse --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes). Input and reply share the invocation timeout.\nRouting labels do not authenticate peers.`); return 0; }
+    try { (deps.output ?? console.log)(`ashlr fleet bus-request --file <absolute-path|-> --timeout-ms <ms> [--interval-ms <ms>] [--root <absolute-path>]\nUse --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes). Input and reply share the invocation timeout.\n--root selects the local store. Routing labels do not authenticate peers.`); return 0; }
     catch { return 1; }
   }
   const values: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
-    const match = /^(--file|--timeout-ms|--interval-ms)(?:=(.*))?$/.exec(args[i]!);
+    const match = /^(--file|--timeout-ms|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
     if (!match || Object.hasOwn(values, match[1]!)) return emit(invalid());
     const value = match[2] ?? args[++i];
     if (!value || value.startsWith('--')) return emit(invalid());
@@ -43,9 +43,10 @@ export async function cmdFleetBusRequest(args: string[], options: BusInboxOption
   }
   const number = (value: string | undefined): number => value && /^\d+$/.test(value) ? Number(value) : NaN;
   const timeout = number(values['--timeout-ms']), interval = values['--interval-ms'] === undefined ? 250 : number(values['--interval-ms']);
-  const file = values['--file'];
+  const file = values['--file'], root = values['--root'];
   if (!file || (file !== '-' && !isAbsolute(file)) || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 3600000 ||
-      !Number.isSafeInteger(interval) || interval < 100 || interval > 60000) return emit(invalid());
+      !Number.isSafeInteger(interval) || interval < 100 || interval > 60000 ||
+      (root !== undefined && (!isAbsolute(root) || root.includes('\0')))) return emit(invalid());
   const controller = new AbortController(), stop = (): void => controller.abort();
   deps.signal?.addEventListener('abort', stop, { once: true });
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
@@ -71,7 +72,9 @@ export async function cmdFleetBusRequest(args: string[], options: BusInboxOption
     }
     const parsed = parseBusEnvelope(text);
     if (!parsed.ok) return emit(invalid());
-    return emit(await requestBusRoundtrip(parsed.value, timeout, interval, options, { ...deps, signal: controller.signal, startedAt: start }));
+    return emit(await requestBusRoundtrip(parsed.value, timeout, interval,
+      root === undefined ? options : { ...options, root },
+      { ...deps, signal: controller.signal, startedAt: start }));
   } finally {
     deps.signal?.removeEventListener('abort', stop);
     process.off('SIGINT', stop); process.off('SIGTERM', stop);
