@@ -13,7 +13,7 @@ const DISMISSED_KEY = 'ashlr.verse.update-reload.dismissed';
 
 const status = (over: Partial<OpsSelfUpdateV1> = {}): OpsSelfUpdateV1 => ({
   v: 1, generatedAt: '2026-10-31T00:00:00.000Z', sourceState: 'healthy',
-  installedVersion: APP_VERSION, repoRoot: true, headSha: SHA_A, headAt: null,
+  installedVersion: APP_VERSION, repoRoot: true, headSha: SHA_A, processHeadSha: SHA_A, headAt: null,
   originSha: SHA_A, branch: 'master', behind: 0, ahead: 0, dirty: false,
   lastFetchAt: null, processStartedAt: '2026-10-31T00:00:00.000Z',
   uptimeSeconds: 30, pid: 4242, canFastForward: false, ...over,
