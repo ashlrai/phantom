@@ -1,4 +1,6 @@
-import { dirname, isAbsolute } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { closeSync, constants, fstatSync, linkSync, lstatSync, openSync, realpathSync, unlinkSync, type BigIntStats } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { type BusInboxOptions } from '../core/fleet/bus-inbox.js';
@@ -7,9 +9,87 @@ import { BUS_SCATTER_DEFAULT_CONCURRENCY, BUS_SCATTER_DEFAULT_TIMEOUT_MS, BUS_SC
   BUS_SCATTER_MIN_TIMEOUT_MS, parseBusScatterFile, previewBusScatter, scatterBusRequests,
   type BusScatterReport, type ScatterDependencies } from '../core/fleet/bus-scatter-request.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { fsyncDirectory } from '../core/util/durability.js';
+import { writePrivateFileAtomically } from '../core/util/private-file-write.js';
+import { assurePrivateStoragePath } from '../core/util/private-storage.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 
 interface Dependencies extends ScatterDependencies { output?: (text: string) => void }
+
+const MAX_REPORT_BYTES = 2 * 1024 * 1024;
+interface Reservation { path: string; parent: string; parentStat: BigIntStats; fd: number; stat: BigIntStats }
+const sameNode = (a: BigIntStats, b: BigIntStats): boolean => a.dev === b.dev && a.ino === b.ino;
+function safeParent(path: string): BigIntStats {
+  const stat = lstatSync(path, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(path) !== path ||
+      typeof process.getuid === 'function' && stat.uid !== BigInt(process.getuid()) ||
+      process.platform !== 'win32' && (stat.mode & 0o077n) !== 0n ||
+      !assurePrivateStoragePath(path, 'directory', 'inspect-existing', { anchorPath: path }).ok) throw new Error('unsafe parent');
+  if (process.platform !== 'win32') {
+    for (let current = dirname(path); ; current = dirname(current)) {
+      const ancestor = lstatSync(current, { bigint: true });
+      if (!ancestor.isDirectory() || ancestor.isSymbolicLink() ||
+          typeof process.getuid === 'function' && ancestor.uid !== 0n && ancestor.uid !== BigInt(process.getuid()) ||
+          (ancestor.mode & 0o022n) !== 0n && (ancestor.mode & 0o1000n) === 0n) throw new Error('unsafe ancestor');
+      if (dirname(current) === current) break;
+    }
+  }
+  return stat;
+}
+function reserveOutput(path: string): Reservation {
+  const parent = dirname(path), parentStat = safeParent(parent);
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+  let stat: BigIntStats | undefined;
+  try {
+    stat = fstatSync(fd, { bigint: true });
+    if (!stat.isFile() || stat.nlink !== 1n || stat.size !== 0n ||
+        typeof process.getuid === 'function' && stat.uid !== BigInt(process.getuid()) ||
+        process.platform !== 'win32' && (stat.mode & 0o777n) !== 0o600n ||
+        !assurePrivateStoragePath(path, 'file', 'secure-created', { anchorPath: parent }).ok ||
+        !sameNode(stat, lstatSync(path, { bigint: true })) || !sameNode(parentStat, safeParent(parent))) throw new Error('unsafe reservation');
+    return { path, parent, parentStat, fd, stat };
+  } catch (error) {
+    closeSync(fd);
+    if (stat) removeReservation({ path, parent, parentStat, fd, stat });
+    throw error;
+  }
+}
+function removeReservation(reservation: Reservation): void {
+  try {
+    if (sameNode(reservation.parentStat, safeParent(reservation.parent)) &&
+        sameNode(reservation.stat, lstatSync(reservation.path, { bigint: true }))) unlinkSync(reservation.path);
+  } catch { /* Never remove a replacement or a path in a changed parent. */ }
+}
+function saveReport(reservation: Reservation, text: string): void {
+  if (Buffer.byteLength(text) > MAX_REPORT_BYTES || !sameNode(reservation.parentStat, safeParent(reservation.parent))) throw new Error('unsafe output');
+  checkReservation(reservation);
+  const stage = join(reservation.parent, `.bus-scatter-${randomBytes(16).toString('hex')}.json`);
+  let staged: BigIntStats | undefined;
+  try {
+    writePrivateFileAtomically(`${stage}.tmp`, stage, text, { anchorPath: reservation.parent, label: 'bus-scatter report' });
+    staged = lstatSync(stage, { bigint: true });
+    if (!sameNode(reservation.parentStat, safeParent(reservation.parent))) throw new Error('parent changed');
+    checkReservation(reservation);
+    // link() publishes without replacing a new occupant if the reservation is raced.
+    unlinkSync(reservation.path);
+    linkSync(stage, reservation.path);
+    if (!sameNode(staged, lstatSync(reservation.path, { bigint: true }))) throw new Error('report changed');
+    fsyncDirectory(reservation.parent);
+  } finally {
+    if (staged) {
+      try {
+        if (sameNode(reservation.parentStat, safeParent(reservation.parent)) && sameNode(staged, lstatSync(stage, { bigint: true }))) unlinkSync(stage);
+      } catch { /* Do not remove a replacement. */ }
+    }
+  }
+}
+function checkReservation(reservation: Reservation): void {
+  const named = lstatSync(reservation.path, { bigint: true }), opened = fstatSync(reservation.fd, { bigint: true });
+  if (!named.isFile() || named.isSymbolicLink() || !sameNode(reservation.stat, named) || !sameNode(reservation.stat, opened) ||
+      named.nlink !== 1n || opened.nlink !== 1n || named.size !== 0n || opened.size !== 0n ||
+      process.platform !== 'win32' && ((named.mode & 0o777n) !== 0o600n || (opened.mode & 0o777n) !== 0o600n) ||
+      !assurePrivateStoragePath(reservation.path, 'file', 'inspect-existing', { anchorPath: reservation.parent }).ok) throw new Error('reservation changed');
+}
 
 function redactFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactFields);
@@ -42,20 +122,28 @@ function formatScatterText(report: BusScatterReport): string {
 /** Convention-resolved CLI entry: fans out a validated batch under one shared deadline. */
 export async function cmdFleetBusScatter(args: string[], options: BusInboxOptions = {}, deps: Dependencies = {}): Promise<number> {
   const start = performance.now(), output = deps.output ?? console.log;
-  let json = false, apply = false;
+  let json = false, apply = false, reservation: Reservation | undefined;
   const emit = (report: BusScatterReport): number => {
     try {
       const safe = sanitizePublicJson(redactFields(report)) as BusScatterReport;
+      let saveFailed = false;
+      if (reservation) {
+        try { saveReport(reservation, JSON.stringify(safe)); }
+        catch { saveFailed = true; console.error('bus-scatter: failed to save output report'); }
+      }
       output(json || report.status === 'invalid-input' ? JSON.stringify(safe) : formatScatterText(safe));
+      if (saveFailed) return 1;
     } catch { return 1; }
     return report.status === 'preview' || report.status === 'all-replied' ? 0 : report.status === 'invalid-input' ? 2 : 1;
   };
   const report = (status: BusScatterReport['status']): BusScatterReport => statusReport(apply ? 'apply' : 'preview', status, start);
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    output('Usage: ashlr fleet bus-scatter --file <absolute JSON file> [--apply] [--timeout-ms <1..60000>] [--concurrency <1..8>] [--json]\n'
+    output('Usage: ashlr fleet bus-scatter --file <absolute JSON file> [--output <absolute new file>] [--apply] [--timeout-ms <1..60000>] [--concurrency <1..8>] [--json]\n'
       + 'Input is {"version":1,"requests":[<envelope>...]} with 1..16 requests (at most 256 KiB). Without --apply the batch is\n'
       + 'validated and routing metadata is shown; no posts are made. Apply posts every request under one shared deadline.\n'
-      + 'Routing labels and correlation are untrusted; reply bodies are never executed.');
+      + 'Routing labels and correlation are untrusted; reply bodies are never executed.\n'
+      + '--output saves the sanitized JSON report in a new private file under a private directory.\n'
+      + 'Handled SIGINT/SIGTERM save partial results; abrupt process death can leave an empty reservation without a report.');
     return 0;
   }
   const values: Record<string, string> = {};
@@ -63,7 +151,7 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
     const arg = args[i]!;
     if (arg === '--json' && !json) { json = true; continue; }
     if (arg === '--apply' && !apply) { apply = true; continue; }
-    const match = /^(--file|--timeout-ms|--concurrency)(?:=(.*))?$/.exec(arg);
+    const match = /^(--file|--output|--timeout-ms|--concurrency)(?:=(.*))?$/.exec(arg);
     if (!match || Object.hasOwn(values, match[1]!)) return emit(report('invalid-input'));
     const value = match[2] ?? args[++i];
     if (!value || value.startsWith('--')) return emit(report('invalid-input'));
@@ -74,9 +162,15 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
   const concurrency = values['--concurrency'] === undefined ? BUS_SCATTER_DEFAULT_CONCURRENCY : number(values['--concurrency']);
   const file = values['--file'];
   if (!file || !isAbsolute(file) ||
+      values['--output'] !== undefined && (!isAbsolute(values['--output']) || resolve(values['--output']) !== values['--output'] ||
+        values['--output'] === resolve(file)) ||
       !Number.isSafeInteger(timeout) || timeout < BUS_SCATTER_MIN_TIMEOUT_MS || timeout > BUS_SCATTER_MAX_TIMEOUT_MS ||
       !Number.isSafeInteger(concurrency) || concurrency < BUS_SCATTER_MIN_CONCURRENCY || concurrency > BUS_SCATTER_MAX_CONCURRENCY) {
     return emit(report('invalid-input'));
+  }
+  if (values['--output'] !== undefined) {
+    try { reservation = reserveOutput(resolve(values['--output'])); }
+    catch { return emit(report('invalid-input')); }
   }
   const controller = new AbortController(), stop = (): void => controller.abort();
   deps.signal?.addEventListener('abort', stop, { once: true });
@@ -103,5 +197,6 @@ export async function cmdFleetBusScatter(args: string[], options: BusInboxOption
   } finally {
     deps.signal?.removeEventListener('abort', stop);
     process.off('SIGINT', stop); process.off('SIGTERM', stop);
+    if (reservation) { closeSync(reservation.fd); removeReservation(reservation); }
   }
 }
