@@ -18,6 +18,9 @@
 .paused { fill: var(--text-tertiary); opacity: .12; }
 .held { fill: var(--status-unknown-solid); opacity: .2; }
 .muted { margin: 0; color: var(--text-tertiary); }
+.truth { margin: 0; color: var(--text-tertiary); }
+.truth[data-tone='warn'] { color: var(--status-warning-fg); }
+.truth[data-tone='bad'] { color: var(--status-danger-fg); }
 
 .laneButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
 .laneButton:hover { text-decoration: underline; }
