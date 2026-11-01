@@ -7,6 +7,8 @@
  * watching (see core/fleet/runs-history.ts). Reading the route is what drives
  * the sampler: each GET first offers `sampleIfDue`, then returns the window.
  * A sampling failure NEVER fails the read — the existing series is served.
+ * stallWindows adds observed idle intervals; they do not prove dispatch failure.
+ * Continuity is limited to consecutive samples at most 150 seconds apart.
  *
  *   GET /api/verse/runs-history[?hours=1..168]  → RunsHistory (default 24 h)
  *   GET /api/verse/runs-history/lane-truth      → LaneTruth (see below)
@@ -33,6 +35,7 @@ import {
   RUNS_HISTORY_MIN_HOURS,
   type RunsHistory,
 } from '../fleet/runs-history.js';
+import { projectRunsStallWindows } from '../fleet/runs-stall-windows.js';
 import {
   defaultLaneTruthReaders,
   LANE_TRUTH_MAX_AGE_MS,
@@ -104,7 +107,8 @@ export function createRunsHistoryApi(deps: RunsHistoryApiDeps = {}): ApiModule {
     }
     try { await sample(); } catch { /* a failed sample never fails the read */ }
     try {
-      sendJson(res, 200, await read(hours));
+      const history = await read(hours);
+      sendJson(res, 200, { ...history, stallWindows: projectRunsStallWindows(history) });
     } catch {
       sendJson(res, 500, { code: 'RUNS_HISTORY_UNAVAILABLE', error: 'runs history unavailable' });
     }
