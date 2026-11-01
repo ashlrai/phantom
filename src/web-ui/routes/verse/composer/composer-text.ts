@@ -84,7 +84,7 @@ export function mentionFor(match: VerseFileMatch, primaryRoot: string | null): s
 // Slash commands
 // ---------------------------------------------------------------------------
 
-export type SlashCommandId = 'bus' | 'fleet' | 'lane' | 'release' | 'pane' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
+export type SlashCommandId = 'job' | 'bus' | 'fleet' | 'lane' | 'release' | 'pane' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
 
 export interface SlashCommand {
   id: SlashCommandId;
@@ -94,6 +94,7 @@ export interface SlashCommand {
 
 /** Commands offered by the composer. */
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
+  { id: 'job', title: '/job', description: 'Hand the fleet a Phantom job: /job [lane=codex-personal|devin|claude|codex-local] [tier=frontier|work|mid|fast] <what to build>' },
   { id: 'handoff', title: '/handoff', description: 'Continue in a fresh chat with a handoff note' },
   { id: 'compact', title: '/compact', description: 'Summarise earlier turns to free context (sent as a turn)' },
   { id: 'new', title: '/new', description: 'Start a new chat on this seat' },
