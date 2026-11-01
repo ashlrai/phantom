@@ -1,13 +1,14 @@
 /**
  * `ashlr fleet backlog` — read-only triage of the open-PR merge backlog.
  *
- * One `gh pr list --json` read describes every open PR in a repo; each row is
+ * A `gh pr list --json` read describes a page of open PRs; each row is
  * validated by parseFleetPrGhState and joined with its local fleet merge-state
  * record (when one exists) so head-moved and terminal records classify
  * honestly. The joined items feed planMergeBacklog and the plan prints as
  * JSON plus a short text summary by category.
  *
- * READ-ONLY: the only gh call is `pr list`. This command never closes,
+ * Explicit selections absent from the page get bounded `gh pr view` reads.
+ * READ-ONLY: this command never closes,
  * updates or merges a pull request. A failed gh read exits nonzero with a
  * clear message — it never prints an empty plan that looks healthy.
  *
@@ -32,12 +33,15 @@ import { makeColors, isTty } from './ui.js';
 const { bold, dim, red } = makeColors(isTty());
 
 export const FLEET_BACKLOG_USAGE =
-  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... [--merges <n>] [--recuts <n>] [--json]';
+  'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... (up to 20 distinct) [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json]';
 
 /** The fleet workbench's own backlog when --repo is not given. */
 const DEFAULT_REPO = 'ashlrai/phantom';
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 10_000;
+const MAX_EXCLUSIONS = 100;
+const MAX_SELECTIONS = 20;
+const VIEW_CONCURRENCY = 4;
 /** A rollup for a few hundred PRs is heavier than the tracker's 2 MB view reads. */
 const GH_LIST_MAX_BYTES = 16 * 1024 * 1024;
 const GH_LIST_TIMEOUT_MS = 60_000;
@@ -78,7 +82,7 @@ export interface FleetBacklogDeps {
 
 type GhRead = { ok: true; rows: unknown[] } | { ok: false; reason: string };
 
-/** The only GitHub call this command makes. */
+/** Read the open-PR page independently of any exact selections. */
 async function readOpenPrs(repo: string, limit: number, gh: CloudGh): Promise<GhRead> {
   const result = await gh([
     'pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json', FLEET_PR_GH_VIEW_FIELDS,
@@ -92,6 +96,25 @@ async function readOpenPrs(repo: string, limit: number, gh: CloudGh): Promise<Gh
     return Array.isArray(rows) ? { ok: true, rows } : { ok: false, reason: 'gh pr list did not return a JSON array' };
   } catch {
     return { ok: false, reason: 'gh pr list output was not JSON' };
+  }
+}
+
+type ViewRead =
+  | { number: number; github: FleetPrGhState }
+  | { number: number; reason: string };
+
+async function readSelectedPr(repo: string, number: number, gh: CloudGh): Promise<ViewRead> {
+  try {
+    const result = await gh(['pr', 'view', String(number), '--repo', repo, '--json', FLEET_PR_GH_VIEW_FIELDS]);
+    if (!result.ok) return { number, reason: 'gh pr view failed' };
+    const raw: unknown = JSON.parse(result.stdout);
+    if (raw === null) return { number, reason: 'not found' };
+    const github = parseFleetPrGhState(raw);
+    if (!github) return { number, reason: 'unreadable response' };
+    if (github.number !== number) return { number, reason: 'PR number mismatch' };
+    return { number, github };
+  } catch {
+    return { number, reason: 'gh pr view failed or returned invalid JSON' };
   }
 }
 
@@ -126,6 +149,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   let repo = DEFAULT_REPO;
   let limit = DEFAULT_LIMIT;
   const requested = new Set<number>();
+  const excluded = new Set<number>();
   // Unbounded defaults: the report classifies the whole page instead of
   // pretending a dispatch pass's lane sizes. --merges/--recuts shape one.
   let merges = Number.MAX_SAFE_INTEGER;
@@ -151,13 +175,21 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       limit = n;
       i++;
       seen.add(arg);
-    } else if (arg === '--pr') {
+    } else if (arg === '--pr' || arg === '--exclude-pr') {
       const n = nonNegativeInt(args[i + 1]);
       if (n === null || n < 1) {
-        process.stderr.write(red('error: ') + `--pr requires a positive safe integer, got: ${args[i + 1] ?? '(missing)'}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
+        process.stderr.write(red('error: ') + `${arg} requires a positive safe integer, got: ${args[i + 1] ?? '(missing)'}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
         return 2;
       }
-      requested.add(n);
+      (arg === '--pr' ? requested : excluded).add(n);
+      if (requested.size > MAX_SELECTIONS) {
+        process.stderr.write(red('error: ') + `--pr accepts at most ${MAX_SELECTIONS} distinct PR numbers\n`);
+        return 2;
+      }
+      if (excluded.size > MAX_EXCLUSIONS) {
+        process.stderr.write(red('error: ') + `--exclude-pr accepts at most ${MAX_EXCLUSIONS} distinct PR numbers\n`);
+        return 2;
+      }
       i++;
     } else if ((arg === '--merges' || arg === '--recuts') && !seen.has(arg)) {
       const n = nonNegativeInt(args[i + 1]);
@@ -170,6 +202,13 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       seen.add(arg);
     } else {
       process.stderr.write(red('error: ') + `invalid fleet backlog argument: ${arg}\nusage: ${FLEET_BACKLOG_USAGE}\n`);
+      return 2;
+    }
+  }
+
+  for (const number of excluded) {
+    if (requested.has(number)) {
+      process.stderr.write(red('error: ') + `PR #${number} cannot be both selected and excluded\n`);
       return 2;
     }
   }
@@ -193,22 +232,64 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   // A malformed observation with a recognizable number makes that identity
   // ambiguous, even if another row for the same PR parsed successfully.
   const ambiguous = new Set<number>();
+  const malformed = new Set<number>();
+  const observed = new Map<number, number>();
   if (requested.size > 0) {
     read.rows.forEach((raw, index) => {
-      if (items[index]!.github === null && raw !== null && typeof raw === 'object' && 'number' in raw &&
-          typeof raw.number === 'number' && requested.has(raw.number)) ambiguous.add(raw.number);
+      if (raw !== null && typeof raw === 'object' && 'number' in raw &&
+          typeof raw.number === 'number' && requested.has(raw.number)) {
+        observed.set(raw.number, (observed.get(raw.number) ?? 0) + 1);
+        if (items[index]!.github === null) malformed.add(raw.number);
+      }
     });
   }
+  for (const number of malformed) ambiguous.add(number);
+  for (const [number, count] of observed) if (count > 1) ambiguous.add(number);
+  const lookups: ViewRead[] = [];
+  const absent = [...requested].filter((number) => !observed.has(number));
+  for (let i = 0; i < absent.length; i += VIEW_CONCURRENCY) {
+    lookups.push(...await Promise.all(absent.slice(i, i + VIEW_CONCURRENCY)
+      .map((number) => readSelectedPr(repo, number, gh))));
+  }
+  const failures = lookups.filter((result): result is Extract<ViewRead, { reason: string }> =>
+    'reason' in result && result.reason !== 'not found');
+  const notFound = lookups.filter((result) => 'reason' in result && result.reason === 'not found').map((result) => result.number);
+  const notOpen = [
+    ...items.flatMap((item) => item.github && requested.has(item.github.number) && item.github.state !== 'OPEN'
+      ? [{ number: item.github.number, state: item.github.state }] : []),
+    ...lookups.flatMap((result) => 'github' in result && result.github.state !== 'OPEN'
+      ? [{ number: result.number, state: result.github.state }] : []),
+  ];
+  for (const result of lookups) {
+    if ('github' in result && result.github.state === 'OPEN') {
+      items.push({ repo, github: result.github, mergeState: states.get(result.number) ?? missing });
+    }
+  }
+  // Preserve duplicate parsed page observations so the planner marks them unknown.
   const selected = requested.size === 0 ? items : items.filter((item) =>
-    item.github !== null && requested.has(item.github.number) && !ambiguous.has(item.github.number));
-  const found = new Set(selected.flatMap((item) => item.github ? [item.github.number] : []));
+    item.github !== null && item.github.state === 'OPEN' && requested.has(item.github.number) && !malformed.has(item.github.number));
+  const found = new Set(selected.flatMap((item) => item.github && !ambiguous.has(item.github.number) ? [item.github.number] : []));
   const selection = requested.size === 0 ? undefined : {
     requested: [...requested],
     found: [...requested].filter((number) => found.has(number)),
     missing: [...requested].filter((number) => !found.has(number)),
     complete: [...requested].every((number) => found.has(number)) && unreadable === 0,
+    ...(failures.length ? { lookupFailures: failures } : {}),
+    ...(notFound.length ? { notFound } : {}),
+    ...(notOpen.length ? { notOpen } : {}),
+    ...(ambiguous.size ? { ambiguous: [...ambiguous] } : {}),
   };
-  const plan = planMergeBacklog(selected, { merges, recuts });
+  // Only a fully parsed observation identifies an exclusion. Unreadable rows
+  // remain in the plan as unknown rather than silently disappearing.
+  const excludedFound = new Set(items.flatMap((item) =>
+    item.github && excluded.has(item.github.number) ? [item.github.number] : []));
+  const exclusions = excluded.size === 0 ? undefined : {
+    requested: [...excluded],
+    found: [...excluded].filter((number) => excludedFound.has(number)),
+    notFoundInFetchedPage: [...excluded].filter((number) => !excludedFound.has(number)),
+  };
+  const planned = selected.filter((item) => item.github === null || !excluded.has(item.github.number));
+  const plan = planMergeBacklog(planned, { merges, recuts });
 
   if (seen.has('--json')) {
     console.log(JSON.stringify({
@@ -218,6 +299,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
       open: read.rows.length,
       complete,
       ...(selection ? { selection } : {}),
+      ...(exclusions ? { exclusions, countsScope: 'planned after exclusions' } : {}),
       tracked,
       unreadable,
       counts: plan.counts,
@@ -228,7 +310,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
         deferred: plan.deferred.map(entryJson),
       },
     }));
-    return 0;
+    return failures.length ? 1 : 0;
   }
 
   const c = plan.counts;
@@ -239,13 +321,23 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   if (selection) {
     const refs = (numbers: number[]) => numbers.length ? numbers.map((number) => `#${number}`).join(', ') : '—';
     console.log(`  selection ${selection.complete ? 'complete' : 'incomplete'}: requested ${refs(selection.requested)}; ` +
-      `found ${refs(selection.found)}; missing from fetched page ${refs(selection.missing)}`);
+      `found ${refs(selection.found)}; unresolved ${refs(selection.missing)}`);
+    for (const failure of failures) console.log(`  selection #${failure.number}: ${failure.reason}`);
+    if (notFound.length) console.log(`  selection not found: ${refs(notFound)}`);
+    for (const result of notOpen) console.log(`  selection #${result.number}: ${result.state.toLowerCase()} (not open)`);
+    if (ambiguous.size) console.log(`  selection ambiguous: ${refs([...ambiguous])}`);
     if (unreadable > 0) console.log('  selection may be affected by unreadable page rows');
   }
-  console.log(`  ${c.ready} ready, ${c.behind} behind, ${c.conflicting} conflicting, ${c.repair} repair, ${c.waiting} waiting`);
+  if (exclusions) {
+    const refs = (numbers: number[]) => numbers.length ? numbers.map((number) => `#${number}`).join(', ') : '—';
+    console.log(`  exclusions: requested ${refs(exclusions.requested)}; found in fetched page ${refs(exclusions.found)}; ` +
+      `not found in fetched page ${refs(exclusions.notFoundInFetchedPage)}`);
+    if (unreadable > 0) console.log('  exclusions may be affected by unreadable page rows');
+  }
+  console.log(`  ${exclusions ? 'planned after exclusions: ' : ''}${c.ready} ready, ${c.behind} behind, ${c.conflicting} conflicting, ${c.repair} repair, ${c.waiting} waiting`);
   console.log(`  ${dim('merges (green-ready):')}    ${laneRefs(plan.merges)}`);
   console.log(`  ${dim('recuts (refix):')}        ${laneRefs(plan.recuts)}`);
   console.log(`  ${dim('refreshes (re-base):')}  ${laneRefs(plan.refreshes)}`);
   console.log(`  ${dim('deferred:')}            ${laneRefs(plan.deferred)}`);
-  return 0;
+  return failures.length ? 1 : 0;
 }

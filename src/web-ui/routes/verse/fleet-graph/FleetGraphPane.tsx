@@ -1,12 +1,15 @@
+import { Button } from '../../../components/primitives/Button.js';
 import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { openDockPane } from '../dock/dock-store.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { RunsGraph } from '../fleet/RunsGraph.js';
 import { runsGraphQuery } from '../fleet/runs-graph-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { SectionVisibilityProvider, useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { liveHeadline, liveIssuesText, liveNodeRows } from './graph-live-model.js';
 import { graphLiveMissing, graphLiveQuery, type GraphLiveState } from './graph-live-queries.js';
+import { liveNodeSteerPrefill, liveNodeSteerVisible } from './live-node-steer-prefill.js';
 import { workerAgeSummary } from './graph-summary.js';
 import styles from './fleet-graph.module.css';
 
@@ -50,6 +53,10 @@ export function FleetGraphPane({ visible }: Pick<PaneProps, 'visible'>) {
                 return <li key={row.id} title={row.reasons.join('; ')}>
                   {clickable ? <button type="button" className={styles.row} onClick={() => openDockPane('fleet-usage')}>{content}</button>
                     : <div className={styles.row}>{content}</div>}
+                  {liveNodeSteerVisible(row) && <Button size="sm" aria-label={`Steer ${row.id}`} onClick={event => {
+                    event.stopPropagation();
+                    openInterjectDialog({ prefill: liveNodeSteerPrefill(row) });
+                  }}>Steer</Button>}
                 </li>;
               })}
             </ul>

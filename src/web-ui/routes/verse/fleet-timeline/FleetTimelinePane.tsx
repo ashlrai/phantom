@@ -6,18 +6,20 @@ import { openDockPane } from '../dock/dock-store.js';
 import { busFeedMissing, busFeedQuery } from '../fleet/bus-feed-queries.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { steerPrefill } from '../fleet/job-sheet-actions.js';
+import { pullUrl } from '../fleet/job-refs.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { requestSteeringFocus } from '../fleet-steering/steering-focus.js';
 import { ageText } from '../ops/ops-runs-model.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { groupByLane, isMasonItem, jobFromItem, laneGroupHeadline, masonLane, stuckWorkers, timelineLanes } from './fleet-timeline-model.js';
+import { groupByLane, isMasonItem, jobFromItem, laneGroupHeadline, masonLane, mergesLane, stuckWorkers, timelineLanes } from './fleet-timeline-model.js';
 import { readGroupByLane, writeGroupByLane } from './timeline-prefs.js';
 import styles from './fleet-timeline.module.css';
 
 function toneOf(status: string): ChartTone {
-  return status === 'running' ? 'success' : status === 'slow' || status === 'interjection' ? 'warning' : status === 'stuck' ? 'danger' : 'unknown';
+  return status === 'running' || status === 'merged' ? 'success' : status === 'slow' || status === 'interjection' ? 'warning' : status === 'stuck' ? 'danger' : 'unknown';
 }
 
 export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -35,6 +37,7 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
   const now = Date.now();
   const timeline = data ? timelineLanes(data, now) : null;
   const mason = timeline && bus.status !== 'error' && bus.data ? masonLane(bus.data.events, timeline.from, timeline.to) : null;
+  const merges = timeline && data ? mergesLane(data, timeline.from, timeline.to) : null;
 
   function openLog(job: string | null): void {
     if (!job || !JOB_ID_RE.test(job)) return;
@@ -47,8 +50,15 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
   }
 
   function selectItem(item: SwimlaneItem): void {
-    if (isMasonItem(item)) openDockPane('fleet-inbox');
-    else openLog(jobFromItem(item));
+    if (isMasonItem(item)) {
+      requestSteeringFocus({ at: item.id.slice('inbox:'.length), label: item.label ?? '' });
+      openDockPane('fleet-steering');
+    }
+    else if (item.status === 'merged') {
+      const match = /^merge:(.+)#(\d+)$/.exec(item.id);
+      const url = match ? pullUrl(match[1]!, Number(match[2])) : null;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    } else openLog(jobFromItem(item));
   }
 
   return <div className={styles.pane} aria-label="Worker timeline">
@@ -69,6 +79,7 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
         {read.status === 'error' ? <p className={styles.muted} role="status">Fleet runs could not refresh. Showing the last reading.</p> : null}
         {grouped ? <>
         {mason ? <Swimlane title="Mason" lanes={[mason]} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} /> : null}
+        {merges?.lane ? <Swimlane title="Merges" lanes={[merges.lane]} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} /> : null}
         {groupByLane(data.workers, now).map((group) => {
           const items = timelineLanes({ ...data, lanes: [], workers: group.rows }, now).lanes.flatMap((lane) => lane.items);
           const lanes = items.map((item, index) => ({ id: String(index), label: item.id, items: [item] }));
@@ -82,8 +93,10 @@ export function FleetTimelinePane({ visible }: Pick<PaneProps, 'visible'>) {
             {stuck.length > 5 ? <p className={styles.groupHeadline}>+{stuck.length - 5} more</p> : null}
             <Swimlane title={`${group.lane} workers`} lanes={lanes} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} />
           </section>;
-        })}</> : <Swimlane title="Worker timeline" lanes={mason ? [mason, ...timeline.lanes] : timeline.lanes} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} />}
-        <p className={styles.hint}>{mason ? 'Click an interjection to open Inbox or a worker bar to open its log.' : 'Click a bar to open its log.'}</p>
+        })}</> : <Swimlane title="Worker timeline" lanes={[...(mason ? [mason] : []), ...(merges?.lane ? [merges.lane] : []), ...timeline.lanes]} from={timeline.from} to={timeline.to} now={now} status={{ kind: 'ready' }} toneOf={toneOf} onSelectItem={selectItem} />}
+        {merges?.unplaced ? <p className={styles.hint}>{merges.unplaced} merges without a time in this snapshot</p> : null}
+        {merges && !merges.lane && data.mergesLastHour.count === 0 ? <p className={styles.hint}>No merges in this window</p> : null}
+        <p className={styles.hint}>{mason ? 'Click an interjection to open Steering or a worker bar to open its log.' : 'Click a bar to open its log.'}{merges?.lane ? ' Click a merge to open its pull request.' : ''}</p>
       </>}
   </div>;
 }

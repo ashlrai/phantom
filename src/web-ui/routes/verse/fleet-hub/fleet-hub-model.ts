@@ -1,4 +1,5 @@
 import { relativeText, type FleetRuns } from '../ops/ops-runs-model.js';
+import { mergeSpeedReading } from './hub-merge-speed.js';
 
 const panes = [
   ['fleet-lanes', 'Lanes'], ['fleet-events', 'Fleet events'],
@@ -52,11 +53,13 @@ export function curatedWorkspace(presentIds: readonly string[]) {
 
 /** Stable tile order and readings; registration is supplied by the caller. */
 export function hubTiles(runs: FleetRuns | null, registered: readonly { id: string; title: string; description?: string | null; order?: number }[]) {
+  const mergeSpeed = mergeSpeedReading(runs?.mergesLastHour);
+  const tones: Record<string, typeof mergeSpeed.tone | undefined> = { 'fleet-merges': mergeSpeed.tone };
   const counts: Record<string, string> = runs ? {
     'fleet-lanes': lanesTileCount(runs.lanes),
     'fleet-events': String(runs.events.length),
     'fleet-inbox': String(runs.inbox.length),
-    'fleet-merges': String(runs.mergesLastHour.count ?? '—'),
+    'fleet-merges': mergeSpeed.text,
     'fleet-supply': String(runs.workers.length),
     'fleet-job-log': String(runs.workers.length),
     'worker-log': String(runs.workers.length),
@@ -76,7 +79,7 @@ export function hubTiles(runs: FleetRuns | null, registered: readonly { id: stri
     .filter(({ id }) => !legacyIds.has(id) && (id.startsWith('fleet-') || id.startsWith('leader-') || id === 'worker-log'))
     .sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || a.title.localeCompare(b.title));
   return [
-    ...panes.map(([id, title]) => ({ id, title: byId.get(id)?.title ?? title, count: counts[id] ?? '—', present: byId.has(id) })),
-    ...discovered.map(({ id, title }) => ({ id, title, count: counts[id] ?? '—', present: true })),
+    ...panes.map(([id, title]) => ({ id, title: byId.get(id)?.title ?? title, count: counts[id] ?? '—', present: byId.has(id), ...(tones[id] === undefined ? {} : { tone: tones[id] }) })),
+    ...discovered.map(({ id, title }) => ({ id, title, count: counts[id] ?? '—', present: true, ...(tones[id] === undefined ? {} : { tone: tones[id] }) })),
   ];
 }
