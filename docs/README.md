@@ -197,6 +197,7 @@ canonical release guide for required hosted qualification and publication.
 - [Autonomy setup](AUTONOMY-SETUP.md)
 - [CLI failure handling for agents](AGENT-CLI-CONTRACTS.md)
 - [Channel delivery contract](CHANNEL-DELIVERY-CONTRACT.md)
+- [Channel guide](CHANNELS.md)
 - [Choosing graph context](GRAPH-CONTEXT-CHOICES.md)
 - [DIAGNOSIS: Why 23 Proposals Are Stuck Pending (Never Drain)](DIAGNOSIS-MERGE-DRAIN.md)
 - [Dependency security policy](DEPENDENCY-SECURITY.md)

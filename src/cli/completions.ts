@@ -94,7 +94,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   fleet: [
     'status', 'watch', 'lanes', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'backlog',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],

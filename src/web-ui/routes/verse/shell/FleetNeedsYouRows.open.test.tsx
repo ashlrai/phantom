@@ -8,7 +8,8 @@ import { setFocusMode } from './focus-mode.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 const state = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../../../data/hooks.js', () => ({
-  useQuery: () => ({ data: state.data, status: 'success' }), useRefetch: () => () => {},
+  useQuery: (query: { key: string }) => ({ data: query.key === 'verse-usage-resets' ? null : state.data, status: 'success' }),
+  useRefetch: () => () => {}, useRefresh: () => () => {},
 }));
 vi.mock('../dock/dock-store.js', () => ({ openDockPane: vi.fn(), requestTerminal: vi.fn() }));
 vi.mock('../verse-ui-store.js', () => ({ closeVerseOverlay: vi.fn(), setVerseSection: vi.fn() }));
