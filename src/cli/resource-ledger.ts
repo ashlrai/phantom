@@ -10,9 +10,10 @@ const SPEND_GLOBAL = ['rowsToday', 'errorsToday', 'tokensInToday', 'tokensOutTod
 type LedgerView = ResourceLedgerV1 & {
   laneFilter?: { lane: unknown; global: string[] };
   modelFilter?: { model: unknown; displayed: number | null; selectionOmitted: number | null; global: string[] };
+  resetFilter?: { withinSeconds: number; deadline: string; unknownResetLanes: string[]; global: string[] };
 };
 
-function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model: string | undefined): LedgerView {
+function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model: string | undefined, resetSeconds?: number): LedgerView {
   let view: LedgerView = ledger;
   if (lane !== undefined) {
     view = { ...view, lanes: ledger.lanes.filter(row => row.lane === lane),
@@ -24,6 +25,19 @@ function selectLedger(ledger: ResourceLedgerV1, lane: string | undefined, model:
     view = { ...view, apiSpend: spend === null ? null : { ...spend, modelUsageToday: selected! },
       modelFilter: { model: sanitizePublicJson(model), displayed: selected?.length ?? null,
         selectionOmitted: selected === undefined ? null : spend!.modelUsageToday.length - selected.length, global: SPEND_GLOBAL } };
+  }
+  if (resetSeconds !== undefined) {
+    const start = instant(ledger.generatedAt);
+    const end = start + resetSeconds * 1000;
+    if (!Number.isFinite(start) || !Number.isSafeInteger(end) || !Number.isFinite(new Date(end).getTime())) throw new RangeError('invalid reset deadline');
+    const unknownResetLanes: string[] = [];
+    const lanes = view.lanes.filter(row => {
+      const reset = instant(row.resetAt);
+      if (!Number.isFinite(reset)) { unknownResetLanes.push(row.lane); return false; }
+      return reset > start && reset <= end;
+    });
+    view = { ...view, lanes, resetFilter: { withinSeconds: resetSeconds, deadline: new Date(end).toISOString(),
+      unknownResetLanes, global: ['generatedAt', 'asOf', 'sources', ...(model === undefined ? ['apiSpend'] : SPEND_GLOBAL), 'jobsMalformedRows'] } };
   }
   return view;
 }
@@ -43,8 +57,12 @@ function printLedger(ledger: LedgerView): void {
     console.log(`Lane filter: ${ledger.laneFilter.lane}; sources and API spend ${ledger.modelFilter ? 'totals are global' : 'are global'}`);
   }
   if (ledger.modelFilter !== undefined) console.log(`Model filter: ${ledger.modelFilter.model}; API spend totals and model list are global`);
+  if (ledger.resetFilter !== undefined) {
+    console.log(`Reset filter: after ${ledger.generatedAt} through ${ledger.resetFilter.deadline} (${ledger.resetFilter.withinSeconds} seconds); sources and API spend totals are global`);
+    console.log(`Unknown or invalid reset lanes in lane scope: ${ledger.resetFilter.unknownResetLanes.join(', ') || 'none'}`);
+  }
   console.log(`Sources: status ${ledger.sources.status}; API spend ${ledger.sources.apiSpend}`);
-  if (ledger.lanes.length === 0) console.log(ledger.laneFilter === undefined ? 'Lanes: none reported' : 'Lanes: none matching lane filter');
+  if (ledger.lanes.length === 0) console.log(ledger.resetFilter !== undefined ? 'Lanes: none matching reset filter' : ledger.laneFilter === undefined ? 'Lanes: none reported' : 'Lanes: none matching lane filter');
   for (const lane of ledger.lanes) {
     console.log(`\n${lane.lane}: running/target ${value(lane.running)}/${value(lane.target)}; held ${value(lane.held)}; window ${lane.window}`);
     if (lane.window === 'weekly') {
@@ -76,15 +94,19 @@ function printLedger(ledger: LedgerView): void {
 
 type HeadroomState = 'ready' | 'unknown' | 'stale' | 'exhausted' | 'held' | 'full';
 
-function freshTimestamp(input: unknown, wallTime: number): 'fresh' | 'stale' | 'unknown' {
-  if (typeof input !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)$/.test(input)) return 'unknown';
+function instant(input: unknown): number {
+  if (typeof input !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)$/.test(input)) return NaN;
   const year = Number(input.slice(0, 4));
   const month = Number(input.slice(5, 7));
   const day = Number(input.slice(8, 10));
   const calendar = new Date(0);
   calendar.setUTCFullYear(year, month - 1, day);
-  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) return 'unknown';
-  const date = Date.parse(input);
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) return NaN;
+  return Date.parse(input);
+}
+
+function freshTimestamp(input: unknown, wallTime: number): 'fresh' | 'stale' | 'unknown' {
+  const date = instant(input);
   const age = wallTime - date;
   if (!Number.isFinite(age) || age < 0) return 'unknown';
   return age > 300_000 ? 'stale' : 'fresh';
@@ -180,6 +202,7 @@ export async function cmdResourceLedger(
   let model: string | undefined;
   let freshSeconds: number | undefined;
   let waitSeconds: number | undefined;
+  let resetSeconds: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
@@ -211,6 +234,15 @@ export async function cmdResourceLedger(
       }
       freshSeconds = parsed;
     }
+    else if (arg === '--resets-within-seconds' && resetSeconds === undefined) {
+      const raw = args[++i];
+      const parsed = Number(raw);
+      if (raw === undefined || !/^\d+$/.test(raw) || !Number.isSafeInteger(parsed)) {
+        process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
+        return 2;
+      }
+      resetSeconds = parsed;
+    }
     else if (arg === '--wait-headroom-seconds' && waitSeconds === undefined) {
       const raw = args[++i];
       if (!raw || !/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > 3600) {
@@ -240,13 +272,13 @@ export async function cmdResourceLedger(
       return 2;
     }
   }
-  if ((interval !== undefined && !watch && waitSeconds === undefined) || (maxSamples !== undefined && !watch) || (changesOnly && (!watch || !json)) || (watch && freshSeconds !== undefined) ||
-      (waitSeconds !== undefined && (lane === undefined || watch || changesOnly || maxSamples !== undefined || model !== undefined || freshSeconds !== undefined))) {
+  if ((interval !== undefined && !watch && waitSeconds === undefined) || (maxSamples !== undefined && !watch) || (changesOnly && (!watch || !json)) || (watch && (freshSeconds !== undefined || resetSeconds !== undefined)) ||
+      (waitSeconds !== undefined && (lane === undefined || watch || changesOnly || maxSamples !== undefined || model !== undefined || freshSeconds !== undefined || resetSeconds !== undefined))) {
     process.stderr.write('Invalid ledger arguments; use phm resources ledger --help.\n');
     return 2;
   }
   if (help) {
-    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--check-fresh-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
+    console.log('Usage: phm resources ledger [--json] [--watch [--interval-ms 1000..60000] [--max-samples 1..10000] [--changes-only]] [--check-fresh-seconds N] [--resets-within-seconds N] [--lane <lane>] [--model <exact-model-id>] [--help|-h]');
     console.log('Read the live resource ledger, including source health and observation time.');
     console.log('Watch reads sequentially (default interval: 5000 ms); JSON output is one object per line.');
     console.log('--max-samples stops after that many successful observations, including suppressed snapshots; read errors do not count.');
@@ -254,6 +286,8 @@ export async function cmdResourceLedger(
     console.log('JSONL example: phm resources ledger --watch --max-samples 2 --json');
     console.log('--lane keeps only matching lane rows; sources, API spend and other fields stay global.');
     console.log('--model selects exact matches from the reader’s model usage rows; API spend totals remain global.');
+    console.log('--resets-within-seconds N selects known resets after generatedAt through the deadline; N is a nonnegative safe integer.');
+    console.log('One snapshot only: unknown or invalid reset lane IDs are listed within the lane filter scope; source health remains global.');
     console.log('Reader omissions are separate from selection omissions; a missing match may be among omitted rows.');
     console.log('--check-fresh-seconds N checks global status asOf against the current clock (N is a nonnegative safe integer).');
     console.log('One-shot only: the versioned freshnessCheck reports age in seconds and pass, stale or unknown.');
@@ -311,7 +345,14 @@ export async function cmdResourceLedger(
     }
   }
   try {
-    const view = selectLedger(await read(), lane, model);
+    const ledger = await read();
+    let view: LedgerView;
+    try { view = selectLedger(ledger, lane, model, resetSeconds); }
+    catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      process.stderr.write('Unable to calculate reset deadline from snapshot and interval.\n');
+      return 1;
+    }
     if (freshSeconds === undefined) {
       if (json) console.log(JSON.stringify(view, null, 2));
       else printLedger(view);
