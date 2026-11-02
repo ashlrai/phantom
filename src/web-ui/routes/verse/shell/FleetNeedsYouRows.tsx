@@ -291,16 +291,19 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
                   : 'The self-tick request failed.');
                 refreshSelfTick();
               }} />}
-              {mainRedRepo && <Button size="sm" onClick={() => {
+              {(() => {
+                const draft = mainRedRepo ? mainRedFixDraft(mainRedRepo, nowMs) : null;
+                return draft && <Button size="sm" onClick={() => {
                 // 'kept' means an unsent draft owns the sheet — stay in the
                 // drawer so the message explains why the fix was not applied.
-                if (openDropJobSheet(mainRedFixDraft(mainRedRepo, nowMs)) === 'kept') {
+                if (openDropJobSheet(draft) === 'kept') {
                   setConfirmation('You have an unsent draft; the fix draft was not applied.');
                   return;
                 }
                 closeVerseOverlay();
                 revealPane('fleet-queue');
-              }}>Draft fix job</Button>}
+              }}>Draft fix job</Button>;
+              })()}
               {item.id.startsWith('lane-reset:') && <ResetReleaseButton lane={item.id.slice('lane-reset:'.length)} onReleased={lane => {
                 setConfirmation(`Released hold for ${lane}.`);
                 refreshRuns();
