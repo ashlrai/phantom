@@ -7,6 +7,7 @@
  *   ● Running · 3 agents working · stage shadow            [Open Fleet ⌘2]
  *     Running 3 of 5. Usage 40%, resets in 3 h. …   (the phone's glance, same words)
  */
+import type { GuardianGlanceRow } from '../../../../core/fleet/guardian-glance.js';
 import { formatOperatorGlance } from '../../../../core/fleet/operator-glance.js';
 import type { FleetControlStateV1 } from '../../../../core/fleet/fleet-control-types.js';
 import { Button } from '../../../components/primitives/Button.js';
@@ -27,6 +28,24 @@ const TONE: Record<FleetControlStateV1['state'], string> = {
   blocked: 'danger',
   off: 'muted',
 };
+
+const rank = (row: GuardianGlanceRow): number => (row.state === 'red' ? 0 : row.stale ? 1 : 2);
+const tone = (row: GuardianGlanceRow): string => (row.state === 'red' ? 'danger' : row.stale ? 'warning' : 'ok');
+const age = (minutes: number | null): string => (minutes === null ? 'never' : minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h`);
+
+/** One compact row of main-guardian chips: red, then stale, then green. */
+export function GuardianRow({ guardian }: { guardian?: readonly GuardianGlanceRow[] }) {
+  if (!guardian || guardian.length === 0) return null;
+  return (
+    <p className={styles.statusLinkLine} data-testid="guardian-row" aria-label="Main guardian">
+      {[...guardian].sort((a, b) => rank(a) - rank(b)).map((row) => (
+        <span key={row.repo} title={`${row.repo} main ${row.state}`}>
+          <span className={styles.dot} data-tone={tone(row)} aria-hidden="true" /> {row.repo} {age(row.ageMinutes)}{row.openFixes ? ` · ${row.openFixes} fix` : ''}
+        </span>
+      ))}
+    </p>
+  );
+}
 
 export function FleetStatusLink() {
   const read = useQuery(fleetControlQuery, { freshMs: 10_000 });
@@ -56,6 +75,7 @@ export function FleetStatusLink() {
         {lines.map((line) => (
           <p key={line} className={styles.statusLinkGlance} data-tone={/Main needs you|Incidents:|unknown/.test(line) ? 'attention' : undefined}>{line}</p>
         ))}
+        <GuardianRow guardian={glance?.guardian} />
       </div>
       <Button size="sm" variant={blocker ? 'primary' : 'subtle'} onClick={() => setVerseSection('fleet', anchor)} aria-keyshortcuts={key ?? undefined}>
         {blocker && blocker.action.kind !== 'wait' ? `${blocker.action.label} in Fleet` : 'Open Fleet'}

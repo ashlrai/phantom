@@ -11,6 +11,7 @@ import { buildCodexResourceReport, collectCodexSessionUsages } from './codex-ses
 import { readEmailDropConfig } from '../comms/email-drop-config.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { readGuardianGlance } from './guardian-glance.js';
 import { buildOperatorGlance, type OperatorGlance } from './operator-glance.js';
 
 const MAX_BYTES = 32 * 1024;
@@ -80,7 +81,8 @@ export async function readOperatorGlance(opts: { runsDir?: string; now?: () => D
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const state = await readFleetRunsDirState({ runsDir, now: () => at.getTime() }).catch(() => null);
   const usage = codexUsage(at.getTime());
-  return buildOperatorGlance({
+  const guardian = await readGuardianGlance(runsDir, at.getTime());
+  const glance = buildOperatorGlance({
     now: at,
     lanes: state?.lanes ?? [],
     switches: state?.switches ?? [],
@@ -93,6 +95,7 @@ export async function readOperatorGlance(opts: { runsDir?: string; now?: () => D
       await readFileBounded(join(runsDir, 'leader', 'INCIDENTS.md'))
     ].filter((text): text is string => text != null).join('\n') || null,
   });
+  return guardian.length > 0 ? { ...glance, guardian } : glance;
 }
 
 /** First verified owner message pairs. A later id does not replace it. */
