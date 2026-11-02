@@ -217,3 +217,73 @@ compilation at the cost of possible build-lock waits. Keep different repositorie
 in separate target directories. Shared output and the optional sccache cache
 live outside `~/.ashlr-runs` and are never pruned by this helper. Existing
 caller-provided Rust environment settings are unchanged when the flags are off.
+
+# Staged-push drain trigger
+
+`staged_drain.py` is one deterministic tick for the Mac host, a pinned repo copy
+like `dispatchd.py` and `restock.py`. Install `staged_drain.py` and
+`staged-drain.sh` next to the #1066 queue scripts and fire the tick from launchd
+(`com.ashlr.staged-drain.plist.in`) or from a dispatchd tick. There is no model
+turn and no token creation; the only network call is the read-only
+`gh api repos/ashlrai/<repo>/actions/runs?status=queued --jq .total_count` poll
+across `locus`, `lexicon`, `ashlr-md`, `ashlr-stack` and `ashlr-plugin`.
+
+Each tick reads `$STAGED_DRAIN_WORK/staged-pushes.tsv` (default
+`/workspace/phantom-work/staged-pushes.tsv`). While the summed queued-run total
+is 50 or more, or the poll fails, the tick holds and changes nothing. Below 50
+it drains the file in row order under a `staged-pushes.tsv.lock` advisory lock;
+a busy lock holds the tick rather than piling up waiters.
+
+- `PARKED` rows are skipped and left untouched.
+- A row touching any `.github` path component, or any component starting with
+  `release` (dot-optional), is never pushed: the staged state is committed via
+  a scratch index onto the local branch `staged-drain/<job>` and the diff lands
+  at `handoff/<job>.diff` for manual handoff. The worktree's own HEAD, branch
+  and index are never moved. When the host `scrub.pl` is installed
+  (`STAGED_DRAIN_SCRUB`, default `~/.ashlr-runs/bin/scrub.pl`), the diff passes
+  its `--check --allow-fixtures` gate before it is written.
+- Every other staged row goes to the pinned publisher only:
+  `STAGED_DRAIN_PUBLISH <job>` (default `~/.ashlr-runs/bin/publish.sh`, the
+  mac-bridge publish.sh install path). The drain itself never runs git push,
+  fetch, pull or any remote command, and publisher output is never printed.
+- Each processed row is marked `done` or `failed` in place with a route note;
+  comment, blank, terminal and malformed lines are preserved verbatim.
+
+TSV row schema v1, one tab-separated row per staged push:
+
+    job<TAB>repo<TAB>worktree<TAB>base<TAB>status[<TAB>files][<TAB>note]
+
+`status` starts as `staged`. `files` is an optional comma-separated list of
+repo-relative paths; it is unioned with a read-only inspection of the worktree
+when one is available, so an under-reported `.github` drift still routes to
+handoff. `repo` must be on the seven-repo allowlist and `base` a hex commit.
+Job ids are restricted to `[A-Za-z0-9._-]`, no `..`, never `.lock`-suffixed.
+
+Logs carry one value-free line per row (`row`, `job`, `outcome`, `route`,
+`reason`) plus gate and summary counts; no paths, file contents, arguments or
+environment values are printed. `--dry-run` reports the gate result and each
+row's route plan without draining, rewriting the TSV, invoking the publisher
+or writing handoff diffs:
+
+```sh
+STAGED_DRAIN_WORK=/path/to/work bash staged-drain.sh --dry-run
+```
+
+launchd install sketch (substitute the deployed paths):
+
+```sh
+sed -e "s|__STAGED_DRAIN_SH__|/path/to/mac-bridge/staged-drain.sh|" \
+    -e "s|__INTERVAL__|300|" -e "s|__LOG_DIR__|$HOME/.ashlr-runs/logs|" \
+    -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
+    -e "s|__WORK__|/workspace/phantom-work|" \
+    -e "s|__PUBLISH__|$HOME/.ashlr-runs/bin/publish.sh|" \
+    com.ashlr.staged-drain.plist.in > ~/Library/LaunchAgents/com.ashlr.staged-drain.plist
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.staged-drain.plist
+```
+
+Fixture tests run a synthetic work dir under a temporary HOME and never touch
+the live queue or GitHub:
+
+```sh
+HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
+```
