@@ -59,6 +59,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'graph-run': () => import('./fleet-graph-run.js'),
   'graph-target': () => import('./fleet-graph-target.js'),
   'grok-usage': () => import('./fleet-grok-usage.js'),
+  'guardian-manifest': () => import('./fleet-guardian-manifest.js'),
   'guardian-retry': () => import('./fleet-guardian-retry.js'),
   'guardian-verify': () => import('./fleet-guardian-verify.js'),
   'handoff-pipe': () => import('./fleet-handoff-pipe.js'),
