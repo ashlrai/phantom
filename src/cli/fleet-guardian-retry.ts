@@ -1,3 +1,4 @@
+import { selectNextGuardianInfraRetry } from '../core/fleet/guardian-retry-next.js';
 import { prepareGuardianRetryState, type GuardianRetrySummary } from '../core/fleet/guardian-retry-state.js';
 import { GUARDIAN_VERIFY_MAX_TIMEOUT_MS } from '../core/fleet/guardian-verify-loop.js';
 import { cmdFleetGuardianVerify } from './fleet-guardian-verify.js';
@@ -17,14 +18,19 @@ export async function cmdFleetGuardianRetry(
   const values: Record<string, string> = {};
   let json = false;
   let verifyNow = false;
+  let nextInfra = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
     if (flag === '--json' && !json) { json = true; continue; }
+    if (flag === '--next-infra' && !nextInfra) { nextInfra = true; continue; }
     if (flag === '--verify' && !verifyNow) { verifyNow = true; continue; }
     if (!['--manifest', '--source-state', '--output-state', '--repo', '--sha', '--timeout-ms'].includes(flag) || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       process.stderr.write('error: invalid guardian-retry arguments\n'); return 2;
     }
     values[flag] = args[++i]!;
+  }
+  if (nextInfra && (values['--repo'] !== undefined || values['--sha'] !== undefined)) {
+    process.stderr.write('error: --next-infra cannot be combined with --repo or --sha\n'); return 2;
   }
   if (values['--timeout-ms'] !== undefined && !verifyNow) {
     process.stderr.write('error: --timeout-ms requires --verify\n'); return 2;
@@ -35,9 +41,16 @@ export async function cmdFleetGuardianRetry(
   }
   let summary: GuardianRetrySummary;
   try {
+    const selected = nextInfra ? await selectNextGuardianInfraRetry({
+      manifest: values['--manifest'] ?? '', sourceState: values['--source-state'] ?? '', outputState: values['--output-state'] ?? '',
+    }) : { repo: values['--repo'] ?? '', sha: values['--sha'] ?? '' };
+    if (!selected) {
+      console.log(JSON.stringify({ status: 'no-work' }));
+      return 0;
+    }
     summary = await prepare({
       manifest: values['--manifest'] ?? '', sourceState: values['--source-state'] ?? '', outputState: values['--output-state'] ?? '',
-      repo: values['--repo'] ?? '', sha: values['--sha'] ?? '',
+      repo: selected.repo, sha: selected.sha,
     });
   } catch {
     process.stderr.write('error: guardian-retry could not validate or prepare retry state\n');
