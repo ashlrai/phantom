@@ -77,3 +77,10 @@ timeout; unmeasured figures are `null`. See [lane health](docs/LANE-HEALTH.md).
 Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
+
+## Publish subscription capacity
+
+Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;
+usage metadata only, never credentials. Resident daemons publish at startup and
+on a timer outside ticks. Follow failure recovery instructions; see
+[capacity publication](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity).

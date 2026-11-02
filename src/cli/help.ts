@@ -39,6 +39,12 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm capacity publish [--json]',
+    description: 'Publish local subscription usage metadata once using this node’s local auth. Exit 0 fresh/published, 1 unavailable, 2 bad usage/configuration. No model execution.',
+    safety: 'append',
+    jsonShape: 'PublisherStatus {state,reason,lastPublishedAt}',
+  },
+  {
     usage: 'phm graph nodes|edges|status [--json]',
     description: 'Read-only GRAPH-1 nodes, edges, and availability. Exit 0 success/help, 1 unavailable or loader failure, 2 bad usage; unavailable counts are unknown.',
     safety: 'read',
@@ -737,6 +743,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
   { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
+  { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
