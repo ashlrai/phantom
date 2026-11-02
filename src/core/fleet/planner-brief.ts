@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import type { OrderTraceV1 } from './order-trace.js';
+import { orderCoverageBriefLines } from './planner-order-coverage.js';
 import { realSupplyBriefLines, type RealSupplyV1 } from './planner-real-supply.js';
 import { readSource, type Source } from './runs-parked-queue.js';
 
@@ -33,6 +35,8 @@ export interface PlannerBriefOptions {
    * no REAL SUPPLY section; when it throws, the section reads unavailable.
    */
   realSupply?: () => Promise<RealSupplyV1>;
+  /** Optional order trace; failures render an unavailable coverage section. */
+  orderCoverage?: () => Promise<OrderTraceV1>;
 }
 const lines = (text: string): string[] => text === '' ? [] : text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -163,6 +167,15 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
       missing.push('real-supply');
     }
   }
+  let orderCoverage: string[] | null = null;
+  if (opts.orderCoverage !== undefined) {
+    try {
+      orderCoverage = orderCoverageBriefLines(await opts.orderCoverage());
+    } catch {
+      orderCoverage = ['(unavailable: order coverage read failed)'];
+      missing.push('order-coverage');
+    }
+  }
   // eslint-disable-next-line no-control-regex -- tick notes must remain a single printable line.
   const note = opts.note?.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 500);
   const text = scrubSecrets([
@@ -174,10 +187,11 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     '## USED IDS', ...usedIdLines,
     '## USED TITLES', ...titleLines,
     '## RECENT PHANTOM MERGES', mergeText,
+    ...(orderCoverage === null ? [] : ['## ORDER COVERAGE', 'Orders marked UNSERVED have no job citing them; prefer them.', ...orderCoverage]),
     '## MASON INBOX (newest last)', ...inboxBody,
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
-  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }) }, missing };
+  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
 }
 
 /** Publish only a prompt the planner's bounded input reader can consume. */
