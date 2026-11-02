@@ -53,7 +53,7 @@ export type WorkbenchSurfaceId = (typeof WORKBENCH_SURFACES)[number];
  * on, not a live surface. Ops is the desktop command center: the board, the
  * router's choices, releases and the leaders' channel, watched not worked.
  */
-export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops'] as const;
+export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops', 'live'] as const;
 export type WorkbenchTraySectionId = (typeof WORKBENCH_TRAY_SECTIONS)[number];
 
 export type WorkbenchSectionId = WorkbenchSurfaceId | WorkbenchTraySectionId;
