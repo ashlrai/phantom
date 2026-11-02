@@ -17,7 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -233,5 +233,24 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     const parsed = parseEmlMessage(eml({ id: null, body: 'x'.repeat(16 * 1024) }));
     expect(parsed).not.toBeNull();
     expect(Buffer.byteLength(parsed!.body, 'utf8')).toBeLessThanOrEqual(8 * 1024);
+  });
+});
+
+describe('runEmailDropOnce other-writable folders', () => {
+  it.each(['inbox', 'processed', 'outbox'] as const)('refuses the pass when the %s folder is other-writable', async (kind) => {
+    drop('a.eml', eml());
+    chmodSync({ inbox: inboxDir, processed: processedDir, outbox: outboxDir }[kind], 0o777);
+    const counts = await runEmailDropOnce(runOpts());
+    expect(counts).toMatchObject({ accepted: 0, unsafeFolder: kind });
+    expect(readdirSync(inboxDir)).toEqual(['a.eml']);
+    expect(existsSync(inboxPath())).toBe(false);
+  });
+
+  it('still ingests from a private folder', async () => {
+    chmodSync(inboxDir, 0o700);
+    drop('a.eml', eml());
+    const counts = await runEmailDropOnce(runOpts());
+    expect(counts.accepted).toBe(1);
+    expect(counts.unsafeFolder).toBeUndefined();
   });
 });
