@@ -16,6 +16,7 @@
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
+ *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
  *   skills audit <path>        Quarantine-audit an external skill pack (read-only).
@@ -2739,6 +2740,12 @@ async function main(): Promise<void> {
       case 'capacity': {
         const { cmdCapacity } = await import('./capacity.js');
         process.exitCode = await cmdCapacity(rest);
+        break;
+      }
+
+      case 'signals': {
+        const { cmdSignals } = await import('./signals.js');
+        process.exitCode = await cmdSignals(rest);
         break;
       }
 
