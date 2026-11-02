@@ -102,13 +102,20 @@ export async function drainGuardianInfraRetries(
     if (remaining < 1) { summary.termination = 'deadline'; break; }
     const attemptPath = join(options.outputDir, attemptName(summary.attempts + 1));
     let selected: { repo: string; sha: string } | null;
-    try { selected = await select({ manifest: options.manifest, sourceState: current, outputState: attemptPath }); }
+    try { selected = await select({ manifest: options.manifest, sourceState: current, outputState: attemptPath, exclude: summary.attempted }); }
     catch { summary.termination = 'unsafe'; break; }
     const fileStop = await stopFileStatus(options.stopFile);
     if (fileStop) { summary.termination = fileStop; break; }
-    if (!selected) { summary.termination = summary.attempts === 0 ? 'no-work' : 'drained'; break; }
+    if (!selected) {
+      if (summary.attempts === 0) { summary.termination = 'no-work'; break; }
+      try {
+        const remainingEligible = await select({ manifest: options.manifest, sourceState: current, outputState: attemptPath });
+        summary.termination = remainingEligible ? 'exhausted' : 'drained';
+      } catch { summary.termination = 'unsafe'; }
+      break;
+    }
     const repo = resolve(selected.repo);
-    const identity = `${repo}${selected.sha}`;
+    const identity = `${repo}\0${selected.sha}`;
     if (attempted.has(identity)) { summary.termination = 'exhausted'; break; }
     attempted.add(identity);
     summary.attempted.push({ repo, sha: selected.sha });
