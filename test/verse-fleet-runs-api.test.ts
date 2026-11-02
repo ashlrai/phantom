@@ -49,6 +49,14 @@ describe('fleet runs api', () => {
     expect(Object.values(wire!.sources as object)).toEqual(Array(5).fill('healthy'));
     expect(JSON.stringify(wire)).not.toMatch(/cwd|prompt|private/);
   });
+  it('projects claims without forwarding other fields and rejects malformed claims', async () => {
+    const claim = { job: 'RQ-PHX-QUEUE', lane: 'codex-personal', tier: 'mid', at: new Date(NOW).toISOString() };
+    const good = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, claimed: [{ ...claim, prompt: 'private' }] }) })), { path: PATH });
+    expect(good.wire).toMatchObject({ claimed: [claim], sources: { runsDir: 'healthy' } });
+    expect(JSON.stringify(good.wire)).not.toContain('private');
+    const bad = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, claimed: [{ ...claim, job: '/Users/private' }] }) })), { path: PATH });
+    expect(bad.wire).toMatchObject({ sources: { runsDir: 'degraded' }, lanes: [] });
+  });
   it('rejects malformed nested rows and private paths without partially applying runs', async () => {
     for (const bad of [{ ...runs, lanes: [{ lane: 'codex' }] }, { ...runs, events: [{ at: 'now', kind: 'debug', text: '/Users/private/work' }] }]) {
       const { wire } = await request(createFleetRunsApi(deps({ readRunsDir: async () => bad })), { path: PATH });

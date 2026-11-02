@@ -25,6 +25,7 @@ export const VERSE_OPS_RELEASES_PATH = `${VERSE_OPS_PATH}/releases`;
 export const VERSE_OPS_SELF_UPDATE_PATH = `${VERSE_OPS_PATH}/self-update`;
 export const VERSE_OPS_LEADERS_PATH = `${VERSE_OPS_PATH}/leaders`;
 export const VERSE_OPS_LEADERS_MESSAGES_PATH = `${VERSE_OPS_PATH}/leaders/messages`;
+export const VERSE_OPS_RESET_RELEASES_PATH = `${VERSE_OPS_PATH}/reset-releases`;
 
 /** The bus channel the Leaders view reads and posts to. */
 export const OPS_LEADERS_CHANNEL = 'leaders';
@@ -167,6 +168,8 @@ export interface OpsRepoReleaseV1 {
   version: string | null;
   /** Newest git tag; null = none or the repo could not be read. */
   latestTag: string | null;
+  /** Local commits after latestTag; absent on older servers, null when unknown. */
+  commitsSinceTag?: number | null;
   /** The workflow file that looks like a release pipeline, e.g. `release.yml`. */
   releaseWorkflow: string | null;
   /**
@@ -235,7 +238,11 @@ export interface OpsLeaderPostBody {
 export interface OpsSelfUpdateV1 {
   v: 1; generatedAt: string; sourceState: 'healthy' | 'degraded' | 'unavailable';
   installedVersion: string | null; repoRoot: boolean;
-  headSha: string | null; headAt: string | null; originSha: string | null; branch: string | null;
+  /** package.json version at origin/master after the last fetch: what a fast-forward would install.
+   * Null when the repo is unavailable, the probe fails, or the checkout is not behind. */
+  candidateVersion: string | null;
+  headSha: string | null; processHeadSha: string | null; headAt: string | null; originSha: string | null; branch: string | null;
+  behindSubjects?: string[] | null;
   behind: number | null; ahead: number | null; dirty: boolean | null; lastFetchAt: string | null;
   processStartedAt: string; uptimeSeconds: number; pid: number; canFastForward: boolean | null;
 }

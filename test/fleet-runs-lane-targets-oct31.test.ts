@@ -22,8 +22,8 @@ it('maps lane fields and attribution with a generated timestamp', async () => {
   const state = await readLaneTargets({ runsDir, now });
   expect(state).toMatchObject({ v: 1, sourceState: 'healthy', generatedAt: now().toISOString() });
   expect(state.lanes).toEqual([
-    { lane: 'sol', target: 2, floor: 0, ceiling: 4, held: false, heldReason: null, heldUntil: null, lastChange: new Date(1793448000 * 1000).toISOString(), changedBy: 'Fake leader 2026-10-30T10:00:00Z' },
-    { lane: 'claude', target: 1, floor: 1, ceiling: 3, held: true, heldReason: 'fixture hold', heldUntil: '2026-11-01T00:00:00Z', lastChange: null, changedBy: 'Fake owner 2026-10-31T10:00:00Z' },
+    { lane: 'sol', target: 2, floor: 0, ceiling: 4, held: false, heldReason: null, heldUntil: null, pausedFrom: null, lastChange: new Date(1793448000 * 1000).toISOString(), changedBy: 'Fake leader 2026-10-30T10:00:00Z' },
+    { lane: 'claude', target: 1, floor: 1, ceiling: 3, held: true, heldReason: 'fixture hold', heldUntil: '2026-11-01T00:00:00Z', pausedFrom: null, lastChange: null, changedBy: 'Fake owner 2026-10-31T10:00:00Z' },
   ]);
 });
 it('changes only target and attribution, preserves held lanes and appends audit lines', async () => {

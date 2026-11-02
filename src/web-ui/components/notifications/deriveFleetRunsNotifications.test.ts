@@ -36,7 +36,8 @@ describe('fleet run incidents', () => {
   it.each(['down', 'REJECTED', 'invalid'])('redacts token-like Claude lane status: %s', (status) => {
     const out = derive(snapshot({ claudeLane: `${status}: ${'x'.repeat(40)}` }), now);
     expect(out).toEqual([{ id: 'fleet-claude-lane-down', category: 'fleet', severity: 'high',
-      title: 'Claude lane is down', detail: `${status}: …`, ts: new Date(now).toISOString() }]);
+      title: 'Claude lane is down', detail: `${status}: …`, ts: new Date(now).toISOString(),
+      actionLabel: 'Open host', actionHref: expect.stringContaining('fleet-host') }]);
   });
 
   it('emits stable ids in severity order, counts drop files and never copies worker/inbox text', () => {
@@ -53,7 +54,7 @@ describe('fleet run incidents', () => {
     ]);
     expect(out[2]?.detail).toContain('waiting for credits');
     expect(out.at(-1)?.detail).toBe('2 leader job files waiting for ingest');
-    expect(out.every((n) => n.category === 'fleet' && n.ts === data.generatedAt && !n.actionHref)).toBe(true);
+    expect(out.every((n) => n.category === 'fleet' && n.ts === data.generatedAt && n.actionHref)).toBe(true);
     expect(JSON.stringify(out)).not.toMatch(/private|other file/);
     expect(derive(data, now + 1000).map((n) => n.id)).toEqual(out.map((n) => n.id));
     expect(derive(snapshot({ drop: { pending: [], done: 2 } }), now)).toEqual([]);

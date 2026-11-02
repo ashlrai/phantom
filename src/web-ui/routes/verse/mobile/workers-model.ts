@@ -1,4 +1,5 @@
 import { sinceText } from './connectivity.js';
+import { ageStateText, workerAgeState, type AgeState } from '../fleet/worker-age-state.js';
 
 export interface FleetWorkers {
   workers: Array<{ job: string; lane: string; tier: string; ageSeconds: number | null }>;
@@ -19,8 +20,13 @@ export function workerRows(data: FleetWorkers, nowMs: number) {
     const ageText = ageSeconds === null ? 'unknown' : sinceText(nowMs - ageSeconds * 1_000, nowMs).replace(/^Updated /, '').replace(/ ago$/, '');
     const tone: 'ok' | 'warn' | 'bad' | 'unknown' = ageSeconds === null ? 'unknown'
       : ageSeconds < 20 * 60 ? 'ok' : ageSeconds <= 45 * 60 ? 'warn' : 'bad';
-    return { job, lane, tier, ageSeconds, ageText, tone };
+    const ageState = workerAgeState(lane, ageSeconds);
+    return { job, lane, tier, ageSeconds, ageText, tone, ageState, ageNote: ageStateText(ageState, lane) };
   }).sort((a, b) => (b.ageSeconds ?? -1) - (a.ageSeconds ?? -1));
   const oldest = rows[0];
   return { rows, summary: oldest ? `${rows.length} running · oldest ${oldest.job} ${oldest.ageText}` : 'No workers running' };
+}
+
+export function stuckCount(rows: ReadonlyArray<{ ageState: AgeState }>): number {
+  return rows.filter(row => row.ageState === 'stuck').length;
 }

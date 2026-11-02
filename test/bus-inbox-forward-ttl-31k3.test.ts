@@ -68,9 +68,14 @@ it('uses exact safe-integer subtraction at clock and TTL boundaries', () => {
   const root = setup(), max = Number.MAX_SAFE_INTEGER;
   expect(post(root, 0, message('zero', max)).status).toBe('posted');
   expect(post(root, max - 1, message('near-max', max)).status).toBe('posted');
-  expect(post(root, max, message('max', 1)).status).toBe('posted');
+  // Before a later post's clock proves expiry, 'zero' still reads at the boundary.
   expect(list(root, max - 1)).toMatchObject({ messages: [
     { envelope: { id: 'zero', ttl: 1 } },
+    { envelope: { id: 'near-max', ttl: max } },
+  ] });
+  expect(post(root, max, message('max', 1)).status).toBe('posted');
+  // The 'max' post reclaimed 'zero' (elapsed === ttl), leaving the live rows.
+  expect(list(root, max - 1)).toMatchObject({ messages: [
     { envelope: { id: 'near-max', ttl: max } },
     { envelope: { id: 'max', ttl: 1 } },
   ] });

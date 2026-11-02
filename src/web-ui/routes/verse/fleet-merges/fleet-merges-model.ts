@@ -1,18 +1,32 @@
-export interface Merged { repo: string; number: number; title: string; href: string | null }
+export interface Merged { repo: string; number: number; title: string; href: string | null; job: string | null; lane: string | null; at: string | null; openedAt: string | null; mergedAt: string | null; openToMergeMs: number | null }
 export interface Pending { job: string; lane: string | null; href: string | null; at: string }
+/** mergeRate24h is a percentage. */
 export interface Lane { lane: string; merged24h: number | null; mergeRate24h: number | null }
+export interface OutsideOverlap { job: string; paths: string[] }
+export interface OutsidePr { repo: string; number: number; title: string; author: string; head: string; at: string | null; files: number; overlaps: OutsideOverlap[] }
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const count = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-const rate = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
+const nonnegative = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+// Server rollup_24h.by_lane.<lane>.merge_rate: [0, 1] is a fraction, (1, 100] a percentage; other values are unknown.
+const rate = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? (value <= 1 ? value * 100 : value) : null;
 const prHref = (value: unknown): string | null => typeof value === 'string' && /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_][A-Za-z0-9._-]*\/pull\/[1-9][0-9]*$/.test(value) ? value : null;
 
 export function readMerges(snapshot: unknown): { merged: Merged[]; pending: Pending[]; lanes: Lane[]; count: number | null; sourceState: string | null } {
   const data = record(snapshot), merges = record(data.mergesLastHour), sources = record(data.sources);
+  const publishes = Array.isArray(data.publishesLastHour) ? data.publishesLastHour.map(record) : [];
   const merged: Merged[] = (Array.isArray(merges.items) ? merges.items : []).flatMap(raw => {
     const item = record(raw), number = count(item.number);
     if (typeof item.repo !== 'string' || number === null || number === 0 || typeof item.title !== 'string') return [];
-    return [{ repo: item.repo, number, title: item.title, href: prHref(`https://github.com/${item.repo}/pull/${number}`) }];
+    const href = prHref(`https://github.com/${item.repo}/pull/${number}`);
+    const publish = publishes.find(p => href && prHref(p.url) === href);
+    const job = typeof publish?.job === 'string' ? publish.job : item.title.match(/\bRQ-[A-Za-z0-9._-]+\b/)?.[0] ?? null;
+    const at = typeof publish?.at === 'string' ? publish.at : null;
+    const openedAt = typeof item.openedAt === 'string' ? item.openedAt : at;
+    const mergedAt = typeof item.mergedAt === 'string' ? item.mergedAt : null;
+    const elapsed = openedAt !== null && mergedAt !== null ? Date.parse(mergedAt) - Date.parse(openedAt) : NaN;
+    const openToMergeMs = nonnegative(item.openToMergeMs) ?? nonnegative(elapsed);
+    return [{ repo: item.repo, number, title: item.title, href, job, lane: typeof publish?.lane === 'string' ? publish.lane : null, at, openedAt, mergedAt, openToMergeMs }];
   }).sort((a, b) => b.number - a.number);
   const pending: Pending[] = (Array.isArray(data.publishesLastHour) ? data.publishesLastHour : []).flatMap(raw => {
     const item = record(raw);
@@ -27,4 +41,46 @@ export function readMerges(snapshot: unknown): { merged: Merged[]; pending: Pend
     return typeof item.lane === 'string' ? [{ lane: item.lane, merged24h: count(item.merged24h), mergeRate24h: rate(item.mergeRate24h) }] : [];
   }).sort((a, b) => a.merged24h === null ? (b.merged24h === null ? 0 : 1) : b.merged24h === null ? -1 : b.merged24h - a.merged24h);
   return { merged, pending, lanes, count: count(merges.count), sourceState: typeof sources.merges === 'string' ? sources.merges : null };
+}
+
+export function readMergeSpeed(snapshot: unknown): { perHour: number | null; medianOpenToMergeMs: number | null; sample: number } {
+  const merges = record(record(snapshot).mergesLastHour);
+  const durations = readMerges(snapshot).merged.flatMap(item => item.openToMergeMs === null ? [] : [item.openToMergeMs]).sort((a, b) => a - b);
+  const middle = Math.floor(durations.length / 2);
+  const median = durations.length === 0 ? null : durations.length % 2 ? durations[middle]! : (durations[middle - 1]! + durations[middle]!) / 2;
+  return { perHour: nonnegative(merges.perHour), medianOpenToMergeMs: nonnegative(merges.medianOpenToMergeMs) ?? median, sample: durations.length };
+}
+
+export function openToMergeText(ms: number | null): string {
+  if (nonnegative(ms) === null) return '—';
+  const minutes = Math.round(ms! / 60_000), hours = Math.floor(minutes / 60);
+  return hours ? `${hours} h ${String(minutes % 60).padStart(2, '0')} min` : `${minutes} min`;
+}
+
+const repoName = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(value) ? value : null;
+const text = (value: unknown, max = 300): string | null => typeof value === 'string' && value.trim().length > 0 && value.length <= max ? value : null;
+
+export function readOutsidePrs(snapshot: unknown): { prs: OutsidePr[]; sourceState: string | null } {
+  const data = record(snapshot);
+  const prs: OutsidePr[] = (Array.isArray(data.repos) ? data.repos : []).flatMap(raw => {
+    const repo = record(raw), name = repoName(repo.repo);
+    if (name === null) return [];
+    return (Array.isArray(repo.prs) ? repo.prs : []).flatMap(entry => {
+      const pr = record(entry), number = count(pr.number);
+      if (number === null || number === 0 || text(pr.title) === null || text(pr.author) === null) return [];
+      const overlaps: OutsideOverlap[] = (Array.isArray(pr.overlaps) ? pr.overlaps : []).flatMap(item => {
+        const overlap = record(item);
+        return text(overlap.job) === null ? [] : [{
+          job: overlap.job as string,
+          paths: Array.isArray(overlap.paths) ? overlap.paths.filter((p): p is string => text(p, 512) !== null).slice(0, 50) : [],
+        }];
+      });
+      return [{
+        repo: name, number, title: pr.title as string, author: pr.author as string,
+        head: text(pr.head) ?? '', at: text(pr.updatedAt, 64),
+        files: Array.isArray(pr.files) ? pr.files.length : 0, overlaps,
+      }];
+    });
+  }).sort((a, b) => b.number - a.number);
+  return { prs, sourceState: typeof data.sourceState === 'string' ? data.sourceState : null };
 }

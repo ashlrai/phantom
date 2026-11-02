@@ -59,7 +59,9 @@ describe('LiveSeatBurnDowns — Claude\'s reset words', () => {
     const { fetchMock } = stubSurfaceFetch({ kind: 'live', now });
     render(<LiveSeatBurnDowns budget={view} />);
     const seats = await screen.findByRole('group', { name: 'Seat windows' });
-    await waitFor(() => expect(seats).toHaveTextContent('26% left · resets Sep 24 at 5pm (America/New_York)'));
+    // The stale session binding is read as the weekly window — never the
+    // retired 5-hour figure or its words.
+    await waitFor(() => expect(seats).toHaveTextContent('46% left · resets Sep 25 at 7pm (America/New_York)'));
     expect(within(seats).queryByText(/No window reading/)).toBeNull();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/api/verse/bootstrap'))).toBe(false);
   });

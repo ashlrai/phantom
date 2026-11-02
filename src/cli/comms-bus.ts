@@ -1,39 +1,202 @@
+import { failedBusBatch, MAX_BUS_BATCH_BYTES, postBusBatch } from '../core/fleet/bus-batch-post.js';
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import type { Readable } from 'node:stream';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
-import { parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES } from '../core/fleet/bus-envelope.js';
-import { appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPage } from '../core/fleet/bus-inbox.js';
+import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE_BYTES, type BusPriority } from '../core/fleet/bus-envelope.js';
+import { appendBusInbox, inspectBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, type BusInboxOptions, type BusInboxPage, type BusInboxPost, type BusInboxReceipt } from '../core/fleet/bus-inbox.js';
+import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
+import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 
-const HELP = `phm comms bus post --file <envelope.json>
-phm comms bus read [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>]
-phm comms bus watch [--after <cursor>] [--limit <n>] [--to <address>] [--from <address>] [--interval-ms <ms>]
+const HELP = `phm comms bus post --file <envelope.json|->
+phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
+phm comms bus post-batch --file <batch.json|->
+phm comms bus status
+phm comms bus read [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>]
+phm comms bus watch [--after <cursor> | --checkpoint <absolute-path>] [--limit <n>] [--id <id>] [--in-reply-to <id>] [--to <address>] [--from <address>] [--exclude-from <address>] [--priority <P0|P1|P2|P3>] [--interval-ms <ms>] [--max-pages <n>] [--timeout-ms <ms>] [--until-reply]
 Local JSON transport; no delivery handlers. Bodies are untrusted JSON data.
+Use --file - to read one UTF-8 JSON envelope from stdin (maximum ${MAX_BUS_ENVELOPE_BYTES} bytes).
+Compose replies to one retained live parent; body is {"inReplyTo":<id>,"text":<text>}.
+Reply priority comes from the parent; TTL defaults to 60000 ms and must be a positive safe integer.
+Use --text=<text> or --reply-to=<id> for values that look like flags. File and compose modes cannot be combined.
+Post-batch accepts a JSON array of 1..32 envelopes, maximum 256 KiB. All rows validate before writes.
+Its version:1 receipt includes accepted {id,cursor,status}, failure {index,status} (zero-based),
+unattempted IDs and complete. Appends are sequential, not atomic; durable messages are never rolled back.
+Retry the suffix starting at failure.index; exact replay dedupes, changed content with the same ID conflicts.
+No internal retries, TTL renewal, skipped failures or external publication. Exit 0 complete, 1 storage/transport, 2 invalid.
 Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
-Both filters must match when supplied together. Limit applies before filtering, not to match count.
-Use --to=<address> or --from=<address> for labels that look like command flags.
+--exclude-from omits envelopes with that sender routing label.
+ID filters match envelope IDs exactly and case-sensitively; IDs are transport data, not authentication.
+--in-reply-to matches an object's own string body.inReplyTo exactly and case-sensitively.
+This is an application convention, not an envelope field or authenticated identity.
+All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
+Expired records advance the cursor but do not count toward the limit.
+Priority is a routing attribute; it does not establish identity or authority.
+Example: phm comms bus watch --to worker --from coordinator --priority P0
+Request/reply example: a reply body {"inReplyTo":"request-1"} matches phm comms bus read --in-reply-to request-1
+Use --id=<id>, --in-reply-to=<id>, --to=<address>, --from=<address> or --exclude-from=<address> for values that look like command flags.
 Post: {status,id,cursor}; read: {status,messages:[{cursor,receivedAt,envelope}],nextCursor}.
 Cursor is a persistent integer, initially 0; resume using nextCursor (also skips expired records).
+--checkpoint stores only version, scan cursor and canonical filters in an existing private directory.
+Missing state starts at zero; corrupt state or changed filters fail. Use one consumer per checkpoint.
+Checkpoint advances after stdout delivery, including empty filtered pages. A crash between stdout
+and persistence can replay a page: at-least-once delivery, without handler acknowledgements.
 Limit: 1..100 (default 50). Store: 1 MiB / 1024 records, then full; no eviction.
+Status reports metadata only; expired records still occupy retained capacity. It never resets cursors.
+Missing or unavailable stores have unknown counts and bytes (null); unavailable exits 1.
 TTL milliseconds from original receipt; receivedAt is epoch milliseconds. Read never renews TTL.
 Watch polls immediately, then every interval (100..60000 ms, default 1000); each successful poll
 emits one JSON page, including empty pages, and resumes from its emitted nextCursor.
+Use --max-pages 1..10000 to stop after that many successful pages (default: unlimited).
+Use --timeout-ms 1..3600000 to bound observation time (default: unlimited). Reaching the
+deadline completes observation successfully; it does not guarantee a reply.
+--until-reply requires --in-reply-to and --timeout-ms and rejects --max-pages. In this mode
+watch emits no ordinary pages: it keeps scanning until a page contains an envelope passing
+every supplied filter, emits that filtered page, and exits 0 only after stdout delivery and
+any checkpoint save succeed. The checkpoint still tracks scan position; a matching cursor
+persists only after its delivery, so a crash or failed sink replays it (at-least-once).
+Deadline or cancellation without a delivered match exits 1. This is observation over
+routing labels only: nothing is consumed, deleted, published or dispatched, and exit 0
+asserts a filter match, not an authenticated reply.
 Watch retries retryable contention after the interval; other failures emit their status and exit 1.
-SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0. Invalid options exit 2.
-Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
+SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0 (1 under --until-reply). Invalid options exit 2.
+An already-started delivery must settle before watch stops; cancellation cannot undo delivered data.
+Rejected asynchronous delivery stops watch with exit 1 without advancing its cursor.
+Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.
+phm comms bus peers
+peers reports the Codex peers transport behind the Locus peers contract: 'unavailable'
+when the locus CLI is missing and on any session failure; child output is never echoed.
+With --session-id it registers, relays one untrusted inbox snapshot and unregisters;
+nothing posts to the bus and no engine runs. Peers reads exit 0 ok, 1 unavailable, 2 invalid.`;
 
+
+export interface CommsBusPeersDeps {
+  /** Locus CLI presence probe; defaults to the canonical `locusAvailableAsync` check. */
+  available?: () => boolean | Promise<boolean>;
+  /** Locus peers endpoint; defaults to the `locus` CLI transport. */
+  endpoint?: LocusPeersEndpoint;
+}
 export interface CommsBusDependencies {
   signal?: AbortSignal;
+  stdin?: Readable;
   list?: typeof listBusInboxAfter;
-  emit?: (json: string) => void;
+  emit?: (json: string) => void | Promise<void>;
+  peers?: CommsBusPeersDeps;
 }
 
-type AddressFilters = { to?: string; from?: string };
+type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string };
 
-function filterPage(page: BusInboxPage, filters: AddressFilters): BusInboxPage {
-  if (page.status !== 'ok' || filters.to === undefined && filters.from === undefined) return page;
+function composeReply(values: Map<string, string>, options: BusInboxOptions, deps: CommsBusDependencies): BusInboxPost {
+  const parentId = values.get('--reply-to')!, id = values.get('--id')!, from = values.get('--from')!;
+  const ttl = Number(values.get('--ttl-ms') ?? 60000), text = values.get('--text')!;
+  // Validate all caller-supplied fields before inspecting the inbox.
+  if (!validateBusEnvelope({ id, from, to: parentId, priority: 'P3', ttl, body: { inReplyTo: parentId, text } }).ok) return { status: 'invalid' };
+  const list = deps.list ?? listBusInboxAfter;
+  let after = 0, parent: BusInboxReceipt | undefined;
+  for (let pageNumber = 0; pageNumber <= Math.ceil(BUS_INBOX_MAX_MESSAGES / BUS_INBOX_MAX_READ); pageNumber++) {
+    const page = list(after, BUS_INBOX_MAX_READ, options);
+    if (page.status !== 'ok') return { status: page.status };
+    for (const row of page.messages) {
+      if (row.envelope.id === parentId) {
+        if (parent) return { status: 'invalid' };
+        parent = row;
+      }
+    }
+    if (page.messages.length < BUS_INBOX_MAX_READ) {
+      if (!parent) return { status: 'invalid' };
+      return appendBusInbox({ id, from, to: parent.envelope.from, priority: parent.envelope.priority, ttl, body: { inReplyTo: parentId, text } }, options);
+    }
+    if (page.nextCursor <= after) return { status: 'unavailable' };
+    after = page.nextCursor;
+  }
+  return { status: 'unavailable' };
+}
+
+async function readStdin(stdin: Readable, maxBytes = MAX_BUS_ENVELOPE_BYTES, signal?: AbortSignal, onReadError?: () => void): Promise<string | null> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  const stop = (): void => { stdin.destroy(new Error('Cancelled')); };
+  if (signal?.aborted) return null;
+  signal?.addEventListener('abort', stop, { once: true });
+  try {
+    for await (const chunk of stdin) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += buffer.length;
+      if (bytes > maxBytes) return null;
+      chunks.push(buffer);
+    }
+    if (!onReadError) return Buffer.concat(chunks, bytes).toString('utf8');
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)); }
+    catch { return null; }
+  } catch {
+    onReadError?.();
+    return null;
+  } finally { signal?.removeEventListener('abort', stop); }
+}
+
+// The stable reader returns decoded text. Compare bounded raw bytes as well so
+// malformed UTF-8 cannot silently become replacement characters in a batch.
+function batchFileUtf8Matches(file: string, text: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    if (!fstatSync(fd).isFile()) return false;
+    const expected = Buffer.from(text, 'utf8');
+    if (expected.length > MAX_BUS_BATCH_BYTES) return false;
+    const actual = Buffer.alloc(expected.length + 1);
+    let size = 0;
+    while (size < actual.length) {
+      const count = readSync(fd, actual, size, actual.length - size, size);
+      if (count === 0) break;
+      size += count;
+    }
+    return size === expected.length && actual.subarray(0, size).equals(expected);
+  } catch { return false; }
+  finally { if (fd !== undefined) { try { closeSync(fd); } catch { /* best-effort close */ } } }
+}
+
+async function postBatch(args: string[], options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+  let receipt = failedBusBatch('invalid');
+  if (args.length === 2 && args[0] === '--file' && args[1] && (args[1] === '-' || !args[1].startsWith('-'))) {
+    const controller = new AbortController(), stop = (): void => controller.abort();
+    deps.signal?.addEventListener('abort', stop, { once: true });
+    process.on('SIGINT', stop); process.on('SIGTERM', stop);
+    try {
+      if (deps.signal?.aborted) stop();
+      let text: string | null = null;
+      if (!controller.signal.aborted) {
+        if (args[1] === '-') text = await readStdin(deps.stdin ?? process.stdin, MAX_BUS_BATCH_BYTES, controller.signal, () => { receipt = failedBusBatch('unavailable'); });
+        else {
+          const file = resolve(args[1]);
+          const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_BATCH_BYTES, remainingBytes: MAX_BUS_BATCH_BYTES });
+          if (read.ok) {
+            if (batchFileUtf8Matches(file, read.text)) text = read.text;
+          }
+          else if (read.reason !== 'per-file-byte-limit' && read.reason !== 'byte-limit') receipt = failedBusBatch('unavailable');
+        }
+      }
+      if (controller.signal.aborted) receipt = failedBusBatch('unavailable');
+      else if (text !== null) receipt = postBusBatch(text, options);
+    } finally {
+      deps.signal?.removeEventListener('abort', stop);
+      process.off('SIGINT', stop); process.off('SIGTERM', stop);
+    }
+  }
+  try { await deliver(JSON.stringify(receipt), deps); } catch { return 1; }
+  return receipt.complete ? 0 : receipt.status === 'invalid' ? 2 : 1;
+}
+
+function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
+  if (page.status !== 'ok' || filters.id === undefined && filters.inReplyTo === undefined && filters.to === undefined && filters.from === undefined && filters.excludeFrom === undefined && filters.priority === undefined) return page;
   return { ...page, messages: page.messages.filter(({ envelope }) =>
+    (filters.id === undefined || envelope.id === filters.id) &&
+    (filters.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
+      !Array.isArray(envelope.body) && Object.hasOwn(envelope.body, 'inReplyTo') && envelope.body.inReplyTo === filters.inReplyTo) &&
     (filters.to === undefined || envelope.to === filters.to) &&
-    (filters.from === undefined || envelope.from === filters.from)) };
+    (filters.from === undefined || envelope.from === filters.from) &&
+    (filters.excludeFrom === undefined || envelope.from !== filters.excludeFrom) &&
+    (filters.priority === undefined || envelope.priority === filters.priority)) };
 }
 
 function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
@@ -45,71 +208,209 @@ function waitForPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function watch(after: number, limit: number, interval: number, filters: AddressFilters, options: BusInboxOptions, deps: CommsBusDependencies): Promise<number> {
+function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnType<typeof openBusCheckpoint>): void | Promise<void> {
+  if (deps.emit) return deps.emit(json);
+  if (!checkpoint) { console.log(json); return; }
+  return new Promise<void>((resolve, reject) => {
+    const fail = (error: Error): void => { reject(error); };
+    process.stdout.once('error', fail);
+    try {
+      process.stdout.write(json + '\n', error => {
+        if (error) reject(error); else resolve();
+        // Keep the error listener through the write error event.
+        setImmediate(() => process.stdout.off('error', fail));
+      });
+    } catch (error) {
+      process.stdout.off('error', fail);
+      reject(error);
+    }
+  });
+}
+
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
-  const emit = deps.emit ?? console.log, list = deps.list ?? listBusInboxAfter;
+  const list = deps.list ?? listBusInboxAfter;
+  const deliverPage = (json: string): void | Promise<boolean> => {
+    const pending = deliver(json, deps, checkpoint);
+    if (pending && typeof pending.then === 'function') {
+      return pending.then(() => true, () => { console.error('bus watch: delivery failed'); return false; });
+    }
+  };
+  const deadline = timeout === undefined ? undefined : performance.now() + timeout;
+  const expired = (): boolean => deadline !== undefined && performance.now() >= deadline;
+  const timer = timeout === undefined ? undefined : setTimeout(stop, timeout);
+  let pages = 0;
   deps.signal?.addEventListener('abort', stop, { once: true });
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
     if (deps.signal?.aborted) stop();
-    while (!controller.signal.aborted) {
+    while (!controller.signal.aborted && !expired()) {
       const page = list(after, limit, options);
       if (controller.signal.aborted) break;
-      if (page.status === 'ok') {
-        emit(JSON.stringify(filterPage(page, filters)));
-        after = page.nextCursor;
-      } else if (page.status !== 'retryable') {
-        emit(JSON.stringify(page));
+      if (page.status !== 'ok' && page.status !== 'retryable') {
+        if (!expired()) {
+          const pending = deliverPage(JSON.stringify(page));
+          if (pending) await pending;
+        }
         return 1;
+      }
+      if (expired()) break;
+      if (page.status === 'ok') {
+        const filtered = filterPage(page, filters);
+        if (untilReply && filtered.status === 'ok' && filtered.messages.length === 0) {
+          // Unrelated page: advance the scan position without emitting output.
+          checkpoint?.save(page.nextCursor);
+          after = page.nextCursor;
+        } else {
+          const output = JSON.stringify(filtered);
+          if (expired()) break;
+          const pending = deliverPage(output);
+          if (pending && !await pending) return 1;
+          checkpoint?.save(page.nextCursor);
+          after = page.nextCursor;
+          if (untilReply || ++pages === maxPages) return 0;
+        }
       }
       await waitForPoll(interval, controller.signal);
     }
-    return 0;
+    return untilReply ? 1 : 0;
   } finally {
+    clearTimeout(timer);
     deps.signal?.removeEventListener('abort', stop);
     process.off('SIGINT', stop); process.off('SIGTERM', stop);
   }
 }
 
+
+/** Session ids are bounded before any I/O — the same limit the peers adapter enforces. */
+const PEERS_SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
+
+/**
+ * `phm comms bus peers [--session-id <id>]` — read-only Codex peers visibility
+ * through the Locus peers contract. The choice is off when the locus CLI is
+ * missing; every failure fails closed as 'unavailable' and child output is
+ * never echoed. With a session id the adapter registers, relays one untrusted
+ * inbox snapshot and always unregisters; nothing posts to the bus and no engine
+ * action runs. Never throws.
+ */
+async function peers(args: string[], deps: CommsBusDependencies): Promise<number> {
+  const emit = async (result: Record<string, unknown>, code: number): Promise<number> => {
+    try { await deliver(JSON.stringify(result), deps); } catch { return 1; }    return code;
+  };
+  let sessionId: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!, inline = /^--session-id=(.*)$/s.exec(token);
+    if (inline === null && token !== '--session-id') return emit({ status: 'invalid' }, 2);
+    const value = inline ? inline[1] : args[++i];
+    if (value === undefined || value === '' || sessionId !== undefined) return emit({ status: 'invalid' }, 2);
+    sessionId = value;
+  }
+  if (sessionId !== undefined && !PEERS_SESSION_ID.test(sessionId)) return emit({ status: 'invalid' }, 2);
+  const identity = { client: 'codex', transport: 'locus-peers' } as const;
+  let available = false;
+  try {
+    const probe = deps.peers?.available ?? (await import('../core/integrations/locus.js')).locusAvailableAsync;
+    available = await probe();
+  } catch { /* A probe failure is indistinguishable from a missing CLI: stay off. */ }
+  if (!available) return emit({ status: 'unavailable', peers: { ...identity, locus: 'missing' } }, 1);
+  if (sessionId === undefined) {
+    return emit({ status: 'ok', peers: { ...identity, locus: 'present', contract: 'unverified' }, read: 'peers --session-id <id>' }, 0);
+  }
+  try {
+    let messages: unknown[] = [];
+    await withCodexPeersSession({
+      sessionId,
+      endpoint: deps.peers?.endpoint,
+      relay: async (inbox) => { messages = JSON.parse(inbox.data) as unknown[]; },
+      run: async () => undefined,
+    });
+    return emit({ status: 'ok', peers: { ...identity, source: 'locus-peers', trust: 'untrusted', sessionId, messages } }, 0);
+  } catch {
+    return emit({ status: 'unavailable', peers: { ...identity } }, 1);
+  }
+}
+
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
-    args.length === 2 && ['post', 'read', 'watch'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
+    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status', 'peers'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
+  if (args[0] === 'post-batch') return postBatch(args.slice(1), options, deps);
   const [verb, ...rest] = args, values = new Map<string, string>();
   const invalid = (): number => { console.log(JSON.stringify({ status: 'invalid' })); return 2; };
+  if (verb === 'status') {
+    if (rest.length !== 0) return invalid();
+    const inspection = inspectBusInbox(options);
+    console.log(JSON.stringify(inspection));
+    return inspection.source === 'unavailable' ? 1 : 0;
+  }
+  if (verb === 'peers') return peers(rest, deps);
   if (verb !== 'post' && verb !== 'read' && verb !== 'watch') return invalid();
   for (let i = 0; i < rest.length; i++) {
-    const token = rest[i]!, inline = /^(--to|--from)=(.*)$/s.exec(token);
-    const key = inline?.[1] ?? token, value = inline ? inline[2] : rest[++i];
-    const address = key === '--to' || key === '--from';
-    const flags = verb === 'post' ? ['--file'] : verb === 'watch' ? ['--after', '--limit', '--interval-ms', '--to', '--from'] : ['--after', '--limit', '--to', '--from'];
-    if (!flags.includes(key) || values.has(key) || !value || (address ? !inline && (flags.includes(value) || /^(--to|--from)=/.test(value)) : value.startsWith('-'))) return invalid();
+    const token = rest[i]!, inline = /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=(.*)$/s.exec(token);
+    const key = inline?.[1] ?? token;
+    const label = key === '--id' || key === '--in-reply-to' || key === '--reply-to' || key === '--to' || key === '--from' || key === '--exclude-from' || key === '--text';
+    const flags = verb === 'post' ? ['--file', '--reply-to', '--id', '--from', '--text', '--ttl-ms'] : verb === 'watch' ? ['--checkpoint', '--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--until-reply', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'] : ['--checkpoint', '--after', '--limit', '--id', '--in-reply-to', '--to', '--from', '--exclude-from', '--priority'];
+    if (!flags.includes(key) || values.has(key)) return invalid();
+    if (key === '--until-reply') { values.set(key, 'true'); continue; }
+    const value = inline ? inline[2] : rest[++i];
+    if (!value || (label ? !inline && (flags.includes(value) || /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=/.test(value)) : value.startsWith('-') && !(verb === 'post' && key === '--file' && value === '-'))) return invalid();
     values.set(key, value);
   }
-  if (verb === 'post' && !values.has('--file')) return invalid();
-  for (const key of ['--after', '--limit', '--interval-ms']) {
+  if (verb === 'post' && (values.has('--file') ? values.size !== 1 : !['--reply-to', '--id', '--from', '--text'].every(key => values.has(key)))) return invalid();
+  for (const key of ['--after', '--limit', '--interval-ms', '--max-pages', '--timeout-ms', '--ttl-ms']) {
     const value = values.get(key);
     if (value !== undefined && (!/^(0|[1-9][0-9]*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return invalid();
   }
-  const filters = { to: values.get('--to'), from: values.get('--from') };
-  for (const label of [filters.to, filters.from]) {
+  const filters = { id: values.get('--id'), inReplyTo: values.get('--in-reply-to'), to: values.get('--to'), from: values.get('--from'), excludeFrom: values.get('--exclude-from'), priority: values.get('--priority') };
+  if (filters.priority !== undefined && !BUS_PRIORITIES.includes(filters.priority as BusPriority)) return invalid();
+  for (const label of [filters.id, filters.inReplyTo, filters.to, filters.from, filters.excludeFrom]) {
     if (label !== undefined && !validateBusEnvelope({ id: label, from: label, to: label, priority: 'P3', ttl: 1, body: null }).ok) return invalid();
   }
-  const after = Number(values.get('--after') ?? 0), limit = Number(values.get('--limit') ?? 50);
+  if (values.has('--checkpoint') && values.has('--after')) return invalid();
+  let after = Number(values.get('--after') ?? 0);
+  const limit = Number(values.get('--limit') ?? 50);
   if (limit < 1 || limit > 100) return invalid();
-  if (verb === 'watch') {
-    const interval = Number(values.get('--interval-ms') ?? 1000);
-    if (interval < 100 || interval > 60000) return invalid();
-    return watch(after, limit, interval, filters, options, deps);
-  }
-  let result;
-  if (verb === 'post') {
-    const file = resolve(values.get('--file')!);
-    const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
-    const parsed = read.ok ? parseBusEnvelope(read.text) : null;
-    result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
-  } else result = filterPage(listBusInboxAfter(after, limit, options), filters);
-  console.log(JSON.stringify(result));
-  return busStatusExitCode(result.status);
+  let checkpoint: ReturnType<typeof openBusCheckpoint> | undefined;
+  try {
+    if (values.has('--checkpoint')) {
+      checkpoint = openBusCheckpoint(values.get('--checkpoint')!, filters);
+      after = checkpoint.cursor;
+    }
+    if (verb === 'watch') {
+      const interval = Number(values.get('--interval-ms') ?? 1000);
+      if (interval < 100 || interval > 60000) return invalid();
+      const maxPages = values.has('--max-pages') ? Number(values.get('--max-pages')) : undefined;
+      if (maxPages !== undefined && (maxPages < 1 || maxPages > 10000)) return invalid();
+      const timeout = values.has('--timeout-ms') ? Number(values.get('--timeout-ms')) : undefined;
+      if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
+      const untilReply = values.has('--until-reply');
+      if (untilReply && (filters.inReplyTo === undefined || timeout === undefined || maxPages !== undefined)) return invalid();
+      return await watch(after, limit, interval, maxPages, timeout, filters, options, deps, checkpoint, untilReply);
+    }
+    let result;
+    if (verb === 'post') {
+      if (!values.has('--file')) {
+        result = composeReply(values, options, deps);
+      } else {
+        const input = values.get('--file')!;
+        let text: string | null;
+        if (input === '-') text = await readStdin(deps.stdin ?? process.stdin);
+        else {
+          const file = resolve(input);
+          const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
+          text = read.ok ? read.text : null;
+        }
+        const parsed = text === null ? null : parseBusEnvelope(text);
+        result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
+      }
+    } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters);
+    await deliver(JSON.stringify(result), deps, checkpoint);
+    if (result.status === 'ok' && verb === 'read') checkpoint?.save((result as BusInboxPage & { status: 'ok' }).nextCursor);
+    return busStatusExitCode(result.status);
+  } catch (error) {
+    if (!values.has('--checkpoint')) throw error;
+    console.error(`bus checkpoint: ${error instanceof Error ? error.message : 'delivery or persistence failed'}`);
+    return 1;
+  } finally { checkpoint?.close(); }
 }

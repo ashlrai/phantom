@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { StatTile } from '../../../components/charts/StatTile.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { opsRunsQuery } from './ops-runs-queries.js';
 import { LaneTargets } from './LaneTargets.js';
@@ -57,7 +60,7 @@ export function OpsRuns() {
     {data.workers.length === 0 ? <p>No workers running.</p> : <table className={runs.table} aria-label="Workers">
       <thead><tr>{['Job', 'Repo', 'Lane', 'Tier', 'Age'].map((s) => <th key={s} scope="col">{s}</th>)}</tr></thead>
       <tbody>{data.workers.map((w, i) => <tr key={`${w.job}:${i}`}>
-        <th scope="row">{w.job}</th><td>{w.repo}</td><td>{w.lane}</td><td>{w.tier}</td>
+        <th scope="row">{JOB_ID_RE.test(w.job) ? <button type="button" className={runs.jobLink} aria-label={`Open log for ${w.job}`} onClick={() => { requestWorkerLogJob(w.job); openDockPane('worker-log'); }}>{w.job}</button> : w.job}</th><td>{w.repo}</td><td>{w.lane}</td><td>{w.tier}</td>
         <td aria-label={`Worker age ${w.ageSeconds === null ? 'unknown' : `${w.ageSeconds} seconds`}`}>{ageText(w.ageSeconds)}</td>
       </tr>)}</tbody>
     </table>}

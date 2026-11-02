@@ -580,6 +580,17 @@ export interface FleetLiveSummary {
   merged7d: number | null;
   postMergeGreenPct7d: number | null;
   cycleTimeP50Ms7d: number | null;
+  /**
+   * Median of (merge:landed.landedAt − daemon:dispatch-start.ts) over merges
+   * landed in the last 7 d — the WHOLE dispatch→merge loop, not just the
+   * proposal→merge tail `cycleTimeP50Ms7d` measures. The join is runId- and
+   * proposalId-keyed (the agent-action ledger's terminal dispatch row carries
+   * both). null = unknown (no correlated sample, or the dispatch ledger could
+   * not be read). Optional: absent from a pre-change snapshot.
+   */
+  dispatchToMergeP50Ms7d?: number | null;
+  /** The same median over the prior 7 d — the "before" beside the current reading. */
+  dispatchToMergeP50MsPrior7d?: number | null;
 }
 
 /**

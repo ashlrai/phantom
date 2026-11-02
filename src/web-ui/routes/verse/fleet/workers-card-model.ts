@@ -3,7 +3,7 @@ const string = (v: unknown): string | null => typeof v === 'string' ? v : null;
 export const validJob = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/.test(v);
 export interface Worker { job: string; repo: string; lane: string; tier: string; ageSeconds: number | null }
 interface Publish { job: string; lane: string | null; url: string | null; at: string }
-export interface Workers { v: 1; generatedAt: string; workers: Worker[]; publishesLastHour: Publish[]; sources: { workers: string } }
+export interface Workers { v: 1; generatedAt: string; workers: Worker[]; publishesLastHour: Publish[]; sources: { workers: string }; switches: string[]; paused: boolean | null; runsDir: string }
 export function narrowWorkers(v: unknown): Workers | null {
   if (!record(v) || v.v !== 1 || typeof v.generatedAt !== 'string' || !record(v.sources)
     || !['healthy', 'degraded', 'missing', 'not-landed'].includes(String(v.sources.workers))
@@ -20,7 +20,15 @@ export function narrowWorkers(v: unknown): Workers | null {
       || !(row.url === null || typeof row.url === 'string') || !(row.lane === null || typeof row.lane === 'string')) return null;
     publishesLastHour.push({ job: row.job, lane: row.lane, url: row.url, at: row.at });
   }
-  return { v: 1, generatedAt: v.generatedAt, workers, publishesLastHour, sources: { workers: String(v.sources.workers) } };
+  return { v: 1, generatedAt: v.generatedAt, workers, publishesLastHour, sources: { workers: String(v.sources.workers) },
+    switches: Array.isArray(v.switches) && v.switches.every(s => typeof s === 'string') ? v.switches : [],
+    paused: typeof v.paused === 'boolean' ? v.paused : null, runsDir: typeof v.sources.runsDir === 'string' ? v.sources.runsDir : 'not-landed' };
+}
+export function emptyReason(data: Workers): { text: string; tone: 'neutral' | 'warning' | 'danger' } {
+  if (data.switches.length) return { text: 'Dispatch is paused by HOLD', tone: 'danger' };
+  if (data.paused) return { text: 'The dispatcher is paused', tone: 'warning' };
+  if (data.runsDir === 'missing') return { text: 'No fleet on this Mac yet (~/.ashlr-runs not found)', tone: 'neutral' };
+  return { text: 'No workers running. Leaders write jobs every 15 minutes.', tone: 'neutral' };
 }
 export function ageText(seconds: number): string {
   const s = Math.floor(seconds);

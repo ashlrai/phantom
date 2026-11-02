@@ -55,6 +55,9 @@ describe('SettingsSection', () => {
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Connection' })).toBeInTheDocument();
+    const fleetHeading = screen.getByRole('heading', { name: 'Fleet on this Mac' });
+    expect(fleetHeading).toHaveAttribute('data-verse-anchor', 'fleet-sources');
+    expect(fleetHeading.nextElementSibling).toHaveTextContent('Runs');
     expect(screen.getByRole('heading', { name: 'Keyboard' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'About' })).toBeInTheDocument();
   });

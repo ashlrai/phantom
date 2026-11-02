@@ -58,6 +58,9 @@ import { VERSE_ACTIVITY_SEEN_PATH, type VerseActivityCompletion } from '../../..
 import { useResourcesUi } from './resources/resources-store.js';
 import { commandChord, detectKeyPlatform, formatChord, matchKey } from './shell/command-keys.js';
 import { useGuardState } from './shell/guard-store.js';
+import { gearUpdateSpoken } from './shell/gear-update-dot.js';
+import { useAutoSelfUpdate } from './sections/useAutoSelfUpdate.js';
+import { useSelfUpdateBadge } from './shell/self-update-badge.js';
 import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
 import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
@@ -174,6 +177,7 @@ const importPalette = () => import('./shell/CommandPalette.js');
 const importDrawer = () => import('./shell/NeedsYouDrawer.js');
 const importShortcuts = () => import('./shell/ShortcutsOverlay.js');
 const importGearTray = () => import('./shell/GearTray.js');
+const importConsoleNotifications = () => import('./shell/ConsoleNotifications.js');
 // The first-run tour's store and its flow: the gate reads the one and loads the other.
 const importOnboarding = () => import('./onboarding/OnboardingGate.js');
 const importRailStatus = () => import('./shell/RailStatus.js');
@@ -187,6 +191,9 @@ const Palette = preloadedLazy(() => importPalette().then((m) => m.CommandPalette
 const Drawer = preloadedLazy(() => importDrawer().then((m) => m.NeedsYouDrawer), false);
 const Shortcuts = preloadedLazy(() => importShortcuts().then((m) => m.ShortcutsOverlay), false);
 const GearTray = lazy(() => importGearTray().then((m) => ({ default: m.GearTray })));
+const GearUpdateDot = lazy(() => import('./shell/GearUpdateDot.js').then((m) => ({ default: m.GearUpdateDot })));
+const ConsoleBell = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleBell })));
+const ConsoleNotificationCenter = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleNotificationCenter })));
 const ReviewMenu = lazy(() => import('./shell/ReviewMenu.js'));
 const PowerStatus = lazy(() => import('./power/PowerStatus.js').then((module) => ({ default: module.PowerStatus })));
 const InterjectDialog = lazy(() => import('./fleet/InterjectDialog.js').then((m) => ({ default: m.InterjectDialog })));
@@ -309,12 +316,14 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 }
 
 export function VerseApp() {
+  useAutoSelfUpdate();
   useWindowTitle();
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
   const toast = useToast();
   const activity = useActivity();
+  const updateLabel = useSelfUpdateBadge()?.label ?? null;
   const { compact } = useViewport();
   const platform = useMemo(() => detectKeyPlatform(), []);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -342,6 +351,16 @@ export function VerseApp() {
     void importGearTray().then(
       () => { if (alive) setGearReady(true); },
       (err) => console.error('[verse] settings tray failed to load', err),
+    );
+    return () => { alive = false; };
+  }, []);
+
+  const [notificationsReady, setNotificationsReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void importConsoleNotifications().then(
+      () => { if (alive) setNotificationsReady(true); },
+      (err) => console.error('[verse] notifications failed to load', err),
     );
     return () => { alive = false; };
   }, []);
@@ -413,10 +432,14 @@ export function VerseApp() {
   // URL carries one.
   useEffect(() => {
     if (typeof window === 'undefined' || !/[?&](?:chat|pane|terminal)=/.test(window.location.search)) return;
-    void import('./shell/deep-link.js').then(({ consumeDeepLink }) => {
+    void import('./shell/deep-link.js').then(async ({ consumeDeepLink, resolveDeepLinkPane }) => {
       const link = consumeDeepLink();
       if (link?.terminal) window.dispatchEvent(new CustomEvent(VERSE_OPEN_TERMINAL_EVENT, { detail: { ...link.terminal, sessionId: link.sessionId } }));
-      else if (link) openWorkbenchLink(link.sessionId, link.paneId);
+      else if (link) {
+        const registry = link.paneId ? await import('./panes/index.js') : null;
+        const paneId = resolveDeepLinkPane(link.paneId, (id) => registry?.getPane(id) != null);
+        openWorkbenchLink(link.sessionId, paneId);
+      }
     }, () => undefined);
   }, []);
   // "Go to that card": whoever raises it (drawer, Command, Mind), the shell reveals it.
@@ -560,12 +583,15 @@ export function VerseApp() {
               <ResourcesBar expanded={expanded} />
             </Suspense>
           ) : rail ? <RailCapacityButton rail={rail} expanded={expanded} /> : null}
+          <Suspense fallback={null}>
+            {notificationsReady ? <ConsoleBell expanded={expanded} compact={compact} /> : null}
+          </Suspense>
           <Tooltip label="Settings and more" placement="right" disabled={expanded || compact || trayOpen}>
             <button
               ref={gearRef}
               type="button"
               className={styles.railButton}
-              aria-label={gearPage ? `Settings and more (${gearPage.label} open)` : 'Settings and more'}
+              aria-label={`${gearPage ? `Settings and more (${gearPage.label} open)` : 'Settings and more'}${gearUpdateSpoken(updateLabel)}`}
               aria-haspopup="menu"
               aria-expanded={trayOpen}
               aria-current={gearPage ? 'page' : undefined}
@@ -573,7 +599,7 @@ export function VerseApp() {
               data-active={gearPage ? true : undefined}
               onClick={() => setTrayOpen((v) => !v)}
             >
-              <span className={styles.railIcon}><GearIcon /></span>
+              <span className={styles.railIcon}><GearIcon /><Suspense fallback={null}><GearUpdateDot /></Suspense></span>
               {expanded || compact ? <span className={styles.railLabel}>{compact ? 'More' : 'Settings'}</span> : null}
             </button>
           </Tooltip>
@@ -609,6 +635,9 @@ export function VerseApp() {
         ))}
       </main>
 
+      <Suspense fallback={null}>
+        {notificationsReady ? <ConsoleNotificationCenter /> : null}
+      </Suspense>
       {/* Lazy chunks (see "Off the first-paint path"); each mounts only while it can draw. */}
       <Suspense fallback={null}>
         {gearReady || trayOpen ? <GearTray open={trayOpen} anchorRef={gearRef} onClose={() => setTrayOpen(false)} compact={compact} /> : null}

@@ -43,14 +43,22 @@ export function ackText(state: ReturnType<typeof ackState>, _waitingSinceMs?: nu
     ? 'Waiting for the next leader pass (every 15 min)' : 'Leader status unknown';
 }
 
+export const DESKTOP_SOURCE_LABELS: readonly string[] = ['Phantom desktop', 'Chat'];
+
 export function sourceChip(source: string): string {
   const trimmed = source.trim();
-  switch (trimmed.toLowerCase()) {
-    case 'telegram': return 'Telegram';
+  const normalized = trimmed.toLowerCase();
+  if (normalized.includes('telegram')) return 'Telegram';
+  if (normalized.includes('mail')) return 'Email';
+  switch (normalized) {
     case 'phantom desktop': case 'desktop': return 'Phantom desktop';
+    case 'phantom desktop chat': case 'chat': return 'Chat';
+    case 'mobile': case 'phantom mobile': case 'mobile remote': return 'Mobile remote';
+    case 'fleet-say': return 'fleet-say';
+    case 'mcp': return 'MCP';
+    case 'api': return 'API';
     case 'phone': return 'Phone';
     case 'terminal': case 'cli': return 'Terminal';
-    case 'email': return 'Email';
     case 'page': return 'Page';
     default: return trimmed.slice(0, 24);
   }

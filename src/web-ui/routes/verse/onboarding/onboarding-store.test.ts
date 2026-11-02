@@ -87,6 +87,7 @@ describe('onboarding store', () => {
       completedAt: null,
       dismissedAt: null,
       expanded: true,
+      seenRelease: null,
       step: 2,
     });
 

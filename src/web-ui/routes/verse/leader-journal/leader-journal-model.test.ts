@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { groupRejects, ingestTone, isLeaderJournal, passSummary } from './leader-journal-model.js';
 
-const valid = () => ({ v: 1, generatedAt: '2026-01-01', sources: { planLog: 'healthy', ingestLog: 'missing', ingested: 'degraded' },
+const valid = () => ({ v: 1, generatedAt: '2026-01-01', notes: [], sources: { orchestration: 'healthy', planLog: 'healthy', ingestLog: 'missing', ingested: 'degraded' },
   passes: [{ at: '2026-01-01', sections: [{ title: 'Plan', bullets: ['First'] }] }],
   ingest: [{ verb: 'reject', file: 'job.json', reason: null }],
   ingested: [{ at: '2026-01-01', id: 'job', leader: 'alpha', lane: 'main', tier: 'mid', title: 'Job' }], rejectedLastHour: 0 });

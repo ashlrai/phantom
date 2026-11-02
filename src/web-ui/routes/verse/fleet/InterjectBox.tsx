@@ -7,6 +7,7 @@ import { useQuery, useRefresh } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { inboxTailQuery, postInterjection } from './interject-queries.js';
 import { ackState, ackText, loadDraft, newestLeaderPassMs, parseInboxAt, saveDraft, sourceChip } from './interject-ack-model.js';
+import { loadHistory, pushHistory, recall } from './interject-history.js';
 import styles from './InterjectBox.module.css';
 
 const UNAVAILABLE = 'The inbox API is not in this build yet.';
@@ -22,6 +23,8 @@ export function InterjectBox() {
   });
   const [sending, setSending] = useState(false);
   const busy = useRef(false);
+  const cursor = useRef<number | null>(null);
+  const liveDraft = useRef('');
   const [unavailable, setUnavailable] = useState(false);
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState<string | null>(null);
@@ -45,6 +48,8 @@ export function InterjectBox() {
     setSent(null);
     try {
       const result = await postInterjection(draft.trim());
+      try { pushHistory(window.localStorage, draft.trim()); } catch { /* Storage can be unavailable. */ }
+      cursor.current = null;
       updateDraft('');
       setSent(result.at);
       refresh();
@@ -73,15 +78,30 @@ export function InterjectBox() {
         onChange={event => updateDraft(event.target.value)}
         onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-          if (event.key === 'Escape' || (event.key === 'Enter' && event.metaKey)) {
+          if (event.key === 'Escape' || (event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
             event.preventDefault();
             event.stopPropagation();
-            if (event.key === 'Escape') updateDraft('');
+            if (event.key === 'Escape') { cursor.current = null; updateDraft(''); }
             else void send();
+          } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+            !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+            const { selectionStart, value } = event.currentTarget;
+            const up = event.key === 'ArrowUp';
+            const firstNewline = value.indexOf('\n');
+            if (up ? firstNewline !== -1 && selectionStart > firstNewline : selectionStart <= value.lastIndexOf('\n')) return;
+            try {
+              const history = loadHistory(window.localStorage);
+              const next = recall(history, cursor.current, up ? 'up' : 'down');
+              if (next.cursor === null && cursor.current === null) return;
+              if (cursor.current === null) liveDraft.current = draft;
+              cursor.current = next.cursor;
+              event.preventDefault();
+              updateDraft(next.text ?? liveDraft.current);
+            } catch { /* Storage can be unavailable. */ }
           }
         }} />
       <div className={styles.row}>
-        <span>⌘↵ send · Esc clear</span>
+        <span>⌘↵ or Ctrl↵ send · ↑ history · Esc clear</span>
         <span aria-live="polite">{draft.length > 5_000 ? `${draft.length.toLocaleString('en-US')} / 6,000` : ''}</span>
         <Button type="submit" variant="primary" size="sm" disabled={!canSend}>{sending ? 'Sending…' : 'Send'}</Button>
       </div>

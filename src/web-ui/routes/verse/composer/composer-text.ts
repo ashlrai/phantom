@@ -84,7 +84,7 @@ export function mentionFor(match: VerseFileMatch, primaryRoot: string | null): s
 // Slash commands
 // ---------------------------------------------------------------------------
 
-export type SlashCommandId = 'fleet' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
+export type SlashCommandId = 'job' | 'bus' | 'fleet' | 'lane' | 'release' | 'pane' | 'handoff' | 'compact' | 'new' | 'plan' | 'effort' | 'model';
 
 export interface SlashCommand {
   id: SlashCommandId;
@@ -94,13 +94,18 @@ export interface SlashCommand {
 
 /** Commands offered by the composer. */
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
+  { id: 'job', title: '/job', description: 'Hand the fleet a Phantom job: /job [lane=codex-personal|devin|claude|codex-local] [tier=frontier|work|mid|fast] <what to build>' },
   { id: 'handoff', title: '/handoff', description: 'Continue in a fresh chat with a handoff note' },
   { id: 'compact', title: '/compact', description: 'Summarise earlier turns to free context (sent as a turn)' },
   { id: 'new', title: '/new', description: 'Start a new chat on this seat' },
-  { id: 'plan', title: '/plan', description: 'Switch this chat to Plan mode — nothing is edited' },
+  { id: 'plan', title: '/plan', description: 'Run one fleet planner pass: /plan [reason]' },
   { id: 'effort', title: '/effort', description: 'Choose the reasoning effort' },
   { id: 'model', title: '/model', description: 'Choose the model' },
+  { id: 'bus', title: '/bus', description: 'Post to the agent bus: /bus <to> <text> (to = leaders, an agent name, or a job id)' },
   { id: 'fleet', title: '/fleet', description: 'Send a message to the fleet leaders’ inbox' },
+  { id: 'lane', title: '/lane', description: 'Set a fleet lane’s worker target: /lane <lane> <n>' },
+  { id: 'release', title: '/release', description: 'Release a fleet lane hold: /release <lane> [reason]' },
+  { id: 'pane', title: '/pane', description: 'Open a dock pane: /pane <name>' },
 ];
 
 /** Commands whose id or title starts with (then contains) the query. */
@@ -158,8 +163,69 @@ export function readFileAsBase64(file: Blob): Promise<string> {
   });
 }
 
+/** Parse a bus command without sending malformed input as a chat turn. */
+export function parseBusCommand(draft: string): { to: string; text: string } | { error: string } | null {
+  if (!/^\/bus(?=\s|$)/.test(draft)) return null;
+  const args = draft.slice('/bus'.length).trim();
+  if (!args) return { error: 'Use /bus <to> <text> to post to the agent bus.' };
+  const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(args)!;
+  const to = match[1]!;
+  if (to.length > 128 || !/^[\x21-\x7e]+$/.test(to)) return { error: 'Enter a printable ASCII recipient of at most 128 characters.' };
+  const text = (match[2] ?? '').trim();
+  if (!text) return { error: 'Enter a message to post to the agent bus.' };
+  return { to, text };
+}
+
 /** Parse only a leading fleet command; the inbox bounds the trimmed payload. */
 export function parseFleetCommand(draft: string): { text: string } | null {
   const match = /^\/fleet\s+(\S[\s\S]*)$/.exec(draft);
   return match ? { text: match[1]!.trim().slice(0, FLEET_RUNS_INBOX_MAX_CHARS) } : null;
+}
+
+/** Resolve a pane by id or a unique id/title prefix. */
+export function parsePaneCommand(draft: string, panes: ReadonlyArray<{ id: string; title: string }>): { id: string; title: string } | { error: string } | null {
+  if (!/^\/pane(?=\s|$)/.test(draft)) return null;
+  const name = draft.slice('/pane'.length).trim();
+  if (!name) return { error: 'Use /pane <name> to open a dock pane.' };
+  const query = name.toLowerCase();
+  const exact = panes.find((pane) => pane.id.toLowerCase() === query);
+  if (exact) return { id: exact.id, title: exact.title };
+  const normalize = (value: string) => value.toLowerCase().replace(/^fleet-/, '');
+  const prefix = normalize(query);
+  const matches = prefix ? panes.filter((pane) => normalize(pane.id).startsWith(prefix) || normalize(pane.title).startsWith(prefix)) : [];
+  if (matches.length === 1) return { id: matches[0]!.id, title: matches[0]!.title };
+  if (matches.length > 1) return { error: `Ambiguous pane: ${matches.slice(0, 8).map((pane) => pane.title).join(', ')}` };
+  return { error: `No pane named ${name}` };
+}
+
+/** Parse a lane command without allowing malformed commands to become chat turns. */
+export function parseLaneCommand(draft: string): { lane: string; target: number } | { error: string } | null {
+  if (!/^\/lane(?=\s|$)/.test(draft)) return null;
+  const parts = draft.trim().split(/\s+/);
+  if (parts.length !== 3) return { error: 'Use /lane <lane> <n> to set a worker target.' };
+  const lane = parts[1]!;
+  if (!/^[a-z][a-z0-9-]{1,39}$/.test(lane)) return { error: 'Enter a valid lane name (2–40 lowercase letters, digits or hyphens).' };
+  const rawTarget = parts[2]!;
+  const target = Number(rawTarget);
+  if (!/^\d+$/.test(rawTarget) || !Number.isSafeInteger(target) || target > 999) {
+    return { error: 'Enter a whole-number target from 0 to 999.' };
+  }
+  return { lane, target };
+}
+
+/** Parse a release command without allowing malformed commands to become chat turns. */
+export function parseReleaseCommand(draft: string): { lane: string; reason: string } | { error: string } | null {
+  if (!/^\/release(?=\s|$)/.test(draft)) return null;
+  const args = draft.slice('/release'.length).trim();
+  if (!args) return { error: 'Use /release <lane> [reason] to release a lane hold.' };
+  const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(args)!;
+  const lane = match[1]!;
+  if (!/^[a-z][a-z0-9-]{1,39}$/.test(lane)) return { error: 'Enter a valid lane name (2–40 lowercase letters, digits or hyphens).' };
+  return { lane, reason: (match[2] ?? '').trim().slice(0, 200).trim() };
+}
+
+/** Consume planner commands locally, with the same reason bound as release. */
+export function parsePlanCommand(draft: string): { reason: string } | null {
+  if (!/^\/plan(?=\s|$)/.test(draft)) return null;
+  return { reason: draft.slice('/plan'.length).trim().slice(0, 200).trim() };
 }

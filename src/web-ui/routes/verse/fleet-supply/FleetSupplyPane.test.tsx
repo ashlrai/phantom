@@ -12,7 +12,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it('renders demand, lane counts, waiting, held reason and assumptions', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(supplyFixture())));
   render(<FleetSupplyPane {...props} />);
-  expect(await screen.findByRole('heading', { name: 'Write 5 more job files' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Write 5 more job files · Shortfall 5 slots' })).toBeInTheDocument();
   const rows = within(screen.getByRole('table')).getAllByRole('row');
   expect(rows).toHaveLength(4);
   expect(within(rows[1]).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['3/8', '5', '2', '3', '4']);
@@ -44,12 +44,12 @@ it('fetches and polls every ten seconds only while visible', async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetSupplyPane {...props} />); });
-  expect(fetcher).toHaveBeenCalledTimes(1);
-  await act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
-  expect(fetcher).toHaveBeenCalledTimes(1);
-  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(fetcher).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(fetcher).toHaveBeenCalledTimes(4);
   view.rerender(<FleetSupplyPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(4);
 });

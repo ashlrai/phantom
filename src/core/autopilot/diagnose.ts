@@ -10,7 +10,8 @@
  *   3. a live recut supersedes it      → wait on the replacement, close this
  *      PR once it merged, stop when it died unmerged or the head moved
  *   4. a merge conflict with the base  → recut: replay the PR's changes onto
- *      a fresh branch cut from the current base and open a replacement PR
+ *      a fresh branch cut from the current base, open a replacement PR and
+ *      requeue it through the merge queue when the lane itself was queued
  *      (the old PR is closed only after the recut merges, never before)
  *   5. the base must join the head     → merge-base (merge, never rebase): a
  *      head a strict base calls behind, or a source-binding refusal — the
@@ -61,6 +62,8 @@ export interface PrView {
   /** null while GitHub is still computing mergeability. */
   mergeable: boolean | null;
   mergeableState: string;
+  /** Auto-merge armed: GitHub merges or merge-queues the PR once requirements pass. */
+  autoMerge: boolean;
 }
 
 export interface ReviewItem {
@@ -116,10 +119,12 @@ export interface AutopilotState {
   pushes: number;
   /**
    * The replacement cut from this head: its branch, its PR number (0 until the
-   * open-PR call confirmed one), and the head it was cut from. While set, this
-   * PR is superseded — it waits for the recut and closes after it merges.
+   * open-PR call confirmed one), and the head it was cut from. `queued` is set
+   * once the recut re-entered the merge queue, so a repeated event never asks
+   * GitHub twice. While set, this PR is superseded — it waits for the recut
+   * and closes after it merges.
    */
-  recut?: { branch: string; number: number; fromHead: string };
+  recut?: { branch: string; number: number; fromHead: string; queued?: boolean };
   /** Fix attempts per failure signature, and `merge-base:<head>:<base>`/`recut:<head>:<base>` attempts. */
   attempts: Record<string, number>;
   /** Heads the autopilot pushed from (a stale read of one is never acted on twice). */

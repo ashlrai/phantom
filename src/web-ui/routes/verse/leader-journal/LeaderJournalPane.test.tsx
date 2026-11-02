@@ -4,7 +4,7 @@ import { evictAll } from '../../../data/cache.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { LeaderJournalPane } from './LeaderJournalPane.js';
 
-const data = () => ({ v: 1, generatedAt: '2026-01-01T12:05:00Z', sources: { planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
+const data = () => ({ v: 1, generatedAt: '2026-01-01T12:05:00Z', notes: [], sources: { orchestration: 'healthy', planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
   passes: [
     { at: '2026-01-01T12:00:00Z', sections: [{ title: 'Earlier', bullets: ['Old plan'] }] },
     { at: '2026-01-01T12:04:00Z', sections: [{ title: 'Plan', bullets: ['Inspect the queue', 'Start work'] }] },
@@ -53,7 +53,7 @@ describe('LeaderJournalPane', () => {
     expect(await screen.findByText(/HTTP 500/)).toBeInTheDocument();
   });
   it('explains missing sources and empty data', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...data(), sources: { planLog: 'missing', ingestLog: 'missing', ingested: 'missing' }, passes: [], ingest: [], ingested: [], rejectedLastHour: null })));
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...data(), notes: [], sources: { orchestration: 'healthy', planLog: 'missing', ingestLog: 'missing', ingested: 'missing' }, passes: [], ingest: [], ingested: [], rejectedLastHour: null })));
     render(<LeaderJournalPane {...props} />);
     expect(await screen.findByText('Plan log source missing.')).toBeInTheDocument();
     expect(screen.getByText('Ingest log source missing.')).toBeInTheDocument();

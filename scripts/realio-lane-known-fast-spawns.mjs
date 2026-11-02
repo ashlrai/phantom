@@ -17,6 +17,8 @@
  * move to REAL_IO_TEST_FILES instead.
  */
 export const KNOWN_FAST_SPAWN_FILES = [
+  'test/resources-local-omlx-probe.test.ts', // Bounded loopback fixture; slowest case is the 2s timeout.
+  'test/resources-local-omlx-probe-undefined-req-31.test.ts', // Bounded loopback fixture; single sub-second case.
   'test/cycle-emit.test.ts', // Three offline Node children, each bounded to 1s and isolated HOME.
   'test/changelog-sync.test.ts', // 1.22s slowest test, 2026-10-26 JSON fixture run; local Node/git only, no network
   'test/grokbot-lane.test.ts', // 0.37s max on 2026-10-26; bounded loopback webhook, mocked Secrets child
@@ -81,10 +83,4 @@ export const KNOWN_FAST_SPAWN_FILES = [
   // literal in the test's own pattern data ('execSync("ls")'), not a call —
   // the file spawns nothing. 0.007s slowest test (2026-10-28).
   'test/cross-review.test.ts', // <0.1s
-  // One real `node scripts/audit-affected-map.mjs` child per run against a
-  // temp fixture root — no git, no network. 0.82s slowest test (2026-10-28).
-  'test/affected-map-audit.test.ts', // 0.8s
-  // Real `bash -c` children running a stubbed curl + a fixture git dir — all
-  // hermetic, no network. 0.99s slowest test (2026-10-28).
-  'test/m30.merge-queue-reaper.test.ts', // 1.0s
 ];

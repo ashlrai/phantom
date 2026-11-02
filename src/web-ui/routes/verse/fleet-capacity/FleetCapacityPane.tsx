@@ -1,11 +1,19 @@
+import { laneModelsQuery } from './lane-models-query.js';
+import { laneModelLine, mismatchText, laneModelsHeadline } from './lane-models-model.js';
 import { useMemo, useState } from 'react';
 import type { RunsSample } from '../../../../core/fleet/runs-history.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
+import { NoFleetNotice } from '../fleet/NoFleetNotice.js';
+import { isNoFleet } from '../fleet/no-fleet.js';
+import { fleetUsageRunsQuery } from '../fleet-usage/fleet-usage-queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { headline, laneSeries, launchGaps, MAX_GAP_MS, sparkPath, type SparkPoint } from './capacity-model.js';
+import { headline, laneSeries, launchGaps, MAX_GAP_MS, sparkPath, stallHeadline, type SparkPoint } from './capacity-model.js';
 import { runsHistoryQuery, type CapacityHours } from './capacity-queries.js';
 import styles from './fleet-capacity.module.css';
+import { laneHeldText } from './lane-held-text.js';
+import { truthHeadline, verdictText, verdictTone } from './lane-truth-model.js';
+import { laneTruthQuery } from './lane-truth-queries.js';
 
 const WIDTH = 240;
 const HEIGHT = 48;
@@ -34,28 +42,49 @@ function Chart({ points, samples, held, label }: { points: SparkPoint[]; samples
   </svg>;
 }
 
-export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
+export function FleetCapacityPane({ visible, host }: Pick<PaneProps, 'visible'> & Partial<Pick<PaneProps, 'host'>>) {
   const [hours, setHours] = useState<CapacityHours>(24);
   const query = useMemo(() => runsHistoryQuery(hours), [hours]);
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const active = visible && sectionVisible && documentVisible;
   const read = useQuery(query, { enabled: active, freshMs: 0 });
+  const snapshot = useQuery(fleetUsageRunsQuery, { enabled: active });
+  const models = useQuery(laneModelsQuery, { enabled: active });
+  const refetchModels = useRefetch(laneModelsQuery);
+  const refreshModels = useRefresh(laneModelsQuery);
+  const truth = useQuery(laneTruthQuery, { enabled: active });
+  const refetchSnapshot = useRefetch(fleetUsageRunsQuery);
+  const refreshSnapshot = useRefresh(fleetUsageRunsQuery);
+  const refetchTruth = useRefetch(laneTruthQuery);
+  const refreshTruth = useRefresh(laneTruthQuery);
   const refetch = useRefetch(query);
   const refresh = useRefresh(query);
-  usePollWhileVisible(refetch, 60_000, { enabled: visible, refreshOnShow: false });
+  usePollWhileVisible(() => { refetch(); refetchSnapshot(); refetchTruth(); refetchModels(); }, 60_000, { enabled: visible, refreshOnShow: false });
   const data = read.data;
+  const runs = snapshot.data && typeof snapshot.data === 'object' && !Array.isArray(snapshot.data)
+    ? snapshot.data as Record<string, unknown> : {};
+  const liveLanes = Array.isArray(runs.lanes) ? runs.lanes : [];
+  const personal = runs.codexPersonal && typeof runs.codexPersonal === 'object' && !Array.isArray(runs.codexPersonal)
+    ? runs.codexPersonal as Record<string, unknown> : {};
+  const resetsAt = typeof personal.resetsAt === 'string' ? personal.resetsAt : null;
   const now = Date.now();
   const samples = data ? [...data.samples].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) : [];
+  const noFleet = !!data && samples.length === 0 && isNoFleet(data.sourceState);
   const lanes = data ? laneSeries(data, now) : [];
+  const stall = stallHeadline(lanes, now);
   const gaps = data ? launchGaps(data) : [];
+  const truthLanes = truth.data?.source === 'ok' ? truth.data.lanes : [];
+  const truthHeadlineText = truthHeadline(truthLanes);
   const workerPoints = samples.map((sample) => ({ atMs: Date.parse(sample.at), running: sample.workers, target: sample.leaders }));
 
   return <div className={styles.pane} aria-label="Capacity">
     <header className={styles.header}>
-      <p className={styles.headline}>{data ? headline(data, now) : 'Fleet capacity history'}</p>
-      <button type="button" className={styles.button} onClick={refresh}>Refresh</button>
+      <p className={styles.headline}>{data && !noFleet ? headline(data, now) : 'Fleet capacity history'}</p>
+      <button type="button" className={styles.button} onClick={() => { refresh(); refreshSnapshot(); refreshTruth(); refreshModels(); }}>Refresh</button>
     </header>
+    {laneModelsHeadline(models.data) ? <p className={styles.muted}>{laneModelsHeadline(models.data)}</p> : null}
+    {truthHeadlineText ? <p className={styles.truth} data-testid="lane-truth-headline">{truthHeadlineText}</p> : null}
     <div className={styles.controls} role="group" aria-label="History window">
       {([6, 24, 72] as const).map((value) => <button type="button" className={styles.button} aria-pressed={hours === value} key={value} onClick={() => setHours(value)}>{value} h</button>)}
     </div>
@@ -63,18 +92,30 @@ export function FleetCapacityPane({ visible }: Pick<PaneProps, 'visible'>) {
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Capacity history is unavailable.' : 'Reading capacity history…'}</p>
       : <>
         {read.status === 'error' ? <p className={styles.muted} role="status">Capacity history could not refresh. Showing the last reading.</p> : null}
+        {noFleet ? <NoFleetNotice /> : null}
         {samples.length > 0 ? <>
           <p className={styles.muted}>Solid: running · dashed: target · shaded: held · muted band: paused. Breaks indicate missing observations.</p>
           <p className={styles.muted}>Observed: {new Date(samples[0].at).toLocaleString()} – {new Date(samples[samples.length - 1].at).toLocaleString()}</p>
+          {stall ? <p className={styles.stall} role="status">{stall}</p> : null}
           <section className={styles.section} aria-labelledby="capacity-lanes"><h3 id="capacity-lanes" className={styles.title}>Lane capacity</h3>
             {lanes.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>{lanes.map((lane) => {
               const points = samples.map((sample) => {
                 const value = sample.lanes.find((item) => item.lane === lane.lane);
                 return { atMs: Date.parse(sample.at), running: value?.running ?? null, target: value?.target ?? null };
               });
+              const live = liveLanes.find((item: unknown) => item && typeof item === 'object' && 'lane' in item && item.lane === lane.lane) as Record<string, unknown> | undefined;
+              const heldText = live ? laneHeldText({ lane: lane.lane, held: live.held === true, heldReason: typeof live.heldReason === 'string' ? live.heldReason : null }, { resetsAt }) : null;
+              const modelLine = laneModelLine(lane.lane, models.data, now);
+              const mismatch = mismatchText(lane.lane, models.data);
+              const truthRow = truthLanes.find((row) => row.lane === lane.lane);
+              const truthLine = truthRow ? verdictText(truthRow) : null;
               return <li key={lane.lane} className={styles.lane}>
-                <div className={styles.line}><strong>{lane.lane}</strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min</span></div>
+                <div className={styles.line}><strong><button type="button" className={styles.laneButton} aria-label={`Open ${lane.lane} in Lanes`} onClick={() => host?.openPane('fleet-lanes')}>{lane.lane}</button></strong><span>{percent(lane.fillPct)} of target · {format(lane.idleSlotMinutes)} idle slot-minutes · {format(lane.heldMinutes)} held min{lane.stallMinutes > 0 ? ` · ${format(lane.stallMinutes)} min stalled` : ''}</span></div>
                 <Chart points={points} samples={samples} held={lane.lane} label={`${lane.lane}: ran at ${percent(lane.fillPct)} of target, ${format(lane.idleSlotMinutes)} idle slot-minutes`} />
+                {modelLine ? <p className={styles.muted} data-testid="lane-models">{modelLine}</p> : null}
+                {mismatch ? <p className={styles.truth} data-tone="warning">{mismatch}</p> : null}
+                {heldText ? <p className={styles.muted} data-testid="lane-held">{heldText}</p> : null}
+                {truthLine ? <p className={styles.truth} data-tone={verdictTone(truthRow!.verdict) ?? undefined} data-testid="lane-truth">{truthLine}</p> : null}
               </li>;
             })}</ul>}
           </section>

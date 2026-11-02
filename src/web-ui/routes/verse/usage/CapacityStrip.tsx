@@ -5,9 +5,10 @@
  * too, so every surface answers "how much of each seat is left" the same way.
  *
  *   [C] Claude Max · max            ● connected                 [actions]
- *       usable · 62% of 5-hour window used
- *       5-hour window  ▇▇▇▇▇▇▇░░░░│▨▨▨  62%   resets 7pm
+ *       usable · 40% of weekly window used
  *       weekly window  ▇▇▇░░░░░░░░│▨▨▨  40%   resets Thu
+ *       Anthropic removed the 5-hour limit on this plan. Only the weekly
+ *       window applies.
  *       Reserved for you 40% · Autonomy: Eligible
  *
  * Each bar reads left to right: used (solid), what autonomy may still use

@@ -2,8 +2,22 @@
  * Policy for the opt-in phone gateway. It is separate from the Hub server:
  * a remote browser must never reach the local token prompt, desktop assets,
  * or the general /api/* router.
+ *
+ * Reviewed fleet surface for the mobile remote: GET fleet/runs,
+ * fleet/control/switches, fleet/control/lanes and fleet/control/holds; GET
+ * fleet/runs/inbox with a bounded limit and optional source filter; GET
+ * fleet/live/bus and fleet/live/queue bare or with a bounded limit; GET
+ * fleet/live/drop-jobs and agent-bus (the latter with bounded after/limit);
+ * POST fleet/live/drop-jobs behind step-up and agent-bus without step-up; GET
+ * fleet/job with a single id matching the fleet job grammar; POST
+ * fleet/runs/inbox {text, source?} without step-up (a message, not a
+ * control); POST fleet/control/switches {id, on}, fleet/control/lanes
+ * {lane, target} and fleet/control/holds {lane, action:'release', reason?}
+ * behind step-up. Every path and body shape is exact — no wildcards.
  */
 import { timingSafeEqual } from 'node:crypto';
+import { validateBusEnvelope } from '../fleet/bus-envelope.js';
+import { validateDropJob } from '../fleet/drop-job-writer.js';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
 
 export interface RemoteRequest {
@@ -28,8 +42,19 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/cloud',
   '/api/verse/leader',
   '/api/verse/leader/directives',
+  '/api/verse/leader/resources',
   '/api/verse/cloud/previews',
   '/api/verse/devin/previews',
+  '/api/verse/fleet/runs',
+  '/api/verse/fleet/ci-runs',
+  '/api/verse/fleet/live/bus',
+  '/api/verse/fleet/live/queue',
+  '/api/verse/fleet/live/drop-jobs',
+  '/api/verse/agent-bus',
+  '/api/verse/fleet/control/switches',
+  '/api/verse/fleet/control/lanes',
+  '/api/verse/fleet/control/holds',
+  '/api/verse/release-pr',
 ]);
 
 export type RemoteRouteDecision =
@@ -52,6 +77,20 @@ const HEAD_SHA = /^[0-9a-f]{40}$/;
 const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 // Match the opaque cursor emitted by the activity route without accepting arbitrary query strings.
 const ACTIVITY_CURSOR = /^v1\.[0-9a-f]{8}\.[et]\.\d{1,15}$/;
+// Fleet inbox read/post share this source label grammar with the Hub route.
+const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
+// Body shape only: the Hub re-checks switch ids against RUNS_SWITCHES and lane
+// ids against LANE_ID_RE plus per-lane bounds, so the gateway bounds format.
+const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
+const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
+// Exact JOB_ID_RE from src/web-ui/routes/verse/fleet-job-log/worker-log-model.ts; duplicated
+// so this module stays free of server-side imports. The CRLF check is load
+// bearing: `$` matches before a trailing line terminator, so the bare pattern
+// would accept a newline-suffixed id the Hub rejects.
+const FLEET_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
+const isFleetJobIdParam = (v: string): boolean => !/[\r\n]+$/.test(v) && FLEET_JOB_ID.test(v);
+const FLEET_READ_LIMIT = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 200;
+const FLEET_CI_HOURS = (v: string): boolean => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 168;
 
 function exactParams(params: URLSearchParams, shape: Record<string, (value: string) => boolean>): boolean {
   const keys = [...params.keys()];
@@ -79,9 +118,12 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
       && ACTION_ID.test(path.slice('/api/verse/leader/directives/'.length))) return { kind: 'write', path, stepUp: true };
     if (method !== 'POST') return { kind: 'deny' };
     if (path === '/api/verse/activity/seen' || path === '/api/verse/sessions'
-      || path === '/api/verse/leader/thread' || path === '/api/verse/leader/directives') return { kind: 'write', path, stepUp: false };
+      || path === '/api/verse/leader/thread' || path === '/api/verse/leader/directives'
+      || path === '/api/verse/fleet/runs/inbox' || path === '/api/verse/agent-bus') return { kind: 'write', path, stepUp: false };
     if (path === '/api/verse/daemon' || path === '/api/verse/budget' || path === '/api/verse/authority'
-      || path === '/api/verse/fleet/live'
+      || path === '/api/verse/fleet/live' || path === '/api/verse/fleet/live/drop-jobs'
+      || path === '/api/verse/fleet/control/switches' || path === '/api/verse/fleet/control/lanes'
+      || path === '/api/verse/fleet/control/holds'
       || path === '/api/verse/leader') return { kind: 'write', path, stepUp: true };
     const inbox = /^\/api\/inbox\/([^/]+)\/(approve|reject)$/.exec(path);
     if (inbox && PROPOSAL_ID.test(inbox[1]!)) return { kind: 'write', path, stepUp: true };
@@ -125,6 +167,22 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     exactParams(params, { limit: (v) => v === '50' })
     || exactParams(params, { limit: (v) => v === '50', before: (v) => THREAD_ID.test(v) })
   )) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/runs/inbox' && (
+    exactParams(params, { limit: FLEET_READ_LIMIT })
+    || exactParams(params, { limit: FLEET_READ_LIMIT, source: (v) => FLEET_INBOX_SOURCE.test(v) })
+  )) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/ci-runs'
+    && exactParams(params, { hours: FLEET_CI_HOURS })) return { kind: 'read', path };
+  if ((path === '/api/verse/fleet/live/bus' || path === '/api/verse/fleet/live/queue')
+    && exactParams(params, { limit: FLEET_READ_LIMIT })) return { kind: 'read', path };
+  if (path === '/api/verse/agent-bus') {
+    const after = (v: string): boolean => /^[0-9]{1,12}(?![\s\S])/.test(v);
+    const limit = (v: string): boolean => /^[0-9]+(?![\s\S])/.test(v) && FLEET_READ_LIMIT(v);
+    if (exactParams(params, { after }) || exactParams(params, { limit })
+      || exactParams(params, { after, limit })) return { kind: 'read', path };
+  }
+  if (path === '/api/fleet/job'
+    && exactParams(params, { id: isFleetJobIdParam })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints'
     && exactParams(params, { chatId: (v) => CHECKPOINT_ID.test(v) })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints/diff') {
@@ -179,9 +237,26 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
     && body.action === 'resume-repo' && typeof body.repo === 'string' && REPO.test(body.repo)
     && (body.kind === undefined || (typeof body.kind === 'string'
       && ['quarantine', 'owner-hold', 'leader-pause', 'cooldown'].includes(body.kind)));
+  if (path === '/api/verse/fleet/live/drop-jobs') return keys(body, ['id', 'lane', 'tier', 'body'])
+    && validateDropJob({ id: body.id, lane: body.lane, tier: body.tier, body: body.body }).ok;
+  if (path === '/api/verse/agent-bus') return validateBusEnvelope(body).ok;
   if (path === '/api/verse/leader') return (keys(body, ['action', 'actionId'])
     && body.action === 'veto' && boundedText(body.actionId, 128))
     || (keys(body, ['action', 'itemId']) && body.action === 'dismiss' && boundedText(body.itemId, 256));
+  if (path === '/api/verse/fleet/runs/inbox') return keys(body, ['text', 'source'])
+    && boundedText(body.text, 4_000)
+    && (body.source === undefined || (typeof body.source === 'string' && FLEET_INBOX_SOURCE.test(body.source)));
+  if (path === '/api/verse/fleet/control/switches') return keys(body, ['id', 'on'])
+    && typeof body.id === 'string' && FLEET_SWITCH_ID.test(body.id)
+    && typeof body.on === 'boolean';
+  if (path === '/api/verse/fleet/control/lanes') return keys(body, ['lane', 'target'])
+    && typeof body.lane === 'string' && FLEET_LANE_ID.test(body.lane)
+    && Number.isSafeInteger(body.target) && (body.target as number) >= 0 && (body.target as number) <= 64;
+  // Release is the only action; the Hub refuses any hold a person placed.
+  if (path === '/api/verse/fleet/control/holds') return keys(body, ['lane', 'action', 'reason'])
+    && typeof body.lane === 'string' && FLEET_LANE_ID.test(body.lane)
+    && body.action === 'release'
+    && (body.reason === undefined || (typeof body.reason === 'string' && body.reason.length <= 120));
   if (path === '/api/verse/leader/thread') return keys(body, ['text', 'replyTo'])
     && boundedText(body.text, 16_384)
     && (body.replyTo === undefined || (typeof body.replyTo === 'string' && THREAD_ID.test(body.replyTo)));

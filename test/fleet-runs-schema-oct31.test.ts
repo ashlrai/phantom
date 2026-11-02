@@ -36,6 +36,7 @@ const healthy: FleetRunsApiDeps = {
   now: () => Date.parse(at),
   readRunsDir: async () => ({ lastTick: at, paused: false, memFreePct: 42, diskFreeGb: 10, switches: ['fake-switch'], claudeLane: 'fake-lane',
     lanes: [{ lane: 'fake-lane', running: 1, target: 2, queued: 3, held: false, heldReason: null, tokensLastHour: 4, merged24h: 5, mergeRate24h: 0.5 }],
+    claimed: [{ job: 'fake-queued', lane: 'fake-lane', tier: 'fake-tier', at }],
     publishesLastHour: [{ job: 'fake-job', lane: null, url: null, at }], events: [{ at, kind: 'fake', text: 'example' }],
     drop: { pending: [{ lane: 'fake-lane', file: 'fake.md' }], done: 1 } }),
   listWorkers: async () => ({ workers: [{ job: 'fake-job', repo: 'fake/repo', lane: 'fake-lane', tier: 'fake-tier', ageSeconds: 1 }],
@@ -65,6 +66,7 @@ describe('fleet runs JSON Schema', () => {
     expect(Object.values(value.sources as object)).toEqual(Array(5).fill('healthy'));
     expect(validates(value, schema)).toBe(true);
     expect(validates({ ...value, extra: true }, schema)).toBe(false);
+    expect(validates({ ...value, claimed: [{ job: 'fake-queued' }] }, schema)).toBe(false);
     const lane = { ...(value.lanes as Record<string, unknown>[])[0] };
     delete lane.held;
     expect(validates({ ...value, lanes: [lane] }, schema)).toBe(false);

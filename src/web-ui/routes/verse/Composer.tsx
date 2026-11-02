@@ -39,7 +39,7 @@
  * ATTACHMENTS: [+] / ⌘U, paste or drop. Each becomes a private copy on the
  * server and an `@path` token in the text, which the engine grants with
  * exactly that folder. `@` fuzzy-finds project files; `/` at the start offers
- * handoff, compact, new, plan, effort, model, fleet.
+ * handoff, compact, new, plan, effort, model, fleet, lane, release and pane.
  *
  * At 375px (or a column too narrow for the pickers) the footer folds to
  * [+] [mic] · seat · ⋯ (the pickers in a bottom sheet) · Send.
@@ -53,7 +53,16 @@ import type { VerseSeat } from '../../data/api-types.js';
 import type { VerseEffort, VersePermissionMode } from '../../../core/verse/workbench-types.js';
 import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
 import { readFailureReason } from '../../data/client.js';
-import { postFleetInterjection } from './composer/fleet-interject.js';
+import { refetchQuery } from '../../data/cache.js';
+import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './composer/fleet-interject.js';
+import { runBusCommand } from './composer/bus-post-command.js';
+import { parseJobCommand, runJobCommand } from './composer/job-drop-command.js';
+import { runPlanCommand } from './composer/planner-run-command.js';
+import { decidePlannerWake, getLastPlannerWakeAt, wakePlannerForOrder } from './composer/planner-wake.js';
+import { runReleaseCommand } from './composer/lane-release-command.js';
+import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
+import { laneTargetsQuery } from './ops/lane-targets-queries.js';
+import { opsRunsQuery } from './ops/ops-runs-queries.js';
 import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
 import { IconPlus } from '../../components/primitives/icons.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
@@ -68,7 +77,12 @@ import {
   applyCompletion,
   insertAttachmentRef,
   matchSlashCommands,
+  parseBusCommand,
   parseFleetCommand,
+  parseLaneCommand,
+  parseReleaseCommand,
+  parsePlanCommand,
+  parsePaneCommand,
   mentionFor,
   removeAttachmentRef,
   type ComposerTrigger,
@@ -83,7 +97,11 @@ import { SuggestMenu, suggestOptionId, type SuggestItem } from './composer/Sugge
 import { useAttachmentDrafts, useFollowUpQueue, useSessionControls } from './composer/useComposerData.js';
 import { FOOTER_FOLD_SHEET, useFooterFold } from './composer/useFooterFold.js';
 import { useTokenGate } from './context/use-token-gate.js';
+import { openDockPane } from './dock/dock-store.js';
+import { setFocusMode } from './shell/focus-mode.js';
+import { setVerseSection } from './verse-ui-store.js';
 import { ComposerSeatBlock } from './health/ComposerSeatBlock.js';
+import { listPanes } from './panes/pane-registry.js';
 import type { SeatChoice } from './SeatSelector.js';
 import { useViewport } from './shell/viewport.js';
 import { getVerseSessionHead } from './verse-store.js';
@@ -238,9 +256,10 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const [listening, setListening] = useState(false);
   const [sentHere, setSentHere] = useState(false);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
-  const [fleetStatus, setFleetStatus] = useState<{ text: string; error: boolean } | null>(null);
+  const [fleetStatus, setFleetStatus] = useState<{ text: string; error: boolean; openInbox?: boolean } | null>(null);
+  const laneConfirmation = useRef<LaneConfirmation | null>(null);
   useEffect(() => {
-    if (!fleetStatus) return;
+    if (!fleetStatus || fleetStatus.error) return;
     const timer = setTimeout(() => setFleetStatus(null), 8000);
     return () => clearTimeout(timer);
   }, [fleetStatus]);
@@ -311,7 +330,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const queueFull = (queue?.items.length ?? 0) >= VERSE_QUEUE_MAX;
   const hasText = text.trim().length > 0;
   const blockedByUpload = attachments.uploading;
-  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/fleet(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
+  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/(?:bus|fleet)(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
   const showHint = !hintSeen && !sentHere;
   const showHandoffHelp = handoffDraft && !sentHere && hasText;
   const cost = useMemo(
@@ -532,10 +551,16 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Fleet and compact insert text; other commands consume their token.
+    // Bus, fleet, lane, release, plan, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
+      case 'job':
+      case 'bus':
       case 'fleet':
+      case 'lane':
+      case 'plan':
+      case 'release':
+      case 'pane':
       case 'compact': {
         if (command.id === 'fleet') setFleetStatus({ text: 'Type what to tell the leaders', error: false });
         const next = applyCompletion(draft, trigger, command.title);
@@ -550,11 +575,6 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       case 'handoff':
         setDraft(without);
         onHandoff?.();
-        return;
-      case 'plan':
-        setDraft(without);
-        placeCaret(0);
-        void changePermission('plan');
         return;
       case 'effort':
       case 'model':
@@ -706,6 +726,113 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     if (disabled || sending || tooLong) return;
     const value = text.trim();
     if (!value) return;
+    const pane = parsePaneCommand(text, listPanes());
+    if (pane) {
+      if ('error' in pane) {
+        setFleetStatus({ text: pane.error, error: true });
+      } else {
+        openDockPane(pane.id);
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `Opened ${pane.title}`, error: false });
+      }
+      return;
+    }
+    if (parsePlanCommand(text)) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runPlanCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    const release = parseReleaseCommand(text);
+    if (release) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runReleaseCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) {
+          setDraft(current => current === text ? '' : current);
+          await Promise.all([
+            refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+            refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+          ]);
+        }
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    const lane = parseLaneCommand(text);
+    if (lane) {
+      if ('error' in lane) {
+        laneConfirmation.current = null;
+        setFleetStatus({ text: lane.error, error: true });
+        return;
+      }
+      const now = Date.now();
+      if (confirmNeeded(laneConfirmation.current, lane, now)) {
+        laneConfirmation.current = { lane: lane.lane, until: now + 5000 };
+        setFleetStatus({ text: `Press Enter again to set ${lane.lane} to 0`, error: false });
+        return;
+      }
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runLaneCommand(lane);
+        if (!result.ok) {
+          setFleetStatus({ text: result.reason, error: true });
+          return;
+        }
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `${result.lane} target ${result.from} → ${result.to}`, error: false });
+        await Promise.all([
+          refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+          refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+        ]);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    laneConfirmation.current = null;
+    if (parseBusCommand(text)) {
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runBusCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    if (parseJobCommand(text)) {
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runJobCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
     const fleet = parseFleetCommand(text);
     if (fleet || /^\/fleet\s*$/.test(text)) {
       if (!fleet) {
@@ -716,8 +843,21 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setFleetStatus(null);
       try {
         const ack = await postFleetInterjection(fleet.text);
-        setDraft((current) => current === text ? '' : current);
-        setFleetStatus({ text: `Sent to the leaders · ${ack.at.slice(-5)}`, error: false });
+        setDraft((current) => draftAfterSend(ack.outcome, current, text));
+        const landing = fleetSendLanding(ack);
+        const wake = decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
+        const wakingText = `${landing.text} · planner waking`;
+        setFleetStatus({ ...landing, text: wake ? wakingText : landing.text, error: false });
+        if (wake) {
+          void wakePlannerForOrder(fleet.text).then(result => {
+            if (result.kind === 'unavailable') {
+              setFleetStatus(current => current?.text === wakingText ? { ...landing, error: false } : current);
+            } else {
+              setFleetStatus({ text: result.text, error: result.kind === 'failed' || result.kind === 'locked' || result.kind === 'no-slate' });
+            }
+          });
+        }
+        await refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true);
       } catch (error) {
         setFleetStatus({ text: readFailureReason(error), error: true });
       } finally {
@@ -1005,6 +1145,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           aria-activedescendant={suggestOpen && suggestItems.length > 0 ? suggestOptionId(suggestId, boundedActive) : undefined}
           onChange={(event) => {
             setHistoryAt(-1);
+            laneConfirmation.current = null;
             setDraft(event.target.value);
             setDismissedTrigger(null);
             setCaret(event.target.selectionStart === event.target.selectionEnd ? event.target.selectionStart : null);
@@ -1077,7 +1218,17 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           <span className="visually-hidden"> This is an estimate; the provider counts the real total.</span>
         </p>
       ) : null}
-      {fleetStatus ? <p role={fleetStatus.error ? 'alert' : 'status'} className={`${styles.help} ${fleetStatus.error ? styles.helpError : ''}`}>{fleetStatus.text}</p> : null}
+      {fleetStatus ? (
+        <p role={fleetStatus.error ? 'alert' : 'status'} className={`${styles.help} ${fleetStatus.error ? styles.helpError : ''}`}>
+          {fleetStatus.text}
+          {fleetStatus.openInbox ? <> <button type="button" aria-label="Open inbox" onClick={() => {
+            // Reveal the inbox even from another section or focus mode.
+            setVerseSection('chat');
+            setFocusMode(false);
+            openDockPane('fleet-inbox');
+          }}>Open inbox</button></> : null}
+        </p>
+      ) : null}
       <p id={helpId} className={`${styles.help} ${showHint || tooLong || listening || running || disabled || historyAt !== -1 || showHandoffHelp || note || controls.error || controls.loading || controls.pending || controls.unsupported || followUps.error ? '' : styles.helpQuiet}`}>
         {tooLong ? <span role="alert" className={styles.helpError}>Message is over 64 KB — trim it before sending.</span>
           : followUps.error ? <span role="alert" className={styles.helpError}>{followUps.error}</span>

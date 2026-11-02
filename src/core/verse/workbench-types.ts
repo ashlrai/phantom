@@ -1537,6 +1537,7 @@ export interface VerseAppToggleRequest {
  * V2.2 control route: Track B's live fleet is `/api/verse/fleet/live` ONLY.
  */
 export const WORKBENCH_ROUTE_FAMILIES = [
+  { id: 'agent-bus', owner: 'agent-bus', module: 'src/core/verse/agent-bus-api.ts', handler: 'handleAgentBusApi', prefixes: ['/api/verse/agent-bus'] },
   {
     id: 'outcomes',
     owner: 'outcome-editor',

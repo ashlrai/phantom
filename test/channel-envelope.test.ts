@@ -31,7 +31,7 @@ describe('shared channel envelope', () => {
     const result = await receive({ ...message, channel });
     expect(result).toEqual({ ok: true, envelope: {
       channel, verifiedSenderId: sender, receivedAt: new Date(start).toISOString(), body: 'Hello\nworld', dedupeKey: expect.stringMatching(/^[a-f0-9]{64}$/),
-    }, ack: { channel, dedupeKey: expect.any(String), status: 'accepted' } });
+    }, ack: { channel, dedupeKey: expect.any(String), status: 'accepted' }, publishState: 'published' });
   });
 
   it('dedupes across clock buckets and accepts again at ten minutes', async () => {

@@ -65,8 +65,11 @@ export interface AppNotification {
   detail: string;
   /** ISO timestamp of the underlying event, when known; falls back to first-seen. */
   ts: string;
-  /** Hash-router path to jump straight to the relevant view. */
+  /** Hash-router path or absolute workbench deep link to the relevant view. */
   actionHref?: string;
+  /** An action that has no URL form at all — switching the console's
+   * surface, say — rendered as a button instead of a link when present. */
+  actionRun?: () => void;
   actionLabel?: string;
   /** Present when the notification is itself ABOUT degraded/unknown source
    * data (e.g. "daemon state unknown") — distinct from Epistemic's per-field

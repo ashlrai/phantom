@@ -1,33 +1,101 @@
-import { useMemo } from 'react';
+import { paneLinkUrl } from '../dock/pane-link.js';
+import { backlogView } from './merge-backlog-model.js';
+import { mergeBacklogQuery } from './merge-backlog-queries.js';
+import { useEffect, useMemo, useState } from 'react';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { safeHref } from '../cloud/cloud-model.js';
+import { JobRefs } from '../fleet/JobRefs.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { readMerges } from './fleet-merges-model.js';
-import { fleetMergesQuery } from './fleet-merges-queries.js';
+import { openToMergeText, readMerges, readMergeSpeed, readOutsidePrs } from './fleet-merges-model.js';
+import { ciRunsQuery, fleetMergesQuery, outsidePrsQuery, supersededQuery } from './fleet-merges-queries.js';
+import { parseSuperseded, supersededCounts, supersededLabel } from './superseded-rows-model.js';
+import { ciVerdictCounts, ciVerdictForBranch } from './merges-ci-verdict.js';
+import { mergesMarkdown } from './merges-markdown.js';
+import { collisionHeadline, collisionSteerPrefill, orderOutsidePrs } from './outside-collision-model.js';
+import { recordMergeSample, summariseMerges, useMergeHistory } from './merges-history-store.js';
+import { ReleaseStrip } from './ReleaseStrip.js';
 import styles from './fleet-merges.module.css';
 
 export function FleetMergesPane({ visible, host }: PaneProps) {
   const read = useQuery(fleetMergesQuery, { enabled: visible, freshMs: 0 });
+  const outside = useQuery(outsidePrsQuery, { enabled: visible, freshMs: 0 });
+  const ci = useQuery(ciRunsQuery, { enabled: visible, freshMs: 0 });
+  const backlog = useQuery(mergeBacklogQuery, { enabled: visible, freshMs: 0 });
+  const superseded = useQuery(supersededQuery, { enabled: visible, freshMs: 0 });
+  const refetchBacklog = useRefetch(mergeBacklogQuery);
+  const refetchSuperseded = useRefetch(supersededQuery);
+  usePollWhileVisible(() => { refetchBacklog(); refetchSuperseded(); }, 60_000, { enabled: visible });
+  const backlogData = backlog.data?.source === 'ok' && Array.isArray(backlog.data.items) ? backlogView(backlog.data, Date.now()) : null;
+  const supersededData = useMemo(() => parseSuperseded(superseded.data), [superseded.data]);
+  const counts = supersededCounts(supersededData, backlogData ? backlog.data!.counts.mergeState.DIRTY ?? 0 : null);
   const refetch = useRefetch(fleetMergesQuery);
-  usePollWhileVisible(refetch, 10_000, { enabled: visible });
+  const refetchOutside = useRefetch(outsidePrsQuery);
+  const refetchCi = useRefetch(ciRunsQuery);
+  usePollWhileVisible(() => { refetch(); refetchOutside(); }, 10_000, { enabled: visible });
+  usePollWhileVisible(refetchCi, 300_000, { enabled: visible });
   const data = useMemo(() => readMerges(read.data), [read.data]);
+  const speed = useMemo(() => readMergeSpeed(read.data), [read.data]);
+  const outsideData = useMemo(() => readOutsidePrs(outside.data), [outside.data]);
+  const ciFacts = ci.status !== 'error' && ci.data?.available === true ? ci.data : undefined;
+  const verdicts = outsideData.prs.map(item => ciVerdictForBranch(
+    ciFacts?.repo?.toLowerCase() === item.repo.toLowerCase() ? ciFacts.recent : undefined, item.head, item.number,
+  ));
+  const history = useMergeHistory();
+  const trend = summariseMerges(history, Date.now());
+  useEffect(() => {
+    const snapshot = read.data;
+    if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && 'generatedAt' in snapshot && typeof snapshot.generatedAt === 'string') {
+      recordMergeSample(snapshot.generatedAt, data.count);
+    }
+  }, [read.data, data.count]);
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (notice !== 'Copied') return;
+    const timer = setTimeout(() => setNotice(''), 2_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(mergesMarkdown(data, Date.now())); setNotice('Copied'); }
+    catch { setNotice('Copy failed'); }
+  };
 
-  if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <p className={styles.message}>Live runs not in this build</p>;
-  if (read.data === undefined) return <div className={styles.root} role="status">{read.status === 'error' ? 'Live runs are unavailable.' : <><span>Reading live runs…</span><SkeletonLine /><SkeletonLine /></>}</div>;
+  if (read.data === null || (read.error instanceof ApiError && read.error.status === 404)) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><p className={styles.message}>Live runs not in this build</p></section>;
+  if (read.data === undefined) return <section className={styles.root} aria-label="Merges"><ReleaseStrip visible={visible} /><div role="status">{read.status === 'error' ? 'Live runs are unavailable.' : <><span>Reading live runs…</span><SkeletonLine /><SkeletonLine /></>}</div></section>;
   return <section className={styles.root} aria-label="Merges">
-    <p className={styles.header}>{data.count ?? '—'} merged in the last hour · {data.pending.length} publishes waiting</p>
+    <ReleaseStrip visible={visible} />
+    <div className={styles.headerActions}><p className={styles.header}>{data.count ?? '—'} merged in the last hour · {data.pending.length} publishes waiting</p>
+      <p className={styles.header}>{speed.medianOpenToMergeMs === null && speed.perHour === null ? 'no timing in this snapshot yet' : [speed.medianOpenToMergeMs === null ? null : `median ${openToMergeText(speed.medianOpenToMergeMs)}`, speed.perHour === null ? null : `${speed.perHour}/h`].filter(Boolean).join(' · ')}</p>
+      {verdicts.some(verdict => verdict.runId !== null) && <p className={styles.header}>{ciVerdictCounts(verdicts)}</p>}
+      <Button size="sm" variant="subtle" aria-label="Copy merges as Markdown" disabled={!data.merged.length && !data.pending.length} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span></div>
+    <section aria-label="Backlog"><h3 className={styles.heading}>Backlog</h3>
+      {backlog.data?.source === 'gh-failed' ? <p>GitHub read failed: {backlog.data.reason}</p> : backlog.status === 'error' ? <p>GitHub read failed: unavailable</p> : !backlogData ? <p role="status">Reading merge backlog…</p> : <>
+        <p>{counts.superseded > 0 ? <>{backlogData.countsLine.replace(`${backlog.data!.counts.mergeState.DIRTY ?? 0} DIRTY`, `${counts.liveDirty} DIRTY`).split(' · ').map((part, index) => <span key={index}>{index > 0 && ' · '}{part}{index === 1 && <> · <span className={styles.ciChip}>{counts.superseded} superseded</span></>}</span>)}</> : backlogData.countsLine}</p>
+        {backlogData.hotFilesLine && <p data-tone={backlogData.danger ? 'danger' : undefined} className={backlogData.danger ? styles.danger : undefined}>{backlogData.hotFilesLine}</p>}
+        {backlogData.rows.length === 0 ? <p>No open fleet PRs</p> : <ul className={styles.list} aria-label="Merge backlog">{backlogData.rows.slice(0, 12).map(row => <li className={styles.row} key={row.number}>
+          <a href={`https://github.com/${backlog.data!.repo}/pull/${row.number}`} target="_blank" rel="noopener noreferrer">#{row.number}</a>
+          {row.job && <JobRefs text={row.job} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}
+          <span>· {row.state} {row.ageText} · {row.action}{row.hotFile && ` · ${row.hotFile}`}</span>
+          {supersededData.pairs.filter(pair => pair.open === row.number).map(pair => <a key={pair.open} className={styles.ciChip} style={{ color: 'var(--text-secondary)' }} href={`https://github.com/${backlog.data!.repo}/pull/${pair.mergedBy}`} target="_blank" rel="noopener noreferrer">{supersededLabel(pair)}</a>)}
+          {row.action === 'recut' && <a href={paneLinkUrl('fleet-outcomes', null, false) ?? undefined} onClick={event => { event.preventDefault(); host.openPane('fleet-outcomes'); }}>Recut in Outcomes</a>}
+        </li>)}</ul>}
+      </>}
+    </section>
+    {trend && <p role="img" aria-label={`Merged per hour trend: ${trend.first} then ${trend.last} over ${trend.spanMinutes} minutes`}>{trend.spark} {trend.first} → {trend.last} merged/h over the last {trend.spanMinutes} min</p>}
     {data.sourceState !== 'healthy' && <p className={styles.notice} role="status">Merge data may be incomplete.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Live runs could not refresh. Showing the last reading.</p>}
     <section><h3 className={styles.heading}>Merged in the last hour</h3>
       {data.merged.length === 0 ? <p className={styles.message}>No merged PRs reported.</p> : <ul className={styles.list} aria-label="Merged PRs">{data.merged.map((item, index) => {
         const href = safeHref(item.href, 'github.com');
-        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span>{item.title}</span></li>;
+        const at = item.at, valid = typeof at === 'string' && Number.isFinite(Date.parse(at));
+        const jobId = item.job, showJob = jobId !== null && !item.title.includes(jobId);
+        return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>} <span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span> <span>· {showJob && <><code>{jobId}</code> · </>}{item.lane ?? '—'} · {valid ? <time dateTime={at} title={new Date(at).toLocaleString()}>{formatRelative(at)}</time> : 'time unknown'}</span> <span className={styles.mergeSpeed}>· {item.openToMergeMs === null ? 'merged' : `open → merge ${openToMergeText(item.openToMergeMs)}`}</span></li>;
       })}</ul>}
     </section>
     <section><h3 className={styles.heading}>Publishes waiting</h3>
@@ -36,8 +104,31 @@ export function FleetMergesPane({ visible, host }: PaneProps) {
         return <li key={`${item.job}:${item.at}:${index}`} className={styles.row}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.job}</a> : <span>{item.job}</span>} <span>· {item.lane ?? '—'} · <time dateTime={valid ? item.at : undefined} title={valid ? new Date(item.at).toLocaleString() : undefined}>{formatRelative(item.at)}</time></span>{JOB_ID_RE.test(item.job) && <Button size="sm" variant="subtle" aria-label={`Open log for ${item.job}`} onClick={() => { requestWorkerLogJob(item.job); host.openPane('worker-log'); }}>Open log</Button>}</li>;
       })}</ul>}
     </section>
+    {outside.data != null && <section>
+      <details open>
+        <summary className={styles.heading}>Outside PRs</summary>
+        <p>{collisionHeadline(outsideData.prs, outsideData.sourceState)}</p>
+        {outsideData.sourceState === 'missing' ? <p className={styles.message}>Outside PR check unavailable (gh missing).</p> : <>
+          {outsideData.sourceState === 'degraded' && <p className={styles.notice} role="status">Outside PR data may be incomplete.</p>}
+          {outsideData.prs.length === 0 ? <p className={styles.message}>No outside open PRs on fleet repos.</p> :
+            <ul className={styles.list} aria-label="Outside PRs">{orderOutsidePrs(outsideData.prs).map((item, index) => {
+              const href = safeHref(`https://github.com/${item.repo}/pull/${item.number}`, 'github.com');
+              const valid = item.at !== null && Number.isFinite(Date.parse(item.at));
+              const verdict = ciVerdictForBranch(ciFacts?.repo?.toLowerCase() === item.repo.toLowerCase() ? ciFacts.recent : undefined, item.head, item.number);
+              const ciHref = safeHref(verdict.url, 'github.com');
+              return <li key={`${item.repo}:${item.number}:${index}`} className={styles.row}>
+                {href ? <a href={href} target="_blank" rel="noopener noreferrer">{item.repo} #{item.number}</a> : <span>{item.repo} #{item.number}</span>}
+                {' '}<span><JobRefs text={item.title} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} /></span>
+                {' '}<span>· {item.author} · {valid ? <time dateTime={item.at!} title={new Date(item.at!).toLocaleString()}>{formatRelative(item.at)}</time> : 'age unknown'}</span>
+                {verdict.tone !== 'none' && (ciHref ? <a className={`${styles.ciChip} ${styles[verdict.tone]}`} href={ciHref} target="_blank" rel="noopener noreferrer">{verdict.label}</a> : <span className={`${styles.ciChip} ${styles[verdict.tone]}`}>{verdict.label}</span>)}
+                {item.overlaps.map((overlap, overlapIndex) => <span key={`${overlap.job}:${overlapIndex}`}>{JOB_ID_RE.test(overlap.job) && <Button size="sm" variant="subtle" title={`Overlaps ${overlap.paths.slice(0, 5).join(', ')}`} aria-label={`collides with ${overlap.job} — open job log`} onClick={() => { requestWorkerLogJob(overlap.job); host.openPane('worker-log'); }}>collides with {overlap.job}</Button>} <Button size="sm" variant="subtle" aria-label={`Steer ${overlap.job} about PR #${item.number}`} onClick={() => openInterjectDialog({ prefill: collisionSteerPrefill(item, overlap) })}>Steer {overlap.job}</Button></span>)}
+              </li>;
+            })}</ul>}
+        </>}
+      </details>
+    </section>}
     <section><h3 className={styles.heading}>Lane throughput · 24 h</h3>
-      {data.lanes.length === 0 ? <p className={styles.message}>No lane throughput reported.</p> : <ul className={styles.list} aria-label="Lane throughput">{data.lanes.map((item, index) => <li key={`${item.lane}:${index}`} className={styles.row}><span>{item.lane}</span>{' '}<span>{item.merged24h ?? '—'} merged · {item.mergeRate24h === null ? '—' : `${item.mergeRate24h.toFixed(1)}%`}</span></li>)}</ul>}
+      {data.lanes.length === 0 ? <p className={styles.message}>No lane throughput reported.</p> : <ul className={styles.list} aria-label="Lane throughput">{data.lanes.map((item, index) => <li key={`${item.lane}:${index}`} className={styles.row}><span>{item.lane}</span>{' '}<span>{item.merged24h ?? '—'} merged · {item.mergeRate24h === null || (item.merged24h === 0 && item.mergeRate24h === 0) ? '—' : `${item.mergeRate24h.toFixed(1)}%`}</span></li>)}</ul>}
     </section>
   </section>;
 }

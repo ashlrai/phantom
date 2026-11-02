@@ -1,0 +1,30 @@
+# Phantom
+
+> The open-source engineering agent workbench that runs all engineering, manages resources, and coordinates local and cloud fleets through a CLI, MCP server, and web console.
+
+## Start
+
+- [Phantom](README.md): The open-source engineering agent workbench by AshlrAI — connect agents, work interactively, or hand the fleet an outcome.
+- [Quickstart](QUICKSTART.md): Install Phantom, enroll a repo, start a resident fleet and publish its work in distinct steps.
+- [Architecture](ARCHITECTURE.md): TypeScript/ESM CLI and SDK plus a React web console; `phm` and `ashlr` share one launcher.
+- [Agent Operations](AGENT-OPERATIONS.md): Cold-start checklist for building, installing, and operating Phantom from source.
+
+## CLI
+
+- [CLI Reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all` output; commands are the checkout authority.
+- [CLI Docs](cli.md): Regenerated from `phm --help` output by `scripts/generate-cli-docs.mjs`; do not edit by hand.
+- [CLI Contracts](AGENT-CLI-CONTRACTS.md): CLI interface contracts and command-level guarantees.
+
+## MCP and agents
+
+- [Fleet MCP Onramp](FLEET-MCP-ONRAMP.md): Standalone fleet MCP server — add a minimal stdio server entry to any client config.
+- [Companions](COMPANIONS.md): Inspect Phantom Secrets, Locus, and Lexicon — separately installed, not bundled.
+- [Agent-Native Quickstart](AGENT-NATIVE-QUICKSTART.md): Use the desktop `/verse/` console as visibility and control surface for sessions and fleet observations.
+- [Plugins](PLUGINS.md): Extend Phantom with backlog scanners, templates, model providers, and CLI commands without forking.
+
+## Fleet
+
+- [Fleet API](FLEET-API.md): Loopback HTTP endpoints exposing projections for desktop, phone, and Leader coordination.
+- [Cloud Lane](CLOUD.md): Start Claude Code cloud sessions from chat, Command, or CLI; Phantom can also start them itself.
+- [Drive](DRIVE.md): Mac queue supervisor running serial ticks, reaping workers, and admitting READY jobs.
+- [Hub Reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet — compatibility identifiers retained.

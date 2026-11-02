@@ -20,7 +20,9 @@
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
 
+import { cmdCommsDiagnose } from './comms-diagnose.js';
 import { cmdCommsBus } from './comms-bus.js';
+import { cmdCommsInbox } from './comms-inbox.js';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { loadConfig } from '../core/config.js';
 import { commsEnabled } from '../core/integrations/imessage.js';
@@ -32,8 +34,11 @@ import { runChangeDigest, readDigestState, type ChangeDigestResult } from '../co
 import { LEGACY_BRIEFING_KIND, type CommsMigrationSummary } from '../core/comms/migrations.js';
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { ashlrHome } from '../core/cloud/store.js';
+import { normalizeEmailDropAddress, readEmailDropConfig, writeEmailDropConfig } from '../core/comms/email-drop-config.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -346,6 +351,23 @@ async function cmdCycle(): Promise<number> {
   const result = await runCommsCycle(cfg);
   logMigration(result.migration);
   console.log(`cycle complete: sent=${result.sent} resolved=${result.resolved}`);
+  try {
+    const runsDir = join(homedir(), '.ashlr-runs');
+    const email = await readEmailDropConfig(runsDir);
+    if (email.state === 'invalid') console.error(`cycle: email-drop config invalid at ${email.path}`);
+    else if (email.state === 'ok' && email.config) {
+      const { runEmailDropOnce } = await import('../core/comms/email-drop-bridge.js');
+      const { inboxDir, outboxDir, processedDir, from } = email.config;
+      const counts = await runEmailDropOnce({
+        inboxDir, outboxDir: outboxDir ?? join(inboxDir, '..', 'outbox'),
+        processedDir: processedDir ?? join(inboxDir, '..', 'processed'),
+        allowedSenders: new Set(from), runsDir, busRoot: join(ashlrHome(), 'fleet'),
+      });
+      console.log(`cycle: email-drop accepted=${counts.accepted} duplicate=${counts.duplicate} refused=${counts.refused} failed=${counts.failed}`);
+    }
+  } catch {
+    console.error('cycle: email-drop failed');
+  }
   return 0;
 }
 
@@ -506,15 +528,18 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <status|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|email-drop|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
+  console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
+  console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (verified senders only)');
   console.log('    status                       config + pending/outstanding + watermark');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
   console.log('    ask "<text>" -o a -o b       post a question with numbered options');
   console.log('    digest [--force]             send what changed since the last digest (silent if nothing)');
+  console.log('    diagnose [--json]            read-only channel diagnostics; never sends');
   console.log('    health [--json]              value-free Telegram poll heartbeat and offset');
   console.log('    ask-vision                   run a Leader tick + deliver the latest memo via the Leader thread');
   console.log('    ask-merges                   post ship proposals for approval + run cycle');
@@ -530,6 +555,7 @@ function printCommsHelp(): void {
  * telegram-brand keeps its own strict parser.
  */
 const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  diagnose:         { allowed: { flags: ['--json'] }, usage: 'usage: phm comms diagnose [--json]' },
   health:           { allowed: { flags: ['--json'] }, usage: 'usage: phm comms health [--json]' },
   status:           { allowed: {}, usage: 'usage: phm comms status' },
   'send-test':      { allowed: {}, usage: 'usage: phm comms send-test' },
@@ -543,6 +569,8 @@ const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> 
 
 export async function cmdComms(args: string[]): Promise<number> {
   if (args[0] === 'bus') return cmdCommsBus(args.slice(1));
+  if (args[0] === 'inbox') return cmdCommsInbox(args.slice(1));
+  if (args[0] === 'email-drop') return cmdCommsEmailDrop(args.slice(1));
   if (args.includes('--help') || args.includes('-h')) {
     printCommsHelp();
     return 0;
@@ -561,6 +589,8 @@ export async function cmdComms(args: string[]): Promise<number> {
   const { sub, text, options } = parseArgs(args);
 
   switch (sub) {
+    case 'diagnose':
+      return cmdCommsDiagnose(args.includes('--json'));
     case 'health': {
       const health = readTelegramHealth(await loadConfig());
       console.log(args.includes('--json') ? JSON.stringify(health) : `Telegram poller: ${health.pollerAlive ? 'alive (recent heartbeat)' : 'stale or never polled'}\nLast poll: ${health.lastPoll ?? 'never'}\nLast update id: ${health.lastUpdateId ?? 'none'}\nToken present: ${health.tokenPresent ? 'yes' : 'no'}\nError: ${health.error ?? 'none'}`);
@@ -584,8 +614,119 @@ export async function cmdComms(args: string[]): Promise<number> {
       return cmdSetupTelegram();
     default:
       console.error(`unknown subcommand: ${sub}`);
-      console.error('usage: phm comms <status|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+      console.error('usage: phm comms <status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand|email-drop>');
       return 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RQ-PHX-EMAILDROPCHANNEL31: email-drop — .eml drop-folder → MASON-INBOX.md
+// ---------------------------------------------------------------------------
+
+const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--once | --watch <seconds>] [--save-config] [--json]';
+
+async function cmdCommsEmailDrop(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records verified senders in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
+    return 0;
+  }
+  const badOption = rejectUnknownOptions(args, {
+    flags: ['--once', '--json', '--save-config'],
+    values: ['--from', '--outbox', '--processed', '--watch'],
+  });
+  const badUsage = (message?: string): number => {
+    if (message) console.error(message);
+    console.error(EMAIL_DROP_USAGE);
+    return 2;
+  };
+  if (badOption) return badUsage(badOption.message);
+
+  let inboxDir: string | undefined;
+  let outbox: string | undefined;
+  let processed: string | undefined;
+  let watchSeconds: number | undefined;
+  let once = false;
+  let json = false;
+  let saveConfig = false;
+  const senders = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--from') {
+      const address = normalizeEmailDropAddress(args[++i] ?? '');
+      if (!address) return badUsage(`invalid --from address: ${args[i] ?? '(missing)'}`);
+      senders.add(address);
+    } else if (arg === '--outbox') {
+      outbox = args[++i];
+      if (!outbox) return badUsage();
+    } else if (arg === '--processed') {
+      processed = args[++i];
+      if (!processed) return badUsage();
+    } else if (arg === '--watch') {
+      const raw = args[++i];
+      const seconds = raw === undefined ? NaN : Number(raw);
+      if (!Number.isFinite(seconds) || seconds < 1 || seconds > 86_400) return badUsage(`--watch requires 1..86400 seconds, got: ${raw ?? '(missing)'}`);
+      watchSeconds = seconds;
+    } else if (arg === '--once') {
+      once = true;
+    } else if (arg === '--json') {
+      json = true;
+    } else if (arg === '--save-config') {
+      saveConfig = true;
+    } else if (inboxDir === undefined && !arg.startsWith('-')) {
+      inboxDir = arg;
+    } else {
+      return badUsage(`unexpected argument: ${arg}`);
+    }
+  }
+  if (inboxDir === undefined) return badUsage();
+  if (watchSeconds !== undefined && once) return badUsage('--once and --watch are mutually exclusive');
+  if (senders.size === 0) {
+    return badUsage('email-drop needs at least one --from <address>; with no verified sender list every message is refused');
+  }
+
+  const { runEmailDropOnce } = await import('../core/comms/email-drop-bridge.js');
+  const options = {
+    inboxDir,
+    outboxDir: outbox ?? join(inboxDir, '..', 'outbox'),
+    processedDir: processed ?? join(inboxDir, '..', 'processed'),
+    allowedSenders: senders,
+  };
+  let savedConfig: string | undefined;
+  const emit = (counts: { accepted: number; duplicate: number; refused: number; failed: number }): void => {
+    console.log(json
+      ? JSON.stringify(savedConfig ? { ...counts, savedConfig } : counts)
+      : `email-drop: accepted=${counts.accepted} duplicate=${counts.duplicate} refused=${counts.refused} failed=${counts.failed}`);
+  };
+  try {
+    if (saveConfig) {
+      savedConfig = await writeEmailDropConfig(join(homedir(), '.ashlr-runs'), {
+        v: 1, inboxDir: resolve(options.inboxDir), outboxDir: resolve(options.outboxDir),
+        processedDir: resolve(options.processedDir), from: [...senders],
+      });
+      if (!json) console.log(`saved ${savedConfig}; \`ashlr comms cycle\` now runs the email drop every pass`);
+    }
+    if (watchSeconds === undefined) {
+      emit(await runEmailDropOnce(options));
+      return 0;
+    }
+    const controller = new AbortController();
+    const stop = (): void => controller.abort();
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    try {
+      while (!controller.signal.aborted) {
+        emit(await runEmailDropOnce(options));
+        if (controller.signal.aborted) break;
+        await delay(watchSeconds * 1000, undefined, { signal: controller.signal }).catch(() => undefined);
+      }
+    } finally {
+      process.removeListener('SIGINT', stop);
+      process.removeListener('SIGTERM', stop);
+    }
+    return 0;
+  } catch (error) {
+    console.error('email-drop failed:', error instanceof Error ? error.message : String(error));
+    return 1;
   }
 }
 

@@ -64,6 +64,20 @@
         }
       }
     },
+    "claimed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job", "lane", "tier", "at"],
+        "properties": {
+          "job": {"type": "string"},
+          "lane": {"type": "string"},
+          "tier": {"type": "string"},
+          "at": {"type": "string"}
+        }
+      }
+    },
     "leaders": {
       "type": "array",
       "items": {

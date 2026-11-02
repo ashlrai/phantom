@@ -59,7 +59,7 @@ function detail(model: AccountCardModel, onClose = vi.fn()): void {
 }
 
 describe('AccountDetail', () => {
-  it('shows a weekly-only Claude account with no session cap', () => {
+  it('shows a weekly-only Claude account with the lifted-limit note', () => {
     const weekly = { id: 'seven_day', label: null, usedPercent: 62, resetsAt: '2026-11-02T12:00:00.000Z', resetDescription: null, measured: true, limitReached: false };
     const account: Account = {
       id: 'claude-weekly', label: 'Claude weekly', provider: 'claude', planType: 'max',
@@ -69,9 +69,9 @@ describe('AccountDetail', () => {
     };
     detail(buildAccountCard(account, null, Date.parse('2026-10-31T12:00:00.000Z')));
     expect(screen.getByText('Week · all models')).toBeInTheDocument();
-    expect(screen.getByText('No session cap on this plan')).toBeInTheDocument();
+    expect(screen.getByText('Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.')).toBeInTheDocument();
     expect(screen.getAllByRole('meter')).toHaveLength(1);
-    expect(screen.queryByText(/5-hour|rolling 5h/)).toBeNull();
+    expect(screen.queryByText(/5-hour window|rolling 5h/)).toBeNull();
   });
 
   it.each([true, false, null, undefined])('shows credit control %s in card and detail without changing the subscription meter', (spendControlReached) => {

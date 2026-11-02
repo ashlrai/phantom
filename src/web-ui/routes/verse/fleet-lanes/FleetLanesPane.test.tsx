@@ -23,7 +23,7 @@ it('renders lanes, held reason, oldest workers and safe merge links', async () =
   const workers = screen.getByRole('heading', { name: 'Workers' }).parentElement!;
   expect(within(workers).getByText('job-12')).toBeInTheDocument();
   expect(within(workers).queryByText('job-0')).toBeNull();
-  expect(within(workers).getByText('+1 more')).toBeInTheDocument();
+  expect(within(workers).getByRole('button', { name: 'Show 1 more' })).toBeInTheDocument();
   const link = screen.getByRole('link', { name: 'example/repo #12 Fleet view' });
   expect(link).toHaveAttribute('href', 'https://github.com/example/repo/pull/12');
   expect(link).toHaveAttribute('target', '_blank'); expect(link).toHaveAttribute('rel', 'noreferrer');
@@ -42,12 +42,13 @@ it('polls every five seconds only while the pane and document are visible', asyn
   let visibility = 'visible';
   vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility as DocumentVisibilityState);
   const view = render(<FleetLanesPane visible />);
+  const calls = (path: string) => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith(path)).length;
   await act(async () => {});
-  await act(async () => { vi.advanceTimersByTime(5_000); }); expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => { vi.advanceTimersByTime(5_000); }); expect(calls('/fleet/runs')).toBe(2);
   visibility = 'hidden'; act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(fetch).toHaveBeenCalledTimes(2);
-  visibility = 'visible'; await act(async () => { document.dispatchEvent(new Event('visibilitychange')); }); expect(fetch).toHaveBeenCalledTimes(3);
+  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(calls('/fleet/runs')).toBe(2);
+  visibility = 'visible'; await act(async () => { document.dispatchEvent(new Event('visibilitychange')); }); expect(calls('/fleet/runs')).toBe(3);
   view.rerender(<FleetLanesPane visible={false} />);
-  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(fetch).toHaveBeenCalledTimes(3);
-  await act(async () => { view.rerender(<FleetLanesPane visible />); }); expect(fetch).toHaveBeenCalledTimes(4);
+  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(calls('/fleet/runs')).toBe(3);
+  await act(async () => { view.rerender(<FleetLanesPane visible />); }); expect(calls('/fleet/runs')).toBe(4);
 });

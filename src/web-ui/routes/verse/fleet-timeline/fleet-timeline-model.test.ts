@@ -16,7 +16,7 @@ describe('timelineLanes', () => {
   it('classifies both threshold boundaries and identifies the longest worker', () => {
     const result = timelineLanes({ ...runs, workers: [worker('a', 1200), worker('b', 1201), worker('c', 2700), worker('d', 2701)] }, now);
     expect(result.lanes[0]!.items.map((item) => item.status)).toEqual(['running', 'slow', 'slow', 'stuck']);
-    expect(result.lanes[0]!.items[3]).toMatchObject({ start: now - 2701_000, end: null, detail: 'd · work · 45:01' });
+    expect(result.lanes[0]!.items[3]).toMatchObject({ id: 'd', start: now - 2701_000, end: null, detail: 'd · work · 45:01' });
     expect(result.longest).toEqual({ job: 'd', lane: 'codex', ageSeconds: 2701 });
     expect(result.from).toBe(Date.parse('2026-10-31T11:00:00Z'));
     expect(result.to).toBe(now);

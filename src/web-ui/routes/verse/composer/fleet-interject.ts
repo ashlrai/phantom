@@ -15,14 +15,40 @@ function mutationHoldError(status = 403): ApiError {
   return new ApiError(reason, status, '/api/verse/fleet/runs/inbox', reason);
 }
 
-export async function postFleetInterjection(text: string): Promise<{ at: string }> {
+type FleetSendResult = { at: string; outcome: 'accepted' | 'duplicate' };
+
+function fleetSendTime(result: FleetSendResult): string {
+  const date = new Date(result.at);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date)
+    : result.at.slice(-5);
+}
+
+export function fleetSendLanding(result: FleetSendResult): { text: string; openInbox: boolean } {
+  return result.outcome === 'accepted'
+    ? { text: `Sent to the leaders' inbox · ${fleetSendTime(result)} · open Inbox to confirm`, openInbox: true }
+    : { text: fleetSendStatus(result), openInbox: false };
+}
+
+export function fleetSendStatus(result: FleetSendResult): string {
+  const time = fleetSendTime(result);
+  return result.outcome === 'duplicate'
+    ? `Already in the inbox (same text, sent ${time})`
+    : `Sent to the leaders · ${time}`;
+}
+
+export function draftAfterSend(outcome: FleetSendResult['outcome'], draft: string, sent: string): string {
+  return outcome === 'accepted' && draft === sent ? '' : draft;
+}
+
+export async function postFleetInterjection(text: string): Promise<FleetSendResult> {
   const token = getMutationToken();
   if (!token) throw mutationHoldError();
   try {
-    const ack = await apiPost<{ at: string }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop chat' }, token);
+    const ack = await apiPost<{ at: string; duplicate?: unknown }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop chat' }, token);
     if (!ack || typeof ack.at !== 'string') throw new Error('The message could not be confirmed. Refresh and check the inbox.');
     touchMutationHold();
-    return ack;
+    return { at: ack.at, outcome: ack.duplicate === true ? 'duplicate' : 'accepted' };
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 404) throw new FleetInboxUnavailableError();

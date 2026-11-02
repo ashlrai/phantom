@@ -1,3 +1,5 @@
+// Keep the colocated notes regressions in the standard backend test lane.
+import '../src/core/fleet/leader-journal.notes.test.js';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,7 +49,7 @@ describe('leader journal parsers', () => {
 describe('leader journal reader', () => {
   it('reports missing sources independently', async () => {
     const result = await readLeaderJournal({ runsDir: await temp(), now: () => 0 });
-    expect(result).toMatchObject({ generatedAt: '1970-01-01T00:00:00.000Z', sources: { planLog: 'missing', ingestLog: 'missing', ingested: 'missing' }, passes: [], ingest: [], ingested: [], rejectedLastHour: null });
+    expect(result).toMatchObject({ generatedAt: '1970-01-01T00:00:00.000Z', sources: { orchestration: 'missing', planLog: 'missing', ingestLog: 'missing', ingested: 'missing' }, passes: [], ingest: [], ingested: [], rejectedLastHour: null });
   });
   it('reads fixtures, counts timestamped rejects and ignores future and old entries', async () => {
     const dir = await temp(); const drop = join(dir, 'leader/drop');
@@ -56,7 +58,7 @@ describe('leader journal reader', () => {
     await writeFile(join(drop, 'ingested.tsv'), await readFile(join(fixtures, 'ingested.tsv')));
     await writeFile(join(drop, 'ingest.log'), '2026-10-31T11:30:00Z reject a denied\n2026-10-31T10:00:00Z reject b old\n2026-10-31T12:01:00Z reject c future\n2026-10-31T11:40:00Z accept d\n');
     const result = await readLeaderJournal({ runsDir: dir, now: () => Date.parse('2026-10-31T12:00:00Z') });
-    expect(result.sources).toEqual({ planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' });
+    expect(result.sources).toEqual({ orchestration: 'missing', planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' });
     expect(result.rejectedLastHour).toBe(1);
     expect(result.ingest[3]).toEqual({ verb: 'reject', file: 'a', reason: 'denied' });
   });
@@ -75,7 +77,7 @@ describe('leader journal reader', () => {
     await symlink(join(fixtures, 'PLAN-LOG.md'), join(leader, 'PLAN-LOG.md'));
     await symlink(fixtures, join(leader, 'drop'));
     const result = await readLeaderJournal({ runsDir: dir });
-    expect(result.sources).toEqual({ planLog: 'degraded', ingestLog: 'degraded', ingested: 'degraded' });
+    expect(result.sources).toEqual({ orchestration: 'missing', planLog: 'degraded', ingestLog: 'degraded', ingested: 'degraded' });
     expect(result.passes).toEqual([]);
   });
   it('reads only the bounded tail and discards its partial first line', async () => {

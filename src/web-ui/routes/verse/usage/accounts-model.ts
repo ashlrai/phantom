@@ -1,4 +1,4 @@
-import { NO_SESSION_CAP_NOTE, sessionCap } from '../seat-subscription.js';
+import { visibleWindows, windowNote } from './provider-windows.js';
 import { currentQuotaReading } from '../../../../core/verse/quota-freshness.js';
 /**
  * routes/verse/usage/accounts-model.ts — the "can I use this account right
@@ -525,10 +525,13 @@ export interface AccountEvidence {
 }
 
 export function buildAccountCard(account: Account, sourceNote: string | null = null, now: number = Date.now()): AccountCardModel {
-  const binding = bindingWindow(account);
-  const verdict = accountVerdict(account, binding, now);
+  // Anthropic removed the 5-hour limit: an account payload that still carries
+  // a `five_hour` window (older collector, cached evidence) is read without it.
+  const shown = { ...account, windows: visibleWindows(account.provider, account.windows) };
+  const binding = bindingWindow(shown);
+  const verdict = accountVerdict(shown, binding, now);
   const engine: VerseEngine = account.provider;
-  const others = account.windows.filter((w) => w.id !== binding?.id).map((w) => toWindowView(w));
+  const others = shown.windows.filter((w) => w.id !== binding?.id).map((w) => toWindowView(w));
   const bindingView = binding ? toWindowView(binding) : null;
   const evidence: AccountEvidence = {
     state: account.state,
@@ -536,7 +539,7 @@ export function buildAccountCard(account: Account, sourceNote: string | null = n
     health: account.health,
     reasonCode: account.reason,
     observedAt: account.observedAt,
-    notes: [...account.notes, ...(sessionCap(engine, account.windows) === 'none' ? [NO_SESSION_CAP_NOTE] : [])],
+    notes: [...account.notes, ...(windowNote(engine) === null ? [] : [windowNote(engine)!])],
     unsupported: account.unsupported,
   };
   return {
@@ -547,12 +550,12 @@ export function buildAccountCard(account: Account, sourceNote: string | null = n
     plan: account.planType,
     verdict,
     creditsCurrent: account.state === 'observed' && currentQuotaReading(account.observedAt, account.expiresAt, now),
-    quotaCurrent: account.state === 'observed' && currentQuotaReading(account.observedAt, account.expiresAt, now, account.windows.map(window => window.resetsAt)),
+    quotaCurrent: account.state === 'observed' && currentQuotaReading(account.observedAt, account.expiresAt, now, shown.windows.map(window => window.resetsAt)),
     allWindows: bindingView ? [bindingView, ...others] : others,
     evidence,
     hasDetail:
-      account.windows.length > 0 ||
-      account.notes.length > 0 ||
+      shown.windows.length > 0 ||
+      evidence.notes.length > 0 ||
       account.credits !== null ||
       account.reason !== null,
     binding: bindingView,

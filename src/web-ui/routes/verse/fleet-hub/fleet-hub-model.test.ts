@@ -11,17 +11,23 @@ const fixture: FleetRuns = {
 };
 
 it('computes live counts and availability without requiring registrations', () => {
-  const tiles = hubTiles({ ...fixture, events: [{ at: 'fake', kind: 'tick', text: 'fake' }], inbox: [{ at: 'fake', source: 'fake', text: 'fake' }] }, ['fleet-lanes', 'fleet-events']);
+  const tiles = hubTiles({ ...fixture, events: [{ at: 'fake', kind: 'tick', text: 'fake' }], inbox: [{ at: 'fake', source: 'fake', text: 'fake' }] }, [{ id: 'fleet-lanes', title: 'Lanes' }, { id: 'fleet-events', title: 'Fleet events' }]);
   expect(tiles.map(({ id, count }) => [id, count])).toEqual([
-    ['fleet-lanes', '1/2'], ['fleet-events', '1'], ['fleet-inbox', '1'], ['fleet-bus', '—'],
-    ['fleet-merges', '2'], ['fleet-usage', '—'], ['fleet-supply', '13'], ['fleet-host', '—'], ['fleet-timeline', '—'],
+    ['fleet-lanes', '1/2 · 1 held'], ['fleet-events', '1'], ['fleet-inbox', '1'], ['fleet-bus', '—'],
+    ['fleet-merges', '2/h'], ['fleet-usage', '—'], ['fleet-supply', '13'], ['fleet-host', '—'], ['fleet-timeline', '1 events'],
   ]);
   expect(tiles.filter((tile) => tile.present).map((tile) => tile.id)).toEqual(['fleet-lanes', 'fleet-events']);
+});
+
+it('shows merge speed and median duration on the Merges tile', () => {
+  const mergesLastHour = { count: 3, items: [], medianOpenToMergeMs: 25 * 60_000 };
+  const tile = hubTiles({ ...fixture, mergesLastHour }, [{ id: 'fleet-merges', title: 'Merges' }]).find(({ id }) => id === 'fleet-merges');
+  expect(tile).toMatchObject({ count: '3/h · open→merge 25m', tone: 'ok', present: true });
 });
 
 it('preserves unknown readings and sums all lanes', () => {
   expect(hubTiles(null, []).every((tile) => tile.count === '—' && !tile.present)).toBe(true);
   const tiles = hubTiles({ ...fixture, lanes: [...fixture.lanes, ...fixture.lanes], mergesLastHour: { count: null, items: [] } }, []);
-  expect(tiles[0]?.count).toBe('2/4');
+  expect(tiles[0]?.count).toBe('2/4 · 2 held');
   expect(tiles.find((tile) => tile.id === 'fleet-merges')?.count).toBe('—');
 });

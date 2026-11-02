@@ -46,11 +46,15 @@ curl -fsS -X POST -H "X-Ashlr-Token: $PHM_MUTATION_TOKEN" \
 
 The body requires nonblank `text` (at most 6000 characters after trimming) and
 allows `source` (1–40 letters, digits, spaces, dots, underscores or hyphens).
-No other keys are accepted. Success is `201 {"ok":true,"at":"..."}`. Invalid
-bodies return `400` with `VERSE_INVALID`; a refused entry returns `422` with
+No other keys are accepted. Success is `201 {"ok":true,"at":"..."}` on the
+first post and `200` with `duplicate:true` on a repost inside the dedupe
+window; receipts persist under the runs dir (`ASHLR_RUNS_DIR`, else
+`~/.ashlr-runs`), so the dedupe survives a Hub restart. Invalid bodies return
+`400` with `VERSE_INVALID`; a refused entry returns `422` with
 `INBOX_REFUSED` and a reason; an unavailable inbox returns `503` with
-`INBOX_UNAVAILABLE`. Dispatch disabled returns `404`. The mutation gate also
-applies.
+`INBOX_UNAVAILABLE`; an unreadable receipt store returns `503` with
+`INBOX_RECEIPTS_UNREADABLE` without writing the entry. Dispatch disabled
+returns `404`. The mutation gate also applies.
 
 ## For agents
 

@@ -4,16 +4,16 @@
  * (GET /api/verse/ops/self-update → OpsSelfUpdateV1) already reports the
  * server's build; this decides when the page's own interface is stale.
  *
- * Two triggers, in precedence order:
+ * Three triggers, in precedence order:
+ *   - chunk-missing: a dynamic import failed and the page needs a reload.
  *   - interface-behind: the server reports a different installedVersion
  *     than this page was built from — the running server is newer code and
  *     the page still shows the old interface build.
- *   - server-restarted: the server's commit (headSha) changed since the
- *     page's first healthy reading — the sidecar restarted on new code,
- *     version number or not.
+ *   - server-restarted: the process commit changed since the page's first
+ *     healthy reading (or headSha changed when process commits are unknown).
  *
- * Never a banner for a missing/unavailable reading, and never again for a
- * headSha the operator already dismissed with "Later".
+ * Status-based triggers require a reading and respect a dismissed headSha;
+ * a failed chunk always requires a reload.
  */
 import type { OpsSelfUpdateV1 } from '../../core/verse/ops-types.js';
 import { PRODUCT_NAME } from './product-brand.js';
@@ -23,9 +23,11 @@ export type UpdateReloadReading = Pick<OpsSelfUpdateV1, 'installedVersion' | 'he
 
 export type ReloadDecision =
   | { show: false }
-  | { show: true; reason: 'interface-behind' | 'server-restarted'; message: string; sha: string | null };
+  | { show: true; reason: 'chunk-missing' | 'interface-behind' | 'server-restarted'; message: string; sha: string | null };
 
 export interface DecideReloadInput {
+  /** A dynamic import failed while this page was open. */
+  chunkError: boolean;
   /** The first healthy reading captured after page load — the restart baseline. */
   first: UpdateReloadReading | null;
   /** The newest reading. */
@@ -36,7 +38,11 @@ export interface DecideReloadInput {
   dismissedSha: string | null;
 }
 
-export function decideReload({ first, current, appVersion, dismissedSha }: DecideReloadInput): ReloadDecision {
+export function decideReload({ chunkError, first, current, appVersion, dismissedSha }: DecideReloadInput): ReloadDecision {
+  if (chunkError) return {
+    show: true, reason: 'chunk-missing', sha: null,
+    message: `${PRODUCT_NAME} updated while this window was open — reload to finish`,
+  };
   if (!current || current.sourceState === 'unavailable') return { show: false };
   const sha = typeof current.headSha === 'string' ? current.headSha : null;
   // "Later" is keyed on the commit it dismissed: a further change asks again.
@@ -49,7 +55,14 @@ export function decideReload({ first, current, appVersion, dismissedSha }: Decid
       sha,
     };
   }
-  if (first && typeof first.headSha === 'string' && sha !== null && first.headSha !== sha) {
+  const firstProcessHeadSha = (first as { processHeadSha?: unknown } | null)?.processHeadSha;
+  const currentProcessHeadSha = (current as { processHeadSha?: unknown }).processHeadSha;
+  const firstProcessSha = typeof firstProcessHeadSha === 'string' ? firstProcessHeadSha : null;
+  const currentProcessSha = typeof currentProcessHeadSha === 'string' ? currentProcessHeadSha : null;
+  const restarted = firstProcessSha !== null && currentProcessSha !== null
+    ? firstProcessSha !== currentProcessSha
+    : first !== null && typeof first.headSha === 'string' && sha !== null && first.headSha !== sha;
+  if (restarted) {
     return {
       show: true,
       reason: 'server-restarted',

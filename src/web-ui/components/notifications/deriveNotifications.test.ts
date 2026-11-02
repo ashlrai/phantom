@@ -13,6 +13,17 @@ function fakeControl(overrides: Record<string, unknown> = {}): ControlSnapshot {
 }
 
 describe('deriveNotifications', () => {
+  it('includes a merge stall alongside other notifications', () => {
+    const fleetRuns = {
+      sources: { merges: 'healthy' }, mergesLastHour: { count: 0 },
+      publishesLastHour: ['one', 'two', 'three'].map((job) => ({ job, at: new Date().toISOString() })),
+    };
+    const fleet = { nextActions: [{ id: 'inspect-x', priority: 'critical', label: 'Inspect X', detail: 'Needs eyes.' }] } as unknown as FleetStatus;
+    const out = deriveNotifications({ fleet }, fleetRuns);
+    expect(out.map((item) => item.id)).toEqual(['next-action-inspect-x', expect.stringMatching(/^merge-stall:/)]);
+    expect(out[1]?.title).toBe('Merge gate stalled: 3 published, 0 merged in the last hour');
+  });
+
   it('returns nothing when everything is healthy and clear', () => {
     const out = deriveNotifications({ control: fakeControl() });
     expect(out).toEqual([]);

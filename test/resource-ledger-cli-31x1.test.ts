@@ -10,7 +10,7 @@ import { readResourceLedger, type ResourceLaneRow, type ResourceLedgerV1 } from 
 const row = (lane: string, fields: Partial<ResourceLaneRow>): ResourceLaneRow => ({
   lane, running: null, target: null, held: null, window: 'none', usedPct: null,
   creditsRemaining: null, resetAt: null, burnPctPerHour: null, tokensPerHour6h: null,
-  projectedExhaustion: null, source: null, ...fields,
+  projectedExhaustion: null, source: null, deadSignal: null, ...fields,
 });
 const ledger: ResourceLedgerV1 = {
   v: 1, generatedAt: '2026-10-31T12:01:00Z', asOf: '2026-10-31T12:00:00Z',

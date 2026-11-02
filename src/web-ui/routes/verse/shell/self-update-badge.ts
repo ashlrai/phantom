@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
+import { useDesktopUpdates, type DesktopUpdateState } from '../../../app/desktop-updates.js';
 import { getQuerySnapshot } from '../../../data/cache.js';
 import { ApiError, apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -35,10 +36,30 @@ export function readSelfUpdate(raw: unknown): SelfUpdateStatus | null {
 }
 
 export function updateEntryLabel(status: SelfUpdateStatus): string | null {
-  if (status.sourceState === 'unavailable'
-    || !(status.canFastForward === true || (status.behind !== null && status.behind > 0 && status.dirty === false))) return null;
-  if (status.behind === null) return 'Update available';
-  return `Update available · ${status.behind} ${status.behind === 1 ? 'commit' : 'commits'} behind`;
+  if (status.sourceState === 'unavailable' || status.behind === null || status.behind === 0) return null;
+  if (status.canFastForward === true && status.dirty !== true) {
+    return `Update available · ${status.behind} ${status.behind === 1 ? 'commit' : 'commits'} behind`;
+  }
+  if (status.dirty === true) return 'Update blocked · local changes';
+  if (status.ahead !== null && status.ahead > 0) return 'Update blocked · diverged';
+  return 'Update blocked · open Settings';
+}
+
+export function nativeUpdateLabel(state: DesktopUpdateState | null): string | null {
+  if (!state) return null;
+  const update = state.version === null ? 'update' : `Phantom ${state.version}`;
+  switch (state.phase) {
+    case 'available': return `${update} available`;
+    case 'downloading': return `Downloading ${update}${state.bytesTotal && state.bytesTotal > 0 ? ` · ${Math.round(state.bytesReceived / state.bytesTotal * 100)}%` : ''}`;
+    case 'staged':
+    case 'waiting-for-idle':
+    case 'waiting-for-app-quit': return `${update} ready · installs when idle`;
+    case 'installing': return `Installing ${update}…`;
+    case 'installed': return `${update} installed · restarts when idle`;
+    case 'adoption-held': return 'Update held · open Settings';
+    case 'failed': return 'Update failed · open Settings';
+    default: return null;
+  }
 }
 
 let missing: ApiError | null = null;
@@ -62,6 +83,7 @@ const subscribeVisibility = (listener: () => void): (() => void) => {
 const visible = (): boolean => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
 export function useSelfUpdateBadge(): { label: string } | null {
+  const native = useDesktopUpdates();
   const isVisible = useSyncExternalStore(subscribeVisibility, visible, () => true);
   const query = useQuery(selfUpdateBadgeQuery, { enabled: isVisible });
   const refetch = useRefetch(selfUpdateBadgeQuery);
@@ -72,6 +94,6 @@ export function useSelfUpdateBadge(): { label: string } | null {
   }, [isVisible, refetch, query.error]);
   const current = isVisible ? query : getQuerySnapshot<unknown>(selfUpdateBadgeQuery.key);
   const status = missing ? null : readSelfUpdate(current.data);
-  const label = status ? updateEntryLabel(status) : null;
+  const label = nativeUpdateLabel(native) ?? (status ? updateEntryLabel(status) : null);
   return label ? { label } : null;
 }

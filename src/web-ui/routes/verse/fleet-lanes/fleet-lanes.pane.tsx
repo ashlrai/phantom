@@ -7,6 +7,7 @@ function LanesGlyph({ size = 16 }: { size?: number }) {
 }
 
 registerPane({
+  shortcut: 'mod+alt+n',
   id: 'fleet-lanes',
   title: 'Lanes',
   description: 'Live lanes, workers and merges from the Mac fleet',

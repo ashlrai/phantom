@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
+import { NO_FLEET_TEXT } from '../fleet/no-fleet.js';
 import { SectionVisibilityProvider } from '../shell/section-visibility.js';
 import { FleetCapacityPane } from './FleetCapacityPane.js';
 
@@ -32,6 +33,23 @@ it('explains a missing route', async () => {
   expect(await screen.findByText('Capacity history has not landed in this build yet.')).toBeInTheDocument();
 });
 
+it('shows one shared status notice for a missing source with no samples', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...fixture, sourceState: 'missing', samples: [] })));
+  render(<FleetCapacityPane visible />);
+  expect(await screen.findByText(NO_FLEET_TEXT)).toHaveAttribute('role', 'status');
+  expect(screen.getAllByText(NO_FLEET_TEXT)).toHaveLength(1);
+  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  expect(screen.queryByText(/No capacity history yet/)).not.toBeInTheDocument();
+});
+
+it('keeps history visible when the source is missing but samples exist', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...fixture, sourceState: 'missing' })));
+  render(<FleetCapacityPane visible />);
+  expect(await screen.findByText(/3 samples · 0 launch gaps · source missing/)).toBeInTheDocument();
+  expect(screen.queryByText(NO_FLEET_TEXT)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Workers and leaders over time')).toBeInTheDocument();
+});
+
 it('requests a separate window when selected', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(fixture)));
   render(<FleetCapacityPane visible />);
@@ -52,6 +70,11 @@ it('retains the last reading when a refresh fails', async () => {
 });
 
 it('polls only while pane, section and document are visible', async () => {
+  const expectReads = (count: number) => {
+    for (const path of ['/api/verse/runs-history?hours=24', '/api/verse/fleet/runs', '/api/verse/runs-history/lane-truth', '/api/verse/fleet/runs/lane-models']) {
+      expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === path)).toHaveLength(count);
+    }
+  };
   vi.useFakeTimers();
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(fixture)));
   let visibility = 'visible';
@@ -59,16 +82,16 @@ it('polls only while pane, section and document are visible', async () => {
   const view = render(<SectionVisibilityProvider visible><FleetCapacityPane visible /></SectionVisibilityProvider>);
   await act(async () => {});
   await act(async () => { vi.advanceTimersByTime(60_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expectReads(2);
   visibility = 'hidden'; act(() => { document.dispatchEvent(new Event('visibilitychange')); });
   await act(async () => { vi.advanceTimersByTime(120_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expectReads(2);
   visibility = 'visible'; await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expectReads(3);
   view.rerender(<SectionVisibilityProvider visible={false}><FleetCapacityPane visible /></SectionVisibilityProvider>);
   await act(async () => { vi.advanceTimersByTime(120_000); });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expectReads(3);
   view.rerender(<SectionVisibilityProvider visible><FleetCapacityPane visible={false} /></SectionVisibilityProvider>);
   await act(async () => { vi.advanceTimersByTime(120_000); });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expectReads(3);
 });

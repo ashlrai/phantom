@@ -19,7 +19,8 @@ it('renders merged PRs, waiting publishes and lane throughput', async () => {
   render(<FleetMergesPane {...props} />);
   expect(await screen.findByText('1 merged in the last hour · 1 publishes waiting')).toBeInTheDocument();
   const merged = within(screen.getByRole('list', { name: 'Merged PRs' }));
-  expect(merged.getByText('bridge: RQ-DONE')).toBeInTheDocument();
+  expect(merged.getByRole('listitem')).toHaveTextContent('bridge: RQ-DONE');
+  expect(merged.getByRole('button', { name: 'Open log for RQ-DONE' })).toBeInTheDocument();
   expect(merged.getByRole('link')).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/12');
   const pending = within(screen.getByRole('list', { name: 'Publishes waiting' }));
   expect(pending.getAllByRole('listitem')).toHaveLength(1);
@@ -47,18 +48,18 @@ it('reports a missing endpoint', async () => {
 
 it('polls every ten seconds only while visible', async () => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => Response.json(fixture()));
+  const fetcher = vi.fn(async (_url: string) => Response.json(fixture()));
   vi.stubGlobal('fetch', fetcher);
   const view = render(<FleetMergesPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetMergesPane {...props} />); });
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/verse/fleet/runs')).toHaveLength(1);
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/verse/fleet/runs')).toHaveLength(2);
   view.rerender(<FleetMergesPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/verse/fleet/runs')).toHaveLength(2);
 });
 
 it('updates from the shared fleet runs cache', async () => {

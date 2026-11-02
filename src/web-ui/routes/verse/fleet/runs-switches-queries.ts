@@ -13,7 +13,7 @@ const PATH = '/api/verse/fleet/control/switches';
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-function narrow(raw: unknown): RunsSwitchesResponse {
+export function narrowRunsSwitches(raw: unknown): RunsSwitchesResponse {
   if (record(raw) && raw.v === 1 && ['healthy', 'missing', 'degraded'].includes(String(raw.sourceState))
     && Array.isArray(raw.switches) && raw.switches.every(row => record(row)
       && typeof row.id === 'string' && typeof row.on === 'boolean'
@@ -27,7 +27,7 @@ let missing: ApiError | null = null;
 export async function getRunsSwitches(): Promise<RunsSwitchesResponse> {
   if (missing) throw missing;
   try {
-    return narrow(await apiGet<unknown>(PATH));
+    return narrowRunsSwitches(await apiGet<unknown>(PATH));
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) missing = error;
     throw error;
@@ -37,7 +37,7 @@ export async function getRunsSwitches(): Promise<RunsSwitchesResponse> {
 export async function postRunsSwitch(id: string, on: boolean): Promise<RunsSwitchesResponse> {
   const token = getMutationToken();
   if (!token) throw new VerseControlLockedError();
-  const result = narrow(await apiPost<unknown>(PATH, { id, on }, token));
+  const result = narrowRunsSwitches(await apiPost<unknown>(PATH, { id, on }, token));
   touchMutationHold();
   return result;
 }

@@ -24,6 +24,7 @@ import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
 import { STATUS_WORDS, type BudgetSeatRow as BudgetRow, type BudgetSeatStatus } from '../budget/budget-model.js';
 import { usedPercentText } from '../percent-text.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
+import { isClaudeProvider } from '../usage/provider-windows.js';
 import {
   accountStatus,
   capacityHeadline,
@@ -204,9 +205,15 @@ function budgetOnlyItems(view: BudgetView, now: number): SeatStripItem[] {
     // Recorded API dollars belong in Credit balances, never this percentage strip.
     if (b.engine === 'claude-api') continue;
     const h = b.headroom;
-    const used = h?.bindingWindow === 'weekly' ? h.weeklyUsedPercent : h?.bindingWindow === 'session' ? h.sessionUsedPercent : null;
+    // Anthropic removed the 5-hour limit: an older server may still name the
+    // session window binding for a Claude seat. Read the weekly figure
+    // instead — the reported reset belongs to the retired window, so it goes.
+    const staleSession = isClaudeProvider(b.engine) && h?.bindingWindow === 'session';
+    const used = staleSession ? h?.weeklyUsedPercent
+      : h?.bindingWindow === 'weekly' ? h.weeklyUsedPercent
+      : h?.bindingWindow === 'session' ? h.sessionUsedPercent : null;
     const left = b.free || used === null || used === undefined ? null : Math.max(0, Math.min(100, 100 - used));
-    const when = describeResetAt(h?.resetAt ?? null, now);
+    const when = staleSession ? null : describeResetAt(h?.resetAt ?? null, now);
     const autonomy: SeatAutonomy = { kind: AUTONOMY_KIND[b.status], word: STATUS_WORDS[b.status], why: b.why ? sentence(b.why) : null };
     const value = b.free ? '—' : left === null ? '—' : `${usedPercentText(left)} left`;
     const note = b.free ? 'Readiness not reported' : when ? `resets ${when}` : null;

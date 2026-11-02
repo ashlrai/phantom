@@ -11,6 +11,7 @@ export interface ResourceLaneRow {
   tokensPerHour6h: number | null;
   projectedExhaustion: string | null;
   source: string | null;
+  observation?: unknown;
   deadSignal?: { lane: string; lastFinishes: number; emptyFailures: number; state: 'ok' | 'suspect' | 'dead' } | null;
 }
 export interface ApiSpendSummary {
@@ -59,6 +60,49 @@ export function isResourceLedger(v: unknown): v is ResourceLedgerV1 {
 
 const grouped = (n: number): string => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(n).replaceAll(',', ' ');
 const compact = (n: number): string => n >= 1_000_000 ? `${grouped(n / 1_000_000)} M` : n >= 1_000 ? `${grouped(n / 1_000)} k` : grouped(n);
+export function easternClock(atMs: number, weekday = false): string {
+  return `${new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', ...(weekday ? { weekday: 'short' } : {}),
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(atMs).replace(',', '')} ET`;
+}
+
+export function sourceLabel(source: string | null): string {
+  if (source === 'codex-personal-sessions') return 'personal Codex session logs';
+  if (source === 'status') return 'dispatchd status';
+  return source !== null && /^[A-Za-z0-9 _.:-]{1,40}$/.test(source) ? source : 'unknown';
+}
+
+export function staleness(asOf: string | null, nowMs: number, staleAfterMs = 15 * 60_000): { state: 'fresh' | 'stale' | 'unknown'; text: string } {
+  const at = asOf === null ? NaN : Date.parse(asOf);
+  if (!Number.isFinite(at) || !Number.isFinite(nowMs) || at > nowMs) return { state: 'unknown', text: 'age unknown' };
+  return { state: nowMs - at >= staleAfterMs ? 'stale' : 'fresh', text: `as of ${easternClock(at)}` };
+}
+
+export function laneAsOf(row: ResourceLaneRow, ledgerAsOf: string | null): string | null {
+  if (row.source !== 'codex-personal-sessions') return ledgerAsOf;
+  return record(row.observation) && row.observation.source === row.source && typeof row.observation.asOf === 'string'
+    ? row.observation.asOf : null;
+}
+
+export function runsOutText(row: ResourceLaneRow, nowMs: number): string | null {
+  if (row.window === 'none') return null;
+  const at = row.projectedExhaustion === null ? NaN : Date.parse(row.projectedExhaustion);
+  const burn = row.burnPctPerHour !== null && Number.isFinite(row.burnPctPerHour)
+    ? `${row.burnPctPerHour.toFixed(1)} %/h` : null;
+  if (!Number.isFinite(at) && burn === null) return null;
+
+  const reset = row.resetAt === null ? NaN : Date.parse(row.resetAt);
+  let text: string | null = null;
+  if ((row.usedPct !== null && row.usedPct >= 100) || (Number.isFinite(at) && at <= nowMs)) {
+    text = `out${Number.isFinite(reset) ? ` · resets ${easternClock(reset, true)}` : ''}`;
+  } else if (Number.isFinite(at) && at > nowMs) {
+    const delta = at - nowMs;
+    const remaining = delta < 3_600_000 ? `in ${Math.ceil(delta / 60_000)} m` : `${(delta / 3_600_000).toFixed(1)} h`;
+    text = `runs out ~${easternClock(at)} (${remaining})`;
+  }
+  return [text, burn].filter(Boolean).join(' · ') || null;
+}
 function duration(ms: number): string {
   const minutes = Math.max(0, Math.ceil(ms / 60_000));
   const days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60);

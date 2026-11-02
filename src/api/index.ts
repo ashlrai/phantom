@@ -8,3 +8,4 @@
 
 export * from './core.js';
 export type * from './types.js';
+export { createGithubWebhookHandler } from './github-webhook.js';

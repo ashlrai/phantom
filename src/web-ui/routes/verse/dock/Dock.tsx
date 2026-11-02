@@ -36,6 +36,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ErrorInfo,
@@ -43,16 +44,19 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '../../../components/primitives/Button.js';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { ActionMenu, anchorBelow, type ActionMenuItem, type MenuAnchor } from '../chat/ActionMenu.js';
 import { commandChord, formatChord } from '../shell/command-keys.js';
-import { DOCK_LAYOUT, clampDockHeight, clampDockWidth, type DockPaneId, type DockPresentation } from '../shell/dock-catalog.js';
+import { DOCK_LAYOUT, DOCK_PANES, REGISTERED_DOCK_PANE_GROUPS, clampDockHeight, clampDockWidth, type DockPaneCatalogEntry, type DockPaneId, type DockPresentation } from '../shell/dock-catalog.js';
 import { getPane, isPaneAvailable, paneChordLabel, panesFor, preloadPanes, usePanes, type PaneContext, type PaneProps, type RegisteredPane } from '../panes/index.js';
 import {
   closeDock,
   closeDockTab,
+  closeDockTabs,
+  moveDockTab,
   openDockPane,
   setDockHeight,
   setDockSplitRatio,
@@ -65,6 +69,7 @@ import { CloseGlyph, PanelBottomGlyph, PanelRightGlyph, SplitGlyph } from './doc
 import styles from './Dock.module.css';
 import { useAgentWorkspace, WORKSPACE_PANES } from './agent-workspace.js';
 import { paneLinkUrl } from './pane-link.js';
+import { groupDockPanes } from './dock-add-menu-model.js';
 
 /** What every pane gets besides its own id, visibility and presentation (PaneProps minus those). */
 export type DockPaneContext = Omit<PaneProps, 'paneId' | 'visible' | 'presentation' | 'requests'>;
@@ -117,6 +122,84 @@ function useFrameWriter(write: (value: number) => void): (value: number) => void
   }, [write]);
 }
 
+function DockAddMenu({ panes, anchor, returnFocus, onClose }: {
+  panes: readonly RegisteredPane[]; anchor: MenuAnchor; returnFocus: HTMLElement; onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const [query, setQuery] = useState('');
+  const [position, setPosition] = useState({ left: anchor.x, top: anchor.y });
+  const entries = panes.map((pane) => {
+    const catalog: DockPaneCatalogEntry | undefined = DOCK_PANES.find((entry) => entry.id === pane.id);
+    return { id: pane.id, label: pane.title, group: catalog?.group ?? REGISTERED_DOCK_PANE_GROUPS[pane.id] ?? 'agent', pane };
+  });
+  const groups = groupDockPanes(entries, query);
+
+  useLayoutEffect(() => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect) return;
+    const left = Math.max(8, Math.min(anchor.x, window.innerWidth - rect.width - 8));
+    const top = Math.max(8, Math.min(anchor.y, window.innerHeight - rect.height - 8));
+    setPosition({ left, top });
+    searchRef.current?.focus();
+  }, [anchor.x, anchor.y]);
+
+  useEffect(() => {
+    const dismiss = (event: Event) => {
+      if (event.target instanceof Node && ref.current?.contains(event.target)) return;
+      closeRef.current();
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    document.addEventListener('scroll', dismiss, true);
+    window.addEventListener('resize', dismiss);
+    const menu = ref.current;
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true);
+      document.removeEventListener('scroll', dismiss, true);
+      window.removeEventListener('resize', dismiss);
+      if ((document.activeElement === document.body || menu?.contains(document.activeElement)) && document.contains(returnFocus)) {
+        returnFocus.focus({ preventScroll: true });
+      }
+    };
+  }, [returnFocus]);
+
+  function select(id: string) {
+    onClose();
+    openDockPane(id);
+  }
+
+  return createPortal(
+    <div ref={ref} className={styles.addMenu} role="dialog" aria-label="Add a pane" style={position}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          if (query) { setQuery(''); searchRef.current?.focus(); } else onClose();
+        } else if (event.key === 'Enter' && event.target === searchRef.current) {
+          const first = groups[0]?.panes[0];
+          if (first) { event.preventDefault(); select(first.id); }
+        }
+      }}>
+      <input ref={searchRef} className={styles.addSearch} aria-label="Search panes" placeholder="Search panes" value={query}
+        onChange={(event) => setQuery(event.target.value)} />
+      <div className={styles.addResults}>
+        {groups.map((group) => <section key={group.id} aria-label={group.label}>
+          <div className={styles.addGroupLabel}>{group.label}</div>
+          {group.panes.map(({ pane }) => {
+            const Icon = pane.icon;
+            return <button type="button" key={pane.id} className={styles.addItem} onClick={() => select(pane.id)}>
+              <Icon size={14} />{pane.title}
+            </button>;
+          })}
+        </section>)}
+        {groups.length === 0 ? <div className={styles.addEmpty}>No matching panes</div> : null}
+      </div>
+    </div>, document.body,
+  );
+}
+
 export function Dock(props: DockProps) {
   const { presentation, windowWidth, columnWidth, columnMax = Number.POSITIVE_INFINITY, columnHeight = 0, pane: paneContext } = props;
   const { state, requests } = useDock();
@@ -125,8 +208,19 @@ export function Dock(props: DockProps) {
   const tiled = workspace && presentation === 'column' && WORKSPACE_PANES.some((id) => id === state.active);
   const panelRef = useRef<HTMLElement>(null);
   const tabRefs = useRef(new Map<DockPaneId, HTMLButtonElement>());
+  const movedTabFocus = useRef<DockPaneId | null>(null);
+  useLayoutEffect(() => {
+    if (movedTabFocus.current !== null) {
+      tabRefs.current.get(movedTabFocus.current)?.focus();
+      movedTabFocus.current = null;
+    }
+  }, [state.tabs]);
   const idBase = useId();
-  const [menu, setMenu] = useState<{ kind: 'add' | 'split'; anchor: MenuAnchor; from: HTMLElement } | null>(null);
+  const [menu, setMenu] = useState<
+    | { kind: 'add' | 'split'; anchor: MenuAnchor; from: HTMLElement }
+    | { kind: 'tab'; pane: DockPaneId; anchor: MenuAnchor; from: HTMLElement }
+    | null
+  >(null);
   const [copyNotice, setCopyNotice] = useState<{ pane: DockPaneId; text: 'Copied' | 'Copy failed' } | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyRequest = useRef(0);
@@ -141,6 +235,9 @@ export function Dock(props: DockProps) {
   const tabs = (tiled ? [...new Set([...WORKSPACE_PANES, ...state.tabs])] : state.tabs).filter((id) => isPaneAvailable(id, context));
   const active = state.active !== null && tabs.includes(state.active) ? state.active : tabs[0] ?? null;
   const split = state.splitWith !== null && tabs.includes(state.splitWith) && state.splitWith !== active ? state.splitWith : null;
+  // The tabs a close may take — the same rule the per-tab close button uses
+  // (a workspace tile has none while the workspace is tiled).
+  const closable = tabs.filter((id) => !tiled || !WORKSPACE_PANES.some((pane) => pane === id));
   const open = state.open && active !== null;
   const sheet = presentation === 'sheet' || presentation === 'bottom-sheet';
   const docked = !sheet;
@@ -218,6 +315,21 @@ export function Dock(props: DockProps) {
   }
 
   function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, pane: DockPaneId) {
+    if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      const delta = event.key === 'ArrowLeft' ? -1 : 1;
+      const index = state.tabs.indexOf(pane);
+      if (index >= 0 && index + delta >= 0 && index + delta < state.tabs.length) movedTabFocus.current = pane;
+      moveDockTab(pane, delta);
+      tabRefs.current.get(pane)?.focus();
+      return;
+    }
+    // The keyboard's context-menu keys open the same menu a right-click does.
+    if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+      event.preventDefault();
+      setMenu({ kind: 'tab', pane, anchor: anchorBelow(event.currentTarget, 'start'), from: event.currentTarget });
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'c') {
       event.preventDefault();
       event.stopPropagation();
@@ -249,11 +361,23 @@ export function Dock(props: DockProps) {
     return { id: p.id, label, icon: <Icon size={14} />, onSelect };
   };
   const closedPanes = available.filter((p) => !tabs.includes(p.id));
-  const addItems: ActionMenuItem[] = closedPanes.map((p) => menuItem(p, p.title, () => openDockPane(p.id)));
   const splitItems: ActionMenuItem[] = [
     ...available.filter((p) => p.id !== active).map((p) => menuItem(p, `${p.title} below`, () => splitDock(p.id))),
     ...(split ? [{ id: 'unsplit', label: 'One pane', separated: true, onSelect: () => splitDock(null) }] : []),
   ];
+  // A tab's right-click menu: the fleet workspace leaves a score of tabs
+  // open, and the way back to one was one click per tab.
+  const tabItems = (id: DockPaneId): ActionMenuItem[] => {
+    const others = closable.filter((pane) => pane !== id);
+    const index = tabs.indexOf(id);
+    return [
+      { id: 'move-left', label: 'Move left', disabled: index === 0, onSelect: () => moveDockTab(id, -1) },
+      { id: 'move-right', label: 'Move right', disabled: index === tabs.length - 1, onSelect: () => moveDockTab(id, 1) },
+      ...(closable.includes(id) ? [{ id: 'close', label: `Close ${titleOf(id)}`, separated: true, onSelect: () => closeDockTab(id) }] : []),
+      { id: 'close-others', label: 'Close other panes', separated: !closable.includes(id), disabled: others.length === 0, onSelect: () => closeDockTabs(others) },
+      { id: 'close-all', label: 'Close all panes', separated: true, disabled: closable.length === 0, onSelect: () => closeDockTabs(closable) },
+    ];
+  };
 
   const toggleChord = chordOf('dock.toggle');
   const width = presentation === 'column' ? columnWidth : clampDockWidth(state.width, windowWidth);
@@ -290,7 +414,11 @@ export function Dock(props: DockProps) {
             const below = id === split && showSplit;
             const key = paneChordLabel(registered);
             return (
-              <div key={id} className={styles.tabWrap} data-selected={selected || undefined} data-below={below || undefined}>
+              <div key={id} className={styles.tabWrap} data-selected={selected || undefined} data-below={below || undefined}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setMenu({ kind: 'tab', pane: id, anchor: { x: event.clientX, y: event.clientY }, from: tabRefs.current.get(id) ?? event.currentTarget });
+                }}>
                 <button
                   ref={(node) => { if (node) tabRefs.current.set(id, node); else tabRefs.current.delete(id); }}
                   type="button"
@@ -313,7 +441,8 @@ export function Dock(props: DockProps) {
                   {copyNotice?.pane === id ? copyNotice.text : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7" /></svg>}
                 </button> : null}
                 {!tiled || !WORKSPACE_PANES.some((pane) => pane === id) ? <button type="button" className={styles.tabClose} aria-label={`Close ${title}`}
-                  title={`Close ${title}`} tabIndex={-1} onClick={() => closeDockTab(id)}>
+                  title={`Close ${title} (⇧: close others)`} tabIndex={-1}
+                  onClick={(event) => { if (event.shiftKey) closeDockTabs(closable.filter((pane) => pane !== id)); else closeDockTab(id); }}>
                   <CloseGlyph size={12} />
                 </button> : null}
               </div>
@@ -324,7 +453,7 @@ export function Dock(props: DockProps) {
           {/* Always drawn (disabled when every pane is open) so the actions
               never shift when the last closed pane is added back. */}
           <button type="button" className={styles.iconButton} aria-label="Add a pane"
-            title={closedPanes.length > 0 ? 'Add a pane' : 'Every pane is already open'} aria-haspopup="menu"
+            title={closedPanes.length > 0 ? 'Add a pane' : 'Every pane is already open'} aria-haspopup="dialog"
             aria-expanded={menu?.kind === 'add'} disabled={closedPanes.length === 0}
             onClick={(event) => setMenu({ kind: 'add', anchor: anchorBelow(event.currentTarget), from: event.currentTarget })}>
             <span className={styles.plus} aria-hidden="true">+</span>
@@ -378,10 +507,12 @@ export function Dock(props: DockProps) {
         {showSplit ? <SplitHandle ratio={state.splitRatio} lower={titleOf(split!)} /> : null}
       </div>
 
-      {menu ? (
+      {menu?.kind === 'add' ? (
+        <DockAddMenu panes={closedPanes} anchor={menu.anchor} returnFocus={menu.from} onClose={() => setMenu(null)} />
+      ) : menu ? (
         <ActionMenu
-          label={menu.kind === 'add' ? 'Add a pane' : 'Split the dock'}
-          items={menu.kind === 'add' ? addItems : splitItems}
+          label={menu.kind === 'tab' ? `${titleOf(menu.pane)} pane` : 'Split the dock'}
+          items={menu.kind === 'tab' ? tabItems(menu.pane) : splitItems}
           anchor={menu.anchor}
           returnFocus={menu.from}
           onClose={() => setMenu(null)}

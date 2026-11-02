@@ -106,6 +106,7 @@ const REDACTED_LINE = '[redacted line]';
 const LAUNCHED = /\blaunched\s+([A-Za-z0-9][A-Za-z0-9._-]{1,79})\s+([A-Za-z0-9][A-Za-z0-9._@-]{0,63})\s+pid\s+(\d+)\s+base\s+([0-9a-fA-F]{4,64})\b/g;
 
 export function isFleetJobId(job: string): boolean {
+  if (/[\r\n]+$/.test(job)) return false;
   return JOB_ID.test(job);
 }
 
@@ -113,10 +114,6 @@ export function isFleetJobId(job: string): boolean {
 function cleanField(value: string): string {
   // eslint-disable-next-line no-control-regex -- stripping control bytes is the point.
   return value.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, MAX_FIELD_CHARS);
-}
-
-function scrubField(value: string): string {
-  return redactHomePaths(scrubSecrets(cleanField(value)));
 }
 
 function scrubLogLine(line: string): string {
@@ -217,15 +214,15 @@ function parseLaunch(text: string, job: string): { lane: string | null; pid: num
   for (const m of text.matchAll(LAUNCHED)) {
     if (m[1] !== job) continue; // a launch record naming another job is not ours
     matched = true;
-    lane = cleanField(m[2]!);
+    lane = scrubLogLine(m[2]!);
     pid = Number(m[3]);
-    baseSha = cleanField(m[4]!);
+    baseSha = scrubLogLine(m[4]!);
   }
   if (!matched) {
     const p = text.match(/\bpid\s+(\d+)\b/);
     if (p) pid = Number(p[1]);
     const b = text.match(/\bbase\s+([0-9a-fA-F]{4,64})\b/);
-    if (b) baseSha = cleanField(b[1]!);
+    if (b) baseSha = scrubLogLine(b[1]!);
   }
   return { lane, pid, baseSha, matched };
 }
@@ -236,10 +233,10 @@ function parsePublish(text: string): NonNullable<FleetJobDetailV1['publish']> {
   const test = text.match(/^TEST\b[^\n]*/m);
   const sens = text.match(/\bSENS=\[([^\]]*)\]/);
   return {
-    prUrl: pr ? scrubField(pr[1]!) : null,
+    prUrl: pr ? scrubLogLine(pr[1]!) : null,
     autoMerge: am ? am[1] === 'on' : null,
-    testLine: test ? scrubField(test[0].trim()) : null,
-    sensitive: sens ? sens[1]!.split(/[\s,]+/).filter(Boolean).map(scrubField) : null,
+    testLine: test ? scrubLogLine(test[0].trim()) : null,
+    sensitive: sens ? sens[1]!.split(/[\s,]+/).filter(Boolean).map(scrubLogLine) : null,
   };
 }
 
@@ -290,8 +287,8 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
       try {
         const fields = firstLine(await readSlice(file('base'), pBase.size, 0, SMALL_READ_BYTES)).split(/\s+/);
         if (fields.length >= 2) {
-          baseSha = cleanField(fields[0]!);
-          branch = cleanField(fields[1]!);
+          baseSha = scrubLogLine(fields[0]!);
+          branch = scrubLogLine(fields[1]!);
           sources.base = 'healthy';
         }
       } catch { /* stays degraded */ }
@@ -308,9 +305,9 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
       try {
         const m = (await readSlice(file('base.meta'), pMeta.size, 0, SMALL_READ_BYTES)).match(/^MODEL\s+(\S+)\s+(\S+)\s+(\S+)/m);
         if (m) {
-          metaLane = cleanField(m[1]!);
-          tier = cleanField(m[2]!);
-          model = cleanField(m[3]!);
+          metaLane = scrubLogLine(m[1]!);
+          tier = scrubLogLine(m[2]!);
+          model = scrubLogLine(m[3]!);
           sources.meta = 'healthy';
         }
       } catch { /* stays degraded */ }
@@ -364,11 +361,15 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     sources.log = 'degraded'; // a symlink or unreadable file — nothing was read
   }
 
-  // ── state — existence + mtime ordering, per the documented semantics ──────
-  const launchNewerThanPublish = pLaunch.mtimeMs !== null && (pPublish.mtimeMs === null || pLaunch.mtimeMs > pPublish.mtimeMs);
-  const launchNewerThanGz = pLaunch.mtimeMs !== null && pLogGz.mtimeMs !== null && pLaunch.mtimeMs > pLogGz.mtimeMs;
+  // Both retry artifacts must postdate the previous completion artifacts.
+  // Equal mtimes do not establish which attempt is newer.
+  const newerThan = (current: Probe, previous: Probe) =>
+    current.mtimeMs !== null && (previous.mtimeMs === null || current.mtimeMs > previous.mtimeMs);
+  const launchNewerThanGz = pLogGz.mtimeMs !== null && newerThan(pLaunch, pLogGz);
+  const currentAttempt = newerThan(pLaunch, pPublish) && newerThan(pLog, pPublish)
+    && newerThan(pLaunch, pLogGz) && newerThan(pLog, pLogGz);
   const state: FleetJobState =
-    launchNewerThanPublish && exists(pLog) && !exists(pLogGz) ? 'running'
+    currentAttempt ? 'running'
       : exists(pPublish) ? 'published'
         : exists(pLogGz) && !launchNewerThanGz ? 'archived'
           : 'unknown';
@@ -376,7 +377,7 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
   return {
     schema: 'fleet.job.v1',
     generatedAt: now.toISOString(),
-    job,
+    job: scrubLogLine(job),
     state,
     lane: launchLane ?? metaLane,
     tier,

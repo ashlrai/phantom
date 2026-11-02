@@ -72,16 +72,62 @@ it('shows errors and preserves the last reading on a failed refresh', async () =
 
 it('polls only while visible', async () => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => Response.json(fixture()));
+  const fetcher = vi.fn(async (_url: string) => Response.json(fixture()));
   vi.stubGlobal('fetch', fetcher);
   const view = render(<FleetReleasesPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetReleasesPane {...props} />); });
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher).toHaveBeenCalledTimes(3);
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(5);
+  await act(async () => { await vi.advanceTimersByTimeAsync(240_000); });
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/ci-runs'))).toHaveLength(2);
   view.rerender(<FleetReleasesPane {...props} visible={false} />);
+  const callsWhenHidden = fetcher.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(callsWhenHidden);
+});
+
+const prFixture = () => ({ v: 1, generatedAt: '2026-10-31T12:00:00Z', sourceState: 'healthy', repos: [
+  { repo: 'AshlrAI/Phantom', path: '/fixture', notes: ['Fixture note'], pr: {
+    number: 1479, title: 'chore(master): release 3.30.0', version: '3.30.0',
+    url: 'https://github.com/ashlrai/phantom/pull/1479', openedAt: '2026-10-28T12:00:00Z',
+    updatedAt: '2026-10-31T12:00:00Z', mergeable: 'UNKNOWN', blocked: true, pending: 0,
+    failing: ['Dependency audit (root + Raycast)'], summary: '3.30.0 blocked by Dependency audit (root + Raycast)',
+    checks: [{ name: 'Dependency audit (root + Raycast)', state: 'fail', url: 'https://github.com/ashlrai/phantom/actions/runs/1' }],
+  } },
+] });
+
+it('shows the blocked release PR and links its failing check', async () => {
+  vi.setSystemTime(new Date('2026-10-31T12:00:00Z'));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.includes('/release-pr') ? prFixture() : fixture())));
+  render(<FleetReleasesPane {...props} />);
+  const headline = await screen.findByRole('link', { name: /Release PR #1479 chore\(master\): release 3.30.0/ });
+  expect(headline).toHaveTextContent('3.30.0 blocked by Dependency audit (root + Raycast) · open since 3d ago');
+  expect(headline).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/1479');
+  expect(screen.getByRole('link', { name: 'Dependency audit (root + Raycast) · fail' })).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/actions/runs/1');
+  expect(screen.getByText('Fixture note')).toBeInTheDocument();
+});
+
+it('reports a missing PR and preserves its notes', async () => {
+  const data = prFixture();
+  const repos = data.repos.map(repo => ({ ...repo, pr: null }));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.includes('/release-pr') ? { ...data, repos } : fixture())));
+  render(<FleetReleasesPane {...props} />);
+  expect(await screen.findByText('No release PR open')).toBeInTheDocument();
+  expect(screen.getByText('Fixture note')).toBeInTheDocument();
+});
+
+it('keeps tags visible when the release PR read fails or is unsupported', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/release-pr') ? Response.json({}, { status: 500 }) : Response.json(fixture())));
+  const view = render(<FleetReleasesPane {...props} />);
+  expect(await screen.findByText('Release PR state is unavailable.')).toBeInTheDocument();
+  expect(screen.getByText('Version: 1.2.3 · Tag: v1.2.3')).toBeInTheDocument();
+  view.unmount();
+  evictAll();
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/release-pr') ? Response.json({}, { status: 404 }) : Response.json(fixture())));
+  render(<FleetReleasesPane {...props} />);
+  expect(await screen.findByText('Version: 1.2.3 · Tag: v1.2.3')).toBeInTheDocument();
+  expect(screen.queryByText('Release PR state is unavailable.')).not.toBeInTheDocument();
 });

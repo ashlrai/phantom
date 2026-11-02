@@ -16,14 +16,19 @@ Read first, in this order:
 npm ci                    # install
 npm run build             # full build to dist/
 npm run dev -- <command>  # run the CLI from source
-npm run typecheck         # tsc --noEmit plus the web typecheck
-npm run lint              # eslint plus lane lints
+node scripts/verify-changed.mjs # automated workers: run once, foreground, do not poll
+npm run typecheck         # optional full backend + web check for humans
+npm run lint              # optional full ESLint + lane lints for humans
 npm run check:docs        # documentation link and anchor check
 npx vitest run test/<file>.test.ts   # one backend suite
 npm run test:web          # src/web-ui suites
 npm run test:ci           # backend lanes with isolated HOME/ASHLR_HOME
 npm run gate              # build, static checks and related tests together
 ```
+
+Before a PR, automated workers run `node scripts/verify-changed.mjs` once in
+the foreground instead of full lint and typecheck; do not poll it. Also run the
+documentation check and affected tests. Merge Gate stays the full check.
 
 ## Companion tools
 

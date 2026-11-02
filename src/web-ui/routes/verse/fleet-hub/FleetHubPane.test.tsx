@@ -24,12 +24,12 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it('opens a tile and lays out only registered fleet panes with one store update', async () => {
   render(<FleetHubPane visible />);
-  await screen.findByText('1/2');
+  await screen.findByText('1/2 · 1 held');
   fireEvent.click(screen.getByText('Lanes'));
   expect(getDockState().active).toBe('fleet-lanes');
   const listener = vi.fn();
   const unsubscribe = subscribeDockState(listener);
-  fireEvent.click(screen.getByRole('button', { name: 'Open fleet workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open all fleet panes' }));
   expect(getDockState()).toMatchObject({ open: true, active: 'fleet-lanes', splitWith: 'fleet-events', tabs: ['fleet-lanes', 'fleet-events'] });
   expect(listener).toHaveBeenCalledTimes(1);
   unsubscribe();
@@ -38,7 +38,7 @@ it('opens a tile and lays out only registered fleet panes with one store update'
 
 it('reacts to late registrations and uses the registered title', async () => {
   render(<FleetHubPane visible />);
-  await screen.findByText('1/2');
+  await screen.findByText('1/2 · 1 held');
   let unregister = () => {};
   act(() => { unregister = registerPane({ id: 'fleet-inbox', title: 'Fleet inbox', needsSession: false, icon: () => null, component: () => null }); });
   fireEvent.click(screen.getByRole('button', { name: 'Fleet inbox 0' }));
@@ -52,8 +52,9 @@ it('refreshes counts while visible and stops polling when hidden', async () => {
   const view = render(<FleetHubPane visible />);
   await act(async () => {});
   await act(async () => { vi.advanceTimersByTime(5_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  const runsCalls = () => vi.mocked(fetch).mock.calls.filter(([path]) => String(path).endsWith('/fleet/runs'));
+  expect(runsCalls()).toHaveLength(2);
   view.rerender(<FleetHubPane visible={false} />);
   await act(async () => { vi.advanceTimersByTime(10_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(runsCalls()).toHaveLength(2);
 });

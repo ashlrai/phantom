@@ -4,7 +4,7 @@ import { Sparkline } from '../../../components/charts/Sparkline.js';
 import { Meter } from '../../../components/primitives/Meter.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { useDocumentVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { pacePerHour, readings, recordReading, requiredPacePerHour, stall, stallText, verdict, type PersonalReading } from './codex-burn-model.js';
+import { pacePerHour, readings, recordReading, requiredPacePerHour, runwayHours, stall, stallText, verdict, type PersonalReading } from './codex-burn-model.js';
 import { personalReader } from './codex-burn-queries.js';
 import styles from './codex-burn.module.css';
 
@@ -59,6 +59,14 @@ export function CodexBurnCard({ now }: { now: number }) {
   if (missing) return <p className={styles.note}>Personal Codex reading is not in this build yet.</p>;
   const pace = pacePerHour(history, now);
   const needed = requiredPacePerHour(reading?.usedPct ?? null, reading?.resetsAt ?? null, now);
+  const runway = runwayHours(reading?.usedPct ?? null, pace);
+  const reset = reading?.resetsAt ? Date.parse(reading.resetsAt) : NaN;
+  const minutes = runway === null ? 0 : Math.round(runway * 60);
+  const runsOut = runway === null ? 'no pace yet'
+    : Number.isFinite(reset) && now + runway * 3_600_000 > reset ? 'after reset'
+      : `~${Math.floor(minutes / 60)}h ${minutes % 60}m · about ${new Date(now + runway * 3_600_000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+  const age = reading?.asOf ? Math.max(0, now - Date.parse(reading.asOf)) : NaN;
+  const ageMinutes = Math.floor(age / 60_000);
   const stalled = stallText(stall(history, now));
   return (
     <section className={styles.card} aria-labelledby="personal-codex-burn">
@@ -66,12 +74,14 @@ export function CodexBurnCard({ now }: { now: number }) {
         <h3 id="personal-codex-burn">Personal Codex burn</h3>
         {sourceState && sourceState !== 'healthy' ? <StatusBadge status={sourceState} tone="warning">reading {sourceState}</StatusBadge> : null}
       </div>
+      {Number.isFinite(age) ? <p className={styles.note} style={age > 2 * 3_600_000 ? { color: 'var(--status-warning-fg)' } : undefined}>{age > 2 * 3_600_000 ? `reading is ${Math.floor(ageMinutes / 60)}h old` : `as of ${ageMinutes < 60 ? `${ageMinutes} min` : `${Math.floor(ageMinutes / 60)}h`} ago`}</p> : null}
       {failed ? <p className={styles.note}>Personal Codex reading unavailable.</p> : null}
       <Meter label="Used" value={reading?.usedPct ?? null} max={100} valueText={reading?.usedPct == null ? '—' : `${reading.usedPct}% used`} {...{ 'aria-valuetext': reading?.usedPct == null ? 'unknown' : `${reading.usedPct}% used` }} />
       <div className={styles.tiles}>
         <StatTile label="Resets in" value={relative(reading?.resetsAt ?? null, now)} />
         <StatTile label="Pace" value={rate(pace)} />
         <StatTile label="Needed" value={rate(needed)} />
+        <StatTile label="Runs out" value={runsOut} />
       </div>
       <p>{verdict(pace, needed).text}</p>
       {stalled ? <p>{stalled}</p> : null}
