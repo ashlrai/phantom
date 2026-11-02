@@ -1,3 +1,4 @@
+import { paneProps } from '../panes/pane-fixtures.test-support.js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, render, screen, within } from '@testing-library/react';
 import badgeStyles from '../../../components/primitives/StatusBadge.module.css';
@@ -23,7 +24,7 @@ it('shows the number of jobs written by each pass and the latest pass in the hea
       { at: '2026-01-01T12:23:00Z', id: 'fake-3', leader: 'other', lane: 'fake', tier: 'fake', title: 'Fake' },
     ], rejectedLastHour: 0,
   })));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...paneProps()} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   const passes = screen.getByRole('heading', { name: 'Passes' }).closest('section')!;
   const summaries = within(passes).getAllByText(/^2026-01-01T12:/).map((time) => time.closest('summary')!);
