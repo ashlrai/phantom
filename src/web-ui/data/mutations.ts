@@ -84,3 +84,9 @@ export async function openTarget(req: OpenTargetRequest): Promise<void> {
 export async function setResourcePlanTier(resourceId: string, planTier: string | null): Promise<void> {
   await post('/api/onboard/plan-tier', { resourceId, planTier });
 }
+
+/** RQ-ONB-7: toggle a scheduled agent on this computer via the automations route. */
+export async function setScheduledAgentEnabled(id: string, enabled: boolean): Promise<void> {
+  await post(`/api/verse/automations/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`, {});
+  invalidate('verse-automations');
+}

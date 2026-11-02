@@ -1029,3 +1029,24 @@ export async function probeCliLogin(checkCommand: string, timeoutMs = 4000): Pro
     return cliLoginVerdict(typeof err.code === 'number' ? err.code : null, `${err.stdout ?? ''}\n${err.stderr ?? ''}`);
   }
 }
+
+// RQ-ONB-7 AGENTS-BALANCER: connect-evidence probes. Presence-only env check
+// plus a loopback-only probe so apikey `https://` endpoints are never dialed.
+
+/** Presence-only env check for a credential variable; never returns the value. */
+export function envKeyPresent(envName: string): boolean {
+  const value = process.env[envName];
+  return typeof value === 'string' && value.length > 0;
+}
+
+const LOOPBACK_ENDPOINT = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i;
+
+/** Bounded GET probe restricted to loopback http; null for anything else. */
+export async function probeLoopbackEndpoint(url: string): Promise<boolean | null> {
+  if (!LOOPBACK_ENDPOINT.test(url)) return null;
+  try {
+    return (await probeEndpoint('connect', url)).up;
+  } catch {
+    return null;
+  }
+}

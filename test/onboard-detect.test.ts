@@ -15,9 +15,10 @@ import { join } from 'node:path';
 
 import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
-import { detectOnboardResources, persistOnboardPlanTier } from '../src/core/onboard.js';
+import { detectOnboardResources, listOnboardScheduledAgents, persistOnboardPlanTier, summarizeOnboardBalance } from '../src/core/onboard.js';
 import { RESOURCE_CATALOG } from '../src/core/onboard/catalog.js';
-import { probeCliLogin, resolveCliOnPath } from '../src/core/readiness.js';
+import { envKeyPresent, probeCliLogin, probeLoopbackEndpoint, resolveCliOnPath } from '../src/core/readiness.js';
+import { createAutomation } from '../src/core/automations/index.js';
 import { loadConfig } from '../src/core/config.js';
 import type { WebServerOptions } from '../src/core/types.js';
 
@@ -62,6 +63,13 @@ describe('detectOnboardResources', () => {
         installed: false, binaryPath: null, loginState: null, selectedPlanTier: null,
       });
     }
+    // keyEnvName rows report presence-only booleans; loopback endpoints probe.
+    for (const row of empty) {
+      const entry = RESOURCE_CATALOG.find((r) => r.id === row.id)!;
+      expect(typeof row.keyPresent).toBe(entry.keyEnvName ? 'boolean' : 'object');
+      expect(typeof row.endpointUp).toBe(
+        entry.validateEndpoint?.startsWith('http://127.0.0.1') ? 'boolean' : 'object');
+    }
 
     fakeCli(bin, 'codex', 'echo "Logged in using ChatGPT"');
     fakeCli(bin, 'claude', 'echo "Not logged in"; exit 1');
@@ -94,6 +102,20 @@ describe('readiness probes', () => {
     fakeCli(bin, 'fakecli', 'echo "error"; exit 1');
     expect(await probeCliLogin('fakecli login status')).toBe('unknown');
     expect(await probeCliLogin('definitely-not-a-real-binary-xyz status')).toBe('unknown');
+  });
+
+  it('envKeyPresent is presence-only and probeLoopbackEndpoint refuses non-loopback urls', async () => {
+    const name = 'ASHLR_ONB7_TEST_KEY';
+    expect(envKeyPresent(name)).toBe(false);
+    process.env[name] = 'onb7-sentinel-not-a-real-key';
+    expect(envKeyPresent(name)).toBe(true);
+    delete process.env[name];
+    // Outbound apikey validate endpoints are never dialed by the connect probe.
+    for (const entry of RESOURCE_CATALOG.filter((r) => r.kind === 'apikey')) {
+      expect(entry.validateEndpoint?.startsWith('https://')).toBe(true);
+      expect(await probeLoopbackEndpoint(entry.validateEndpoint!)).toBeNull();
+    }
+    expect(await probeLoopbackEndpoint('http://127.0.0.1:9/unreachable')).toBe(false);
   });
 });
 
@@ -138,10 +160,15 @@ describe('GET /api/onboard/status', () => {
     const body = JSON.parse(res.body) as {
       dispatchEnabled: boolean;
       resources: Array<{ id: string; installed: boolean; loginCommand: string | null }>;
+      agents: { agents: unknown[] };
+      balance: { connected: string[]; scheduledAgents: { total: number; enabled: number } };
     };
     expect(body.dispatchEnabled).toBe(false);
     expect(body.resources.map((r) => r.id)).toEqual(RESOURCE_CATALOG.map((r) => r.id));
     expect(byId(body.resources, 'codex').loginCommand).toBe('codex login');
+    expect(body.agents.agents).toEqual([]);
+    expect(body.balance.scheduledAgents).toEqual({ total: 0, enabled: 0 });
+    expect(body.balance.connected).toContain('this-computer');
     expect(res.body).not.toContain('s3ntinel-value');
     delete process.env.ASHLR_TEST_SENTINEL;
   });
@@ -174,5 +201,74 @@ describe('POST /api/onboard/plan-tier', () => {
     expect(loadConfig().onboard?.planTiers?.codex).toBe('Pro');
     expect((await post(h.port, auth, JSON.stringify({ resourceId: 'codex', planTier: 'Diamond' }))).statusCode).toBe(400);
     expect((await post(h.port, auth, JSON.stringify({ resourceId: 'devin', planTier: 'Nope' }))).statusCode).toBe(400);
+  });
+});
+
+const scheduleAutomation = (over: Record<string, unknown> = {}) => ({
+  name: 'Nightly review', enabled: true, lane: 'fleet', repos: ['*'],
+  trigger: { kind: 'schedule', rrule: 'FREQ=DAILY;BYHOUR=2' }, ...over });
+
+describe('listOnboardScheduledAgents', () => {
+  it('lists schedule-triggered automations on this computer with enabled state', async () => {
+    expect((await listOnboardScheduledAgents()).agents).toEqual([]);
+    const saved = await createAutomation(scheduleAutomation());
+    await createAutomation(scheduleAutomation({ name: 'Hook', trigger: { kind: 'webhook' } }));
+    const report = await listOnboardScheduledAgents();
+    expect(report.agents).toHaveLength(1);
+    expect(report.agents[0]).toMatchObject({
+      id: saved.id, name: 'Nightly review', enabled: true,
+      rrule: 'FREQ=DAILY;BYHOUR=2', nextRunAt: null,
+    });
+  });
+});
+
+describe('summarizeOnboardBalance', () => {
+  const status = (over: Record<string, unknown> = {}) => ({
+    id: 'x', installed: false, binaryPath: null, loginState: null, loginCommand: null,
+    selectedPlanTier: null, keyPresent: null, endpointUp: null, ...over,
+  });
+  const agents = (n: number, enabled = 0) => ({ agents: Array.from({ length: n }, (_, i) =>
+    ({ id: `au_${i}`, name: `a${i}`, enabled: i < enabled, rrule: 'FREQ=DAILY', nextRunAt: null })) });
+
+  it('marks connected only on real evidence and keeps usage unknown without a source', async () => {
+    const prev = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = 'onb7-sentinel-not-a-real-key';
+    try {
+      const summary = await summarizeOnboardBalance(cfg(), [
+        status({ id: 'grok', keyPresent: true }),
+        status({ id: 'ollama', endpointUp: true }),
+        status({ id: 'codex', installed: true, loginState: 'logged-in', selectedPlanTier: 'Pro' }),
+        status({ id: 'cursor', installed: true }),
+        status({ id: 'this-computer' }),
+        status({ id: 'openai', keyPresent: false }),
+      ] as never[], agents(1, 1));
+      const by = new Map(summary.resources.map((r) => [r.id, r] as const));
+      const expected: Record<string, [boolean, string]> = {
+        grok: [true, 'key-present'], ollama: [true, 'serving'], codex: [true, 'signed-in'], cursor: [true, 'installed'],
+        'this-computer': [true, 'self'], 'proactive-agents': [true, 'scheduled-agents'], openai: [false, 'none'],
+      };
+      for (const [id, [connected, evidence]] of Object.entries(expected)) {
+        expect(by.get(id)).toMatchObject({ connected, evidence });
+      }
+      expect(by.get('openai')!.usage).toBeNull();
+      expect(summary.connected.sort()).toEqual(Object.keys(expected).filter((id) => id !== 'openai').sort());
+      expect(summary.scheduledAgents).toEqual({ total: 1, enabled: 1 });
+      // Plan tiers come verbatim from the catalog, never invented.
+      expect(by.get('codex')!.planTiers).toEqual(
+        RESOURCE_CATALOG.find((r) => r.id === 'codex')!.planTiers);
+      expect(by.get('codex')!.selectedPlanTier).toBe('Pro');
+      // Ledger-backed rows expose real readings only; unbacked rows stay null.
+      const codexUsage = by.get('codex')!.usage!;
+      expect(codexUsage.usedPct === null || typeof codexUsage.usedPct === 'number').toBe(true);
+      expect(JSON.stringify(summary)).not.toContain('onb7-sentinel');
+      // No enabled scheduled agent -> proactive-agents stays disconnected.
+      const none = await summarizeOnboardBalance(cfg(), [], agents(2, 0));
+      expect(none.resources.find((r) => r.id === 'proactive-agents'))
+        .toMatchObject({ connected: false, evidence: 'none' });
+      expect(none.scheduledAgents).toEqual({ total: 2, enabled: 0 });
+    } finally {
+      if (prev === undefined) delete process.env.XAI_API_KEY;
+      else process.env.XAI_API_KEY = prev;
+    }
   });
 });

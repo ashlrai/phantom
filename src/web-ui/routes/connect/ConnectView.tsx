@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react';
 import { RESOURCE_CATALOG, type ResourceKind } from '../../../core/onboard/catalog.js';
+import { Switch } from '../../components/primitives/Switch.js';
 import { apiGet } from '../../data/client.js';
-import { setResourcePlanTier } from '../../data/mutations.js';
-import type { OnboardResourceStatus, OnboardStatusReport } from '../../data/api-types.js';
+import { setResourcePlanTier, setScheduledAgentEnabled } from '../../data/mutations.js';
+import type {
+  OnboardBalanceRow,
+  OnboardResourceStatus,
+  OnboardStatusReport,
+  OnboardUsageReading,
+} from '../../data/api-types.js';
 import styles from './ConnectView.module.css';
 
 const STEPS: readonly { kind: ResourceKind; title: string; description: string }[] = [
@@ -11,8 +17,10 @@ const STEPS: readonly { kind: ResourceKind; title: string; description: string }
   { kind: 'local', title: 'Local models', description: 'Run models on your own hardware.' },
   { kind: 'computer', title: 'This computer', description: 'Use the computer running Phantom.' },
   { kind: 'cloud', title: 'Cloud computer', description: 'Explore remote computing resources.' },
-  { kind: 'agent', title: 'Proactive agents', description: 'Explore agents that can work with you.' },
+  { kind: 'agent', title: 'Proactive agents', description: 'Agents this computer runs on a schedule.' },
 ];
+
+const catalogName = (id: string): string => RESOURCE_CATALOG.find((r) => r.id === id)?.displayName ?? id;
 
 function statusText(resource: OnboardResourceStatus): string {
   if (resource.loginState === 'logged-in') return 'Installed and signed in';
@@ -21,10 +29,36 @@ function statusText(resource: OnboardResourceStatus): string {
   return 'Installed - sign-in unknown';
 }
 
+const EVIDENCE_TEXT: Record<string, string> = {
+  'signed-in': 'signed in', 'key-present': 'API key present', 'serving': 'serving locally',
+  'scheduled-agents': 'scheduled agents on', 'self': 'this machine',
+};
+const evidenceText = (row: OnboardBalanceRow): string =>
+  row.evidence === 'installed' ? (row.connected ? 'installed' : 'installed, not signed in')
+    : EVIDENCE_TEXT[row.evidence] ?? 'not detected';
+
+function planText(row: OnboardBalanceRow): string | null {
+  return row.selectedPlanTier ? `plan ${row.selectedPlanTier}`
+    : row.planTiers.length > 0 ? `plans: ${row.planTiers.join(' · ')}` : null;
+}
+
+function usageText(u: OnboardUsageReading | null): string {
+  const parts = u ? [
+    u.usedPct !== null ? `${u.usedPct}% of window used` : null,
+    u.resetsAt ? `resets ${u.resetsAt}` : null,
+    u.callsToday !== null ? `${u.callsToday} dispatches today` : null,
+    u.tokensToday !== null ? `${u.tokensToday} tokens` : null,
+    u.costTodayUsd !== null ? `$${u.costTodayUsd.toFixed(2)}` : null,
+  ].filter((p): p is string => p !== null) : [];
+  return parts.length ? parts.join(', ') : 'usage unknown';
+}
+
 export function ConnectView() {
   const [report, setReport] = useState<OnboardStatusReport | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [agentSaveFailed, setAgentSaveFailed] = useState(false);
+  const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +69,7 @@ export function ConnectView() {
   }, []);
 
   const byId = new Map((report?.resources ?? []).map((r) => [r.id, r] as const));
-  // POST /api/onboard/plan-tier only exists on a dispatch-enabled server.
+  // POST routes only exist on a dispatch-enabled server.
   const picksLocked = report?.dispatchEnabled === false;
 
   async function pickTier(resourceId: string, planTier: string | null) {
@@ -48,6 +82,22 @@ export function ConnectView() {
     }
   }
 
+  async function toggleAgent(id: string, enabled: boolean) {
+    setAgentSaveFailed(false);
+    setToggling((prev) => new Set(prev).add(id));
+    try {
+      await setScheduledAgentEnabled(id, enabled);
+      setReport(await apiGet<OnboardStatusReport>('/api/onboard/status'));
+    } catch {
+      setAgentSaveFailed(true);
+    }
+    setToggling((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  }
+
+  const balance = report?.balance ?? null;
+  const balanceLine = balance === null ? null
+    : `${balance.connected.length === 0 ? 'Nothing connected yet' : `${balance.connected.length} connected: ${balance.connected.map(catalogName).join(', ')}`}. ${balance.scheduledAgents.enabled}/${balance.scheduledAgents.total} scheduled agents on.`;
+
   return (
     <div className={styles.page}>
       <h1>Connect Resources</h1>
@@ -57,6 +107,26 @@ export function ConnectView() {
       </p>
       {loadError && (
         <p role="status" className={styles.notice}>Live detection is unavailable.</p>
+      )}
+      {balance && (
+        <section className={styles.card} aria-labelledby="connect-balance">
+          <h2 id="connect-balance">Resource balance</h2>
+          <p>{balanceLine}</p>
+          <ul>
+            {balance.resources
+              .filter((row) => row.connected || row.selectedPlanTier !== null || row.usage !== null)
+              .map((row) => (
+              <li key={row.id}>
+                <span className={styles.badge} aria-hidden="true">{catalogName(row.id).slice(0, 1)}</span>
+                <div><span>{catalogName(row.id)}</span>
+                  <small className={styles.status}>{evidenceText(row)}</small>
+                  {planText(row) && <small>{planText(row)}</small>}
+                  <small>{usageText(row.usage)}</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       <div className={styles.grid}>
         {STEPS.map((step, index) => (
@@ -97,12 +167,31 @@ export function ConnectView() {
                   </li>
                 );
               })}
+              {step.kind === 'agent' && report?.agents.agents.map((agent) => (
+                <li key={agent.id}>
+                  <span className={styles.badge} aria-hidden="true">{agent.name.slice(0, 1)}</span>
+                  <div><span>{agent.name}</span>
+                    <small>{agent.rrule}{agent.nextRunAt ? ` - next ${agent.nextRunAt}` : ''}</small>
+                  </div>
+                  <Switch
+                    aria-label={`${agent.name} enabled`}
+                    checked={agent.enabled} disabled={picksLocked || toggling.has(agent.id)}
+                    onChange={(next) => void toggleAgent(agent.id, next)}
+                  />
+                </li>
+              ))}
             </ul>
+            {step.kind === 'agent' && report?.agents.agents.length === 0 && (
+              <small>No scheduled agents on this computer yet.</small>
+            )}
             {step.kind === 'subscription' && saveFailed && (
               <p role="alert" className={styles.notice}>Plan tier was not saved.</p>
             )}
             {step.kind === 'subscription' && picksLocked && !saveFailed && (
               <small>Plan picks save to local config when this server runs with dispatch enabled.</small>
+            )}
+            {step.kind === 'agent' && agentSaveFailed && (
+              <p role="alert" className={styles.notice}>Agent toggle was not saved.</p>
             )}
           </section>
         ))}
