@@ -12,6 +12,9 @@ export function validateDraft(draft: DropJobDraft): { ok: true; bytes: number } 
   if (!lanes.some(lane => lane === draft.lane)) reasons.push('Choose an allowed lane.');
   if (!tiers.some(tier => tier === draft.tier)) reasons.push('Choose an allowed tier.');
   if (!draft.body.trim()) reasons.push('Body must not be empty.');
+  if (draft.body.split(/\r?\n/).find(line => line.trim())?.trimStart().startsWith('#job ')) {
+    reasons.push('Body must not repeat the #job header; the writer adds it.');
+  }
   const bytes = draftBytes(draft);
   if (bytes > 8000) reasons.push('Body and header must fit within 8000 bytes.');
   return reasons.length ? { ok: false, reasons } : { ok: true, bytes };
