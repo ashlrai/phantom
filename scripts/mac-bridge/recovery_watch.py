@@ -50,6 +50,10 @@ def main(argv=None, deps=None, out=None):
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--runs-dir")
     parser.add_argument("--service", action="append", type=service, default=[])
+    parser.add_argument("--require-complete", action="store_true",
+                        help="exit 0 only when the final attempted pass produced valid complete=true and exit code 0; "
+                             "exhaustion with incomplete, exception, invalid report, nonzero child status, or "
+                             "cancellation before any completed pass returns nonzero")
     args = parser.parse_args(argv)
     deps = deps or {}
     out = out or sys.stdout
@@ -74,6 +78,7 @@ def main(argv=None, deps=None, out=None):
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous[sig] = signal.signal(sig, cancel)
     try:
+        final_record = None
         for index in range(1, args.max_passes + 1):
             if stop.is_set():
                 break
@@ -89,12 +94,18 @@ def main(argv=None, deps=None, out=None):
                               complete=result["complete"], outcome="completed")
             except Exception:
                 record.update(outcome="failed", complete=False)
+            final_record = record
             print(json.dumps(record, separators=(",", ":")), file=out, flush=True)
             if index == args.max_passes or stop.is_set() or wait(args.interval_seconds):
                 break
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+    if args.require_complete:
+        if final_record is None or not final_record.get("complete"):
+            return 1
+        if final_record.get("exitCode", 0) != 0:
+            return 1
     return 0
 
 

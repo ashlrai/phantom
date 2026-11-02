@@ -5,6 +5,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'bet-audit': () => import('./fleet-bet-audit.js'),
   'bet-trace': () => import('./fleet-bet-trace.js'),
   'brains': () => import('./fleet-brains.js'),
+  'bridge-install': () => import('./fleet-bridge-install.js'),
   'bus-claim': () => import('./fleet-bus-claim.js'),
   'bus-claimed-run': () => import('./fleet-bus-claimed-run.js'),
   'bus-follow': () => import('./fleet-bus-follow.js'),
