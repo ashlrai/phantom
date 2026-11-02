@@ -95,6 +95,7 @@ import {
 import type { EffectivePolicy, LedgerEntry, LedgerReadOptions, LedgerReadResult } from '../authority/types.js';
 import { STANDING_GRANT_PATTERNS } from '../authority/types.js';
 import { displayStandingPolicy } from './display-standing-policy.js';
+import { readRunningCommit } from '../fleet/build-commit.js';
 import { readLedger } from '../authority/ledger.js';
 import { listRepoHolds, setRepoHold } from '../fleet/quarantine.js';
 import { listPostMergeWatches, type PostMergeWatchView } from '../fleet/post-merge-watch.js';
@@ -1418,6 +1419,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     lastActivityAt,
     darkSince: fleetDarkSince(state, lastActivityAt),
     summary,
+    commit: safely(readRunningCommit, null),
     lanes,
     runs: runList,
     funnel,
