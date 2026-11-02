@@ -1,5 +1,18 @@
 # AGENTS.md: agent constitution
 
+## Use Phantom before you edit
+
+Install, then read the command list. Follow [docs/AGENT-MCP-CLI.md](docs/AGENT-MCP-CLI.md) verbatim for the MCP gateway on Claude, Cursor, and Codex. Do not treat a successful command as permission to merge or spend.
+
+```sh
+npm install -g @ashlr/phantom
+phm docs --agent --json
+phm mcp list --json
+phm wire status --json
+```
+
+Indexes: [docs/llms.txt](docs/llms.txt) and [docs/llms-full.txt](docs/llms-full.txt).
+
 This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`phm improve` / steward) and other coding agents, under the same standing authority that applies to `ashlrai/phantom` (see phantom `docs/STANDING-AUTHORITY.md`).
 
 ## Article 1: Full autonomy, always forward
