@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="t">
+  <title id="t">CLI with JSON output</title>
+  <rect width="640" height="360" rx="24" fill="#141A2A"/>
+  <rect x="36" y="36" width="568" height="288" rx="16" fill="#0B1020" stroke="#2A3550"/>
+  <circle cx="68" cy="72" r="6" fill="#8B7CFF"/>
+  <circle cx="90" cy="72" r="6" fill="#3DDC97"/>
+  <circle cx="112" cy="72" r="6" fill="#93A0B8"/>
+  <text x="64" y="140" fill="#3DDC97" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="28">$ phm mcp list --json</text>
+  <text x="64" y="196" fill="#E8EEF9" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="24">{ "servers": [ ... ] }</text>
+  <text x="64" y="260" fill="#93A0B8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22">Machines read stdout.</text>
+</svg>

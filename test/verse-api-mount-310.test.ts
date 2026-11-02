@@ -187,9 +187,9 @@ async function boot(opts: Partial<WebServerOptions> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('the real mount table', () => {
-  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin, jev, runs-history, release-pr, fleet-holds, fleet-graph-live, fleet-ci-runs, fleet-usage-audit and fleet-graph — in that order', () => {
+  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin, jev, runs-history, release-pr, fleet-holds, fleet-graph-live, fleet-ci-runs, fleet-usage-audit, fleet-memory and fleet-graph — in that order', () => {
     setMountedApiModulesForTest(null);
-    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr', 'fleet-holds', 'fleet-graph-live', 'fleet-ci-runs', 'fleet-usage-audit', 'fleet-graph']);
+    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr', 'fleet-holds', 'fleet-graph-live', 'fleet-ci-runs', 'fleet-usage-audit', 'fleet-memory', 'fleet-graph']);
   });
 
   it('every entry resolves to a handler function (the owning units exported what the contract names)', async () => {
@@ -233,6 +233,7 @@ describe('the real mount table', () => {
       'fleet-graph': '/api/verse/fleet/graph',
       'fleet-ci-runs': '/api/verse/fleet/ci-runs',
       'fleet-usage-audit': '/api/verse/fleet/usage-audit',
+      'fleet-memory': '/api/verse/fleet/memory',
     };
     for (const [owner, p] of Object.entries(representative) as Array<[MountedApiModuleId, string]>) {
       for (const { id, handler } of handlers) {

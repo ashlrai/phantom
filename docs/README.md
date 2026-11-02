@@ -17,7 +17,29 @@ Historical Ashlrverse research and build contracts keep their original names.
 Use one canonical guide for each task. The North Star is a target, not a claim
 that every integration, provider or autonomous effect is active.
 
-## Start here
+## Agents, start here
+
+Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](llms.txt). Copy-paste reference: [llms-full.txt](llms-full.txt).
+
+```sh
+npm install -g @ashlr/phantom
+phm docs --agent --json
+phm mcp list --json
+phm wire status --json
+```
+
+A zero exit code is not a merge and not permission to spend. `phm docs --agent --json` from the installed binary wins if this page is older.
+
+## Humans, start here
+
+| Your task | Canonical guide |
+|-----------|-----------------|
+| Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
+| Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
+| Use the console | [Phantom user guide](VERSE.md) |
+| Choose chat or fleet work | [Automatic work](AUTOMATIC-OUTCOMES.md) |
+
+## All tasks
 
 Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlrai/phantom/blob/master/docs/grokbot-lane.md).
 
@@ -34,7 +56,6 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
-| Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
 | Install Phantom locally, connect agents over MCP, upgrade and uninstall | [Self-hosting](SELF-HOSTING.md) |
