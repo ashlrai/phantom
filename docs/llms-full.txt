@@ -143,4 +143,5 @@ These do not merge by themselves. See [CLOUD.md](CLOUD.md) and [DEVIN.md](DEVIN.
 - [AUTOMATIC-OUTCOMES.md](AUTOMATIC-OUTCOMES.md): chat routing and fleet outcomes
 - [AUTONOMY-SETUP.md](AUTONOMY-SETUP.md): dormant autonomy commissioning
 - [FLEET-MCP-ONRAMP.md](FLEET-MCP-ONRAMP.md): read-only fleet MCP
+- [JOB-COST.md](JOB-COST.md): per-job cost breakdown by model call
 - [Repository README](../README.md): agent quickstart

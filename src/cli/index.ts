@@ -2133,6 +2133,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'job': {
+        process.exitCode = await (await import('./job.js')).cmdJob(rest);
+        break;
+      }
+
       case 'pool': {
         process.exitCode = await (await import('./pool.js')).cmdPool(rest);
         break;

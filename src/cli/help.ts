@@ -734,6 +734,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
+  { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
   { cmd: 'audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail; --team lists workspace actions (read-only).', topic: 'observability' },

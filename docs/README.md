@@ -70,6 +70,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
 | Inspect station/pool queue rates, wait, WIP and Little’s law drift | [Queue statistics](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE-STATS.md) |
 | Manage a local job queue and import router snapshots | [Job queue](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE.md) |
+| See a job's per-model-call tokens and cost in the console or CLI | [Job cost breakdown](https://github.com/ashlrai/phantom/blob/master/docs/JOB-COST.md) |
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Plan a persistent Linux node with local capacity limits and cloud cost estimates | [Node VM design](https://github.com/ashlrai/phantom/blob/master/docs/NODES-SANDBOX-VM.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
