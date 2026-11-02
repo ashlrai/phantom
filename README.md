@@ -6,15 +6,15 @@ Phantom is the open-source engineering agent workbench from [AshlrAI](https://as
 
 Agents start here. Humans can use the same commands.
 
-[Agent index](docs/llms.txt) ·
-[Full agent reference](docs/llms-full.txt) ·
+[Agent index](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) ·
+[Full agent reference](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) ·
 [Onboarding](https://phm.dev/connect) ·
 [User guide](docs/VERSE.md) ·
 [GitHub](https://github.com/ashlrai/phantom)
 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
 
-![Diagram of the agent path: one install, one MCP gateway, and a JSON result beside a diff. No session is running.](docs/images/phantom-hero.svg)
+![Diagram of the agent path: one install, one MCP gateway, and a JSON result beside a diff. No session is running.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-hero.svg)
 
 ## Quickstart
 
@@ -97,9 +97,9 @@ The read-only fleet server is a second entry. It does not launch work or merge.
 }
 ```
 
-Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-mcp) and [fleet MCP](docs/FLEET-MCP-ONRAMP.md).
+Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-mcp) and [fleet MCP](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MCP-ONRAMP.md).
 
-![Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts. No provider ran.](docs/images/verse-work-with-me-3.24.3-demo.jpg)
+![Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts. No provider ran.](https://github.com/ashlrai/phantom/blob/master/docs/images/verse-work-with-me-3.24.3-demo.jpg)
 
 *Compiled 3.24.3 browser UI with labeled Demo accounts. No provider ran and no fleet was active. The screenshot shows the browser UI, not the native app window.*
 
@@ -107,10 +107,10 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 
 | | |
 | --- | --- |
-| ![CLI JSON](docs/images/feature-cli.svg) | **CLI for agents.** `phm docs --agent --json` lists commands. Add `--json` on commands that offer it. |
-| ![MCP gateway](docs/images/feature-mcp.svg) | **One MCP gateway.** Claude, Cursor, and Codex use `ashlr-hub`. |
-| ![Accounts and local models](docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Phantom does not ask for or store the vendor credential. |
-| ![Review](docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. A finished run is not proof the outcome shipped. |
+| ![CLI JSON](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-cli.svg) | **CLI for agents.** `phm docs --agent --json` lists commands. Add `--json` on commands that offer it. |
+| ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **One MCP gateway.** Claude, Cursor, and Codex use `ashlr-hub`. |
+| ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Phantom does not ask for or store the vendor credential. |
+| ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. A finished run is not proof the outcome shipped. |
 
 **Work with me** is the chat. **Work for me** is the fleet. Saving a fleet outcome does not start work and does not widen permission. The fleet runs only in enrolled repositories under a signed grant. Autonomy ships **dormant** and is macOS-only.
 
@@ -164,7 +164,7 @@ No. It ships dormant and is macOS-only. It starts after you install the custody 
 No. Read the JSON. A health command can exit 0 when work is held. A recorded run is not a merge, a release, or proof the outcome was delivered.
 
 **Where is the long agent page?**
-[docs/llms.txt](docs/llms.txt) is the short index. [docs/llms-full.txt](docs/llms-full.txt) is the copy-paste reference.
+[docs/llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) is the short index. [docs/llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) is the copy-paste reference.
 
 ## Star Phantom
 
@@ -174,13 +174,13 @@ If this workbench is useful, star [ashlrai/phantom](https://github.com/ashlrai/p
 
 The desktop app is a native window around the same console. It bundles the CLI, so the app itself does not need a separate Node.js install.
 
-Download the signed arm64 archive and paired update manifest from [GitHub releases](https://github.com/ashlrai/phantom/releases/latest). Match the archive to the installed CLI version. The app is locally signed, not Apple notarized, so macOS may ask for **Open Anyway** on first launch. Steps: [desktop installation guide](desktop/README.md#install).
+Download the signed arm64 archive and paired update manifest from [GitHub releases](https://github.com/ashlrai/phantom/releases/latest). Match the archive to the installed CLI version. The app is locally signed, not Apple notarized, so macOS may ask for **Open Anyway** on first launch. Steps: [desktop installation guide](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#install).
 
 ```sh
 phm verse
 ```
 
-Closing the window hides it. **Quit** stops the server. Building from source is in [Releasing locally](docs/RELEASING-LOCALLY.md).
+Closing the window hides it. **Quit** stops the server. Building from source is in [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md).
 
 ## The CLI
 
@@ -226,26 +226,26 @@ Phantom is the workbench. These projects stay useful on their own. The [ecosyste
 | **[AshlrCode](https://github.com/ashlrai/ashlrcode)** | Run a multi-provider coding agent in the terminal. |
 | **[Morphkit](https://github.com/ashlrai/morphkit)** | Turn a TypeScript/React app into a SwiftUI project. |
 
-The [ecosystem map](docs/ECOSYSTEM-MAP.md) is a planning snapshot, not a claim that every integration is live.
+The [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-MAP.md) is a planning snapshot, not a claim that every integration is live.
 
 ## Documentation
 
 | Doc | Use it for |
 | --- | --- |
-| [docs/llms.txt](docs/llms.txt) | Short index for agents |
-| [docs/llms-full.txt](docs/llms-full.txt) | Copy-paste install, JSON commands, and MCP setup |
+| [docs/llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) | Short index for agents |
+| [docs/llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt) | Copy-paste install, JSON commands, and MCP setup |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | First local session |
 | [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) | Install, MCP, upgrade, uninstall |
 | [docs/VERSE.md](docs/VERSE.md) | Console guide |
 | [docs/README.md](docs/README.md) | Full doc map |
-| [docs/HUB-REFERENCE.md](docs/HUB-REFERENCE.md) | Kernel reference: Universe, resource pools, and the legacy fleet |
+| [docs/HUB-REFERENCE.md](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) | Kernel reference: Universe, resource pools, and the legacy fleet |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Working on this repository
 
-Agents that change this repo follow [AGENTS.md](AGENTS.md). Humans follow [CONTRIBUTING.md](CONTRIBUTING.md).
+Agents that change this repo follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md). Humans follow [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md).
 
-For agents working in this checkout, `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr`. These companion servers are separate from Phantom's aggregation gateway (`phm mcp`). Registration and discovery do not establish authorization or live readiness. See the [agent toolchain](docs/AGENT-TOOLCHAIN.md).
+For agents working in this checkout, `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr`. These companion servers are separate from Phantom's aggregation gateway (`phm mcp`). Registration and discovery do not establish authorization or live readiness. See the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
 
 ## License
 
