@@ -36,7 +36,7 @@ vi.mock('../src/core/comms/telegram-channel.js', async (importOriginal) => ({
 
 import { runCommsCycle } from '../src/core/comms/dispatch.js';
 import { recordTelegramMessages } from '../src/core/comms/telegram-thread-map.js';
-import { setTelegramTransportForTests } from '../src/core/integrations/telegram.js';
+import { setTelegramSendClockForTests, setTelegramTransportForTests } from '../src/core/integrations/telegram.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
 const CHAT = 1234567;
@@ -88,10 +88,12 @@ beforeEach(() => {
   sendFails = false;
   fleet.telegramFleetStatus.mockClear();
   leader.converseWithLeader.mockClear();
+  setTelegramSendClockForTests(null);
   setTelegramTransportForTests(fakeTransport);
 });
 
 afterEach(() => {
+  setTelegramSendClockForTests(null);
   setTelegramTransportForTests(null);
   if (previousHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = previousHome;
@@ -108,23 +110,25 @@ describe('Telegram status end to end', () => {
     expect(result.resolved).toBe(1);
   });
 
-  it('plain "status" answers the same fleet text through the local command', async () => {
-    updates = [textUpdate('status', 501)];
+  it('plain "status" answers a short glance and never calls the Leader', async () => {
+    updates = [textUpdate("how's the fleet?", 501)];
     const result = await runCommsCycle(cfg(), fastCycle);
 
-    expect(sentTexts).toEqual(['Fleet: 3 running']);
+    expect(sentTexts).toHaveLength(1);
+    expect(sentTexts[0]).toContain('Running');
+    expect(sentTexts[0]!.length).toBeLessThan(400);
     expect(leader.converseWithLeader).not.toHaveBeenCalled();
     expect(result.resolved).toBe(1);
   });
 
-  it.each(['/fleet-status', 'status'])('a failed %s send reports the cycle failure; the Leader is never called', async (text) => {
+  it.each(['/fleet-status', "how's the fleet?"])('a failed %s send reports the cycle failure; the Leader is never called', async (text) => {
     sendFails = true;
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       updates = [textUpdate(text, 502)];
       const result = await runCommsCycle(cfg(), fastCycle);
 
-      expect(sentTexts).toEqual(['Fleet: 3 running']);
+      expect(sentTexts[0]).toContain(text === '/fleet-status' ? 'Fleet: 3 running' : 'Running');
       expect(leader.converseWithLeader).not.toHaveBeenCalled();
       expect(result.resolved).toBe(0);
       expect(err.mock.calls.flat().join(' ')).toContain('Telegram inbound handling failed');

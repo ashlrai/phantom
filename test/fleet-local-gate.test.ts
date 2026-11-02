@@ -1,29 +1,39 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runLocalGate, type LocalGateDeps } from '../src/core/fleet/local-gate.js';
 import { cmdFleetLocalGate } from '../src/cli/fleet-local-gate.js';
 
+const dirs: string[] = [];
+
 function fixture() {
   let elapsed = 0;
+  const cwd = mkdtempSync(join(tmpdir(), 'local-gate-cwd-'));
+  dirs.push(cwd);
   const exec = vi.fn(async (command: string, args: string[]) => {
     elapsed += 1;
     return { ok: true, stdout: command === 'git' ? (args[0] === 'rev-parse' ? 'a' : 'b').repeat(40) : 'password=plainly-fake-value', stderr: '' };
   });
-  const deps: LocalGateDeps = { exec, now: () => elapsed, appendMetric: vi.fn(async () => {}), warn: vi.fn(), metricsPath: '/fake/metrics/local-gate.jsonl' };
-  return { exec, deps };
+  const deps: LocalGateDeps = { exec, cwd, now: () => elapsed, appendMetric: vi.fn(async () => {}), warn: vi.fn(), metricsPath: '/fake/metrics/local-gate.jsonl' };
+  return { exec, deps, cwd };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe('fleet local-gate', () => {
   it('runs both checks in order and appends one output-free verdict row', async () => {
-    const { exec, deps } = fixture();
+    const { exec, deps, cwd } = fixture();
     const report = await runLocalGate(undefined, deps);
     expect(report).toEqual({ verdict: 'pass', headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), steps: [
       { name: 'typecheck', ok: true, seconds: 1 }, { name: 'verify-changed', ok: true, seconds: 1 },
     ], seconds: 4 });
     expect(exec.mock.calls.slice(2)).toEqual([
-      ['npx', ['tsc', '--noEmit', '-p', 'tsconfig.json'], expect.any(String)],
-      ['node', ['scripts/verify-changed.mjs'], expect.any(String)],
+      ['node', [join(cwd, 'node_modules', 'typescript', 'bin', 'tsc'), '--noEmit', '-p', 'tsconfig.json'], cwd],
+      ['node', ['scripts/verify-changed.mjs'], cwd],
     ]);
     expect(deps.appendMetric).toHaveBeenCalledExactlyOnceWith('/fake/metrics/local-gate.jsonl', JSON.stringify(report) + '\n');
     expect(JSON.stringify(report)).not.toContain('plainly-fake-value');

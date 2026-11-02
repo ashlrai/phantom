@@ -52,7 +52,11 @@ import {
 import { escapeTelegramHtml, leaderDisplayText } from '../integrations/telegram-format.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { LaneHoldError, releaseLaneHold } from '../fleet/runs-lane-hold.js';
+import { placeLaneHold } from '../fleet/runs-lane-hold-place.js';
+import { LaneTargetError, setLaneTarget } from '../fleet/runs-lane-targets.js';
 import { parseReleaseCommand, renderReleaseReply, type ReleaseReply } from './telegram-release-command.js';
+import { parseHoldCommand, renderHoldReply, type HoldReply } from './telegram-hold-command.js';
+import { parseTargetCommand, renderTargetReply, type TargetReply } from './telegram-target-command.js';
 import { cleanOperatorText, OPERATOR_LIMITS } from '../vision/leader-operator.js';
 import type { CommsRequest } from './requests.js';
 import {
@@ -835,6 +839,8 @@ const TELEGRAM_HELP_SECTIONS = [
   ['Talk & work', [
     ['/leader <text>', 'message the Leader'],
     ['/release <lane>', 'release a lane hold (same as the Lanes pane)'],
+    ['/hold <lane> <minutes> [reason]', 'hold a lane temporarily'],
+    ['/target <lane> <n>', 'set a lane worker target (same as fleet lane-target)'],
     ['/task <owner/repo> <what to do>', 'hand work to an enabled Telegram automation'],
     ['build X / fix Y in owner/repo', 'ask the Leader to start work within the grant'],
   ]],
@@ -1025,6 +1031,57 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
           : { status: 'failed', reason: error instanceof LaneHoldError && (error.code === 'manual-hold' || error.code === 'unknown-lane') ? error.code : 'unavailable' };
       }
       const sent = await replyTo(event, renderReleaseReply(result), cfg);
+      if (!sent.ok) throw new Error('Telegram acknowledgement failed');
+      return true;
+    }
+  }
+  if (cmd === 'hold') {
+    const request = parseHoldCommand(text);
+    if (!request) {
+      const sent = await replyTo(event, renderHoldReply({ status: 'usage' }), cfg);
+      if (!sent.ok) throw new Error('Telegram acknowledgement failed');
+      return true;
+    }
+    // Match /release's retained identity evidence before making a write.
+    const chatId = cfg.comms?.telegram?.chatId;
+    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
+    if (Number.isSafeInteger(id) && event.fromChatId === chatId &&
+        event.privateChat === true && event.senderUserId === id) {
+      let result: HoldReply;
+      try {
+        const state = await placeLaneHold(request.lane, { minutes: request.minutes, reason: request.reason, changedBy: 'telegram' });
+        const row = state.sourceState === 'healthy' ? state.lanes.find(r => r.lane === request.lane) : undefined;
+        result = row?.held && row.heldUntil
+          ? { status: 'held', lane: request.lane, heldUntil: row.heldUntil }
+          : { status: 'failed', reason: 'unavailable' };
+      } catch (error) {
+        result = { status: 'failed', reason: error instanceof LaneHoldError && (error.code === 'manual-hold' || error.code === 'unknown-lane') ? error.code : 'unavailable' };
+      }
+      const sent = await replyTo(event, renderHoldReply(result), cfg);
+      if (!sent.ok) throw new Error('Telegram acknowledgement failed');
+      return true;
+    }
+  }
+  if (cmd === 'target') {
+    const request = parseTargetCommand(text);
+    // The same retained identity evidence as /release: the configured positive
+    // private-chat ID, the exact sender and the exact chat. Injected or old
+    // events missing it fail closed before any write.
+    const chatId = cfg.comms?.telegram?.chatId;
+    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
+    if (request && Number.isSafeInteger(id) && event.fromChatId === chatId &&
+        event.privateChat === true && event.senderUserId === id) {
+      let result: TargetReply;
+      try {
+        const state = await setLaneTarget(request.lane, request.target, { changedBy: 'telegram' });
+        const row = state.sourceState === 'healthy' ? state.lanes.find(r => r.lane === request.lane) : undefined;
+        result = row
+          ? { status: 'set', lane: request.lane, target: row.target, held: row.held }
+          : { status: 'failed', reason: 'unavailable' };
+      } catch (error) {
+        result = { status: 'failed', reason: error instanceof LaneTargetError && (error.code === 'unknown-lane' || error.code === 'out-of-range') ? error.code : 'unavailable' };
+      }
+      const sent = await replyTo(event, renderTargetReply(result), cfg);
       if (!sent.ok) throw new Error('Telegram acknowledgement failed');
       return true;
     }

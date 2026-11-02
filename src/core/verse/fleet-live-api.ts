@@ -1353,7 +1353,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   }
   if (problems.length > 0) stateReason = `${stateReason ? `${stateReason} ` : ''}Unknown: ${problems.join('; ')}.`;
 
-  const standingTickFresh = tick !== null && tick.standing !== null && nowMs - msOf(tick.at) <= 10 * 60_000;
+  const standingTickFresh = tick !== null && tick.standing !== null && nowMs >= msOf(tick.at) && nowMs - msOf(tick.at) <= 10 * 60_000;
   const lanes: FleetLaneState[] = standingTickFresh
     ? tick.lanes.map((lane) => ({ ...lane, busy: busy[lane.lane] ?? 0 }))
     : FLEET_ENGINES.map((lane) => ({

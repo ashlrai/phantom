@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { constants } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -47,7 +48,12 @@ function read(path: string, limit: number): string {
 }
 
 export interface ContextWorkerOptions {
-  snapshot: string; prompt: string; argv: string[]; busAddress?: string; busAfter?: number;
+  snapshot: string; prompt: string; argv: string[]; busAddress?: string; busAfter?: number; timeoutMs?: number;
+  /** Selected working directory for the worker; omitted inherits process.cwd(). */
+  cwd?: string;
+  /** Programmatic cancel: an already-aborted signal never launches the child;
+   * after launch it drives the same SIGTERM→SIGKILL escalation as an OS signal. */
+  signal?: AbortSignal;
 }
 export interface ContextWorkerIO {
   stdout?: Writable; stderr?: Writable;
@@ -57,11 +63,18 @@ export interface ContextWorkerIO {
 export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWorkerIO = {}): Promise<number> {
   const stderr = io.stderr ?? process.stderr;
   const diagnostic = (text: string): void => { stderr.write(`context-run: ${text}\n`); };
+  // A cancelled run reports the same 128+SIGTERM a terminated child would.
+  const aborted = (): number => { diagnostic('worker launch aborted'); return 128 + (constants.signals.SIGTERM ?? 15); };
+  if (opts.signal?.aborted) return aborted();
   let payload: string;
   try {
     if (!opts.argv.length || opts.argv.some(a => typeof a !== 'string' || a.includes('\0')) || !opts.argv[0] ||
+        (opts.signal !== undefined && !(opts.signal instanceof AbortSignal)) ||
         (opts.busAddress !== undefined && !address(opts.busAddress)) ||
-        (opts.busAfter !== undefined && !cursor(opts.busAfter))) throw new Error('invalid input');
+        (opts.busAfter !== undefined && !cursor(opts.busAfter)) ||
+        (opts.timeoutMs !== undefined && (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs < 1 || opts.timeoutMs > 3600000)) ||
+        (opts.cwd !== undefined && (typeof opts.cwd !== 'string' || !opts.cwd || opts.cwd.includes('\0') ||
+          !isAbsolute(opts.cwd) || !statSync(opts.cwd).isDirectory()))) throw new Error('invalid input');
     const input: unknown = JSON.parse(read(opts.snapshot, 1024 * 1024));
     const prompt = read(opts.prompt, 1024 * 1024);
     if (!valid(input)) throw new Error('invalid input');
@@ -83,37 +96,59 @@ export async function runContextWorker(opts: ContextWorkerOptions, io: ContextWo
       diagnostic('launch refused by runs controls'); return 1;
     }
   } catch { diagnostic('invalid or unavailable context input'); return 2; }
+  // An abort landing between the async context reads and here still prevents launch.
+  if (opts.signal?.aborted) return aborted();
 
   return new Promise<number>(resolve => {
     let child: ReturnType<typeof spawn>;
-    try { child = spawn(opts.argv[0]!, opts.argv.slice(1), { shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    try { child = spawn(opts.argv[0]!, opts.argv.slice(1), { cwd: opts.cwd, shell: false, detached: false, stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch { diagnostic('worker spawn failed'); resolve(1); return; }
     let failed = false;
     let interrupted: NodeJS.Signals | undefined;
+    let timedOut = false;
+    let closed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     const stop = (signal: NodeJS.Signals): void => {
+      if (closed) return;
       child.kill(signal);
       timer ??= setTimeout(() => { child.kill('SIGKILL'); }, 1000);
     };
-    const interrupt = (signal: NodeJS.Signals): void => { interrupted ??= signal; stop(signal); };
+    const interrupt = (signal: NodeJS.Signals): void => {
+      if (timedOut) return;
+      interrupted ??= signal; stop(signal);
+    };
     const int = (): void => interrupt('SIGINT');
     const term = (): void => interrupt('SIGTERM');
     process.on('SIGINT', int); process.on('SIGTERM', term);
+    const abort = (): void => interrupt('SIGTERM');
+    opts.signal?.addEventListener('abort', abort, { once: true });
+    // The abort event only fires on transition; catch a signal that already landed.
+    if (opts.signal?.aborted) abort();
     const fail = (): void => { failed = true; stop('SIGTERM'); };
     child.on('error', () => { diagnostic('worker spawn failed'); failed = true; });
+    child.once('spawn', () => {
+      if (opts.timeoutMs !== undefined) deadline = setTimeout(() => {
+        if (interrupted || closed) return;
+        timedOut = true; stop('SIGTERM');
+      }, opts.timeoutMs);
+    });
     const transfers = [
       pipeline(Readable.from([payload]), child.stdin!).catch(() => { diagnostic('worker stdin failed'); fail(); }),
       pipeline(child.stdout!, io.stdout ?? process.stdout, { end: false }).catch(fail),
       pipeline(child.stderr!, stderr, { end: false }).catch(fail),
     ];
     child.once('close', (code, signal) => {
+      closed = true;
       if (timer) clearTimeout(timer);
+      if (deadline) clearTimeout(deadline);
       process.off('SIGINT', int); process.off('SIGTERM', term);
+      opts.signal?.removeEventListener('abort', abort);
       void Promise.all(transfers).then(() => {
         const ended = interrupted ?? signal;
         if (signal) diagnostic(`worker ended by ${signal}`);
         if (interrupted) diagnostic(`runner interrupted by ${interrupted}`);
-        resolve(ended ? 128 + (constants.signals[ended] ?? 1) : code !== null && code > 0 ? code : failed ? 1 : code === 0 ? 0 : 1);
+        resolve(timedOut ? 124 : ended ? 128 + (constants.signals[ended] ?? 1) : code !== null && code > 0 ? code : failed ? 1 : code === 0 ? 0 : 1);
       });
     });
   });

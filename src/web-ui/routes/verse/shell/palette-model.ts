@@ -14,6 +14,7 @@
  * chat that merely contains an s, t, o and p.
  */
 import { backlogItemKeywords, backlogItemTitle, type PaletteBacklogItem } from './palette-backlog.js';
+import { phoneItemTitle, phoneItemSubtitle, type PalettePhone } from './palette-phone.js';
 import { laneItemTitle, releaseItemTitle, type PaletteLane } from './palette-lanes.js';
 import { prLabel, safePrUrl } from '../fleet-job-log/worker-log-model.js';
 import type { VerseProject, VerseSeat, VerseSession } from '../../../data/api-types.js';
@@ -63,6 +64,8 @@ export interface PaletteItem {
     | { kind: 'pane'; paneId: string }
     | { kind: 'worker'; job: string; url?: string; selectLog?: boolean }
     | { kind: 'backlog'; url: string }
+    | { kind: 'copy-text'; text: string }
+    | { kind: 'open-phone'; url: string }
     | { kind: 'lane'; lane: PaletteLane }
     | { kind: 'lane-release'; lane: PaletteLane }
     | { kind: 'chat'; sessionId: string }
@@ -87,7 +90,9 @@ export interface PaletteInput {
   workers?: readonly PaletteWorker[];
   lanes?: readonly PaletteLane[];
   backlog?: readonly PaletteBacklogItem[];
+  phone?: PalettePhone | null;
   needsYou: readonly NeedsYouItem[];
+  fleetNeedsYou?: ReadonlyArray<{ id: string; title: string; detail: string }>;
   running: readonly VerseActivityRunning[];
   sessions: readonly VerseSession[];
   seats: readonly VerseSeat[];
@@ -267,6 +272,15 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     });
   }
 
+  for (const item of input.fleetNeedsYou ?? []) {
+    items.push({
+      key: `needs-you:${item.id}`, kind: 'needs-you', group: 'needs-you', title: item.title,
+      subtitle: item.detail, shortcut: null, monogram: null, engine: null,
+      keywords: ['ci', 'fleet', 'needs you'], argument: null, tone: 'warn',
+      payload: { kind: 'needs-you', itemId: item.id },
+    });
+  }
+
   for (const pane of input.panes ?? []) {
     items.push({
       key: `pane:${pane.id}`, kind: 'pane', group: 'panes',
@@ -274,6 +288,24 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       monogram: null, engine: null,
       keywords: [pane.title, ...pane.id.split('-'), ...(pane.keywords ?? [])],
       argument: null, tone: 'neutral', payload: { kind: 'pane', paneId: pane.id },
+    });
+  }
+
+  if (input.phone?.phoneUrl) {
+    const phone = input.phone;
+    items.push({
+      key: 'phone:copy-url', kind: 'command', group: 'lanes',
+      title: phoneItemTitle(phone), subtitle: phoneItemSubtitle(phone), shortcut: null,
+      monogram: null, engine: null, keywords: ['phone', 'mobile', 'remote', 'url', 'qr'],
+      argument: null, tone: phone.pending > 0 ? 'warn' : 'neutral',
+      payload: { kind: 'copy-text', text: phone.phoneUrl! },
+    });
+    items.push({
+      key: 'phone:open-url', kind: 'command', group: 'lanes',
+      title: 'Open phone URL', subtitle: phoneItemSubtitle(phone), shortcut: null,
+      monogram: null, engine: null, keywords: ['phone', 'mobile', 'remote', 'url'],
+      argument: null, tone: phone.pending > 0 ? 'warn' : 'neutral',
+      payload: { kind: 'open-phone', url: phone.phoneUrl! },
     });
   }
 

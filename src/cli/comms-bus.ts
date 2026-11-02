@@ -7,6 +7,7 @@ import { BUS_PRIORITIES, parseBusEnvelope, validateBusEnvelope, MAX_BUS_ENVELOPE
 import { appendBusInbox, inspectBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, type BusInboxOptions, type BusInboxPage, type BusInboxPost, type BusInboxReceipt } from '../core/fleet/bus-inbox.js';
 import { openBusCheckpoint } from './comms-bus-checkpoint.js';
 import { busStatusExitCode } from './comms-bus-exit.js';
+import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 
 const HELP = `phm comms bus post --file <envelope.json|->
 phm comms bus post --reply-to <id> --id <new-id> --from <address> --text <text> [--ttl-ms <ms>]
@@ -62,13 +63,26 @@ Watch retries retryable contention after the interval; other failures emit their
 SIGINT, SIGTERM or an injected AbortSignal stops watch with exit 0 (1 under --until-reply). Invalid options exit 2.
 An already-started delivery must settle before watch stops; cancellation cannot undo delivered data.
 Rejected asynchronous delivery stops watch with exit 1 without advancing its cursor.
-Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.`;
+Failures: {status:invalid|unavailable|retryable|full|conflict}; retryable means writer contention.
+phm comms bus peers
+peers reports the Codex peers transport behind the Locus peers contract: 'unavailable'
+when the locus CLI is missing and on any session failure; child output is never echoed.
+With --session-id it registers, relays one untrusted inbox snapshot and unregisters;
+nothing posts to the bus and no engine runs. Peers reads exit 0 ok, 1 unavailable, 2 invalid.`;
 
+
+export interface CommsBusPeersDeps {
+  /** Locus CLI presence probe; defaults to the canonical `locusAvailableAsync` check. */
+  available?: () => boolean | Promise<boolean>;
+  /** Locus peers endpoint; defaults to the `locus` CLI transport. */
+  endpoint?: LocusPeersEndpoint;
+}
 export interface CommsBusDependencies {
   signal?: AbortSignal;
   stdin?: Readable;
   list?: typeof listBusInboxAfter;
   emit?: (json: string) => void | Promise<void>;
+  peers?: CommsBusPeersDeps;
 }
 
 type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string };
@@ -267,9 +281,58 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
   }
 }
 
+
+/** Session ids are bounded before any I/O — the same limit the peers adapter enforces. */
+const PEERS_SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
+
+/**
+ * `phm comms bus peers [--session-id <id>]` — read-only Codex peers visibility
+ * through the Locus peers contract. The choice is off when the locus CLI is
+ * missing; every failure fails closed as 'unavailable' and child output is
+ * never echoed. With a session id the adapter registers, relays one untrusted
+ * inbox snapshot and always unregisters; nothing posts to the bus and no engine
+ * action runs. Never throws.
+ */
+async function peers(args: string[], deps: CommsBusDependencies): Promise<number> {
+  const emit = async (result: Record<string, unknown>, code: number): Promise<number> => {
+    try { await deliver(JSON.stringify(result), deps); } catch { return 1; }    return code;
+  };
+  let sessionId: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!, inline = /^--session-id=(.*)$/s.exec(token);
+    if (inline === null && token !== '--session-id') return emit({ status: 'invalid' }, 2);
+    const value = inline ? inline[1] : args[++i];
+    if (value === undefined || value === '' || sessionId !== undefined) return emit({ status: 'invalid' }, 2);
+    sessionId = value;
+  }
+  if (sessionId !== undefined && !PEERS_SESSION_ID.test(sessionId)) return emit({ status: 'invalid' }, 2);
+  const identity = { client: 'codex', transport: 'locus-peers' } as const;
+  let available = false;
+  try {
+    const probe = deps.peers?.available ?? (await import('../core/integrations/locus.js')).locusAvailableAsync;
+    available = await probe();
+  } catch { /* A probe failure is indistinguishable from a missing CLI: stay off. */ }
+  if (!available) return emit({ status: 'unavailable', peers: { ...identity, locus: 'missing' } }, 1);
+  if (sessionId === undefined) {
+    return emit({ status: 'ok', peers: { ...identity, locus: 'present', contract: 'unverified' }, read: 'peers --session-id <id>' }, 0);
+  }
+  try {
+    let messages: unknown[] = [];
+    await withCodexPeersSession({
+      sessionId,
+      endpoint: deps.peers?.endpoint,
+      relay: async (inbox) => { messages = JSON.parse(inbox.data) as unknown[]; },
+      run: async () => undefined,
+    });
+    return emit({ status: 'ok', peers: { ...identity, source: 'locus-peers', trust: 'untrusted', sessionId, messages } }, 0);
+  } catch {
+    return emit({ status: 'unavailable', peers: { ...identity } }, 1);
+  }
+}
+
 export async function cmdCommsBus(args: string[], options: BusInboxOptions = {}, deps: CommsBusDependencies = {}): Promise<number> {
   if (args.length === 0 || args.length === 1 && ['--help', '-h'].includes(args[0]!) ||
-    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
+    args.length === 2 && ['post', 'post-batch', 'read', 'watch', 'status', 'peers'].includes(args[0]!) && ['--help', '-h'].includes(args[1]!)) {
     console.log(HELP); return 0;
   }
   if (args[0] === 'post-batch') return postBatch(args.slice(1), options, deps);
@@ -281,6 +344,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
     console.log(JSON.stringify(inspection));
     return inspection.source === 'unavailable' ? 1 : 0;
   }
+  if (verb === 'peers') return peers(rest, deps);
   if (verb !== 'post' && verb !== 'read' && verb !== 'watch') return invalid();
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i]!, inline = /^(--id|--in-reply-to|--reply-to|--to|--from|--exclude-from|--text)=(.*)$/s.exec(token);
