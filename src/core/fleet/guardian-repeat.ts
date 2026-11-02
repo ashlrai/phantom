@@ -10,12 +10,12 @@ import { drainGuardianInfraRetries, type GuardianDrainDeps, type GuardianDrainSu
 // original source file is never written. Verification, eligibility, holds,
 // exclusion and exclusive-lock policy stay in the drain it delegates to. Only
 // bounded counters and the latest verified path/session are retained.
-export type GuardianRepeatTermination = GuardianDrainTermination | 'duration';
+export type GuardianRepeatTermination = GuardianDrainTermination | 'duration' | 'max-passes' | 'idle-limit';
 
 export interface GuardianRepeatOptions {
   manifest: string; sourceState: string; outputDir: string;
   durationMs: number; intervalMs: number; maxRetries: number; timeoutMs: number;
-  idleBackoffMaxMs?: number;
+  idleBackoffMaxMs?: number; maxPasses?: number; maxIdlePasses?: number;
   apply: boolean; stopFile?: string; signal?: AbortSignal;
 }
 
@@ -88,9 +88,16 @@ export async function repeatGuardianDrains(
   options: GuardianRepeatOptions,
   deps: GuardianRepeatDeps = {},
 ): Promise<GuardianRepeatSummary> {
+  if (options.maxPasses !== undefined && (!Number.isSafeInteger(options.maxPasses) || options.maxPasses < 1 || options.maxPasses > 1000)) {
+    throw new RangeError('maxPasses must be a safe integer between 1 and 1000');
+  }
   if (options.idleBackoffMaxMs !== undefined && (!Number.isSafeInteger(options.idleBackoffMaxMs)
     || options.idleBackoffMaxMs < options.intervalMs || options.idleBackoffMaxMs > 86_400_000)) {
     throw new RangeError('idleBackoffMaxMs must be a safe integer between intervalMs and 86400000');
+  }
+  if (options.maxIdlePasses !== undefined && (!Number.isSafeInteger(options.maxIdlePasses)
+    || options.maxIdlePasses < 1 || options.maxIdlePasses > 10000)) {
+    throw new RangeError('maxIdlePasses must be a safe integer between 1 and 10000');
   }
   const now = deps.now ?? Date.now;
   const drain = deps.drain ?? drainWithFreshSession({}, deps.now);
@@ -101,6 +108,7 @@ export async function repeatGuardianDrains(
   };
   const startedAt = now();
   let source = options.sourceState;
+  let cleanIdle = 0;
   let consecutiveIdle = 0, nextDelayMs = options.intervalMs;
   for (;;) {
     const halted = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
@@ -120,6 +128,7 @@ export async function repeatGuardianDrains(
     summary.passes++; summary.attempts += drained.attempts;
     summary.verified += drained.verified; summary.refused += drained.refused;
     const ok = REPEATABLE.has(drained.termination);
+    cleanIdle = drained.termination === 'no-work' && drained.attempts === 0 && drained.refused === 0 ? cleanIdle + 1 : 0;
     if (options.idleBackoffMaxMs !== undefined) {
       if (drained.termination === 'no-work' && drained.refused === 0) {
         consecutiveIdle++;
@@ -144,7 +153,19 @@ export async function repeatGuardianDrains(
         : drained.termination;
       return summary;
     }
+    if (options.maxIdlePasses !== undefined && cleanIdle >= options.maxIdlePasses) {
+      const halted = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
+      if (halted) { summary.termination = halted; return summary; }
+      summary.termination = now() - startedAt >= options.durationMs ? 'duration' : 'idle-limit';
+      return summary;
+    }
     const left = Math.floor(options.durationMs - (now() - startedAt));
+    if (left < 1) { summary.termination = 'duration'; return summary; }
+    const stopped = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
+    if (stopped) { summary.termination = stopped; return summary; }
+    if (options.maxPasses !== undefined && summary.passes >= options.maxPasses) {
+      summary.termination = 'max-passes'; return summary;
+    }
     if (left <= nextDelayMs) { summary.termination = 'duration'; return summary; }
     // Wait in short slices so a stop file also interrupts the interval.
     for (let waited = 0; waited < nextDelayMs && !options.signal?.aborted;) {
