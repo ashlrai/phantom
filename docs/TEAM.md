@@ -51,6 +51,33 @@ returning members must reacquire expired claims. Claims coordinate the local
 log only and do not grant GitHub permissions or enforce cross-machine exclusion.
 See the [team architecture](architecture/teams.md) for handoffs and trust limits.
 
+### Invite, join and remove a teammate
+
+An invite makes someone a team **member** and nothing else. It never carries a
+password, token or key, and it does not give access to anyone's repositories,
+connectors or models. Each person's machine keeps using its own local login.
+
+```bash
+# Owner/admin, on the node that holds the team log:
+phm team invite octocat --team acme            # prints a phm-invite-v1.… line
+# Invited person, on their own node, signed in as that person:
+phm team join phm-invite-v1.<paste-the-line>   # team comes from the invite
+phm team view --team acme                      # confirm you are a member
+# Owner/admin, to revoke:
+phm team remove octocat --team acme
+```
+
+Add `--json` to any of these for machine-readable output. `remove` takes effect
+at once: the member's claims are released, their accepted handoffs go back to
+`open` for someone else, and anything they post afterwards is ignored. Re-run
+`invite` to bring them back. Owners cannot be removed, and you cannot remove
+yourself.
+
+If `join` says the identity does not match, run it from the invited person's
+account or pin their name in `owner.json` as the message shows. If it says there
+is no live invite, the log has not reached this node (or the invite was revoked):
+get the latest log through your sync service or ask for a fresh `invite`.
+
 ### Onboarding walkthrough checks
 
 Repeat these checks after changing onboarding guidance:
