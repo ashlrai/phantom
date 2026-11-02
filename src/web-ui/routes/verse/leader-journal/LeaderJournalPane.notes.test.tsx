@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import { LeaderJournalPane } from './LeaderJournalPane.js';
+import type { PaneProps } from '../panes/pane-registry.js';
 import { filterNotes, isLeaderJournal } from './leader-journal-model.js';
 
 const data = () => ({
@@ -19,7 +20,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 it('renders notes before passes, expands the newest and searches both sections', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(data())));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...({ visible: true } as PaneProps)} />);
   const region = await screen.findByRole('region', { name: 'Leader notes' });
   expect(screen.getAllByRole('region')[0]).toBe(region);
   const details = region.querySelectorAll('details');
@@ -43,7 +44,7 @@ it('renders notes before passes, expands the newest and searches both sections',
 
 it.each(['missing', 'degraded'])('shows the source fallback for %s orchestration', async (orchestration) => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...data(), notes: [], sources: { ...data().sources, orchestration } })));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...({ visible: true } as PaneProps)} />);
   expect(await screen.findByText('Leader notes source missing.')).toBeInTheDocument();
 });
 

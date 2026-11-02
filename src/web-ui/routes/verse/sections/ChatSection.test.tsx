@@ -87,7 +87,8 @@ describe('ChatSection bootstrap', () => {
     }));
     expect(getDockSnapshot().state.open).toBe(false);
     mount();
-    await screen.findByText('Fleet is running on this Mac. Opened the fleet workspace.');
+    // The auto-open lands behind the lazy dock chunk, a fetch and an effect; give CI slack.
+    await screen.findByText('Fleet is running on this Mac. Opened the fleet workspace.', {}, { timeout: 5000 });
     expect(getDockSnapshot().state).toMatchObject({ open: true, active: 'fleet-hub', splitWith: 'fleet-lanes', tabs: ['fleet-hub', 'fleet-lanes', 'fleet-merges', 'fleet-inbox'] });
   });
 
@@ -241,7 +242,9 @@ describe('ChatSection sessions', () => {
     }
   });
 
-  it('creates a session with the contract body and selects it', async () => {
+  // First New-chat consumer pays the dialog's lazy-chunk load; under a busy
+  // host that alone can eat the 5 s default, so this test gets extra room.
+  it('creates a session with the contract body and selects it', { timeout: 20_000 }, async () => {
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
     setMutationToken(TOKEN);
@@ -250,7 +253,7 @@ describe('ChatSection sessions', () => {
     await screen.findByRole('button', { name: /Fix the login bug/ });
 
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     if (within(dialog).getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded') === 'false') {
       await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
     }
@@ -462,7 +465,7 @@ describe('ChatSection layout', () => {
 
     // "+" adds Context; it is the ResourcesPanel minus the accounts.
     await user.click(within(dock).getByRole('button', { name: 'Add a pane' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Context' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Add a pane' })).getByRole('button', { name: 'Context' }));
     const context = screen.getByRole('complementary', { name: 'Dock: Context' });
     expect(within(context).getByRole('tab', { name: 'Context' })).toHaveAttribute('aria-selected', 'true');
     expect(await within(context).findByLabelText('Context efficiency')).toBeInTheDocument();
@@ -721,7 +724,7 @@ describe('ChatSection — context orchestration wiring', () => {
     mount();
     await screen.findByRole('button', { name: /Fix the login bug/ });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     if (within(dialog).getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded') === 'false') {
       await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
     }
@@ -767,7 +770,7 @@ describe('ChatSection — context orchestration wiring', () => {
     // The Context pane is the dock's; open it the way ⌘\ + "+" would.
     await user.click(screen.getByRole('button', { name: 'Dock' }));
     await user.click(await screen.findByRole('button', { name: 'Add a pane' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Context' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Add a pane' })).getByRole('button', { name: 'Context' }));
     const efficiency = await screen.findByLabelText('Context efficiency');
     await waitFor(() => expect(within(efficiency).getByText('Peak context', { selector: 'dt' }).nextElementSibling).toHaveTextContent('50k'));
     expect(within(efficiency).getByText('Avg context / turn', { selector: 'dt' }).nextElementSibling).toHaveTextContent('40k');
@@ -842,7 +845,7 @@ describe('ChatSection — commands and keys (3.10)', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     act(() => { requestVerseCommand('new-chat', { seatId: 'local:qwen3-coder', projectPath: '/Users/mason/dev/site' }); });
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     expect(within(dialog).getByLabelText('Project')).toHaveValue('/Users/mason/dev/site');
     expect(within(dialog).getByLabelText('Seat and model')).toHaveValue(JSON.stringify(['local:qwen3-coder', 'qwen3-coder']));
   });
@@ -922,7 +925,7 @@ describe('ChatSection — commands and keys (3.10)', () => {
     act(() => { runCommand('dock.toggle'); });
     const dock = await screen.findByRole('complementary', { name: 'Dock: Tasks' });
     await user.click(within(dock).getByRole('button', { name: 'Add a pane' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Context' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Add a pane' })).getByRole('button', { name: 'Context' }));
     await user.click(await screen.findByRole('button', { name: 'Accounts & capacity →' }));
     expect(getVerseUiState().section).toBe('apps');
   });
@@ -1133,7 +1136,7 @@ describe('ChatSection — the workbench (3.16)', () => {
   it('toggles a registered pane with its OWN shortcut (a key the catalog does not have)', async () => {
     const { registerPane } = await import('../panes/index.js');
     const dispose = registerPane({
-      id: 'test-runner', title: 'Tests', icon: () => null, shortcut: 'mod+alt+t', needsSession: false,
+      id: 'test-runner', title: 'Tests', icon: () => null, shortcut: 'mod+alt+x', needsSession: false,
       component: () => <p>test runner body</p>,
     });
     try {
@@ -1143,7 +1146,7 @@ describe('ChatSection — the workbench (3.16)', () => {
       await screen.findByRole('navigation', { name: 'Chats' });
       // The registry loads just after first paint; the key works once it is in.
       await waitFor(() => {
-        fireEvent.keyDown(document.body, { key: 't', code: 'KeyT', ctrlKey: true, altKey: true });
+        fireEvent.keyDown(document.body, { key: 'x', code: 'KeyX', ctrlKey: true, altKey: true });
         expect(getDockSnapshot().state).toMatchObject({ open: true, active: 'test-runner' });
       });
       expect(await screen.findByText('test runner body')).toBeInTheDocument();
@@ -1203,7 +1206,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     expect(within(dialog).queryByLabelText('Seat and model')).not.toBeInTheDocument();
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), 'Review the security of this code');
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1229,7 +1232,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     act(() => { requestVerseCommand('new-chat', { seatId: 'local:qwen3-coder', projectPath: '/Users/mason/dev/site' }); });
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     expect(within(dialog).getByRole('button', { name: 'Manual' })).toHaveAttribute('aria-pressed', 'true');
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), 'Explain the navigation');
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1252,7 +1255,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const message = 'Review the security of this code';
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), message);
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1273,7 +1276,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const message = 'Review the security of this code';
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), message);
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1293,7 +1296,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const option = await within(dialog).findByRole('option', { name: 'Product — 2 folders' });
     await user.selectOptions(within(dialog).getByLabelText('Project'), option);
     const message = 'Review the security of this code';
@@ -1320,7 +1323,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const message = 'Review the security of this code';
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), message);
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));

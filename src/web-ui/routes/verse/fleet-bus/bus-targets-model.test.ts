@@ -18,7 +18,7 @@ describe('bus targets', () => {
   it('matches case-insensitive prefixes at the caret and caps results', () => {
     expect(mentionCandidates('hello @rq-n tail', 11, runs)).toEqual({ query: 'rq-n', items: ['RQ-NEW'] });
     expect(mentionCandidates('hello@RQ', 8, runs)).toBeNull();
-    const many = { lanes: [], workers: Array.from({ length: 12 }, (_, i) => ({ job: `RQ-${i}`, ageSeconds: i })) } as FleetRuns;
+    const many = { lanes: [], workers: Array.from({ length: 12 }, (_, i) => ({ job: `RQ-${i}`, ageSeconds: i })) } as unknown as FleetRuns;
     expect(mentionCandidates('@', 1, many)?.items).toHaveLength(8);
     expect(mentionCandidates('@none', 5, runs)?.items).toEqual([]);
   });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveUpdateNotifications as derive } from './deriveUpdateNotifications.js';
 import type { DesktopUpdateState } from '../../app/desktop-updates.js';
 import type { UpdateServerStatus } from '../../routes/verse/sections/update-status-queries.js';
+import type { SelfUpdateLastApply } from '../../../core/verse/self-update-last.js';
 
 const now = Date.parse('2026-10-31T12:15:00Z');
 const sha = (c: string) => c.repeat(40);
@@ -17,7 +18,7 @@ const server = (over: Partial<UpdateServerStatus> & Record<string, unknown> = {}
   processStartedAt: '2026-10-31T08:00:00Z', uptimeSeconds: 15_300, canFastForward: false, ...over,
 });
 
-const lastApply = (over: Record<string, unknown> = {}) => ({
+const lastApply = (over: Partial<SelfUpdateLastApply> = {}): SelfUpdateLastApply => ({
   outcome: 'failed', reason: 'update failed', startedAt: '2026-10-31T12:00:00Z',
   finishedAt: '2026-10-31T12:01:00Z', fromCommit: sha('a'), toCommit: sha('b'),
   restartRequired: false, restartMode: 'manual', ...over,
@@ -100,9 +101,15 @@ describe('update notifications — server self-update probe', () => {
       title: 'Update to bbbbbbb refused: dirty tree' })]);
   });
 
-  it.each(['updated', 'already-current'])('stays silent once the apply is %s', (outcome) => {
-    const status = server({ lastApply: lastApply({ outcome, reason: null, restartRequired: true }) }) as UpdateServerStatus;
+  it('stays silent once the apply is already-current', () => {
+    const status = server({ lastApply: lastApply({ outcome: 'already-current', reason: null, restartRequired: true }) }) as UpdateServerStatus;
     expect(derive(status, now)).toEqual([]);
+  });
+
+  it('surfaces a settled apply as an informational item, not an action', () => {
+    const status = server({ lastApply: lastApply({ outcome: 'updated', reason: null, restartRequired: false }) }) as UpdateServerStatus;
+    expect(derive(status, now)).toEqual([expect.objectContaining({
+      id: 'update-applied:bbbbbbb', category: 'daemon-health', severity: 'info', title: 'Now running bbbbbbb' })]);
   });
 
   it('lets a stale apply record age out instead of nagging forever', () => {

@@ -38,7 +38,7 @@ export function RunsGraph() {
         if (event.key === 'Enter') {
           const first = graph.nodes.find(node => filtered.matched.has(node.id));
           if (!first) return;
-          const button = [...(canvas.current?.querySelectorAll('button[aria-label]') ?? [])].find(item => item.getAttribute('aria-label') === `Inspect workspace node ${first.id}`);
+          const button = [...(canvas.current?.querySelectorAll<HTMLButtonElement>('button[aria-label]') ?? [])].find(item => item.getAttribute('aria-label') === `Inspect workspace node ${first.id}`);
           if (button && button.getAttribute('aria-pressed') !== 'true') button.click();
           else setSelectedId(first.id);
         }
