@@ -6,11 +6,12 @@ from contextlib import closing
 import json
 import os
 import re
+import signal
 import sqlite3
 import stat
 import sys
 import tempfile
-import time
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -125,7 +126,7 @@ def cycle(args):
         os.close(directory)
 
 
-def main():
+def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--drop-dir', required=True)
     parser.add_argument('--db', required=True)
@@ -134,18 +135,46 @@ def main():
     schedule.add_argument('--cycles', type=bounded(1000))
     parser.add_argument('--interval', type=bounded(3600), default=1, help='seconds between cycles')
     parser.add_argument('--apply', action='store_true', help='submit eligible files')
-    args = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main(argv=None, deps=None, out=None):
+    args = parse_args(argv)
+    deps = deps or {}
+    out = out or sys.stdout
+    stop = deps.get('stop') or threading.Event()
+    requested = []
+    previous = {}
+
+    def cancel(signum, _frame):
+        requested.append(signum)
+        stop.set()
+
+    if threading.current_thread() is threading.main_thread():  # signals: main only
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous[sig] = signal.signal(sig, cancel)
     failed = False
+    completed = 0
     try:
         for number in range(1 if args.once else args.cycles):
-            if number:
-                time.sleep(args.interval)
+            # A requested stop ends the run between scans, never mid-transaction.
+            if stop.is_set() or (number and stop.wait(args.interval)):
+                break
             result = cycle(args)
-            print(json.dumps(result, separators=(',', ':')), flush=True)
+            print(json.dumps(result, separators=(',', ':')), file=out, flush=True)
             failed |= bool(result['conflict'])
+            completed += 1
+        if stop.is_set():
+            summary = {'stopped': True, 'cycles': completed}
+            if requested:
+                summary['signal'] = signal.Signals(requested[0]).name
+            print(json.dumps(summary, separators=(',', ':')), file=out, flush=True)
     except (OSError, ValueError, sqlite3.Error, OverflowError):
-        print(json.dumps({'error': 'drop scan or coordinator failure'}), flush=True)
+        print(json.dumps({'error': 'drop scan or coordinator failure'}), file=out, flush=True)
         return 1
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
     return 1 if failed else 0
 
 
