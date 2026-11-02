@@ -203,6 +203,7 @@ import {
 } from './fleet-runtime-journal.js';
 import { repoIdentityOfPath, resolveRepoLabel } from './repo-identity.js';
 import { noteTickPhase } from '../daemon/tick-progress.js';
+import { runTickPhase } from '../daemon/tick-phases.js';
 import { DEVIN_CLI_LANE, FLEET_ENGINES, grantEngineOfLane, type DispatchOutcome, type FleetEngine, type LandingRecord, type RepoHold, type RepoHoldChange, type SetRepoHoldRequest } from './fleet-types.js';
 
 // ---------------------------------------------------------------------------
@@ -1373,9 +1374,22 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const mirrorPaused: { path: string; repo: string; reason: string }[] = [];
       let readyMirrors: MirrorTickPreparation['ready'] = [];
       if (!hookCtx.dryRun) {
-        try {
-          noteTickPhase('mirror prep', `${policy.repos.length} repo(s)`);
-          const prep = await deps.prepareMirrors(policy, hookCtx.signal);
+        // RQ-DAEMONTICK-UNBLOCK: one bounded 'mirror-prep' phase around the
+        // whole mirror preparation (RQ-APPDIAG-1-LANESTALE owns the per-repo
+        // bounds inside mirrors.ts). Its deadline sits above prep's own
+        // deadline + abort grace so prep's internal accounting lands first.
+        const { MIRROR_TICK_PREP_DEADLINE_MS, MIRROR_TICK_ABORT_GRACE_MS } = await import('./mirrors.js');
+        const mirrorPhase = await runTickPhase(
+          'mirror-prep',
+          (signal) => deps.prepareMirrors(policy, signal),
+          {
+            deadlineMs: MIRROR_TICK_PREP_DEADLINE_MS + MIRROR_TICK_ABORT_GRACE_MS + 30_000,
+            parentSignal: hookCtx.signal,
+            log: (line) => console.warn('[ashlr] daemon:tick', line),
+          },
+        );
+        if (mirrorPhase.status === 'ok' && mirrorPhase.value !== undefined) {
+          const prep = mirrorPhase.value;
           readyMirrors = prep.ready;
           for (const failed of prep.failed) {
             if (!failed.path) continue;
@@ -1386,8 +1400,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               mirrorPaused.push({ path, repo: dirLabel(path), reason: 'Its mirror is not current.' });
             }
           }
-        } catch (err) {
-          mirrorProblem = `The fleet mirrors could not be prepared (${describeError(err)}), so no repo is known to be current.`;
+        } else if (mirrorPhase.status === 'timeout') {
+          mirrorProblem = 'The fleet mirrors could not be prepared in time (mirror-prep exceeded its deadline), so no repo is known to be current.';
+        } else {
+          mirrorProblem = `The fleet mirrors could not be prepared (${mirrorPhase.error ?? 'unavailable'}), so no repo is known to be current.`;
         }
         if (mirrorProblem === null) {
           try {
