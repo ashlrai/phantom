@@ -29,6 +29,7 @@ const VERBS = [
   'lane-models',
   'lane-truth',
   'launch-proof',
+  'memory',
   'meter-drop',
   'real-supply',
   'runs-read',
