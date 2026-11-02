@@ -201,6 +201,13 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   batching can change actual timing; these ranges are estimates, not deadlines.
   Missing/malformed history, unavailable required checks, or an unknown queue
   position yields `unknown`. History is bounded to 1 MiB / 10,000 rows.
+  Each row also attributes the PR's merge-queue wait (`waitingOn`): `position`
+  when entries ahead must land first, `checks` when the head entry waits on
+  the merge-group's required checks, or `conflict` when GitHub reports the PR
+  conflicting; `waitingMs` is the observed queue time from `enqueuedAt`.
+  A conflicting PR carries exactly one idempotent recut request,
+  `RQ-RECUT-<repo>-<pr>-<head7>` — the same conflicting head re-read yields
+  the same key, so consumers dedupe by it; a moved head makes a new request.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `--json` never prompts and prints one object.
