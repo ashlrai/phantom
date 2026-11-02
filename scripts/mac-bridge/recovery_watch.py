@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 
+import recover_apps
 import recover_services
 
 
@@ -54,6 +55,9 @@ def main(argv=None, deps=None, out=None):
                         help="exit 0 only when the final attempted pass produced valid complete=true and exit code 0; "
                              "exhaustion with incomplete, exception, invalid report, nonzero child status, or "
                              "cancellation before any completed pass returns nonzero")
+    parser.add_argument("--recover-apps", action="store_true",
+                        help="after each pass whose service recovery report is complete, run "
+                             "recover_apps --apply once; the app report is never copied into the log")
     args = parser.parse_args(argv)
     deps = deps or {}
     out = out or sys.stdout
@@ -69,6 +73,20 @@ def main(argv=None, deps=None, out=None):
         recovery_args.extend(["--runs-dir", args.runs_dir])
     for item in args.service:
         recovery_args.extend(["--service", item])
+    app_call = deps.get("app_call") or recover_apps.main
+    app_deps = dict(recovery_deps or {})
+    app_deps.setdefault("now", now)
+    app_args = ["--apply"]
+    if args.runs_dir is not None:
+        app_args.extend(["--runs-dir", args.runs_dir])
+
+    def run_app_recovery():
+        try:
+            captured = io.StringIO()
+            code = app_call(app_args[:], deps=app_deps, out=captured)
+            return code if isinstance(code, int) else None
+        except Exception:
+            return None
 
     previous = {}
     def cancel(_signum, _frame):
@@ -92,6 +110,8 @@ def main(argv=None, deps=None, out=None):
                     raise ValueError("invalid recovery result")
                 record.update(exitCode=code if isinstance(code, int) else None,
                               complete=result["complete"], outcome="completed")
+                if args.recover_apps and result["complete"]:
+                    record["appRecovery"] = {"exitCode": run_app_recovery()}
             except Exception:
                 record.update(outcome="failed", complete=False)
             final_record = record
