@@ -591,18 +591,10 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
+from launch_precheck import precheck as shared_precheck
+
 def precheck(j, repo, pf):
-    try:
-        task = next((t for t in rd(pf).splitlines() if t.startswith(j + " (")), "")
-        if not task: return None
-        env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        r = _run(["/bin/bash", R + "/bin/precheck.sh", task, H + "/Projects/ashlrai/" + repo], 20, env=env, cwd=H)
-        if r.returncode in (10, 11, 12, 13):
-            m = re.search(r"reason=(\S+)", r.stdout); return (r.returncode, m.group(1) if m else "?")
-    except Exception:
-        pass
-    return None
+    return shared_precheck(j, repo, rd(pf), H, R, _run)
 
 # ---- queue
 # RQ-READYLOCK-SCOPE: queue/ready.lock guards only the ready.tsv read and the ready.tsv rewrite, never the
