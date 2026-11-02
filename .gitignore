@@ -42,3 +42,6 @@ undefined/
 
 # Sanitized operator usage readings for bridge handoff
 !/usage-readings.log
+
+# Routing eval report (npm run eval:routing). The corpus stays checked in.
+eval/routing/out/
