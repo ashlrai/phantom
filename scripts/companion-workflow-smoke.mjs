@@ -870,13 +870,12 @@ export async function phantomGateway(options, env, box) {
 
   const checks = [];
   const write = await run(options.phm, ['mcp', 'ecosystem', '--write', '--json'], { env: gwEnv, cwd: project, timeoutMs: 30_000 });
-  let report = null;
-  try { report = JSON.parse(write.stdout); } catch { /* reported below */ }
+  const report = lastJsonObject(write.stdout);
   const registered = new Set([...(report?.added ?? []), ...(report?.available ?? []).filter(item => item?.registered).map(item => item.name)]);
   const unregistered = expected.filter(server => !registered.has(server.name)).map(server => server.name);
   checks.push(['phm:mcp-ecosystem', report && !unregistered.length
     ? { status: 'pass', detail: `registered ${expected.map(server => server.name).join(', ')}` }
-    : { status: 'fail', detail: report ? `not registered: ${unregistered.join(', ')}; refused ${JSON.stringify(report.refused ?? [])}` : `ecosystem --write exit ${write.code}: ${write.stderr.trim().slice(0, 200)}` }]);
+    : { status: 'fail', detail: report ? `not registered: ${unregistered.join(', ')}; refused ${JSON.stringify(report.refused ?? [])}` : `ecosystem --write exit ${write.code}: ${write.stderr.trim().slice(0, 200)}; stdout: ${await scrubbedHead(write.stdout)}` }]);
   if (unregistered.length) return checks;
 
   const settingsPath = report.settingsPath ?? join(env.ASHLR_HOME, 'settings.json');
@@ -902,6 +901,23 @@ export async function phantomGateway(options, env, box) {
 }
 
 /** A routed phantom_list_secrets: the one stored name, never its value. */
+/** The last complete JSON object in `text` (published phm may print log lines before its report). */
+export function lastJsonObject(text) {
+  const s = String(text ?? '');
+  for (let i = s.lastIndexOf('{'); i >= 0; i = i > 0 ? s.lastIndexOf('{', i - 1) : -1) {
+    try { const value = JSON.parse(s.slice(i)); if (value && typeof value === 'object' && !Array.isArray(value)) return value; } catch { /* keep scanning */ }
+  }
+  return null;
+}
+
+/** First 200 chars of output after the shared secret-shape scrub; withheld if the scrubber can't load. */
+export async function scrubbedHead(text) {
+  try {
+    const { scrubSecrets } = await import('../src/core/util/scrub.ts');
+    return JSON.stringify(scrubSecrets(String(text ?? '').replaceAll(SECRET_SENTINEL, '<value>')).slice(0, 200));
+  } catch { return '<withheld: scrubber unavailable>'; }
+}
+
 export function evaluateGatewaySecrets(message) {
   if (message?.error) return { status: 'fail', detail: `tools/call error: ${JSON.stringify(message.error).slice(0, 200)}` };
   const text = (message?.result?.content ?? []).map(part => part?.text ?? '').join('\n');
