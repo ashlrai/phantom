@@ -9,6 +9,17 @@ workload. Only the group this wrapper created is ever signalled: never a
 discovered PID, its parent group, a GUI app, or a command-name match. Global
 newest-worker selection belongs to a future monitor; this is the safe
 actuator for workers it owns.
+
+Bounded escalation: with --max-paused-seconds the pause is no longer open
+ended. When the owned group stays continuously stopped for that budget,
+critical telemetry or telemetry-unavailable alike, the wrapper escalates on
+its own authority: SIGCONT, SIGTERM, the configured grace, then SIGKILL
+through the same owned-group cleanup, awaits reaping, and exits 71 with
+receipt state 'pressure-kill' (reason 'pause-budget-exhausted'). The budget
+is continuous monotonic pause time: only an actual SIGCONT resume after the
+healthy-sample hysteresis resets it, so healthy blips that never resume the
+group cannot postpone the kill. Without the option the legacy unbounded
+pause is unchanged.
 """
 
 import argparse
@@ -105,17 +116,24 @@ def private_directory(path):
 
 def run(command, metrics_path, max_age_seconds, receipt_dir, *, poll=POLL_SECONDS,
         healthy_samples=HEALTHY_SAMPLES, launch_wait=LAUNCH_WAIT_SECONDS,
-        deadline=None, term_grace=TERM_GRACE_SECONDS):
+        deadline=None, term_grace=TERM_GRACE_SECONDS, max_paused=None,
+        clock=time.monotonic, sleep=time.sleep, sampler=probe):
     """Launch command under pressure control; return its propagated exit code.
 
-    75 = launch blocked by telemetry, 124 = caller deadline, 128+sig = cancelled.
+    75 = launch blocked by telemetry, 124 = caller deadline, 128+sig = cancelled,
+    71 = pause budget exhausted (owned group killed under sustained pressure).
+    max_paused bounds continuous stopped time in monotonic seconds; None keeps
+    the legacy unbounded pause. clock/sleep/sampler are test seams.
     """
+    if max_paused is not None and (not math.isfinite(max_paused) or max_paused <= 0):
+        raise ValueError('max_paused must be a finite positive number of seconds')
     metrics_path, receipt_dir = Path(metrics_path), Path(receipt_dir)
     private_directory(receipt_dir)
     receipt = receipt_dir / (uuid.uuid4().hex + '.json')
     record = {'schemaVersion': 1, 'wrapperPid': os.getpid(), 'pgid': None,
               'state': 'waiting', 'reason': None, 'startedAt': time.time(),
-              'updatedAt': time.time(), 'endedAt': None, 'returncode': None}
+              'updatedAt': time.time(), 'endedAt': None, 'returncode': None,
+              'maxPausedSeconds': max_paused, 'pausedSeconds': 0.0}
     child, stopped, handlers = None, [], {}
 
     def update(state, reason=None):
@@ -157,21 +175,21 @@ def run(command, metrics_path, max_age_seconds, receipt_dir, *, poll=POLL_SECOND
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         handlers[sig] = signal.signal(sig, stop)
     try:
-        end = None if deadline is None else time.monotonic() + deadline
-        limit = time.monotonic() + launch_wait
+        end = None if deadline is None else clock() + deadline
+        limit = clock() + launch_wait
         if end is not None:
             limit = min(limit, end)
         state, healthy_run = 'unavailable', 0
         while healthy_run < healthy_samples:
-            state = probe(metrics_path, max_age_seconds)
+            state = sampler(metrics_path, max_age_seconds)
             healthy_run = healthy_run + 1 if state == 'healthy' else 0
             if stopped or healthy_run >= healthy_samples:
                 break
             update('waiting', state)
-            now = time.monotonic()
+            now = clock()
             if now >= limit:
                 break
-            time.sleep(min(poll, max(0.01, limit - now)))
+            sleep(min(poll, max(0.01, limit - now)))
         if stopped:
             return finish('cancelled', f'signal-{stopped[0]}', 128 + stopped[0])
         if healthy_run < healthy_samples:
@@ -192,39 +210,52 @@ def run(command, metrics_path, max_age_seconds, receipt_dir, *, poll=POLL_SECOND
         record['pgid'] = child.pid
         update('running')
         paused, healthy_run, terminating = False, 0, None
+        paused_since = None  # monotonic start of the current continuous stop
         while True:
-            now = time.monotonic()
+            now = clock()
             if stopped and terminating is None:
                 terminating = ('cancelled', f'signal-{stopped[0]}', 128 + stopped[0])
             if terminating is None and end is not None and now >= end:
                 terminating = ('deadline', 'deadline-exceeded', 124)
+            if (terminating is None and paused_since is not None
+                    and max_paused is not None and now - paused_since >= max_paused):
+                terminating = ('pressure-kill', 'pause-budget-exhausted', 71)
             if terminating is not None:
+                record['pausedSeconds'] = (
+                    0.0 if paused_since is None else round(now - paused_since, 3))
                 update('terminating', terminating[1])
                 terminate(term_grace)
                 return finish(*terminating)
             code = child.poll()
             if code is not None:
                 return finish('finished', None, 128 - code if code < 0 else code)
-            state = probe(metrics_path, max_age_seconds)
+            state = sampler(metrics_path, max_age_seconds)
             if state in ('critical', 'unavailable'):
                 healthy_run = 0
                 if not paused:
                     signal_group(signal.SIGSTOP)
-                    paused = True
+                    paused, paused_since = True, now
                     update('paused', state)
                     print(f'pressure-worker: paused owned group ({state})',
                           file=sys.stderr, flush=True)
             elif state == 'healthy':
                 healthy_run += 1
                 if paused and healthy_run >= healthy_samples:
+                    # Only a real resume clears the continuous-pause budget.
                     signal_group(signal.SIGCONT)
-                    paused = False
+                    paused, paused_since = False, None
                     update('running', 'resumed')
                     print('pressure-worker: resumed owned group', file=sys.stderr, flush=True)
             else:
                 healthy_run = 0
-            wait = poll if end is None else min(poll, max(0.01, end - now))
-            time.sleep(max(wait, 0.01))
+            record['pausedSeconds'] = (
+                0.0 if paused_since is None else round(now - paused_since, 3))
+            wait = poll
+            if end is not None:
+                wait = min(wait, max(0.01, end - now))
+            if paused_since is not None and max_paused is not None:
+                wait = min(wait, max(0.01, paused_since + max_paused - now))
+            sleep(max(wait, 0.01))
     finally:
         terminate(term_grace)  # never orphan a stopped group
         for sig, handler in handlers.items():
@@ -246,6 +277,11 @@ def main(argv=None):
     parser.add_argument('--launch-wait-seconds', type=float, default=LAUNCH_WAIT_SECONDS)
     parser.add_argument('--deadline-seconds', type=float, default=None,
                         help='optional caller deadline over launch wait plus runtime')
+    parser.add_argument('--max-paused-seconds', type=float, default=None,
+                        help='optional cap on continuous paused time; the owned '
+                             'group is continued, terminated and reaped when the '
+                             'budget is exhausted (exit 71); omitted: pause is '
+                             'unbounded')
     parser.add_argument('--term-grace-seconds', type=float, default=TERM_GRACE_SECONDS)
     # Split at -- so child options are never interpreted or echoed by argparse.
     divider = raw.index('--') if '--' in raw else len(raw)
@@ -257,12 +293,15 @@ def main(argv=None):
                args.term_grace_seconds]
     if args.deadline_seconds is not None:
         timings.append(args.deadline_seconds)
+    if args.max_paused_seconds is not None:
+        timings.append(args.max_paused_seconds)
     if any(not math.isfinite(v) or v <= 0 for v in timings) or args.healthy_samples < 1:
         raise ValueError('invalid timing or sample configuration')
     return run(command, args.metrics, args.max_age_seconds, args.receipt_dir,
                poll=args.poll_seconds, healthy_samples=args.healthy_samples,
                launch_wait=args.launch_wait_seconds, deadline=args.deadline_seconds,
-               term_grace=args.term_grace_seconds)
+               term_grace=args.term_grace_seconds,
+               max_paused=args.max_paused_seconds)
 
 
 if __name__ == '__main__':
