@@ -702,4 +702,5 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-graph-process-tree-stop-nov01.test.ts', // spawns real node children to exercise process-tree stop
   'test/phx-graph-node-stream01.test.ts', // spawn and spawnSync run the real `fleet graph-run` CLI
   'test/planner-cycle-single-01solc5.test.ts', // spawnSync runs a real node child for the single-cycle planner fixture
+  'test/verify-changed-dedupe.test.ts', // spawnSync node scripts/verify-changed.mjs and execFileSync git in real temp repos
 ];
