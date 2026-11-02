@@ -42,8 +42,13 @@ CLI operator's sender ID is in the allowlist (canonical ID: `local-operator`).
 Drop-folder delivery via [`email-drop-bridge.ts`](src/core/comms/email-drop-bridge.ts):
 an external mail path saves raw RFC 822 files (`*.eml`) into an inbox directory;
 Phantom parses, checks the allow-listed From address, writes the body, and drops a
-`.reply.eml` into the outbound folder.  Not yet available as a live service — a
-configured allow-list is required before any real mail reaches the inbox.
+`.reply.eml` into the outbound folder.  Sending those replies is opt-in on
+macOS: `phm comms email-drop … --save-config --send-replies` stores
+`sendReplies: true`, after which each `phm comms cycle` pass drains the outbox
+through Mail.app — claimed atomically, sent exactly once, never retried from a
+crashed claim.  Replies go only to the config's allow-listed `from` senders;
+`ashlr fleet email-outbox [--send] [--json]` shows what is queued, sent or
+stuck.  Mail.app cannot set `In-Reply-To`, so replies start a fresh thread.
 When `PHANTOM_OPERATOR_SECRET` (or `~/.ashlr/comms/operator-secret`) is set, mail
 also needs a DKIM pass for the sender's domain and that secret once; later mail
 from the paired address stays plain language. See [operator glance](OPERATOR-GLANCE.md).
