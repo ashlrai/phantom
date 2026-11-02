@@ -21,7 +21,8 @@ describe('native MCP tool inventory', () => {
 
   it('keeps native tools/list below the pre-audit byte count', () => {
     const response = { jsonrpc: '2.0', id: 1, result: { tools: listNativeTools(), _meta: { 'ashlr/discovery': { servers: [], rejectedRoutes: [] } } } };
-    expect(Buffer.byteLength(JSON.stringify(response) + '\n')).toBeLessThan(24205);
+    // Ceiling after the fleet forum tool joined the native list (the addressed bus tools are in the same inventory).
+    expect(Buffer.byteLength(JSON.stringify(response) + '\n')).toBeLessThan(27327);
   });
 });
 

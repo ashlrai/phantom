@@ -55,7 +55,7 @@ function resultJson(r: { content: { type: 'text'; text: string }[] }): unknown {
 
 describe('M129 native tool registration', () => {
   it('total native tool count is now 35', () => {
-    expect(nativeToolDefs()).toHaveLength(35);
+    expect(nativeToolDefs()).toHaveLength(43);
   });
 
   const newTools = ['ashlr_fleet_status', 'ashlr_scorecard', 'ashlr_oversight', 'ashlr_routing'];
