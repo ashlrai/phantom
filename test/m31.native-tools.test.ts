@@ -83,6 +83,7 @@ describe('native tool registry', () => {
         'ashlr_website_publish',
         'ashlr_website_status',
         'phantom_fleet_graph',
+        'phantom_fleet_orders',
         'phantom_fleet_session',
         'phm_proactive_agents_list',
         'phm_proactive_agents_create',

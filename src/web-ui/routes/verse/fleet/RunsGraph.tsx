@@ -38,7 +38,7 @@ export function RunsGraph() {
         if (event.key === 'Enter') {
           const first = graph.nodes.find(node => filtered.matched.has(node.id));
           if (!first) return;
-          const button = [...(canvas.current?.querySelectorAll('button[aria-label]') ?? [])].find(item => item.getAttribute('aria-label') === `Inspect workspace node ${first.id}`);
+          const button = [...(canvas.current?.querySelectorAll<HTMLButtonElement>('button[aria-label]') ?? [])].find(item => item.getAttribute('aria-label') === `Inspect workspace node ${first.id}`);
           if (button && button.getAttribute('aria-pressed') !== 'true') button.click();
           else setSelectedId(first.id);
         }
@@ -49,7 +49,7 @@ export function RunsGraph() {
         canvas.current = element;
         // WorkspaceGraph has no title prop; enrich its existing native DOM hooks.
         if (!element) return;
-        for (const button of element.querySelectorAll('button[aria-label]')) {
+        for (const button of element.querySelectorAll<HTMLButtonElement>('button[aria-label]')) {
           const id = button.getAttribute('aria-label')?.replace('Inspect workspace node ', '');
           const node = graph.nodes.find(n => n.id === id);
           if (node) { button.setAttribute('title', node.title); button.classList.toggle(styles.dimmed, !filtered.matched.has(node.id)); }
