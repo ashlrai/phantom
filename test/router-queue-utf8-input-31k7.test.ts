@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fanoutAskV1 } from '../src/core/ask/fanout.js';
 import { cmdRouterQueue } from '../src/cli/router-queue.js';
 import { enqueueRouterFollowup, routerQueueAskFanout } from '../src/core/fleet/router-queue.js';
 
@@ -27,14 +28,15 @@ describe('router queue input decoding', () => {
     // Split every byte so all multi-byte sequences cross chunk boundaries.
     const chunks = Array.from(bytes, (_, index) => bytes.subarray(index, index + 1));
     expect(await run([command, '--json'], chunks)).toEqual({ code: 0, output: [{ accepted: command }] });
-    const target = command === 'ask' ? routerQueueAskFanout : enqueueRouterFollowup;
-    expect(target).toHaveBeenCalledExactlyOnceWith(record);
+    if (command === 'ask') expect(routerQueueAskFanout).toHaveBeenCalledExactlyOnceWith(record, fanoutAskV1);
+    else expect(enqueueRouterFollowup).toHaveBeenCalledExactlyOnceWith(record);
   });
 
   it.each(['ask', 'merged'] as const)('accepts plain valid %s records', async (command) => {
     const record = { schema: command === 'ask' ? 'ask.v1' : 'merged.v1', task: 'local fixture' };
     expect(await run([command], [JSON.stringify(record)])).toEqual({ code: 0, output: [{ accepted: command }] });
-    expect(command === 'ask' ? routerQueueAskFanout : enqueueRouterFollowup).toHaveBeenCalledExactlyOnceWith(record);
+    if (command === 'ask') expect(routerQueueAskFanout).toHaveBeenCalledExactlyOnceWith(record, fanoutAskV1);
+    else expect(enqueueRouterFollowup).toHaveBeenCalledExactlyOnceWith(record);
   });
 
   it.each([
