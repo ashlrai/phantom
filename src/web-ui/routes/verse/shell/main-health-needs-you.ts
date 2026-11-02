@@ -22,7 +22,7 @@ export function deriveMainHealthNeedsYou(read: MainHealthRead | undefined): Flee
   if (guardianOff) {
     items.push({ id: 'main-guardian-off', severity: 'attention', target: 'fleet',
       title: 'The main guardian is switched off', detail: 'The main guardian kill switch is on.',
-      nextStep: 'Remove ~/.ashlr-runs/queue/MAIN_GUARDIAN_OFF if the stop was not meant',
+      nextStep: 'Turn off MAIN_GUARDIAN_OFF in Fleet ▸ Switches if the stop was not meant',
       open: { kind: 'pane', paneId: 'fleet-lanes' } });
   } else if (stale) {
     items.push({ id: 'main-guardian-stale', severity: 'attention', target: 'fleet',
