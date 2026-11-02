@@ -124,8 +124,9 @@ export async function drainGuardianInfraRetries(
       await prepare({ manifest: options.manifest, sourceState: current, outputState: attemptPath, repo: selected.repo, sha: selected.sha });
     } catch (error) { summary.termination = (error as NodeJS.ErrnoException).code === 'EEXIST' ? 'collision' : 'unsafe'; break; }
     summary.attempts++;
+    const fileHalt = await stopFileStatus(options.stopFile);
     const left = Math.floor(deadlineAt - now());
-    const halted = left < 1 ? 'deadline' as const : stop(options.signal);
+    const halted = (left < 1 ? 'deadline' as const : stop(options.signal)) ?? fileHalt;
     if (halted) { summary.termination = halted; break; }
     let outcome: GuardianVerifyExclusiveResult;
     try { outcome = await verify({ manifest: options.manifest, state: attemptPath, maxPasses: 1, intervalMs: 1000, timeoutMs: left, signal: options.signal }); }
