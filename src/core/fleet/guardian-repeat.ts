@@ -10,12 +10,12 @@ import { drainGuardianInfraRetries, type GuardianDrainDeps, type GuardianDrainSu
 // original source file is never written. Verification, eligibility, holds,
 // exclusion and exclusive-lock policy stay in the drain it delegates to. Only
 // bounded counters and the latest verified path/session are retained.
-export type GuardianRepeatTermination = GuardianDrainTermination | 'duration';
+export type GuardianRepeatTermination = GuardianDrainTermination | 'duration' | 'max-passes';
 
 export interface GuardianRepeatOptions {
   manifest: string; sourceState: string; outputDir: string;
   durationMs: number; intervalMs: number; maxRetries: number; timeoutMs: number;
-  idleBackoffMaxMs?: number;
+  idleBackoffMaxMs?: number; maxPasses?: number;
   apply: boolean; stopFile?: string; signal?: AbortSignal;
 }
 
@@ -88,6 +88,9 @@ export async function repeatGuardianDrains(
   options: GuardianRepeatOptions,
   deps: GuardianRepeatDeps = {},
 ): Promise<GuardianRepeatSummary> {
+  if (options.maxPasses !== undefined && (!Number.isSafeInteger(options.maxPasses) || options.maxPasses < 1 || options.maxPasses > 1000)) {
+    throw new RangeError('maxPasses must be a safe integer between 1 and 1000');
+  }
   if (options.idleBackoffMaxMs !== undefined && (!Number.isSafeInteger(options.idleBackoffMaxMs)
     || options.idleBackoffMaxMs < options.intervalMs || options.idleBackoffMaxMs > 86_400_000)) {
     throw new RangeError('idleBackoffMaxMs must be a safe integer between intervalMs and 86400000');
@@ -145,6 +148,12 @@ export async function repeatGuardianDrains(
       return summary;
     }
     const left = Math.floor(options.durationMs - (now() - startedAt));
+    if (left < 1) { summary.termination = 'duration'; return summary; }
+    const stopped = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
+    if (stopped) { summary.termination = stopped; return summary; }
+    if (options.maxPasses !== undefined && summary.passes >= options.maxPasses) {
+      summary.termination = 'max-passes'; return summary;
+    }
     if (left <= nextDelayMs) { summary.termination = 'duration'; return summary; }
     // Wait in short slices so a stop file also interrupts the interval.
     for (let waited = 0; waited < nextDelayMs && !options.signal?.aborted;) {
