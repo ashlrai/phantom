@@ -1,2 +1,3 @@
 
+- [Nodes view](docs/NODES-VIEW.md): `phm nodes --json` and the desktop Nodes panel: role, caps, heartbeat age, live jobs, leader; per-node local auth only, no credentials.
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
