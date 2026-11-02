@@ -17,7 +17,10 @@ export async function cmdFleetLocalGate(args: string[], deps: LocalGateDeps = {}
   }
   const report = await runLocalGate(budget, deps);
   console.log(json ? JSON.stringify(report) : [
-    ...report.steps.map(step => `${step.ok ? 'PASS' : 'FAIL'} ${step.name} (${step.seconds.toFixed(2)}s)`),
+    ...report.steps.flatMap(step => [
+      `${step.ok ? 'PASS' : 'FAIL'} ${step.name} (${step.seconds.toFixed(2)}s)`,
+      ...(step.blockers ?? []).map(blocker => `  ${blocker.kind}: ${blocker.nextStep}`),
+    ]),
     `${report.verdict.toUpperCase()} total (${report.seconds.toFixed(2)}s)`,
   ].join('\n'));
   return report.verdict === 'pass' ? 0 : 1;

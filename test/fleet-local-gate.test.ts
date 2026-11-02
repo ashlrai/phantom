@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runLocalGate, type LocalGateDeps } from '../src/core/fleet/local-gate.js';
 import { cmdFleetLocalGate } from '../src/cli/fleet-local-gate.js';
 
+const ready = { state: 'OPEN', isDraft: false, headRefOid: 'a'.repeat(40), mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }] };
+
 function fixture() {
   let elapsed = 0;
   const exec = vi.fn(async (command: string, args: string[]) => {
     elapsed += 1;
-    return { ok: true, stdout: command === 'git' ? (args[0] === 'rev-parse' ? 'a' : 'b').repeat(40) : 'password=plainly-fake-value', stderr: '' };
+    return { ok: true, stdout: command === 'gh' ? JSON.stringify(ready) : command === 'git' ? (args[0] === 'rev-parse' ? 'a' : 'b').repeat(40) : 'password=plainly-fake-value', stderr: '' };
   });
   const deps: LocalGateDeps = { exec, now: () => elapsed, appendMetric: vi.fn(async () => {}), warn: vi.fn(), metricsPath: '/fake/metrics/local-gate.jsonl' };
   return { exec, deps };
@@ -20,8 +22,9 @@ describe('fleet local-gate', () => {
     const report = await runLocalGate(undefined, deps);
     expect(report).toEqual({ verdict: 'pass', headSha: 'a'.repeat(40), baseSha: 'b'.repeat(40), steps: [
       { name: 'typecheck', ok: true, seconds: 1 }, { name: 'verify-changed', ok: true, seconds: 1 },
-    ], seconds: 4 });
-    expect(exec.mock.calls.slice(2)).toEqual([
+      { name: 'merge readiness', ok: true, seconds: 1, blockers: [] },
+    ], seconds: 5 });
+    expect(exec.mock.calls.slice(2, 4)).toEqual([
       ['npx', ['tsc', '--noEmit', '-p', 'tsconfig.json'], expect.any(String)],
       ['node', ['scripts/verify-changed.mjs'], expect.any(String)],
     ]);
@@ -36,16 +39,16 @@ describe('fleet local-gate', () => {
       .mockRejectedValueOnce(new Error('password=plainly-fake-value'));
     const report = await runLocalGate(180, deps);
     expect(report.verdict).toBe('fail');
-    expect(report.steps.map(step => step.ok)).toEqual([false, true]);
-    expect(exec).toHaveBeenCalledTimes(4);
+    expect(report.steps.map(step => step.ok)).toEqual([false, true, true]);
+    expect(exec).toHaveBeenCalledTimes(5);
   });
 
   it('adds a fail row for a budget overrun after running both steps', async () => {
     const { exec, deps } = fixture();
     const report = await runLocalGate(3, deps);
     expect(report.verdict).toBe('fail');
-    expect(report.steps.at(-1)).toEqual({ name: 'budget', ok: false, seconds: 4 });
-    expect(exec).toHaveBeenCalledTimes(4);
+    expect(report.steps.at(-1)).toEqual({ name: 'budget', ok: false, seconds: 5 });
+    expect(exec).toHaveBeenCalledTimes(5);
   });
 
   it('warns without failing when the metrics file is unwritable', async () => {
@@ -61,7 +64,7 @@ describe('fleet local-gate', () => {
     const report = await runLocalGate(180, deps);
     expect(report.verdict).toBe('fail');
     expect(report.steps[0].name).toBe('git identity');
-    expect(exec).toHaveBeenCalledTimes(4);
+    expect(exec).toHaveBeenCalledTimes(5);
   });
 
   it('prints JSON and returns 1 for a failed check', async () => {
@@ -75,7 +78,67 @@ describe('fleet local-gate', () => {
     const { deps } = fixture();
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetLocalGate([], deps)).toBe(0);
-    expect(log.mock.calls[0][0]).toBe('PASS typecheck (1.00s)\nPASS verify-changed (1.00s)\nPASS total (4.00s)');
+    expect(log.mock.calls[0][0]).toBe('PASS typecheck (1.00s)\nPASS verify-changed (1.00s)\nPASS merge readiness (1.00s)\nPASS total (5.00s)');
+  });
+
+  it.each([
+    ['branch-behind', { mergeStateStatus: 'BEHIND' }, 'Fetch the base branch'],
+    ['pending-check', { statusCheckRollup: [{ status: 'IN_PROGRESS' }] }, 'gh pr checks --watch'],
+    ['conflict', { mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING' }, 'resolve conflicts'],
+    ['failed-check', { statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE' }] }, 'fix the failing checks'],
+    ['unknown', { mergeStateStatus: 'FUTURE_STATE' }, 'gh pr view'],
+    ['pending-check', { statusCheckRollup: [{ status: 'FUTURE_STATE' }] }, 'gh pr checks --watch'],
+    ['unknown', { isDraft: true }, 'gh pr view'],
+    ['unknown', { state: 'CLOSED' }, 'gh pr view'],
+    ['unknown', { mergeable: 'UNKNOWN' }, 'gh pr view'],
+    ['unknown', { headRefOid: 'c'.repeat(40) }, 'gh pr view'],
+    ['unknown', { statusCheckRollup: [] }, 'gh pr view'],
+    ['unknown', { statusCheckRollup: null }, 'gh pr view'],
+  ])('reports %s with an actionable next step', async (kind, state, action) => {
+    const { exec, deps } = fixture();
+    const fallback = exec.getMockImplementation()!;
+    exec.mockImplementation(async (command, args) => command === 'gh'
+      ? { ok: true, stdout: JSON.stringify({ ...ready, ...state }), stderr: '' }
+      : fallback(command, args));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetLocalGate([], deps)).toBe(1);
+    expect(log.mock.calls[0][0]).toContain(`${kind}:`);
+    expect(log.mock.calls[0][0]).toContain(action);
+    const report = JSON.parse(vi.mocked(deps.appendMetric!).mock.calls[0][1]);
+    expect(report.verdict).toBe('fail');
+    expect(report.steps.at(-1).blockers).toContainEqual({ kind, nextStep: expect.stringContaining(action) });
+  });
+
+  it.each(['malformed', '{}', 'null', '[]'])('fails closed for unavailable PR evidence: %s', async stdout => {
+    const { exec, deps } = fixture();
+    const fallback = exec.getMockImplementation()!;
+    exec.mockImplementation(async (command, args) => command === 'gh'
+      ? { ok: true, stdout, stderr: 'password=plainly-fake-value' } : fallback(command, args));
+    const report = await runLocalGate(180, deps);
+    expect(report.verdict).toBe('fail');
+    expect(report.steps.at(-1)?.blockers?.[0].kind).toBe('unknown');
+    expect(JSON.stringify(report)).not.toContain('plainly-fake-value');
+  });
+
+  it('reports simultaneous behind and pending blockers', async () => {
+    const { exec, deps } = fixture();
+    const fallback = exec.getMockImplementation()!;
+    exec.mockImplementation(async (command, args) => command === 'gh'
+      ? { ok: true, stdout: JSON.stringify({ ...ready, mergeStateStatus: 'BEHIND', statusCheckRollup: [{ state: 'PENDING' }] }), stderr: '' }
+      : fallback(command, args));
+    const report = await runLocalGate(180, deps);
+    expect(report.verdict).toBe('fail');
+    expect(report.steps.at(-1)?.blockers?.map(blocker => blocker.kind)).toEqual(['branch-behind', 'pending-check']);
+  });
+
+  it('fails closed when the PR reader throws', async () => {
+    const { exec, deps } = fixture();
+    const fallback = exec.getMockImplementation()!;
+    exec.mockImplementation(async (command, args) => {
+      if (command === 'gh') throw new Error('unavailable');
+      return fallback(command, args);
+    });
+    expect((await runLocalGate(180, deps)).verdict).toBe('fail');
   });
 
   it.each(['0', '-1', 'NaN', 'Infinity'])('rejects invalid budget %s without running children', async value => {
