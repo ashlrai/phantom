@@ -365,4 +365,10 @@ python3 contrib/mac/restock.py --dry-run --json
 # {"dry_run": true, "queued": 0, "done_noop": ["RQ-EXAMPLE"], "skips": {"done-noop": 1}}
 ```
 
+Restock also cuts NOOP churn (RQ-PSEL-4-NOOPCUT): within one pass it keeps a
+single line per target PR and per `file=` target, and it parks a job for 24 h
+once its last 2 runs both retired as `DONE-NOOP` (skip reason `noop-streak`).
+The streak lives in `queue/noop-streak.json`; a pass that really queues the job
+clears it, `--dry-run` never writes it, and an unreadable file suppresses nothing.
+
 `install.sh` installs the restocker and shared module alongside dispatchd.

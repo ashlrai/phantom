@@ -33,7 +33,7 @@
  *     name order; every handled file is renamed into processedDir (never
  *     deleted) and one bad file never throws or stops the pass.
  *
- * Like Telegram's `sender-not-allowed`, an unverified sender gets no reply and
+ * Like Telegram's `sender-not-allowed`, a sender not on the From allowlist gets no reply and
  * no inbox write. A failed outbox write never unwrites an accepted entry.
  */
 
@@ -91,6 +91,14 @@ export interface EmailDropCounts {
   failed: number;
   /** Present when the pass handled status messages; accepted counts include queued replies. */
   status?: { queued: number; duplicate: number };
+  /** Set when the pass did nothing because this folder is writable by other users. */
+  unsafeFolder?: 'inbox' | 'processed' | 'outbox';
+}
+
+/** A folder any other local user can write could inject or swap .eml files. */
+function isOtherWritable(path: string): boolean {
+  try { return (statSync(path).mode & 0o002) !== 0; }
+  catch { return false; } // missing dirs are handled by the normal empty-pass path
 }
 
 const BODY_CAP_BYTES = 8 * 1024;
@@ -342,9 +350,9 @@ export async function recordEmailToInbox(
   if (secret.state === 'ready' && secret.secret) {
     if (!dkimPasses(parsed.authenticationResults, parsed.from)) return { ok: false, reason: 'sender-not-allowed' };
     const stripped = stripPairingSecret(parsed.body, secret.secret);
-    const paired = opts.runsDir ? emailPaired(parsed.from, opts.runsDir) : false;
+    const paired = emailPaired(parsed.from, runsRoot(opts.runsDir));
     if (!stripped.presented && !paired) return { ok: false, reason: 'sender-not-allowed' };
-    if (stripped.presented && opts.runsDir) rememberEmailPair(parsed.from, opts.runsDir);
+    if (stripped.presented) rememberEmailPair(parsed.from, runsRoot(opts.runsDir));
     parsed = { ...parsed, body: stripped.body };
     if (!parsed.body && stripped.presented) {
       if (!opts.outboxDir || !parsed.messageId) return { ok: false, reason: 'invalid' };
@@ -356,7 +364,7 @@ export async function recordEmailToInbox(
       } catch { return { ok: false, reason: 'write-failed' }; }
       return { ok: false, kind: 'status', reason: 'status-queued' };
     }
-  } else if (parsed.authenticationResults && /\bdkim=/i.test(parsed.authenticationResults) && !dkimPasses(parsed.authenticationResults, parsed.from)) {
+  } else if (!emailPaired(parsed.from, runsRoot(opts.runsDir)) || !dkimPasses(parsed.authenticationResults, parsed.from)) {
     return { ok: false, reason: 'sender-not-allowed' };
   }
   if (!allowOperatorMessage(`email:${parsed.from}`, (opts.now ?? (() => new Date()))().getTime())) {
@@ -372,8 +380,8 @@ export async function recordEmailToInbox(
   }
   const message = emailChannelMessage(parsed, opts.allowedSenders);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
-  // Allowlist is the first gate. When a pairing secret is configured, DKIM
-  // for the sender domain and that secret are required as well. The secret
+  // Allowlist, exact-domain DKIM and prior pairing are mandatory. A configured
+  // secret can establish the pairing on the first authenticated mail. The secret
   // line is removed before the order is logged. Inbound text is never a command.
   try {
     const ask = isOperatorStatusAsk(parsed.body.trim() || parsed.subject.trim());
@@ -448,10 +456,16 @@ export async function recordEmailToInbox(
 /**
  * One pass over `*.eml` in inboxDir, in name order. Each handled file is
  * renamed into processedDir (never deleted; a colliding name gains a suffix)
- * and one bad file never throws or stops the pass.
+ * and one bad file never throws or stops the pass. A drop folder that is
+ * other-writable (inbox, processed or outbox) refuses the whole pass: the From
+ * header is the only identity evidence, and such a folder lets any local user
+ * plant a file with an allowlisted From.
  */
 export async function runEmailDropOnce(opts: EmailDropRunOptions): Promise<EmailDropCounts> {
   const counts: EmailDropCounts = { accepted: 0, duplicate: 0, refused: 0, failed: 0 };
+  for (const [kind, path] of [['inbox', opts.inboxDir], ['processed', opts.processedDir], ['outbox', opts.outboxDir]] as const) {
+    if (path && isOtherWritable(path)) return { ...counts, unsafeFolder: kind };
+  }
   let names: string[];
   try {
     mkdirSync(opts.processedDir, { recursive: true });
