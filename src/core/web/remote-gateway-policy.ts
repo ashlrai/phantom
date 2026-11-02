@@ -46,6 +46,7 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/cloud/previews',
   '/api/verse/devin/previews',
   '/api/verse/fleet/runs',
+  '/api/verse/fleet/runs/glance',
   '/api/verse/fleet/ci-runs',
   '/api/verse/fleet/live/bus',
   '/api/verse/fleet/live/queue',
