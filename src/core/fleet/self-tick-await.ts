@@ -62,13 +62,15 @@ const observe = (view: SelfTickLastView | null, afterMs: number, atNow: number):
     failedSteps: capNames(view.failedSteps), newerThanAfter: atMs > afterMs, futureDated: atMs > atNow };
 };
 
-/** Await a seam result; resolves undefined early when the signal aborts. */
-function bounded<T>(pending: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+/** Bound a seam by the deadline and interruption, observing late rejection safely. */
+function bounded<T>(pending: Promise<T>, signal: AbortSignal, remaining: number): Promise<T | undefined> {
   return new Promise((resolve, reject) => {
-    const stop = () => { signal.removeEventListener('abort', stop); resolve(undefined); };
+    const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', stop); };
+    const stop = () => { cleanup(); resolve(undefined); };
+    const timer = setTimeout(stop, Math.max(0, remaining));
     pending.then(
-      (value) => { signal.removeEventListener('abort', stop); resolve(value); },
-      (error) => { signal.removeEventListener('abort', stop); reject(error); },
+      (value) => { cleanup(); resolve(value); },
+      (error) => { cleanup(); reject(error); },
     );
     signal.addEventListener('abort', stop, { once: true });
     if (signal.aborted) stop();
@@ -100,17 +102,17 @@ export async function awaitSelfTick(options: SelfTickAwaitOptions): Promise<Self
     if (now() >= deadline) { outcome = 'timed-out'; break; }
     if (signal.aborted) { outcome = 'interrupted'; break; }
     polls += 1;
-    let aborted = false;
+    let stopped = false;
     try {
       // .then routes a sync-throwing seam into the same 'unreadable' path.
-      const view = await bounded(Promise.resolve().then(() => read(options.runsDir, now())), signal);
-      if (view === undefined) aborted = true; // bounded resolves undefined only on abort
+      const view = await bounded(Promise.resolve().then(() => read(options.runsDir, now())), signal, deadline - now());
+      if (view === undefined) stopped = true;
       else lastObservation = observe(view, options.afterMs, now());
     } catch {
       lastObservation = { state: 'unreadable' };
     }
     if (now() >= deadline) { outcome = 'timed-out'; break; }
-    if (aborted || signal.aborted) { outcome = 'interrupted'; break; }
+    if (stopped || signal.aborted) { outcome = signal.aborted ? 'interrupted' : 'timed-out'; break; }
     const seen = lastObservation;
     if (seen?.state === 'seen' && seen.newerThanAfter && !seen.futureDated
       && seen.mode === 'apply' && seen.ranState === 'ran') {
@@ -120,7 +122,8 @@ export async function awaitSelfTick(options: SelfTickAwaitOptions): Promise<Self
     const remaining = deadline - now();
     if (remaining <= 0) { outcome = 'timed-out'; break; }
     // The sleep is capped to the deadline so a slow interval never overshoots it.
-    await bounded(sleep(Math.min(options.intervalMs, remaining), signal), signal);
+    const slept = await bounded(sleep(Math.min(options.intervalMs, remaining), signal).then(() => true), signal, remaining);
+    if (slept === undefined) { outcome = signal.aborted ? 'interrupted' : 'timed-out'; break; }
   }
 
   return {

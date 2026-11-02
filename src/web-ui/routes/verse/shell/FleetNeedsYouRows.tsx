@@ -28,6 +28,8 @@ import { safeHref } from '../cloud/cloud-model.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { releasePrQuery } from '../fleet/release-pr-query.js';
+import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
+import { mainRedFixDraft } from '../fleet-queue/main-red-fix-draft.js';
 import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 import { normalizePaneId } from './dock-catalog.js';
@@ -263,6 +265,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
         };
         const isRelease = releaseUrls.has(item.id);
         const href = releaseUrls.get(item.id);
+        const mainRedRepo = mainHealthRead.data?.kind === 'available'
+          ? mainHealthRead.data.data.repos.find(repo => item.id === `main-red-${repo.repo}`)
+          : undefined;
         return (
           <div key={item.id} className={styles.row} data-severity={severity.tone} onClick={open}>
             <span className={styles.rule} aria-hidden="true" />
@@ -286,6 +291,16 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
                   : 'The self-tick request failed.');
                 refreshSelfTick();
               }} />}
+              {mainRedRepo && <Button size="sm" onClick={() => {
+                // 'kept' means an unsent draft owns the sheet — stay in the
+                // drawer so the message explains why the fix was not applied.
+                if (openDropJobSheet(mainRedFixDraft(mainRedRepo, nowMs)) === 'kept') {
+                  setConfirmation('You have an unsent draft; the fix draft was not applied.');
+                  return;
+                }
+                closeVerseOverlay();
+                revealPane('fleet-queue');
+              }}>Draft fix job</Button>}
               {item.id.startsWith('lane-reset:') && <ResetReleaseButton lane={item.id.slice('lane-reset:'.length)} onReleased={lane => {
                 setConfirmation(`Released hold for ${lane}.`);
                 refreshRuns();

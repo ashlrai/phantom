@@ -17,13 +17,14 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 // 3 unsafe/collision/cancelled, 4 deadline, 5 refused.
 export async function cmdFleetGuardianDrain(
   args: string[],
-  deps: GuardianDrainDeps & { now?: () => number } = {},
+  deps: GuardianDrainDeps & { now?: () => number; writeLine?: (line: string) => void | Promise<void> } = {},
 ): Promise<number> {
   const values: Record<string, string> = {};
-  let json = false, apply = false;
+  let json = false, stream = false, apply = false;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
     if (flag === '--json' && !json) { json = true; continue; }
+    if (flag === '--stream' && !stream) { stream = true; continue; }
     if (flag === '--apply' && !apply) { apply = true; continue; }
     if (!['--manifest', '--source-state', '--output-dir', '--max-retries', '--timeout-ms'].includes(flag)
       || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
@@ -31,6 +32,7 @@ export async function cmdFleetGuardianDrain(
     }
     values[flag] = args[++i]!;
   }
+  if (json && stream) { process.stderr.write('error: --json and --stream are mutually exclusive\n'); return 2; }
   const positive = (value: string | undefined): number => value !== undefined && /^[1-9]\d*$/.test(value) ? Number(value) : NaN;
   const maxRetries = positive(values['--max-retries']);
   const timeoutMs = positive(values['--timeout-ms']);
@@ -50,18 +52,40 @@ export async function cmdFleetGuardianDrain(
   try {
     summary = await drainGuardianInfraRetries(
       { manifest, sourceState, outputDir, maxRetries, timeoutMs, apply, signal: controller.signal, now: deps.now },
-      deps,
+      { ...deps, onAttempt: stream ? async attempt => {
+        await deps.onAttempt?.(attempt);
+        await writeStreamRecord({ record: 'attempt', ...attempt }, deps.writeLine);
+      } : deps.onAttempt },
     );
   } finally {
     if (deadline !== undefined) clearTimeout(deadline);
     process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel);
   }
   const safe = sanitizePublicJson(summary) as GuardianDrainSummary;
-  console.log(json
+  if (stream) {
+    try { await writeStreamRecord({ record: 'summary', ...summary }, deps.writeLine); }
+    catch { return 3; }
+  } else console.log(json
     ? JSON.stringify(safe)
     : `guardian-drain: mode=${safe.mode} termination=${safe.termination} attempts=${safe.attempts} verified=${safe.verified} refused=${safe.refused}${safe.latestOutput ? ` latest=${safe.latestOutput}` : ''}`);
   return summary.termination === 'deadline' ? 4
     : summary.termination === 'refused' ? 5
-    : ['unsafe', 'collision', 'cancelled'].includes(summary.termination) ? 3
+    : ['unsafe', 'collision', 'cancelled', 'observer-error'].includes(summary.termination) ? 3
     : 0;
+}
+
+async function writeStreamRecord(record: unknown, writeLine?: (line: string) => void | Promise<void>): Promise<void> {
+  const line = `${JSON.stringify(sanitizePublicJson(record))}\n`;
+  if (writeLine) { await writeLine(line); return; }
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error): void => { reject(error); };
+    process.stdout.once('error', onError);
+    try {
+      process.stdout.write(line, error => {
+        // Writable streams can emit the error after invoking the callback.
+        if (error) { setImmediate(() => process.stdout.removeListener('error', onError)); reject(error); }
+        else { process.stdout.removeListener('error', onError); resolve(); }
+      });
+    } catch (error) { process.stdout.removeListener('error', onError); reject(error); }
+  });
 }
