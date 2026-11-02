@@ -1,0 +1,33 @@
+{
+  "measuredAt": "2026-11-02T07:31:22.777Z",
+  "platform": "darwin",
+  "node": "v22.22.3",
+  "pnpm": "10.28.2",
+  "methodology": "Manifest snapshots on checkout volume; empty npm cache for first npm install, reused for npm-warm; empty shared store for cold pnpm, reused for pnpm-warm. Verified identical vitest realpaths across pnpm snapshots. Lifecycle scripts disabled equally. du -sk does not follow dependency symlinks and counts APFS shared extents repeatedly. Store cost reported separately.",
+  "rows": [
+    {
+      "kind": "npm",
+      "durationMs": 23790,
+      "nodeModulesAllocatedBytes": 244830208,
+      "sharedStoreAllocatedBytes": 0
+    },
+    {
+      "kind": "npm-warm",
+      "durationMs": 18818,
+      "nodeModulesAllocatedBytes": 242323456,
+      "sharedStoreAllocatedBytes": 0
+    },
+    {
+      "kind": "pnpm-cold",
+      "durationMs": 13790,
+      "nodeModulesAllocatedBytes": 290816,
+      "sharedStoreAllocatedBytes": 467845120
+    },
+    {
+      "kind": "pnpm-warm",
+      "durationMs": 9470,
+      "nodeModulesAllocatedBytes": 290816,
+      "sharedStoreAllocatedBytes": 467845120
+    }
+  ]
+}

@@ -676,6 +676,12 @@ const loadCommsCmd = lazyCmd(
   'comms command requires src/cli/comms.ts (M137 module not yet built).',
 );
 
+const loadChannelsCmd = lazyCmd(
+  () => import('./channels.js'),
+  (m) => m.cmdChannels as Cmd,
+  'channels command requires src/cli/channels.ts (RQ-CHANNELS-18 module not yet built).',
+);
+
 // ─── M257 director command loader ────────────────────────────────────────────
 
 const loadDirectorCmd = lazyCmd(
@@ -2127,6 +2133,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pool': {
+        process.exitCode = await (await import('./pool.js')).cmdPool(rest);
+        break;
+      }
+
       case 'benchmark': {
         process.exitCode = await (await loadBenchmarkCmd())(rest);
         break;
@@ -2569,6 +2580,12 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'channels': {
+        const cmdChannels = await loadChannelsCmd();
+        process.exitCode = await cmdChannels(rest);
         break;
       }
 

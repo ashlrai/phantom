@@ -1,0 +1,13 @@
+# pnpm 10 spelling of virtualStoreType: global (pnpm 12).
+# All users of this writable store must share a trust boundary.
+enableGlobalVirtualStore: true
+# Mirror npm's security overrides; npm remains the release package manager.
+overrides:
+  fast-uri: 3.1.9
+  hono: 4.13.13
+  ip-address: 10.7.4
+  vite: 8.2.4
+  js-yaml: 4.3.2
+  minimatch: 11.0.3
+  nanoid: 3.3.18
+  qs: 6.16.1

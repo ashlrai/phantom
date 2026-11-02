@@ -89,3 +89,21 @@ alter scheduling authority. Subsequent high readings do not emit duplicate
 transitions. Unknown readings retain the active cut; a numeric reading below
 80 clears it and rearms the next transition. After a crash, use the persistent
 signal rather than relying solely on stdout delivery.
+
+## Two-hourly router append (built-in status readers)
+
+For the router's 2-hourly pool readings, `--status-readers` replaces `--readers` with
+built-in readers that run no operator executables:
+
+```sh
+npx tsx src/cli/usage-signal.ts --directory "$HOME/.ashlr-runs" --event manual-reading \
+  --status-readers --codex-home /absolute/cmp/pool/home --dry-run
+```
+
+`--dry-run` runs the readers and prints the rows that would be appended (`preview`)
+without touching `usage-readings.log` or `fleet.json`; drop it to append. Only
+`codex-cmp` (Codex App Server rate-limit read with fixed argv and an explicit pool
+HOME) and `claude-max` (Phantom's own sanitized `rate_limit_event` store, `utilization`
+as a 0..1 fraction) are read. No `~/.codex`, `~/.claude`, auth file, keychain or
+environment is read, nothing calls login/logout, and only numeric fields are logged.
+Other pools stay unread; the 30-minute debounce makes a 2-hour cadence safe.

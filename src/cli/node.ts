@@ -1,4 +1,8 @@
-/** Planning only. No provisioning, host inspection, credentials, or registry I/O. */
+import { NODE_FLEET_USAGE, NODE_FLEET_VERBS } from './node-fleet-usage.js';
+
+/** `bootstrap` is planning only: no provisioning, host inspection, credentials, or registry I/O.
+ * The other verbs (see node-fleet.ts) are the local node registry, router and job leases.
+ */
 export function nodeBootstrapPlan() {
   return {
     schemaVersion: 1,
@@ -23,10 +27,12 @@ export function nodeBootstrapPlan() {
 const USAGE = 'Usage: phm node bootstrap --dry-run [--json]';
 
 export async function cmdNode(args: string[]): Promise<number> {
+  const fleetVerb = NODE_FLEET_VERBS.find(verb => verb === args[0]);
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${USAGE}\nPlanning stub only. No VM creation, login, or registry calls.`);
+    console.log(`${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.\n\n${NODE_FLEET_USAGE}`);
     return 0;
   }
+  if (fleetVerb) return (await import('./node-fleet.js')).cmdNodeFleet(fleetVerb, args.slice(1));
   const json = args.includes('--json');
   const flags = args.slice(1);
   if (args[0] !== 'bootstrap' || !flags.includes('--dry-run') ||

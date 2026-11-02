@@ -82,6 +82,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; dryRun=true, executable=false, registry.status=stub, steps',
   },
   {
+    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|status|leave [flags] [--json]',
+    description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
+    safety: 'append',
+    jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -284,6 +290,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     description: 'Session-start context: genome hits, health, backlog, pending proposals, attention. Run once when starting work.',
     safety: 'read',
     jsonShape: 'OrientResult',
+  },
+  {
+    usage: 'phm channels status [--json]',
+    description: 'Per-channel rollup: configured, credential custody, pairing, received, pendingOutbound, lastSeenAt. Counts are measured or "unknown", never fabricated. Exit 0 success/help, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ChannelsStatus {v:1, at, inbox, channels[]}',
+  },
+  {
+    usage: 'phm channels add <telegram <chat-id>|email <inboxDir> --from <a> [...]|mobile|cli|desktop|page> [--json]',
+    description: 'Writes channel configuration only — no transport, pairing, or credential IO. Credentials stay in existing custody (TELEGRAM_BOT_TOKEN, PHANTOM_OPERATOR_SECRET, private files) and are never accepted or printed. Exit 0 success/help, 1 error, 2 bad usage.',
+    safety: 'append',
+    jsonShape: 'ChannelAddResult {ok, kind, changed, credential, next}',
   },
   {
     usage: 'ashlr ask "<question>" [--json] | ashlr ask status [--jobs <path>] [--json]',
@@ -665,6 +683,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
+  { cmd: 'channels add <kind> | status [--json]', desc: 'Bring a channel up (config only, credentials stay in custody) or read the per-channel rollup.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
   { cmd: 'universe <demo|init|run|status|archive>', desc: 'Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.', topic: 'autonomy' },
@@ -713,6 +732,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
+  { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
@@ -741,6 +761,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
 
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
+  { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
   { cmd: 'sandbox diff <id>',            desc: 'Show diff of a sandbox vs its base HEAD.', topic: 'safety' },
