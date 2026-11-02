@@ -86,7 +86,7 @@ function WindowMeter({ row, w, reservePercent, current = true }: { row: Capacity
     used = 100;
   } else if (w.usedPercent === null) {
     level = 'unknown';
-    value = 'no reading';
+    value = 'unknown';
   } else {
     used = clamp(w.usedPercent);
     level = used >= TIGHT_AT ? 'tight' : 'ok';
@@ -185,7 +185,7 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
             {' '}Personal-plan reference $0.04 per credit; not actual purchase price or attributed spend.
             {' '}<a href={CODEX_CREDIT_VALUE_SOURCE} target="_blank" rel="noreferrer">Published reference</a> checked {CODEX_CREDIT_VALUE_CHECKED}.
           </p> : null}
-          {row.notes.map((note) => <p key={note} className={styles.subtle}>{note}</p>)}
+          {row.notes.filter(note => !status.detail?.includes(note)).map((note) => <p key={note} className={styles.subtle}>{note}</p>)}
           {reserveText !== null || creditText !== null ? (
             <p className={styles.reserveLine}>
               {reserveText !== null ? <span title={reserve?.why}>{reserveText}</span> : null}

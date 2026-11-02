@@ -352,7 +352,7 @@ describe('ResourcesDrawer — accounts', () => {
     const status = await screen.findByRole('group', { name: 'Cash Margin Partners: readiness' });
     expect(within(status).getByText('Ready')).toBeInTheDocument();
     expect(within(status).getByText('Not in this stage')).toBeInTheDocument();
-    expect(within(cardOf('Cash Margin Partners')).getByText('No current usage reading')).toBeInTheDocument();
+    expect(within(cardOf('Cash Margin Partners')).getByText('Usage unknown')).toBeInTheDocument();
     expect(calls.every(call => call.method === 'GET')).toBe(true);
     expect(unknown.capacity.windows).toEqual([]);
   });

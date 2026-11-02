@@ -66,7 +66,7 @@ export function projectResourceDisplay(row: CapacityRow, options: { nowMs: numbe
     current: 'Current usage',
     retained: 'Last reading · current usage unconfirmed',
     historical: 'Last reading · current usage unconfirmed',
-    missing: 'No current usage reading',
+    missing: 'Usage unknown',
     'signed-out': 'Signed out · current usage unconfirmed',
     'not-applicable': 'Local readiness',
   };
