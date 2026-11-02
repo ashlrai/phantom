@@ -44,6 +44,12 @@ def service(value):
     return value
 
 
+def successful(record):
+    return (record is not None and record.get("outcome") == "completed"
+            and record.get("complete") is True and type(record.get("exitCode")) is int
+            and record["exitCode"] == 0)
+
+
 def main(argv=None, deps=None, out=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--interval-seconds", type=positive_interval, default=60.0)
@@ -55,6 +61,9 @@ def main(argv=None, deps=None, out=None):
                         help="exit 0 only when the final attempted pass produced valid complete=true and exit code 0; "
                              "exhaustion with incomplete, exception, invalid report, nonzero child status, or "
                              "cancellation before any completed pass returns nonzero")
+    parser.add_argument("--until-complete", action="store_true",
+                        help="stop after the first valid complete report with exit code 0; "
+                             "return nonzero if stopped or exhausted before success")
     parser.add_argument("--recover-apps", action="store_true",
                         help="after each pass whose service recovery report is complete, run "
                              "recover_apps --apply once; the app report is never copied into the log")
@@ -108,7 +117,7 @@ def main(argv=None, deps=None, out=None):
                 result = json.loads(captured.getvalue())
                 if not isinstance(result, dict) or not isinstance(result.get("complete"), bool):
                     raise ValueError("invalid recovery result")
-                record.update(exitCode=code if isinstance(code, int) else None,
+                record.update(exitCode=code if type(code) is int else None,
                               complete=result["complete"], outcome="completed")
                 if args.recover_apps and result["complete"]:
                     record["appRecovery"] = {"exitCode": run_app_recovery()}
@@ -116,16 +125,15 @@ def main(argv=None, deps=None, out=None):
                 record.update(outcome="failed", complete=False)
             final_record = record
             print(json.dumps(record, separators=(",", ":")), file=out, flush=True)
+            if args.until_complete and successful(final_record):
+                break
             if index == args.max_passes or stop.is_set() or wait(args.interval_seconds):
                 break
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
-    if args.require_complete:
-        if final_record is None or not final_record.get("complete"):
-            return 1
-        if final_record.get("exitCode", 0) != 0:
-            return 1
+    if args.require_complete or args.until_complete:
+        return 0 if successful(final_record) else 1
     return 0
 
 
