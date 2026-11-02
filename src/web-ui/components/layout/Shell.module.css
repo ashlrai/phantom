@@ -35,8 +35,8 @@
   box-shadow: none;
 }
 
-@media (max-width: 720px) {
-  .shell { flex-direction: column; }
-  .body { min-height: 0; }
-  .main { padding: var(--space-3); }
-}
+/* Compact width class from app/console-mode.ts (CONSOLE_LAYOUT_BREAKPOINTS),
+   stamped on <html> as data-console-layout by syncConsoleLayout. */
+:root[data-console-layout='compact'] .shell { flex-direction: column; }
+:root[data-console-layout='compact'] .body { min-height: 0; }
+:root[data-console-layout='compact'] .main { padding: var(--space-3); }
