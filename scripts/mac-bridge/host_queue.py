@@ -72,8 +72,11 @@ def run(args):
     host = identifier(args.host) if hasattr(args, 'host') else None
     payload = None
     if args.action == 'enqueue':
-        with open(args.payload, 'rb') as handle:
-            payload = handle.read(MAX_PAYLOAD + 1)
+        if args.payload == '-':
+            payload = sys.stdin.buffer.read(MAX_PAYLOAD + 1)
+        else:
+            with open(args.payload, 'rb') as handle:
+                payload = handle.read(MAX_PAYLOAD + 1)
         if not payload or len(payload) > MAX_PAYLOAD:
             raise ValueError('payload must contain 1 to 65536 bytes')
     current = receipt(args.receipt) if hasattr(args, 'receipt') else None
@@ -158,7 +161,7 @@ def parser():
     sub = p.add_subparsers(dest='action', required=True)
     enqueue = sub.add_parser('enqueue')
     enqueue.add_argument('job')
-    enqueue.add_argument('payload', help='opaque local file, 1-65536 bytes')
+    enqueue.add_argument('payload', help='opaque local file, or - for stdin, 1-65536 bytes')
     claim = sub.add_parser('claim')
     claim.add_argument('--host', required=True)
     claim.add_argument('--ttl', type=positive, default=300, help='lease seconds (1-86400)')
