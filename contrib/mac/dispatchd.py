@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 # dispatchd core (one tick). Run only via dispatchd.sh (lockf). No LLM calls, no network of its own.
-# Repo copy of ~/.ashlr-runs/bin/dispatchd.py (installed via swap.sh, sha-pinned by selfrun.sh under
-# G1-CODE-PIN; this revision is not installed on the Mac). RQ-DEVINROUTEDEFAULTQ7 +
-# DEVIN-LEVERAGE-20261026 rev: devin sits in the restock trigger loop and the failure-spike step-down
-# is computed in dispatchd itself (Masbot 21:19 Oct 26); devin leverage defaults target 10, ceiling 16.
+# Single source for ~/.ashlr-runs/bin/dispatchd.py (RQ-MACDISPATCH-RECONCILE): contrib/mac/install.sh diffs and
+# installs this file; selfrun.sh sha-pins the installed copy under G1-CODE-PIN, so Security re-pins on every change.
+# RQ-DEVINROUTEDEFAULTQ7 + DEVIN-LEVERAGE-20261026 rev: devin sits in the restock trigger loop and the failure-spike
+# step-down is computed in dispatchd itself (Masbot 21:19 Oct 26); devin defaults stay target 6, floor 3, ceiling 10,
+# hard_cap 10 (the live values; a slots.json or budget-overrides.json entry raises them per host).
 # RQ-LANERECOVERNOV1Q8 rev: repeated authentication failures (>=2 distinct failed/EMPTY finishes with a
 # provider auth-error line) hold the lane autobackoff-style; no credential store is ever written.
 import os, re, json, time, fcntl, subprocess, glob
@@ -18,11 +19,12 @@ LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-
 DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
            "codex-personal": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
            "claude": {"target": 0, "floor": 0, "ceiling": 8, "hard_cap": 8},
-           "devin": {"target": 10, "floor": 3, "ceiling": 16, "hard_cap": 16},   # DEVIN-LEVERAGE-20261026
+           "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 GLOBAL_HARD_CAP = 18
-# RQ-LOADGATE-1 admission gate limits: any one tripping stops claims and pauses the ramp.
+# RQ-LOADGATE-1 admission gate limits: loadavg and procs trip (stop claims, pause the ramp); worktree count and daemon
+# tick age only add admission.json "warnings" (Masbot 06:15 ET Nov 2).
 GATE_LOAD_MAX = 36.0; GATE_PROCS_MAX = 800; GATE_WORKTREES_MAX = 40; GATE_TICK_MAX_S = 15 * 60; GATE_STATUS_TIMEOUT = 30
 LOCAL_MID_CAP = 2   # RQ-LOCAL-LANE: at most 2 concurrent tier=mid ('strong', 27B) codex-local jobs; fast uses the rest
 LOCAL_HEALTH = "http://127.0.0.1:8123/v1/models"   # loopback only, no auth header, 2 s timeout, checked at most once per tick
@@ -31,6 +33,24 @@ TIERS = {"frontier", "work", "mid", "fast"}
 # empty) in the last 10 devin completions steps the target down 2, never below 6; the approved
 # spike bar sits well over the 5% baseline (2 of 40).
 DEVIN_STEP = {"window": 10, "max_non_pr": 3, "step": 2, "floor": 6}
+# ---- RQ-TICK-BUDGET (Masbot 18:10 Oct 27): ticks grew to ~10 min. subprocess.run(timeout=) kills only the direct
+# child and leaves grandchildren (git fetch under precheck.sh, git under git-safe) running and piling up. _run kills
+# the whole process group and logs any call over 5 s as SLOW. TICK_BUDGET_S caps the optional per-tick work.
+try: TICK_BUDGET_S = float(os.environ.get("TICK_BUDGET_S", "90"))
+except ValueError: TICK_BUDGET_S = 90.0
+def over_budget(): return time.time() - NOW > TICK_BUDGET_S
+def _run(cmd, timeout, **kw):
+    import signal
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+                         stdin=kw.pop("stdin", subprocess.DEVNULL), **kw)
+    name = os.path.basename(cmd[1] if cmd[0].endswith("bash") and len(cmd) > 1 else cmd[0]); t0 = time.time()
+    try: out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(p.pid, signal.SIGKILL)
+        except OSError: pass
+        p.communicate(); log("SLOW %s timeout %ds, group killed" % (name, timeout)); raise
+    if time.time() - t0 > 5: log("SLOW %s %.0fs" % (name, time.time() - t0))
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 JID = re.compile(r"^[A-Za-z0-9._-]+$")
 RL = re.compile(r"(?i)(429 too many requests|status(code)?[\s:=\"]+429\b|rate[ _-]?limit (reached|exceeded|hit)|exceeded (your|the) .{0,20}rate limit|usage limit|you've hit your|quota exceeded)")
 
@@ -163,7 +183,7 @@ def ab_git(wt, *a):   # read-only git through the pinned helper (gitlink/commond
     with open(GITSAFE, "rb") as f:
         if os.path.islink(GITSAFE) or hashlib.sha256(f.read()).hexdigest() != GITSAFE_SHA: raise RuntimeError("git-safe sha")
     env = {"HOME": H, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"}
-    r = subprocess.run(["/bin/bash", GITSAFE, "run", wt] + list(a), capture_output=True, text=True, timeout=30, env=env, stdin=subprocess.DEVNULL)
+    r = _run(["/bin/bash", GITSAFE, "run", wt] + list(a), 30, env=env)
     if r.returncode or r.stdout.startswith("UNSAFE"): raise RuntimeError("git-safe refused")
     return r.stdout
 def ab_run(j, b):   # -> (failed, work, src). src: None | "outcome_unreadable" (counted failed, hold capped 6h) | "unknown" (no hold)
@@ -317,7 +337,7 @@ def _ph_check():   # auto-release PUBLISH_HOLD once org Actions backlog < 50 que
     except FileNotFoundError: pass
     open(st, "w").close(); n = 0
     for rp in ("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"):
-        try: n += int(subprocess.run(["gh", "api", "repos/ashlrai/%s/actions/runs?status=queued&per_page=1" % rp, "--jq", ".total_count"], capture_output=True, text=True, timeout=20).stdout.strip())
+        try: n += int(_run(["gh", "api", "repos/ashlrai/%s/actions/runs?status=queued&per_page=1" % rp, "--jq", ".total_count"], 20).stdout.strip())
         except Exception: return
     open(R + "/PUBLISH_HOLD.queued", "w").write("%d %d\n" % (int(time.time()), n))
     if n < 50: os.replace(ph, ph + ".released-%d" % int(time.time()))
@@ -340,6 +360,10 @@ try:
     if os.path.exists(R + "/DISKGUARD_TEST") and os.environ.get("DISKGUARD_FREE_GB"): disk_free_gb = float(os.environ["DISKGUARD_FREE_GB"])
 except Exception: disk_free_gb = 0.0   # unreadable: fail closed to reuse-only
 disk_reuse_only = disk_free_gb < DISK_REUSE_ONLY_GB
+# RQ-TERA-LANE: hard stop, below DISK_HARD_STOP_GB free no launches at all (reaps still run, they free disk)
+try: DISK_HARD_STOP_GB = float(os.environ.get("DISK_HARD_STOP_GB", "30"))
+except ValueError: DISK_HARD_STOP_GB = 30.0
+disk_hard_stop = disk_free_gb < DISK_HARD_STOP_GB
 # ---- RQ-DISKGUARD-DRIP (b): phantom publish drip. While ashlrai/phantom has >= 150 open PRs, publish (reap) only
 # LAND, FIXUP, CONSOLIDATE and CLOSE-* jobs there; others stay finished and local. Count cached 10 min in
 # $R/phantom-open-prs ("<epoch> <n>"), fetched with the same gh CLI as _ph_check; unavailable -> filter on.
@@ -353,8 +377,7 @@ def _ph_open_prs():
     except Exception: n = None
     if n is None:
         try:
-            n = int(subprocess.run(["gh", "api", "search/issues?q=repo:ashlrai/phantom+is:pr+is:open&per_page=1", "--jq", ".total_count"],
-                                   capture_output=True, text=True, timeout=20).stdout.strip())
+            n = int(_run(["gh", "api", "search/issues?q=repo:ashlrai/phantom+is:pr+is:open&per_page=1", "--jq", ".total_count"], 20).stdout.strip())
             open(cp + ".tmp", "w").write("%d %d\n" % (int(time.time()), n)); os.replace(cp + ".tmp", cp)
         except Exception: n = None
     _ph_open.append(n); return n
@@ -393,7 +416,7 @@ for line in ps.splitlines():
 claude_live = any(rd(x).split()[3:4] in (["claude"], ["claude-api"]) and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
 try:
     if not claude_live: raise RuntimeError("skip lsof")   # cwd scan only needed for claude (argv lacks the worktree)
-    lo = subprocess.run(["lsof", "-nP", "-w", "-d", "cwd", "-Fn"], capture_output=True, text=True, timeout=20).stdout
+    lo = _run(["lsof", "-nP", "-w", "-d", "cwd", "-Fn"], 20).stdout
     for line in lo.splitlines():
         if line.startswith("n"):
             m = pat_wt.match(line[1:])
@@ -478,7 +501,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         continue
     if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
     if os.path.exists(R + "/PUBLISH_LANDONLY") and _prio(bp)[0] > 2 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # Masbot 23:45 Oct 26: merge-rate first; only REL/LAND/FIXUP/RECUT, G1-passed and listed jobs publish
-    if nreap >= MAX_REAPS: continue
+    if nreap >= MAX_REAPS or over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
     if _ph_drip_hold(j):
         mk = RUN + "/" + j + ".phdrip"
         if not os.path.exists(mk): open(mk, "w").close(); ev("PHANTOM_DRIP hold %s open_prs=%s" % (j, _ph_open_prs()))
@@ -489,8 +512,8 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
     os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1
     try:
         lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
-        st_ = subprocess.run(["git", "-C", wt, "diff", "--shortstat", b[0]], capture_output=True, text=True, timeout=30).stdout
-        nf = len([x for x in subprocess.run(["git", "-C", wt, "status", "--porcelain", "-uall"], capture_output=True, text=True, timeout=30).stdout.splitlines() if not x.endswith("BRIDGE_NOTES.md")])
+        st_ = _run(["git", "-C", wt, "diff", "--shortstat", b[0]], 30).stdout
+        nf = len([x for x in _run(["git", "-C", wt, "status", "--porcelain", "-uall"], 30).stdout.splitlines() if not x.endswith("BRIDGE_NOTES.md")])
         ins = re.search(r"(\d+) insertion", st_); dele = re.search(r"(\d+) deletion", st_)
         metric({"event": "finish", "job": j, "lane": pool, "wall_s": int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None,
                 "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
@@ -521,7 +544,7 @@ def _install_holder():   # the install-gate.py wrapper writes its holder JSON in
     except Exception: pass
     return None
 def admission_gate():
-    g = {"tripped": False, "reasons": [], "disabled": os.path.exists(Q + "/LOADGATE_OFF")}
+    g = {"tripped": False, "reasons": [], "warnings": [], "disabled": os.path.exists(Q + "/LOADGATE_OFF")}
     test = os.path.exists(R + "/LOADGATE_TEST")
     try: ncpu = int(os.environ["LOADGATE_NCPU"]) if test and os.environ.get("LOADGATE_NCPU") else (os.cpu_count() or 1)
     except ValueError: ncpu = os.cpu_count() or 1
@@ -533,9 +556,9 @@ def admission_gate():
     load_max = min(2.0 * ncpu, GATE_LOAD_MAX)
     if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f" % (load1, load_max))
     if procs > GATE_PROCS_MAX: g["reasons"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
-    if wts > GATE_WORKTREES_MAX: g["reasons"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
-    if age is None: g["reasons"].append("daemon_status_unavailable (%s)" % why)
-    elif age > GATE_TICK_MAX_S: g["reasons"].append("daemon_tick_stale %ds > %ds" % (age, GATE_TICK_MAX_S))
+    if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
+    if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
+    elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds" % (age, GATE_TICK_MAX_S))
     g.update(load1=load1, ncpu=ncpu, load_max=load_max, procs=procs, worktrees=wts, daemon_tick_age_s=None if age is None else int(age))
     g["tripped"] = bool(g["reasons"]) and not g["disabled"]
     return g
@@ -571,8 +594,7 @@ def precheck(j, repo, pf):
         if not task: return None
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         env["GIT_TERMINAL_PROMPT"] = "0"
-        r = subprocess.run(["/bin/bash", R + "/bin/precheck.sh", task, H + "/Projects/ashlrai/" + repo],
-                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, env=env, cwd=H)
+        r = _run(["/bin/bash", R + "/bin/precheck.sh", task, H + "/Projects/ashlrai/" + repo], 20, env=env, cwd=H)
         if r.returncode in (10, 11, 12, 13):
             m = re.search(r"reason=(\S+)", r.stdout); return (r.returncode, m.group(1) if m else "?")
     except Exception:
@@ -685,7 +707,10 @@ GCAP = global_cap()
 _prev = jload(Q + "/admission.json", {}).get("gate_reason"); _now_reason = "; ".join(GATE["reasons"]) if GATE["tripped"] else None
 if _now_reason and _prev != _now_reason: ev("LOADGATE tripped: " + _now_reason)
 elif not _now_reason and _prev: ev("LOADGATE clear")
-if not pause and not GATE["tripped"]:
+_pw = jload(Q + "/admission.json", {}).get("warnings") or []
+if GATE["warnings"] and _pw != GATE["warnings"]: ev("LOADGATE warn (non-tripping): " + "; ".join(GATE["warnings"]))
+if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_free_gb, DISK_HARD_STOP_GB))
+if not pause and not disk_hard_stop and not GATE["tripped"]:
     # interleave lanes so neither starves: take candidates round-robin, cmp first
     cand = {l: [] for l in LANES}
     for l in lines:
@@ -744,7 +769,7 @@ if not pause and not GATE["tripped"]:
         if os.path.isdir(wt) and not (j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY")))):
             rest.append(line); seen.add(j); continue   # finished worktree awaiting reap: never double up
         seen.add(j)
-        if pc_n < PC_MAX:   # empty-run precheck (contrib/precheck.sh): no model call, fail open
+        if pc_n < PC_MAX and not over_budget():   # empty-run precheck (contrib/precheck.sh): no model call, fail open
             pc_n += 1; pc = precheck(j, repo, pf)
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
@@ -864,9 +889,9 @@ if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
                      stderr=subprocess.STDOUT, start_new_session=True)
 _at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(running.values()) >= GCAP else None
 _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
-adm = {"schema": "dispatchd.admission.v1", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "reason": "; ".join(_block) or None,
+adm = {"schema": "dispatchd.admission.v1", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,
        "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
        "daemon_tick_age_s": GATE["daemon_tick_age_s"], "cap": GCAP, "running": sum(running.values()), "hard_cap": slots["hard_cap"], "install_lock_holder": _install_holder()}
 jsave(Q + "/admission.json", adm); st["admission"] = adm
 jsave(Q + "/status.json", st)
-log("tick run=%s q=%d launched=%d reap=%d pause=%s" % (json.dumps(running), len(rest), len(launched), nreap, bool(pause)))
+log("tick run=%s q=%d launched=%d reap=%d pause=%s wall=%.0fs" % (json.dumps(running), len(rest), len(launched), nreap, bool(pause), time.time() - NOW))
