@@ -3463,7 +3463,12 @@ describe('M201 — Group A: backlog build + top-K selection', () => {
     expect(mockBuildBacklog).toHaveBeenCalledTimes(2);
     expect(mockRunSelfHealCycle).not.toHaveBeenCalled();
     expect(mockRunSelfHealCycleForRepos).toHaveBeenCalledTimes(1);
-    expect(mockRunSelfHealCycleForRepos).toHaveBeenCalledWith([repo.dir], expect.any(Object));
+    expect(mockRunSelfHealCycleForRepos).toHaveBeenCalledWith(
+      [repo.dir],
+      expect.any(Object),
+      // RQ-DAEMONTICK-UNBLOCK: the bounded self-heal phase's AbortSignal.
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(mockRunSwarm).toHaveBeenCalledTimes(1);
     expect(result.producerMaintenance).toMatchObject({
       selfHeal: true,
@@ -3501,7 +3506,12 @@ describe('M201 — Group A: backlog build + top-K selection', () => {
     expect(mockBuildBacklog).toHaveBeenCalledTimes(2);
     expect(mockRunSelfHealCycle).not.toHaveBeenCalled();
     expect(mockRunSelfHealCycleForRepos).toHaveBeenCalledTimes(1);
-    expect(mockRunSelfHealCycleForRepos).toHaveBeenCalledWith([repo.dir], expect.any(Object));
+    expect(mockRunSelfHealCycleForRepos).toHaveBeenCalledWith(
+      [repo.dir],
+      expect.any(Object),
+      // RQ-DAEMONTICK-UNBLOCK: the bounded self-heal phase's AbortSignal.
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(mockRunAutoMergePass).toHaveBeenCalledTimes(1);
     expect(mockRunSwarm).not.toHaveBeenCalled();
   });
