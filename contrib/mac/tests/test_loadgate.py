@@ -3,7 +3,7 @@
 Same harness as test_dispatchd.py: each case builds a synthetic ~/.ashlr-runs in a temp HOME and runs one tick of the repo
 copy as a subprocess. Load and ncpu are pinned through LOADGATE_LOADAVG / LOADGATE_NCPU (honored only while the
 LOADGATE_TEST marker exists), `ps` and `ashlr daemon status --json` are stubs. Covers each gate (loadavg, process count,
-worktree count, daemon tick age), the global running cap, the hard_cap clamps, the ramp pause, and the autopilot overrides reload.
+process count; worktree count and daemon tick age only warn), the global running cap, the hard_cap clamps, the ramp pause, and the autopilot overrides reload.
 """
 import json
 import os
@@ -92,31 +92,50 @@ class GateTests(unittest.TestCase):
         home = self._case(prep=lambda h: stub_ps(h, 800))
         self.assertEqual(launched(home), ['RQ-GATE-0'])
 
-    def test_more_than_40_live_worktrees_blocks(self):
+    def test_more_than_40_live_worktrees_warns_but_admits(self):
         def prep(home, count=41):
             for i in range(count):
                 j = f'RQ-LIVE-{i:02d}'
                 (home / 'Projects' / 'ashlrai' / 'wt' / j).mkdir()
                 (home / '.ashlr-runs' / f'{j}.base').write_text(f'deadbeef x {home}/Projects/ashlrai/wt/{j} claude\n')
         home = self._case(prep=prep)
-        self.assertEqual(launched(home), [])
+        self.assertEqual(launched(home), ['RQ-GATE-0'])
         self.assertEqual(admission(home)['worktrees'], 41)
-        self.assertIn('worktrees 41 > 40', admission(home)['reason'])
+        self.assertIn('worktrees 41 > 40', admission(home)['warnings'])
+        self.assertTrue(admission(home)['admit'])
+        self.assertIsNone(admission(home)['reason'])
+        self.assertIn('LOADGATE warn (non-tripping): worktrees 41 > 40', events(home))
         # 40 worktrees is the limit, not over it; they sit on the held claude lane so only the gate decides.
         home = self._case(prep=lambda h: prep(h, 40))
         self.assertEqual(admission(home)['worktrees'], 40)
-        self.assertNotIn('worktrees', admission(home)['reason'] or '')
+        self.assertEqual(admission(home)['warnings'], [])
 
-    def test_stale_daemon_tick_blocks(self):
+    def test_stale_daemon_tick_warns_but_admits(self):
         home = self._case(prep=lambda h: set_daemon_tick(h, '2020-01-01T00:00:00Z'))
-        self.assertEqual(launched(home), [])
-        self.assertRegex(admission(home)['reason'], r'daemon_tick_stale \d+s > 900s')
+        self.assertEqual(launched(home), ['RQ-GATE-0'])
+        self.assertRegex(admission(home)['warnings'][0], r'daemon_tick_stale \d+s > 900s')
+        self.assertIsNone(admission(home)['reason'])
 
-    def test_missing_null_or_unreadable_daemon_status_blocks(self):
+    def test_missing_null_or_unreadable_daemon_status_warns_but_admits(self):
         for value in (None, 'null', 'not-a-timestamp'):
             home = self._case(prep=lambda h, v=value: set_daemon_tick(h, v))
-            self.assertEqual(launched(home), [], value)
-            self.assertIn('daemon_status_unavailable', admission(home)['reason'], value)
+            self.assertEqual(launched(home), ['RQ-GATE-0'], value)
+            self.assertIn('daemon_status_unavailable', admission(home)['warnings'][0], value)
+            self.assertIsNone(admission(home)['reason'], value)
+
+    def test_warnings_do_not_mask_a_tripping_gate(self):
+        home = self._case({'LOADGATE_LOADAVG': '50'}, prep=lambda h: set_daemon_tick(h, '2020-01-01T00:00:00Z'))
+        self.assertEqual(launched(home), [])
+        self.assertIn('loadavg', admission(home)['reason'])
+        self.assertNotIn('daemon_tick_stale', admission(home)['reason'])
+        self.assertRegex(admission(home)['warnings'][0], r'daemon_tick_stale')
+
+    def test_disk_hard_stop_blocks_launches(self):
+        def prep(home):
+            (home / '.ashlr-runs' / 'DISKGUARD_TEST').write_text('')
+        home = self._case({'DISKGUARD_FREE_GB': '20'}, prep=prep)
+        self.assertEqual(launched(home), [])
+        self.assertIn('DISKGUARD hard_stop 20G < 30G, no launches', events(home))
 
     def test_fresh_daemon_tick_just_inside_window_admits(self):
         import datetime as dt
@@ -220,7 +239,7 @@ class HardCapTests(unittest.TestCase):
         home = self._devin({})
         s = slots_of(home)
         self.assertEqual({k: v['hard_cap'] for k, v in s.items() if isinstance(v, dict)},
-                         {'codex-cmp': 32, 'codex-personal': 32, 'claude': 8, 'devin': 16, 'claude-api': 8, 'codex-local': 6})
+                         {'codex-cmp': 32, 'codex-personal': 32, 'claude': 8, 'devin': 10, 'claude-api': 8, 'codex-local': 6})
 
     def test_hard_cap_clamps_stored_target_ceiling_and_floor(self):
         home = self._devin({'target': 14, 'floor': 12, 'ceiling': 16, 'hard_cap': 8})
