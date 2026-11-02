@@ -19,7 +19,8 @@ describe('memory quality benchmark', () => {
     expect(cases).toHaveLength(539);
     expect(new Set(cases.map(entry => entry.id)).size).toBe(cases.length);
     for (const dimension of MEMORY_BENCHMARK_DIMENSIONS) expect(cases.some(entry => entry.dimension === dimension)).toBe(true);
-    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(56);
+    // 56 -> 60: the stricter credential scrubber (ec6e83441) redacts prose like "token every 90 days" (see the floors file).
+    expect(cases.filter(entry => entry.screened).map(entry => entry.id)).toHaveLength(60);
     for (const entry of cases) for (const step of entry.steps) {
       expect(validMemorySnapshot(step.snapshot) && validMemoryPackQuery(step.query)).toBe(!entry.screened);
     }

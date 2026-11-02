@@ -47,6 +47,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useViewport } from '../shell/viewport.js';
 import { executeCatalogCommand } from '../shell/run-command.js';
 import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, WhySeatCard } from '../fleet/FleetCards.js';
+import { MainHealthRows } from '../fleet/MainHealthRows.js';
 import { RepoTable } from '../fleet/RepoTable.js';
 import { FleetScheduling } from '../resources/SchedulingEvidence.js';
 import { ExecutionFeedback } from '../fleet/ExecutionFeedback.js';
@@ -147,6 +148,9 @@ export function FleetSection() {
               off state is FleetControl's single blocker + button. */}
           {off && off.kind === 'setup' ? <AutonomyOffState state={off} here="fleet" /> : null}
           <LanesStrip live={live} />
+          {/* Per-repo main state from the guardian's state.json — one row each,
+              unknown never green. Owns its own read + poll. */}
+          <MainHealthRows />
         </>
       }
     >

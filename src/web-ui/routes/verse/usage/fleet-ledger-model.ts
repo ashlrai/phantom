@@ -12,6 +12,7 @@ export interface ResourceLaneRow {
   projectedExhaustion: string | null;
   source: string | null;
   observation?: unknown;
+  quotaScopes?: { id: string; usedPct: number; resetAt: string | null }[];
   deadSignal?: { lane: string; lastFinishes: number; emptyFailures: number; state: 'ok' | 'suspect' | 'dead' } | null;
 }
 export interface ApiSpendSummary {
@@ -69,6 +70,7 @@ export function easternClock(atMs: number, weekday = false): string {
 
 export function sourceLabel(source: string | null): string {
   if (source === 'codex-personal-sessions') return 'personal Codex session logs';
+  if (source === 'claude-native-usage') return 'Claude native usage';
   if (source === 'status') return 'dispatchd status';
   return source !== null && /^[A-Za-z0-9 _.:-]{1,40}$/.test(source) ? source : 'unknown';
 }
@@ -80,7 +82,7 @@ export function staleness(asOf: string | null, nowMs: number, staleAfterMs = 15 
 }
 
 export function laneAsOf(row: ResourceLaneRow, ledgerAsOf: string | null): string | null {
-  if (row.source !== 'codex-personal-sessions') return ledgerAsOf;
+  if (row.source !== 'codex-personal-sessions' && row.source !== 'claude-native-usage') return ledgerAsOf;
   return record(row.observation) && row.observation.source === row.source && typeof row.observation.asOf === 'string'
     ? row.observation.asOf : null;
 }
@@ -114,6 +116,25 @@ function future(iso: string | null, nowMs: number, prefix: string): string | nul
   if (iso === null) return null;
   const delta = Date.parse(iso) - nowMs;
   return Number.isFinite(delta) ? `${prefix} ${delta <= 0 ? 'now' : `in ${duration(delta)}`}` : null;
+}
+const CLAUDE_SCOPE_LABELS: Record<string, string> = { seven_day_fable: 'Fable', seven_day_opus: 'Opus', seven_day_sonnet: 'Sonnet' };
+const CLAUDE_SCOPE_ORDER = ['seven_day_fable', 'seven_day_opus', 'seven_day_sonnet'];
+
+/** Per-model Claude weekly windows in a fixed order; malformed scopes are skipped, never fatal. */
+export function claudeScopeRows(row: ResourceLaneRow, nowMs: number): { label: string; usage: string; resets: string | null; usedPct: number }[] {
+  const scopes: unknown = row.quotaScopes;
+  if (!Array.isArray(scopes)) return [];
+  const found = new Map<string, { usedPct: number; resetAt: string | null }>();
+  for (const scope of scopes as unknown[]) {
+    if (!record(scope) || typeof scope.id !== 'string' || !(scope.id in CLAUDE_SCOPE_LABELS)) continue;
+    if (typeof scope.usedPct !== 'number' || !Number.isFinite(scope.usedPct) || scope.usedPct < 0 || scope.usedPct > 100) continue;
+    if (scope.resetAt !== null && !date(scope.resetAt)) continue;
+    if (!found.has(scope.id)) found.set(scope.id, { usedPct: scope.usedPct, resetAt: scope.resetAt as string | null });
+  }
+  return CLAUDE_SCOPE_ORDER.flatMap(id => {
+    const scope = found.get(id);
+    return scope === undefined ? [] : [{ label: CLAUDE_SCOPE_LABELS[id]!, usage: `${grouped(scope.usedPct)} % of weekly`, resets: future(scope.resetAt, nowMs, 'resets'), usedPct: scope.usedPct }];
+  });
 }
 export function ledgerRows(data: ResourceLedgerV1, nowMs: number) {
   return data.lanes.map(row => ({
