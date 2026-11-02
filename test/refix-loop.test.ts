@@ -132,6 +132,62 @@ describe('refix-loop dispatchd cycle', () => {
     expect(preloaded.lines).toHaveLength(0);
   });
 
+  it('measures recovery wait and bounds stale retries across cycles and duplicate observations', () => {
+    const options = { now: NOW, prs: new Map([['ashlrai/phantom', [
+      pr({ mergeState: 'BEHIND' }), pr({ mergeState: 'BEHIND' }),
+      pr({ number: 2, mergeState: 'DIRTY' }),
+    ]]]) };
+    const fake = makeIo(options);
+    expect(runRefixCycle(fake.io).maxWaitMs).toBe(0);
+    expect(updateCalls(fake.calls)).toHaveLength(1);
+    expect(fake.lines).toHaveLength(1);
+    options.now += 60_000;
+    expect(runRefixCycle(fake.io).maxWaitMs).toBe(60_000);
+    expect(updateCalls(fake.calls)).toHaveLength(1);
+    for (let i = 0; i < 3; i++) {
+      options.now += 15 * 60_000;
+      runRefixCycle(fake.io);
+    }
+    expect(updateCalls(fake.calls)).toHaveLength(3);
+    expect(fake.lines).toHaveLength(1);
+    fake.setPrs('ashlrai/phantom', [pr({ mergeState: 'CLEAN' })]);
+    runRefixCycle(fake.io);
+    expect(fake.state()?.waiting).not.toHaveProperty('phantom#1');
+    options.now += 24 * 60 * 60_000;
+    fake.setPrs('ashlrai/phantom', [pr({ mergeState: 'BEHIND' })]);
+    expect(runRefixCycle(fake.io).updated).toBe(1);
+  });
+
+  it('observes queued wait without updating queued or held entries and caps stale updates', () => {
+    const options = { now: NOW, hold: new Set(['phantom#3']), prs: new Map([['ashlrai/phantom', [
+      pr({ number: 1, mergeState: 'BEHIND', inMergeQueue: true }),
+      pr({ number: 2, mergeState: 'BEHIND' }),
+      pr({ number: 3, mergeState: 'BEHIND' }),
+      pr({ number: 4, mergeState: 'BEHIND' }),
+    ]]]) };
+    const fake = makeIo(options);
+    expect(runRefixCycle(fake.io, { cycleCap: 1 })).toMatchObject({ updated: 1, capped: true });
+    expect(updateCalls(fake.calls)).toEqual(['update-branch ashlrai/phantom#2']);
+    options.now += 1_000;
+    expect(runRefixCycle(fake.io, { cycleCap: 1 }).maxWaitMs).toBe(1_000);
+    expect(updateCalls(fake.calls)).toEqual(['update-branch ashlrai/phantom#2', 'update-branch ashlrai/phantom#4']);
+    fake.setPrs('ashlrai/phantom', []);
+    expect(runRefixCycle(fake.io).maxWaitMs).toBe(0);
+    expect(fake.state()?.waiting).toEqual({});
+  });
+
+  it('reserves a failed update before calling gh and waits before retrying', () => {
+    const options = { now: NOW, prs: new Map([['ashlrai/phantom', [pr({ mergeState: 'BEHIND' })]]]) };
+    const fake = makeIo(options);
+    fake.io.updateBranch = () => { throw new Error('ambiguous failure'); };
+    expect(() => runRefixCycle(fake.io)).toThrow('ambiguous failure');
+    expect(Object.values(fake.state()?.updates ?? {})).toEqual([{ pr: 'phantom#1', at: NOW }]);
+    expect(runRefixCycle(fake.io).updated).toBe(0);
+    options.now += 15 * 60_000;
+    expect(() => runRefixCycle(fake.io)).toThrow('ambiguous failure');
+    expect(Object.keys(fake.state()?.updates ?? {})).toHaveLength(2);
+  });
+
   it('caps new drain lines at 20 per cycle', () => {
     const many = Array.from({ length: 25 }, (_, i) =>
       pr({ number: 100 + i, mergeState: 'DIRTY', headSha: sha(`${i % 10}`) }));

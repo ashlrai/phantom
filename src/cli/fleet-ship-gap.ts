@@ -13,6 +13,13 @@
  * (ShipGapReader) so the report is fully unit-testable; the production reader
  * wraps the bounded git-ops runner.
  *
+ * Tag drift alone says nothing about users: a repo can be tagged v3.29.16
+ * while npm still serves 3.29.15. Each row therefore also carries the npm
+ * version (only where the repo's root package.json names a public package),
+ * the conclusion of the latest scheduled CI run, and `live` — whether npm
+ * has caught up with the newest tag. Those extra reads are best effort: a
+ * failed one stays null (and `live` stays null) without failing the row.
+ *
  * A failed read marks that repo `unknown` with null numbers — never a fake
  * zero drift — and exits nonzero. Exit codes: 0 all repos measured,
  * 1 at least one repo unread, 2 bad usage.
@@ -37,6 +44,10 @@ export interface ShipGapTag {
   taggedAt: string;
   /** Commits on the default branch not reachable from the tag. */
   ahead: number;
+  /** Version npm serves for the repo's package; null when no package or unread. */
+  npmVersion?: string | null;
+  /** Conclusion of the latest scheduled CI run; null when none or unread. */
+  ciConclusion?: string | null;
 }
 
 export type ShipGapRead = ({ ok: true } & ShipGapTag) | { ok: false; reason: string };
@@ -49,8 +60,25 @@ export interface FleetShipGapDeps {
   reader?: ShipGapReader;
   /** Injected gh; used only when reader is absent. */
   gh?: CloudGh;
+  /** Injected read-only GET returning parsed JSON (npm registry); null on any failure. */
+  getJson?: JsonGetter;
   now?: () => Date;
 }
+
+/** A read-only HTTP GET returning parsed JSON, or null on any failure. */
+export type JsonGetter = (url: string) => Promise<unknown | null>;
+
+const NPM_REGISTRY = 'https://registry.npmjs.org';
+
+/** Production getter: global fetch, GET only, bounded by a timeout. */
+const defaultGetJson: JsonGetter = async (url) => {
+  try {
+    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(15_000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+};
 
 const GH_TIMEOUT_MS = 60_000;
 const GH_API_MAX_BYTES = 4 * 1024 * 1024;
@@ -92,9 +120,8 @@ export function newestVersionTag(tags: unknown): string | null {
   for (const row of tags) {
     const name = (row as { name?: unknown } | null)?.name;
     if (typeof name !== 'string') continue;
-    const m = VERSION_TAG_RE.exec(name);
-    if (!m) continue;
-    const key = [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === '' ? 1 : 0];
+    if (!VERSION_TAG_RE.test(name)) continue;
+    const key = versionKey(name)!;
     if (best === null || lexGreater(key, best.key)) best = { name, key };
   }
   return best?.name ?? null;
@@ -114,7 +141,7 @@ function lexGreater(a: readonly number[], b: readonly number[]): boolean {
  * compare (commits the branch is ahead of that tag plus the tag's own
  * commit date from base_commit).
  */
-export function ghShipGapReader(gh: CloudGh): ShipGapReader {
+export function ghShipGapReader(gh: CloudGh, getJson: JsonGetter = defaultGetJson): ShipGapReader {
   return async (repo) => {
     const meta = await ghApiJson(gh, `repos/${repo}`);
     if (!meta.ok) return meta;
@@ -139,8 +166,59 @@ export function ghShipGapReader(gh: CloudGh): ShipGapReader {
     if (typeof taggedAt !== 'string' || Number.isNaN(Date.parse(taggedAt))) {
       return { ok: false, reason: `gh api compare for ${repo} did not report the tag's commit date` };
     }
-    return { ok: true, tag, taggedAt, ahead };
+    const [npmVersion, ciConclusion] = await Promise.all([
+      readNpmVersion(gh, getJson, repo),
+      readScheduledCi(gh, repo),
+    ]);
+    return { ok: true, tag, taggedAt, ahead, npmVersion, ciConclusion };
   };
+}
+
+/**
+ * The npm version of the package at the repo root, or null when the repo has
+ * no public package or any read fails.
+ */
+async function readNpmVersion(gh: CloudGh, getJson: JsonGetter, repo: string): Promise<string | null> {
+  const file = await ghApiJson(gh, `repos/${repo}/contents/package.json`);
+  if (!file.ok) return null;
+  const content = (file.value as { content?: unknown } | null)?.content;
+  if (typeof content !== 'string') return null;
+  let pkg: { name?: unknown; private?: unknown };
+  try {
+    pkg = JSON.parse(Buffer.from(content, 'base64').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (pkg.private === true || typeof pkg.name !== 'string' || pkg.name === '') return null;
+  const meta = await getJson(`${NPM_REGISTRY}/${pkg.name.replace('/', '%2f')}/latest`);
+  const version = (meta as { version?: unknown } | null)?.version;
+  return typeof version === 'string' && VERSION_TAG_RE.test(version) ? version : null;
+}
+
+/** Conclusion of the newest scheduled workflow run; null when none or unread. */
+async function readScheduledCi(gh: CloudGh, repo: string): Promise<string | null> {
+  const runs = await ghApiJson(gh, `repos/${repo}/actions/runs?event=schedule&per_page=1`);
+  if (!runs.ok) return null;
+  const run = (runs.value as { workflow_runs?: unknown } | null)?.workflow_runs;
+  const conclusion = Array.isArray(run) ? (run[0] as { conclusion?: unknown } | undefined)?.conclusion : null;
+  return typeof conclusion === 'string' && conclusion !== '' ? conclusion : null;
+}
+
+/**
+ * Whether npm has caught up with the newest tag: true when npm serves that
+ * version or newer, false when the tag is ahead, null when npm is unknown.
+ */
+export function npmIsLive(tag: string, npmVersion: string | null | undefined): boolean | null {
+  if (npmVersion == null) return null;
+  const a = versionKey(tag);
+  const b = versionKey(npmVersion);
+  if (a === null || b === null) return null;
+  return !lexGreater(a, b);
+}
+
+function versionKey(version: string): number[] | null {
+  const m = VERSION_TAG_RE.exec(version);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === '' ? 1 : 0] : null;
 }
 
 interface RepoShipGapRow {
@@ -150,6 +228,10 @@ interface RepoShipGapRow {
   taggedAt: string | null;
   tagAgeDays: number | null;
   ahead: number | null;
+  npmVersion: string | null;
+  ciConclusion: string | null;
+  /** Tag reached npm; null when the repo has no package or npm was unread. */
+  live: boolean | null;
   reason?: string;
 }
 
@@ -168,7 +250,7 @@ export async function cmdFleetShipGap(args: string[], deps: FleetShipGapDeps = {
     return 2;
   }
 
-  const reader = deps.reader ?? ghShipGapReader(deps.gh ?? defaultGh);
+  const reader = deps.reader ?? ghShipGapReader(deps.gh ?? defaultGh, deps.getJson);
   const now = (deps.now ?? (() => new Date()))();
   const reads = await Promise.all(QUEUEGEN_REPOS.map(async (repo) => {
     try {
@@ -181,10 +263,14 @@ export async function cmdFleetShipGap(args: string[], deps: FleetShipGapDeps = {
   const repos: RepoShipGapRow[] = reads.map(({ repo, read }) => {
     if (!read.ok) {
       // Unknown means unread — never a fabricated zero drift.
-      return { repo, status: 'unknown', tag: null, taggedAt: null, tagAgeDays: null, ahead: null, reason: read.reason };
+      return { repo, status: 'unknown', tag: null, taggedAt: null, tagAgeDays: null, ahead: null, npmVersion: null, ciConclusion: null, live: null, reason: read.reason };
     }
     const tagAgeDays = Math.max(0, Math.floor((now.getTime() - Date.parse(read.taggedAt)) / 86_400_000));
-    return { repo, status: 'ok', tag: read.tag, taggedAt: read.taggedAt, tagAgeDays, ahead: read.ahead };
+    const npmVersion = read.npmVersion ?? null;
+    return {
+      repo, status: 'ok', tag: read.tag, taggedAt: read.taggedAt, tagAgeDays, ahead: read.ahead,
+      npmVersion, ciConclusion: read.ciConclusion ?? null, live: npmIsLive(read.tag, npmVersion),
+    };
   });
   const unknown = repos.filter((row) => row.status === 'unknown').length;
 
@@ -200,7 +286,8 @@ export async function cmdFleetShipGap(args: string[], deps: FleetShipGapDeps = {
     console.log(bold('Fleet ship-gap:') + ` ${repos.length - unknown}/${repos.length} repo(s) measured`);
     for (const row of repos) {
       if (row.status === 'ok') {
-        console.log(`  ${row.repo.padEnd(28)} ${row.tag}  tagged ${row.tagAgeDays}d ago  ${row.ahead} commit(s) ahead`);
+        const npm = row.npmVersion === null ? 'no npm' : `npm ${row.npmVersion}${row.live === false ? yellow(' (not live)') : ''}`;
+        console.log(`  ${row.repo.padEnd(28)} ${row.tag}  tagged ${row.tagAgeDays}d ago  ${row.ahead} commit(s) ahead  ${npm}  ci ${row.ciConclusion ?? 'n/a'}`);
       } else {
         console.log(`  ${row.repo.padEnd(28)} ${red('unknown')}  ${dim(row.reason ?? '')}`);
       }

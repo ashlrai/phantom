@@ -93,8 +93,9 @@ Workspace mutations derive the caller from the local human identity, ignore
 role changes require another owner/admin. Linked repos appear in `team view`.
 
 Each successful action is its own audit record in the existing locked,
-append-only `events.jsonl`: `member.invited`, `member.role-changed` (including
-previous role), or `repo.linked`, with actor, timestamp and event ID. A failed
+append-only `events.jsonl`: `member.invited`, `member.removed` (lists the claims it drained and
+the handoffs it reopened; later events by the removed actor are ignored until
+re-invited), `member.role-changed` (including previous role), or `repo.linked`, with actor, timestamp and event ID. A failed
 or duplicate action appends nothing. State and audit share the same append,
 so a state change cannot succeed without its record. Earlier `member.joined`
 records also appear in the audit listing. The viewer is read-only, newest-first,
