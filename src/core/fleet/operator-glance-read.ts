@@ -88,7 +88,10 @@ export async function readOperatorGlance(opts: { runsDir?: string; now?: () => D
     usagePct: usage.usedPct,
     resetsAt: usage.resetsAt,
     mainText: await newestStatus(runsDir),
-    incidentText: await readFileBounded(join(runsDir, 'leader', 'INCIDENTS.md')),
+    incidentText: [
+      await readFileBounded(join(runsDir, 'NEEDS-MASON.md')),
+      await readFileBounded(join(runsDir, 'leader', 'INCIDENTS.md'))
+    ].filter((text): text is string => text != null).join('\n') || null,
   });
 }
 
