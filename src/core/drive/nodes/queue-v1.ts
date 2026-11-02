@@ -5,6 +5,14 @@
 export interface QueueJobV1 {
   id: string;
   state: 'pending' | 'running' | 'completed';
+  /** Owner scope: only nodes that belong to it may see, route or pull the job. */
+  owner?: string;
+  /** Capabilities a node must advertise (`gh` additionally needs a live local auth heartbeat). */
+  requires?: string[];
+  /** Context-pack reference. An ID only, never pack contents. */
+  pack?: string;
+  /** Secret NAMES the executor resolves from its own local custody, never values. */
+  secrets?: string[];
   claim?: JobClaim;
   result?: string;
 }
