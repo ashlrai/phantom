@@ -32,6 +32,10 @@
  * reported through an optional per-pass sink (onPass) that the loop awaits
  * and then forgets; a throwing sink stops admission safely and is named in
  * the summary (termination 'observer-error') — it never crashes a tick.
+ *
+ * An optional integer max-ticks bound (1..1000) can be supplied alongside
+ * --duration-ms: whichever bound occurs first stops admission. Default
+ * behavior (no max-ticks) is unchanged.
  */
 export const SELF_LOOP_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
 export const SELF_LOOP_DEFAULT_INTERVAL_MS = 60_000;
@@ -78,9 +82,13 @@ export interface SelfLoopSummary {
   ticks: number;
   failures: number;
   busy: number;
-  termination: 'duration' | 'interrupted' | 'observer-error';
+  termination: 'duration' | 'max-ticks' | 'interrupted' | 'observer-error';
   /** The latest pass's parsed report (sanitized by the caller), or null. */
   lastReport: unknown;
+  /**
+   * Set only when the count bound caused exit: the max-ticks value supplied.
+   */
+  maxTicks?: number;
   /**
    * Set only when the per-pass sink threw: its message. Present solely on
    * that termination path, so non-streaming callers see no shape change.
@@ -91,6 +99,8 @@ export interface SelfLoopSummary {
 export interface RunSelfLoopOptions {
   /** Finite positive pass budget; validated by the CLI wrapper. */
   durationMs: number;
+  /** Optional count cap (1..1000), validated by the CLI wrapper. */
+  maxTicks?: number;
   intervalMs: number;
   failureBackoffMaxMs?: number;
   /** Opt-in busy backoff cap, between the interval and SELF_LOOP_MAX_DURATION_MS (CLI-validated). */
@@ -122,6 +132,7 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   const signal = options.signal ?? new AbortController().signal;
   const start = now();
   const deadline = start + options.durationMs;
+  const maxTicks = options.maxTicks;
   let ticks = 0, failures = 0, busy = 0;
   let consecutiveFailures = 0, delayMs = options.intervalMs;
   let consecutiveBusy = 0, busyDelayMs = options.intervalMs;
@@ -129,7 +140,8 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   let observerError: string | undefined;
   // The first pass is always admitted; after that, only before the deadline
   // and while no interruption is pending. An in-flight pass always finishes.
-  while (ticks === 0 || (!signal.aborted && now() < deadline)) {
+  while (ticks === 0 || (!signal.aborted && now() < deadline
+    && (maxTicks === undefined || ticks < maxTicks))) {
     let outcome: SelfLoopTickOutcome;
     try {
       outcome = await options.tick();
@@ -179,6 +191,9 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
         break; // safe termination: the pass counts, admission stops here
       }
     }
+    // Never sleep after the final allowed pass: break immediately when the
+    // count cap has been reached, so no sleep runs after that final tick.
+    if (maxTicks !== undefined && ticks >= maxTicks) break;
     const current = now();
     if (signal.aborted || current >= deadline) break;
     // Wait the interval, but never past the deadline: the remaining budget is
@@ -201,8 +216,12 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
     ticks,
     failures,
     busy,
-    termination: signal.aborted ? 'interrupted' : observerError === undefined ? 'duration' : 'observer-error',
+    termination: signal.aborted ? 'interrupted'
+      : observerError === undefined
+        ? (maxTicks !== undefined && ticks >= maxTicks ? 'max-ticks' : 'duration')
+        : 'observer-error',
     lastReport,
+    ...(maxTicks !== undefined ? { maxTicks } : {}),
     ...(observerError === undefined ? {} : { observerError }),
   };
 }
