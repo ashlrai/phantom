@@ -1033,17 +1033,13 @@ describe('M484 shadow workflow policy', () => {
 
   it('is an explicitly non-mutating shadow check with least privilege', () => {
     expect(workflow.name).toBe('PR topology observation (non-authoritative)');
-    expect(workflow.on).toHaveProperty('pull_request_target');
-    expect(workflow.on).toHaveProperty('workflow_dispatch');
+    expect(workflow.on).not.toHaveProperty('pull_request_target');
     expect(workflow.on).not.toHaveProperty('pull_request');
+    expect(workflow.on).toHaveProperty('workflow_dispatch');
+    expect(workflow.on.schedule).toEqual([{ cron: '23 9 * * *' }]);
     expect(workflow.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' });
-    expect(workflow.on.pull_request_target.types).toEqual([
-      'opened',
-      'reopened',
-      'synchronize',
-      'edited',
-      'closed',
-    ]);
+    expect(workflow.jobs.daily.if).toBe("github.event_name == 'schedule'");
+    expect(job.if).toBe("github.event_name == 'workflow_dispatch'");
     expect(job.name).toBe('PR topology observation (non-authoritative)');
     expect(job).not.toHaveProperty('permissions');
     expect(workflowText).toContain('Do not add this context to required status checks.');

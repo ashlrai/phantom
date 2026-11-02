@@ -1,25 +1,8 @@
 name: Dependency Audit
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - "package.json"
-      - "package-lock.json"
-      - "npm-shrinkwrap.json"
-      - ".npmrc"
-      - "src/raycast/package.json"
-      - "src/raycast/package-lock.json"
-      - "src/raycast/npm-shrinkwrap.json"
-      - "src/raycast/.npmrc"
-      - "scripts/npm-audit-with-osv-fallback.sh"
-      - "desktop/src-tauri/Cargo.toml"
-      - "desktop/src-tauri/Cargo.lock"
-      - "docs/DEPENDENCY-SECURITY.md"
-      - ".github/dependabot.yml"
-      - ".github/workflows/dependency-audit.yml"
-  pull_request:
-    branches: ["**"]
+  # Once a week, not on every pull request or push (daily-CI policy: hosted
+  # audits run on a schedule plus workflow_dispatch).
   schedule:
     - cron: "17 9 * * 1"
   workflow_dispatch:
@@ -28,8 +11,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: dependency-audit-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   audit:
@@ -49,7 +32,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

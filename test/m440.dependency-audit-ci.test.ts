@@ -91,15 +91,13 @@ describe('M440 dependency audit CI', () => {
     expect(workflow).toEqual({
       name: 'Dependency Audit',
       on: {
-        push: { branches: ['master'], paths: authorityPaths },
-        pull_request: { branches: ['**'] },
         schedule: [{ cron: '17 9 * * 1' }],
         workflow_dispatch: null,
       },
       permissions: { contents: 'read' },
       concurrency: {
-        group: 'dependency-audit-${{ github.event.pull_request.number || github.ref }}',
-        'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+        group: 'dependency-audit-${{ github.ref }}',
+        'cancel-in-progress': false,
       },
       jobs: {
         audit: {
@@ -123,7 +121,7 @@ describe('M440 dependency audit CI', () => {
               uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
               with: {
                 'persist-credentials': false,
-                ref: '${{ github.event.pull_request.head.sha || github.sha }}',
+                ref: '${{ github.sha }}',
               },
             },
             {
@@ -182,11 +180,13 @@ describe('M440 dependency audit CI', () => {
     });
   });
 
-  it('runs on every pull request exact head, dependency pushes, weekly drift, and manual dispatch', () => {
-    expect(events.push).toEqual({ branches: ['master'], paths: authorityPaths });
-    expect(events.pull_request).toEqual({ branches: ['**'] });
-    expect(events.pull_request).not.toHaveProperty('paths');
-    expect(events.pull_request).not.toHaveProperty('paths-ignore');
+  it('runs on the weekly schedule and manual dispatch, not on pull requests or branch pushes', () => {
+    expect(events).not.toHaveProperty('push');
+    expect(events).not.toHaveProperty('pull_request');
+    expect(events).not.toHaveProperty('pull_request_target');
+    expect(workflowText).not.toMatch(/^ {2}pull_request:/m);
+    expect(workflowText).not.toMatch(/^ {2}push:/m);
+    for (const path of authorityPaths) expect(workflowText).not.toContain(`- "${path}"`);
     expect(events.schedule).toEqual([{ cron: '17 9 * * 1' }]);
     expect(events.workflow_dispatch).toBeNull();
   });
@@ -194,8 +194,8 @@ describe('M440 dependency audit CI', () => {
   it('uses read-only authority, bounded concurrency, and a hard timeout', () => {
     expect(workflow.permissions).toEqual({ contents: 'read' });
     expect(workflow.concurrency).toEqual({
-      group: 'dependency-audit-${{ github.event.pull_request.number || github.ref }}',
-      'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+      group: 'dependency-audit-${{ github.ref }}',
+      'cancel-in-progress': false,
     });
     expect(audit['runs-on']).toBe('ubuntu-latest');
     expect(audit['timeout-minutes']).toBe(20);
@@ -228,7 +228,7 @@ describe('M440 dependency audit CI', () => {
       uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       with: {
         'persist-credentials': false,
-        ref: '${{ github.event.pull_request.head.sha || github.sha }}',
+        ref: '${{ github.sha }}',
       },
     });
     expect(steps[1]).toMatchObject({

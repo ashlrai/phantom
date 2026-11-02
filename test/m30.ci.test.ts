@@ -264,11 +264,14 @@ describe('M30 CI workflow', () => {
     for (const id of ['quick', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full'), `push ${id}`).toBe(false);
     }
-    // The daily scheduled run and manual dispatch still own the complete matrix.
+    // The daily schedule owns the cheap matrix. The redundant macOS general
+    // shards run only on workflow_dispatch (about 10× Linux billing for suites
+    // Ubuntu already runs). Manual dispatch still runs them.
     for (const event of ['schedule', 'workflow_dispatch']) {
-      for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'merge-gate', 'fixup-queue']) {
+      for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'merge-gate', 'fixup-queue']) {
         expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(true);
       }
+      expect(evaluateIf(jobs['mac-general']!.if, event, 'full'), `${event} mac-general`).toBe(event === 'workflow_dispatch');
       expect(evaluateIf(jobs.quick!.if, event, 'full'), `${event} quick`).toBe(false);
     }
   });
@@ -462,12 +465,15 @@ describe('M30 CI workflow', () => {
     }
     // Every full lane runs only in the daily, dispatch and reusable runs: never
     // on a PR or merge-queue commit. Mac and Windows service lanes also skip the
-    // caller's push event (reusable call from a tag push).
-    for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
+    // caller's push event (reusable call from a tag push). The macOS general
+    // matrix is dispatch-only.
+    for (const id of ['ci', 'ci-shared-macos', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       const push = id === 'ci' ? '' : " && github.event_name != 'push'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group'`);
     }
+    expect(jobs['mac-general']!.needs).toBe('classify');
+    expect(jobs['mac-general']!.if).toBe("needs.classify.outputs.lane == 'full' && github.event_name == 'workflow_dispatch'");
     expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '3 9 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
