@@ -18,7 +18,10 @@
  * does not stop the loop.
  *
  * Memory is bounded by construction: the loop keeps integer counters and the
- * latest parsed report only — no history of ticks is retained.
+ * latest parsed report only — no history of ticks is retained. Progress is
+ * reported through an optional per-pass sink (onPass) that the loop awaits
+ * and then forgets; a throwing sink stops admission safely and is named in
+ * the summary (termination 'observer-error') — it never crashes a tick.
  */
 export const SELF_LOOP_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
 export const SELF_LOOP_DEFAULT_INTERVAL_MS = 60_000;
@@ -32,6 +35,26 @@ export interface SelfLoopTickOutcome {
 /** The pass seam; each call is one full self-tick pass. */
 export type SelfLoopTick = () => Promise<SelfLoopTickOutcome>;
 
+/**
+ * One completed pass as handed to the per-pass sink: its 1-based number,
+ * its folded exit code, its report's top-level state string ('ran', 'busy',
+ * …) when present, and its raw parsed report. Sanitizing and bounding the
+ * payload for output is the sink's job; the loop retains nothing of it.
+ */
+export interface SelfLoopPassEvent {
+  pass: number;
+  exitCode: number;
+  state: string | null;
+  report: unknown;
+}
+/**
+ * Optional progress sink, awaited once per completed pass before any sleep.
+ * A throwing sink is an explicit safe termination: the failing pass still
+ * counts, no further pass is admitted, and the summary carries
+ * observerError with termination 'observer-error'.
+ */
+export type SelfLoopPassObserver = (event: SelfLoopPassEvent) => void | Promise<void>;
+
 export interface SelfLoopSummary {
   v: 1;
   startedAt: string;
@@ -42,9 +65,14 @@ export interface SelfLoopSummary {
   ticks: number;
   failures: number;
   busy: number;
-  termination: 'duration' | 'interrupted';
+  termination: 'duration' | 'interrupted' | 'observer-error';
   /** The latest pass's parsed report (sanitized by the caller), or null. */
   lastReport: unknown;
+  /**
+   * Set only when the per-pass sink threw: its message. Present solely on
+   * that termination path, so non-streaming callers see no shape change.
+   */
+  observerError?: string;
 }
 
 export interface RunSelfLoopOptions {
@@ -57,6 +85,8 @@ export interface RunSelfLoopOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Cancellation seam; the CLI aborts it from SIGINT/SIGTERM. */
   signal?: AbortSignal;
+  /** Optional per-pass sink; awaited after each completed pass. See SelfLoopPassObserver. */
+  onPass?: SelfLoopPassObserver;
 }
 
 /** The default sleep: real time, interruptible by the abort signal. */
@@ -78,6 +108,7 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   const deadline = start + options.durationMs;
   let ticks = 0, failures = 0, busy = 0;
   let lastReport: unknown = null;
+  let observerError: string | undefined;
   // The first pass is always admitted; after that, only before the deadline
   // and while no interruption is pending. An in-flight pass always finishes.
   while (ticks === 0 || (!signal.aborted && now() < deadline)) {
@@ -89,10 +120,19 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
     }
     ticks += 1;
     if (outcome.exitCode !== 0) failures += 1;
-    const state = typeof outcome.report === 'object' && outcome.report !== null
+    const rawState = typeof outcome.report === 'object' && outcome.report !== null
       ? (outcome.report as Record<string, unknown>)['state'] : undefined;
+    const state = typeof rawState === 'string' ? rawState : null;
     if (state === 'busy') busy += 1;
     lastReport = outcome.report;
+    if (options.onPass) {
+      try {
+        await options.onPass({ pass: ticks, exitCode: outcome.exitCode, state, report: outcome.report });
+      } catch (error) {
+        observerError = error instanceof Error ? error.message : String(error);
+        break; // safe termination: the pass counts, admission stops here
+      }
+    }
     if (signal.aborted || now() >= deadline) break;
     try {
       await sleep(options.intervalMs, signal);
@@ -112,7 +152,8 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
     ticks,
     failures,
     busy,
-    termination: signal.aborted ? 'interrupted' : 'duration',
+    termination: signal.aborted ? 'interrupted' : observerError === undefined ? 'duration' : 'observer-error',
     lastReport,
+    ...(observerError === undefined ? {} : { observerError }),
   };
 }
