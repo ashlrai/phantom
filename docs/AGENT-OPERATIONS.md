@@ -14,7 +14,8 @@ either name.
 | Need | Command |
 | --- | --- |
 | Node version | `>=22.15.0` (`package.json` `engines`) |
-| Install dependencies | `npm ci` |
+| Install dependencies in a trusted local worktree | `npm run install:worktree` (pnpm 10.28.2; shared same-volume store; see [setup](../CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)) |
+| Install dependencies in CI or for release packaging | `npm ci` |
 | Build `dist/` (CLI, assets, web console, build identity) | `npm run build` |
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
