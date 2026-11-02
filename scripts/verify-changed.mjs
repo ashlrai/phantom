@@ -11,6 +11,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
   return {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
+    fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
   };
 }
 
@@ -285,6 +286,18 @@ export function runRealioCheck(root, changed, spawn = spawnSync) {
   return relevant.length === 0;
 }
 
+/** Check the generated registry before taking a typecheck slot. */
+export function runFleetRegistryCheck(selected, run) {
+  if (!selected) {
+    console.log('PASS fleet registry skipped: no fleet command changed');
+    return true;
+  }
+  if (run('fleet registry check', 'scripts/gen-fleet-registry.mjs', ['--check'])) return true;
+  console.error('Run node scripts/gen-fleet-registry.mjs to update the fleet registry');
+  process.exitCode = 1;
+  return false;
+}
+
 function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   let selection;
@@ -318,6 +331,7 @@ function main() {
     if (!passed) process.exitCode = 1;
     return passed;
   };
+  if (!runFleetRegistryCheck(selection.fleetRegistry, run)) return;
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
     console.log(`SKIP eslint: ${preflight.reason}; Merge Gate lints on CI`);

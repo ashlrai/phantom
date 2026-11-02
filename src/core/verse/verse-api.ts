@@ -196,7 +196,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'main-health' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -238,6 +238,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Fleet runs history: GET /api/verse/runs-history (core/verse/runs-history-api.ts),
   // the durable per-minute lane series; read-only, sampling happens on read.
   { id: 'runs-history', load: async () => (await import('./runs-history-api.js')).handleRunsHistoryApi },
+  // Main guardian health: GET /api/verse/runs-history/main-health (core/verse/main-health-api.ts); read-only.
+  { id: 'main-health', load: async () => (await import('./main-health-api.js')).handleMainHealthApi },
   { id: 'release-pr', load: async () => (await import('./ops-release-pr-api.js')).handleReleasePrApi },
   // Lane hold release: /api/verse/fleet/control/holds (core/verse/fleet-holds-api.ts).
   { id: 'fleet-holds', load: async () => (await import('./fleet-holds-api.js')).handleFleetHoldsApi },
