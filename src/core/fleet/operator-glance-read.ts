@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { buildCodexResourceReport, collectCodexSessionUsages } from './codex-session-usage.js';
 import { readEmailDropConfig } from '../comms/email-drop-config.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
+import { readMainHealth } from './main-health-read.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { buildOperatorGlance, type OperatorGlance } from './operator-glance.js';
 
@@ -80,16 +81,28 @@ export async function readOperatorGlance(opts: { runsDir?: string; now?: () => D
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const state = await readFleetRunsDirState({ runsDir, now: () => at.getTime() }).catch(() => null);
   const usage = codexUsage(at.getTime());
-  return buildOperatorGlance({
+  // The guardian's own status decides `main` when it was written: red repos
+  // mean down, a fresh all-green list means up, and anything stale or partly
+  // unknown is unknown — a newer unrelated status file cannot overwrite it.
+  // With no readable guardian status the newest supervisor note speaks.
+  const health = await readMainHealth({ runsDir, now: () => at.getTime() }).catch(() => null);
+  const guardian = health !== null && health.source === 'ok' && health.statusAt !== null;
+  const glance = buildOperatorGlance({
     now: at,
     lanes: state?.lanes ?? [],
     switches: state?.switches ?? [],
     claudeLane: state?.claudeLane ?? null,
     usagePct: usage.usedPct,
     resetsAt: usage.resetsAt,
-    mainText: await newestStatus(runsDir),
+    mainText: guardian ? null : await newestStatus(runsDir),
     incidentText: await readFileBounded(join(runsDir, 'leader', 'INCIDENTS.md')),
   });
+  if (guardian) {
+    glance.main = health.red > 0 ? 'down'
+      : !health.stale && health.repos.length > 0 && health.repos.every((repo) => repo.state === 'green') ? 'up'
+      : 'unknown';
+  }
+  return glance;
 }
 
 /** First verified owner message pairs. A later id does not replace it. */
