@@ -23,6 +23,7 @@ const VERBS = [
   'class-share',
   'dead-heads',
   'dispatch-summary',
+  'dirty-landed',
   'edit-collisions',
   'grok-usage',
   'job-class-share',
