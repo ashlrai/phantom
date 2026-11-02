@@ -1,4 +1,5 @@
 /** Scheduling policy is independent of DRIVER-1 storage and the host semaphore. */
+import { laneBreakers, type LaneBreaker } from './lane-breaker.js';
 import { claudeApiHealth, type LaneHealth } from './lane-health.js';
 import { drivePoolAllowed, isPoolDayShare, pacedShareRemaining, type PoolDayShare } from './pool-routing.js';
 
@@ -45,6 +46,7 @@ export interface DriveReport {
   publicationUnknown: string[];
   held: string | null;
   laneHealth?: LaneHealth;
+  laneBreakers?: LaneBreaker[];
 }
 
 /**
@@ -139,11 +141,14 @@ export function planDrive(snapshot: DriveSnapshot, nowMs = Date.now()): string[]
   const health = claudeApiHealth(snapshot.jobs, nowMs);
   // Half-open: one ordinary eligible job probes recovery, never a synthetic paid call.
   const apiLimit = health.reason ? (nowMs >= health.probeAtMs! ? 1 : 0) : Number.POSITIVE_INFINITY;
+  const laneLimit = new Map(laneBreakers(snapshot.jobs, nowMs).map(breaker =>
+    [breaker.pool, breaker.state === 'open' ? 0 : breaker.state === 'probing' ? 1 : Number.POSITIVE_INFINITY]));
+  laneLimit.set('claude-api', Math.min(apiLimit, laneLimit.get('claude-api') ?? Number.POSITIVE_INFINITY));
   const ready = snapshot.jobs.filter(job => job.state === 'READY' && drivePoolAllowed(job.id, job.pool));
   const result: string[] = [];
   while (total < snapshot.maxRunning) {
     const eligible = ready.filter(job => {
-      const ceiling = Math.min(pools.get(job.pool)!.ceiling, job.pool === 'claude-api' ? apiLimit : Number.POSITIVE_INFINITY);
+      const ceiling = Math.min(pools.get(job.pool)!.ceiling, laneLimit.get(job.pool) ?? Number.POSITIVE_INFINITY);
       return counts.get(job.pool)! < ceiling && shareLeft.get(job.pool)! > 0;
     });
     eligible.sort((a, b) => {
@@ -172,6 +177,7 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
     const state = parseDriveSnapshot(await bridge.snapshot(lease ?? undefined));
     state.paused ||= await deps.paused();
     report.laneHealth = claudeApiHealth(state.jobs, nowMs());
+    report.laneBreakers = laneBreakers(state.jobs, nowMs());
     report.paused = state.paused;
     report.active = state.jobs.filter(active).length;
     report.ready = state.jobs.filter(job => job.state === 'READY').length;
