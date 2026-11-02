@@ -4,13 +4,15 @@
  */
 import { userInfo } from 'node:os';
 import {
-  localHumanActor, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, updateWorkspace, type TeamActor,
+  inviteMember, joinWithInvite, localHumanActor, memberIdForGithubUser, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
 
-const USAGE = `Usage: phm team <view|join|invite|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
+const USAGE = `Usage: phm team <view|join|invite|remove|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
   view                         Members, presence, claims, handoffs and pending approvals
   join [--role admin]          Join as the local human (first human becomes owner; --as is ignored)
-  invite <human:name>          Add a local workspace member (no external message)
+  join <invite>                Accept an invite on your own node (team comes from the invite; uses only this node's local auth)
+  invite <gh-user>             Invite a GitHub user (owner/admin); prints an invite that grants membership only, never credentials
+  remove <gh-user>             Revoke membership (owner/admin); drains that member's claims and reopens their accepted handoffs
   role <human:name> <admin|member>  Change a member role (owner/admin only)
   link <owner/repo>            Link a repository (owner/admin only)
   approve|deny <approvalId>    Decide a consequential handoff (owner/admin only; identity is the local OS user/owner.json, never --as)
@@ -60,8 +62,17 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         lines.push('Before editing: re-read task sources and resolve claims. Missing access/context: ask the owner/admin with the task reference and redacted error; retry the blocked check.');
         return out(s, lines.join('\n'));
       }
-      case 'invite': case 'role': case 'link': {
+      case 'invite': case 'role': case 'link': case 'remove': {
         if (rest.length !== (sub === 'role' ? 2 : 1)) throw new Error(USAGE);
+        if (sub === 'invite' && !rest[0]!.startsWith('human:')) {
+          const r = inviteMember(team, localHumanActor(), rest[0]!);
+          return out(r, `Invited ${r.member} to ${team} (membership only; no credentials in the invite).\n${r.invite}\n${r.next}`);
+        }
+        if (sub === 'remove') {
+          const ev = updateWorkspace(team, localHumanActor(), { type: 'member.removed', memberId: memberIdForGithubUser(rest[0]!) });
+          const p = ev.payload as { drainedClaims: string[]; reopenedHandoffs: string[] };
+          return out(ev, `Removed ${rest[0]} from ${team}: drained ${p.drainedClaims.length} claims, reopened ${p.reopenedHandoffs.length} handoffs. Re-invite with: phm team invite ${rest[0]} --team ${team}`);
+        }
         if (sub === 'role' && rest[1] !== 'admin' && rest[1] !== 'member') throw new Error('role must be admin or member.');
         const action = sub === 'link' ? { type: 'repo.linked' as const, repo: rest[0]! }
           : sub === 'invite' ? { type: 'member.invited' as const, memberId: rest[0]! }
@@ -69,7 +80,10 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         const ev = updateWorkspace(team, localHumanActor(), action);
         return out(ev, `${ev.type} [${ev.id}]`);
       }
-      case 'join': { const actor = localHumanActor(); const role = flag(rest, '--role'); const ev = appendEvent(team, actor, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${actor.id}.`); }
+      case 'join': if (rest[0] && !rest[0].startsWith('-')) {
+        const r = joinWithInvite(rest[0]);
+        return out(r, `${r.alreadyJoined ? 'Already joined' : 'Joined'} ${r.team} as ${r.member}. Your own local auth is used; nothing was shared.`);
+      } else { const actor = localHumanActor(); const role = flag(rest, '--role'); const ev = appendEvent(team, actor, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${actor.id}.`); }
       case 'approve': case 'deny': { const r = decideApproval(team, localHumanActor(), rest[0] ?? '', sub === 'approve' ? 'approve' : 'deny'); return out(r, `${r.approvalId}: ${r.state}`); }
       case 'claim': {
         const branch = flag(rest, '--branch'); const path = flag(rest, '--path'); const reason = flag(rest, '--reason') ?? ''; const ttl = flag(rest, '--ttl-min');

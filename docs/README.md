@@ -20,7 +20,7 @@ that every integration, provider or autonomous effect is active.
 
 ## Agents, start here
 
-Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](llms.txt). Copy-paste reference: [llms-full.txt](llms-full.txt).
+Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 
 ```sh
 npm install -g @ashlr/phantom
@@ -74,6 +74,8 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Plan a persistent Linux node with local capacity limits and cloud cost estimates | [Node VM design](https://github.com/ashlrai/phantom/blob/master/docs/NODES-SANDBOX-VM.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
+| Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
+| See the skills learned from merged PRs | [Learned skills](https://github.com/ashlrai/phantom/blob/master/docs/SKILLS.md) |
 | Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
 | Understand macOS CLI launch holds and memory recovery thresholds | [Host headroom](https://github.com/ashlrai/phantom/blob/master/docs/HOST-HEADROOM.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
@@ -282,4 +284,4 @@ canonical release guide for required hosted qualification and publication.
 - [ashlr-plugin Leverage Maximization Plan](https://github.com/ashlrai/phantom/blob/master/docs/PLUGIN-LEVERAGE-PLAN.md)
 - [cfg.foundry — Polyglot Backend Configuration](https://github.com/ashlrai/phantom/blob/master/docs/FOUNDRY-CONFIG.md)
 
-- [Standing lane freshness](FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.
+- [Standing lane freshness](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.

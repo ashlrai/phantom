@@ -35,6 +35,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
 - [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
+- Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Hub reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet. Compatibility identifiers stay.
 - [Console layout](CONSOLE-LAYOUT.md): One set of width breakpoints for the web console. Compact phone, laptop, and wide-monitor views of the same live state.
