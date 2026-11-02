@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 /**
  * RQ-PHX-TELEGRAMSTATUSEND2END01 — a Telegram "status" asks the real fleet,
  * once, and never reaches the Leader thread.
@@ -83,6 +84,7 @@ beforeEach(() => {
   previousHome = process.env['HOME'];
   home = mkdtempSync(join(tmpdir(), 'tg-status-e2e-home-'));
   process.env['HOME'] = home;
+  pairedTelegram(home, CHAT);
   updates = [];
   sentTexts = [];
   sendFails = false;

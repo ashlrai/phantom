@@ -1,3 +1,4 @@
+import { rememberEmailPair } from '../src/core/fleet/operator-glance-read.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ let runsDir: string;
 const now = () => new Date('2026-11-01T04:08:00.000Z');
 const allowedSenders = new Set(['mason@example.com']);
 const message = (body = '/fleet-status', from = 'Mason <mason@example.com>', id = '<status-1@example.com>', subject = 'status') =>
-  `From: ${from}\r\nSubject: ${subject}\r\nMessage-ID: ${id}\r\n\r\n${body}\r\n`;
+  `From: ${from}\r\nSubject: ${subject}\r\nMessage-ID: ${id}\r\nAuthentication-Results: mx.example.com; dkim=pass header.d=example.com\r\n\r\n${body}\r\n`;
 const files = () => existsSync(outboxDir) ? readdirSync(outboxDir) : [];
 const drop = (raw: string) => writeFileSync(join(inboxDir, 'request.eml'), raw);
 
@@ -25,6 +26,7 @@ beforeEach(() => {
   inboxDir = join(root, 'in'); outboxDir = join(root, 'out');
   processedDir = join(root, 'processed'); runsDir = join(root, 'runs');
   mkdirSync(inboxDir); mkdirSync(runsDir);
+  rememberEmailPair('mason@example.com', runsDir);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
