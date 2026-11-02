@@ -112,6 +112,18 @@ An accepted PR creates one deterministic follow-up asking for the next bounded,
 evidence-supported improvement. Replay is idempotent, even after completion;
 conflicting SHA/time metadata for the same PR is refused.
 
+### Outcome learning
+
+`phm fleet outcomes --events <log> --json` reads a dispatch event log and
+prints, for each resource, model, job type, and repo, the merge rate, time to
+merge, usage, and breakage rate. It also lists improvement jobs for recurring
+failures. `phm fleet outcomes route` adds the next assignment and a
+plain-language reason. The same types are exported from
+`src/core/routing/outcome-learning.ts` for the desktop app. There is no
+routing setting to tune: the log is the memory. Critical jobs are never held
+for an exhausted resource, and allowance that resets soon is still spent when
+that resource can finish the job.
+
 `phm fleet queue ask --json` reads one `ask.v1` record on stdin —
 `{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
 as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
