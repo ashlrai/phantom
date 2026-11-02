@@ -17,6 +17,7 @@ number.
 - [`CONTRACT-M570.md`](./CONTRACT-M570.md) — strict, authority-free release-successor policy evidence schema and verifier.
 - [`CONTRACT-M571.md`](./CONTRACT-M571.md) — exact-source local production gate and canonical no-authority receipt.
 - [`CONTRACT-XREVIEW.md`](./CONTRACT-XREVIEW.md) — cross-model review on another pool and the SHA-bound auto-merge decision.
+- [`CONTRACT-OPERATOR-GLANCE.md`](./CONTRACT-OPERATOR-GLANCE.md) — one glance and plain-language orders for phone, Telegram, and email.
 
 - `CONTRACT-M3.md` … `CONTRACT-M30.md` — v1 (M1–M20) + v2 (M21–M30, the Autonomous Engineering Organization).
 - `CONTRACT-H1.md` … — v2.1 "Harden & Prove" (end-to-end chain harness, crash recovery, concurrency/budget stress, …).
