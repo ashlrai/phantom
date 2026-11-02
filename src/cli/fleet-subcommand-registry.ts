@@ -11,6 +11,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'bus-follow': () => import('./fleet-bus-follow.js'),
   'bus-next': () => import('./fleet-bus-next.js'),
   'bus-peers': () => import('./fleet-bus-peers.js'),
+  'bus-reply': () => import('./fleet-bus-reply.js'),
   'bus-reply-stdin': () => import('./fleet-bus-reply-stdin.js'),
   'bus-request': () => import('./fleet-bus-request.js'),
   'bus-scatter': () => import('./fleet-bus-scatter.js'),
