@@ -64,3 +64,13 @@ exports, verbatim from source.
 | `ashlr_racing` | Model-racing distillation stats: total races persisted, frontier-engine win rate, average score delta (frontier − local), and local win count. Reads from ~/.ashlr/racing/. Read-only. |
 | `ashlr_comms` | Comms channel status: whether the channel is enabled, which transport is configured (imessage/telegram/none), and pending/outstanding request counts. Secret-safe — the bot token and handle are NEVER included in the output. Read-only. |
 | `ashlr_desktop_open` | Propose a desktop UI action (open a path in editor / Finder / terminal). Creates a PENDING desktop-action proposal — NEVER executes directly. The action runs only after the user explicitly approves via `ashlr inbox`. Requires the repo to be enrolled and the kill switch to be off. |
+
+## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
+
+The standalone read-only server started by `phm mcp fleet`, separate from the
+`mcp-native.ts` gateway tools catalogued above. Every tool reads a persisted
+observation; no tool changes the fleet.
+
+| Server | Tool | Description |
+| --- | --- | --- |
+| phantom-fleet | `fleet_lanes` | Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane. |

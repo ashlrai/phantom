@@ -3,16 +3,18 @@ import { Button } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
 import { loadDraft, saveDraft } from '../fleet/interject-ack-model.js';
 import { postInterjectionDetailed } from '../fleet/interject-queries.js';
-import { postResultText, retryable } from './inbox-post-result.js';
+import { retryable } from './inbox-post-result.js';
+import { postAckLine } from './inbox-post-ack-model.js';
 import styles from './fleet-inbox.module.css';
 
-export function InboxPostBox({ onPosted }: { onPosted: (text: string) => void }) {
+export function InboxPostBox({ onPosted, snapshot }: { onPosted: (text: string) => void; snapshot?: unknown }) {
   const id = useId();
   const [draft, setDraft] = useState(() => {
     try { return loadDraft(window.sessionStorage); } catch { return ''; }
   });
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState('');
+  const [result, setResult] = useState<Awaited<ReturnType<typeof postInterjectionDetailed>> | null>(null);
   const [retryText, setRetryText] = useState<string | null>(null);
   const busy = useRef(false);
   const canSend = !sending && draft.trim().length > 0 && draft.length <= 6_000;
@@ -25,11 +27,12 @@ export function InboxPostBox({ onPosted }: { onPosted: (text: string) => void })
     busy.current = true;
     setSending(true);
     setMessage('');
+    setResult(null);
     setRetryText(null);
     try {
       const result = await postInterjectionDetailed(text);
+      setResult(result);
       updateDraft('');
-      setMessage(postResultText(result));
       if (!result.duplicate) onPosted(text);
     } catch (error) {
       setMessage(error instanceof ApiError ? error.detail ?? error.message
@@ -40,6 +43,7 @@ export function InboxPostBox({ onPosted }: { onPosted: (text: string) => void })
       setSending(false);
     }
   }
+  const ack = postAckLine(result, snapshot, Date.now());
   return <form className={styles.composer} onSubmit={event => { event.preventDefault(); void send(); }}>
     <label htmlFor={id}>Prompt, thought or interjection</label>
     <textarea id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
@@ -60,6 +64,7 @@ export function InboxPostBox({ onPosted }: { onPosted: (text: string) => void })
       <Button type="submit" variant="primary" size="sm" disabled={!canSend}>{sending ? 'Sending…' : 'Send'}</Button>
     </div>
     {message && <p role="status">{message}</p>}
+    <p aria-live="polite" data-tone={ack?.tone}>{ack?.text}</p>
     {retryText !== null && <Button type="button" size="sm" disabled={sending} onClick={() => void send(retryText)}>Retry</Button>}
   </form>;
 }

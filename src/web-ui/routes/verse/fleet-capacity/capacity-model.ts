@@ -4,7 +4,7 @@ import { isNoFleet, NO_FLEET_TEXT } from '../fleet/no-fleet.js';
 const MINUTE = 60_000;
 export const MAX_GAP_MS = 5 * MINUTE;
 export interface LanePoint { atMs: number; running: number; target: number; queued: number; held: boolean }
-export interface LaneSeries { lane: string; points: LanePoint[]; fillPct: number | null; idleSlotMinutes: number; heldMinutes: number }
+export interface LaneSeries { lane: string; points: LanePoint[]; fillPct: number | null; idleSlotMinutes: number; heldMinutes: number; stallMinutes: number }
 export interface SparkPoint { atMs: number; running: number | null; target: number | null }
 
 function ordered(history: RunsHistory): RunsSample[] {
@@ -21,12 +21,13 @@ export function laneSeries(history: RunsHistory, now: number): LaneSeries[] {
     for (const lane of sample.lanes) {
       let series = lanes.get(lane.lane);
       if (!series) {
-        series = { lane: lane.lane, points: [], fillPct: null, idleSlotMinutes: 0, heldMinutes: 0 };
+        series = { lane: lane.lane, points: [], fillPct: null, idleSlotMinutes: 0, heldMinutes: 0, stallMinutes: 0 };
         lanes.set(lane.lane, series);
       }
       series.points.push({ atMs, running: lane.running, target: lane.target, queued: lane.queued, held: lane.held });
       series.idleSlotMinutes += Math.max(0, lane.target - lane.running) * minutes;
       if (lane.held) series.heldMinutes += minutes;
+      if (!lane.held && lane.running < lane.target && lane.queued > 0) series.stallMinutes += minutes;
     }
   }
   for (const series of lanes.values()) {
@@ -34,6 +35,14 @@ export function laneSeries(history: RunsHistory, now: number): LaneSeries[] {
     series.fillPct = total.target ? total.running / total.target * 100 : null;
   }
   return [...lanes.values()].sort((a, b) => a.lane.localeCompare(b.lane));
+}
+
+export function stallHeadline(series: LaneSeries[], now: number): string | null {
+  const worst = series.reduce<LaneSeries | null>((current, lane) => lane.stallMinutes > (current?.stallMinutes ?? 0) ? lane : current, null);
+  if (!worst) return null;
+  const latest = worst.points.reduce<LanePoint | null>((current, point) => point.atMs <= now && (!current || point.atMs > current.atMs) ? point : current, null);
+  const open = latest ? Math.max(0, latest.target - latest.running) : 0;
+  return `Launch stall: ${worst.lane} waited ${Number(worst.stallMinutes.toFixed(1)).toLocaleString()} min with ${open} open slots`;
 }
 
 function allLaunchGaps(history: RunsHistory): Array<{ fromMs: number; toMs: number; minutes: number }> {

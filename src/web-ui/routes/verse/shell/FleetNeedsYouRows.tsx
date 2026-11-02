@@ -23,15 +23,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { ApiError } from '../../../data/client.js';
-import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { useMutationHold, useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { safeHref } from '../cloud/cloud-model.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { releasePrQuery } from '../fleet/release-pr-query.js';
+import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 import { normalizePaneId } from './dock-catalog.js';
 import { setFocusMode } from './focus-mode.js';
+import { deriveLaneStreakNeedsYou } from './lane-streak-needs-you.js';
+import { laneStreaksQuery } from './lane-streak-query.js';
+import { isFleetRuns } from '../ops/ops-runs-model.js';
+import { derivePhoneNeedsYou, PHONE_CONNECTION_PANE } from './phone-needs-you.js';
+import { phonePendingQuery } from './phone-pending-query.js';
 import { deriveReleaseNeedsYou } from './release-needs-you.js';
+import { deriveResetNeedsYou, mergeNeedsYou } from './reset-needs-you.js';
+import { usageResetsQuery } from './usage-resets-query.js';
 import { closeVerseOverlay, setVerseSection, type NeedsYouSplit } from '../verse-ui-store.js';
 import {
   deriveFleetNeedsYou,
@@ -67,6 +75,7 @@ const SURFACE_NAME: Readonly<Record<FleetNeedsYouItem['target'], string>> = {
 const PANE_NAME: Readonly<Record<string, string>> = {
   'fleet-lanes': 'Lanes', 'fleet-supply': 'Supply', 'fleet-host': 'Mac host',
   'fleet-releases': 'Releases', 'leader-journal': 'Leader journal',
+  [PHONE_CONNECTION_PANE]: 'Connection',
 };
 
 function revealPane(paneId: string): void {
@@ -83,6 +92,29 @@ function openSurface(target: FleetNeedsYouItem['target']): void {
   setVerseSection(target);
 }
 
+function ResetReleaseButton({ lane, onReleased }: { lane: string; onReleased: (lane: string) => void }) {
+  const { hasHold } = useMutationHold();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  async function release() {
+    if (!hasHold || pending) return;
+    setPending(true);
+    setError('');
+    try {
+      await postReleaseHold(lane, 'reset detected (Needs-you)');
+      onReleased(lane);
+    } catch (reason) {
+      setError(reason instanceof ApiError ? reason.detail ?? reason.message : 'The release failed.');
+    } finally { setPending(false); }
+  }
+  return <>
+    <Button size="sm" disabled={!hasHold || pending} title={!hasHold ? 'Unlock to release' : undefined}
+      aria-label={`Release ${lane}`} onClick={() => void release()}>{pending ? 'Releasing…' : 'Release'}</Button>
+    {!hasHold && <span>Unlock to release</span>}
+    {error && <span role="status">{error}</span>}
+  </>;
+}
+
 export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   /** The drawer's current split; the group renders only on All and Fleet. */
   split: NeedsYouSplit;
@@ -91,11 +123,23 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   onResult: (report: FleetNeedsYouReport) => void;
 }) {
   const [clipboard, setClipboard] = useState<Record<string, 'copied' | 'failed'>>({});
+  const [confirmation, setConfirmation] = useState('');
   const read = useQuery(fleetRunsNeedsYouQuery);
   const refetch = useRefetch(fleetRunsNeedsYouQuery);
+  const resetsRead = useQuery(usageResetsQuery);
+  const refetchResets = useRefetch(usageResetsQuery);
+  const refreshRuns = useRefresh(fleetRunsNeedsYouQuery);
+  const refreshResets = useRefresh(usageResetsQuery);
+  usePollWhileVisible(refetchResets, FLEET_NEEDS_YOU_POLL_MS);
+  const phoneRead = useQuery(phonePendingQuery);
+  const refetchPhone = useRefetch(phonePendingQuery);
+  usePollWhileVisible(refetchPhone, FLEET_NEEDS_YOU_POLL_MS);
   const releaseRead = useQuery(releasePrQuery);
   const refetchRelease = useRefetch(releasePrQuery);
   usePollWhileVisible(refetchRelease, FLEET_NEEDS_YOU_POLL_MS, { enabled: releaseRead.data?.kind !== 'notInBuild' });
+  const laneStreaksRead = useQuery(laneStreaksQuery);
+  const refetchLaneStreaks = useRefetch(laneStreaksQuery);
+  usePollWhileVisible(refetchLaneStreaks, FLEET_NEEDS_YOU_POLL_MS, { enabled: laneStreaksRead.data?.kind !== 'notInBuild' });
   const notFound = read.error instanceof ApiError && read.error.status === 404;
   usePollWhileVisible(refetch, FLEET_NEEDS_YOU_POLL_MS, { enabled: !notFound });
 
@@ -109,7 +153,16 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     () => deriveReleaseNeedsYou(releaseRead.status === 'error' ? undefined : releaseRead.data, nowMs),
     [releaseRead.data, releaseRead.status, nowMs],
   );
-  const combined = useMemo(() => ({ ...result, items: [...result.items, ...releaseItems] }), [result, releaseItems]);
+  const laneStreakItems = useMemo(
+    () => deriveLaneStreakNeedsYou(laneStreaksRead.status === 'error' ? undefined : laneStreaksRead.data, isFleetRuns(read.data) ? read.data : null, nowMs),
+    [laneStreaksRead.data, laneStreaksRead.status, read.data, nowMs],
+  );
+  const resetItems = useMemo(() => deriveResetNeedsYou(resetsRead.status === 'error' ? null : resetsRead.data, nowMs),
+    [resetsRead.data, resetsRead.status, nowMs]);
+  const phoneItems = useMemo(() => derivePhoneNeedsYou(phoneRead.status === 'error' ? undefined : phoneRead.data),
+    [phoneRead.data, phoneRead.status]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...laneStreakItems, ...phoneItems] }, resetItems),
+    [result, releaseItems, laneStreakItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
@@ -118,13 +171,14 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     onResult({ ...combined, silent });
   }, [onResult, combined, silent]);
 
-  if ((split !== 'all' && split !== 'fleet') || combined.items.length === 0) return null;
+  if ((split !== 'all' && split !== 'fleet') || (combined.items.length === 0 && !confirmation)) return null;
 
   return (
     <section aria-label="Fleet on this Mac">
       <div className={styles.batch}>
         <p className={styles.rowKind}>Fleet on this Mac</p>
       </div>
+      {confirmation && <p role="status">{confirmation}</p>}
       {combined.items.map((item) => {
         const severity = SEVERITY[item.severity];
         const destination = item.open;
@@ -143,6 +197,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
               setClipboard(previous => ({ ...previous, [item.id]: 'failed' }));
             }
             revealPane(TERMINAL_PANE_ID);
+          } else if (paneId === PHONE_CONNECTION_PANE) {
+            closeVerseOverlay();
+            setVerseSection('settings', 'fleet-sources');
           } else if (paneId) {
             closeVerseOverlay();
             revealPane(paneId);
@@ -168,6 +225,11 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
               </span>
             </span>
             <span onClick={(event) => event.stopPropagation()}>
+              {item.id.startsWith('lane-reset:') && <ResetReleaseButton lane={item.id.slice('lane-reset:'.length)} onReleased={lane => {
+                setConfirmation(`Released hold for ${lane}.`);
+                refreshRuns();
+                refreshResets();
+              }} />}
               {isRelease && href && <a href={href} target="_blank" rel="noopener noreferrer" aria-label="Open release PR">Open</a>}
               {isRelease && <Button size="sm" variant="subtle" onClick={() => {
                 closeVerseOverlay();
@@ -175,6 +237,15 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
                 setVerseSection('chat');
                 openDockPane('fleet-merges');
               }}>Open Merges</Button>}
+              {item.id === 'claude-lane-down' && destination?.kind === 'terminal' && <Button size="sm" onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(destination.command);
+                  setClipboard(previous => ({ ...previous, [item.id]: 'copied' }));
+                } catch {
+                  setClipboard(previous => ({ ...previous, [item.id]: 'failed' }));
+                }
+              }}>{clipboard[item.id] === 'copied' ? 'Copied' : 'Copy'}</Button>}
+              {item.id === 'claude-lane-down' && destination?.kind === 'terminal' && <code>{destination.command}</code>}
               <Button size="sm" variant="subtle" aria-label={label} onClick={open}>
                 {label}
               </Button>

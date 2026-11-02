@@ -5,12 +5,23 @@ import { durationText } from '../ops/ops-lane-model.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
 
 type Lane = FleetRunsV1['lanes'][number];
-interface Context { lastTickAgeMs: number | null; paused: boolean | null; claudeLane: string | null; nowMs: number }
+interface Context { lastTickAgeMs: number | null; paused: boolean | null; claudeLane: string | null; nowMs: number; youngestWorkerAgeMs: ReadonlyMap<string, number>; workerLanes?: ReadonlySet<string> }
 export interface LaneVerdict {
   lane: string;
-  kind: 'held' | 'down' | 'paused' | 'at-target' | 'filling' | 'starved' | 'idle' | 'over';
+  kind: 'held' | 'down' | 'paused' | 'at-target' | 'filling' | 'starved' | 'stalled' | 'idle' | 'over';
   headline: string; action: string | null; free: number;
   tone: 'ok' | 'warn' | 'danger' | 'neutral';
+  stall?: { queued: number; duration: string };
+}
+
+export function youngestWorkerAges(workers: ReadonlyArray<{ lane: string; ageSeconds: number | null }>): Map<string, number> {
+  const ages = new Map<string, number>();
+  for (const { lane, ageSeconds } of workers) {
+    if (ageSeconds === null) continue;
+    const ageMs = ageSeconds * 1000;
+    ages.set(lane, Math.min(ages.get(lane) ?? ageMs, ageMs));
+  }
+  return ages;
 }
 
 const easternTime = new Intl.DateTimeFormat('en-US', {
@@ -53,7 +64,12 @@ export function laneVerdict(lane: Lane, ctx: Context): LaneVerdict {
   if (running >= target && target > 0) return running > target ? result('over', `${running} running — over target ${target}`, 'warn') : result('at-target', 'at target', 'ok');
   if (running < target && queued > 0) {
     if (ctx.lastTickAgeMs !== null && ctx.lastTickAgeMs > 5 * 60_000) return result('starved', `${free} free, ${queued} queued — last tick ${Math.floor(ctx.lastTickAgeMs / 60_000)} min ago`, 'danger', 'Dispatch is not launching: check the tick and lane holds');
-    return result('filling', `${free} free, ${queued} queued — launching`, 'warn');
+    const ageMs = ctx.youngestWorkerAgeMs.get(lane.lane);
+    const duration = ageMs === undefined ? 'this session' : durationText(ageMs);
+    if ((ageMs !== undefined && ageMs >= 15 * 60_000) || (ageMs === undefined && !ctx.workerLanes?.has(lane.lane) && free > 0 && ctx.lastTickAgeMs !== null && ctx.lastTickAgeMs < 5 * 60_000)) {
+      return { ...result('stalled', `${free} free, ${queued} queued — nothing launched for ${duration}`, 'danger', 'Queued lines are not launching on this lane: check holds, drip limits and dependencies in the dispatcher state'), stall: { queued, duration } };
+    }
+    return result('filling', `${free} free, ${queued} queued — ${ageMs === undefined ? 'last launch unknown' : `last launch ${duration} ago`}`, 'warn');
   }
   return result('idle', `${free} free, ${queued} queued — idle`, 'neutral', 'Write more jobs for this lane');
 }
@@ -73,8 +89,10 @@ export function tickAgeMs(lastTick: string | null, nowMs: number): number | null
 export function readDispatch(raw: unknown, nowMs: number) {
   if (!isFleetRuns(raw)) return null;
   const lastTickAgeMs = tickAgeMs(raw.lastTick, nowMs);
+  const youngestWorkerAgeMs = youngestWorkerAges(raw.workers);
+  const workerLanes = new Set(raw.workers.map(worker => worker.lane));
   const rank = { danger: 0, warn: 1, ok: 2, neutral: 2 };
-  const verdicts = raw.lanes.map(lane => laneVerdict(lane, { lastTickAgeMs, paused: raw.paused, claudeLane: raw.claudeLane, nowMs }))
+  const verdicts = raw.lanes.map(lane => laneVerdict(lane, { lastTickAgeMs, paused: raw.paused, claudeLane: raw.claudeLane, nowMs, youngestWorkerAgeMs, workerLanes }))
     .sort((a, b) => rank[a.tone] - rank[b.tone] || a.lane.localeCompare(b.lane));
   return { verdicts, supply: supplySummary(raw.lanes), incidents: incidents(raw, nowMs).filter(item => item.id === 'stall'), lastTickAgeMs, sourceState: raw.sources.runsDir };
 }

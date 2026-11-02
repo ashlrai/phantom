@@ -1,5 +1,8 @@
 .root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
 .header, .message, .notice { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.waste { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.waste[data-tone='warn'] { color: var(--status-warning-fg); }
+.waste[data-tone='bad'] { color: var(--status-danger-fg); }
 .notice { color: var(--text-primary); }
 .heading { margin: 0 0 var(--space-2); font-size: var(--text-xs-size); color: var(--text-secondary); }
 .list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }

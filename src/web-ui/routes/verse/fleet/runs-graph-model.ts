@@ -3,7 +3,7 @@ import type { WorkspaceGraphV1 } from './workspace-graph.js';
 
 export interface RunsData {
   v: 1;
-  workers: Array<{ job: string; lane?: string; model?: string; startedAt?: string; repo?: string }>;
+  workers: Array<{ job: string; lane?: string; model?: string; startedAt?: string; repo?: string; ageSeconds?: number | null }>;
   leaders: Array<{ name?: string; lane?: string; model?: string }>;
   lanes?: Array<{ id: string; running: number; target: number }>;
   mergesLastHour: { count: number | null; items?: Array<{ repo?: string; number?: number }> };

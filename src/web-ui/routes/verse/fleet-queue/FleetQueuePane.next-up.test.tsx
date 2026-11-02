@@ -29,7 +29,7 @@ it('shows the next ready job ids for a lane and opens their worker logs', async 
 
   const lane = (await screen.findByText('devin: 3 ready · 1 parked')).closest('li')!;
   const next = within(lane).getByTestId('lane-next');
-  expect(next).toHaveTextContent('Next: RQ-AAA, RQ-BBB, RQ-CCC');
+  expect(next).toHaveTextContent('Next: RQ-AAA other, RQ-BBB other, RQ-CCC other');
 
   fireEvent.click(within(next).getByLabelText('Open log for RQ-BBB'));
   expect(requestWorkerLogJob).toHaveBeenLastCalledWith('RQ-BBB');

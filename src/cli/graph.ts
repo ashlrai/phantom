@@ -1,23 +1,44 @@
 /** Read-only GRAPH-1 CLI. Exit codes: 0 success/help, 1 unavailable/error, 2 usage. */
 import { graphNeighborhood, type GraphDirection } from '../core/graph/neighborhood.js';
+import { delegationCycles } from '../core/graph/delegation-cycles.js';
+import { renderMermaid, MermaidLimitError } from './graph-mermaid.js';
+import { graphRoutePath } from '../core/graph/route-path.js';
 
 const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
+       phm graph cycles [--json]
        phm graph <nodes|edges> [--agent <bare-agent-id>] [--json]
+       phm graph export --format mermaid [--from <id>] [--to <id>]
        phm graph node <node-id> [--json]
+       phm graph path <source-id> <target-id> --edge-kind can-message|can-delegate|reviews|routes-to [--max-hops 1..16] [--json]
        phm graph neighbors <node-id> [--direction in|out|both] [--depth 1..4] [--edge-kind can-message|can-delegate|reviews|routes-to] [--json]
 
   nodes       List graph node records.
   node        Retrieve one exact graph node record.
   edges       List graph edge records.
   status      Report graph availability and node/edge counts.
+  cycles      Report cyclic can-delegate components and their edge evidence.
+              The current inventory loader does not establish delegation coverage.
+  export      Export the loaded graph as Mermaid flowchart text.
+              Example: phm graph export --format mermaid > handoff-graph.mmd
+              A small export might contain:
+                flowchart LR
+                  n0["Fleet"]
+                  n1["Lane codex"]
+                  n0 -->|"contains"| n1
+              Limits: 500 nodes (including missing endpoints), 1000 edges,
+              and 256 KiB of UTF-8 output; exceeding a limit fails.
   neighbors   Find a node and its bounded graph neighborhood (default: both, depth 1).
               Returns at most 500 nodes and indicates whether results were truncated.
               Use -- before a node ID that looks like an option (also applies to node).
+  path        Find one directed shortest route in loaded data (default: 8 hops; 500 nodes).
+              Example: phm graph path agent:one agent:two --edge-kind can-message --json
+              Routes are advisory only and do not grant dispatch authority.
   --kind      Filter nodes by agent|engine-account|model|mcp, or edges by
               can-message|can-delegate|reviews|routes-to (exact match).
   --edge-kind Filter neighbors traversal to one exact edge kind (same values as edges --kind).
-  --from      Filter edges by exact source ID; use --from=<id> for option-like IDs.
-  --to        Filter edges by exact destination ID; use --to=<id> for option-like IDs.
+  --format    Required for export; only mermaid is supported.
+  --from      Filter edges (including export) by exact source ID; use --from=<id> for option-like IDs.
+  --to        Filter edges (including export) by exact destination ID; use --to=<id> for option-like IDs.
   --agent     Resolve a bare agent ID from loaded agent metadata. For nodes, include
               the agent and its direct outgoing routes-to targets; for edges,
               include incident edges. Composes with --kind, --from, and --to.
@@ -33,8 +54,8 @@ Exit codes: 0 success/help, 1 unavailable or loader failure, 2 invalid arguments
 Node and neighbors also exit 1 when the node is not found.
 `;
 
-type GraphCommand = 'nodes' | 'node' | 'edges' | 'status' | 'neighbors';
-type ErrorCode = 'GRAPH_USAGE' | 'GRAPH_UNAVAILABLE' | 'GRAPH_LOAD_FAILED' | 'GRAPH_NODE_NOT_FOUND';
+type GraphCommand = 'nodes' | 'node' | 'edges' | 'status' | 'neighbors' | 'export' | 'cycles' | 'path';
+type ErrorCode = 'GRAPH_USAGE' | 'GRAPH_UNAVAILABLE' | 'GRAPH_LOAD_FAILED' | 'GRAPH_NODE_NOT_FOUND' | 'GRAPH_EXPORT_LIMIT';
 const NODE_KINDS = ['agent', 'engine-account', 'model', 'mcp'] as const;
 const EDGE_KINDS = ['can-message', 'can-delegate', 'reviews', 'routes-to'] as const;
 
@@ -43,6 +64,8 @@ interface Options {
   json: boolean;
   help: boolean;
   nodeId: string | null;
+  targetId: string | null;
+  maxHops: number;
   direction: GraphDirection;
   depth: number;
   kind: string | null;
@@ -50,16 +73,18 @@ interface Options {
   from: string | null;
   to: string | null;
   agent: string | null;
+  format: string | null;
 }
 
 function isCommand(value: string): value is GraphCommand {
-  return value === 'nodes' || value === 'node' || value === 'edges' || value === 'status' || value === 'neighbors';
+  return value === 'nodes' || value === 'node' || value === 'edges' || value === 'status' || value === 'neighbors' || value === 'export' || value === 'cycles' || value === 'path';
 }
 
 function parse(args: string[]): Options {
-  const options: Options = { command: null, json: false, help: false, nodeId: null, direction: 'both', depth: 1, kind: null, edgeKind: null, from: null, to: null, agent: null };
+  const options: Options = { command: null, json: false, help: false, nodeId: null, targetId: null, maxHops: 8, direction: 'both', depth: 1, kind: null, edgeKind: null, from: null, to: null, agent: null, format: null };
   let directionSeen = false;
   let depthSeen = false;
+  let maxHopsSeen = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !options.json) options.json = true;
@@ -76,11 +101,20 @@ function parse(args: string[]): Options {
       const value = separator === -1 ? args[++i] : arg.slice(separator + 1);
       if (options.agent !== null || !value || value.startsWith('-')) throw new Error('Invalid --agent filter.');
       options.agent = value;
-    } else if (options.command === 'neighbors' && arg === '--edge-kind' && options.edgeKind === null) {
+    } else if ((options.command === 'neighbors' || options.command === 'path') && arg === '--edge-kind' && options.edgeKind === null) {
       const value = args[++i];
       if (value === undefined || !(EDGE_KINDS as readonly string[]).includes(value)) throw new Error(`Edge kind must be ${EDGE_KINDS.join(', ')}.`);
       options.edgeKind = value;
-    } else if (options.command === 'edges' && /^(--from|--to)(=|$)/.test(arg)) {
+    } else if (options.command === 'path' && arg === '--max-hops' && !maxHopsSeen) {
+      const value = args[++i];
+      if (value === undefined || !/^(?:[1-9]|1[0-6])$/.test(value)) throw new Error('Max hops must be an integer from 1 to 16.');
+      options.maxHops = Number(value);
+      maxHopsSeen = true;
+    } else if (options.command === 'export' && arg === '--format' && options.format === null) {
+      const value = args[++i];
+      if (value !== 'mermaid') throw new Error('Export format must be mermaid.');
+      options.format = value;
+    } else if ((options.command === 'edges' || options.command === 'export') && /^(--from|--to)(=|$)/.test(arg)) {
       const separator = arg.indexOf('=');
       const key = (separator === -1 ? arg.slice(2) : arg.slice(2, separator)) as 'from' | 'to';
       const value = separator === -1 ? args[++i] : arg.slice(separator + 1);
@@ -98,14 +132,19 @@ function parse(args: string[]): Options {
       if (value === undefined || !/^[1-4]$/.test(value)) throw new Error('Depth must be an integer from 1 to 4.');
       options.depth = Number(value);
       depthSeen = true;
+    } else if (options.command === 'path' && !arg.startsWith('-') && (options.nodeId === null || options.targetId === null)) {
+      if (options.nodeId === null) options.nodeId = arg;
+      else options.targetId = arg;
     } else if ((options.command === 'neighbors' || options.command === 'node') && options.nodeId === null && !arg.startsWith('-')) {
       options.nodeId = arg;
     }
     else if (isCommand(arg) && options.command === null) options.command = arg;
     else throw new Error('Invalid graph arguments.');
   }
+  if (!options.help && options.command === 'export' && (options.format !== 'mermaid' || options.json)) throw new Error('Export requires --format mermaid and does not accept --json.');
   if (!options.help && options.command === null) throw new Error('A graph subcommand is required.');
   if (!options.help && (options.command === 'neighbors' || options.command === 'node') && options.nodeId === null) throw new Error('A node ID is required.');
+  if (!options.help && options.command === 'path' && (!options.nodeId || !options.targetId || !options.edgeKind)) throw new Error('Path requires source and target IDs and --edge-kind.');
   return options;
 }
 
@@ -145,6 +184,49 @@ export async function cmdGraph(args: string[]): Promise<number> {
       throw new Error('Invalid graph snapshot');
     }
     const command = options.command!;
+    if (command === 'path') {
+      const route = graphRoutePath(graph, options.nodeId!, options.targetId!, options.edgeKind!, options.maxHops);
+      const result = { schemaVersion: 1, command, sourceId: options.nodeId, targetId: options.targetId,
+        edgeKind: options.edgeKind, maxHops: options.maxHops, ...route,
+        complete: graph.complete ?? null, sources: graph.sources ?? null, issues: graph.issues ?? null };
+      if (options.json) console.log(JSON.stringify(result));
+      else {
+        const message = route.status === 'found' ? `Route found: ${route.nodeIds.join(' -> ')}`
+          : route.status === 'search_limit' ? 'Search limit reached; the route is unknown.'
+            : route.reason === 'missing_endpoint' ? 'A source or target node is missing from loaded data.'
+              : 'No route found in loaded data.';
+        console.log(`${message}\nGraph complete: ${result.complete ?? 'unknown'}; sources: ${JSON.stringify(result.sources)}; issues: ${JSON.stringify(result.issues)}.\nRoutes are advisory only and do not grant dispatch authority.`);
+        if (route.status === 'found') console.log(`Edge evidence: ${JSON.stringify(route.edges)}`);
+      }
+      return route.status === 'found' ? 0 : 1;
+    }
+    if (command === 'cycles') {
+      const components = delegationCycles(graph);
+      const acyclic = components.length ? false : null;
+      if (options.json) {
+        console.log(JSON.stringify({ schemaVersion: 1, command, status: 'ready', components, acyclic,
+          delegationCoverage: 'unknown', complete: graph.complete ?? null,
+          sources: graph.sources ?? null, issues: graph.issues ?? null }));
+      } else {
+        console.log(`Delegation cycles: ${components.length}`);
+        for (const component of components) {
+          console.log(`Agents that may deadlock through delegation: ${component.nodeIds.join(', ')}`);
+          for (const edge of component.edges) console.log(`  ${edge.from} -> ${edge.to} (${edge.id})`);
+        }
+        console.log(`Graph complete: ${graph.complete === undefined ? 'unknown' : graph.complete}; issues: ${graph.issues?.length ?? 'unknown'}.`);
+        console.log('Delegation coverage is unknown; an empty result cannot prove acyclicity.');
+      }
+      return 0;
+    }
+    if (command === 'export') {
+      try {
+        console.log(renderMermaid(graph, { from: options.from, to: options.to }));
+        return 0;
+      } catch (error) {
+        if (error instanceof MermaidLimitError) return fail(options, 'GRAPH_EXPORT_LIMIT', error.message);
+        throw error;
+      }
+    }
     if (command === 'node') {
       const node = graph.nodes.find((record) => record?.id === options.nodeId);
       if (!node) return fail(options, 'GRAPH_NODE_NOT_FOUND', 'Graph node not found.');

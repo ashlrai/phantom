@@ -52,8 +52,9 @@ it('refreshes counts while visible and stops polling when hidden', async () => {
   const view = render(<FleetHubPane visible />);
   await act(async () => {});
   await act(async () => { vi.advanceTimersByTime(5_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  const runsCalls = () => vi.mocked(fetch).mock.calls.filter(([path]) => String(path).endsWith('/fleet/runs'));
+  expect(runsCalls()).toHaveLength(2);
   view.rerender(<FleetHubPane visible={false} />);
   await act(async () => { vi.advanceTimersByTime(10_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(runsCalls()).toHaveLength(2);
 });

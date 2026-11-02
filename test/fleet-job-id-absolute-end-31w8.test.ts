@@ -8,8 +8,8 @@
  * valid (clean) identifiers are still accepted.
  */
 
-import { beforeEach, expect, describe, it } from 'vitest';
-import { getFleetJobDetail, isFleetJobId } from '../../src/core/fleet/runs-job-detail.js';
+import { afterEach, beforeEach, expect, describe, it } from 'vitest';
+import { getFleetJobDetail, isFleetJobId } from '../src/core/fleet/runs-job-detail.js';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

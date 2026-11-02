@@ -20,6 +20,13 @@
  *       the host queue dir's ready.tsv/queue.v1.json/jobs.jsonl plus the
  *       local usage readers. --queue-dir points at a captured queue directory
  *       (fixture). READ-ONLY; never mutates, never contacts a provider.
+ *   fleet usage-audit [--json] [--queue-dir <abs>]
+ *       Usage-motion audit (RQ-PHX-ZEROWASTEAUDIT31): rereads the queue's
+ *       usage-readings.log journal and requires two distinct observations an
+ *       hour apart — latest fresh — before asserting a lane's meter moved.
+ *       An unchanged meter with queued/live work is a proven `incident`
+ *       (exit 1); weak evidence is `insufficient-evidence` (exit 2), never
+ *       healthy. READ-ONLY; never clears holds or launches work.
  *   fleet pause
  *       Engage the global kill switch (setKill(true)) — same effect as
  *       `ashlr daemon stop`'s kill: any running loop halts on its next tick and
@@ -38,10 +45,13 @@ import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig } from '../core/types.js';
 import type { AuditEntry } from '../core/types.js';
 import type { FleetLaneSnapshot, FleetLaneView } from '../core/fleet/lane-console.js';
+import type { UsageMotionAuditView, UsageMotionClassification, UsageMotionLaneView } from '../core/fleet/usage-motion-audit.js';
 import type { FleetStatus } from '../core/fleet/status.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
+import { resolveFleetSubcommand, isModuleNotFound } from './fleet-subcommand-resolve.js';
+import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
 
 const { bold, dim, green, red, yellow, cyan } = makeColors(isTty());
 
@@ -1897,6 +1907,79 @@ async function cmdFleetLanes(rest: string[]): Promise<number> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// fleet usage-audit — RQ-PHX-ZEROWASTEAUDIT31: did each lane's meter move?
+// ---------------------------------------------------------------------------
+
+const USAGE_AUDIT_TAG: Record<UsageMotionClassification, string> = {
+  'incident': 'INCIDENT', 'insufficient-evidence': 'unknown',
+  'reset-observed': 'reset', 'moving': 'moving', 'idle': 'idle',
+};
+
+/**
+ * Render a usage-motion audit as plain (no-color) text. Pure — no I/O.
+ * Names the affected lane(s) and the concrete next step; used-percent
+ * readings are never presented as remaining quota.
+ */
+export function formatUsageMotionAudit(audit: UsageMotionAuditView): string {
+  const lines: string[] = [];
+  lines.push(`Usage motion audit — ${audit.schema} · window ${audit.windowMinutes}m · generated ${relTime(audit.generatedAt)}`);
+  lines.push('Readings are used-percent of each lane\'s metered window — remaining quota is not consumption evidence.');
+  lines.push('');
+  if (audit.lanes.length === 0) {
+    lines.push('  (no lanes observed — every source is missing or empty)');
+  }
+  const COL_TAG = 8;
+  const COL_LANE = Math.max(4, ...audit.lanes.map(l => l.lane.length)) + 2;
+  for (const lane of audit.lanes) {
+    const used = lane.readings === 0 ? 'used —'
+      : lane.readings === 1 ? `used ${lane.pctUsedLast}% (1 reading)`
+      : `used ${lane.pctUsedFirst}%→${lane.pctUsedLast}% over ${lane.observedMinutes}m`;
+    const work = `queue ${lane.queued ?? '—'} live ${lane.live ?? '—'}`;
+    lines.push(`  ${padLane(USAGE_AUDIT_TAG[lane.classification], COL_TAG)} ${padLane(lane.lane, COL_LANE)} ${padLane(used, 30)} ${work}`);
+    if (lane.classification === 'moving' || lane.classification === 'idle') continue;
+    const indent = '  ' + ' '.repeat(COL_TAG + 1 + COL_LANE);
+    lines.push(`${indent}${lane.reason}`);
+    lines.push(`${indent}next: ${lane.nextAction}`);
+  }
+  lines.push('');
+  const j = audit.sources.usageJournal;
+  lines.push(
+    `  sources: ready.tsv ${audit.sources.queue} · queue.v1.json ${audit.sources.queueState}` +
+    ` · usage journal ${j.state}${j.truncated ? ' (truncated)' : ''} (${j.rows} rows${j.dropped ? `, ${j.dropped} dropped` : ''})`,
+  );
+  if (audit.incidents > 0) {
+    lines.push(`  ${audit.incidents} proven incident(s): meter unmoved with work queued — evidence for an operator, not a repair claim.`);
+  }
+  return lines.join('\n');
+}
+
+async function cmdFleetUsageAudit(rest: string[]): Promise<number> {
+  const jsonMode = rest.includes('--json');
+  let queueDir: string | undefined;
+  const at = rest.indexOf('--queue-dir');
+  if (at >= 0) {
+    queueDir = rest[at + 1];
+    if (!queueDir || !isAbsolute(queueDir)) {
+      process.stderr.write(red('error: ') + 'fleet usage-audit: --queue-dir requires an absolute path\n');
+      return 2;
+    }
+  }
+  try {
+    const { auditUsageMotion } = await import('../core/fleet/usage-motion-audit.js');
+    const audit = await auditUsageMotion(queueDir ? { queueDir } : {});
+    if (jsonMode) console.log(JSON.stringify(audit));
+    else console.log(formatUsageMotionAudit(audit));
+    if (audit.incidents > 0) return 1; // proven unmoving meter with work queued
+    const unresolved = audit.lanes.length === 0 ||
+      audit.lanes.some((l: UsageMotionLaneView) => l.classification === 'insufficient-evidence');
+    return unresolved ? 2 : 0;
+  } catch {
+    process.stderr.write(red('error: ') + 'fleet usage-audit failed; check the queue directory\n');
+    return 2;
+  }
+}
+
 export async function cmdFleetWatch(jsonMode: boolean): Promise<number> {
   const cfg = await loadCfg();
 
@@ -2422,6 +2505,8 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   watch:          { allowed: { flags: ['--json'] }, usage: 'ashlr fleet watch [--json]' },
   graph:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'phantom fleet graph [--json] [--queue-dir <abs>]' },
   lanes:          { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'ashlr fleet lanes [--json] [--queue-dir <abs>]' },
+  'usage-audit':  { allowed: { flags: ['--json'], values: ['--queue-dir'] }, usage: 'ashlr fleet usage-audit [--json] [--queue-dir <abs>]' },
+  'lane-models':  { allowed: { flags: ['--json'], values: ['--runs-dir', '--models'] }, usage: 'ashlr fleet lane-models [--json] [--runs-dir <abs>] [--models <abs>]' },
   direction:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet direction [--json]' },
   init:           { allowed: { flags: ['--write'] }, usage: 'ashlr fleet init [--write]' },
   doctor:         { allowed: { flags: ['--json'] }, usage: 'ashlr fleet doctor [--json]' },
@@ -2429,6 +2514,7 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
   oversight:      { allowed: { flags: ['--json'] }, usage: 'ashlr fleet oversight [--json]' },
   'judge-traces': { allowed: { flags: ['--json', '--outcome-only'], values: ['--limit', '--proposal'] }, usage: 'ashlr fleet judge-traces [--limit N] [--proposal <id>] [--outcome-only] [--json]' },
   'judge-health': { allowed: { flags: ['--json', '--degradation'] }, usage: 'ashlr fleet judge-health [--degradation] [--json]' },
+  backlog:        { allowed: { flags: ['--json'], values: ['--repo', '--limit', '--pr', '--exclude-pr', '--merges', '--recuts', '--recut-job'] }, usage: 'ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--pr <n>]... (up to 20 distinct) [--exclude-pr <n>]... [--merges <n>] [--recuts <n>] [--json] [--recut-job <n>]' },
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
@@ -2448,15 +2534,32 @@ export async function cmdFleet(args: string[]): Promise<number> {
     const { cmdFleetJobRead } = await import('./fleet-job-read.js');
     return cmdFleetJobRead(args.slice(1));
   }
-  if (args[0] === 'workers') {
-    const { cmdFleetWorkers } = await import('./fleet-workers.js');
-    return cmdFleetWorkers(args.slice(1));
-  }
   const [sub, ...rest] = args;
 
   if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
     printFleetHelp();
     return 0;
+  }
+
+  // Convention verbs own their help and flags; built-in switch cases keep
+  // their existing help and option checks below.
+  if (!Object.hasOwn(FLEET_VERB_OPTIONS, sub)
+    && !['pause', 'resume', 'grok-usage', 'automerge-canary', 'xreview', 'receipt', 'evidence', 'optimize-prompt'].includes(sub)) {
+    // New fleet subcommands need no line here: ship
+    // src/cli/fleet-<name>.ts exporting
+    // cmdFleet<PascalName>(args: string[]): Promise<number>.
+    const resolved = resolveFleetSubcommand(sub);
+    const loader = resolved ? FLEET_SUBCOMMAND_LOADERS[sub] : undefined;
+    if (resolved && loader) {
+      let loaded: Record<string, unknown> | undefined;
+      try {
+        loaded = await loader();
+      } catch (err) {
+        if (!isModuleNotFound(err, resolved.module)) throw err;
+      }
+      const fn = loaded?.[resolved.exportName];
+      if (typeof fn === 'function') return await fn(rest);
+    }
   }
 
   // `fleet <verb> --help` prints usage and never runs the verb: without this,
@@ -2509,6 +2612,8 @@ export async function cmdFleet(args: string[]): Promise<number> {
     }
     case 'lanes':
       return cmdFleetLanes(rest);
+    case 'usage-audit':
+      return cmdFleetUsageAudit(rest);
     case 'direction':
       return cmdFleetDirection(rest);
     case 'init':
@@ -2543,10 +2648,15 @@ export async function cmdFleet(args: string[]): Promise<number> {
       return cmdFleetJudgeHealth(rest);
     case 'optimize-prompt':
       return cmdFleetOptimizePrompt(rest);
-    default:
+    case 'backlog': {
+      const { cmdFleetBacklog } = await import('./fleet-backlog.js');
+      return cmdFleetBacklog(rest);
+    }
+    default: {
       process.stderr.write(red('error: ') + `unknown fleet subcommand: ${sub}\n`);
       printFleetHelp();
       return 2;
+    }
   }
 }
 
@@ -2556,6 +2666,7 @@ function printFleetHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
+  console.log('    ashlr fleet <name>   # any src/cli/fleet-<name>.ts module (see fleet-subcommand-resolve.ts)');
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
@@ -2563,8 +2674,16 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet lanes [--json] [--queue-dir <abs>]`);
   console.log(`                          ${cyan('# per-lane engineering console: credit left, queue depth,')}`);
   console.log(`                          ${cyan('#   live jobs, merges/hour — read-only (RQ-PHANTOM-ENG-CONSOLE)')}`);
+  console.log(`    ashlr fleet class-share [--hours N] [--json]`);
+  console.log(`    ashlr fleet usage-audit [--json] [--queue-dir <abs>]`);
+  console.log(`                          ${cyan('# did each lane\'s usage meter move this hour? unmoving meter')}`);
+  console.log(`                          ${cyan('#   + queued work = incident (read-only, RQ-PHX-ZEROWASTEAUDIT31)')}`);
+  console.log(`    ashlr fleet lane-models [--json] [--runs-dir <abs>] [--models <abs>]`);
+  console.log(`                          ${cyan('# effective model per lane+tier; flags a lane whose last launch')}`);
+  console.log(`                          ${cyan('#   ran another model (read-only, RQ-PHX-LANEMODELVIEW31)')}`);
   console.log(`    phm fleet runs [--json]       ${cyan('# host runs and lane state')}`);
   console.log(`    phm fleet workers [--lane ID] [--repo NAME] [--json] ${cyan('# live host processes')}`);
+  console.log(`    phm fleet wait-jobs --job ID --timeout-ms N [--interval-ms N] --json`);
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
@@ -2578,6 +2697,7 @@ function printFleetHelp(): void {
   console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
+  console.log(`    phm fleet canary-ladder [--json] ${cyan('# per-repo auto-merge rung report (read-only)')}`);
   console.log(`    ashlr fleet xreview run|decide --request <file> [--head <sha>] [--json]`);
   console.log(`                          ${cyan('# cross-model review on another pool + SHA-bound merge decision')}`);
   console.log(`    ashlr fleet evidence doctor <source> [--deep] [--json]`);
@@ -2592,6 +2712,8 @@ function printFleetHelp(): void {
   console.log(`                          ` + cyan('# judge calibration: kappa + dark-current + degradation (M145)'));
   console.log(`    ashlr fleet optimize-prompt --target judge|strategist [--rounds N] [--dry-run]`);
   console.log(`                          ` + cyan('# GEPA offline prompt optimizer — outputs candidate to ~/.ashlr/optimizer/ (M150)'));
+  console.log(`    ashlr fleet backlog [--repo <owner/name>] [--limit <n>] [--json]`);
+  console.log(`                          ` + cyan('# read-only triage of open PRs: ready/behind/conflicted/waiting, never merges'));
   console.log('');
 }
 

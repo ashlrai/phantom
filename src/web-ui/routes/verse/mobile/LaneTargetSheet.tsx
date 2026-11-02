@@ -1,8 +1,10 @@
 import { useId, useState } from 'react';
-import { postLaneTarget } from '../ops/lane-targets-queries.js';
+import { refetchQuery } from '../../../data/cache.js';
+import { laneTargetsQuery, postLaneTarget } from '../ops/lane-targets-queries.js';
 import { describeActionError, useGuardState } from '../shell/guard-store.js';
 import { pauseTransition, resumeTransition } from '../fleet-lanes/lane-pause-model.js';
-import { clampTarget, confirmText, pauseState, readPauseRecord, writePauseRecord, type MobileLaneRow } from './lane-target-model.js';
+import { releaseLaneHold } from './fleet-actions.js';
+import { clampTarget, confirmText, holdClearsIn, holdReleasable, pauseState, readPauseRecord, writePauseRecord, type MobileLaneRow } from './lane-target-model.js';
 import { runMobileAction } from './mobile-actions.js';
 import { canShowActions, useMobile } from './mobile-context.js';
 import { showMobileToast } from './mobile-toast.js';
@@ -25,8 +27,30 @@ export function LaneTargetSheet({ row, open, onClose, onDone }: LaneTargetSheetP
   const { permissions, reachability } = useMobile();
   const target = clampTarget(Number(draft), row.floor, row.ceiling);
   const pause = pauseState(row, readPauseRecord());
-  const disabled = !row.writable || !canShowActions(permissions) || busy
-    || reachability === 'offline' || reachability === 'unreachable';
+  const offline = reachability === 'offline' || reachability === 'unreachable';
+  const disabled = !row.writable || !canShowActions(permissions) || busy || offline;
+  // A held lane is never writable, so releasing it needs its own gate.
+  const releaseDisabled = !canShowActions(permissions) || busy || offline;
+  const releaseHold = () => {
+    if (releaseDisabled) return;
+    runMobileAction({
+      title: `Release the ${row.lane} hold?`,
+      consequences: `The dispatcher can launch ${row.lane} workers again at its next tick.`,
+      confirmLabel: 'Release hold',
+      confirm: false,
+      run: async () => {
+        setBusy(true);
+        try { await releaseLaneHold(row.lane); }
+        finally { setBusy(false); }
+      },
+      success: `${row.lane} hold released.`,
+      onDone: () => {
+        void refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true);
+        onDone();
+      },
+    });
+  };
+  const clears = row.heldUntil ? holdClearsIn(row.heldUntil, Date.now()) : null;
   const submit = () => {
     if (disabled || target === row.target) return;
     const text = confirmText(row.lane, row.target ?? row.floor, target);
@@ -85,8 +109,12 @@ export function LaneTargetSheet({ row, open, onClose, onDone }: LaneTargetSheetP
         {pause.paused ? `Resume lane · back to ${pause.resumeTarget}` : 'Pause lane'}
       </Button> : null}
       <p>Floor {row.floor} · Ceiling {row.ceiling}</p>
-      {row.held ? <p>Held: {row.heldReason || 'reason unavailable'}. Targets can't change until it clears.</p>
-        : !row.writable ? <p>Lane targets are not in this build. Update Phantom on your Mac.</p> : null}
+      {row.held ? <>
+        <p>Held: {row.heldReason || 'reason unavailable'}{clears ? ` · clears ${clears}` : ''}{row.changedBy ? ` · placed by ${row.changedBy}` : ''}. Targets can't change until it clears.</p>
+        {holdReleasable(row)
+          ? <Button disabled={releaseDisabled} onClick={releaseHold}>Release hold</Button>
+          : <p className={ui.muted}>Placed by hand; release it from the Mac.</p>}
+      </> : !row.writable ? <p>Lane targets are not in this build. Update Phantom on your Mac.</p> : null}
     </BottomSheet>
   );
 }

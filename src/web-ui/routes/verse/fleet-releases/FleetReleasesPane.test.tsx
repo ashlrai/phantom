@@ -72,18 +72,21 @@ it('shows errors and preserves the last reading on a failed refresh', async () =
 
 it('polls only while visible', async () => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => Response.json(fixture()));
+  const fetcher = vi.fn(async (_url: string) => Response.json(fixture()));
   vi.stubGlobal('fetch', fetcher);
   const view = render(<FleetReleasesPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetReleasesPane {...props} />); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(3);
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(fetcher).toHaveBeenCalledTimes(5);
+  await act(async () => { await vi.advanceTimersByTimeAsync(240_000); });
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/ci-runs'))).toHaveLength(2);
   view.rerender(<FleetReleasesPane {...props} visible={false} />);
+  const callsWhenHidden = fetcher.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(fetcher).toHaveBeenCalledTimes(callsWhenHidden);
 });
 
 const prFixture = () => ({ v: 1, generatedAt: '2026-10-31T12:00:00Z', sourceState: 'healthy', repos: [

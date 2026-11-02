@@ -70,6 +70,11 @@ it('retains the last reading when a refresh fails', async () => {
 });
 
 it('polls only while pane, section and document are visible', async () => {
+  const expectReads = (count: number) => {
+    for (const path of ['/api/verse/runs-history?hours=24', '/api/verse/fleet/runs', '/api/verse/runs-history/lane-truth', '/api/verse/fleet/runs/lane-models']) {
+      expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === path)).toHaveLength(count);
+    }
+  };
   vi.useFakeTimers();
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(fixture)));
   let visibility = 'visible';
@@ -77,16 +82,16 @@ it('polls only while pane, section and document are visible', async () => {
   const view = render(<SectionVisibilityProvider visible><FleetCapacityPane visible /></SectionVisibilityProvider>);
   await act(async () => {});
   await act(async () => { vi.advanceTimersByTime(60_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expectReads(2);
   visibility = 'hidden'; act(() => { document.dispatchEvent(new Event('visibilitychange')); });
   await act(async () => { vi.advanceTimersByTime(120_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expectReads(2);
   visibility = 'visible'; await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expectReads(3);
   view.rerender(<SectionVisibilityProvider visible={false}><FleetCapacityPane visible /></SectionVisibilityProvider>);
   await act(async () => { vi.advanceTimersByTime(120_000); });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expectReads(3);
   view.rerender(<SectionVisibilityProvider visible><FleetCapacityPane visible={false} /></SectionVisibilityProvider>);
   await act(async () => { vi.advanceTimersByTime(120_000); });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expectReads(3);
 });

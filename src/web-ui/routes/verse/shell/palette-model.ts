@@ -13,7 +13,9 @@
  * catalog's order breaks ties — so "stop" puts "Stop running chats…" above a
  * chat that merely contains an s, t, o and p.
  */
-import { laneItemTitle, type PaletteLane } from './palette-lanes.js';
+import { backlogItemKeywords, backlogItemTitle, type PaletteBacklogItem } from './palette-backlog.js';
+import { phoneItemTitle, phoneItemSubtitle, type PalettePhone } from './palette-phone.js';
+import { laneItemTitle, releaseItemTitle, type PaletteLane } from './palette-lanes.js';
 import { prLabel, safePrUrl } from '../fleet-job-log/worker-log-model.js';
 import type { VerseProject, VerseSeat, VerseSession } from '../../../data/api-types.js';
 import {
@@ -34,14 +36,14 @@ import {
   type WorkbenchCommand,
 } from './command-catalog.js';
 
-export type PaletteItemKind = 'pane' | 'lane' | 'worker' | 'needs-you' | 'chat' | 'command' | 'seat' | 'project' | 'argument';
+export type PaletteItemKind = 'pane' | 'lane' | 'worker' | 'needs-you' | 'chat' | 'command' | 'seat' | 'project' | 'argument' | 'backlog';
 
 export interface PaletteItem {
   /** Unique across the whole list (React key + active-descendant id). */
   key: string;
   kind: PaletteItemKind;
   workerState?: PaletteWorker['state'];
-  group: PaletteGroupId | 'recent' | 'lanes';
+  group: PaletteGroupId | 'recent' | 'lanes' | 'backlog';
   title: string;
   /** Muted second part of the row. */
   subtitle: string | null;
@@ -61,7 +63,11 @@ export interface PaletteItem {
     | { kind: 'needs-you'; itemId: string }
     | { kind: 'pane'; paneId: string }
     | { kind: 'worker'; job: string; url?: string; selectLog?: boolean }
+    | { kind: 'backlog'; url: string }
+    | { kind: 'copy-text'; text: string }
+    | { kind: 'open-phone'; url: string }
     | { kind: 'lane'; lane: PaletteLane }
+    | { kind: 'lane-release'; lane: PaletteLane }
     | { kind: 'chat'; sessionId: string }
     | { kind: 'command'; commandId: string }
     | { kind: 'seat'; seatId: string; label: string }
@@ -83,6 +89,8 @@ export interface PaletteInput {
   panes?: ReadonlyArray<{ id: string; title: string; keywords?: readonly string[] }>;
   workers?: readonly PaletteWorker[];
   lanes?: readonly PaletteLane[];
+  backlog?: readonly PaletteBacklogItem[];
+  phone?: PalettePhone | null;
   needsYou: readonly NeedsYouItem[];
   running: readonly VerseActivityRunning[];
   sessions: readonly VerseSession[];
@@ -93,27 +101,30 @@ export interface PaletteInput {
   now?: number;
 }
 
-export const GROUP_LABEL: Readonly<Record<PaletteGroupId | 'recent' | 'lanes', string>> = {
+export const GROUP_LABEL: Readonly<Record<PaletteGroupId | 'recent' | 'lanes' | 'backlog', string>> = {
   ...(Object.fromEntries(PALETTE_GROUPS.map((g) => [g.id, g.label])) as Record<PaletteGroupId, string>),
   recent: 'Recent',
   lanes: 'Lanes',
+  backlog: 'Merge backlog',
 };
 
-const GROUP_ORDER: readonly (PaletteGroupId | 'recent' | 'lanes')[] = [
+const GROUP_ORDER: readonly (PaletteGroupId | 'recent' | 'lanes' | 'backlog')[] = [
   'needs-you',
   'recent',
   'lanes',
+  'backlog',
   ...PALETTE_GROUPS.map((g) => g.id).filter((id) => id !== 'needs-you'),
 ];
 
 /** Per-group caps with a query (the palette is for jumping, not browsing). */
-const GROUP_CAP: Readonly<Record<PaletteGroupId | 'recent' | 'lanes', number>> = {
+const GROUP_CAP: Readonly<Record<PaletteGroupId | 'recent' | 'lanes' | 'backlog', number>> = {
   'needs-you': 5,
   recent: PALETTE_RECENT_LIMIT,
   panes: 8,
   chats: 8,
   workers: 8,
   lanes: 50,
+  backlog: 21,
   actions: 8,
   'go-to': 6,
   'seats-apps': 5,
@@ -220,7 +231,7 @@ function projectName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-export function commandItem(command: WorkbenchCommand, platform: KeyPlatform, group: PaletteGroupId | 'recent' | 'lanes'): PaletteItem {
+export function commandItem(command: WorkbenchCommand, platform: KeyPlatform, group: PaletteGroupId | 'recent' | 'lanes' | 'backlog'): PaletteItem {
   const chord = command.keys[0];
   return {
     key: `${group}:cmd:${command.id}`,
@@ -270,12 +281,52 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     });
   }
 
+  if (input.phone?.phoneUrl) {
+    const phone = input.phone;
+    items.push({
+      key: 'phone:copy-url', kind: 'command', group: 'lanes',
+      title: phoneItemTitle(phone), subtitle: phoneItemSubtitle(phone), shortcut: null,
+      monogram: null, engine: null, keywords: ['phone', 'mobile', 'remote', 'url', 'qr'],
+      argument: null, tone: phone.pending > 0 ? 'warn' : 'neutral',
+      payload: { kind: 'copy-text', text: phone.phoneUrl! },
+    });
+    items.push({
+      key: 'phone:open-url', kind: 'command', group: 'lanes',
+      title: 'Open phone URL', subtitle: phoneItemSubtitle(phone), shortcut: null,
+      monogram: null, engine: null, keywords: ['phone', 'mobile', 'remote', 'url'],
+      argument: null, tone: phone.pending > 0 ? 'warn' : 'neutral',
+      payload: { kind: 'open-phone', url: phone.phoneUrl! },
+    });
+  }
+
   for (const lane of input.lanes ?? []) {
     items.push({
       key: `lane:${lane.lane}`, kind: 'lane', group: 'lanes',
       title: laneItemTitle(lane), subtitle: null, shortcut: null,
       monogram: null, engine: null, keywords: ['lane', 'pause', 'resume', lane.lane],
       argument: null, tone: 'neutral', payload: { kind: 'lane', lane },
+    });
+    if (lane.held) items.push({
+      key: `lane-release:${lane.lane}`, kind: 'lane', group: 'lanes',
+      title: releaseItemTitle(lane), subtitle: null, shortcut: null,
+      monogram: null, engine: null, keywords: ['release', 'hold', 'unhold', lane.lane],
+      argument: null, tone: 'neutral', payload: { kind: 'lane-release', lane },
+    });
+  }
+
+  const backlog = input.backlog ?? [];
+  if (backlog.length > 0) {
+    items.push({
+      key: 'backlog:summary', kind: 'pane', group: 'backlog',
+      title: `Merge backlog: ${backlog.length} stuck (recut ${backlog.filter(item => item.action === 'recut').length}) · open Merges pane`,
+      subtitle: null, shortcut: null, monogram: null, engine: null,
+      keywords: ['merge', 'backlog', 'stuck'], argument: null, tone: 'neutral',
+      payload: { kind: 'pane', paneId: 'fleet-merges' },
+    });
+    for (const item of backlog) items.push({
+      key: `backlog:${item.number}`, kind: 'backlog', group: 'backlog', title: backlogItemTitle(item),
+      subtitle: null, shortcut: null, monogram: null, engine: null, keywords: backlogItemKeywords(item),
+      argument: null, tone: item.state === 'DIRTY' ? 'warn' : 'neutral', payload: { kind: 'backlog', url: item.url },
     });
   }
 
@@ -400,7 +451,7 @@ export function argumentItems(kind: CommandArgumentKind, input: PaletteInput): P
 }
 
 export interface PaletteGroup {
-  id: PaletteGroupId | 'recent' | 'lanes';
+  id: PaletteGroupId | 'recent' | 'lanes' | 'backlog';
   label: string;
   items: PaletteItem[];
 }
@@ -434,7 +485,7 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
   const only: PaletteGroupId | null = prefix ? PALETTE_PREFIXES[prefix] : null;
   const trimmed = query.trim();
 
-  const groups = new Map<PaletteGroupId | 'recent' | 'lanes', Array<{ item: PaletteItem; score: number; order: number }>>();
+  const groups = new Map<PaletteGroupId | 'recent' | 'lanes' | 'backlog', Array<{ item: PaletteItem; score: number; order: number }>>();
   const push = (item: PaletteItem, score: number, order: number) => {
     const list = groups.get(item.group) ?? [];
     list.push({ item, score, order });
@@ -472,7 +523,7 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
     // Chats: running first (SPEC-310C §1), then by match. Everything else by
     // match, with catalog / recency order breaking ties.
     const runRank = (e: { item: PaletteItem }) => id === 'workers' ? (e.item.workerState === 'queued' ? 1 : e.item.workerState === 'merged' ? 2 : 0) : (id === 'chats' && e.item.tone === 'running' ? 0 : 1);
-    list.sort((a, b) => runRank(a) - runRank(b) || b.score - a.score || a.order - b.order);
+    list.sort((a, b) => id === 'backlog' ? a.order - b.order : runRank(a) - runRank(b) || b.score - a.score || a.order - b.order);
     const cap = (id === 'panes' && trimmed !== '') || prefix && (id !== 'workers' || list.some(e => e.item.workerState !== undefined)) ? 50 : GROUP_CAP[id];
     const shown = list.slice(0, cap);
     for (const e of shown) flatScores.push(e.score);

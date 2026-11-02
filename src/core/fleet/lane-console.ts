@@ -55,9 +55,10 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
+import { readLaneTargets } from './runs-lane-targets.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.lanes.v1 wire shape.
@@ -108,12 +109,22 @@ export interface FleetLaneView {
   /** Unique merged PRs (or legacy job-level merges) in the trailing window per hour. */
   mergesPerHour: number | null;
   credit: FleetLaneCreditView;
+  /** Null when no trustworthy hold record is available for this lane. */
+  hold: {
+    held: boolean;
+    reason: string | null;
+    until: string | null;
+    by: 'autobackoff' | 'manual' | null;
+    since: string | null;
+  } | null;
 }
 
 export interface FleetLaneSnapshot {
   schema: 'fleet.lanes.v1';
   generatedAt: string;
   mergeWindowMinutes: number;
+  holdSource: 'healthy' | 'missing' | 'degraded';
+  notes: string[];
   /** Per-source health + counts. Basenames only — absolute paths never leave the host. */
   sources: {
     queue: { state: FleetLaneSourceState; file: string; rows: number; dropped: number };
@@ -634,13 +645,27 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   const budgets = await readPoolBudgets(budgetsDir, now);
   sources.budgets.state = budgets.sourceState;
 
-  // ── 6. fold into lanes ────────────────────────────────────────────────────
+  // ── 6. hold records — independent of the other lane sources ──────────────
+  let holdSource: FleetLaneSnapshot['holdSource'] = 'degraded';
+  let holdRows: Awaited<ReturnType<typeof readLaneTargets>>['lanes'] = [];
+  try {
+    const targets = await readLaneTargets({ runsDir: dirname(queueDir) });
+    holdSource = targets.sourceState;
+    if (holdSource === 'healthy') holdRows = targets.lanes;
+  } catch {
+    // A failed hold read must not prevent the rest of the snapshot.
+  }
+  const notes = holdSource === 'healthy' ? [] : [`holds: ${holdSource}`];
+  const holds = new Map(holdRows.map(row => [row.lane, row]));
+
+  // ── 7. fold into lanes ────────────────────────────────────────────────────
   const cutoff = now.getTime() - mergeWindowMs;
   const lanes = new Set<string>([
     ...usage.latest.keys(),
     ...queueRows.map(r => r.pool),
     ...(queueState ? queueState.jobPool.values() : []),
     ...ledgerEvents.map(e => e.pool).filter((p): p is string => p !== null),
+    ...holds.keys(),
   ]);
   for (const pool of Object.keys(budgets.pools)) lanes.add(pool);
 
@@ -694,7 +719,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     const mergeCount = mergeCounts.get(lane) ?? 0;
     const mergesPerHour = !sawMergeEvidence ? null
       : Math.round((mergeCount / (mergeWindowMs / 3_600_000)) * 100) / 100;
-    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest) };
+    const row = holds.get(lane);
+    const hold: FleetLaneView['hold'] = row ? {
+      held: row.held,
+      reason: row.heldReason,
+      until: row.heldUntil,
+      by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
+      since: row.lastChange,
+    } : null;
+    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest), hold };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.
@@ -708,6 +741,8 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     schema: 'fleet.lanes.v1',
     generatedAt: now.toISOString(),
     mergeWindowMinutes: Math.round(mergeWindowMs / 60_000),
+    holdSource,
+    notes,
     sources,
     lanes: views,
   };

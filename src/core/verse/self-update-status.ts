@@ -27,9 +27,10 @@ function repoRoot(): string | null {
 }
 
 const require = createRequire(import.meta.url);
+const packageVersionPattern = /^[0-9][0-9A-Za-z.+-]{0,63}$/;
 function readPackageVersion(root: string): string | null {
   const pkg = require(join(root, 'package.json')) as { version?: unknown };
-  return typeof pkg.version === 'string' && /^[0-9][0-9A-Za-z.+-]{0,63}$/.test(pkg.version) ? pkg.version : null;
+  return typeof pkg.version === 'string' && packageVersionPattern.test(pkg.version) ? pkg.version : null;
 }
 
 function statFetchHead(root: string): Date | null {
@@ -56,6 +57,12 @@ const runGit: NonNullable<SelfUpdateDeps['runGit']> = (args, cwd) => new Promise
   }, (error, stdout) => done({ code: error ? 1 : 0, stdout }));
 });
 
+let processHeadSha: string | null = null;
+
+export function resetProcessHeadShaForTests(): void {
+  processHeadSha = null;
+}
+
 export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<OpsSelfUpdateWithLastApply> {
   const now = (deps.now ?? Date.now)();
   const uptimeSeconds = process.uptime();
@@ -63,8 +70,8 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
   try { lastApply = (deps.readLastApply ?? readSelfUpdateLastApply)(); } catch { /* History is advisory. */ }
   const result: OpsSelfUpdateWithLastApply = {
     lastApply, v: 1, generatedAt: new Date(now).toISOString(), sourceState: 'healthy',
-    installedVersion: null, repoRoot: false, headSha: null, headAt: null, originSha: null,
-    branch: null, behind: null, ahead: null, dirty: null, lastFetchAt: null,
+    installedVersion: null, candidateVersion: null, repoRoot: false, headSha: null, processHeadSha, headAt: null, originSha: null,
+    branch: null, behindSubjects: null, behind: null, ahead: null, dirty: null, lastFetchAt: null,
     processStartedAt: new Date(now - uptimeSeconds * 1000).toISOString(), uptimeSeconds, pid: process.pid,
     canFastForward: null,
   };
@@ -87,16 +94,38 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
     return null;
   };
   const sha = (text: string) => /^[a-f0-9]{40,64}$/.test(text);
-  const [head, at, origin, branch, counts, status] = await Promise.all([
+  const [head, at, origin, branch, counts, status, candidate] = await Promise.all([
     git(['rev-parse', 'HEAD'], sha),
     git(['show', '-s', '--format=%cI', 'HEAD'], (s) => /^\d{4}-\d\d-\d\dT/.test(s) && Number.isFinite(Date.parse(s))),
     git(['rev-parse', 'origin/master'], sha),
     git(['rev-parse', '--abbrev-ref', 'HEAD'], (s) => /^[A-Za-z0-9._/-]{1,200}$/.test(s)),
     git(['rev-list', '--left-right', '--count', 'HEAD...origin/master'], (s) => /^\d+\s+\d+$/.test(s) && s.split(/\s+/).every((n) => Number.isSafeInteger(Number(n)))),
     git(['status', '--porcelain'], () => true),
+    (async (): Promise<string | null> => {
+      try {
+        const out = await (deps.runGit ?? runGit)(['show', 'origin/master:package.json'], root);
+        if (out.code !== 0) return null;
+        const pkg: unknown = JSON.parse(out.stdout);
+        return pkg !== null && typeof pkg === 'object' && 'version' in pkg
+          && typeof pkg.version === 'string' && packageVersionPattern.test(pkg.version) ? pkg.version : null;
+      } catch { return null; } // Candidate metadata is advisory; preserve the other probes' source state.
+    })(),
   ]);
-  result.headSha = head; result.headAt = at; result.originSha = origin; result.branch = branch;
+  if (processHeadSha === null && head !== null && /^[a-f0-9]{40}$/.test(head)) processHeadSha = head;
+  result.headSha = head; result.processHeadSha = processHeadSha; result.headAt = at; result.originSha = origin; result.branch = branch;
   if (counts !== null) [result.ahead, result.behind] = counts.split(/\s+/).map(Number) as [number, number];
+  result.candidateVersion = result.behind !== null && result.behind > 0 ? candidate : null;
+  if (result.behind !== null && result.behind > 0) {
+    try {
+      const out = await (deps.runGit ?? runGit)(['log', '--format=%s', '-n', '5', 'HEAD..origin/master'], root);
+      if (out.code === 0) {
+        const subjects = out.stdout.split('\n').slice(0, 5)
+          .map((subject) => subject.replace(/[\p{Cc}\p{Cf}]/gu, '').trim().slice(0, 120))
+          .filter(Boolean);
+        result.behindSubjects = subjects.length > 0 ? subjects : null;
+      }
+    } catch { /* Commit subjects are advisory; preserve the status probes. */ }
+  }
   result.dirty = status === null ? null : status.length > 0;
   if (result.behind !== null && result.ahead !== null && result.dirty !== null) {
     result.canFastForward = result.behind > 0 && result.ahead === 0 && result.dirty === false;

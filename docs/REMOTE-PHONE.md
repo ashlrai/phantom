@@ -29,6 +29,55 @@ The gateway is **off by default**. For full-time desktop and phone use, the inst
 
 To disable the phone gateway, rename or remove `~/.ashlr/verse-remote.json`, then quit and reopen Phantom. Confirm the gateway port has closed; the desktop Phantom window should still work. A sidecar crash restart also re-reads the file, so a removed config stays disabled. Keep the file private while it is renamed or stored as a backup. For a one-off CLI test instead of the desktop app, quit Phantom first and run `ashlr verse --remote-config /absolute/path/to/private-config.json`; stop that process before reopening Phantom, since both default to main port 7777.
 
+
+## What the phone can see and do
+
+The phone shell URL is the gateway's public origin followed by `/verse/m`, served by `src/core/web/remote-gateway.ts`.
+
+**Phone screens**
+
+- **Home** — seat count, budget status, and a button to open the live fleet bus.
+- **Fleet** — fleet switches, lanes, and holds; read fleet activity and live bus.
+- **Runs** — fleet runs list and current state.
+- **Inbox** — fleet inbox messages with optional source filter.
+- **Leader** — leader threads, directives, resources, and unanswered questions.
+- **Needs-you** — tasks awaiting your approval: session cancellations, task dismissals, agent plan decisions.
+- **Workers** — worker status, live bus output, and telling workers things.
+- **Agents** — your agent list and pending agent plan approvals.
+- **Agent detail** — a transcript of a single agent's turn history.
+- **New agent** — create a new agent and kick off its plan.
+- **More** — device management, invitations, and account settings.
+
+**Read routes** (every path the phone gateway may read through `GET`)
+
+| Route | Description |
+| --- | --- |
+| `/api/verse/bootstrap` | Server bootstrap retrieves startup configuration |
+| `/api/verse/activity` | Activity feed streams recent system updates |
+| `/api/verse/sessions` | Session list displays currently open sessions |
+| `/api/verse/control` | Control endpoint returns current gateway settings |
+| `/api/verse/fleet/live` | Fleet live shows currently active fleet members |
+| `/api/verse/fleet/grok-ultra` | Fleet grok ultra handles specialized computation queries |
+| `/api/verse/authority` | Authority endpoint returns current permission details |
+| `/api/verse/budget` | Budget status shows remaining token allowance |
+| `/api/verse/seats` | Seat count returns currently available seat information |
+| `/api/verse/session-meta` | Session metadata provides detailed session information |
+| `/api/verse/cloud` | Cloud status returns current service availability |
+| `/api/verse/leader` | Leader thread list shows currently active threads |
+| `/api/verse/leader/directives` | Leader directives retrieves current system directives |
+| `/api/verse/leader/resources` | Leader resources lists currently available resources |
+| `/api/verse/cloud/previews` | Cloud task previews shows recent preview information |
+| `/api/verse/devin/previews` | Devin task previews shows recent preview information |
+| `/api/verse/fleet/runs` | Fleet runs list shows current active runs |
+| `/api/verse/fleet/live/bus` | Fleet live bus streams real-time status updates |
+| `/api/verse/fleet/live/queue` | Fleet live queue shows currently pending items |
+| `/api/verse/fleet/control/switches` | Fleet switches manages toggleable fleet controls |
+| `/api/verse/fleet/control/lanes` | Fleet lanes manages lane routing assignments |
+| `/api/verse/fleet/control/holds` | Fleet holds manages fleet hold operations |
+| `/api/verse/release-pr` | Release pull requests handles release pull requests |
+
+An `act` device may post fleet inbox messages, toggle fleet switches, update lanes, release fleet holds, submit leader threads and directives, answer leader questions, cancel sessions, terminate sessions, land or close or dismiss cloud and Devin tasks, plan agents, manage queues, and use the release-pr endpoint — all paths from `validateRemoteMutation` in `src/core/web/remote-gateway-policy.ts`. Device approval, invitation, and revocation never pass through the gateway; they operate through a local Unix socket on the Mac.
+
 ## Mac availability and limits
 
 The Mac must be awake and online, and the installed Phantom app must remain running, for live reads and actions. Use AC power and verify the app restarts after login if that is part of the intended daily setup. A separate `ashlr verse` LaunchAgent on port 7777 conflicts with the desktop-owned server and must be disabled for this mode. Supervise `cloudflared` separately after Access is active; on this Mac it uses the `ai.ashlr.verse-cloudflared` user LaunchAgent. A `caffeinate -i -s` process can prevent idle system sleep on AC, but battery behavior and a closed lid still require a real acceptance check. The existing Phantom daemon's `keepAwake` setting does not supervise the desktop app or phone gateway.
