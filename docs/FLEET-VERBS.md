@@ -15,6 +15,7 @@
 | dead-heads | `src/cli/fleet-dead-heads.ts` | Read-only report; never edits queue state or launches jobs | no |
 | dispatch-summary | `src/cli/fleet-dispatch-summary.ts` | Read-only dispatch intent rollup; never writes and never contacts a provider | no |
 | dirty-landed | `src/cli/fleet-dirty-landed.ts` | Read-only landed / partly-landed / needs-recut / unknown class per open conflicting PR; scratch git objects in a temporary bare repo | no |
+| disk | `src/cli/fleet-disk.ts` | Read-only disk-pressure view: free-GB trend from LEADER rows in the last 12 hours plus the ten largest folders under the runs dir; unread sources print unknown | no |
 | drip | `src/cli/fleet-drip.ts` | Read-only open Phantom PRs vs the limit of 250, finished jobs waiting behind a `queue/run/<job>.phdrip` marker and the oldest marker age; unread sources print unknown | no |
 | edit-collisions | `src/cli/fleet-edit-collisions.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |
 | grok-usage | `src/cli/fleet-grok-usage.ts` | Reads Grok usage metrics from a configured source | no |
