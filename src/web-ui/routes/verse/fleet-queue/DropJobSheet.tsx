@@ -10,17 +10,13 @@ import { fleetSupplyQuery } from '../fleet-supply/fleet-supply-queries.js';
 import { draftBytes, lanes, outcomeText, suggestId, tiers, validateDraft, type DropJobDraft } from './drop-job-model.js';
 import { dropJobsQuery, postDropJob } from './drop-job-queries.js';
 import { dropJobPreflight, laneLine } from './drop-job-preflight.js';
+import { dropJobDraftStorageKey, readDropJobDraftStorage } from './drop-job-sheet-store.js';
 import { laneHoldsQuery } from './queue-holds-model.js';
-const storageKey = 'phantom.drop-job-draft.v1';
+const storageKey = dropJobDraftStorageKey;
 function restore(): DropJobDraft {
-  const empty = { id: '', lane: 'codex-personal', tier: 'mid', body: '' };
-  try {
-    const raw: unknown = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null');
-    if (raw && typeof raw === 'object' && Object.keys(empty).every(key => key in raw && typeof (raw as Record<string, unknown>)[key] === 'string')) return raw as DropJobDraft;
-  } catch { /* Storage may be unavailable. */ }
-  return empty;
+  return readDropJobDraftStorage() ?? { id: '', lane: 'codex-personal', tier: 'mid', body: '' };
 }
-export function DropJobSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function DropJobSheet({ open, onClose, seed }: { open: boolean; onClose: () => void; seed?: DropJobDraft }) {
   const [draft, setDraft] = useState(restore);
   const [sending, setSending] = useState(false);
   const pending = useRef(false);
@@ -55,6 +51,10 @@ export function DropJobSheet({ open, onClose }: { open: boolean; onClose: () => 
   useEffect(() => {
     try { sessionStorage.setItem(storageKey, JSON.stringify(draft)); } catch { /* Keep the in-memory draft. */ }
   }, [draft]);
+  // A seed only fills an empty body — an unsent draft is never overwritten.
+  useEffect(() => {
+    if (seed) setDraft(previous => previous.body.trim() ? previous : { ...seed });
+  }, [seed]);
   function change(key: keyof DropJobDraft, value: string) {
     setDraft(previous => {
       const next = { ...previous, [key]: value };
