@@ -40,10 +40,11 @@
  * whole window; that write never affects the publisher's state, and the
  * store makes it a no-op under ASHLR_CAPACITY_HISTORY=0.
  *
- * Started lazily (ensureDaemonCapacityPublisher) by the standing merge pass,
- * which runs every standing tick BEFORE beforeTick / dispatch. It refuses to
+ * Started at resident daemon startup; its own timer runs outside tick dispatch.
+ * The standing merge pass also ensures it is started (idempotently). It refuses to
  * start outside a daemon process (ASHLR_IN_DAEMON=1) and under vitest, so a
- * test or an interactive CLI command never spawns native probes.
+ * test never spawns native probes. The explicit capacity publish CLI uses a
+ * separate one-shot instance with this node’s local authentication.
  */
 import type { AshlrConfig } from '../types.js';
 import { readCapacitySnapshot, type CapacitySnapshot } from '../routing/budget-store.js';
@@ -145,11 +146,11 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
     let error: string | null;
     try {
       error = deps.recordHistory(snapshot);
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'unknown error';
+    } catch {
+      error = 'history-write-failed';
     }
     if (error !== null && error !== historyError) {
-      try { deps.log(`daemon capacity publisher: capacity history was not recorded (${error})`); } catch { /* never throws */ }
+      try { deps.log(`daemon capacity publisher: capacity history was not recorded; check local routing directory write access and retry phm capacity publish`); } catch { /* never throws */ }
     }
     historyError = error;
   }
@@ -191,8 +192,8 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
     let collector: PublisherCollector;
     try {
       collector = await deps.startCollector(cfg);
-    } catch (error) {
-      return set('failed', `the account collector could not start (${error instanceof Error ? error.message : 'unknown error'}); paid seats stay ineligible`);
+    } catch {
+      return set('failed', 'the account collector could not start; check local account configuration and sign in on this node, then retry phm capacity publish');
     }
     try {
       const collectorStatus = collector.status();
@@ -224,11 +225,13 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
         }
         return set(
           'lease-held-elsewhere',
-          `the native account-metadata lease is not available to the daemon (${collectorStatus.reasonCode ?? collectorStatus.mode}); paid seats stay ineligible until a publisher runs`,
+          collectorStatus.mode === 'unconfigured'
+            ? 'local accounts are unconfigured; configure this node’s accounts root and CLI sign-in, then retry phm capacity publish'
+            : 'the native account-metadata lease is unavailable; close the other local account collector or start its publisher, then retry phm capacity publish',
         );
       }
       if (!(await waitForFirstSample(collector))) {
-        return set('sample-timeout', 'the account collector did not finish a sample in time; nothing was published');
+        return set('sample-timeout', 'the account collector timed out; check local CLI sign-in and connectivity, then retry phm capacity publish');
       }
       if (stopped) return set('idle', 'the publisher stopped before publishing');
       const publishedAt = await deps.publish(cfg, collector);
@@ -243,8 +246,8 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
       }
       if (written && written.publishedAt === publishedAt) recordHistory(written);
       return status;
-    } catch (error) {
-      return set('failed', `the capacity snapshot could not be published (${error instanceof Error ? error.message : 'unknown error'}); paid seats stay ineligible`);
+    } catch {
+      return set('failed', 'the capacity snapshot could not be published; check local account configuration and routing directory write access, then retry phm capacity publish');
     } finally {
       // Release the lease between samples: a Verse server started later then
       // finds it free and owns live collection (and the UI's readings).
@@ -260,11 +263,11 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
     if (inFlight) return inFlight;
     const previous = status.state;
     inFlight = runCycle()
-      .catch(() => set('failed', 'the capacity publisher failed unexpectedly'))
+      .catch(() => set('failed', 'the capacity publisher failed; check local account configuration and retry phm capacity publish'))
       .then((result) => {
         // Log transitions only (a steady dormant/fresh state is not news).
         if (result.state !== previous && result.state !== 'fresh' && result.state !== 'dormant') {
-          deps.log(`daemon capacity publisher: ${result.reason}`);
+          try { deps.log(`daemon capacity publisher: ${result.reason}`); } catch { /* logging must not reject a cycle */ }
         }
         return result;
       })
@@ -298,7 +301,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
 export function defaultDaemonCapacityPublisherDeps(): DaemonCapacityPublisherDeps {
   return {
     nowMs: () => Date.now(),
-    sleep: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.(); }),
+    sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
     readSnapshot: () => readCapacitySnapshot(),
     startCollector: async (cfg) => {
       const [{ startVerseAccountCollector }, { resolveAccountsRoot }] = await Promise.all([
