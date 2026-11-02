@@ -115,6 +115,7 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'local-runtime uninstall': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'local-runtime logs': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'local-runtime resolve-model': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
+  'local-runtime missing-model-guard': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'openai-agents sessions': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents inspect': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents turns': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
