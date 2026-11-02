@@ -6,7 +6,7 @@ import { readInboxEntries } from './mason-inbox.js';
 export interface OrderTraceJob {
   id: string;
   lane: string | null;
-  state: 'queued' | 'launched' | 'published';
+  state: 'queued' | 'launched' | 'published' | 'merged';
   url: string | null;
 }
 export interface OrderTraceV1 {
@@ -81,14 +81,23 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
   }
   if ((!directories || !files.length) && result.sources.prompts === 'healthy') result.sources.prompts = 'missing';
   const publishes = new Map<string, { url: string; ts: number }>();
+  const merges = new Map<string, string | null>();
   try {
     const text = await readFile(join(root, 'metrics', 'jobs.jsonl'), 'utf8');
     for (const line of text.split(/\r?\n/).filter(Boolean)) {
       try {
         const row = JSON.parse(line) as Record<string, unknown>;
+        const id = row.job ?? row.job_id ?? row.id;
+        const merged = typeof id === 'string' && id.startsWith('RQ-') &&
+          (/merged/i.test(String(row.state ?? '')) || /merged/i.test(String(row.outcome ?? '')) || typeof row.merged_at === 'string');
+        if (merged) {
+          const url = typeof row.url === 'string' ? row.url : typeof row.pr_url === 'string' ? row.pr_url : null;
+          merges.set(id, url ?? merges.get(id) ?? null);
+        }
         if (row.event !== 'publish' || typeof row.job !== 'string' || typeof row.url !== 'string' ||
             typeof row.ts !== 'string' || !Number.isFinite(Date.parse(row.ts))) {
-          result.sources.publishes = 'degraded'; continue;
+          if (!merged) result.sources.publishes = 'degraded';
+          continue;
         }
         const ts = Date.parse(row.ts);
         if (ts >= (publishes.get(row.job)?.ts ?? -Infinity)) publishes.set(row.job, { url: row.url, ts });
@@ -117,7 +126,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
       const publish = publishes.get(file.id);
       for (const order of result.orders) {
         if (!cached.keys.includes(order.key) || order.jobs.some(job => job.id === file.id)) continue;
-        order.jobs.push({ id: file.id, lane, state: publish ? 'published' : launched ? 'launched' : 'queued', url: publish?.url ?? null });
+        order.jobs.push({ id: file.id, lane, state: merges.has(file.id) ? 'merged' : publish ? 'published' : launched ? 'launched' : 'queued', url: publish?.url ?? merges.get(file.id) ?? null });
       }
     } catch { result.sources.prompts = 'degraded'; }
   }
