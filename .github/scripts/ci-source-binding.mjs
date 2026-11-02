@@ -15,8 +15,8 @@ export function bindSource({ root, candidate, eventSha, eventBase, eventHead, ru
   if (candidate !== eventSha) git(['fetch', '--no-tags', 'origin', eventSha]);
   const tree = git(['rev-parse', `${candidate}^{tree}`]);
   if (!shaPattern.test(tree)) throw new Error('Candidate tree differs from the original GitHub event tree');
-  const eventTree = git(['rev-parse', `${eventSha}^{tree}`]);
-  if (eventTree === tree) return { revision: candidate, tree, eventSha };
+  const treeDiffers = git(['rev-parse', `${eventSha}^{tree}`]) !== tree;
+  if (!treeDiffers) return { revision: candidate, tree, eventSha };
   // Behind-base pull_request: the event revision is GitHub's merge of base into head.
   // Accept only if the candidate IS the event head, the event commit's parents are
   // exactly (event base, event head), and its tree equals a local clean merge of them.
@@ -27,6 +27,7 @@ export function bindSource({ root, candidate, eventSha, eventBase, eventHead, ru
   if (parents.length !== 3 || parents[0] !== eventSha || parents[1] !== eventBase || parents[2] !== eventHead) {
     throw new Error('GitHub event merge parents differ from the event base and head');
   }
+  const eventTree = git(['rev-parse', `${eventSha}^{tree}`]);
   let merged;
   try { merged = git(['merge-tree', '--write-tree', '--no-messages', eventBase, eventHead]); }
   catch { throw new Error('Event base and head do not merge cleanly'); }
