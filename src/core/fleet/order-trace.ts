@@ -18,7 +18,7 @@ export interface OrderTraceV1 {
 const months = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
 export function parseOrderCitations(body: string): string[] {
   const keys = new Set<string>();
-  for (const phrase of body.matchAll(/Serves Mason['’]s\s+([^.!?]+)/gi)) {
+  for (const phrase of body.matchAll(/\bServ(?:e|es|ing)\s+Mason['’]s\s+([^.!?]+)/gi)) {
     let date: string | undefined;
     for (const match of phrase[1]!.matchAll(/\b(?:(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+)?([0-2]\d:[0-5]\d)\b/gi)) {
       if (match[1]) {
