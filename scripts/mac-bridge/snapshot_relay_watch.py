@@ -11,10 +11,15 @@ the loop. Preview stays the default: without --apply every cycle is a dry run
 that writes nothing; --apply performs the transfers. A failed cycle
 (verification, lock or copy) leaves the prior destination pointer untouched
 through the relay's own cleanup path, and a later cycle can still succeed.
-Each cycle emits one bounded metadata line -- cycle number, outcome, and the
-relayed generation's name and file count; never file contents or receipt
-material -- followed by a single aggregate line with completed/noop/failed
-counts and the stop reason. Exit status is nonzero if any cycle failed.
+Each cycle emits one bounded metadata line -- cycle number, outcome, the
+relayed generation's name and file count, and on apply cycles a retentionOk
+flag recording whether the relay's post-commit pruning succeeded; never file
+contents, receipt material or retentionError's exception text -- followed by
+a single aggregate line with completed/noop/failed counts and the stop
+reason, plus retentionFailed and a fixed retentionReason whenever any cycle
+failed to prune. A pruning failure never reclassifies a committed transfer
+or rolls back its pointer, but the aggregate reports ok=false. Exit status
+is nonzero if any cycle failed or reported a retention failure.
 Filesystem directories only; no installation, SSH, network setup or machine
 changes.
 """
@@ -88,6 +93,9 @@ def cycle_record(index, at, apply, call, source, destination):
             record['files'] = files
         if apply and result.get('copied') is True:
             record['copied'] = True
+        # retentionError text is arbitrary; only a bounded flag is emitted.
+        if apply or result.get('retentionError') is not None:
+            record['retentionOk'] = result.get('retentionError') is None
     return record, record['outcome'], False
 
 
@@ -121,6 +129,7 @@ def main(argv=None, deps=None, out=None):
             previous[sig] = signal.signal(sig, cancel)
 
     counts = {'completed': 0, 'noop': 0, 'failed': 0}
+    retention_failed = 0
     cycles, reason = 0, 'stopped'
     end = now() + args.deadline
     try:
@@ -132,6 +141,8 @@ def main(argv=None, deps=None, out=None):
             record, outcome, halt = cycle_record(
                 cycles, now(), args.apply, call, args.source, args.destination)
             counts[outcome] += 1
+            if record.get('retentionOk') is False:
+                retention_failed += 1
             print(json.dumps(record, separators=(',', ':')), file=out, flush=True)
             if halt or stop.is_set():
                 reason = 'stopped'
@@ -157,9 +168,13 @@ def main(argv=None, deps=None, out=None):
         for sig, handler in previous.items():
             signal.signal(sig, handler)
     aggregate = {'tool': TOOL,
-                 'ok': counts['failed'] == 0 and reason != 'error',
+                 'ok': counts['failed'] == 0 and retention_failed == 0
+                       and reason != 'error',
                  'apply': args.apply, 'cycles': cycles, **counts,
                  'stopReason': reason}
+    if retention_failed:
+        aggregate['retentionFailed'] = retention_failed
+        aggregate['retentionReason'] = 'prune'
     print(json.dumps(aggregate, separators=(',', ':')), file=out, flush=True)
     return 0 if aggregate['ok'] else 1
 
