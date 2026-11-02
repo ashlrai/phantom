@@ -139,7 +139,7 @@ export function foldRedMerges(text: string, hours: number, nowMs: number): { win
     if (ms === null || ms < cutoff || ms > nowMs) continue;
     const job = jobOf(row);
     const key = job ?? pickString(row, ['url', 'pr_url', 'prUrl', 'pr']) ?? `row-${index}`;
-    const lane = laneOf(row) ?? (job !== null ? jobLane.get(job) ?? null : null) ?? 'unattributed';
+    const lane = laneOf(row) ?? jobLane.get(job ?? '') ?? 'unattributed';
     const existing = merges.get(key);
     if (existing === undefined || ms < existing.ms) merges.set(key, { ms, lane, checks: checksOf(row) });
   }

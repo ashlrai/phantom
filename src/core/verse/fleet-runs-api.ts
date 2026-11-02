@@ -12,7 +12,8 @@ import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
-import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
+import { readNeedsMason } from '../fleet/needs-mason-read.js';
+import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, VERSE_FLEET_RUNS_NEEDS_MASON_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
@@ -246,6 +247,11 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       } catch {
         sendJson(res, 200, { v: 1, at: new Date(now()).toISOString(), running: null, target: null, usagePct: null, resetsAt: null, mergesToday: null, main: 'unknown', incidents: [] });
       }
+      return true;
+    }
+    if (path === VERSE_FLEET_RUNS_NEEDS_MASON_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      sendJson(res, 200, await readNeedsMason({ runsDir: deps.runsDir }));
       return true;
     }
     if (method === 'GET' && path === VERSE_FLEET_RUNS_PATH) {
