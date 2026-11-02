@@ -24,7 +24,7 @@ import { lstat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { LANE_ID_RE, readLaneTargets, type LaneTargetsOptions, type LaneTargetsV1 } from './runs-lane-targets.js';
+import { GLOBAL_SLOT_KEYS, LANE_ID_RE, readLaneTargets, type LaneTargetsOptions, type LaneTargetsV1 } from './runs-lane-targets.js';
 
 export const VERSE_FLEET_CONTROL_HOLDS_PATH = '/api/verse/fleet/control/holds';
 export interface LaneHoldOptions extends LaneTargetsOptions { reason?: string }
@@ -83,6 +83,7 @@ async function source(opts: LaneHoldOptions) {
   const lanes = Object.hasOwn(raw, 'lanes') ? raw.lanes : raw;
   if (!object(lanes)) throw new LaneHoldError('unavailable');
   for (const [lane, row] of Object.entries(lanes)) {
+    if (GLOBAL_SLOT_KEYS.has(lane)) continue;
     if (!LANE_ID_RE.test(lane) || !object(row) || !integer(row.target) || !integer(row.floor) || !integer(row.ceiling) || row.floor > row.ceiling || typeof row.held !== 'boolean') throw new LaneHoldError('unavailable');
   }
   return { queue, path, raw, lanes: lanes as Record<string, Record<string, unknown>> };

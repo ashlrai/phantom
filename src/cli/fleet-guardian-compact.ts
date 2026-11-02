@@ -1,9 +1,6 @@
 import { compactGuardianState, type GuardianCompactOptions } from '../core/fleet/guardian-state-compact.js';
 
-// Deliberately a const-arrow export: this job must not touch the shared
-// fleet-subcommand registry, whose generator only collects `export async
-// function` verbs. Convention dispatch activates with the next registry pass.
-export const cmdFleetGuardianCompact = async (args: string[], compact = compactGuardianState): Promise<number> => {
+export async function cmdFleetGuardianCompact(args: string[], compact = compactGuardianState): Promise<number> {
   const values: Record<string, string> = {};
   let json = false;
   for (let i = 0; i < args.length; i++) {
@@ -29,4 +26,4 @@ export const cmdFleetGuardianCompact = async (args: string[], compact = compactG
     process.stderr.write('error: guardian-compact could not validate or compact state\n');
     return 1;
   }
-};
+}
