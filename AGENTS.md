@@ -57,7 +57,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Layout: `src/cli/` command dispatchers, `src/core/` logic, `src/web-ui/` console, `test/` backend suites (`m<N>.<topic>.test.ts`), `docs/` guides indexed by `docs/README.md`.
 - Learned skills: `phm skills list --json` shows skills written from merged PR outcomes (metadata only, scrubbed, capped; counts real or `"unknown"`). See [docs/SKILLS.md](docs/SKILLS.md).
 - Channels: `phm channels add <kind>` writes config only (credentials stay in existing custody, never printed); `phm channels status --json` reports real counts or `"unknown"`. See [docs/CHANNELS.md](docs/CHANNELS.md).
-- Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md).
+- Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/CONSOLE-LAYOUT.md](docs/CONSOLE-LAYOUT.md) (web console width breakpoints).
 
 ## Coding and verification conventions
 

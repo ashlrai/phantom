@@ -73,16 +73,17 @@
   letter-spacing: 0.04em;
 }
 
-@media (max-width: 720px) {
-  .sidebar {
-    width: 100%; height: auto; max-height: 42vh; overflow: auto;
-    border-right: 0; border-bottom: 1px solid var(--border-subtle);
-    padding: var(--space-2);
-  }
-  .brand { padding: var(--space-1) var(--space-2) var(--space-2); }
-  .group { margin-bottom: var(--space-2); }
-  .leaves { flex-direction: row; overflow-x: auto; }
-  .link { flex: 0 0 auto; min-height: 44px; }
+/* Compact width class from app/console-mode.ts (data-console-layout). The
+   sidebar folds into a top strip: the brand row stays, and each group's
+   leaves scroll sideways as chips instead of stacking down the page. */
+:root[data-console-layout='compact'] .sidebar {
+  width: 100%; height: auto; max-height: 42vh; overflow: auto;
+  border-right: 0; border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-2);
 }
+:root[data-console-layout='compact'] .brand { padding: var(--space-1) var(--space-2) var(--space-2); }
+:root[data-console-layout='compact'] .group { margin-bottom: var(--space-2); }
+:root[data-console-layout='compact'] .leaves { flex-direction: row; overflow-x: auto; }
+:root[data-console-layout='compact'] .link { flex: 0 0 auto; min-height: 44px; }
 
 @media (prefers-reduced-motion: reduce) { .link { transition: none; } }
