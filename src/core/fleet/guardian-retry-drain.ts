@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { lstat, stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { GUARDIAN_VERIFY_DEADLINE, GUARDIAN_VERIFY_MAX_TIMEOUT_MS, type GuardianOptions } from './guardian-verify-loop.js';
 import { runGuardianVerifyExclusive, type GuardianVerifyExclusiveDeps, type GuardianVerifyExclusiveResult } from './guardian-verify-exclusive.js';
@@ -23,12 +23,12 @@ export const GUARDIAN_DRAIN_MAX_RETRIES = 20;
  * non-deadline abort; 'unsafe' validation/prepare/verify failed. */
 export type GuardianDrainTermination =
   | 'planned' | 'no-work' | 'drained' | 'exhausted' | 'max-retries'
-  | 'deadline' | 'refused' | 'collision' | 'cancelled' | 'unsafe' | 'observer-error';
+  | 'stopped' | 'deadline' | 'refused' | 'collision' | 'cancelled' | 'unsafe' | 'observer-error';
 
 export interface GuardianDrainOptions {
   manifest: string; sourceState: string; outputDir: string;
   maxRetries: number; timeoutMs: number; apply: boolean;
-  signal?: AbortSignal; now?: () => number;
+  signal?: AbortSignal; now?: () => number; stopFile?: string;
 }
 
 export interface GuardianDrainAttempt {
@@ -54,6 +54,12 @@ const attemptName = (n: number): string => `guardian-drain-attempt-${n}.json`;
 const stop = (signal?: AbortSignal): GuardianDrainTermination | null =>
   signal?.aborted ? (signal.reason === GUARDIAN_VERIFY_DEADLINE ? 'deadline' : 'cancelled') : null;
 
+async function stopFileStatus(path?: string): Promise<GuardianDrainTermination | null> {
+  if (path === undefined) return null;
+  try { await lstat(path); return 'stopped'; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unsafe'; }
+}
+
 export async function drainGuardianInfraRetries(
   options: GuardianDrainOptions,
   deps: GuardianDrainDeps = {},
@@ -65,14 +71,19 @@ export async function drainGuardianInfraRetries(
     attempts: 0, verified: 0, refused: 0, attempted: [], planned: [], latestOutput: null,
   };
   if (![options.manifest, options.sourceState, options.outputDir].every(p => isAbsolute(p) && p.length <= 4096)
+    || (options.stopFile !== undefined && (!isAbsolute(options.stopFile) || options.stopFile.length > 4096 || options.stopFile.includes('\0')))
     || !Number.isSafeInteger(options.maxRetries) || options.maxRetries < 1 || options.maxRetries > GUARDIAN_DRAIN_MAX_RETRIES
     || !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > GUARDIAN_VERIFY_MAX_TIMEOUT_MS) return summary;
+  const initialStop = await stopFileStatus(options.stopFile);
+  if (initialStop) { summary.termination = initialStop; return summary; }
   if (!options.apply) {
     // Read-only plan: the selector validates manifest and state fully and
     // reports the admission the first attempt would take. Nothing is written.
     try {
       const probe = join(options.outputDir, attemptName(1));
       const selected = await select({ manifest: options.manifest, sourceState: options.sourceState, outputState: probe });
+      const blocked = await stopFileStatus(options.stopFile);
+      if (blocked) { summary.termination = blocked; return summary; }
       if (selected) summary.planned = [{ repo: resolve(selected.repo), sha: selected.sha }];
       summary.termination = selected ? 'planned' : 'no-work';
     } catch { /* fall through to unsafe */ }
@@ -85,7 +96,7 @@ export async function drainGuardianInfraRetries(
   const attempted = new Set<string>();
   summary.termination = 'max-retries';
   while (summary.attempts < options.maxRetries) {
-    const blocked = stop(options.signal);
+    const blocked = stop(options.signal) ?? await stopFileStatus(options.stopFile);
     if (blocked) { summary.termination = blocked; break; }
     const remaining = Math.floor(deadlineAt - now());
     if (remaining < 1) { summary.termination = 'deadline'; break; }
@@ -93,6 +104,8 @@ export async function drainGuardianInfraRetries(
     let selected: { repo: string; sha: string } | null;
     try { selected = await select({ manifest: options.manifest, sourceState: current, outputState: attemptPath }); }
     catch { summary.termination = 'unsafe'; break; }
+    const fileStop = await stopFileStatus(options.stopFile);
+    if (fileStop) { summary.termination = fileStop; break; }
     if (!selected) { summary.termination = summary.attempts === 0 ? 'no-work' : 'drained'; break; }
     const repo = resolve(selected.repo);
     const identity = `${repo}${selected.sha}`;
