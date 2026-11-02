@@ -358,12 +358,25 @@ async function cmdCycle(): Promise<number> {
     else if (email.state === 'ok' && email.config) {
       const { runEmailDropOnce } = await import('../core/comms/email-drop-bridge.js');
       const { inboxDir, outboxDir, processedDir, from } = email.config;
+      const outDir = outboxDir ?? join(inboxDir, '..', 'outbox');
       const counts = await runEmailDropOnce({
-        inboxDir, outboxDir: outboxDir ?? join(inboxDir, '..', 'outbox'),
+        inboxDir, outboxDir: outDir,
         processedDir: processedDir ?? join(inboxDir, '..', 'processed'),
         allowedSenders: new Set(from), runsDir, busRoot: join(ashlrHome(), 'fleet'),
       });
       console.log(`cycle: email-drop accepted=${counts.accepted} duplicate=${counts.duplicate} refused=${counts.refused} failed=${counts.failed}`);
+      // RQ-PHX-EMAILOUTBOXSEND02: opt-in reply send. Off by default — a config
+      // with no sendReplies field behaves exactly as before. A failed send
+      // never fails the cycle; the counts line carries the outcome.
+      if (email.config.sendReplies === true) {
+        try {
+          const { macMailTransport, sendEmailOutbox } = await import('../core/comms/email-outbox.js');
+          const outbox = await sendEmailOutbox({ dir: outDir, allowedRecipients: new Set(from), transport: macMailTransport() });
+          console.log(`cycle: email-outbox queued=${outbox.queued} sent=${outbox.sent} refused=${outbox.refused} failed=${outbox.failed} stuck=${outbox.stuck}`);
+        } catch {
+          console.error('cycle: email-outbox send failed');
+        }
+      }
     }
   } catch {
     console.error('cycle: email-drop failed');
@@ -623,15 +636,15 @@ export async function cmdComms(args: string[]): Promise<number> {
 // RQ-PHX-EMAILDROPCHANNEL31: email-drop — .eml drop-folder → MASON-INBOX.md
 // ---------------------------------------------------------------------------
 
-const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--once | --watch <seconds>] [--save-config] [--json]';
+const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--once | --watch <seconds>] [--save-config] [--send-replies] [--json]';
 
 async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records verified senders in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
+    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records verified senders in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\n--send-replies with --save-config lets 'ashlr comms cycle' send queued replies via Mail.app.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
     return 0;
   }
   const badOption = rejectUnknownOptions(args, {
-    flags: ['--once', '--json', '--save-config'],
+    flags: ['--once', '--json', '--save-config', '--send-replies'],
     values: ['--from', '--outbox', '--processed', '--watch'],
   });
   const badUsage = (message?: string): number => {
@@ -648,6 +661,7 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   let once = false;
   let json = false;
   let saveConfig = false;
+  let sendReplies = false;
   const senders = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -672,6 +686,8 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
       json = true;
     } else if (arg === '--save-config') {
       saveConfig = true;
+    } else if (arg === '--send-replies') {
+      sendReplies = true;
     } else if (inboxDir === undefined && !arg.startsWith('-')) {
       inboxDir = arg;
     } else {
@@ -702,8 +718,9 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
       savedConfig = await writeEmailDropConfig(join(homedir(), '.ashlr-runs'), {
         v: 1, inboxDir: resolve(options.inboxDir), outboxDir: resolve(options.outboxDir),
         processedDir: resolve(options.processedDir), from: [...senders],
+        ...(sendReplies ? { sendReplies: true } : {}),
       });
-      if (!json) console.log(`saved ${savedConfig}; \`ashlr comms cycle\` now runs the email drop every pass`);
+      if (!json) console.log(`saved ${savedConfig}; \`ashlr comms cycle\` now runs the email drop every pass${sendReplies ? ' and sends queued replies via Mail.app' : ''}`);
     }
     if (watchSeconds === undefined) {
       emit(await runEmailDropOnce(options));
