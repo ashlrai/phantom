@@ -2699,6 +2699,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
   console.log(`    ashlr fleet queue merged|read|complete <job-id> [--json]`);
+  console.log(`    phm fleet outcomes [--events <file>] [--json] ${cyan('# learned merge, usage, breakage, and the next assignment')}`);
   console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
