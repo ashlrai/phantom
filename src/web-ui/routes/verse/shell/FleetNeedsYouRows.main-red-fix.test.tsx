@@ -31,7 +31,7 @@ const fleet = {
   mergesLastHour: { count: 0, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
 
-const redRepo = { repo: '/tmp/fake-repo', branch: 'master', sha: SHA, state: 'red' as const,
+const redRepo = { repo: 'phantom', branch: 'master', sha: SHA, state: 'red' as const,
   checkedAt: '2026-10-31T11:55:00Z', failingCheck: 'build', fixJobs: [], nightlyRed: null };
 
 function mainHealth(over: Partial<MainHealthData> = {}): MainHealthData {
@@ -62,7 +62,7 @@ it('Draft fix job seeds the sheet with a draft for the red repo and reveals the 
   expect(openDropJobSheet).toHaveBeenCalledOnce();
   const draft = vi.mocked(openDropJobSheet).mock.calls[0]![0];
   expect(draft).toMatchObject({ id: 'MAINFIXABCDEF0', lane: 'codex-personal', tier: 'mid' });
-  expect(draft.body).toContain('/tmp/fake-repo');
+  expect(draft.body).toContain('phantom');
   expect(draft.body).toContain('build');
   expect(getVerseUiState().overlay).toBeNull();
   expect(openDockPane).toHaveBeenCalledWith('fleet-queue');
@@ -92,5 +92,11 @@ it('has no button when the red repo already has a fix job', async () => {
   const claudeLane = { lane: 'claude', running: 0, target: 2, queued: 0, held: false, heldReason: null, tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 };
   setup(mainHealth({ repos: [{ ...redRepo, fixJobs: ['RQ-PHX-EXISTING'] }] }), { claudeLane: 'down token rejected', lanes: [claudeLane] });
   expect(await screen.findByText(/Claude lane is down/, {}, { timeout: 3000 })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Draft fix job' })).not.toBeInTheDocument();
+});
+
+it('keeps supporting repo red rows visible without a misrouted draft action', async () => {
+  setup(mainHealth({ repos: [{ ...redRepo, repo: 'stack' }] }));
+  expect(await screen.findByText(/stack master is red/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Draft fix job' })).not.toBeInTheDocument();
 });
