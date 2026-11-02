@@ -12,9 +12,11 @@
  * clock is still before the deadline and the abort signal is silent. A pass
  * already in flight when the deadline passes (or a signal arrives) finishes
  * normally — the loop never interrupts a tick. Sequencing is one awaited
- * tick, then one awaited sleep of the full interval: passes can therefore
- * never overlap. A nonzero or throwing tick ends that pass as a failure and
- * the loop continues; a tick reporting state 'busy' is counted and likewise
+ * tick, then one awaited sleep of the interval capped to the budget left
+ * before the deadline: passes can therefore never overlap, and a window
+ * shorter than the interval ends at its deadline, not one interval after it.
+ * A nonzero or throwing tick ends that pass as a failure and the loop
+ * continues; a tick reporting state 'busy' is counted and likewise
  * does not stop the loop.
  *
  * Memory is bounded by construction: the loop keeps integer counters and the
@@ -133,9 +135,12 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
         break; // safe termination: the pass counts, admission stops here
       }
     }
-    if (signal.aborted || now() >= deadline) break;
+    const current = now();
+    if (signal.aborted || current >= deadline) break;
+    // Wait the interval, but never past the deadline: the remaining budget is
+    // positive here, so the capped wait is too.
     try {
-      await sleep(options.intervalMs, signal);
+      await sleep(Math.min(options.intervalMs, deadline - current), signal);
     } catch {
       // An interrupted sleep ends admission; the pass that ran is kept.
       break;

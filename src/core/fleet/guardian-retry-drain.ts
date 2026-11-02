@@ -23,7 +23,7 @@ export const GUARDIAN_DRAIN_MAX_RETRIES = 20;
  * non-deadline abort; 'unsafe' validation/prepare/verify failed. */
 export type GuardianDrainTermination =
   | 'planned' | 'no-work' | 'drained' | 'exhausted' | 'max-retries'
-  | 'deadline' | 'refused' | 'collision' | 'cancelled' | 'unsafe';
+  | 'deadline' | 'refused' | 'collision' | 'cancelled' | 'unsafe' | 'observer-error';
 
 export interface GuardianDrainOptions {
   manifest: string; sourceState: string; outputDir: string;
@@ -31,7 +31,13 @@ export interface GuardianDrainOptions {
   signal?: AbortSignal; now?: () => number;
 }
 
+export interface GuardianDrainAttempt {
+  attempt: number; repo: string; sha: string;
+  outcome: 'verified' | 'refused'; refusal: string | null; latestOutput: string | null;
+}
+
 export interface GuardianDrainDeps {
+  onAttempt?: (attempt: GuardianDrainAttempt) => void | Promise<void>;
   select?: typeof selectNextGuardianInfraRetry;
   prepare?: typeof prepareGuardianRetryState;
   verify?: (options: GuardianOptions, deps?: GuardianVerifyExclusiveDeps) => Promise<GuardianVerifyExclusiveResult>;
@@ -103,11 +109,18 @@ export async function drainGuardianInfraRetries(
     let outcome: GuardianVerifyExclusiveResult;
     try { outcome = await verify({ manifest: options.manifest, state: attemptPath, maxPasses: 1, intervalMs: 1000, timeoutMs: left, signal: options.signal }); }
     catch { summary.termination = 'unsafe'; break; }
-    if (outcome.state === 'refused') { summary.refused++; summary.termination = 'refused'; break; }
-    summary.verified++;
-    // Carry the latest complete verified state forward; a prepared file that
-    // was never verified is never carried, and the source is never touched.
-    current = attemptPath; summary.latestOutput = attemptPath;
+    if (outcome.state === 'refused') summary.refused++;
+    else {
+      summary.verified++;
+      // Only a complete verified state is carried forward.
+      current = attemptPath; summary.latestOutput = attemptPath;
+    }
+    try {
+      await deps.onAttempt?.({ attempt: summary.attempts, repo, sha: selected.sha,
+        outcome: outcome.state === 'refused' ? 'refused' : 'verified',
+        refusal: outcome.state === 'refused' ? outcome.reason : null, latestOutput: summary.latestOutput });
+    } catch { summary.termination = 'observer-error'; break; }
+    if (outcome.state === 'refused') { summary.termination = 'refused'; break; }
     if (outcome.summary.deadlineExceeded) { summary.termination = 'deadline'; break; }
     if (outcome.summary.cancelled) { summary.termination = 'cancelled'; break; }
   }
