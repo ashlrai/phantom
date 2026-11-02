@@ -18,6 +18,7 @@ npm run build             # full build to dist/
 npm run dev -- <command>  # run the CLI from source
 node scripts/verify-changed.mjs # automated workers: run once, foreground, do not poll
 npm run typecheck         # optional full backend + web check for humans
+npm run typecheck:fast    # same projects via tsgo (native); what gate phase A runs
 npm run lint              # optional full ESLint + lane lints for humans
 npm run check:docs        # documentation link and anchor check
 npx vitest run test/<file>.test.ts   # one backend suite
