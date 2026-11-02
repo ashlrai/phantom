@@ -17,6 +17,7 @@ import {
 } from '../core/fleet/planner-autorun.js';
 import { readPlannerCandidates, type PlannerCandidatesRead } from '../core/fleet/planner-candidates.js';
 import { readPlannerPromptPath } from '../core/fleet/planner-prompt.js';
+import { readPlannerPassOutput, summarizePlannerPassOutput } from '../core/fleet/planner-pass-output.js';
 import { runPlannerPass, type SpawnLike } from '../core/fleet/planner-run.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
@@ -27,7 +28,10 @@ pass is at least --min-gap-minutes (default 25) old. Without --apply this is
 a dry-run: it prints the decision (RUN or SKIP) and appends one PLANNER_TICK
 line to queue/dispatch-events.log. With --apply a RUN decision fires one
 pass through runPlannerPass on the declared slate; a missing slate or an
-undeclared prompt prints an honest outcome and still exits 0.`;
+undeclared prompt prints an honest outcome and still exits 0. An executed pass
+exits successfully only when output evidence shows pending or ingested work.
+Evidence is observational: concurrent planners may contribute within the run
+window. Pending work has not necessarily been ingested or launched.`;
 
 interface Dependencies {
   /** Input read seam; defaults to readPlannerAutorunInput. */
@@ -36,6 +40,8 @@ interface Dependencies {
   runCandidates?: (runsDir: string) => Promise<PlannerCandidatesRead>;
   /** Spawn seam forwarded to runPlannerPass; tests fake it, never a shell. */
   spawn?: SpawnLike;
+  /** Output read seam for unavailable evidence. */
+  readOutput?: typeof readPlannerPassOutput;
   now?: number | (() => number);
   output?: (text: string) => void;
   error?: (text: string) => void;
@@ -148,6 +154,27 @@ export async function cmdFleetPlannerTick(args: string[], deps: Dependencies = {
     spawn: deps.spawn,
     now,
   });
-  output(JSON.stringify(sanitizePublicJson(result)));
-  return result.outcome === 'spawn-failed' || result.outcome === 'plan-failed' ? 1 : 0;
+  if (result.outcome !== 'ran') {
+    output(JSON.stringify(sanitizePublicJson({ ...result, verdict: 'failed', evidence: { state: 'not-collected' } })));
+    return 1;
+  }
+  const start = Date.parse(result.startedAt), finish = Date.parse(result.finishedAt);
+  let evidence: { state: 'productive' | 'unproductive' | 'unknown'; detail: string; window?: { since: string; until: string }; counts?: { ingested: number; pending: number; rejected: number }; sources?: Awaited<ReturnType<typeof readPlannerPassOutput>>['sources'] };
+  if (!Number.isFinite(start) || !Number.isFinite(finish) || start > finish) {
+    evidence = { state: 'unknown', detail: 'Invalid run bounds; output evidence cannot be observed.' };
+  } else {
+    const sinceMs = Math.floor(start / 1000) * 1000, untilMs = Math.ceil(finish / 1000) * 1000;
+    try {
+      const view = await (deps.readOutput ?? readPlannerPassOutput)({ runsRoot: root, sinceMs, untilMs });
+      const degraded = view.sources.ledger === 'invalid' || view.sources.drops.some((drop) => drop.state === 'invalid') || view.sources.skipped > 0;
+      const missing = view.sources.ledger === 'missing' && view.sources.drops.every((drop) => drop.state === 'missing');
+      const state = degraded || missing ? 'unknown' : view.counts.ingested + view.counts.pending > 0 ? 'productive' : 'unproductive';
+      evidence = { state, detail: state === 'unknown' ? 'Output evidence is missing or degraded.' : summarizePlannerPassOutput(view), window: view.window, counts: view.counts, sources: view.sources };
+    } catch {
+      evidence = { state: 'unknown', detail: 'Output evidence read failed.' };
+    }
+  }
+  const verdict = result.exitCode === 0 ? evidence.state : 'failed';
+  output(JSON.stringify(sanitizePublicJson({ ...result, verdict, evidence: { ...evidence, attribution: 'observational' } })));
+  return verdict === 'productive' ? 0 : 1;
 }
