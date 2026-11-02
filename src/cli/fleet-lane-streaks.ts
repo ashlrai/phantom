@@ -14,8 +14,8 @@ import {
 
 /** Descriptor-bound tail read of the runs-dir event log, like runs-dir-state. */
 const DISPATCH_EVENTS_TAIL = 8 * 1024 * 1024;
-async function readDispatchEventsLog(): Promise<string | null> {
-  const path = join(homedir(), '.ashlr-runs', 'dispatch-events.log');
+export async function readDispatchEventsLog(runsDir?: string): Promise<string | null> {
+  const path = join(runsDir ?? join(homedir(), '.ashlr-runs'), 'dispatch-events.log');
   try {
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
