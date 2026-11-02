@@ -56,10 +56,13 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
   const finish = (): void => {
     if (heading === undefined) return;
     const match = /^## (.+?) ET \([^,\n]+, (.+?)\) PRIORITY (\S+)(?:.*)$/.exec(heading);
+    const dated = match ? null : /^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?: ET)?/.exec(heading);
+    const source = dated ? /\(([^)]*)\)/.exec(heading.slice(dated[0].length))?.[1]?.trim().slice(0, 80) : undefined;
+    const priority = dated ? /\bPRIORITY\s*:?\s+(\w+)/.exec(heading)?.[1] : undefined;
     entries.push({
-      at: match?.[1] ?? heading,
-      source: match?.[2] ?? 'unknown',
-      priority: match?.[3] ?? null,
+      at: match?.[1] ?? dated?.[1] ?? heading,
+      source: match?.[2] ?? (source || 'unknown'),
+      priority: match?.[3] ?? priority ?? null,
       text: body.join('\n').trim().slice(0, INBOX_MAX_CHARS),
     });
   };
