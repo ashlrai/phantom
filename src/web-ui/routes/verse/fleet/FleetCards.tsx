@@ -55,12 +55,12 @@ const STALE_STANDING_LANES = 'No standing tick has reported lanes in the last 10
 
 function LaneChip({ lane, children }: { lane: FleetLaneState; children?: ReactNode }) {
   const text = laneChipText(lane);
-  // The server uses zero slots when the last completed standing snapshot is
+  // The server uses zero slots when the last standing lane observation is
   // stale. That is unknown capacity, not an observed disabled lane. Keep the
   // independently observed active producer count visible in that case.
   const capacityUnknown = lane.slots === 0 && lane.capReason === STALE_STANDING_LANES;
   const slots = capacityUnknown
-    ? `${lane.busy > 0 ? `${lane.busy} working · ` : ''}capacity unobserved`
+    ? `${lane.busy > 0 ? `${lane.busy} working · ` : ''}capacity unknown`
     : text.slots;
   return (
     <li className={styles.lane} data-off={lane.slots === 0 && !capacityUnknown || undefined} title={laneReason(lane) ?? undefined}>
@@ -98,7 +98,7 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
             <li key={n.lanes.join(',')}>
               {n.all ? null : <span className={styles.laneNoteLanes}>{n.lanes.map((l) => LANE_LABEL[l]).join(', ')}: </span>}
               {asSentence(n.reason === STALE_STANDING_LANES
-                ? 'Lane capacity is unobserved because no completed standing tick has reported lanes in the last 10 minutes. Active producer counts are shown when known.'
+                ? 'Lane capacity is unobserved because no standing lane observation has arrived in the last 10 minutes. Active producer counts are shown when known.'
                 : n.reason)}
             </li>
           ))}
