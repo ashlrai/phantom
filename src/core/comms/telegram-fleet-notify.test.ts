@@ -15,28 +15,32 @@ describe('Telegram fleet notifier', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('sends a sanitized held reason and limits each kind, including failed sends', async () => {
+  it('sends a release or a human-only incident and stays quiet otherwise', async () => {
     let time = 0;
     const cfg = configured();
     const send = vi.fn(async () => ({ ok: true }));
     const notify = createTelegramFleetNotifier({ cfg, send, now: () => time, minGapMs: 600_000 });
     await notify('fleet-lane-held', { detail: 'codex-personal: usage_limit\n /Users/fake/private sk-fake123' });
-    expect(send).toHaveBeenCalledExactlyOnceWith('Fleet: lane codex-personal held — usage_limit [REDACTED] [REDACTED]', undefined, cfg);
-    await notify('fleet-lane-held', { detail: 'another: held' });
-    expect(send).toHaveBeenCalledTimes(1);
     await notify('fleet-merged', { count: 3, detail: 'private title' });
-    expect(send).toHaveBeenLastCalledWith('Fleet: 3 merges in the last hour', undefined, cfg);
+    await notify('completed', { detail: 'done' });
+    expect(send).not.toHaveBeenCalled();
+    await notify('needs-you', { detail: 'approve the release' });
+    expect(send).toHaveBeenCalledExactlyOnceWith('Needs you.', undefined, cfg);
+    await notify('fleet-merged', { detail: 'weekly release' });
+    expect(send).toHaveBeenLastCalledWith('Release shipped.', undefined, cfg);
     time = 600_000;
-    await notify('fleet-lane-held', { detail: 'claude: down usage_limit' });
-    expect(send).toHaveBeenLastCalledWith('Fleet: Claude lane down — run ~/.ashlr-runs/bin/fix-claude-lane.sh', undefined, cfg);
+    await notify('fleet-lane-held', { detail: 'claude: down' });
+    expect(send).toHaveBeenLastCalledWith('Claude lane is down. It needs you.', undefined, cfg);
+    expect(send).toHaveBeenCalledTimes(3);
+    await notify('fleet-lane-held', { detail: 'claude: down again' });
     expect(send).toHaveBeenCalledTimes(3);
   });
 
   it('swallows rejected sends and counts them against the gap', async () => {
     const send = vi.fn(async (): Promise<{ ok: boolean }> => { throw new Error('failed'); });
     const notify = createTelegramFleetNotifier({ cfg: configured(), send, now: () => 0 });
-    await expect(notify('fleet-lane-held', { detail: 'lane: reason' })).resolves.toBeUndefined();
-    await notify('fleet-lane-held', { detail: 'lane: reason' });
+    await expect(notify('needs-you', { detail: 'lane: reason' })).resolves.toBeUndefined();
+    await notify('needs-you', { detail: 'lane: reason' });
     expect(send).toHaveBeenCalledTimes(1);
   });
 
