@@ -16,6 +16,20 @@ export const DAEMON_TICK_MAX_S = 15 * 60;
 export const DEFAULT_GLOBAL_HARD_CAP = 18;
 const STATUS_TIMEOUT_MS = 30_000;
 
+export function usageVerdict(row: Record<string, unknown>, now: number, critical = false) {
+  const used = row.weekly_used_pct;
+  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || used > 100) {
+    return { admit: true, reason: 'usage unknown', used_fraction: null, elapsed_fraction: null, limit: null };
+  }
+  const reset = typeof row.reset_at === 'number' ? row.reset_at * 1000 : typeof row.reset_at === 'string' ? Date.parse(row.reset_at) : NaN;
+  const week = 7 * 86400_000;
+  const elapsed = Number.isFinite(reset) && now < reset && reset <= now + week ? Math.max(0, 1 - (reset - now) / week) : null;
+  const limit = critical ? 0.95 : elapsed === null ? 0.60 : Math.min(1, elapsed + 0.10);
+  const admit = used / 100 <= limit;
+  return { admit, reason: `${critical ? 'critical reserve' : elapsed === null ? 'reset unknown: 60% fallback' : 'reset pacing'}: ${admit ? 'admit' : 'defer'}`,
+    used_fraction: used / 100, elapsed_fraction: elapsed, limit };
+}
+
 export interface InstallLockHolder { pid: number; job?: string; command?: string; since?: number }
 export interface AdmissionInput {
   load1: number; ncpu: number; procs: number; worktrees: number;
@@ -24,6 +38,7 @@ export interface AdmissionInput {
   slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null; disabled?: boolean;
 }
 export interface AdmissionReport {
+  lanes?: Record<string, { routine: ReturnType<typeof usageVerdict>; critical: ReturnType<typeof usageVerdict> }>;
   admit: boolean; reason: string | null; reasons: string[]; disabled: boolean;
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
@@ -135,8 +150,14 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
     if (h && Number.isInteger(h.pid) && h.pid > 0 && alive(h.pid)) holder = h;
   } catch { /* garbage content is no holder */ }
 
-  return evaluateAdmission({
+  let usage: Record<string, Record<string, unknown>> = {};
+  try { usage = JSON.parse(await text(join(queue, 'budget-overrides.json')) ?? '{}') ?? {}; } catch { /* unknown usage */ }
+  const lanes = Object.fromEntries(Object.keys(slots).filter(lane => !GLOBAL_SLOT_KEYS.has(lane)).map(lane => {
+    const row = usage[lane] ?? {};
+    return [lane, { routine: usageVerdict(row, now), critical: usageVerdict(row, now, true) }];
+  }));
+  return { lanes, ...evaluateAdmission({
     load1: (opts.load1 ?? (() => loadavg()[0]!))(), ncpu: (opts.ncpu ?? availableParallelism)(),
     procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, disabled: await exists(join(queue, 'LOADGATE_OFF')),
-  });
+  }) };
 }

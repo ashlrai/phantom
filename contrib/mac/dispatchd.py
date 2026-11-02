@@ -701,6 +701,31 @@ try:   # atomic; a failed write never breaks the tick (rev2 A4)
     _dl = R + "/.autopilot-disk-gate.tmp"; open(_dl, "w").write(DISK_GATE + "\n"); os.replace(_dl, R + "/.autopilot-disk-gate")
 except Exception as e: log("autopilot disk-level write failed %s" % type(e).__name__)
 
+# Weekly quota pacing; reset_at is an ISO timestamp or Unix seconds.
+def usage_verdict(row, now, critical=False):
+    import datetime
+    import math
+    used = row.get("weekly_used_pct") if isinstance(row, dict) else None
+    if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used) or not 0 <= used <= 100:
+        return {"admit": True, "reason": "usage unknown", "used_fraction": None, "elapsed_fraction": None, "limit": None}
+    elapsed = None
+    try:
+        reset = row.get("reset_at")
+        reset = float(reset) if isinstance(reset, (int, float)) else datetime.datetime.fromisoformat(str(reset).replace("Z", "+00:00")).timestamp()
+        # weekly_used_pct describes a seven-day window; expired readings await refresh.
+        if math.isfinite(reset) and now < reset <= now + 7 * 86400:
+            elapsed = max(0, 1 - (reset - now) / (7 * 86400))
+    except (TypeError, ValueError, OverflowError): pass
+    limit = 0.95 if critical else (min(1, elapsed + 0.10) if elapsed is not None else 0.60)
+    admit = used / 100 <= limit
+    return {"admit": admit, "reason": ("critical reserve" if critical else "reset pacing" if elapsed is not None else "reset unknown: 60% fallback") + (": admit" if admit else ": defer"),
+            "used_fraction": used / 100, "elapsed_fraction": elapsed, "limit": limit}
+
+usage_rows = jload(Q + "/budget-overrides.json", {})
+if not isinstance(usage_rows, dict): usage_rows = {}
+lane_admission = {lane: {"routine": usage_verdict(usage_rows.get(lane, {}), NOW),
+                         "critical": usage_verdict(usage_rows.get(lane, {}), NOW, True)} for lane in LANES}
+
 # ---- (b) fill
 launched = []; rest = []; bad = 0
 GCAP = global_cap()
@@ -758,6 +783,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue
         if (len(launched) >= MAX_LAUNCH_PER_TICK or s.get("held") or lane in hold
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
+            rest.append(line); seen.add(j); continue
+        router_line = next((r for r in (rq or "").splitlines() if re.match(r"^- READY " + re.escape(j) + r"[ \[(]", r)), "")
+        urgent = bool(re.search(r"(?i)\b(?:P0|critical)\b", router_line))
+        if not lane_admission[lane]["critical" if urgent else "routine"]["admit"]:
             rest.append(line); seen.add(j); continue
         if lane == "codex-local":
             if tier == "mid" and local_mid >= LOCAL_MID_CAP: rest.append(line); seen.add(j); continue
@@ -890,7 +919,7 @@ if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
 _at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(running.values()) >= GCAP else None
 _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
 adm = {"schema": "dispatchd.admission.v1", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,
-       "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
+       "lanes": lane_admission, "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
        "daemon_tick_age_s": GATE["daemon_tick_age_s"], "cap": GCAP, "running": sum(running.values()), "hard_cap": slots["hard_cap"], "install_lock_holder": _install_holder()}
 jsave(Q + "/admission.json", adm); st["admission"] = adm
 jsave(Q + "/status.json", st)

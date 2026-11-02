@@ -3,6 +3,7 @@ import { readAdmission, type AdmissionReport, type ReadAdmissionOptions } from '
 const HELP = `Usage: phm pool admission [--json]
 
 admission: what dispatchd would decide about new claims right now, read-only.
+  JSON includes per-lane routine/critical usage pacing verdicts and reasons.
   Reports 1-min loadavg, ncpu, the global running cap, running jobs, the install-lock
   holder and admit true/false with the reason. Exit 0 either way; 2 on bad arguments.
   No claims while loadavg > min(2 x ncpu, 36), processes > 800, live job worktrees > 40,

@@ -101,6 +101,14 @@ describe('readAdmission and phm pool admission', () => {
     expect(r.daemon.tickAgeSeconds).toBe(60);
     expect(r.installLock.holder).toBeNull();
   });
+  it('exposes lane pacing through the JSON CLI', async () => {
+    await writeFile(join(queue, 'budget-overrides.json'), JSON.stringify({ devin: { weekly_used_pct: 69, reset_at: new Date(NOW + 86400_000).toISOString() } }));
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdPool(['admission', '--json'], probes())).toBe(0);
+    const report = JSON.parse(String(output.mock.calls[0]?.[0]));
+    expect(report.lanes.devin.routine).toMatchObject({ admit: true, used_fraction: .69, reason: 'reset pacing: admit' });
+    expect(report.lanes.devin.critical.limit).toBe(.95);
+  });
   it('counts only .base files whose worktree directory exists', async () => {
     const wt = join(dir, 'wt-1'); await mkdir(wt);
     await writeFile(join(dir, 'RQ-A.base'), `abc x ${wt} devin\n`);

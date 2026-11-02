@@ -351,3 +351,22 @@ the live queue or GitHub:
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
 ```
+
+### Weekly usage pacing (RQ-PACE-TO-RESET)
+
+The dispatcher reads each lane's `weekly_used_pct` and `reset_at` from
+`queue/budget-overrides.json`. Reset timestamps accept ISO dates with timezone or
+Unix seconds. The window is seven days: routine work admits when used fraction
+is at most elapsed fraction plus 0.10 (capped at 1). Missing, malformed, expired,
+or more-than-seven-days-away resets use the previous 60% threshold until refreshed.
+Missing usage is reported as unknown and does not impose a quota gate.
+For example, 69% used with one day until reset admits routine work
+(elapsed 85.7% + 10% margin). At mid-window it defers (limit 60%).
+A READY router line containing the word `P0` or `critical` admits through 95%,
+independent of reset timing. Existing host, hold, capacity and provider gates apply.
+`queue/admission.json` and `phm pool admission --json` expose `lanes` with separate
+`routine` and `critical` verdicts, reasons, used/elapsed fractions and limits.
+The CLI reads the same budget overrides and recomputes pacing at query time;
+the top-level verdict continues to describe host capacity.
+Preview installation with `contrib/mac/install.sh --dry-run --json`; Security must
+review and re-pin before `contrib/mac/install.sh --json` installs live files.

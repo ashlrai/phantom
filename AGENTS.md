@@ -76,3 +76,8 @@ timeout; unmeasured figures are `null`. See [lane health](docs/LANE-HEALTH.md).
 Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
+
+Weekly quota pacing: `phm pool admission --json` exposes per-lane routine and
+critical verdicts. At 69% weekly usage with one day until reset, routine work
+admits; at mid-window it defers. P0/critical READY lines admit through 95%.
+See [Mac dispatcher pacing](contrib/mac/README.md#weekly-usage-pacing-rq-pace-to-reset).

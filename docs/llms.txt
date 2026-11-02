@@ -39,3 +39,4 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Hub reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet. Compatibility identifiers stay.
 - [Console layout](CONSOLE-LAYOUT.md): One set of width breakpoints for the web console. Compact phone, laptop, and wide-monitor views of the same live state.
+- Weekly usage pacing: ../contrib/mac/README.md#weekly-usage-pacing-rq-pace-to-reset — lane reset timing, 10% margin, P0/critical reserve through 95%; `phm pool admission --json`.
