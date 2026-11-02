@@ -2731,6 +2731,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'capacity': {
+        const { cmdCapacity } = await import('./capacity.js');
+        process.exitCode = await cmdCapacity(rest);
+        break;
+      }
+
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);

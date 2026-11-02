@@ -119,7 +119,7 @@ let _phantomInstalled: boolean | undefined;
 function phantomInstalled(): boolean {
   if (_phantomInstalled === undefined) {
     try {
-      execFileSync(process.platform === 'win32' ? 'where' : 'which', ['phantom'], { stdio: 'ignore' });
+      execFileSync(process.platform === 'win32' ? 'where' : 'which', ['phantom'], { stdio: 'ignore', timeout: 2_000 });
       _phantomInstalled = true;
     } catch {
       _phantomInstalled = false;
@@ -234,7 +234,7 @@ export function resolveBinAbsolute(bin: string): string {
   if (!bin || bin.includes('/')) return bin;
   try {
     const probe = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(probe, [bin], { encoding: 'utf8' }).trim().split('\n')[0]?.trim();
+    const out = execFileSync(probe, [bin], { encoding: 'utf8', timeout: 2_000 }).trim().split('\n')[0]?.trim();
     return out && out.length > 0 ? out : bin;
   } catch {
     return bin;
@@ -296,7 +296,9 @@ export function engineInstalled(engine: EngineId, cfg?: AshlrConfig): boolean {
   const candidates = spec?.bins ?? [spec?.bin ?? engine];
   for (const bin of candidates) {
     try {
-      execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore' });
+      // RQ-DAEMONTICK-UNBLOCK: bounded — a PATH probe that never exits must
+      // not freeze the tick that reached it.
+      execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore', timeout: 2_000 });
       return true;
     } catch {
       // try next

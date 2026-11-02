@@ -61,6 +61,8 @@ import type {
   DaemonDispatchTrace,
   DaemonState,
   DaemonTick,
+  DaemonTickOutcome,
+  DaemonTickPhase,
   EngineId,
   EngineTier,
   EvidenceOutcomeSummary,
@@ -189,7 +191,28 @@ import {
 } from './activity.js';
 import { residentPidProvablyReused } from './pid-reuse-proof.js';
 import { beginTickProgress, noteTickPhase, readTickProgress } from './tick-progress.js';
-import { boundedBeforeTick } from './tick-deadline.js';
+import {
+  boundedBeforeTick,
+  BEFORE_TICK_ABORT_GRACE_MS,
+  BEFORE_TICK_DEADLINE_MS,
+} from './tick-deadline.js';
+import {
+  beginTickPhases,
+  deriveTickOutcome,
+  endTickPhases,
+  runTickPhase,
+  skipTickPhase,
+  type TickPhaseSkipped,
+  tickPhasesSnapshot,
+  TICK_PHASE_BACKLOG_REFRESH_MS,
+  TICK_PHASE_CAPACITY_MS,
+  TICK_PHASE_DISPATCH_PLAN_MS,
+  TICK_PHASE_FRONTIER_PROBE_MS,
+  TICK_PHASE_GRACE_MS,
+  TICK_PHASE_INVENT_MS,
+  TICK_PHASE_MAINTENANCE_MS,
+  TICK_PHASE_REFLECTION_MS,
+} from './tick-phases.js';
 import {
   consumeDaemonActivationPermit,
   isDaemonActivationCapability,
@@ -210,6 +233,7 @@ import {
   startLocalFleetHangWatchdog,
   type LocalFleetConcurrency,
   type LocalFleetSettings,
+  type ServingRuntimeCapacity,
 } from './local-fleet.js';
 import { createOuterAttemptIdentity } from '../fleet/attempt-identity.js';
 import { runSwarm } from '../swarm/runner.js';
@@ -272,6 +296,7 @@ import {
 } from '../run/best-of-n-policy.js';
 import { runSelfHealCycle, runSelfHealCycleForRepos } from '../fleet/self-heal.js';
 import { runInventCycle } from '../generative/invent-cycle.js'; // M186
+import { resolvePlanningClient } from '../generative/invent.js';
 import { runCounterfactualReplay } from '../fleet/counterfactual.js'; // M187
 import { detectRegression, bisectAndRevert } from '../fleet/regression-sentinel.js'; // M189
 import { observePostMergeStability } from '../fleet/post-merge-stability-observer.js';
@@ -1168,6 +1193,12 @@ const DAEMON_PAUSE_PARK_MS = 1_000;
  * KILL and SIGTERM still wake the park at once.
  */
 const STANDING_WITHDRAWN_PARK_MS = 30_000;
+/**
+ * RQ-DAEMONTICK-UNBLOCK: after the hang watchdog aborts a fleet-armed turn,
+ * this is the settle grace the tick waits before detaching the run. With the
+ * fleet off the bound is the watchdog timeout alone (nothing is aborted).
+ */
+const TURN_SETTLE_GRACE_MS = 60_000;
 const pendingDaemonTickEffects = new WeakMap<DaemonTick, Set<Promise<void>>>();
 const durableAgentOsObserverTicks = new WeakSet<object>();
 
@@ -1384,6 +1415,12 @@ interface DaemonRunOptions extends TickOptions {
    * watched by a human. See daemon/post-merge-halt.ts.
    */
   postMergeHalt?: boolean;
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: the resident loop's bound on ONE tick() call.
+   * Every phase inside tick() bounds itself; this is the backstop for a
+   * non-phase await that never settles. Absent = DAEMON_TICK_DEADLINE_MS.
+   */
+  tickDeadlineMs?: number;
 }
 
 /** Schedule advisory post-state work only after a durable resident tick returns. */
@@ -3945,6 +3982,24 @@ export async function tick(
   cfg: AshlrConfig,
   opts: TickOptions,
 ): Promise<DaemonTick> {
+  // RQ-DAEMONTICK-UNBLOCK: open this tick's phase ledger first — every bounded
+  // stage below appends {name,status,durationMs,error}; recordTick stamps the
+  // ledger onto the record and the resident loop persists it onto state even
+  // when the tick is abandoned at the runDaemon deadline.
+  beginTickPhases();
+  const phaseLog = (line: string): void => console.warn('[ashlr] daemon:tick', line);
+  // RQ-DAEMONTICK-UNBLOCK: one funnel for every awaited tick stage — bounded
+  // wait + AbortSignal + ledger record + log on failure. A phase that times
+  // out is cancelled and left detached; the tick continues and completes.
+  const runPhase = <T>(
+    name: string,
+    deadlineMs: number,
+    run: (signal: AbortSignal) => Promise<T>,
+    graceMs?: number,
+  ) => runTickPhase(name, run, {
+    deadlineMs, parentSignal: opts.signal, log: phaseLog,
+    ...(graceMs !== undefined ? { graceMs } : {}),
+  });
   const now = new Date().toISOString();
   // receipt.v1 R6: later[] entries from ledger events this process writes (idempotent, best effort).
   try { installReceiptLaterHooks(registerLedgerAppendObserver); } catch { /* never blocks the tick */ }
@@ -3964,6 +4019,7 @@ export async function tick(
       proposalsCreated: 0,
       spentUsd: 0,
       reason: 'activation-refused',
+      phases: tickPhasesSnapshot(),
     };
   }
   // V3.10 (U5) capability-kind split. A `resident-standing` capability (minted
@@ -4035,6 +4091,7 @@ export async function tick(
   let backlogSnapshotId: string | undefined;
   const ownershipLostTick = (t: DaemonTick): DaemonTick => ({
     ...t,
+    phases: tickPhasesSnapshot(),
     reason: 'shutdown-requested',
     durationMs: t.durationMs ?? Date.now() - _tickStartMs,
   });
@@ -4110,6 +4167,9 @@ export async function tick(
         : {}),
       ...(backlogSnapshotAt ? { backlogSnapshotAt } : {}),
       ...(backlogSnapshotId ? { backlogSnapshotId } : {}),
+      // RQ-DAEMONTICK-UNBLOCK: the phase ledger so far — a 'running' entry
+      // marks the stage in flight when this record is written.
+      phases: tickPhasesSnapshot(),
       durationMs: t.durationMs ?? Date.now() - _tickStartMs,
     });
     if (!stillOwnsTick()) return ownershipLostTick(tick);
@@ -4527,16 +4587,17 @@ export async function tick(
     producerMaintenanceNextAfter = new Date(nextRunAt).toISOString();
     return false;
   };
-  const runSelfHealMaintenance = async (targetRepos?: string[]): Promise<void> => {
+  const runSelfHealMaintenance = async (targetRepos?: string[], phaseSignal?: AbortSignal): Promise<void> => {
     if (meteredUsdExhaustedForMaintenance || proposalOnlyActivation || opts.dryRun || stopRequested() || selfHealMaintenanceRan) return;
     selfHealMaintenanceRan = true;
     const settleObservation = beginTickStageObservation('self-heal');
     let observationOutcome: 'ok' | 'failed' = 'ok';
     try {
+      const healOpts = phaseSignal ? { signal: phaseSignal } : {};
       if (targetRepos && targetRepos.length > 0) {
-        await runSelfHealCycleForRepos(targetRepos, liveCfg);
+        await runSelfHealCycleForRepos(targetRepos, liveCfg, healOpts);
       } else {
-        await runSelfHealCycle(liveCfg);
+        await runSelfHealCycle(liveCfg, healOpts);
       }
     } catch (err) {
       // Best-effort — self-heal must never crash the tick.
@@ -4590,7 +4651,7 @@ export async function tick(
       return proposalRepairMaintenanceResult;
     }
   };
-  const runInventMaintenance = async (): Promise<boolean> => {
+  const runInventMaintenance = async (phaseSignal?: AbortSignal): Promise<boolean | TickPhaseSkipped> => {
     if (
       meteredUsdExhaustedForMaintenance ||
       proposalOnlyActivation ||
@@ -4601,12 +4662,27 @@ export async function tick(
     ) return false;
     if (directionPlan?.forceLocalOnly === true) return false;
     if ((liveCfg.foundry as Record<string, unknown>)?.generative !== true) return false;
+    // RQ-DAEMONTICK-UNBLOCK: a missing frontier client records
+    // 'skipped: no-frontier' — the tick never awaits an unresolvable planner.
+    // The probe races a bound tighter than the enclosing phase deadline so a
+    // hung account/client scan degrades fast instead of holding the tick.
+    const probed = await Promise.race([
+      resolvePlanningClient(liveCfg).then((client) => client, () => null),
+      new Promise<'probe-timeout'>((resolveProbe) => {
+        const probeTimer = setTimeout(() => resolveProbe('probe-timeout'), TICK_PHASE_FRONTIER_PROBE_MS);
+        probeTimer.unref?.();
+      }),
+    ]);
+    if (probed === 'probe-timeout') {
+      throw new Error(`frontier client probe exceeded its ${TICK_PHASE_FRONTIER_PROBE_MS / 1_000} s deadline`);
+    }
+    if (probed === null) return skipTickPhase('no-frontier');
     inventMaintenanceRan = true;
     const settleObservation = beginTickStageObservation('invention');
     let observationOutcome: 'ok' | 'failed' = 'ok';
     let enqueued: number | undefined;
     try {
-      const result = await runInventCycle(liveCfg);
+      const result = await runInventCycle(liveCfg, phaseSignal ? { signal: phaseSignal } : {});
       enqueued = result.enqueued;
       // Self-heal/repair changes already receive their own fresh scan. Invention
       // only adds queue entries, so a completed zero-enqueue cycle needs none.
@@ -4685,17 +4761,16 @@ export async function tick(
 
     // Low cadence, matching the counterfactual-replay pattern above: reflection
     // persists a snapshot and distills playbooks, and does not need every tick.
+    // Its own bounded phase — a wedged distillation must not hold ancillary.
     if (
       !stopRequested() &&
       (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] === true &&
       state.ticks.length % 20 === 0
     ) {
-      try {
+      await runTickPhase('reflection', async (phaseSignal) => {
         const { runReflectionCycle } = await import('../learn/reflect.js');
-        await runReflectionCycle(liveCfg);
-      } catch (err) {
-        console.warn('[ashlr] daemon:tick runReflectionCycle failed:', (err as Error)?.message ?? err);
-      }
+        await runReflectionCycle(liveCfg, { signal: phaseSignal });
+      }, { deadlineMs: TICK_PHASE_REFLECTION_MS, parentSignal: opts.signal, log: phaseLog });
     }
 
     // M189: Regression sentinel — detect regressions introduced by auto-merge and bisect/revert.
@@ -5090,8 +5165,13 @@ export async function tick(
   // tick waiting on one stuck mirror install (2026-09-26). The default hooks
   // resolve at once, so master's path is unchanged.
   noteTickPhase('tick hooks', 'mirrors, post-merge watch, ledger and budget reads');
-  try {
-    tickConstraints = await boundedBeforeTick(
+  // RQ-DAEMONTICK-UNBLOCK: the hook already bounds itself (tick-deadline.ts);
+  // this phase adds the ledger entry and a backstop wait slightly above the
+  // hook's own deadline+grace, so even a wedged boundedBeforeTick records
+  // 'timeout' and lets the tick continue instead of freezing lastTickAt.
+  const beforeTickPhase = await runTickPhase(
+    'tick hooks',
+    (phaseSignal) => boundedBeforeTick(
       (signal) => hooks.beforeTick({
         nowMs: Date.now(),
         cfg: liveCfg,
@@ -5100,15 +5180,28 @@ export async function tick(
         ...(standingTick && dcfg.dailyBudgetUsd > 0 && state.todaySpentUsd >= dcfg.dailyBudgetUsd
           && !(state.spendGuardAccounting?.budgetDay === state.todayDate
             && state.spendGuardAccounting.budgetExhausted === true) ? { meteredUsdExhausted: true as const } : {}),
+        // boundedBeforeTick's composed signal already carries the phase
+        // deadline (parent) and its own hook deadline.
         signal,
       }),
-      opts.signal ? { parentSignal: opts.signal } : {},
-    );
-  } catch (err) {
+      { parentSignal: phaseSignal },
+    ),
+    {
+      deadlineMs: BEFORE_TICK_DEADLINE_MS + BEFORE_TICK_ABORT_GRACE_MS + TICK_PHASE_GRACE_MS,
+      graceMs: TICK_PHASE_GRACE_MS,
+      parentSignal: opts.signal,
+      log: phaseLog,
+    },
+  );
+  if (beforeTickPhase.status === 'ok' && beforeTickPhase.value !== undefined) {
+    tickConstraints = beforeTickPhase.value;
+  } else {
     tickConstraints = {
       pausedRepos: [],
       laneCaps: {},
-      holdProduction: `tick hooks failed before the tick (${boundedText(err instanceof Error ? err.message : String(err), 160)})`,
+      holdProduction: beforeTickPhase.status === 'timeout'
+        ? 'tick hooks exceeded their deadline before the tick; production held this tick'
+        : `tick hooks failed before the tick (${boundedText(beforeTickPhase.error ?? 'unknown', 160)})`,
     };
   }
   noteTickPhase('selection and dispatch');
@@ -5190,7 +5283,24 @@ export async function tick(
   // -------------------------------------------------------------------------
   if (autonomyControlEnabled(liveCfg)) {
     try {
-      directionPlan = await buildDaemonStrategyPlan(liveCfg, state, cachedBacklogCountForEnrolledRepos(enrolled), { standingTick, zeroDollarOnly: zeroDollarOnlyTick });
+      // RQ-DAEMONTICK-UNBLOCK: bounded like every other tick stage — a wedged
+      // planner degrades to 'pause' instead of freezing the tick.
+      const directionPhase = await runPhase(
+        'dispatch-plan',
+        TICK_PHASE_DISPATCH_PLAN_MS,
+        () => buildDaemonStrategyPlan(liveCfg, state, cachedBacklogCountForEnrolledRepos(enrolled), { standingTick, zeroDollarOnly: zeroDollarOnlyTick }),
+      );
+      if (directionPhase.status === 'ok' && directionPhase.value) {
+        directionPlan = directionPhase.value;
+      } else {
+        directionPlan = {
+          mode: 'pause',
+          allowDispatch: false,
+          forceLocalOnly: false,
+          runAutoMergeMaintenance: false,
+          reason: `resource strategy ${directionPhase.status}: ${(directionPhase.error ?? 'unavailable').slice(0, 160)}`,
+        };
+      }
       directionMode = directionPlan.mode;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -5214,7 +5324,8 @@ export async function tick(
     }
 
     if (!directionPlan.allowDispatch) {
-      const autoMergePassResult = await runAutoMergeMaintenancePass();
+      const autoMergePassResult =
+        (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass())).value ?? null;
       const autoMerge = autoMergeTickSummary(autoMergePassResult);
       const merged = autoMergePassResult?.merged ?? 0;
       if (!stillOwnsTick()) {
@@ -5257,7 +5368,8 @@ export async function tick(
   //     dispatch above. Default hooks never hold.
   // -------------------------------------------------------------------------
   if (tickConstraints.holdProduction !== null) {
-    const autoMergePassResult = await runAutoMergeMaintenancePass();
+    const autoMergePassResult =
+      (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass())).value ?? null;
     const autoMerge = autoMergeTickSummary(autoMergePassResult);
     const merged = autoMergePassResult?.merged ?? 0;
     if (!stillOwnsTick()) {
@@ -5288,13 +5400,16 @@ export async function tick(
   // -------------------------------------------------------------------------
   // 5. Build / refresh backlog for ENROLLED repos only.
   // -------------------------------------------------------------------------
-  let backlogItems: WorkItem[] = await refreshBacklogForTick();
-  const proposalRepairResult = await runProposalRepairMaintenance();
+  let backlogItems: WorkItem[] =
+    (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? [];
+  const proposalRepairResult =
+    (await runPhase('proposal-repair', TICK_PHASE_MAINTENANCE_MS, () => runProposalRepairMaintenance())).value ?? null;
   if (
     (proposalRepairResult?.queued ?? 0) > 0 ||
     (proposalRepairResult?.dispatchRepairPruned ?? 0) > 0
   ) {
-    backlogItems = await refreshBacklogForTick();
+    backlogItems =
+      (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? [];
   }
   for (const key of proposalRepairResult?.blockedItemKeys ?? []) blockedRepairKeys.add(key);
   for (const key of proposalRepairResult?.blockedRootKeys ?? []) blockedRepairRootKeys.add(key);
@@ -5337,7 +5452,8 @@ export async function tick(
   }
 
   if (backlogItems.length === 0) {
-    const autoMergePassResult = await runAutoMergeMaintenancePass();
+    const autoMergePassResult =
+      (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass())).value ?? null;
     preDispatchAutoMergePassResult = autoMergePassResult;
     preDispatchAutoMergePassRan = true;
     const autoMerge = autoMergeTickSummary(autoMergePassResult);
@@ -5345,15 +5461,18 @@ export async function tick(
 
     if (!opts.dryRun && shouldRunProducerMaintenance(state)) {
       producerMaintenanceBeforeSelection = true;
-      await runSelfHealMaintenance();
-      backlogItems = filterGeneratedRepairDispatch(await refreshBacklogForTick());
+      await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(undefined, signal));
+      backlogItems = filterGeneratedRepairDispatch(
+        (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
       if (backlogItems.length > 0) {
         skipInventAfterSelfHealRefill = true;
       } else {
-        const invented = await runInventMaintenance();
-        if (invented) backlogItems = filterGeneratedRepairDispatch(await refreshBacklogForTick());
+        const invented =
+          (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
+        if (invented) backlogItems = filterGeneratedRepairDispatch(
+          (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
       }
-      await runAncillaryMaintenance();
+      await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
     }
 
     if (backlogItems.length > 0) {
@@ -5408,14 +5527,18 @@ export async function tick(
     shouldRunProducerMaintenance(state)
   ) {
     producerMaintenanceBeforeSelection = true;
-    await runSelfHealMaintenance(selfHealReposBeforeSelection);
-    backlogItems = filterGeneratedRepairDispatch(await refreshBacklogForTick());
-    const invented = await runInventMaintenance();
-    if (invented) backlogItems = filterGeneratedRepairDispatch(await refreshBacklogForTick());
-    await runAncillaryMaintenance();
+    await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(selfHealReposBeforeSelection, signal));
+    backlogItems = filterGeneratedRepairDispatch(
+      (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
+    const invented =
+      (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
+    if (invented) backlogItems = filterGeneratedRepairDispatch(
+      (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
+    await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
 
     if (backlogItems.length === 0) {
-      const autoMergePassResult = await runAutoMergeMaintenancePass();
+      const autoMergePassResult =
+        (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass())).value ?? null;
       preDispatchAutoMergePassResult = autoMergePassResult;
       preDispatchAutoMergePassRan = true;
       const autoMerge = autoMergeTickSummary(autoMergePassResult);
@@ -6210,9 +6333,9 @@ export async function tick(
   // guard so queued work discovery and regression watches do not extend an
   // in-flight accounting guard for selected dispatches.
   if (!producerMaintenanceBeforeSelection && shouldRunProducerMaintenance(state)) {
-    await runSelfHealMaintenance();
-    await runInventMaintenance();
-    await runAncillaryMaintenance();
+    await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(undefined, signal));
+    await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal));
+    await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
   }
 
   if (!stillOwnsTick()) {
@@ -6323,7 +6446,26 @@ export async function tick(
   let fleetConcurrency: LocalFleetConcurrency | null = null;
   let fleetDispatchBlocked: string | null = null;
   if (localFleet.enabled) {
-    const capacity = await resolveServingCapacity(routingCfg, localFleet);
+    // RQ-DAEMONTICK-UNBLOCK: resolveServingCapacity catches probe failures but
+    // cannot bound a probe that never settles — the phase deadline degrades to
+    // a fail-closed 'down' capacity instead of freezing the tick.
+    const capacityPhase = await runPhase(
+      'capacity',
+      TICK_PHASE_CAPACITY_MS,
+      () => resolveServingCapacity(routingCfg, localFleet),
+    );
+    const capacity: ServingRuntimeCapacity = capacityPhase.value ?? {
+      runtime: 'llama-server',
+      endpoint: localFleet.baseUrl.replace(/^https?:\/\//, '').slice(0, 120),
+      state: 'down',
+      slots: null,
+      busySlots: null,
+      model: null,
+      managed: false,
+      startedAt: null,
+      observedAt: now,
+      detail: `capacity probe ${capacityPhase.status === 'timeout' ? 'exceeded its deadline' : 'failed'}: ${capacityPhase.error ?? 'unknown'}`,
+    };
     fleetMonitor.setCapacity(capacity);
     // V3.10 (U5 → U6): a standing tick's cap on the local lane (2 while Mason
     // is present, a Leader decision, the grant) is folded in so the snapshot
@@ -6419,16 +6561,21 @@ export async function tick(
   // no lane computed) on every other tick.
   const laneCapsActive = Object.keys(tickConstraints.laneCaps).length > 0;
   if (hooks.prepareDispatchPlan && !stopRequested()) {
-    try {
-      const order = await hooks.prepareDispatchPlan(workedSet,routingCfg,opts.signal);
-      // Advice may reorder only the exact already-claimed batch. Never add,
-      // remove, duplicate or manufacture work to consume an allowance.
-      if (order && order.length === workedSet.length && new Set(order).size === order.length &&
-        order.every((id) => workedSet.some((item) => item.id === id))) {
-        const positions = new Map(order.map((id,index) => [id,index]));
-        workedSet.sort((a,b) => positions.get(a.id)!-positions.get(b.id)!);
-      }
-    } catch { /* Failed advisory remains deterministic ordinary routing. */ }
+    // RQ-DAEMONTICK-UNBLOCK: advice is bounded — a stuck planner degrades the
+    // phase and the deterministic order stands instead of holding the tick.
+    const planPhase = await runPhase(
+      'dispatch-plan',
+      TICK_PHASE_DISPATCH_PLAN_MS,
+      () => Promise.resolve(hooks.prepareDispatchPlan!(workedSet, routingCfg, opts.signal)),
+    );
+    const order = planPhase.value;
+    // Advice may reorder only the exact already-claimed batch. Never add,
+    // remove, duplicate or manufacture work to consume an allowance.
+    if (order && order.length === workedSet.length && new Set(order).size === order.length &&
+      order.every((id) => workedSet.some((item) => item.id === id))) {
+      const positions = new Map(order.map((id,index) => [id,index]));
+      workedSet.sort((a,b) => positions.get(a.id)!-positions.get(b.id)!);
+    }
   }
   hooks.beginDispatchPlan?.(workedSet.map((item) => item.id));
   const itemRoutePlans = workedSet.map((item) => {
@@ -6562,6 +6709,34 @@ export async function tick(
     };
   };
   /**
+   * A turn that exceeded the tick's per-run bound and was left running
+   * detached. Distinct from `fleetWatchdogOutcome`: nothing was aborted —
+   * the run's own engine backstop / stall monitor still owns the tail, and
+   * the tick stopped waiting rather than holding its pool slot forever
+   * (RQ-DAEMONTICK-UNBLOCK).
+   */
+  const detachedTurnOutcome = (
+    item: WorkItem,
+    plan: { backend: EngineId; model: string | null },
+    attemptId: string,
+    boundMs: number,
+  ): ItemOutcome => ({
+    item,
+    spentUsd: 0,
+    dispatched: false,
+    dispatch: dispatchTrace(item, {
+      backend: plan.backend,
+      tier: engineTierOf(plan.backend, routingCfg),
+      model: plan.model,
+      assignedBy: 'tick-deadline',
+      reason: `agent turn exceeded the tick's ${boundMs}ms per-run bound; still running detached under its own engine backstop`,
+      dispatched: false,
+      runId: attemptId,
+      trajectoryId: `run:${attemptId}`,
+      skipReason: 'turn-deadline',
+    }),
+  });
+  /**
    * Wrap one agent turn with the two things an UNATTENDED local fleet needs and
    * a supervised one does not: a hang watchdog, and a record that it is running.
    *
@@ -6572,8 +6747,19 @@ export async function tick(
    * loop that has quietly stopped, so the watchdog aborts the turn's dispatch
    * signal, which the swarm runner already honours, and the slot comes back.
    *
+   * RQ-DAEMONTICK-UNBLOCK: the bound now applies to EVERY turn — a
+   * `runGoal`-routed engine (local-coder, cloud) that never resolved used to
+   * hold its pool slot forever with the fleet off, which is exactly how the
+   * resident tick froze. Fleet-armed turns keep the existing semantics: the
+   * watchdog aborts the turn's own controller at `taskTimeoutMs`, and a short
+   * settle grace lets a cooperative run wind down before the tick detaches.
+   * With the fleet off the run keeps its own engine backstops — at the bound
+   * the tick stops waiting and the run continues detached (nothing is
+   * killed), so a legitimately long frontier run is never cut by the tick.
+   *
    * It adds NO authority and NO gate beyond the explicit daily local ceiling:
-   * with the fleet off this is a direct call through to the original function.
+   * with the fleet off this adds only the bounded wait around the original
+   * call.
    */
   const superviseFleetTurn = async (
     item: WorkItem,
@@ -6582,7 +6768,6 @@ export async function tick(
     watchdogController: AbortController,
     inner: () => Promise<ItemOutcome>,
   ): Promise<ItemOutcome> => {
-    if (!localFleet.enabled) return inner();
 
     // WHICH TURNS THIS GOVERNS. The hang watchdog applies to EVERY turn while
     // the fleet is armed — a wedged builtin swarm holds its pool slot just as
@@ -6600,7 +6785,7 @@ export async function tick(
     //     "Fleet in flight" beside a slot meter fed from llama-server's own
     //     `/slots`, i.e. N agents apparently running against a runtime
     //     reporting zero busy slots, with nothing saying they were elsewhere.
-    const onServingRuntime = plan.backend === localFleet.engine;
+    const onServingRuntime = localFleet.enabled && plan.backend === localFleet.engine;
 
     const capRefusal = (reason: string): ItemOutcome => ({
       item,
@@ -6647,6 +6832,13 @@ export async function tick(
       : null;
     if (agentId !== null) fleetMonitor.publish();
     let timedOut = false;
+    // RQ-DAEMONTICK-UNBLOCK: with the fleet off the watchdog's only action is
+    // to stop the tick waiting — the run keeps its engine backstops and is
+    // left detached (never killed by the tick). With the fleet armed it keeps
+    // aborting the turn's own controller as before.
+    const turnBoundMs = localFleet.enabled
+      ? localFleet.taskTimeoutMs + TURN_SETTLE_GRACE_MS
+      : localFleet.taskTimeoutMs;
     const cancelWatchdog = startLocalFleetHangWatchdog({
       timeoutMs: localFleet.taskTimeoutMs,
       onExpire: () => {
@@ -6656,7 +6848,7 @@ export async function tick(
         // signal "this agent is wedged" made every downstream reader diagnose
         // a hung local agent as claim contention. The dispatch signal composes
         // both, so aborting this one still stops the turn.
-        if (!watchdogController.signal.aborted) {
+        if (localFleet.enabled && !watchdogController.signal.aborted) {
           watchdogController.abort(new Error(
             `local fleet watchdog: no completion within ${localFleet.taskTimeoutMs}ms`,
           ));
@@ -6665,13 +6857,44 @@ export async function tick(
           action: 'daemon:tick',
           repo: item.repo,
           sandboxId: null,
-          summary: `local fleet watchdog aborted a wedged turn for "${item.title}"`,
+          summary: localFleet.enabled
+            ? `local fleet watchdog aborted a wedged turn for "${item.title}"`
+            : `agent turn exceeded the tick's ${turnBoundMs}ms bound for "${item.title}"; left running detached`,
           result: 'error',
         });
       },
     });
     try {
-      const outcome = await inner();
+      const running = inner();
+      // Observed below or detached at the bound; keeps a late rejection from
+      // surfacing as an unhandled rejection once the turn stops waiting.
+      running.catch(() => undefined);
+      let detachTimer: ReturnType<typeof setTimeout> | undefined;
+      const detachBound = new Promise<'turn-detach-bound'>((resolveBound) => {
+        detachTimer = setTimeout(() => resolveBound('turn-detach-bound'), turnBoundMs);
+      });
+      let outcome: ItemOutcome | 'turn-detach-bound';
+      try {
+        outcome = await Promise.race([running, detachBound]);
+      } finally {
+        if (detachTimer) clearTimeout(detachTimer);
+      }
+      // The tick stopped waiting: the run is still in flight, detached under
+      // its own engine backstop / stall monitor. timedOut may already be true
+      // (fleet watchdog expired during the settle grace).
+      if (outcome === 'turn-detach-bound') {
+        timedOut = true;
+        reservation?.release();
+        if (agentId !== null) {
+          fleetMonitor.recordRuntimeFailure(
+            `agent turn exceeded the tick's ${turnBoundMs}ms bound on ${plan.backend}; left running detached`,
+          );
+          fleetMonitor.endAgent(agentId, 'timeout', 'turn bound expired; detached');
+        }
+        return localFleet.enabled
+          ? fleetWatchdogOutcome(item, attemptId, localFleet.taskTimeoutMs)
+          : detachedTurnOutcome(item, plan, attemptId, turnBoundMs);
+      }
       // A turn that never dispatched hands its place in the ceiling back —
       // otherwise a kill-switch or budget skip would consume the day's quota.
       if (outcome.dispatched !== true) reservation?.release();
@@ -6680,7 +6903,9 @@ export async function tick(
       if (agentId === null) {
         // Off-runtime turn: the watchdog governed it, nothing else did.
         return timedOut
-          ? fleetWatchdogOutcome(item, attemptId, localFleet.taskTimeoutMs)
+          ? localFleet.enabled
+            ? fleetWatchdogOutcome(item, attemptId, localFleet.taskTimeoutMs)
+            : detachedTurnOutcome(item, plan, attemptId, turnBoundMs)
           : outcome;
       }
       // HEALTH MUST SEE DISPATCH FAILURES, not just timeouts. A runtime that
@@ -8378,6 +8603,46 @@ export async function tick(
   // backends itself, around hooks.route; the tiered pool carries the lanes.
   const useConcurrentDispatch = !standingTick && routingCfg.foundry?.fabric?.concurrentDispatch === true;
 
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: the dispatch phase's bound is the honest worst
+   * case — every serial slot-worth of turns, each bounded by superviseFleetTurn
+   * (watchdog + settle grace). Past it the tick stops waiting: admitted runs
+   * continue detached and queued items get explicit deadline outcomes.
+   */
+  const dispatchPhaseDeadlineMs = (taskCount: number): number => {
+    const slots = Math.max(1, Math.min(
+      Math.max(1, taskCount),
+      fleetConcurrency?.effective ?? batchParallelCeiling ?? dcfg.parallel ?? taskCount,
+    ));
+    const perTurnBoundMs =
+      localFleet.taskTimeoutMs + (localFleet.enabled ? TURN_SETTLE_GRACE_MS : 0) + TICK_PHASE_GRACE_MS;
+    return Math.ceil(Math.max(1, taskCount) / slots) * perTurnBoundMs;
+  };
+  /** The outcome a worked item gets when the dispatch phase exceeded its bound. */
+  const dispatchDeadlineOutcome = (
+    item: WorkItem,
+    plans: ReadonlyArray<{ backend: EngineId; model?: string | null } | undefined>,
+  ): ItemOutcome => {
+    const idx = workedSet.indexOf(item);
+    const plan = idx >= 0 ? plans[idx] : undefined;
+    const attemptId = attemptIds.get(item.id);
+    return {
+      item,
+      spentUsd: 0,
+      dispatched: false,
+      dispatch: dispatchTrace(item, {
+        backend: plan?.backend ?? null,
+        tier: plan?.backend ? engineTierOf(plan.backend, routingCfg) : null,
+        model: plan?.model ?? null,
+        assignedBy: 'tick-deadline',
+        reason: 'the dispatch phase exceeded its deadline; any admitted run is left detached under its own watchdog',
+        dispatched: false,
+        skipReason: 'dispatch-deadline',
+        ...(attemptId ? { runId: attemptId, trajectoryId: `run:${attemptId}` } : {}),
+      }),
+    };
+  };
+
   let outcomes: PromiseSettledResult<ItemOutcome>[];
   let dispatchManifest: DaemonTick['dispatchManifest'] | undefined;
 
@@ -8448,9 +8713,15 @@ export async function tick(
     const routeReasons = new Map<string, string>();
     const routeModels = new Map<string, string | null>();
     if (routingCfg.foundry?.fabric?.gateway === true) {
-      const gds = await Promise.allSettled(
-        workedSet.map((item) => gatewayDecide(item, routingCfg, { spentUsd: tickSpent + state.todaySpentUsd }))
-      );
+      // RQ-DAEMONTICK-UNBLOCK: gateway advice is bounded — a wedged decide
+      // degrades the phase and the planner falls back to hints-free routing.
+      const gds = (await runPhase(
+        'dispatch-plan',
+        TICK_PHASE_DISPATCH_PLAN_MS,
+        () => Promise.allSettled(
+          workedSet.map((item) => gatewayDecide(item, routingCfg, { spentUsd: tickSpent + state.todaySpentUsd }))
+        ),
+      )).value ?? [];
       for (let i = 0; i < workedSet.length; i++) {
         const d = gds[i];
         if (d?.status === 'fulfilled') {
@@ -8498,7 +8769,14 @@ export async function tick(
     dispatchManifest = recordDispatchManifest(dispatchManifestEvent);
 
     // runConcurrentDispatch: executes plan with full cross-backend parallelism.
-    const concurrentResults = await runConcurrentDispatch(
+    // RQ-DAEMONTICK-UNBLOCK: bounded at the honest worst case — every serial
+    // slot-worth of turns under their own watchdog. Past the deadline the
+    // admitted runs continue detached and every item gets an explicit
+    // 'dispatch-deadline' outcome instead of the tick waiting forever.
+    const concurrentDispatchPhase = await runPhase(
+      'dispatch',
+      dispatchPhaseDeadlineMs(tasks.length),
+      () => runConcurrentDispatch(
       concurrentPlan,
       async (item, _backend): Promise<unknown> => {
         // Each dispatched item flows through the FULL task run function.
@@ -8544,8 +8822,17 @@ export async function tick(
           finish: backend => tierPool.finish(poolTierForBackend(backend, engineTierOf(backend, routingCfg), routingCfg), laneCapsActive ? fleetLaneOf(backend, routingCfg) : null),
         },
       },
-    );
+      ));
 
+    const concurrentResults = concurrentDispatchPhase.value;
+    if (concurrentResults === undefined) {
+      // The pool never settled inside its bound — every worked item gets an
+      // explicit deadline outcome; admitted runs keep going detached.
+      outcomes = workedSet.map((item) => ({
+        status: 'fulfilled' as const,
+        value: dispatchDeadlineOutcome(item, itemRoutePlans),
+      }));
+    } else {
     // Convert DispatchResult[] → PromiseSettledResult<ItemOutcome>[] for downstream.
     outcomes = concurrentResults.map((r): PromiseSettledResult<ItemOutcome> => {
       if (r.settled?.status === 'rejected') {
@@ -8591,6 +8878,7 @@ export async function tick(
 	        },
 	      });
 	    }
+	    }
   } else {
     // Batch mode (default — no continuous mode, no explicit concurrency config):
     // use the exact pre-M116 bounded worker-pool so dispatch + the in-tick budget
@@ -8606,9 +8894,20 @@ export async function tick(
     // V3.10 (U5): a standing tick always takes the tiered pool — the batch
     // pool has no tier or lane awareness, so it could not hold a lane cap.
     const useBatchPool = !standingTick && !isContinuousMode && !explicitConcurrency && fleetConcurrency === null;
-    outcomes = useBatchPool
-      ? await bounded(tasks.map((t) => t.run), dcfg.parallel)
-      : await tieredBounded(tasks, tierPool);
+    // RQ-DAEMONTICK-UNBLOCK: every turn is bounded by superviseFleetTurn, so
+    // this bound is the honest worst case for the pool — past it, unclaimed
+    // items get explicit deadline outcomes and admitted runs stay detached.
+    const dispatchPhase = await runPhase(
+      'dispatch',
+      dispatchPhaseDeadlineMs(tasks.length),
+      () => useBatchPool
+        ? bounded(tasks.map((t) => t.run), dcfg.parallel)
+        : tieredBounded(tasks, tierPool),
+    );
+    outcomes = dispatchPhase.value ?? workedSet.map((item) => ({
+      status: 'fulfilled' as const,
+      value: dispatchDeadlineOutcome(item, itemRoutePlans),
+    }));
   }
   } catch (err) {
     stopLeaseRenewer();
@@ -8649,9 +8948,14 @@ export async function tick(
       dispatchedOutcomes.every((outcome) => outcome.status === 'rejected' ||
         localFleetOutcomeOf(outcome.value).outcome === 'failed');
     if (everyDispatchFailed) {
-      fleetMonitor.setCapacity(
-        await resolveServingCapacity(routingCfg, localFleet, { force: true }),
+      // RQ-DAEMONTICK-UNBLOCK: bounded like the initial probe; a stale/stuck
+      // re-probe leaves the previous (already down) capacity in place.
+      const reprobePhase = await runPhase(
+        'capacity-recheck',
+        TICK_PHASE_CAPACITY_MS,
+        () => resolveServingCapacity(routingCfg, localFleet, { force: true }),
       );
+      if (reprobePhase.value) fleetMonitor.setCapacity(reprobePhase.value);
     }
     fleetMonitor.publish();
   }
@@ -8665,7 +8969,13 @@ export async function tick(
     for (const outcome of outcomes) {
       if (outcome.status !== 'fulfilled') continue;
       try {
-        await hooks.afterDispatch(dispatchOutcomeOf(outcome.value, at, standingTick ? routingCfg : null));
+        // RQ-DAEMONTICK-UNBLOCK: each hook gets its own bounded phase — one
+        // wedged afterDispatch must not hold the whole tick open.
+        await runPhase(
+          'dispatch-hook',
+          TICK_PHASE_DISPATCH_PLAN_MS,
+          () => Promise.resolve(hooks.afterDispatch(dispatchOutcomeOf(outcome.value, at, standingTick ? routingCfg : null))),
+        );
       } catch (err) {
         console.warn('[ashlr] daemon:tick afterDispatch hook failed:', (err as Error)?.message ?? err);
       }
@@ -9218,7 +9528,9 @@ export async function tick(
   // strictly proposal-only.
   let merged = 0;
   let autoMergePassResult: AutoMergePassResult | null = null;
-  autoMergePassResult = preDispatchAutoMergePassRan ? preDispatchAutoMergePassResult : await runAutoMergeMaintenancePass(true);
+  autoMergePassResult = preDispatchAutoMergePassRan
+    ? preDispatchAutoMergePassResult
+    : (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass(true))).value ?? null;
   const autoMerge = autoMergeTickSummary(autoMergePassResult);
   merged = autoMergePassResult?.merged ?? 0;
   const producerMaintenance = producerMaintenanceSummary();
@@ -9602,6 +9914,181 @@ async function openStandingRunForDaemon(cfg: AshlrConfig): Promise<StandingRun |
 // ---------------------------------------------------------------------------
 // runDaemon — the operator loop
 // ---------------------------------------------------------------------------
+
+/**
+ * RQ-DAEMONTICK-UNBLOCK: the resident loop's backstop bound on one tick()
+ * call. tick() bounds every phase internally — this covers a phase bug or a
+ * wedged non-phase await so `lastTickAt` can never freeze again. 60 min sits
+ * above every honest phase budget (25 min hooks + maintenance + the bounded
+ * dispatch pool).
+ */
+export const DAEMON_TICK_DEADLINE_MS = 60 * 60_000;
+
+/**
+ * A tick abandoned at the runDaemon deadline is REMEMBERED: the loop must
+ * not start a second tick over one that is still open (two mirror preps
+ * racing, double state writes). It clears itself when the abandoned promise
+ * finally settles — the same contract boundedBeforeTick keeps.
+ */
+let abandonedDaemonTick: { since: number; settled: Promise<void> } | null = null;
+
+/** True while a previous tick abandoned at its deadline is still open. */
+export function abandonedDaemonTickRunning(): boolean {
+  return abandonedDaemonTick !== null;
+}
+
+/** Test-only: forget an abandoned tick. */
+export function resetAbandonedDaemonTickForTests(): void {
+  abandonedDaemonTick = null;
+}
+
+export type BoundedDaemonTick =
+  | { kind: 'settled'; result: DaemonTick }
+  | { kind: 'failed'; error: string }
+  | { kind: 'timeout'; error: string }
+  | { kind: 'refused-open'; error: string };
+
+/**
+ * Race one tick invocation against a deadline. A deadline hit parks the still-
+ * running tick as "abandoned" (see `abandonedDaemonTick`) and reports
+ * 'timeout'; subsequent calls refuse while it stays open. Exported for tests.
+ */
+export async function runBoundedDaemonTick(
+  invoke: () => Promise<DaemonTick>,
+  deadlineMs: number,
+): Promise<BoundedDaemonTick> {
+  if (abandonedDaemonTick !== null) {
+    return {
+      kind: 'refused-open',
+      error: `the previous tick is still open (abandoned at its deadline ${Math.round((Date.now() - abandonedDaemonTick.since) / 60_000)} min ago); refusing to start a second`,
+    };
+  }
+  // Promise.resolve().then: a SYNCHRONOUS throw inside invoke must still be a
+  // raced rejection, not an escape past the deadline machinery.
+  const running = Promise.resolve().then(invoke);
+  // Observed in every branch below; keeps a late rejection quiet once the
+  // loop has stopped waiting on an abandoned tick.
+  running.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<'deadline'>((resolveDeadline) => {
+    timer = setTimeout(() => resolveDeadline('deadline'), Math.max(1, deadlineMs));
+    timer.unref?.();
+  });
+  try {
+    const first = await Promise.race([
+      running.then((result) => ({ result }), (err) => ({ err })),
+      deadline,
+    ]);
+    if (first === 'deadline') {
+      const entry = {
+        since: Date.now(),
+        settled: running.then(() => undefined, () => undefined).finally(() => {
+          if (abandonedDaemonTick === entry) abandonedDaemonTick = null;
+        }),
+      };
+      abandonedDaemonTick = entry;
+      return {
+        kind: 'timeout',
+        error: `tick exceeded its ${Math.round(deadlineMs / 60_000)} min deadline; left running detached`,
+      };
+    }
+    if ('err' in first) {
+      return {
+        kind: 'failed',
+        error: first.err instanceof Error ? first.err.message : String(first.err),
+      };
+    }
+    return { kind: 'settled', result: first.result };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * RQ-DAEMONTICK-UNBLOCK: the guaranteed post-tick write. Runs whether tick()
+ * returned, threw, or was abandoned at its deadline — `lastTickAt` always
+ * advances and the outcome + phase ledger land on daemon state. Best-effort:
+ * a persistence failure is logged, never thrown.
+ */
+function persistResidentTickOutcome(
+  daemonLock: DaemonLock,
+  input: {
+    tickTs: string | null;
+    outcome: DaemonTickOutcome;
+    phases: DaemonTickPhase[];
+    error: string | null;
+  },
+): void {
+  const saved = updateResidentDaemonState(daemonLock, (current) => ({
+    ...current,
+    lastTickAt: input.tickTs ?? new Date().toISOString(),
+    lastTickOutcome: input.outcome,
+    lastTickPhases: input.phases,
+    lastTickError: input.error,
+  }));
+  if (!saved.ok) {
+    console.warn('[ashlr] daemon:tick outcome persistence failed:', saved.error);
+  }
+}
+
+/** The first non-ok phase error, for `lastTickError` when tick() returned. */
+function firstPhaseError(phases: DaemonTick['phases']): string | null {
+  const failed = (phases ?? []).find(
+    (phase) => (phase.status === 'degraded' || phase.status === 'timeout') && phase.error,
+  );
+  return failed?.error ?? null;
+}
+
+/**
+ * Run one bounded resident tick and ALWAYS persist the outcome — the fix for
+ * lastTickAt freezing whenever an await inside tick() never settled.
+ */
+async function runResidentBoundedTick(
+  daemonLock: DaemonLock,
+  invoke: () => Promise<DaemonTick>,
+  deadlineMs: number,
+): Promise<DaemonTick | null> {
+  const endTickProgress = beginTickProgress();
+  let tickResult: DaemonTick | null = null;
+  let tickFailed: string | null = null;
+  let tickTimedOut = false;
+  try {
+    const bounded = await runBoundedDaemonTick(invoke, deadlineMs);
+    if (bounded.kind === 'settled') tickResult = bounded.result;
+    else if (bounded.kind === 'failed' || bounded.kind === 'refused-open') tickFailed = bounded.error;
+    else { tickTimedOut = true; tickFailed = bounded.error; }
+  } catch (err) {
+    // runBoundedDaemonTick never throws by construction; if it ever did, the
+    // guaranteed persistence below must still run with 'failed' outcome.
+    tickFailed = boundedText(err instanceof Error ? err.message : String(err), 300);
+  } finally {
+    endTickProgress();
+    const phases = tickPhasesSnapshot();
+    endTickPhases();
+    persistResidentTickOutcome(daemonLock, {
+      tickTs: tickResult?.ts ?? null,
+      outcome: deriveTickOutcome({
+        phases,
+        tickFailed: tickResult === null && !tickTimedOut,
+        tickTimedOut,
+      }),
+      phases,
+      error: tickFailed ?? firstPhaseError(phases),
+    });
+  }
+  if (tickFailed !== null) {
+    persistAudit({
+      action: 'daemon:tick',
+      repo: null,
+      sandboxId: null,
+      summary: tickTimedOut
+        ? `tick exceeded its deadline and was left running detached: ${boundedText(tickFailed, 200)}`
+        : `tick failed: ${boundedText(tickFailed, 200)}`,
+      result: 'error',
+    });
+  }
+  return tickResult;
+}
 
 /**
  * Start the daemon operator.
@@ -10097,18 +10584,29 @@ async function runDaemonInEnrollmentScope(
       if (!shutdown.signal.aborted && ownsDaemonLock() && (onceStanding === null || onceStanding.ok)) {
         transitionActivity('tick');
         const headSeqBefore = standing ? standing.headSeq() : null;
-        // What this tick is doing, for `ashlr daemon status` (tick-progress.ts).
-        const endTickProgress = beginTickProgress();
-        const tickResult = await tick(liveCfg, {
-          dryRun: opts.dryRun,
-          ...(activation.capability ? { activationCapability: activation.capability } : {}),
-          ...(onceStanding?.ok && standing ? { activationCapability: onceStanding.capability, hooks: standing.hooks } : {}),
-          ...(opts.drain ? { drain: opts.drain } : {}),
-          ...(opts.drainLimit ? { drainLimit: opts.drainLimit } : {}),
-          signal: shutdown.signal,
-          ownerLock: daemonLock,
-          onOwnershipLost: requestOwnershipLoss,
-        }).finally(endTickProgress);
+        // RQ-DAEMONTICK-UNBLOCK: bounded + guaranteed-persisted — a tick that
+        // throws or never settles still advances lastTickAt with an outcome.
+        const tickResult = await runResidentBoundedTick(
+          daemonLock,
+          () => tick(liveCfg, {
+            dryRun: opts.dryRun,
+            ...(activation.capability ? { activationCapability: activation.capability } : {}),
+            ...(onceStanding?.ok && standing ? { activationCapability: onceStanding.capability, hooks: standing.hooks } : {}),
+            // Test/integrator seam — standing ticks always take the live hooks.
+            ...(onceStanding?.ok !== true && opts.hooks ? { hooks: opts.hooks } : {}),
+            ...(opts.drain ? { drain: opts.drain } : {}),
+            ...(opts.drainLimit ? { drainLimit: opts.drainLimit } : {}),
+            signal: shutdown.signal,
+            ownerLock: daemonLock,
+            onOwnershipLost: requestOwnershipLoss,
+          }),
+          opts.tickDeadlineMs ?? DAEMON_TICK_DEADLINE_MS,
+        );
+        if (tickResult === null) {
+          // Thrown / timed-out / refused-open tick: nothing else this pass can
+          // safely run (pulse sync, rollups read the tick record).
+          transitionActivity('idle');
+        } else {
         if (standing) await standing.notifyLedgerRows(await standing.rowsSince(headSeqBefore));
         if (tickResult.reason === 'state-persistence-failed' &&
           tickResult.residentSafePersistenceFailure !== 'repair-treatment') {
@@ -10127,6 +10625,7 @@ async function runDaemonInEnrollmentScope(
           }
         }
         if (!shutdown.signal.aborted) transitionActivity('idle');
+        }
       }
     } else {
       // M85/M116/M309: choose loop strategy from live config every iteration.
@@ -10418,18 +10917,37 @@ async function runDaemonInEnrollmentScope(
         const standingHeadSeq = standing ? standing.headSeq() : null;
 
         transitionActivity('tick');
-        // What this tick is doing, for `ashlr daemon status` (tick-progress.ts).
-        const endTickProgress = beginTickProgress();
-        const tickResult = await tick(liveCfg, {
-          dryRun: opts.dryRun,
-          ...(standingCapability && standing ? { activationCapability: standingCapability, hooks: standing.hooks } : {}),
-          ...(opts.drain ? { drain: opts.drain } : {}),
-          ...(opts.drainLimit ? { drainLimit: opts.drainLimit } : {}),
-          signal: shutdown.signal,
-          ownerLock: daemonLock,
-          onOwnershipLost: requestOwnershipLoss,
-        }).finally(endTickProgress);
+        // RQ-DAEMONTICK-UNBLOCK: bounded + guaranteed-persisted — a tick that
+        // throws or never settles still advances lastTickAt with an outcome.
+        const tickResult = await runResidentBoundedTick(
+          daemonLock,
+          () => tick(liveCfg, {
+            dryRun: opts.dryRun,
+            ...(standingCapability && standing ? { activationCapability: standingCapability, hooks: standing.hooks } : {}),
+            // Test/integrator seam — standing ticks always take the live hooks.
+            ...(standingCapability !== null && standing ? {} : opts.hooks ? { hooks: opts.hooks } : {}),
+            ...(opts.drain ? { drain: opts.drain } : {}),
+            ...(opts.drainLimit ? { drainLimit: opts.drainLimit } : {}),
+            signal: shutdown.signal,
+            ownerLock: daemonLock,
+            onOwnershipLost: requestOwnershipLoss,
+          }),
+          opts.tickDeadlineMs ?? DAEMON_TICK_DEADLINE_MS,
+        );
         completedTicks++;
+        if (tickResult === null) {
+          // Thrown / timed-out / refused-open tick: the outcome is already
+          // persisted. Park like an idle cycle so an abandoned-then-detached
+          // tick cannot turn the loop into a state-write hot spin.
+          transitionActivity('idle');
+          const parkCfg = resolveCfg(reloadLiveConfigForDaemon(liveCfg));
+          const parkMs = parkCfg.mode === 'continuous'
+            ? (parkCfg.idleBackoffMs ?? 5_000)
+            : parkCfg.intervalMs;
+          if (!(await sleep(parkMs, shutdown.signal))) break;
+          if (!ownsDaemonLock() || killSwitchOn() || shutdown.signal.aborted) break;
+          continue;
+        }
         // V3.10 (U5): landings this tick made go to hooks.afterLanding (the
         // post-merge watch registers them), and — in a run window — into the
         // overnight record with the gates' own sentences.
@@ -10678,7 +11196,7 @@ async function runDaemonInEnrollmentScope(
   clearInterval(killSwitchPoll);
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
-  if (!opts.dryRun && standing !== null) await stopResidentCapacityPublisher();
+  if (!opts.dryRun) await stopResidentCapacityPublisher();
   await cancelDaemonPostTickChildren(
     scheduledResolutionObserver,
     scheduledCutoffCapture,
@@ -10750,11 +11268,9 @@ async function runDaemonInEnrollmentScope(
  * calling `ensureDaemonCapacityPublisher` (idempotent), so this only moves
  * the start earlier and adds the stop.
  *
- * Only for a resident (non-once, non-dry) run under a standing session: that
- * is the only daemon whose paid-seat decisions read the snapshot. A one-shot
- * run ends in one tick and would leave a mid-sample collector behind; the
- * pass still covers it. The publisher itself refuses outside ASHLR_IN_DAEMON=1
- * and under vitest, so this never spawns probes from a test.
+ * Every resident (non-once, non-dry) daemon starts it, including runs without
+ * a standing session. The publisher owns startup sampling and its timer;
+ * neither waits for or blocks tick dispatch. Tests never spawn native probes.
  *
  * Lazy import: keeps capacity-publisher out of loop.ts's static closure, like
  * every other routing read here. Never throws.
@@ -10768,7 +11284,7 @@ const loadCapacityPublisher = async (): Promise<ResidentCapacityPublisherModule>
   import('./capacity-publisher.js');
 
 export function residentCapacityPublisherWanted(run: { dryRun: boolean; once: boolean; standing: boolean }): boolean {
-  return !run.dryRun && !run.once && run.standing;
+  return !run.dryRun && !run.once;
 }
 
 export async function startResidentCapacityPublisher(
