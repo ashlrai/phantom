@@ -97,6 +97,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'real-supply': () => import('./fleet-real-supply.js'),
   'reassign': () => import('./fleet-reassign.js'),
   'red-fix': () => import('./fleet-red-fix.js'),
+  'red-merges': () => import('./fleet-red-merges.js'),
   'reset-release': () => import('./fleet-reset-release.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
   'self-tick': () => import('./fleet-self-tick.js'),
