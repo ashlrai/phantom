@@ -1,3 +1,4 @@
+import { rememberEmailPair } from '../fleet/operator-glance-read.js';
 /**
  * RQ-PHX-EMAILDROPCHANNEL31 — drop-folder email → MASON-INBOX.md bridge.
  *
@@ -62,6 +63,7 @@ function eml(over: { from?: string; id?: string | null; subject?: string; body?:
     `Subject: ${subject}`,
     ...(id === null ? [] : [`Message-ID: ${id}`]),
     'Date: Fri, 31 Oct 2026 08:00:00 -0400',
+    'Authentication-Results: mx.example.com; dkim=pass header.d=example.com',
     ...(extraHeaders ? [extraHeaders] : []),
     '',
     body,
@@ -84,6 +86,7 @@ beforeEach(() => {
   outboxDir = dir('email-drop-out-');
   processedDir = dir('email-drop-done-');
   process.env['HOME'] = home;
+  rememberEmailPair(MASON, runsDir);
 });
 
 afterEach(() => {
@@ -163,6 +166,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
   it('multipart: first text/plain part only, quoted lines and signature stripped', async () => {
     const raw = [
       `From: ${MASON}`,
+      'Authentication-Results: mx.example.com; dkim=pass header.d=example.com',
       'Subject: Multipart test',
       'Message-ID: <mp-1@x>',
       'Content-Type: multipart/alternative; boundary="BOUND"',
