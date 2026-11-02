@@ -17,6 +17,7 @@
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
+ *   skills list [--json]       List skills learned from merged PRs (read-only).
  *   skills audit <path>        Quarantine-audit an external skill pack (read-only).
  *   new <name> [opts]          Scaffold a new project and register it in the index.
  *   ship [path] [opts]         Run pre-ship gate (lint/test/build/deps) + optional deploy.
