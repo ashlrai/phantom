@@ -36,7 +36,7 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 
 **Phone screens**
 
-- **Home** — seat count, budget status, and a button to open the live fleet bus.
+- **Home** — one glance: running jobs, usage versus reset, merges today, main health, incidents, and a box to send an order in plain language.
 - **Fleet** — fleet switches, lanes, and holds; read fleet activity and live bus.
 - **Runs** — fleet runs list and current state.
 - **Inbox** — fleet inbox messages with optional source filter.
@@ -69,7 +69,11 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 | `/api/verse/cloud/previews` | Cloud task previews shows recent preview information |
 | `/api/verse/devin/previews` | Devin task previews shows recent preview information |
 | `/api/verse/fleet/runs` | Fleet runs list shows current active runs |
+| `/api/verse/fleet/runs/glance` | One fleet glance: running, usage, merges, main health, incidents |
+| `/api/verse/fleet/ci-runs` | Fleet CI runs for the recent window |
 | `/api/verse/fleet/live/bus` | Fleet live bus streams real-time status updates |
+| `/api/verse/fleet/live/drop-jobs` | Fleet drop jobs waiting for a lane |
+| `/api/verse/agent-bus` | Agent bus messages |
 | `/api/verse/fleet/live/queue` | Fleet live queue shows currently pending items |
 | `/api/verse/fleet/control/switches` | Fleet switches manages toggleable fleet controls |
 | `/api/verse/fleet/control/lanes` | Fleet lanes manages lane routing assignments |
