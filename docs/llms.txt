@@ -21,6 +21,7 @@
 - [Companions](COMPANIONS.md): Inspect Phantom Secrets, Locus, and Lexicon — separately installed, not bundled.
 - [Agent-Native Quickstart](AGENT-NATIVE-QUICKSTART.md): Use the desktop `/verse/` console as visibility and control surface for sessions and fleet observations.
 - [Plugins](PLUGINS.md): Extend Phantom with backlog scanners, templates, model providers, and CLI commands without forking.
+- [Stuck outcomes](AUTOMATIC-OUTCOMES.md): See why an outcome is waiting for a plan or failed, and retry it with `phm app outcome retry <id> --json`.
 
 ## Fleet
 

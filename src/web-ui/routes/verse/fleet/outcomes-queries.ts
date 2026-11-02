@@ -16,6 +16,8 @@ function validOutcome(value: unknown): value is OutcomeView {
     && Number.isSafeInteger(row.scopeRevision) && row.scopeRevision > 0 && !!row.scope && typeof row.scope.desiredOutcome === 'string'
     && strings(row.scope.targetRepos) && strings(row.scope.acceptance)
     && ['waiting-plan', 'queued', 'running', 'waiting-verification', 'failed', 'paused', 'plan-verified'].includes(row.status)
+    && typeof row.retryable === 'boolean'
+    && (row.lastError === null || typeof row.lastError?.message === 'string')
     && (row.manager === undefined || validManagerProjection(row.manager))
     && Array.isArray(row.tasks) && row.tasks.every(task => !!task && typeof task.key === 'string' && typeof task.title === 'string'
       && (task.repo === null || typeof task.repo === 'string')
@@ -34,7 +36,7 @@ export const outcomesQuery: QueryDef<OutcomesRead> = {
   },
 };
 
-export async function writeOutcome(action: 'start' | 'edit' | 'pause' | 'resume' | 'manager-configure', id: string, commandId: string, expectedRevision: number, scope?: OutcomeScope): Promise<OutcomeOperationResult> {
+export async function writeOutcome(action: 'start' | 'edit' | 'pause' | 'resume' | 'retry' | 'manager-configure', id: string, commandId: string, expectedRevision: number, scope?: OutcomeScope): Promise<OutcomeOperationResult> {
   const token = getMutationToken();
   if (!token) throw new VerseMutationLockedError();
   const body = { commandId, expectedRevision, ...(scope ? { scope } : {}), ...(action === 'start' ? { id } : {}),

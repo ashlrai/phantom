@@ -416,6 +416,12 @@ const loadVerseCmd = lazyCmd(
   'verse command requires src/cli/verse.ts (Verse module not yet built).',
 );
 
+const loadAppCmd = lazyCmd(
+  () => import('./app.js' as unknown as string),
+  (m) => m.cmdApp as Cmd,
+  'app command requires src/cli/app.ts.',
+);
+
 const loadModelsCmd = lazyCmd(
   () => import('./models.js' as unknown as string),
   (m) => m.cmdModels as Cmd,
@@ -2268,6 +2274,12 @@ async function main(): Promise<void> {
         // Ashlr Verse: serve with dispatch forced on, opens /verse/.
         const cmdVerse = await loadVerseCmd();
         process.exitCode = await cmdVerse(rest);
+        break;
+      }
+
+      case 'app': {
+        const cmdApp = await loadAppCmd();
+        process.exitCode = await cmdApp(rest);
         break;
       }
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OutcomeStore } from '../src/core/goals/outcome-store.js';
-import { OutcomeCoordinator, type OutcomeTerminal } from '../src/core/goals/outcome-coordinator.js';
+import { OutcomeCoordinator, outcomeRetryable, type OutcomeTerminal } from '../src/core/goals/outcome-coordinator.js';
 import { outcomeCanonical, outcomeDigest, outcomeGraphObjective, type OutcomeState, type OutcomeWrite } from '../src/core/goals/outcome-types.js';
 import { ecosystemMissionGraphDigest, type MissionGraphInput, type MissionGraphNodeInput } from '../src/core/vision/mission-graph.js';
 import { hashDiff, signLocalMergeIntent, signLocalRealizedMergeReceipt } from '../src/core/foundry/provenance.js';
@@ -426,6 +426,28 @@ describe('durable outcome core', () => {
     const attempts = f.state().nodes[id]!.attempts;
     expect(attempts).toHaveLength(2); expect(attempts[0]!.id).toBe(attempt.id); expect(attempts[0]!.state).toBe('failed');
     expect(attempts[1]!.id).not.toBe(attempt.id); expect(attempts[1]!.generationId).not.toBe(attempt.generationId);
+  });
+  it('retry re-plans a failed task under a new scope revision and keeps the failure on record', () => {
+    const f = fixture(); const { id, terminal, attempt } = f.claimed();
+    expect(outcomeRetryable(f.state())).toBe(false); // running work is never raced
+    success(f.coordinator.joinTerminal(f.command(), { ...terminal, state: 'failed', proposalId: null }));
+    expect(outcomeRetryable(f.state())).toBe(true);
+    const cmd = f.command(); const retried = success(f.coordinator.retry(cmd));
+    expect(retried).toMatchObject({ graph: null, activeNodeIds: [], scopeRevision: 2 });
+    expect(retried.nodes[id]!.attempts[0]).toMatchObject({ id: attempt.id, state: 'failed' });
+    expect(f.coordinator.retry(cmd)).toMatchObject({ ok: true, disposition: 'replayed' });
+    f.refine(); // the next planner stage yields fresh nodes with no attempts
+    expect(f.state().activeNodeIds.every(node => f.state().nodes[node]!.attempts.length === 0)).toBe(true);
+    expect(f.state().activeNodeIds).not.toContain(id);
+  });
+  it('retry is refused while paused or when nothing is stuck', () => {
+    const f = fixture(); f.start(); f.refine(); f.link();
+    expect(f.coordinator.retry(f.command()).ok).toBe(false); // planned and healthy
+    success(f.coordinator.editScope(f.command(), { ...f.scope, acceptance: ['Changed'] })); // no plan again
+    success(f.coordinator.setPaused(f.command(), true));
+    expect(f.coordinator.retry(f.command()).ok).toBe(false);
+    success(f.coordinator.setPaused(f.command(), false));
+    expect(f.coordinator.retry(f.command()).ok).toBe(true);
   });
   it('does not treat a missing run as proof a claimed attempt never started', () => {
     const f = fixture(); f.start(); f.refine(); f.link(); const id = f.nodeId('a');

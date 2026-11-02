@@ -17,7 +17,7 @@ export function normalizeOutcomeOperation(value: unknown): OutcomeOperation {
   const input = object(value);
   if (input.kind === 'read') { exactKeys(input, ['kind']); return { kind: 'read' }; }
   const kind = input.kind;
-  if (kind !== 'start' && kind !== 'edit' && kind !== 'pause' && kind !== 'resume' && kind !== 'manager-configure' && kind !== 'manager-interject') throw new Error('Invalid outcome action.');
+  if (kind !== 'start' && kind !== 'edit' && kind !== 'pause' && kind !== 'resume' && kind !== 'retry' && kind !== 'manager-configure' && kind !== 'manager-interject') throw new Error('Invalid outcome action.');
   const keys = ['kind', 'id', 'commandId', 'expectedRevision'];
   if (kind === 'start' || kind === 'edit') keys.push('scope');
   if (kind === 'manager-configure') keys.push('mode', 'sessionId');

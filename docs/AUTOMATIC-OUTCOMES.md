@@ -146,6 +146,28 @@ in-process API adapters can still reveal a key for a call. Configured
 explicit off, warn, enforce or firm behavior. Neither tool's presence proves
 all resources are activated or every call has the same credential boundary.
 
+## When an outcome is stuck
+
+An outcome shows **Waiting for a plan** until the manager publishes a plan, and
+**Failed** when a task attempt failed or was stopped. Open the outcome in **Work
+for me**: a red line names the last error in plain words (for example "The
+manager run failed before it produced a plan." or `Task "Add tests" failed.`),
+and **Retry outcome** appears when a retry would be accepted. Retry re-plans from
+your saved result. Earlier attempts stay on record, and it is refused while work
+is running or the outcome is paused. No secret values, run output or usage
+percentages are shown; a reading Phantom cannot take is shown as unknown.
+
+The same action from a terminal, with copy-paste examples:
+
+```bash
+phm app outcome list --json            # status, lastError and retryable per outcome
+phm app outcome retry outcome-1 --json # {"ok":true,"disposition":"recorded","outcome":{...}}
+```
+
+Retry uses one command id per revision, so running it twice never plans twice.
+Exit 0 ok, 1 refused or unavailable, 2 invalid arguments. The web console calls
+`POST /api/verse/outcomes/<id>/retry` with `{commandId, expectedRevision}`.
+
 ## Evidence and recovery
 
 ### Task context in the successor source

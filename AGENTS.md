@@ -19,6 +19,8 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
 
+- If an outcome is stuck on "Waiting for a plan" or "Failed", read its last error with `phm app outcome list --json` and re-plan it with `phm app outcome retry <id> --json` ([docs/AUTOMATIC-OUTCOMES.md](docs/AUTOMATIC-OUTCOMES.md#when-an-outcome-is-stuck)).
+
 ## Agents may
 - Create branches, commit, and open pull requests.
 - Turn on GitHub auto-merge (`gh pr merge --auto`; `phm improve propose` opens draft PRs only and refuses `--auto-merge`). Merge to main and ship to production on your own, with no human approval or manual merge; fix main forward. Never use an admin override.

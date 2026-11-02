@@ -111,7 +111,7 @@ export async function handleOutcomesApiWithDeps(
     const suffix = path.slice(OUTCOMES_PATH.length + 1).split('/');
     const start = suffix.length === 1 && suffix[0] === 'start';
     const action = suffix[1];
-    if (!start && (suffix.length !== 2 || !OUTCOME_ID_PATTERN.test(suffix[0]!) || !['edit', 'pause', 'resume', 'manager-configure'].includes(action!))) {
+    if (!start && (suffix.length !== 2 || !OUTCOME_ID_PATTERN.test(suffix[0]!) || !['edit', 'pause', 'resume', 'retry', 'manager-configure'].includes(action!))) {
       sendJson(res, 404, { error: 'Outcome action not found.' }); return true;
     }
     let raw: string;

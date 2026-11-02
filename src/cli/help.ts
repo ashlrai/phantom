@@ -44,6 +44,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: '{schemaVersion:1, command, status:"ready", nodes|edges|counts} | {schemaVersion:1, command, status:"unavailable"|"error", error:{code,message}}',
   },
+  {
+    usage: 'phm app outcome list|retry <id> [--json]',
+    description: 'List saved outcomes with their last error, or re-plan one that has no plan or a failed task. Same action as Retry in Work for me.',
+    safety: 'append',
+    jsonShape: '{ok:true, outcomes:OutcomeView[]} | {ok:true, disposition, outcome:OutcomeView} | {ok:false, reason, error}',
+  },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
   {
     usage: 'phm budget show [--json]',
@@ -556,6 +562,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },
   { cmd: 'models start',                 desc: 'Best-effort start a locally-installed Ollama (never downloads).', topic: 'run' },
   { cmd: 'local-runtime <status|start|stop|restart|reshape|logs|resolve-model>', desc: 'Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.', topic: 'run' },
+  { cmd: 'app outcome <list|retry <id>> [--json]', desc: 'List saved outcomes with their last error, or re-plan a stuck one (no plan or a failed task).', topic: 'run' },
   { cmd: 'local-runtime install|uninstall', desc: 'Add or remove the opt-in launch agent that keeps llama-server up across logout/crashes; install is refused while the kill switch is engaged.', topic: 'run' },
 
   { cmd: 'spec new "<goal>" [--project]', desc: 'Author a versioned end-state spec artifact (local-first model).', topic: 'swarm' },

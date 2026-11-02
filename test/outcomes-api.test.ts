@@ -72,6 +72,17 @@ describe('durable outcome API', () => {
     expect(store.read().records).toHaveLength(2);
     expect((await request()).value).toMatchObject({ outcomes: [{ revision: 2, status: 'paused' }] });
   });
+  it('retries an outcome that has no plan, over the API and the same operation the CLI uses', async () => {
+    const { kind: _kind, ...body } = start();
+    await request('/api/verse/outcomes/start', 'POST', body);
+    expect((await request()).value).toMatchObject({ outcomes: [{ status: 'waiting-plan', retryable: true, lastError: null }] });
+    const retried = await request('/api/verse/outcomes/outcome-test/retry', 'POST', { commandId: 'retry-r1', expectedRevision: 1 });
+    expect(retried).toMatchObject({ status: 200, value: { disposition: 'recorded', outcome: { revision: 2, scopeRevision: 2 } } });
+    expect((await request('/api/verse/outcomes/outcome-test/retry', 'POST', { commandId: 'retry-r1', expectedRevision: 1 })).value)
+      .toMatchObject({ disposition: 'replayed' });
+    await request('/api/verse/outcomes/outcome-test/pause', 'POST', { commandId: 'pause-test', expectedRevision: 2 });
+    expect((await request('/api/verse/outcomes/outcome-test/retry', 'POST', { commandId: 'retry-r3', expectedRevision: 3 })).status).toBe(409);
+  }, 30_000);
   it('refuses a stale edit and preserves the winning durable scope', async () => {
     assertWrite(executeOutcomeOperation(start()));
     const edit = { commandId: 'edit-first', expectedRevision: 1, scope: { ...scope(), desiredOutcome: 'First result' } };

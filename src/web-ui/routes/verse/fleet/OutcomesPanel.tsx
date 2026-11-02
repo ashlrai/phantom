@@ -50,7 +50,7 @@ export function OutcomesPanel({ actions }: { actions: SurfaceActions }) {
   const disabled = !available || actions.busy || actions.readOnly;
   const repos = value?.enrollment.repos ?? [];
 
-  function mutate(action: 'start' | 'edit' | 'pause' | 'resume' | 'manager-configure', id: string, revision: number, scope?: OutcomeScope) {
+  function mutate(action: 'start' | 'edit' | 'pause' | 'resume' | 'retry' | 'manager-configure', id: string, revision: number, scope?: OutcomeScope) {
     const key = JSON.stringify([action, id, revision, scope]);
     if (pendingCommand.current?.key !== key) pendingCommand.current = { key, id: crypto.randomUUID() };
     const savedManagerCommand = Object.hasOwn(managerCommands, id) ? managerCommands[id] : undefined;
@@ -123,6 +123,7 @@ export function OutcomesPanel({ actions }: { actions: SurfaceActions }) {
       <div className={styles.detail}>
         {outcome.status === 'waiting-plan' && !outcome.manager ? <p className={styles.note}>The desired result is saved. Waiting for the Leader to refine a plan.</p> : null}
         {outcome.status === 'plan-verified' ? <p className={styles.note}>All active plan tasks have verification or explicit gate evidence. Check the desired result against your acceptance criteria.</p> : null}
+        {outcome.lastError ? <p className={styles.note} role="alert">{outcome.lastError.message} Retry re-plans it; earlier attempts stay on record. CLI: phm app outcome retry {outcome.id}</p> : null}
         {outcome.manager ? <p className={styles.note} role="status">{managerStatus(outcome)}</p> : null}
         {outcome.manager?.sourceState === 'healthy' && (outcome.manager.running ?? outcome.manager.latest) ? <p className={styles.note}>
           Recorded route: {managerEngine((outcome.manager.running ?? outcome.manager.latest)!.route.engine)} · {(outcome.manager.running ?? outcome.manager.latest)!.route.model}
@@ -146,6 +147,8 @@ export function OutcomesPanel({ actions }: { actions: SurfaceActions }) {
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => {
               setManagerCommands(current => { const next = { ...current }; delete next[outcome.id]; return next; });
             }}>Use current manager revision</Button> : null}
+          {outcome.retryable ? <Button size="sm" variant="primary" disabled={disabled}
+            onClick={() => mutate('retry', outcome.id, outcome.revision)}>Retry outcome</Button> : null}
           <Button size="sm" variant="ghost" disabled={disabled} onClick={() => edit(outcome)}>Edit outcome</Button>
           <Button size="sm" variant="ghost" disabled={disabled} onClick={() => mutate(outcome.status === 'paused' ? 'resume' : 'pause', outcome.id, outcome.revision)}>
             {outcome.status === 'paused' ? 'Resume outcome' : 'Pause outcome'}

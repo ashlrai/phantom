@@ -65,6 +65,16 @@ function recordTerminal(current: OutcomeState | null, terminal: OutcomeTerminal)
   return current;
 }
 
+/** An outcome with no plan, or with a failed or stopped task, may be re-planned. Anything still
+ * claimed, running or being planned is left alone so a retry never races live work. */
+export function outcomeRetryable(state: OutcomeState): boolean {
+  if (state.paused) return false;
+  if (state.manager?.stages.some(stage => stage.state === 'running')) return false;
+  const last = state.activeNodeIds.map(id => state.nodes[id]!.attempts.at(-1)?.state);
+  if (last.some(value => value === 'claimed' || value === 'running')) return false;
+  return state.graph === null || last.some(value => value === 'failed' || value === 'aborted');
+}
+
 /** Shared graph transformation for an atomic manager result and the existing plan port.
  * Does not alter work terminal or protected merge completion semantics. */
 export function refineOutcomeState(current: OutcomeState, input: MissionGraphInput): OutcomeState | null {
@@ -123,6 +133,13 @@ export class OutcomeCoordinator {
       return { ...current, scope: normalized, scopeDigest: outcomeDigest(normalized), scopeRevision: current.scopeRevision + 1,
         graphDigest: null, graph: null, activeNodeIds: [] };
     });
+  }
+  /** Re-plans from the saved result. A new scope revision gives every node a fresh identity, so the
+   * failed attempts stay as truthful history and the next planner stage starts from a clean graph. */
+  retry(command: OutcomeCommand): OutcomeWrite {
+    return this.store.transact(command.commandId, command.expectedRevision, { kind: 'retry' }, current =>
+      current && outcomeRetryable(current) ? { ...current, scopeRevision: current.scopeRevision + 1,
+        graphDigest: null, graph: null, activeNodeIds: [] } : null);
   }
   setPaused(command: OutcomeCommand, paused: boolean): OutcomeWrite {
     return this.store.transact(command.commandId, command.expectedRevision, { kind: 'pause', paused }, current =>

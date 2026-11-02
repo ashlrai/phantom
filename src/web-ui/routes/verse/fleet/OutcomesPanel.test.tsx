@@ -10,7 +10,7 @@ import type { OutcomesRead, OutcomeView } from './outcomes-types.js';
 const token = 'b'.repeat(64);
 const repo = '/repo/ashlr-hub';
 function outcome(): OutcomeView {
-  return { id: 'outcome-test', revision: 1, scopeRevision: 1, status: 'waiting-plan', tasks: [],
+  return { id: 'outcome-test', revision: 1, scopeRevision: 1, status: 'waiting-plan', tasks: [], lastError: null, retryable: false,
     scope: { desiredOutcome: 'Improve the workbench', targetRepos: [repo], acceptance: ['Useful change tested and shipped'] } };
 }
 function residentManager(): NonNullable<OutcomeView['manager']> {
@@ -203,6 +203,15 @@ describe('Work for me resident manager', () => {
     await waitFor(() => expect(posts).toHaveLength(3));
     expect(posts[2]!.body.expectedRevision).toBe(2);
     expect(posts[2]!.body.commandId).not.toBe(posts[0]!.body.commandId);
+  });
+  it('names why an outcome is stuck and retries it with one button', async () => {
+    const stuck = { ...outcome(), lastError: { source: 'plan' as const, message: 'The manager run failed before it produced a plan.' }, retryable: true };
+    const { posts } = fixture([stuck]); const user = userEvent.setup(); render(<Host />);
+    await user.click(await screen.findByText('Improve the workbench'));
+    expect(screen.getByRole('alert')).toHaveTextContent('The manager run failed before it produced a plan.');
+    expect(screen.getByRole('alert')).toHaveTextContent('phm app outcome retry outcome-test');
+    await user.click(screen.getByRole('button', { name: 'Retry outcome' }));
+    await waitFor(() => expect(posts.map(post => post.path)).toEqual(['/api/verse/outcomes/outcome-test/retry']));
   });
   it('requires resume before enabling and retains ordinary outcome pause semantics', async () => {
     const { posts } = fixture([{ ...outcome(), status: 'paused' }]); const user = userEvent.setup(); render(<Host />);

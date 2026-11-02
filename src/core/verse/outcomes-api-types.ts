@@ -17,6 +17,8 @@ export interface OutcomeTaskView {
   proposalId: string | null;
   mergeIdentity: string | null;
 }
+/** Plain-English reason an outcome is stuck. Never carries run output or secrets. */
+export interface OutcomeProblem { source: 'plan' | 'task'; message: string }
 export interface OutcomeView {
   id: string;
   revision: number;
@@ -24,6 +26,9 @@ export interface OutcomeView {
   scope: OutcomeScope;
   status: OutcomeStatus;
   tasks: OutcomeTaskView[];
+  lastError: OutcomeProblem | null;
+  /** True when a retry would be accepted now (no plan or a failed task, nothing running). */
+  retryable: boolean;
   manager?: OutcomeManagerProjection;
 }
 export interface OutcomesRead {
@@ -41,7 +46,7 @@ export type OutcomeOperation =
   | { kind: 'read' }
   | { kind: 'start'; id: string; commandId: string; expectedRevision: number; scope: OutcomeScope }
   | { kind: 'edit'; id: string; commandId: string; expectedRevision: number; scope: OutcomeScope }
-  | { kind: 'pause' | 'resume'; id: string; commandId: string; expectedRevision: number }
+  | { kind: 'pause' | 'resume' | 'retry'; id: string; commandId: string; expectedRevision: number }
   | { kind: 'manager-configure'; id: string; commandId: string; expectedRevision: number; mode: 'interactive' | 'resident'; sessionId: string | null }
   | { kind: 'manager-interject'; id: string; commandId: string; expectedRevision: number; reference: VerseManagerMessageReference };
 export type OutcomeOperationResult = OutcomesRead | {

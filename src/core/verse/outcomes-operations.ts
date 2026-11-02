@@ -7,14 +7,33 @@ import { goalProjectMatchesRepo } from '../goals/project-match.js';
 import { readOutcomeManagerSessionMetadata } from './session-store.js';
 import { readOutcomeManagerConversation } from './manager-conversation.js';
 import { managerSessionTargetsMatch } from './manager-scope.js';
-import { OutcomeCoordinator } from '../goals/outcome-coordinator.js';
+import { OutcomeCoordinator, outcomeRetryable } from '../goals/outcome-coordinator.js';
 import { outcomeDirectory } from '../goals/outcome-runtime.js';
 import { OutcomeStore } from '../goals/outcome-store.js';
 import type { OutcomeState } from '../goals/outcome-types.js';
 import { readEnrollmentRegistry } from '../sandbox/policy.js';
 import { inspectPrivateDirectory } from '../universe/artifacts.js';
-import { OUTCOME_ID_PATTERN, type OutcomeOperation, type OutcomeOperationResult, type OutcomesRead, type OutcomeView } from './outcomes-api-types.js';
+import { OUTCOME_ID_PATTERN, type OutcomeOperation, type OutcomeOperationResult, type OutcomeProblem, type OutcomesRead, type OutcomeView } from './outcomes-api-types.js';
 import { outcomeTaskPublicId } from './outcome-task-context.js';
+
+const PLAN_PROBLEM = {
+  'plan-refused': 'The manager planned work that fleet policy refused.',
+  'invalid-result': 'The manager returned a plan that could not be read.',
+  'run-failed': 'The manager run failed before it produced a plan.',
+} as const;
+
+/** Names the most recent reason the outcome is stuck, or null when none is recorded. */
+function outcomeProblem(state: OutcomeState, tasks: OutcomeView['tasks']): OutcomeProblem | null {
+  const failedTask = tasks.find(task => task.state === 'failed' || task.state === 'aborted');
+  if (failedTask) return { source: 'task', message: `Task "${failedTask.title}" ${failedTask.state === 'failed' ? 'failed' : 'was stopped'}.` };
+  const stage = state.manager?.stages.at(-1);
+  if (!state.graph && stage && stage.state !== 'running' && stage.state !== 'succeeded') {
+    return { source: 'plan', message: stage.state === 'failed' ? PLAN_PROBLEM[stage.failureReason ?? 'run-failed']
+      : stage.state === 'aborted' ? 'The manager run was stopped before it produced a plan.'
+        : 'The manager result no longer matched the outcome, so it was not used.' };
+  }
+  return null;
+}
 
 export function outcomeView(state: OutcomeState): OutcomeView {
   const tasks = state.activeNodeIds.map(id => {
@@ -31,7 +50,7 @@ export function outcomeView(state: OutcomeState): OutcomeView {
       : tasks.some(task => task.state === 'running') ? 'running'
         : tasks.some(task => task.state === 'failed' || task.state === 'aborted') ? 'failed'
           : tasks.some(task => task.state === 'proposed') ? 'waiting-verification' : 'queued';
-  return { id: state.id, revision: state.revision, scopeRevision: state.scopeRevision, scope: state.scope, status, tasks, ...(state.manager ? { manager: projectOutcomeManager(state) } : {}) };
+  return { id: state.id, revision: state.revision, scopeRevision: state.scopeRevision, scope: state.scope, status, tasks, lastError: outcomeProblem(state, tasks), retryable: outcomeRetryable(state), ...(state.manager ? { manager: projectOutcomeManager(state) } : {}) };
 }
 
 /** Neither discovery nor projection creates directories or repairs ledgers. */
@@ -116,6 +135,7 @@ export function executeOutcomeOperation(operation: OutcomeOperation): OutcomeOpe
     : operation.kind === 'manager-interject' ? manager.interject(command, operation.reference, managerMetadataAdmission())
     : operation.kind === 'start' ? coordinator.start(command, operation.id, operation.scope)
     : operation.kind === 'edit' ? coordinator.editScope(command, operation.scope)
+    : operation.kind === 'retry' ? coordinator.retry(command)
       : coordinator.setPaused(command, operation.kind === 'pause');
   if (write.ok) return { ok: true, disposition: write.disposition, outcome: outcomeView(write.state) };
   // The terminal writer's lock taxonomy is host-only; HTTP callers retain
