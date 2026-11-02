@@ -1,7 +1,7 @@
 import { cmdFleetGuardianContinue } from './fleet-guardian-continue.js';
 
 const LIMIT = 32 * 1024;
-const values = new Set(['--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms', '--idle-backoff-max-ms']);
+const values = new Set(['--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms', '--idle-backoff-max-ms', '--max-passes']);
 const switches = new Set(['--stdin', '--apply', '--json', '--stream']);
 type Deps = {
   input?: AsyncIterable<string | Uint8Array> | Iterable<string | Uint8Array>;
