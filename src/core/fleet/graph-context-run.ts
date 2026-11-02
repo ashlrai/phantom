@@ -11,6 +11,8 @@ type Task = { id: string; dependsOn?: string[]; snapshot: string; prompt: string
 type Row = { id: string; status: string; exitCode: number | null };
 const id = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
 const path = (s: unknown): s is string => typeof s === 'string' && isAbsolute(s) && !s.includes('\0') && s.length <= 4096;
+const directory = (s: unknown): s is string =>
+  typeof s === 'string' && isAbsolute(s) && !s.includes('\0') && statSync(s).isDirectory();
 
 export interface GraphContextRunOptions {
   /** Whole-apply execution budget in milliseconds (default 900000, valid range
@@ -60,7 +62,7 @@ export async function graphContextRun(file: string, apply = false, io: ContextWo
         !path(t.snapshot) || !path(t.prompt) ||
         !Array.isArray(t.argv) || !t.argv.length || t.argv.length > 128 || !t.argv[0] ||
         t.argv.some(a => typeof a !== 'string' || a.includes('\0') || a.length > 8192) ||
-        (t.cwd !== undefined && (typeof t.cwd !== 'string' || !t.cwd || t.cwd.includes('\0') || !isAbsolute(t.cwd) || !statSync(t.cwd).isDirectory())) ||
+        (t.cwd !== undefined && !directory(t.cwd)) ||
         (t.dependsOn !== undefined && (!Array.isArray(t.dependsOn) || t.dependsOn.length > 32 || !t.dependsOn.every(id)))) throw Error();
     }
     const ids = new Set(tasks.map(t => t.id));
