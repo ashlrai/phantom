@@ -1,0 +1,2517 @@
+{
+ "cwds_known": true,
+ "argv_jobs": [
+  "FIXUP-FLAKY-ashlar-landing-npm-run-build",
+  "RQ-BUILD-QOS",
+  "RQ-DAEMONTICK-UNBLOCK",
+  "RQ-DRAIN-phantom-1110",
+  "RQ-GUARDIANHEADQ8",
+  "RQ-LANEMERGESQ8",
+  "RQ-LANERECOVERNOV1Q8",
+  "RQ-LOADGATE-1",
+  "RQ-MAINREPAIRTIMEQ8",
+  "RQ-MERGEAGEQUEUEQ8",
+  "RQ-MERGEFLOWNOV1Q8",
+  "RQ-MERGELAG01Q8",
+  "RQ-MERGEWAIT31Q8",
+  "RQ-PHX-GUARDIANEXCLUSIVE02SOLX1",
+  "RQ-PHX-POOLGLOBALDEADLINE02SOLS1",
+  "RQ-PHX-SELFTICKVERB02",
+  "RQ-PNPM-GVS",
+  "RQ-PS1A103007Q8",
+  "RQ-TIER1CLOSURE2Q8",
+  "RQ-VERIFY-DEDUPE",
+  "check",
+  "guardian-phantom"
+ ],
+ "worktrees": [
+  {
+   "name": "DESKTOP-ASHLR-MD",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/DESKTOP-ASHLR-MD",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "DESKTOP-PHANTOM-SECRETS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/DESKTOP-PHANTOM-SECRETS",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "FIXUP-FLAKY-ashlar-landing-npm-run-build",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/FIXUP-FLAKY-ashlar-landing-npm-run-build",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-APPTRUTH-6-SOURCEOFTRUTH",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-APPTRUTH-6-SOURCEOFTRUTH",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-AUTO-LOCAL-1e-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-AUTO-LOCAL-1e-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:3"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-BENCH3Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BENCH3Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-BUDGET-RESET-CALENDAR-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BUDGET-RESET-CALENDAR-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-BUILD-QOS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BUILD-QOS",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-CISRCBINDMERGEQ9",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CISRCBINDMERGEQ9",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master",
+   "head_state": "merged-equivalent"
+  },
+  {
+   "name": "RQ-CLAUDECLI-SMOKE1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CLAUDECLI-SMOKE1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/lexicon/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-CODEX-USAGE-SOURCE-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CODEX-USAGE-SOURCE-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:3"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-CONLEADERSCHANNELQ7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CONLEADERSCHANNELQ7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-CYCLE-1-r3-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CYCLE-1-r3-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DAEMONTICK-UNBLOCK",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAEMONTICK-UNBLOCK",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-DAILY-15-PHANTOM-A1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILY-15-PHANTOM-A1",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DAILYFIX-REDISPATCH-ASHLR-PLUGIN",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-ASHLR-PLUGIN",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:4"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin/.git"
+  },
+  {
+   "name": "RQ-DAILYFIX-REDISPATCH-LEXICON",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-LEXICON",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/lexicon/.git"
+  },
+  {
+   "name": "RQ-DAILYFIX-REDISPATCH-LOCUS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-LOCUS",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:75264"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git"
+  },
+  {
+   "name": "RQ-DAILYFIX-REDISPATCH-PHANTOM-SECRETS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-PHANTOM-SECRETS",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:4"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git"
+  },
+  {
+   "name": "RQ-DESK-1-SCHEMA",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DESK-1-SCHEMA",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DISC-SITE-ASHLR",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DISC-SITE-ASHLR",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlar-landing/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAIN-PHANTOM-1066",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-1066",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1073"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAIN-PHANTOM-1214",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-1214",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:4"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAIN-PHANTOM-928",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-928",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:385"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAIN-PHANTOM-SECRETS-469",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-SECRETS-469",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-DRAIN-PHANTOM-SECRETS-485",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-SECRETS-485",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-DRAIN-PHANTOM-SECRETS-535",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-SECRETS-535",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-1045",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1045",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-1056",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1056",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-1064",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1064",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:683"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-1110",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1110",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-DRAIN-phantom-1192",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1192",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-1222",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1222",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-687-R2",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-687-R2",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1584"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-693-R2",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-693-R2",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1696"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-697-R2",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-697-R2",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master",
+   "head_state": "contained"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-935",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-935",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-980-R2",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-980-R2",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAIN-phantom-981",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-981",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAINPH1010Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1010Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAINPH1022Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1022Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAINPH1037Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1037Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAINPH1045Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1045Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAINPH948Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH948Q7",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1103"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-DRAINPH954Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH954Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAINPH956Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH956Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DRAINPH962Q7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH962Q7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DV-DRIVER-SIM-HARNESS-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-DRIVER-SIM-HARNESS-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DV-SPLIT-FLEET-STATUS-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-SPLIT-FLEET-STATUS-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-DV-SPLIT-PROD-LEDGER-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-SPLIT-PROD-LEDGER-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-ECON-MACHINE-TELEMETRY-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ECON-MACHINE-TELEMETRY-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-ECON-RESOURCE-VIEW-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ECON-RESOURCE-VIEW-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-FIXUP-SHAPE-PHANTOM-949",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PHANTOM-949",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-FIXUP-SHAPE-PHANTOM-966",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PHANTOM-966",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-FIXUP-SHAPE-PHANTOM-SECRETS-276",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PHANTOM-SECRETS-276",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-FIXUP-SHAPE-PS-485",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PS-485",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-FRESH-SITE-ASHLR",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-SITE-ASHLR",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlar-landing/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-FRESHECOSYSTEMCHANGELOGQ7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESHECOSYSTEMCHANGELOGQ7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-GEN-2026102621-003",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-003",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-stack/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-GEN-2026102621-008",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-008",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-GEN-2026102621-399",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-399",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-md/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-GEN-2026102622-126",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-126",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/lexicon/.git"
+  },
+  {
+   "name": "RQ-GEN-2026102703-036",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-036",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:24"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-GEN-2026102704-001",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102704-001",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:42"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git"
+  },
+  {
+   "name": "RQ-GEN-2026102800-001",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102800-001",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:109"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git"
+  },
+  {
+   "name": "RQ-GUARDIANHEADQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GUARDIANHEADQ8",
+   "eligible": false,
+   "reasons": [
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-LANEMERGESQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LANEMERGESQ8",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-LANERECOVERNOV1Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LANERECOVERNOV1Q8",
+   "eligible": false,
+   "reasons": [
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-LEXPINACTIONSQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LEXPINACTIONSQ8",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/lexicon/.git"
+  },
+  {
+   "name": "RQ-LOADGATE-1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOADGATE-1",
+   "eligible": false,
+   "reasons": [
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-LOCUS14A103008Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUS14A103008Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-LOCUS15A103008Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUS15A103008Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-LOCUS1A103009Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUS1A103009Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-LOCUSPREVIEWCOVQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUSPREVIEWCOVQ8",
+   "eligible": false,
+   "reasons": [
+    "live-cwd"
+   ]
+  },
+  {
+   "name": "RQ-LOCUSSIEMQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUSSIEMQ8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-MAC-DISK-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MAC-DISK-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-MAC-HYGIENE-DISK",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MAC-HYGIENE-DISK",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:25"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-MAINREPAIRTIMEQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MAINREPAIRTIMEQ8",
+   "eligible": false,
+   "reasons": [
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-MD3A103009Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MD3A103009Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-md/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-MD6A103009Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MD6A103009Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-md/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-MEASURABLY-OSS-AUDIT-LOCAL",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MEASURABLY-OSS-AUDIT-LOCAL",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/measurably/.git",
+   "default_ref": "origin/main",
+   "head_state": "contained"
+  },
+  {
+   "name": "RQ-MEM-RECLAIM-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MEM-RECLAIM-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:3"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-MERGEAGEQUEUEQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGEAGEQUEUEQ8",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-MERGEFLOWNOV1Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGEFLOWNOV1Q8",
+   "eligible": false,
+   "reasons": [
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-MERGELAG01Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGELAG01Q8",
+   "eligible": false,
+   "reasons": [
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-MERGELATENCY31Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGELATENCY31Q8",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1723",
+    "unregistered"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-MERGELATENCYNOV2Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGELATENCYNOV2Q8",
+   "eligible": false,
+   "reasons": [
+    "not-a-worktree"
+   ]
+  },
+  {
+   "name": "RQ-MERGEWAIT31Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGEWAIT31Q8",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-MERGEWAITTRACEQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGEWAITTRACEQ8",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:2942",
+    "unregistered"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-METRICS-LEVERS-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-METRICS-LEVERS-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-METRICSDASHMACQ7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-METRICSDASHMACQ7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-MR-10-OUTCOME-EXPORT",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MR-10-OUTCOME-EXPORT",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-MR-9-DESK-UNBLOCK",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MR-9-DESK-UNBLOCK",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-N26-AFFECTED-MAP-AUDIT-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-AFFECTED-MAP-AUDIT-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-N26-CON-PROMPT-RULES-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-CON-PROMPT-RULES-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-N26-CON-RULES-LINT-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-CON-RULES-LINT-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-N26-PH-DISPATCH-EVENTS-PARSER-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-PH-DISPATCH-EVENTS-PARSER-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-N26-PH-WT-AGE-REPORT-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-PH-WT-AGE-REPORT-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-N26-PS-ARGV-TESTS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-PS-ARGV-TESTS",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-NODE-1-JOIN",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-NODE-1-JOIN",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:3063",
+    "unregistered"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-NODECAPS-14-ROUTER",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-NODECAPS-14-ROUTER",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-ONB-7-AGENTS-BALANCER",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONB-7-AGENTS-BALANCER",
+   "eligible": false,
+   "reasons": [
+    "not-a-worktree"
+   ]
+  },
+  {
+   "name": "RQ-ONEASK-1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-1",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:6"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-ONEASK-1-SCHEMA",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-1-SCHEMA",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-ONEASK-2",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-2",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master",
+   "head_state": "contained"
+  },
+  {
+   "name": "RQ-ONEASK-3",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-3",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master",
+   "head_state": "contained"
+  },
+  {
+   "name": "RQ-PARITYTOPQ7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PARITYTOPQ7",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PERF-12-LOCUS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PERF-12-LOCUS",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git"
+  },
+  {
+   "name": "RQ-PHCODEOWNERSAUTHQ9",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHCODEOWNERSAUTHQ9",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master",
+   "head_state": "merged-equivalent"
+  },
+  {
+   "name": "RQ-PHRELEASEONTAGQ9",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHRELEASEONTAGQ9",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:6"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-PHX-CICACHEEVIDENCE01SOLQ3",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-CICACHEEVIDENCE01SOLQ3",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-CISCHEDULEAUDIT01SOLQ4",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-CISCHEDULEAUDIT01SOLQ4",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-GRAPHCONTEXTGUIDE31D3",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-GRAPHCONTEXTGUIDE31D3",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-GUARDIANEXCLUSIVE02SOLX1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-GUARDIANEXCLUSIVE02SOLX1",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-PHX-PALETTEPHONERECUT01",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PALETTEPHONERECUT01",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-PALETTEPHONERECUT02",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PALETTEPHONERECUT02",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-PALETTEPHONEURL31",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PALETTEPHONEURL31",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-PHONEACCESSCARD31",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PHONEACCESSCARD31",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-PHONECARDRECUT01",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PHONECARDRECUT01",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-PHONECARDRECUT02",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PHONECARDRECUT02",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-PLANNERSUPPLYFLOOR02",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PLANNERSUPPLYFLOOR02",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:3"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-PHX-POOLGLOBALDEADLINE02SOLS1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-POOLGLOBALDEADLINE02SOLS1",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-PHX-PRURL31",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PRURL31",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-REMOTEQUEUEWAIT02SOLW1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-REMOTEQUEUEWAIT02SOLW1",
+   "eligible": false,
+   "reasons": [
+    "not-a-worktree"
+   ]
+  },
+  {
+   "name": "RQ-PHX-RESOURCEWATCH31J",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-RESOURCEWATCH31J",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-SAFARINAVIGATE01SOLC4",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SAFARINAVIGATE01SOLC4",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-SELFTICKVERB02",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SELFTICKVERB02",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-PHX-SLOTTRUTHDOC31",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SLOTTRUTHDOC31",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:531"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-PHX-SOURCESREMEDY31",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SOURCESREMEDY31",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-PHX-STACKSLOWTEST01",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-STACKSLOWTEST01",
+   "eligible": false,
+   "reasons": [
+    "live-cwd"
+   ]
+  },
+  {
+   "name": "RQ-PLUGINERRORHINTQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PLUGINERRORHINTQ8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-PLUGSNAPQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PLUGSNAPQ8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-PLUGUIPANELQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PLUGUIPANELQ8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-PNPM-GVS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PNPM-GVS",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-PS-AGENT-GET-g1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-AGENT-GET-g1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-PS-ECOSTARS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-ECOSTARS",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main",
+   "head_state": "merged-equivalent"
+  },
+  {
+   "name": "RQ-PS-PROXY-BENCH",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-PROXY-BENCH",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-PS1A103007Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS1A103007Q8",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-PS1A103009Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS1A103009Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-PS2A103009Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS2A103009Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-PSDEDUPEQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PSDEDUPEQ8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-RADARLOCALMODELSQ7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-RADARLOCALMODELSQ7",
+   "eligible": false,
+   "reasons": [
+    "not-a-worktree"
+   ]
+  },
+  {
+   "name": "RQ-READYLOCK-SCOPE",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-READYLOCK-SCOPE",
+   "eligible": false,
+   "reasons": [
+    "not-a-worktree"
+   ]
+  },
+  {
+   "name": "RQ-REALMERGERATEQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REALMERGERATEQ8",
+   "eligible": false,
+   "reasons": [
+    "not-a-worktree"
+   ]
+  },
+  {
+   "name": "RQ-REFILL-2026102703-CONSO-061",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-CONSO-061",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-REFILL-2026102703-FIXUP-068",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-068",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:24"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git"
+  },
+  {
+   "name": "RQ-REFILL-2026102703-LAND-001",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-LAND-001",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:35"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-REFILL-2026102719-LAND-004",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102719-LAND-004",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-REFILL-2026102722-CONSO-010",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102722-CONSO-010",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-REFILL-2026102723-CONSO-010",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102723-CONSO-010",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-REFILL-2026102800-CONSO-010",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102800-CONSO-010",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:128"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git"
+  },
+  {
+   "name": "RQ-RESEARCH-EVALS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-RESEARCH-EVALS",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-SECFIX-20261027-001",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SECFIX-20261027-001",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:35"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git"
+  },
+  {
+   "name": "RQ-SECFIX-20261027-001-RECUT",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SECFIX-20261027-001-RECUT",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-SELFOPT-FAILURE-CLUSTERS",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SELFOPT-FAILURE-CLUSTERS",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-SEO-ASHLR",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SEO-ASHLR",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:18"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlar-landing/.git"
+  },
+  {
+   "name": "RQ-SHIPGAPSTAGEQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SHIPGAPSTAGEQ8",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:4"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-SLASHCMD-17",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SLASHCMD-17",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:15"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-SRCTAG-13-FORUM",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SRCTAG-13-FORUM",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master",
+   "head_state": "contained"
+  },
+  {
+   "name": "RQ-STACK-SCRUB-FROM-BASE-ashlr-md",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-ashlr-md",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-md/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-STACK-SCRUB-FROM-BASE-ashlr-plugin",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-ashlr-plugin",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-STACK-SCRUB-FROM-BASE-ashlr-stack",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-ashlr-stack",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-stack/.git"
+  },
+  {
+   "name": "RQ-STACK-SCRUB-FROM-BASE-lexicon",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-lexicon",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/lexicon/.git"
+  },
+  {
+   "name": "RQ-STACK-SCRUB-FROM-BASE-locus",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-locus",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/locus/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-STACK-SCRUB-FROM-BASE-phantom-secrets",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-phantom-secrets",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git"
+  },
+  {
+   "name": "RQ-STACK2A102901Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK2A102901Q8",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-stack/.git"
+  },
+  {
+   "name": "RQ-STACK6A103009Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK6A103009Q8",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-stack/.git",
+   "default_ref": "origin/main"
+  },
+  {
+   "name": "RQ-STACKSCRUBFROMBASEPHANTOMQ7",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACKSCRUBFROMBASEPHANTOMQ7",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:3"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-SUPPLYSIGNALSQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SUPPLYSIGNALSQ8",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:6"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-TIER1CLOSURE2Q8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-TIER1CLOSURE2Q8",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-TIER1CLOSUREQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-TIER1CLOSUREQ8",
+   "eligible": true,
+   "reasons": [],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master",
+   "head_state": "contained"
+  },
+  {
+   "name": "RQ-TOKENSHAREQ8",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-TOKENSHAREQ8",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:3"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-UPKEEP-DOCS-ashlar-landing-20261101",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-DOCS-ashlar-landing-20261101",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:6"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlar-landing/.git"
+  },
+  {
+   "name": "RQ-UPKEEP-DOCS-measurably-20261101",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-DOCS-measurably-20261101",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:4"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/measurably/.git"
+  },
+  {
+   "name": "RQ-UPKEEP-WEB-ashlar-landing-20261101",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-WEB-ashlar-landing-20261101",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:3"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlar-landing/.git"
+  },
+  {
+   "name": "RQ-UPKEEP-WEB-measurably-20261101",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-WEB-measurably-20261101",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:8"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/measurably/.git"
+  },
+  {
+   "name": "RQ-USAGE-READINGS-2H",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-USAGE-READINGS-2H",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:6"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-V4-FAST-CHECK-EVIDENCE-1",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-V4-FAST-CHECK-EVIDENCE-1",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-VERIFY-DEDUPE",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-DEDUPE",
+   "eligible": false,
+   "reasons": [
+    "live-cwd",
+    "live-argv"
+   ]
+  },
+  {
+   "name": "RQ-VERIFY-PR985",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-PR985",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:1"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git",
+   "default_ref": "origin/master"
+  },
+  {
+   "name": "RQ-VISION-928-GREEN-recut",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VISION-928-GREEN-recut",
+   "eligible": false,
+   "reasons": [
+    "uncommitted:18"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/phantom/.git"
+  },
+  {
+   "name": "RQ-WT-REAP-227",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/RQ-WT-REAP-227",
+   "eligible": false,
+   "reasons": [
+    "self"
+   ]
+  },
+  {
+   "name": "guardian-ashlar-landing",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlar-landing",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-ashlr-md",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlr-md",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-ashlr-plugin",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlr-plugin",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-ashlr-stack",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlr-stack",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-lexicon",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-lexicon",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-locus",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-locus",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-measurably",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-measurably",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-phantom",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-phantom",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "guardian-phantom-secrets",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/guardian-phantom-secrets",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "masbot-locus-build",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/masbot-locus-build",
+   "eligible": false,
+   "reasons": [
+    "infra-name"
+   ]
+  },
+  {
+   "name": "stack-release-dispatch-ff",
+   "path": "/Users/masonwyatt/Projects/ashlrai/wt/stack-release-dispatch-ff",
+   "eligible": false,
+   "reasons": [
+    "commits-ahead:2"
+   ],
+   "common": "/Users/masonwyatt/Projects/ashlrai/ashlr-stack/.git",
+   "default_ref": "origin/main"
+  }
+ ],
+ "repos": {
+  "/Users/masonwyatt/Projects/ashlrai/phantom/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/phantom",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/phantom",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RECUT-836",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RECUT-837",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RECUT-phantom-702",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-1140-LAZY-UI",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-1141-LAZY-UI",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-APPTRUTH-6-SOURCEOFTRUTH",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-AUTO-LOCAL-1e-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BENCH-1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BENCH3Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BOLD-POOL-RESET-MANAGER",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BUDGET-RESET-CALENDAR-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-BUILD-QOS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CISRCBINDMERGEQ9",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CODEX-USAGE-SOURCE-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CON-MERGE-DEFAULT",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CON-SIGNAL-DAEMON",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CON-SIGNAL-RESTOCK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CONLEADERSCHANNELQ7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CYCLE-1-r3-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAEMONTICK-UNBLOCK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILY-15-PHANTOM-A1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DEL-PHANTOM",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DESK-1-SCHEMA",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-PHANTOM",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-1066",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-1214",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-928",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1045",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1056",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1064",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1192",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-1222",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-687-R2",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-693-R2",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-697-R2",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-935",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-980-R2",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-phantom-981",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1010Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1022Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1037Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH1045Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH948Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH954Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH956Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAINPH962Q7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRIVER-NODES-4-APIKEY-POOLS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-DRIVER-SIM-HARNESS-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-PHM-HELP-UX",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-SPLIT-FLEET-STATUS-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-SPLIT-INBOX-MERGE",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DV-SPLIT-PROD-LEDGER-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ECON-MACHINE-TELEMETRY-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ECON-RESOURCE-VIEW-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PHANTOM-949",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PHANTOM-966",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESHECOSYSTEMCHANGELOGQ7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-002",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-003",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-004",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-005",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-006",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-007",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-008",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-009",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-010",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-011",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-012",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-013",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-014",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-015",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-016",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-017",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-018",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-019",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-020",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-021",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-022",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-023",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-024",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-025",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-026",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-027",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-028",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-029",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-030",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-031",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-032",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-033",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-035",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-036",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-037",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102620-038",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-005",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-006",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-007",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-023",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-026",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-027",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-379",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-380",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-381",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-382",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-383",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-384",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-385",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-386",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-387",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-388",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-389",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-002",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-003",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-004",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-005",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-006",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-007",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-008",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-009",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-010",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-011",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-018",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-019",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-021",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-022",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-024",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-025",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-027",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-028",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-029",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-030",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-031",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-032",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-033",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-035",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-036",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-037",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-038",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-039",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-040",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-041",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-042",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-043",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-044",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-045",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-047",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-048",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-049",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-050",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-051",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-053",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-054",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-055",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-056",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-057",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-063",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-064",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-065",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-069",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-070",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-074",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-081",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-088",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-089",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-092",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102623-016",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102623-017",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102623-018",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102623-033",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102623-034",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-004",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-006",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-002",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-003",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-005",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-006",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-007",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-010",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-011",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-014",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-018",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-019",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-020",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-021",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-022",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-024",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-025",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-026",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-028",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-030",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-031",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-034",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-035",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-036",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-037",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-039",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-041",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GRAPH-1-r2",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-IDEA-LAND-FIRST",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LANEMERGESQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOADGATE-1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MAC-DISK-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MAC-HYGIENE-DISK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MEM-RECLAIM-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MERGEWAIT31Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-METRICS-LEVERS-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-METRICSDASHMACQ7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MR-10-OUTCOME-EXPORT",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MR-9-DESK-UNBLOCK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-AFFECTED-MAP-AUDIT-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-CON-PROMPT-RULES-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-CON-RULES-LINT-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-PH-DISPATCH-EVENTS-PARSER-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-PH-WT-AGE-REPORT-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-011",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-013",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-015",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-017",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-019",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-021",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-023",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-025",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-028",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-030",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-032",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-034",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-036",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-038",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-040",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-042",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-045",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-047",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-048",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-049",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-050",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-052",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-053",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-NODECAPS-14-ROUTER",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-1-SCHEMA",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-2",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-ONEASK-3",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-OT-P2-FAILOVER",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PARITYTOPQ7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHANTOM-NODE22-FIX",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHANTOM-SHARD-AUTHORITY-FIX",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHCODEOWNERSAUTHQ9",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHRELEASEONTAGQ9",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-CICACHEEVIDENCE01SOLQ3",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-CISCHEDULEAUDIT01SOLQ4",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-GRAPHCONTEXTGUIDE31D3",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-GUARDIANEXCLUSIVE02SOLX1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PALETTEPHONERECUT01",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PALETTEPHONERECUT02",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PALETTEPHONEURL31",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PHONEACCESSCARD31",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PHONECARDRECUT01",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PHONECARDRECUT02",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PLANNERSUPPLYFLOOR02",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-POOLGLOBALDEADLINE02SOLS1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-PRURL31",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-RESOURCEWATCH31J",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SAFARINAVIGATE01SOLC4",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SELFTICKVERB02",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SLOTTRUTHDOC31",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-SOURCESREMEDY31",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PL-PH-ROUTER-PERSONAL-LANE",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PNPM-GVS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-POLICY-DSL-1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-R2-LVERIFIER",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-R2-RECEIPT",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-R2-SKILLLIFT",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-R2-SPECRACE",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-R2-TESTVALUE",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-RECUT-1131",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-CONSO-056",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-071",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-072",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-077",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-078",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-079",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-081",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-082",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-083",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-LAND-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-041",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-043",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-044",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-045",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-046",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-047",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-048",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-049",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-050",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-051",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REL-BUMP-3.29.16",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-RESEARCH-EVALS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SELFOPT-FAILURE-CLUSTERS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SHIPGAPSTAGEQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SLASHCMD-17",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SRCTAG-13-FORUM",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACKSCRUBFROMBASEPHANTOMQ7",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SUPPLYSIGNALSQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-TESTDIET-DUPES",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-TIER1CLOSURE2Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-TIER1CLOSUREQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-TOKENSHAREQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-USAGE-READINGS-2H",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-V4-FAST-CHECK-EVIDENCE-1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-DEDUPE",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-PR1059",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-PR1063",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-PR1089",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-PR1095",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-PR985",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VISION-928-GREEN-recut",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-WT-REAP-227",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-phantom",
+    "/private/tmp/phantom-baseline",
+    "/private/tmp/phx-master",
+    "/private/tmp/rq-mac-wtclone.osRA7z",
+    "/private/tmp/rq-verify-pr1063-check",
+    "/private/tmp/rq-verify-pr1095-6269a0735"
+   ],
+   "locked": [
+    "/Users/masonwyatt/Projects/ashlrai/wt/RECUT-phantom-702"
+   ],
+   "prunable": [
+    "/Users/masonwyatt/Projects/ashlrai/wt/RECUT-836",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RECUT-phantom-702",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-PH-WT-AGE-REPORT-ff",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-VERIFY-DEDUPE",
+    "/private/tmp/phantom-baseline",
+    "/private/tmp/phx-master"
+   ]
+  },
+  "/Users/masonwyatt/Projects/ashlrai/lexicon/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/lexicon",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/lexicon",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-CLAUDECLI-SMOKE1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-LEXICON",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DEL-LEXICON",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-LEXICON",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-LEX",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-396",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-062",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-075",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-107",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-108",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-109",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-110",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-112",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-113",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-114",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-115",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-116",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-122",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-123",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-124",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-125",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-126",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-007",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-008",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-009",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-008",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-016",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-017",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-023",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-032",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LEXPINACTIONSQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-065",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-066",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-067",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-009",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-033",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-lexicon",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-lexicon"
+   ],
+   "locked": [],
+   "prunable": [
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-LEXICON",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-116",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-126"
+   ]
+  },
+  "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/ashlr-plugin",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-ASHLR-PLUGIN",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DEL-ASHLR-PLUGIN",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-ASHLR-PLUGIN",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-PLUG",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-004",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-020",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-021",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-401",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-402",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-403",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-034",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-118",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-119",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-121",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-004",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-009",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-012",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-013",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-038",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-060",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-087",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-088",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-090",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-094",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-096",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PERF-12-PLUG",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PLUG-BUDGET-GUARD-TESTS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PLUGINERRORHINTQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PLUGSNAPQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PLUGUIPANELQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-LAND-007",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-LAND-008",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-LAND-009",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-031",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-ashlr-plugin",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlr-plugin"
+   ],
+   "locked": [],
+   "prunable": [
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-021",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-094",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlr-plugin"
+   ]
+  },
+  "/Users/masonwyatt/Projects/ashlrai/locus/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/locus",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/locus",
+    "/Users/masonwyatt/Projects/ashlrai/wt/MG-LOCUS-CONFORMANCE",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-LOCUS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DEL-LOCUS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-LOCUS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-LOCUS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-011",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-012",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-013",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-391",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-392",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-393",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-013",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-014",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-015",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-059",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-060",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-061",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-068",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-071",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-072",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-073",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-077",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-078",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-080",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-082",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-086",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-090",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102623-015",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-003",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-005",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUS-EVENTS-SCHEMA",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUS14A103008Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUS15A103008Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUS1A103009Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-LOCUSSIEMQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-056",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-061",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-062",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-063",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-064",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PERF-12-LOCUS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-CONSO-063",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-CONSO-064",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-CONSO-065",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-002",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-003",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102719-LAND-004",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-locus",
+    "/Users/masonwyatt/Projects/ashlrai/wt/THROUGHPUT-LOCUS-CANCEL",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-locus",
+    "/Users/masonwyatt/Projects/ashlrai/wt/masbot-locus-build"
+   ],
+   "locked": [],
+   "prunable": [
+    "/Users/masonwyatt/Projects/ashlrai/locus",
+    "/Users/masonwyatt/Projects/ashlrai/wt/MG-LOCUS-CONFORMANCE"
+   ]
+  },
+  "/Users/masonwyatt/Projects/ashlrai/phantom-secrets/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/phantom-secrets",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/phantom-secrets",
+    "/Users/masonwyatt/Projects/ashlrai/wt/DESKTOP-PHANTOM-SECRETS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DAILYFIX-REDISPATCH-PHANTOM-SECRETS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-PHANTOM-SECRETS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-SECRETS-469",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-SECRETS-485",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-SECRETS-535",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PHANTOM-SECRETS-276",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FIXUP-SHAPE-PS-485",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-PS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-008",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-009",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-010",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-390",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-012",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-016",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-020",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-023",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-026",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-046",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-058",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-066",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-067",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-076",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-079",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-083",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-084",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-085",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-087",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-091",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102700-002",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102704-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102800-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26-PS-ARGV-TESTS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-055",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-100",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-101",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-102",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-AGENT-GET-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-ECOSTARS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-PROXY-BENCH",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-RATE-LIMITER-TESTS",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-UNMERGEABLE",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS1A103007Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS1A103009Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS2A103009Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PSDEDUPEQ8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-CONSO-061",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-CONSO-062",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-068",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-070",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-FIXUP-075",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-006",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-007",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102722-CONSO-010",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102723-CONSO-010",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102800-CONSO-010",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SECFIX-20261027-001",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SECFIX-20261027-001-RECUT",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-phantom-secrets",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-phantom-secrets"
+   ],
+   "locked": [],
+   "prunable": [
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAIN-PHANTOM-SECRETS-469",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-016",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PS-AGENT-GET-g1",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-phantom-secrets"
+   ]
+  },
+  "/Users/masonwyatt/Projects/ashlrai/ashlar-landing/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/ashlar-landing",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/ashlar-landing",
+    "/Users/masonwyatt/Projects/ashlrai/wt/FIXUP-FLAKY-ashlar-landing-npm-run-build",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DISC-SITE-ASHLR",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-SITE-ASHLR",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-SEO-ASHLR",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-DOCS-ashlar-landing-20261101",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-WEB-ashlar-landing-20261101",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlar-landing"
+   ],
+   "locked": [],
+   "prunable": []
+  },
+  "/Users/masonwyatt/Projects/ashlrai/ashlr-stack/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/ashlr-stack",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/ashlr-stack",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-ASHLR-STACK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-STACK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-003",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-400",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-133",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-040",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-059",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-STACKSLOWTEST01",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-FIX-126",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-FIX-131",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-ashlr-stack",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK2A102901Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK6A103009Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlr-stack",
+    "/Users/masonwyatt/Projects/ashlrai/wt/stack-release-dispatch-ff"
+   ],
+   "locked": [],
+   "prunable": [
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-ASHLR-STACK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-STACK",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-133",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-059",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-PHX-STACKSLOWTEST01"
+   ]
+  },
+  "/Users/masonwyatt/Projects/ashlrai/ashlr-md/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/ashlr-md",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/ashlr-md",
+    "/Users/masonwyatt/Projects/ashlrai/wt/DESKTOP-ASHLR-MD",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DEL-ASHLR-MD",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DRAFT-SWEEP-ASHLR-MD",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-MD",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-002",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-016",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-017",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-397",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-398",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-399",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-052",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-127",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-128",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-129",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-130",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-131",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-015",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-027",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-029",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102703-033",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MD-EDITOR-PERF",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MD3A103009Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MD6A103009Q8",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-058",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-077",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-078",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-N26B-080",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-REFILL-2026102703-SALVA-005",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-STACK-SCRUB-FROM-BASE-ashlr-md",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-ashlr-md"
+   ],
+   "locked": [],
+   "prunable": [
+    "/Users/masonwyatt/Projects/ashlrai/wt/DESKTOP-ASHLR-MD",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-DEL-ASHLR-MD",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-FRESH-CLIFF-ROLLOUT-MD",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102621-016",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-127",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-128",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-GEN-2026102622-130"
+   ]
+  },
+  "/Users/masonwyatt/Projects/ashlrai/measurably/.git": {
+   "main": "/Users/masonwyatt/Projects/ashlrai/measurably",
+   "registered": [
+    "/Users/masonwyatt/Projects/ashlrai/measurably",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-MEASURABLY-OSS-AUDIT-LOCAL",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-DOCS-measurably-20261101",
+    "/Users/masonwyatt/Projects/ashlrai/wt/RQ-UPKEEP-WEB-measurably-20261101",
+    "/Users/masonwyatt/Projects/ashlrai/wt/guardian-measurably"
+   ],
+   "locked": [],
+   "prunable": []
+  }
+ }
+}
