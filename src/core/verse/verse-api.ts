@@ -196,7 +196,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-self-tick' | 'fleet-main-red-age';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -249,6 +249,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Host memory guard projection: GET /api/verse/fleet/memory (core/verse/fleet-memory-api.ts); read-only.
   { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
   // Local desktop app status and bounded launch, focus and restart actions.
+  { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
   { id: 'fleet-apps', load: async () => (await import('./fleet-apps-api.js')).handleFleetAppsApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
