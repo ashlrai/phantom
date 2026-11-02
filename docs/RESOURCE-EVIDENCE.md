@@ -176,3 +176,18 @@ phm resources claude-promotion record --observation /absolute/path/history.json 
 Keep the original `capturedAt`, the capture's SHA-256 `evidenceDigest`, and the reported integer-microdollar amounts. Set `binding` and `cycleId` to `null`. For a UTC expiry date without an exact instant, use `expiry: {"precision":"date","date":"YYYY-MM-DD","timezone":"UTC","instant":null}`; unknown expiry or amounts stay unknown. The command validates the local schema, not the authenticity of billing evidence, and returns **Held**. It writes only the existing private history store, creates no credentials or financial authority, and makes no provider request. `--accounts-root` can select the same private root configured for the desktop; otherwise the configured accounts root is used. An identical observation ID is idempotent; a conflicting ID, unsafe file or busy store is refused without replacing existing history.
 
 For recorded attempt, verification, and GitHub outcomes, see [execution feedback](EXECUTION-FEEDBACK.md).
+
+## Publish subscription capacity
+
+Run `phm capacity publish --json` on each node to refresh its local capacity
+snapshot once with that node's own local CLI authentication. Only usage metadata
+is published; credentials stay local. Exit 0 means published or already fresh,
+1 means unavailable (follow the returned recovery instruction), and 2 means bad
+arguments or configuration. Unknown usage remains ineligible; publishing does
+not guarantee a seat qualifies. Resident daemons start the publisher at startup
+and check every minute outside tick dispatch, sampling at most every five minutes.
+`ASHLR_DAEMON_CAPACITY_PUBLISHER=0` disables automatic daemon publication.
+
+```sh
+phm capacity publish --json
+```

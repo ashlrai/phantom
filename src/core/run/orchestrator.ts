@@ -2059,7 +2059,7 @@ async function checkGovernance(cfg: AshlrConfig, overBudgetFlag: boolean): Promi
  */
 function isBinaryInstalled(name: string): boolean {
   try {
-    execFileSync(process.platform === 'win32' ? 'where' : 'which', [name], { stdio: 'ignore' });
+    execFileSync(process.platform === 'win32' ? 'where' : 'which', [name], { stdio: 'ignore', timeout: 2_000 });
     return true;
   } catch {
     return false;
