@@ -48,10 +48,12 @@ export function aboutUpdateLines(status: ServerObservation, now: number): AboutU
 
   const last = lastApplyOf(status);
   if (last) {
+    const processHeadSha = (status as { processHeadSha?: unknown }).processHeadSha;
+    const processSha = typeof processHeadSha === 'string' ? processHeadSha : null;
     let value = `${last.outcome} ${relative(last.finishedAt, now)}`;
     if ((last.outcome === 'refused' || last.outcome === 'failed') && last.reason) value += ` · ${last.reason}`;
     if (last.outcome === 'updated' && last.toCommit) value += ` · to ${last.toCommit.slice(0, 7)}`;
-    if (last.restartRequired && last.fromCommit !== null && status.headSha === last.fromCommit) value += ' · restart needed';
+    if (last.restartRequired && last.fromCommit !== null && (processSha ?? status.headSha) === last.fromCommit) value += ' · restart needed';
     rows.push({ label: 'Last update', value });
   }
 

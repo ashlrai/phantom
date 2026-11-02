@@ -1,11 +1,12 @@
 /**
- * Fleet holds API — releasing a stale lane hold from Phantom. Mounted by
+ * Fleet controls API — holds release and stray stop from Phantom. Mounted by
  * verse-api.ts (A10 id `fleet-holds`):
  *
  *   GET  /api/verse/fleet/control/holds → LaneTargetsV1 — the same read the
  *                                       lanes route serves, so a client can
  *                                       read and write through one path
  *   POST /api/verse/fleet/control/holds → {lane, action:'release', reason?} → LaneTargetsV1
+ *   POST /api/verse/fleet/control/stray-slots → verified SIGTERM + audit + refreshed report
  *
  * The path sits inside the fleet-control workbench family's /api/verse/fleet/
  * control prefix, so dispatchWorkbenchModules lets exactly this path fall
@@ -17,6 +18,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import { parseStrayStopAction, stopStray, StrayStopError, VERSE_FLEET_CONTROL_STRAY_STOP_PATH } from '../fleet/stray-stop.js';
 import type { ApiModule } from './api-modules.js';
 import type { VerseApiContext } from './verse-api.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -72,7 +74,28 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
 let actionInFlight: Promise<unknown> | null = null;
 
 export const handleFleetHoldsApi: ApiModule = async (ctx, req, res, path, method) => {
-  if (path !== VERSE_FLEET_CONTROL_HOLDS_PATH) return false;
+  const strayStop = path === VERSE_FLEET_CONTROL_STRAY_STOP_PATH && method === 'POST';
+  if (!strayStop && path !== VERSE_FLEET_CONTROL_HOLDS_PATH) return false;
+  if (strayStop) {
+    try {
+      const body = await readMutationBody(ctx, req, res);
+      if (!body) return true;
+      const action = parseStrayStopAction(body);
+      if (!action) { sendInvalid(res, 'invalid stray stop action'); return true; }
+      if (actionInFlight) {
+        sendJson(res, 409, { code: 'busy', error: 'Another fleet control action is still running — try again in a moment.' });
+        return true;
+      }
+      const run = stopStray(action);
+      actionInFlight = run;
+      try { sendJson(res, 200, await run); }
+      finally { actionInFlight = null; }
+    } catch (error) {
+      if (error instanceof StrayStopError) sendJson(res, error.status, { code: error.code, error: error.message });
+      else sendJson(res, 500, { code: 'fleet-control-failed', error: 'the fleet control request failed' });
+    }
+    return true;
+  }
   try {
     const { readLaneTargets } = await import('../fleet/runs-lane-targets.js');
     const { releaseLaneHold, parseLaneHoldAction, LaneHoldError } = await import('../fleet/runs-lane-hold.js');

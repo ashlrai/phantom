@@ -61,7 +61,8 @@ function snapshot(over: Partial<FleetRuns> = {}): FleetRuns {
 /** The four-item incident snapshot from the acceptance criteria. */
 const INCIDENT = snapshot({
   claudeLane: 'down token rejected 2026-10-31 01:03:35',
-  lanes: [{ lane: 'codex-cmp', running: 0, target: 2, queued: 4, held: true, heldReason: 'credit exhausted', tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 }],
+  lanes: [{ lane: 'claude', running: 0, target: 12, queued: 0, held: false, heldReason: null, tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 },
+    { lane: 'codex-cmp', running: 0, target: 2, queued: 4, held: true, heldReason: 'credit exhausted', tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 }],
   switches: ['HOLD'],
   diskFreeGb: 4,
 });
@@ -161,7 +162,7 @@ describe('FleetNeedsYouRows', () => {
     setup(activity(), INCIDENT);
     const reports = renderRows();
     const group = await screen.findByRole('region', { name: 'Fleet on this Mac' });
-    expect(within(group).getByText('The Claude lane is down')).toBeInTheDocument();
+    expect(within(group).getByText('Claude lane is down: 12 slots idle')).toBeInTheDocument();
     expect(within(group).getByText('Dispatch is paused by HOLD')).toBeInTheDocument();
     expect(within(group).getByText('Lane codex-cmp is held')).toBeInTheDocument();
     expect(within(group).getByText('This Mac is under pressure')).toBeInTheDocument();

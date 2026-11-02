@@ -27,6 +27,7 @@ import { verseBootstrapQuery } from '../../verse-bootstrap-query.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { fleetStateView, type FleetHeadline } from '../fleet-state.js';
 import { personalLine } from '../home-personal-line.js';
+import { homeLastOrder } from '../home-last-order-model.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileInterject } from '../MobileInterject.js';
@@ -117,7 +118,9 @@ export function HomeBody() {
   const canAct = canShowActions(permissions);
   const action = fleet.action;
   const showAction = action !== null && (action.kind === 'open-fleet' || canAct);
-  const personal = personalLine(runs.data, Date.now());
+  const now = Date.now();
+  const personal = personalLine(runs.data, now);
+  const lastOrder = homeLastOrder(runs.data, now);
 
   return (
     <>
@@ -177,7 +180,11 @@ export function HomeBody() {
         )}
       </Section>
 
-      {personal ? <Row title={personal.title} trailing={<Badge tone={personal.tone}>{personal.trailing}</Badge>} /> : null}
+      {lastOrder ? <Section>
+        {personal ? <Row title={personal.title} trailing={<Badge tone={personal.tone}>{personal.trailing}</Badge>} /> : null}
+        <Row title={lastOrder.title} subtitle={lastOrder.subtitle} trailing={<Badge tone={lastOrder.tone}>{lastOrder.ackLabel}</Badge>}
+          onClick={() => navigate({ screen: 'inbox' })} />
+      </Section> : personal ? <Row title={personal.title} trailing={<Badge tone={personal.tone}>{personal.trailing}</Badge>} /> : null}
       <HomeRuns />
       <MobileInterject />
 

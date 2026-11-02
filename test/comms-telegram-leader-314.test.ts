@@ -584,7 +584,7 @@ describe('slash commands and keywords', () => {
     expect(texts()[0]).not.toContain('&amp;lt;');
     expect(texts()[0]).toContain('within the grant');
     expect(texts()[0]!.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE);
-    expect(texts()[1]).toMatch(/Autonomy: off — next step: `phm authority setup`/);
+    expect(texts()[1]).toMatch(/Running/);
     expect(texts()[2]).toMatch(/No standing directives/);
     expect(texts()[3]).toMatch(/^Leader memo — /);
     expect(texts()[3]).not.toContain(MEMO_ID);

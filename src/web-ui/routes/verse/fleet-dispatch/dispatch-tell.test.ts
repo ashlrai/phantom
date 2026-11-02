@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import { dispatchTellKinds, dispatchTellPrefill } from './dispatch-tell.js';
 
-it('selects only starved, down and held verdicts', () => {
-  expect(dispatchTellKinds()).toEqual(new Set(['starved', 'down', 'held']));
+it('selects only starved, stalled, down and held verdicts', () => {
+  expect(dispatchTellKinds()).toEqual(new Set(['starved', 'stalled', 'down', 'held']));
 });
 
 it('prefills a starved lane with its headline and free slots', () => {

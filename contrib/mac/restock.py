@@ -152,8 +152,23 @@ for i, j in seclist: print(("DRY " if DRY else "") + "HOLD-SECURITY\t" + j)
 for j, repo, l, tier, pf, p, i in out: print(("DRY " if DRY else "") + "\t".join([j, repo, l, tier]))
 if DRY or (not out and not seclist): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
-with open(Q + "/ready.lock", "a") as lk:
-    fcntl.flock(lk, fcntl.LOCK_EX)
+# RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
+# timeouts; on timeout exit before claiming anything so the next pass retries the same lines.
+def ev(msg):
+    with open(EV, "a") as f: f.write("%s %s\n" % (TS, msg))
+def ready_lock(who="restock"):
+    timeout = float(os.environ.get("ASHLR_READY_LOCK_TIMEOUT", 10))
+    lk = open(Q + "/ready.lock", "a"); t0 = time.monotonic()
+    while True:
+        try: fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+        except OSError:
+            if time.monotonic() - t0 >= timeout:
+                lk.close(); ev("READY_LOCK_TIMEOUT %s waited %.1fs" % (who, time.monotonic() - t0))
+                sys.exit("restock: ready.lock busy for %.0fs; nothing claimed" % timeout)
+            time.sleep(0.05)
+    if time.monotonic() - t0 > 1: ev("READY_LOCK_WAIT %s %.1fs" % (who, time.monotonic() - t0))
+    return lk
+with ready_lock() as lk:
     with open(Q + "/ready.tsv", "a") as f:
         for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
 with open(Q + "/claimed.tsv", "a") as f:

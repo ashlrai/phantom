@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evictAll, runQuery } from '../../../data/cache.js';
 import { installFetch, json } from '../context/context-fixtures.test-support.js';
@@ -40,8 +40,8 @@ afterEach(() => {
   localStorage.removeItem(RESOURCES_STORAGE_KEY); reloadResourcesUiForTest(); closeResources();
 });
 
-function mount() {
-  installFetch(call => call.path === '/api/verse/fleet/runs' ? json(fleetRuns) : json({}));
+function mount(snapshot: FleetRuns = fleetRuns) {
+  installFetch(call => call.path === '/api/verse/fleet/runs' ? json(snapshot) : json({}));
   return render(<SectionVisibilityProvider visible><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
 }
 
@@ -73,12 +73,42 @@ describe('codex-personal lane facts in the resources bar', () => {
     expect(tip).not.toHaveTextContent('Held:');
   });
 
-  it('leaves the detail empty while the shared snapshot is cold', async () => {
+  it('shows lane facts when the shared snapshot arrives and updates when the lane changes', async () => {
     const view = mount();
     const row = await personalRow(view.container);
     fireEvent.focus(within(row).getByRole('button', { name: /Codex personal · session logs:/ }));
     const tip = screen.getByRole('tooltip');
     expect(tip).not.toHaveTextContent('Lane codex-personal');
+    await act(async () => runQuery(opsRunsQuery.key, async () => fleetRuns));
+    await waitFor(() => expect(tip).toHaveTextContent('Lane codex-personal: 0/12 running · 14 queued'));
+    expect(tip).toHaveTextContent('Held: usage limit');
+    await act(async () => runQuery(opsRunsQuery.key, async () => ({
+      ...fleetRuns, lanes: [{ ...fleetRuns.lanes[0]!, running: 3, queued: 2, held: false }],
+    })));
+    expect(tip).toHaveTextContent('Lane codex-personal: 3/12 running · 2 queued');
     expect(tip).not.toHaveTextContent('Held:');
+  });
+
+  it('leaves the detail empty when the snapshot has no lanes', async () => {
+    await runQuery(opsRunsQuery.key, async () => ({ ...fleetRuns, lanes: [] }));
+    const view = mount({ ...fleetRuns, lanes: [] });
+    const row = await personalRow(view.container);
+    fireEvent.focus(within(row).getByRole('button', { name: /Codex personal · session logs:/ }));
+    const tip = screen.getByRole('tooltip');
+    await waitFor(() => expect(tip).toHaveTextContent('Personal Codex weekly'));
+    expect(tip).not.toHaveTextContent('Lane codex-personal');
+    expect(tip).not.toHaveTextContent('Held:');
+  });
+
+  it('marks retained lane facts when a refresh fails', async () => {
+    await runQuery(opsRunsQuery.key, async () => fleetRuns);
+    const view = mount();
+    const row = await personalRow(view.container);
+    fireEvent.focus(within(row).getByRole('button', { name: /Codex personal · session logs:/ }));
+    await act(async () => runQuery(opsRunsQuery.key, async () => { throw new Error('offline'); }));
+    const tip = screen.getByRole('tooltip');
+    expect(tip).toHaveTextContent('Lane codex-personal: 0/12 running · 14 queued');
+    expect(tip).toHaveTextContent('Held: usage limit');
+    expect(tip).toHaveTextContent('Last known lane facts · latest refresh failed.');
   });
 });

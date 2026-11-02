@@ -5,18 +5,21 @@
  * the windows the provider reported — minus Claude's retired 5-hour window,
  * which Anthropic lifted; the row carries one note saying the weekly window
  * is the whole story — plus the fleet snapshot's own Codex personal figure
- * and a tokens-per-lane table. Accounts poll every
- * 60 s and the live fleet snapshot every 10 s, only while the pane is on
- * top; both reads degrade to a notice rather than taking the pane down.
+ * and a tokens-per-lane table. Accounts and the zero-waste meter audit poll
+ * every 60 s and the live fleet snapshot every 10 s, only while the pane is
+ * on top; unavailable reads degrade to notices.
  */
 import { useMemo, useState } from 'react';
 import { formatDecimalMetric, formatMetric } from '../../../components/charts/format-metric.js';
 import { copyText } from '../../../components/primitives/clipboard.js';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
-import { ApiError } from '../../../data/client.js';
+import { auditHeadline, auditRows } from './usage-audit-model.js';
+import { usageAuditQuery } from './usage-audit-queries.js';
+import { ApiError, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { formatTokens } from '../fleet-lanes/fleet-lanes-model.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usedPercentText } from '../percent-text.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -24,6 +27,8 @@ import { creditsSpendable } from '../usage/accounts-model.js';
 import { projectAccountsSnapshot, type AccountCredits } from '../usage/usage-contract.js';
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import { fleetUsageRunsQuery } from './fleet-usage-queries.js';
+import { auditSteerPrefill, auditSteerVisible } from './audit-steer-prefill.js';
+import { claudeIdle } from './claude-idle-model.js';
 import {
   codexPersonalRow,
   degradedSources,
@@ -110,9 +115,10 @@ function creditBalanceText(credits: AccountCredits): string {
  * not spendable gets the honest sentence instead.
  */
 function creditUsabilityNote(credits: AccountCredits): string {
-  if (creditsSpendable(credits)) return 'credits keep this account usable past the weekly limit';
   if (credits.spendControlReached === true) return 'the provider reports credit spending held';
-  return 'no spendable credit balance is reported';
+  if (!creditsSpendable(credits)) return 'no spendable credit balance is reported';
+  if (credits.spendControlReached !== false) return 'credit spending control is unconfirmed';
+  return 'credits keep this account usable past the weekly limit';
 }
 
 /**
@@ -136,7 +142,7 @@ function AccountFacts({ row, nowMs }: { row: UsageRow; nowMs: number }) {
         </li>
       )}
       {credits !== null && (
-        <li className={styles.asOf}>Credits {creditBalanceText(credits)} — {creditUsabilityNote(credits)}</li>
+        <li className={styles.asOf}>credits: {creditBalanceText(credits)} — {creditUsabilityNote(credits)}</li>
       )}
       {reconnectCommand !== null && (
         <li className={styles.asOf}>
@@ -155,7 +161,7 @@ function AccountFacts({ row, nowMs }: { row: UsageRow; nowMs: number }) {
   );
 }
 
-function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
+function AccountRow({ row, nowMs, incident }: { row: UsageRow; nowMs: number; incident: ReturnType<typeof claudeIdle> }) {
   const planType = row.planType ?? null;
   const hasFacts = row.observedAt != null || row.credits != null || row.reconnectCommand != null;
   return (
@@ -169,8 +175,9 @@ function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
           <li className={styles.reason}>{row.reason ?? STATE_FALLBACK[row.state]}</li>
           {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
           <AccountFacts row={row} nowMs={nowMs} />
+          {incident && <li className={styles.incident} data-tone={incident.tone}><span className={styles.verdict}>Incident</span> {incident.text}</li>}
         </ul>
-      ) : row.windows.length === 0 && row.note === null && !hasFacts ? (
+      ) : row.windows.length === 0 && row.note === null && !hasFacts && !incident ? (
         <span className={styles.reason}>—</span>
       ) : (
         <ul className={styles.windows}>
@@ -178,6 +185,7 @@ function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
           {row.windows.length === 0 && row.note === null ? <li className={styles.reason}>—</li> : null}
           {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
           <AccountFacts row={row} nowMs={nowMs} />
+          {incident && <li className={styles.incident} data-tone={incident.tone}><span className={styles.verdict}>Incident</span> {incident.text}</li>}
         </ul>
       )}
     </li>
@@ -185,6 +193,9 @@ function AccountRow({ row, nowMs }: { row: UsageRow; nowMs: number }) {
 }
 
 export function FleetUsagePane({ visible }: PaneProps) {
+  const auditRead = useQuery(usageAuditQuery, { enabled: visible, freshMs: 0 });
+  const refetchAudit = useRefetch(usageAuditQuery);
+  usePollWhileVisible(refetchAudit, 60_000, { enabled: visible });
   const accountsRead = useQuery(verseAccountsQuery, { enabled: visible, freshMs: 0 });
   const runsRead = useQuery(fleetUsageRunsQuery, { enabled: visible, freshMs: 0 });
   const refetchAccounts = useRefetch(verseAccountsQuery);
@@ -199,17 +210,20 @@ export function FleetUsagePane({ visible }: PaneProps) {
   const lanes = useMemo(() => laneTokens(runsRead.data ?? null), [runsRead.data]);
   const degraded = useMemo(() => degradedSources(runsRead.data ?? null), [runsRead.data]);
   const nowMs = Date.now();
+  const runs = runsRead.data && typeof runsRead.data === 'object' && !Array.isArray(runsRead.data)
+    ? runsRead.data as Record<string, unknown> : null;
   const disagreement = personalDisagreement(rows, personal, personalCodexAccount(snapshot?.accounts ?? [])?.observedAt ?? null, nowMs);
 
   const accountsMissing = read !== undefined && !read.available;
   const runsMissing = runsRead.data === null || (runsRead.error instanceof ApiError && runsRead.error.status === 404);
-  if (accountsMissing && runsMissing) return <p className={styles.message}>Usage not in this build</p>;
+  const auditLanes = new Map(auditRead.data?.lanes.map(lane => [lane.lane, lane]));
 
   const hasContent = rows.length > 0 || personal !== null || lanes.length > 0;
   const waiting = read === undefined || (runsRead.data === undefined && runsRead.error === undefined);
 
   return (
     <section className={styles.root} aria-label="Usage">
+      {accountsMissing && runsMissing && <p className={styles.message}>Usage not in this build</p>}
       {accountsMissing && <p className={styles.notice} role="status">{read.reason ?? 'Provider account usage is unavailable.'}</p>}
       {runsMissing && <p className={styles.notice} role="status">Live fleet usage is not in this build.</p>}
       {!runsMissing && runsRead.data === undefined && runsRead.status === 'error' && (
@@ -223,7 +237,15 @@ export function FleetUsagePane({ visible }: PaneProps) {
 
       {(rows.length > 0 || personal !== null) && (
         <ul className={styles.rows} aria-label="Provider usage">
-          {rows.map((row) => <AccountRow key={row.id} row={row} nowMs={nowMs} />)}
+          {rows.map((row) => {
+            const weekly = row.windows.filter((window) => /weekly|seven[\s_-]*day|7[\s_-]*(?:day|d)\b/i.test(window.label));
+            const window = weekly.length === 1 ? weekly[0] : weekly.length === 0 && row.windows.length === 1 ? row.windows[0] : null;
+            const incident = row.provider === 'claude' ? claudeIdle({
+              claudeLane: runs?.['claudeLane'], lanes, usedPercent: window?.measured && !window.limitReached ? window.usedPercent : null,
+              resetsAt: window?.resetsAt ?? null, nowMs,
+            }) : null;
+            return <AccountRow key={row.id} row={row} nowMs={nowMs} incident={incident} />;
+          })}
           {personal !== null && (
             <li className={styles.row}>
               <span className={styles.account}>Codex personal</span>
@@ -250,6 +272,38 @@ export function FleetUsagePane({ visible }: PaneProps) {
       {read?.available && snapshot !== null && rows.length === 0 && (
         <p className={styles.message}>No provider accounts reported.</p>
       )}
+
+      <section className={styles.laneSection} aria-label="Zero waste (last hour)">
+        <h3 className={styles.title}>Zero waste (last hour)</h3>
+        {auditRead.error !== undefined ? (
+          <p className={styles.notice} role="status">Zero-waste audit unavailable: {readFailureReason(auditRead.error)}</p>
+        ) : auditRead.data === null ? (
+          <p className={styles.notice} role="status">Zero-waste audit unavailable: invalid response.</p>
+        ) : auditRead.data ? (
+          <>
+            <p>{auditHeadline(auditRead.data)}</p>
+            <ul className={styles.rows}>
+              {auditRows(auditRead.data).map(row => {
+                const lane = auditLanes.get(row.lane);
+                return (
+                  <li key={row.lane} title={row.nextAction} className={styles.auditRow}>
+                    <span>{row.lane}</span>{' '}
+                    <span className={styles.verdict} data-tone={row.tone}>{row.verdict}</span>{' '}
+                    <span>{row.deltaText}</span>{' '}
+                    <span className={styles.reason}>{row.reason}</span>
+                    {lane && auditSteerVisible(lane) && (
+                      <Button variant="subtle" size="sm" aria-label={`Steer ${row.lane}`}
+                        onClick={() => openInterjectDialog({ prefill: auditSteerPrefill(lane, new Date().toISOString()) })}>
+                        Steer
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : <p className={styles.message}>Reading zero-waste audit…</p>}
+      </section>
 
       {lanes.length > 0 && (
         <section className={styles.laneSection} aria-labelledby="fleet-usage-lane-title">

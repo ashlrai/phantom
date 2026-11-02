@@ -241,13 +241,15 @@ describe('NeedsYouScreen — actions', () => {
   it('Hide hides on this phone only — no request — and Undo brings it back', async () => {
     const stub = stubFetch({});
     renderMobile(<Harness />, { activity: withItems() });
+    await waitFor(() => expect(stub.calls.some((call) => call.url.includes('/fleet/ci-runs'))).toBe(true));
+    const readsBeforeHide = stub.calls.length;
     await userEvent.click(screen.getByRole('button', { name: 'Hide on this phone: fix the flaky snapshot test' }));
     expect(screen.queryByRole('heading', { name: 'fix the flaky snapshot test' })).not.toBeInTheDocument();
     expect(screen.getByText('Hidden on this phone. It stays on your Mac.')).toBeInTheDocument();
     // Not "All clear": something is only hidden here.
     expect(screen.queryByText('All clear')).not.toBeInTheDocument();
     expect(screen.getByText(/1 hidden on this phone/)).toBeInTheDocument();
-    expect(stub.calls).toHaveLength(0);
+    expect(stub.calls).toHaveLength(readsBeforeHide);
 
     await userEvent.click(screen.getByRole('button', { name: 'Undo hide: fix the flaky snapshot test' }));
     expect(screen.getByRole('heading', { name: 'fix the flaky snapshot test' })).toBeInTheDocument();

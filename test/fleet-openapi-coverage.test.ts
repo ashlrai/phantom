@@ -62,6 +62,7 @@ const LOCAL_ONLY: Record<string, string> = {
   '/api/verse/fleet/live/feedback': 'execution feedback index is hub-only',
   '/api/verse/fleet/live/feedback/cases/{}': 'feedback case detail is hub-only',
   '/api/verse/runs-history': 'run outcome samples are hub-only',
+  '/api/verse/runs-history/lane-truth': 'lane truth reads local slots and meter rollouts; hub-only',
   '/api/verse/leader/memos/{}': 'Leader memo reads stay on the hub',
   '/api/verse/leader/orders': 'order trace is hub-only',
 };
@@ -73,6 +74,7 @@ const REMOTE_QUERY_PROBES: Record<string, string> = {
   '/api/verse/checkpoints': 'chatId=chat01',
   '/api/verse/checkpoints/diff': 'chatId=chat01&turnId=turn01&rootId=abcdef12&mode=turn',
   '/api/events': 'topics=verse-sessions',
+  '/api/fleet/job': 'id=RQ-PHX-JOB1',
   '/api/verse/fleet/live/bus': 'limit=5',
   '/api/verse/fleet/live/queue': 'limit=5',
   '/api/verse/fleet/runs/inbox': 'limit=5',

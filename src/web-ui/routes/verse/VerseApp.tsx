@@ -53,17 +53,20 @@ import { useToast } from '../../components/primitives/Toast.js';
 import { getMutationToken } from '../../data/auth-store.js';
 import { queryGateStats } from '../../data/cache.js';
 import { apiPost } from '../../data/client.js';
-import { useTheme } from '../../data/hooks.js';
+import { useQuery, useRefetch, useTheme } from '../../data/hooks.js';
 import { VERSE_ACTIVITY_SEEN_PATH, type VerseActivityCompletion } from '../../../core/verse/workbench-types.js';
 import { useResourcesUi } from './resources/resources-store.js';
 import { commandChord, detectKeyPlatform, formatChord, matchKey } from './shell/command-keys.js';
 import { useGuardState } from './shell/guard-store.js';
 import { gearUpdateSpoken } from './shell/gear-update-dot.js';
+import { useAutoSelfUpdate } from './sections/useAutoSelfUpdate.js';
 import { useSelfUpdateBadge } from './shell/self-update-badge.js';
 import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
 import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
-import { SectionVisibilityProvider } from './shell/section-visibility.js';
+import { SectionVisibilityProvider, usePollWhileVisible } from './shell/section-visibility.js';
+import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './shell/fleet-ci-runs-query.js';
+import { deriveCiNeedsYou } from './shell/ci-needs-you.js';
 import { preloadedLazy } from './shell/preloaded.js';
 import { SECTION_MODULES, sectionImporter } from './shell/section-modules.js';
 import { SurfaceNotInBuild, SurfaceSkeleton } from './shell/skeletons.js';
@@ -315,12 +318,16 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 }
 
 export function VerseApp() {
+  useAutoSelfUpdate();
   useWindowTitle();
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
   const toast = useToast();
   const activity = useActivity();
+  const ciRead = useQuery(fleetCiRunsQuery, { freshMs: FLEET_CI_RUNS_POLL_MS });
+  const refetchCi = useRefetch(fleetCiRunsQuery);
+  usePollWhileVisible(refetchCi, FLEET_CI_RUNS_POLL_MS);
   const updateLabel = useSelfUpdateBadge()?.label ?? null;
   const { compact } = useViewport();
   const platform = useMemo(() => detectKeyPlatform(), []);
@@ -483,7 +490,8 @@ export function VerseApp() {
   }, [ui.section, data?.mind?.unseen, latestMemoAt]);
 
   const expanded = ui.railExpanded && !compact;
-  const needsYouCount = data ? data.counts.needsYou : null;
+  const ciCount = deriveCiNeedsYou(ciRead.status === 'error' ? undefined : ciRead.data, Date.now()).length;
+  const needsYouCount = data ? data.counts.needsYou + ciCount : ciCount || null;
   // Settings, Apps & Accounts and Usage open from the gear, so on those pages
   // the gear IS the current rail item — for assistive tech too (aria-current,
   // and the page's name, since one gear stands for three pages), not only

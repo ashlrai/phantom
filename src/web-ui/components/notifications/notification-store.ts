@@ -13,7 +13,7 @@
  *     secret — same class of persistence as the theme toggle).
  *   - Throttle for the OS Notification API: a real desktop notification only
  *     fires for an id the store has never seen before, at critical/high
- *     severity or a fleet merge, in an unmuted category, while permission is granted — never
+ *     severity or a fleet merge or lane release, in an unmuted category, while permission is granted — never
  *     once per poll for a still-active issue.
  */
 import type { AppNotification, NotificationCategory } from './types.js';
@@ -109,7 +109,7 @@ export function getNotificationSnapshot(): NotificationStoreState {
 /**
  * Replace the full derived set for this poll cycle. Fires a throttled
  * desktop notification for any id that is BOTH new (never seen before in
- * this tab) and unmuted critical/high or a fleet merge — never for an id already active.
+ * this tab) and unmuted critical/high or a fleet merge or lane release — never for an id already active.
  */
 export function reconcileNotifications(derived: AppNotification[]): void {
   const previousIds = new Set(allItems.map((n) => n.id));
@@ -119,7 +119,7 @@ export function reconcileNotifications(derived: AppNotification[]): void {
     for (const n of derived) {
       if (mutedCategories.has(n.category)) continue;
       if (n.severity !== 'critical' && n.severity !== 'high'
-        && !(n.category === 'fleet' && n.id.startsWith('fleet-merge:'))) continue;
+        && !(n.category === 'fleet' && (n.id.startsWith('fleet-merge:') || n.id.startsWith('fleet-lane-released-')))) continue;
       if (previousIds.has(n.id) || everSeenIds.has(n.id)) continue;
       everSeenIds.add(n.id);
       try {

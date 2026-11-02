@@ -8,7 +8,7 @@ export const MAX_TAKEAWAYS = 20;
 export const MAX_TAKEAWAY_BYTES = 4096;
 
 type IssueCode = 'malformed_id' | 'duplicate_id' | 'missing_checked' | 'invalid_checked' | 'future_checked' | 'missing_urls';
-interface Source {
+export interface Source {
   id: string;
   title: string;
   checkedAt: string | null;

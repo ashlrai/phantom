@@ -19,6 +19,7 @@
  */
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { copyText } from '../../../components/primitives/clipboard.js';
 import { useFocusTrap } from '../../../components/primitives/focus-trap.js';
 import { useQuery } from '../../../data/hooks.js';
 import { verseBootstrapQuery, verseSessionsQuery } from '../verse-queries.js';
@@ -31,12 +32,16 @@ import { detectKeyPlatform, findCommand, type WorkbenchCommand } from './command
 import { argumentItems, buildPaletteItems, paletteView, type PaletteItem } from './palette-model.js';
 import { executeCatalogCommand, shellNotify } from './run-command.js';
 import { useActivity } from './useActivity.js';
+import { deriveCiNeedsYou } from './ci-needs-you.js';
+import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './fleet-ci-runs-query.js';
 import styles from './CommandPalette.module.css';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { revealDockPane } from '../dock/reveal-pane.js';
 import { usePanes } from '../panes/pane-registry.js';
+import { paletteBacklogQuery } from './palette-backlog-queries.js';
+import { palettePhoneQuery } from './palette-phone-query.js';
 import { paletteWorkers } from './palette-workers.js';
 
 import { paletteLanes, type PaletteLane } from './palette-lanes.js';
@@ -45,6 +50,9 @@ import { laneTargetsQuery, postLaneTarget } from '../ops/lane-targets-queries.js
 import { laneWriting, setLaneWriting } from '../fleet-lanes/LaneTargetStepper.js';
 import { refetchQuery } from '../../../data/cache.js';
 import { readFailureReason } from '../../../data/client.js';
+import { VerseControlLockedError } from '../autonomy/control-queries.js';
+import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
+import { isLaneTargets } from '../ops/lane-targets-model.js';
 
 // Dictation (voice/): lazy, so the palette opens as fast as before.
 const VoiceInput = lazy(() => import('../voice/VoiceInput.js'));
@@ -56,10 +64,13 @@ export interface CommandPaletteProps {
 export function CommandPalette({ onClose = closeVerseOverlay }: CommandPaletteProps) {
   const ui = useVerseUi();
   const open = ui.overlay === 'palette';
+  const phone = useQuery(palettePhoneQuery, { enabled: open, freshMs: 0 });
   const runs = useQuery(opsRunsQuery, { enabled: open, freshMs: 0 });
+  const backlog = useQuery(paletteBacklogQuery, { enabled: open, freshMs: 0 });
   const panes = usePanes();
   useEffect(() => { void import('../panes/index.js'); }, []);
   const activity = useActivity();
+  const ciRead = useQuery(fleetCiRunsQuery, { freshMs: FLEET_CI_RUNS_POLL_MS });
   const sessions = useQuery(verseSessionsQuery);
   const bootstrap = useQuery(verseBootstrapQuery);
   const platform = useMemo(() => detectKeyPlatform(), []);
@@ -87,8 +98,11 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     () => ({
       panes: [...panes].sort((a, b) => a.title.localeCompare(b.title)),
       workers: paletteWorkers(runs.data),
+      backlog: backlog.data ?? [],
+      phone: phone.data && !('kind' in phone.data) ? phone.data : null,
       lanes: paletteLanes(runs.data, parsePauseRecord(localStorage.getItem(LANE_PAUSE_KEY))),
       needsYou: activity.data?.needsYou ?? [],
+      fleetNeedsYou: deriveCiNeedsYou(ciRead.status === 'error' ? undefined : ciRead.data, Date.now()),
       running: activity.data?.running ?? [],
       sessions: sessions.data ?? bootstrap.data?.sessions ?? [],
       seats: bootstrap.data?.seats ?? [],
@@ -96,7 +110,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       recentActions: ui.recentActions,
       platform,
     }),
-    [panes, runs.data, activity.data, sessions.data, bootstrap.data, ui.recentActions, platform],
+    [panes, runs.data, backlog.data, phone.data, activity.data, ciRead.data, ciRead.status, sessions.data, bootstrap.data, ui.recentActions, platform],
   );
 
   const view = useMemo(() => {
@@ -112,6 +126,17 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
   // refresh under an unchanged query only keeps the highlight on a real row,
   // so it never yanks a highlight the operator arrowed to.
   const highlightBestRef = useRef(query !== '');
+  const manuallySelectedRef = useRef(false);
+  const hadBacklogDataRef = useRef(backlog.data !== undefined);
+  const hadPhoneDataRef = useRef(phone.data !== undefined);
+  useEffect(() => {
+    if (((!hadBacklogDataRef.current && backlog.data !== undefined)
+      || (!hadPhoneDataRef.current && phone.data !== undefined)) && !manuallySelectedRef.current && query.trim()) {
+      highlightBestRef.current = true;
+    }
+    if (backlog.data !== undefined) hadBacklogDataRef.current = true;
+    if (phone.data !== undefined) hadPhoneDataRef.current = true;
+  }, [backlog.data, phone.data, query]);
   // A spoken command while the palette is already open replaces the query.
   useEffect(() => {
     function onSpoken(event: Event) {
@@ -121,6 +146,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       setArgFor(null);
       setQuery(spoken);
       highlightBestRef.current = true;
+      manuallySelectedRef.current = false;
       inputRef.current?.focus();
     }
     window.addEventListener(PALETTE_QUERY_EVENT, onSpoken);
@@ -131,6 +157,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     const node = inputRef.current;
     setQuery((current) => insertDictation(current, chunk.replace(/[.!?]+$/, ''), node?.selectionStart ?? null, node?.selectionEnd ?? null).value);
     highlightBestRef.current = true;
+    manuallySelectedRef.current = false;
   }, []);
   useEffect(() => {
     if (highlightBestRef.current) {
@@ -170,11 +197,45 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     } finally { setLaneWriting(false); }
   }
 
+  async function releaseLane(lane: PaletteLane) {
+    if (laneWriting()) return;
+    setLaneWriting(true);
+    try {
+      const result = await postReleaseHold(lane.lane, 'Phantom palette');
+      if (!isLaneTargets(result)) {
+        shellNotify('The server returned an invalid lane response.', 'danger');
+        return;
+      }
+      const row = result.lanes.find((item) => item.lane === lane.lane);
+      if (!row || row.held) {
+        shellNotify('The server did not confirm the lane release.', 'danger');
+        return;
+      }
+      shellNotify(`Released ${lane.lane}.`, 'success');
+      await Promise.all([
+        refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+        refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+      ]);
+    } catch (error) {
+      shellNotify(error instanceof VerseControlLockedError ? error.message : readFailureReason(error), 'danger');
+    } finally { setLaneWriting(false); }
+  }
+
   function run(item: PaletteItem | undefined) {
     if (!item) return;
     const payload = item.payload;
+    if (payload.kind === 'copy-text') {
+      onClose();
+      void copyText(payload.text).then((copied) => shellNotify(copied ? 'Phone URL copied' : 'Could not copy phone URL', copied ? 'success' : 'danger'));
+      return;
+    }
     if (payload.kind === 'lane') {
       void changeLane(payload.lane);
+      onClose();
+      return;
+    }
+    if (payload.kind === 'lane-release') {
+      void releaseLane(payload.lane);
       onClose();
       return;
     }
@@ -192,6 +253,11 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     if (payload.kind === 'pane') {
       revealDockPane(payload.paneId);
       recordVerseAction(`pane.${payload.paneId}`);
+      onClose();
+      return;
+    }
+    if (payload.kind === 'backlog' || payload.kind === 'open-phone') {
+      window.open(payload.url, '_blank', 'noopener,noreferrer');
       onClose();
       return;
     }
@@ -237,17 +303,21 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     }
     switch (key) {
       case 'ArrowDown':
+        manuallySelectedRef.current = true;
         event.preventDefault();
         if (count > 0) setActive((i) => (i + 1) % count);
         return;
       case 'ArrowUp':
+        manuallySelectedRef.current = true;
         event.preventDefault();
         if (count > 0) setActive((i) => (i - 1 + count) % count);
         return;
       case 'Home':
+        manuallySelectedRef.current = true;
         if (count > 0) { event.preventDefault(); setActive(0); }
         return;
       case 'End':
+        manuallySelectedRef.current = true;
         if (count > 0) { event.preventDefault(); setActive(count - 1); }
         return;
       case 'Enter':
@@ -313,6 +383,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
             onChange={(e) => {
               setQuery(e.target.value);
               highlightBestRef.current = true;
+              manuallySelectedRef.current = false;
             }}
             onKeyDown={onKeyDown}
           />
@@ -343,7 +414,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
                       aria-selected={i === active}
                       className={styles.item}
                       data-tone={item.tone}
-                      onMouseMove={() => i !== active && setActive(i)}
+                      onMouseMove={() => { if (i !== active) { manuallySelectedRef.current = true; setActive(i); } }}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => run(item)}
                     >

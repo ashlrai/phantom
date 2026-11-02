@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, SkeletonLine, Tag } from '../../../components/primitives/index.js';
 import { ApiError } from '../../../data/client.js';
-import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { busFeedMissing, busFeedQuery } from '../fleet/bus-feed-queries.js';
 import { JobRefs } from '../fleet/JobRefs.js';
@@ -9,6 +9,12 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { busFilterLabel, busRows, groupEvents, isInterjection, matchEvents, summarizeHops, type BusRow } from './fleet-bus-model.js';
+import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery, type AgentBusReceipt } from './agent-bus-queries.js';
+import { busStatusLine, envelopeRows, isMasonInterjection } from './agent-bus-model.js';
+import { takeBusPostRequest, useBusPostRequest } from './bus-post-request.js';
+import { BusPostBox, type BusPostPrefill } from './BusPostBox.js';
+import { recentSenders } from './bus-post-model.js';
+import { replyCounts, threadHeadline, threadOf } from './bus-thread-model.js';
 import styles from './fleet-bus.module.css';
 
 // Include an occurrence number so identical log lines remain separate events.
@@ -28,8 +34,28 @@ const newEvents = (known: readonly IdentifiedEvent[], current: readonly Identifi
 };
 const count = (value: number | null) => value === null ? '—' : value.toLocaleString();
 
-export function FleetBusPane({ visible, host }: PaneProps) {
-  const read = useQuery(busFeedQuery, { enabled: visible && !busFeedMissing(), freshMs: 0 });
+export function FleetBusPane(props: PaneProps) {
+  const [view, setView] = useState<'dispatch' | 'durable'>('dispatch');
+  const [query, setQuery] = useState('');
+  const request = useBusPostRequest();
+  const [tell, setTell] = useState<BusPostPrefill | null>(null);
+  useEffect(() => {
+    if (!props.visible || !request) return;
+    const pending = takeBusPostRequest();
+    if (pending) { setView('durable'); setTell({ to: pending.to, replyTo: '', quote: pending.quote }); }
+  }, [props.visible, request]);
+  return <section aria-label="Bus views">
+    <div className={styles.viewToggle} aria-label="Bus view">
+      <Button size="sm" aria-pressed={view === 'dispatch'} onClick={() => setView('dispatch')}>Dispatch feed</Button>
+      <Button size="sm" aria-pressed={view === 'durable'} onClick={() => setView('durable')}>Durable bus</Button>
+    </div>
+    <div hidden={view !== 'dispatch'}><DispatchFeed {...props} visible={props.visible && view === 'dispatch'} query={query} setQuery={setQuery} /></div>
+    <div hidden={view !== 'durable'}><DurableBus visible={props.visible && view === 'durable'} query={query} setQuery={setQuery} tell={tell} /></div>
+  </section>;
+}
+
+function DispatchFeed({ visible, host, query, setQuery }: PaneProps & { query: string; setQuery: (value: string) => void }) {
+  const read = useQuery(busFeedQuery, { enabled: visible && !busFeedMissing(), freshMs: 5_000 });
   const refetch = useRefetch(busFeedQuery);
   usePollWhileVisible(() => { if (!busFeedMissing()) refetch(); }, 5_000, { enabled: visible && !busFeedMissing() });
   const events = useMemo(() => identify(busRows(read.data?.events ?? [], read.data?.hops ?? [], 60, read.data?.lastHopAt)), [read.data]);
@@ -37,7 +63,6 @@ export function FleetBusPane({ visible, host }: PaneProps) {
   const [frozen, setFrozen] = useState<IdentifiedEvent[]>([]);
   const [arrivals, setArrivals] = useState<IdentifiedEvent[]>([]);
   const [merged, setMerged] = useState<IdentifiedEvent[] | null>(null);
-  const [query, setQuery] = useState('');
   const [kind, setKind] = useState<BusRow['kind'] | null>(null);
   useEffect(() => {
     if (paused && read.data) setArrivals(current => [...current, ...newEvents([...frozen, ...current], events)]);
@@ -73,5 +98,89 @@ export function FleetBusPane({ visible, host }: PaneProps) {
         {event.kind === 'hop' ? <span className={styles.time} /> : <time className={styles.time} dateTime={event.at} title={new Date(event.at).toLocaleString()}>{formatRelative(event.at)}</time>}
         <Tag size="sm">{event.kind}</Tag><span className={styles.text}>{event.kind === 'hop' ? event.text : <JobRefs text={event.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />}</span>
       </li>)}</ol>}
+  </section>;
+}
+
+
+const PAGE_LIMIT = 50;
+const channelLabels = { telegram: 'Telegram', email: 'email', mobile: 'phone', desktop: 'desktop', page: 'page', cli: 'CLI' } as const;
+function durableError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return 'Read session expired. Reopen the console.';
+    if (error.status === 404) return 'This hub has no durable bus route yet (update the hub).';
+    if (error.status === 503) return 'Durable bus storage unavailable.';
+  }
+  return 'Durable bus is unavailable.';
+}
+function DurableBus({ visible, query, setQuery, tell }: { visible: boolean; query: string; setQuery: (value: string) => void; tell: BusPostPrefill | null }) {
+  const status = useQuery(agentBusStatusQuery, { enabled: visible && !agentBusMissing(), freshMs: 10_000 });
+  const after = Math.max(0, (status.data?.retainedCount ?? 0) - PAGE_LIMIT);
+  const pageQuery = useMemo(() => agentBusPageQuery(after), [after]);
+  const page = useQuery(pageQuery, { enabled: visible && !!status.data && !agentBusMissing(), freshMs: 10_000 });
+  const refreshStatus = useRefetch(agentBusStatusQuery);
+  const refreshPage = useRefetch(pageQuery);
+  const refreshPostedStatus = useRefresh(agentBusStatusQuery);
+  const refreshPostedPage = useRefresh(pageQuery);
+  const [prefill, setPrefill] = useState<BusPostPrefill | null>(null);
+  const [thread, setThread] = useState<string | null>(null);
+  const [about, setAbout] = useState('');
+  useEffect(() => { if (tell) { setPrefill(tell); setAbout(tell.quote); } }, [tell]);
+  usePollWhileVisible(() => { if (!agentBusMissing()) { refreshStatus(); if (status.data) refreshPage(); } }, 10_000,
+    { enabled: visible && !agentBusMissing() });
+  const [messages, setMessages] = useState<AgentBusReceipt[]>([]);
+  const [olderBoundary, setOlderBoundary] = useState<number | null>(null);
+  const [olderError, setOlderError] = useState<unknown>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  useEffect(() => {
+    if (!page.data) return;
+    setMessages(current => [...new Map([...current, ...page.data!.messages].map(row => [row.cursor, row])).values()]);
+    setOlderBoundary(current => current === null ? after : Math.min(current, after));
+  }, [page.data, after]);
+  const loadOlder = async () => {
+    const oldest = messages.length ? Math.min(...messages.map(row => row.cursor)) : olderBoundary ?? 0;
+    const boundary = Math.min(oldest, olderBoundary ?? oldest);
+    const previous = Math.max(0, boundary - PAGE_LIMIT);
+    setLoadingOlder(true); setOlderError(null);
+    try {
+      const result = await agentBusPageQuery(previous).fetch();
+      if (!result) throw new Error('Invalid bus page');
+      setMessages(current => [...new Map([...result.messages, ...current].map(row => [row.cursor, row])).values()]);
+      setOlderBoundary(previous);
+    } catch (error) { setOlderError(error); }
+    finally { setLoadingOlder(false); }
+  };
+  const error = status.error ?? page.error ?? olderError;
+  const errorText = agentBusMissing() ? 'This hub has no durable bus route yet (update the hub).' : error ? durableError(error) : null;
+  const allRows = envelopeRows(messages, Date.now());
+  const selected = thread === null ? null : threadOf(messages, thread);
+  const counts = replyCounts(messages);
+  const rowsById = new Map(allRows.map(row => [row.id, row]));
+  const rows = selected ? selected.ids.flatMap(id => { const row = rowsById.get(id); return row ? [row] : []; }) : allRows.filter(row =>
+    [row.from, row.to, row.priority, row.kind, row.channel ?? '', row.excerpt].some(value => value.toLowerCase().includes(query.toLowerCase())));
+  return <section className={styles.root} aria-label="Durable bus">
+    {status.data && <p className={styles.header}>{busStatusLine(status.data)}</p>}
+    {errorText && <p className={styles.notice} role="status">{errorText}</p>}
+    {!errorText && (status.data === null || page.data === null) && <p className={styles.notice}>Durable bus is unavailable.</p>}
+    <input className={styles.search} type="search" aria-label="Filter bus events" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setQuery(''); }} />
+    {selected && <><p className={styles.header}>{threadHeadline(selected, messages)}</p><Button size="sm" onClick={() => setThread(null)}>Back to all</Button></>}
+    {rows.length > 0 ? <ol className={styles.list} aria-label="Durable bus envelopes">{rows.map(row =>
+      <li key={row.cursor} className={`${styles.row} ${styles.envelope} ${isMasonInterjection(row) ? styles.interjection : ''}`} aria-label={isMasonInterjection(row) ? 'Interjection' : undefined}>
+        <Tag size="sm">{row.priority}</Tag><span>{row.from} → {row.to}</span><Tag size="sm">{row.kind}</Tag>
+        {row.kind === 'interjection' && row.channel && <Tag size="sm">via {channelLabels[row.channel]}</Tag>}
+        <span className={styles.text}>{row.excerpt}</span>{row.expired && <Tag size="sm">expired</Tag>}
+        <time className={styles.time} dateTime={row.at} title={new Date(row.at).toLocaleString()}>{row.ageText}</time>
+        {row.from === 'mason' && !!counts.get(row.id) && <span>Replies: {counts.get(row.id)}</span>}
+        <Button size="sm" variant="subtle" aria-label={`Open thread ${row.id}`} onClick={() => setThread(row.id)}>Thread</Button>
+        {row.from !== 'mason' && <Button size="sm" variant="subtle" onClick={() => { setAbout(''); setPrefill({ to: row.from, replyTo: row.id, quote: row.excerpt }); }}>Reply</Button>}
+      </li>)}</ol> : status.data && page.data && <p className={styles.message}>{messages.length ? 'No events match this filter.' : 'No durable bus messages yet.'}</p>}
+    {olderBoundary !== null && olderBoundary > 0 && <Button size="sm" onClick={() => { void loadOlder(); }} disabled={loadingOlder}>{loadingOlder ? 'Loading…' : 'Load older'}</Button>}
+    {about && <p className={styles.message}>About: {about}</p>}
+    <BusPostBox senders={recentSenders(allRows)} prefill={prefill} onPosted={cursor => {
+      setAbout(''); refreshPostedStatus(); refreshPostedPage();
+      // The cursor can exceed retainedCount after pruning; fetch the new row directly in that case.
+      if (cursor > after + PAGE_LIMIT) void agentBusPageQuery(cursor - 1).fetch().then(result => {
+        if (result) setMessages(current => [...new Map([...current, ...result.messages].map(row => [row.cursor, row])).values()]);
+      }).catch(() => {});
+    }} />
   </section>;
 }

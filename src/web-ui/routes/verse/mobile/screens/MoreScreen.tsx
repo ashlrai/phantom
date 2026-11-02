@@ -200,6 +200,7 @@ export function MoreScreen() {
         <Row title="Agents" subtitle="Every agent session on your Mac" onClick={() => navigate({ screen: 'agents' })} />
         {canAct ? <Row title="New agent" subtitle="Start an agent on one of your repos" onClick={() => navigate({ screen: 'new' })} /> : null}
         <Row title="Needs you" subtitle="Approvals and questions waiting on you" onClick={() => navigate({ screen: 'needs' })} />
+        <Row title="Hand the fleet a job" subtitle="Write a Phantom job for the fleet" onClick={() => navigate({ screen: 'drop-job' })} />
         {!remote ? <Row title="Use the desktop layout" subtitle="Open the full workbench in this browser" onClick={openDesktop} /> : null}
       </Section>
 

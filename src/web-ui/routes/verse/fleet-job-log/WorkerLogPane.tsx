@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { invalidate } from '../../../data/cache.js';
+import { readFailureReason } from '../../../data/client.js';
+import { queueRecut, recutDropJobsQuery } from '../fleet-outcomes/recut-queue-client.js';
+import { jobBacklogQuery } from './job-backlog-query.js';
+import { backlogVerdict, parseLogPr, recutFromLog } from './log-recut-model.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
+import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
+import { steerPrefill } from '../fleet/job-sheet-actions.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, safePrUrl, stateTone } from './worker-log-model.js';
+import { JOB_ID_RE, jobOptions, logHint, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
 import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
@@ -13,6 +20,8 @@ import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
 import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
 import { jobTextQuery } from './job-text-queries.js';
+import { jobStopEligible, postJobStop, STOP_CONFIRM_MS, stopConfirmLabel, stopFailureText, stopOutcomeText } from './job-stop-action.js';
+import { livenessText, livenessTone, newLinesLabel, trackGrowth, type TrackedLog } from './log-liveness-model.js';
 import styles from './worker-log.module.css';
 
 const EMPTY_LINES: string[] = [];
@@ -59,6 +68,42 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   };
   const [follow, setFollow] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
+  const tracked = useRef<{ job: string; value: TrackedLog | null }>({ job, value: null });
+  const [liveness, setLiveness] = useState<TrackedLog | null>(null);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (tracked.current.job !== job) tracked.current = { job, value: null };
+    if (!detail.data) { setLiveness(null); return; }
+    const value = trackGrowth(tracked.current.value, { ...detail.data, follow }, Date.now());
+    tracked.current.value = value;
+    setLiveness(value);
+  }, [job, detail.data, follow]);
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [active]);
+  const clearUnseen = () => {
+    if (!tracked.current.value?.unseenLines) return;
+    tracked.current.value = { ...tracked.current.value, unseenLines: 0 };
+    setLiveness(tracked.current.value);
+  };
+  const [stop, setStop] = useState<{ armedAt: number | null; busy: boolean; text: string }>({ armedAt: null, busy: false, text: '' });
+  useEffect(() => { setStop({ armedAt: null, busy: false, text: '' }); }, [job]);
+  const stopArmed = stop.armedAt !== null && now - stop.armedAt < STOP_CONFIRM_MS;
+  const pressStop = async () => {
+    if (stop.busy) return;
+    if (!stopArmed) { setStop((prev) => ({ ...prev, armedAt: Date.now(), text: '' })); return; }
+    setStop((prev) => ({ ...prev, armedAt: null, busy: true }));
+    try {
+      const result = await postJobStop(job);
+      setStop((prev) => ({ ...prev, busy: false, text: stopOutcomeText(result) }));
+      refreshRuns();
+      if (valid) refreshDetail();
+    } catch (error) {
+      setStop((prev) => ({ ...prev, busy: false, text: stopFailureText(error) }));
+    }
+  };
   const [search, setSearch] = useState('');
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
   const lines = detail.data?.log?.tail ?? EMPTY_LINES;
@@ -74,10 +119,14 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const moveMatch = (dir: 1 | -1) => setSelectedMatch(nextMatch(matches, current, dir));
   const retained = valid && !options.some(option => option.job === job);
   const url = safePrUrl(detail.data?.publish?.prUrl);
-  const testFact = publishTestFact(detail.data?.publish?.testLine);
-  const sensitiveFact = publishSensitiveFact(detail.data?.publish?.sensitive);
-  const autoMergeOff = detail.data?.publish?.autoMerge === false && url !== null;
+  const pr = parseLogPr(url);
+  const backlogQuery = useMemo(() => jobBacklogQuery(pr?.repo ?? ''), [pr?.repo]);
+  const backlog = useQuery(backlogQuery, { enabled: active && pr !== null, freshMs: 60_000 });
+  const verdict = backlog.status === 'error' ? null : backlogVerdict(url, backlog.data, now);
+  const backlogUnavailable = pr !== null && (backlog.data === null || backlog.data?.source === 'gh-failed' || backlog.status === 'error');
+  const { testLine, sensitive } = publishFacts(detail.data?.publish);
   const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
+  const hint = detail.data ? logHint(detail.data, Date.now()) : null;
   const state = detail.data?.state ?? 'unknown';
 
   return <div className={styles.pane} aria-label="Worker log">
@@ -94,6 +143,12 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         if (event.key === 'Escape') { setSearch(''); setSelectedMatch(null); }
       }} /></label>
       <Button size="sm" variant="subtle" aria-label="Copy as Markdown" disabled={!valid || !detail.data} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span>
+      <Button size="sm" variant="subtle" aria-label="Steer this job" disabled={!valid} onClick={() => openInterjectDialog({ prefill: steerPrefill(job, detail.data?.lane ?? runs.data?.workers.find(worker => worker.job === job)?.lane) })}>Steer</Button>
+      {valid && jobStopEligible(state) && <>
+        <Button size="sm" variant="subtle" aria-label="Stop this job" disabled={stop.busy} onClick={() => void pressStop()}>{stopConfirmLabel(job, stopArmed)}</Button>
+        {stop.text !== '' && <span role="status">{stop.text}</span>}
+      </>}
+      {verdict && <LogRecut key={`${job}:${url}`} job={job} prUrl={url} lane={detail.data?.lane} verdict={verdict} />}
       <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
       <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
       <button type="button" aria-label="Next" disabled={matches.length === 0} onClick={() => moveMatch(1)}>↓</button>
@@ -109,15 +164,26 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     {valid && detail.status === 'error' && <p role="status">Job detail could not refresh.</p>}
     {valid && detail.data && <>
       <div className={styles.meta}><StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
+        {' '}<StatusBadge status="output" tone={livenessTone(liveness?.lastGrowthAt ?? null, state, now)}>{livenessText(liveness?.lastGrowthAt ?? null, state, now)}</StatusBadge>
         {meta.slice(1).map((part, index) => <span key={`${part}-${index}`}> · {url && index === meta.length - 2 && part === prLabel(url) ? <a href={url} target="_blank" rel="noreferrer">{part}</a> : part}</span>)}
       </div>
-      {(testFact !== null || sensitiveFact !== null || autoMergeOff) && <section aria-label="Publish" className={styles.meta}>
-        {testFact !== null && <p>Tests: <code>{testFact}</code></p>}
-        {sensitiveFact !== null && <p role="note">Touches owner-reviewed paths: {sensitiveFact} — needs an owner review before it can merge</p>}
-        {autoMergeOff && <p>Auto-merge: off</p>}
+      {backlogUnavailable && <p role="status">merge backlog unavailable</p>}
+      {verdict && <p className={styles.meta}>{verdict.text}</p>}
+      {(testLine !== null || sensitive !== null) && <section aria-label="Publish" className={styles.meta}>
+        {testLine !== null && <p>Tests: <code>{testLine}</code></p>}
+        {sensitive !== null && <p role="note">Touches owner-reviewed paths: {sensitive.join(', ')}</p>}
       </section>}
-      {detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
-        <div ref={logRef} className={styles.log} role="log" aria-live="polite">{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>}
+      {hint ? <p className={styles.hint}>{hint}</p> : detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
+        <div className={styles.logWrap}>
+          <div ref={logRef} className={styles.log} role="log" aria-live="polite" onScroll={event => {
+            const log = event.currentTarget;
+            if (log.scrollTop + log.clientHeight >= log.scrollHeight - 1) clearUnseen();
+          }}>{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>
+          {!follow && (liveness?.unseenLines ?? 0) > 0 && <button type="button" className={styles.newLines} onClick={() => {
+            if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+            clearUnseen(); setFollow(true);
+          }}>{newLinesLabel(liveness?.unseenLines ?? 0)} ↓</button>}
+        </div>}
       {changes.data && <section aria-label="Changes" className={styles.changes}>
         <div>{changesHeadline(changes.data)}</div>
         {changes.data.state === 'missing' ? <p>Worktree not available</p> : <>
@@ -153,15 +219,29 @@ function JobText({ job, kind, enabled }: { job: string; kind: 'notes' | 'prompt'
   </details>;
 }
 
-function publishTestFact(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') return null;
-  const collapsed = value.replace(/\s+/g, ' ').trim();
-  if (collapsed === '') return null;
-  return collapsed.length > 200 ? `${collapsed.slice(0, 199)}…` : collapsed;
-}
-
-function publishSensitiveFact(paths: string[] | null | undefined): string | null {
-  if (!paths || paths.length === 0) return null;
-  const shown = paths.slice(0, 5).join(', ');
-  return paths.length > 5 ? `${shown} +${paths.length - 5} more` : shown;
+function LogRecut({ job, prUrl, lane, verdict }: { job: string; prUrl: string | null; lane: string | null | undefined; verdict: NonNullable<ReturnType<typeof backlogVerdict>> }) {
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState('');
+  const queued = useRef(false);
+  async function queue() {
+    const recut = recutFromLog({ job, prUrl, title: null, lane, nowMs: Date.now() });
+    if (!recut || inFlight.current || queued.current || !(verdict.action === 'recut' || verdict.mergeStateStatus === 'DIRTY')) return;
+    inFlight.current = true;
+    setBusy(true);
+    setResult('');
+    try {
+      const outcome = await queueRecut(recut);
+      if (outcome === 'queued') {
+        queued.current = true;
+        setResult(`Queued as RQ-PHX-${recut.id}`);
+        invalidate(recutDropJobsQuery.key);
+      } else if (outcome === 'already queued') {
+        queued.current = true;
+        setResult('Already queued');
+      } else setResult('Recut unavailable (drop-jobs route missing)');
+    } catch (error) { setResult(readFailureReason(error)); }
+    finally { inFlight.current = false; setBusy(false); }
+  }
+  return <><Button size="sm" variant="subtle" aria-label={`Recut PR ${verdict.number}`} disabled={busy || queued.current || !(verdict.action === 'recut' || verdict.mergeStateStatus === 'DIRTY')} onClick={() => void queue()}>Recut PR #{verdict.number}</Button><span role="status">{result}</span></>;
 }
