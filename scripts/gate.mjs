@@ -11,7 +11,9 @@
  * evidence. See docs/RELEASING-LOCALLY.md for the complete release checks.
  *
  * Phase A (parallel): root build (tsc, then the static-asset copy from `npm run build` — see
- * GATE_BUILD_ASSET_SCRIPTS), web typecheck, eslint (cached), the real-io lane guard, the
+ * GATE_BUILD_ASSET_SCRIPTS), the native-compiler typecheck (`npm run typecheck:fast`, tsgo on
+ * both projects — cold tsc in a fresh worker tree can take tens of minutes, so tsgo reports the
+ * same diagnostics in seconds), web typecheck, eslint (cached), the real-io lane guard, the
  * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs), the quarantine-ledger verifier
  * (scripts/check-quarantine-ledger.mjs: every added test skip needs a live ledger row),
  * the docs check. Then the web build + first-paint budget. Phase B runs the
@@ -392,6 +394,7 @@ function staticSteps() {
   const [tsc, ...assets] = buildCommands({ nodeBin: node, tscBin: bin.tsc, tsBuildInfoFile: gate('tsc.tsbuildinfo') });
   return [
     { name: 'build', ...tsc, then: assets },
+    { name: 'typecheck-fast', cmd: npm, args: ['run', '--silent', 'typecheck:fast'] },
     { name: 'typecheck-web', cmd: node, args: [bin.tsc, '--noEmit', '-p', 'src/web-ui/tsconfig.json', '--incremental', '--tsBuildInfoFile', gate('tsc-web.tsbuildinfo')] },
     { name: 'eslint', cmd: node, args: [bin.eslint, '--cache', '--cache-location', gate('eslintcache'), '.'] },
     { name: 'realio-lane', cmd: npm, args: ['run', '--silent', 'lint:realio-lane'] },
@@ -509,7 +512,7 @@ async function main() {
     return step;
   };
 
-  say('phase A: build, typecheck-web, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
+  say('phase A: build, typecheck-fast, typecheck-web, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
   const phaseA = await Promise.all([...staticSteps(), quarantineStep(changes.mergeBase)].map((step) => runStatic(step).then(record)));
   const buildFailed = phaseA.find((step) => step.name === 'build').status === 'fail';
   const phaseAFailed = phaseA.some((step) => step.status === 'fail');
