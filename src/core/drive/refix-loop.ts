@@ -12,7 +12,9 @@
  * are never touched; only the seven GS_REPOS and `ashlr-fleet[bot]` authors;
  * at most 3 drain lines per PR per 24h window, then REFIX_GIVEUP is logged
  * once for that key; any gh error aborts the cycle with no retry; at most 20
- * new lines per cycle; lines for PRs touching .github, publish.sh, dispatchd,
+ * new lines and 20 branch updates per cycle; update attempts are durably
+ * reserved, spaced at least 15 minutes apart and capped at 3 per PR per 24h
+ * (including failed calls). Recovery wait starts at first observation; lines for PRs touching .github, publish.sh, dispatchd,
  * git-safe, scrub or reap carry "Security pin required".
  *
  * All I/O is injected through RefixIo so the cycle is unit-testable and the
@@ -21,6 +23,7 @@
 
 export const REFIX_CYCLE_CAP = 20;
 export const REFIX_PR_WINDOW_CAP = 3;
+export const REFIX_RETRY_MS = 15 * 60 * 1000;
 export const REFIX_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const FLEET_AUTHOR = 'ashlr-fleet[bot]';
 export const SECURITY_PIN = 'Security pin required';
@@ -45,6 +48,10 @@ export interface RefixPr {
 
 export interface RefixState {
   v: 1;
+  /** First observed recovery wait, retained across head changes. */
+  waiting?: Record<string, number>;
+  /** Reserved before update-branch; failed calls consume the same retry budget. */
+  updates?: Record<string, { pr: string; at: number }>;
   /** key -> {pr: "<short>#<n>", at: epochMs} for every appended drain line. */
   appended: Record<string, { pr: string; at: number }>;
   /** key -> epochMs the REFIX_GIVEUP line was logged. Permanent suppression. */
@@ -83,6 +90,8 @@ export interface RefixSummary {
   drains: number;
   giveups: number;
   capped: boolean;
+  /** Longest currently observed recovery wait (not PR age). */
+  maxWaitMs: number;
 }
 
 const shortName = (repo: string): string => repo.split('/').pop() ?? repo;
@@ -97,7 +106,7 @@ export function securityPinnedPath(path: string): boolean {
 }
 
 function emptyState(): RefixState {
-  return { v: 1, appended: {}, giveup: {} };
+  return { v: 1, appended: {}, giveup: {}, waiting: {}, updates: {} };
 }
 
 export function normalizeState(value: unknown): RefixState {
@@ -108,6 +117,16 @@ export function normalizeState(value: unknown): RefixState {
     if (typeof e['pr'] === 'string' && Number.isSafeInteger(e['at'])) {
       state.appended[key] = { pr: e['pr'], at: e['at'] as number };
     }
+  }
+  const updates = (row['updates'] ?? {}) as Record<string, unknown>;
+  for (const [key, entry] of Object.entries(updates)) {
+    const e = (entry ?? {}) as Record<string, unknown>;
+    if (typeof e['pr'] === 'string' && Number.isSafeInteger(e['at'])) {
+      state.updates![key] = { pr: e['pr'], at: e['at'] as number };
+    }
+  }
+  for (const [key, at] of Object.entries((row['waiting'] ?? {}) as Record<string, unknown>)) {
+    if (Number.isSafeInteger(at) && (at as number) >= 0) state.waiting![key] = at as number;
   }
   for (const [key, at] of Object.entries((row['giveup'] ?? {}) as Record<string, unknown>)) {
     if (Number.isSafeInteger(at)) state.giveup[key] = at as number;
@@ -154,7 +173,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
   const windowMs = options.windowMs ?? REFIX_WINDOW_MS;
   const authors = options.fleetAuthors ?? [FLEET_AUTHOR];
   const now = io.now();
-  const summary: RefixSummary = { updated: 0, drains: 0, giveups: 0, capped: false };
+  const summary: RefixSummary = { updated: 0, drains: 0, giveups: 0, capped: false, maxWaitMs: 0 };
   let hold: Set<string>;
   try {
     hold = io.readHoldList();
@@ -170,6 +189,12 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
     io.log('REFIX_QUEUE_INVALID');
     throw error;
   }
+  const waiting = state.waiting!;
+  const updates = state.updates!;
+  // Expired reservations no longer affect the rolling retry budget.
+  for (const [key, entry] of Object.entries(updates)) {
+    if (now - entry.at >= windowMs) delete updates[key];
+  }
   const eligible = (repo: string, pr: RefixPr): boolean =>
     !hold.has(`${shortName(repo)}#${pr.number}`) && authors.includes(pr.author);
   const drains24h = (prTag: string): number =>
@@ -183,8 +208,29 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
         io.log(`REFIX_GH_ERROR list ${repo}`);
         throw error;
       }
+      const present = new Set(prs.map((pr) => `${shortName(repo)}#${pr.number}`));
+      for (const tag of Object.keys(waiting)) {
+        if (tag.startsWith(`${shortName(repo)}#`) && !present.has(tag)) delete waiting[tag];
+      }
+      const seen = new Set<string>();
       for (const pr of prs) {
-        if (!eligible(repo, pr) || pr.mergeState !== 'BEHIND' || pr.inMergeQueue) continue;
+        const tag = `${shortName(repo)}#${pr.number}`;
+        if (!eligible(repo, pr)) continue;
+        if (pr.inMergeQueue || ['BEHIND', 'DIRTY'].includes(pr.mergeState)) {
+          waiting[tag] ??= now;
+          const waitMs = Math.max(0, now - waiting[tag]!);
+          summary.maxWaitMs = Math.max(summary.maxWaitMs, waitMs);
+          io.log(`REFIX_WAIT ${repo}#${pr.number} waitMs=${waitMs}`);
+        } else if (pr.mergeState === 'CLEAN') delete waiting[tag];
+        if (seen.has(tag)) continue;
+        seen.add(tag);
+        if (pr.mergeState !== 'BEHIND' || pr.inMergeQueue) continue;
+        const attempts = Object.values(updates).filter((e) => e.pr === tag);
+        if (attempts.length >= prWindowCap || attempts.some((e) => now - e.at < REFIX_RETRY_MS)) continue;
+        if (summary.updated >= cycleCap) { summary.capped = true; continue; }
+        // Write ahead: a crash or ambiguous gh failure must not create a tight retry loop.
+        updates[`${tag}:${now}`] = { pr: tag, at: now };
+        io.saveState(state);
         try {
           io.updateBranch(repo, pr.number);
         } catch (error) {
@@ -225,7 +271,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
         io.log(`REFIX_DRAIN ${key}`);
       }
     }
-    io.log(`REFIX_CYCLE updated=${summary.updated} drains=${summary.drains} giveups=${summary.giveups} capped=${summary.capped ? 1 : 0}`);
+    io.log(`REFIX_CYCLE updated=${summary.updated} drains=${summary.drains} giveups=${summary.giveups} capped=${summary.capped ? 1 : 0} maxWaitMs=${summary.maxWaitMs}`);
     return summary;
   } finally {
     prune(state);

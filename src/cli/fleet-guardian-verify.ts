@@ -1,5 +1,10 @@
 import { GUARDIAN_VERIFY_DEADLINE, GUARDIAN_VERIFY_MAX_TIMEOUT_MS, runGuardianVerifyLoop, type GuardianOptions } from '../core/fleet/guardian-verify-loop.js';
+import { runGuardianVerifyExclusive } from '../core/fleet/guardian-verify-exclusive.js';
 
+// Exit codes: 0 pass, 1 fail, 2 invalid arguments, 3 unknown/cancelled/unprocessable,
+// 4 deadline exceeded, 5 refused because another guardian holds this state file
+// (no checks ran, state untouched; retry after it exits). 5 never means verified.
+// Output with --json: a refusal is {"state":"refused","reason":"already-running"|"lock-unavailable","ran":false}.
 export async function cmdFleetGuardianVerify(args: string[], run = runGuardianVerifyLoop): Promise<number> {
   const values: Record<string, string> = {};
   let json = false;
@@ -22,7 +27,12 @@ export async function cmdFleetGuardianVerify(args: string[], run = runGuardianVe
   process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
   const deadline = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(GUARDIAN_VERIFY_DEADLINE), timeoutMs);
   try {
-    const summary = await run({ ...options, signal: controller.signal });
+    const outcome = await runGuardianVerifyExclusive({ ...options, signal: controller.signal }, { run });
+    if (outcome.state === 'refused') {
+      console.log(json ? JSON.stringify({ state: 'refused', reason: outcome.reason, ran: false }) : `guardian-verify: refused reason=${outcome.reason} ran=false`);
+      return 5;
+    }
+    const summary = outcome.summary;
     console.log(json ? JSON.stringify(summary) : `guardian-verify: pass=${summary.pass} fail=${summary.fail} unknown=${summary.unknown} cancelled=${summary.cancelled}${summary.deadlineExceeded ? ' deadline-exceeded' : ''}`);
     return summary.deadlineExceeded ? 4 : summary.cancelled || summary.unknown ? 3 : summary.fail ? 1 : 0;
   } catch {

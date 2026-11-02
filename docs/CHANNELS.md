@@ -84,9 +84,30 @@ verification — the page source is the channel label.
 - **Ack timeout** — 2 000 ms per [`CHANNEL_ACK_TIMEOUT_MS`](src/core/fleet/channel-envelope.ts);
   the transport is best-effort and never unwrites a durable receipt.
 
+## Setup and status from the CLI
+
+`phm channels` is the one path: `add` writes a channel's config and nothing
+else — no transport, no pairing, and no credential. Tokens and secrets stay in
+their existing custody (`TELEGRAM_BOT_TOKEN`, `PHANTOM_OPERATOR_SECRET`, or the
+private files above) and are never accepted on the command line or printed.
+
+```sh
+phm channels add telegram 123456789          # your numeric chat id; token stays in TELEGRAM_BOT_TOKEN
+phm channels add email /path/to/mail-in --from you@example.com
+phm channels status --json
+```
+
+`phm comms setup-telegram` still discovers the chat id. `status` reports each
+channel's `configured`/`credential`/`paired` state plus `received`,
+`pendingOutbound`, and `lastSeenAt` — measured numbers, or `"unknown"` when a
+source cannot be read. `cli`, `desktop`, and `page` need no setup and always
+report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
+([REMOTE-PHONE.md](REMOTE-PHONE.md)).
+
 ## Where to watch it
 
 - **Desktop console** — the Channels pane (top-level navigation) and the Inbox pane.
-- **CLI** — `phm comms bus read` shows every accepted bus envelope;
+- **CLI** — `phm channels status [--json]` rolls all six kinds up;
+  `phm comms bus read` shows every accepted bus envelope;
   `phm comms inbox read` reads the inbox file directly.
 - **API** — the `GET /api/verse/fleet/runs/inbox` route exposes the inbox in JSON.
