@@ -697,4 +697,5 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-dirty-union-preview-nov01.test.ts', // spawnSync drives a real git fixture (dirty union preview)
   'test/remote-gateway-bus-read-session-nov01.test.ts', // binds a real loopback HTTP server (remote-gateway bus read session)
   'test/verify-changed-tsc-cache.test.ts', // spawnSync node scripts/verify-changed.mjs --tsc-cache as a real child
+  'test/verify-changed-dedupe.test.ts', // spawnSync node scripts/verify-changed.mjs and execFileSync git in real temp repos
 ];
