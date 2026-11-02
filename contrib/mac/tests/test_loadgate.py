@@ -308,6 +308,44 @@ class HardCapTests(unittest.TestCase):
 
 
 class AdmissionSnapshotTests(unittest.TestCase):
+    def test_local_mid_cap_load_bands_and_override(self):
+        tmp, home = ready_fixture(0)
+        self.addCleanup(tmp.cleanup)
+        for load, expected in [('3.9', 4), ('4', 2), ('8', 2), ('8.1', 1)]:
+            with self.subTest(load=load):
+                r = tick(home, {'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': load})
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(admission(home)['local_mid_cap'], expected)
+        tick(home, {'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': '9', 'LOCAL_MID_CAP': '3'})
+        self.assertEqual(admission(home)['local_mid_cap'], 3)
+        tick(home, {'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': '1', 'LOCAL_MID_CAP': 'invalid'})
+        self.assertEqual(admission(home)['local_mid_cap'], 4)
+
+    def test_local_mid_cap_limits_launches(self):
+        for load, expected in [('1', 4), ('4', 2), ('9', 0)]:
+            with self.subTest(load=load):
+                slots = held_lanes()
+                slots['codex-local'] = {'target': 6, 'floor': 0, 'ceiling': 6, 'hard_cap': 6, 'last_change': int(1e15)}
+                tmp = build(slots=slots)
+                self.addCleanup(tmp.cleanup)
+                home = Path(tmp.name).resolve()
+                q = home / '.ashlr-runs' / 'queue'
+                for i in range(5):
+                    job = f'RQ-MID-{i}'
+                    (q / 'prompts' / f'{job}.md').write_text('fixture')
+                    with (q / 'ready.tsv').open('a') as f:
+                        f.write(f'{job}\tphantom\tcodex-local\tmid\t{q}/prompts/{job}.md\n')
+                # Stub only the loopback health probe in the child process.
+                (home / 'sitecustomize.py').write_text(
+                    'import urllib.request\n'
+                    'class Response:\n status = 200\n def __enter__(self): return self\n def __exit__(self, *args): pass\n'
+                    'class Opener:\n def open(self, *args, **kwargs): return Response()\n'
+                    'urllib.request.build_opener = lambda *args: Opener()\n')
+                r = tick(home, {'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': load, 'PYTHONPATH': str(home)})
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(len(launched(home)), expected)
+                self.assertEqual(len(ready_left(home)), 5 - expected)
+
     def test_install_lock_holder_reported_only_while_pid_alive(self):
         tmp, home = ready_fixture(0)
         self.addCleanup(tmp.cleanup)

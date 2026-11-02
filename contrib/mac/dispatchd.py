@@ -26,7 +26,6 @@ GLOBAL_HARD_CAP = 18
 # RQ-LOADGATE-1 admission gate limits: loadavg and procs trip (stop claims, pause the ramp); worktree count and daemon
 # tick age only add admission.json "warnings" (Masbot 06:15 ET Nov 2).
 GATE_LOAD_MAX = 36.0; GATE_PROCS_MAX = 800; GATE_WORKTREES_MAX = 40; GATE_TICK_MAX_S = 15 * 60; GATE_STATUS_TIMEOUT = 30
-LOCAL_MID_CAP = 2   # RQ-LOCAL-LANE: at most 2 concurrent tier=mid ('strong', 27B) codex-local jobs; fast uses the rest
 LOCAL_HEALTH = "http://127.0.0.1:8123/v1/models"   # loopback only, no auth header, 2 s timeout, checked at most once per tick
 TIERS = {"frontier", "work", "mid", "fast"}
 # DEVIN-LEVERAGE-20261026 step-down (Masbot 21:19 Oct 26): more than 3 non-PR outcomes (abort or
@@ -563,6 +562,10 @@ def admission_gate():
     g["tripped"] = bool(g["reasons"]) and not g["disabled"]
     return g
 GATE = admission_gate()
+# An explicit nonnegative override fixes the cap; malformed values fall back to the load-aware default.
+try: LOCAL_MID_CAP = max(0, int(os.environ["LOCAL_MID_CAP"])) if "LOCAL_MID_CAP" in os.environ else None
+except ValueError: LOCAL_MID_CAP = None
+if LOCAL_MID_CAP is None: LOCAL_MID_CAP = 1 if GATE["tripped"] else (4 if GATE["load1"] < GATE["ncpu"] else 2)
 def global_cap():   # min(sum of unheld lane targets, ncpu, global hard_cap); held lanes launch nothing so they add nothing
     live = [l for l in LANES if not (slots[l].get("held") or l in hold)]
     return max(0, min(sum(slots[l]["target"] for l in live), GATE["ncpu"], slots["hard_cap"]))
@@ -883,7 +886,7 @@ _at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(r
 _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
 adm = {"schema": "dispatchd.admission.v1", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,
        "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
-       "daemon_tick_age_s": GATE["daemon_tick_age_s"], "cap": GCAP, "running": sum(running.values()), "hard_cap": slots["hard_cap"], "install_lock_holder": _install_holder()}
+       "daemon_tick_age_s": GATE["daemon_tick_age_s"], "local_mid_cap": LOCAL_MID_CAP, "cap": GCAP, "running": sum(running.values()), "hard_cap": slots["hard_cap"], "install_lock_holder": _install_holder()}
 jsave(Q + "/admission.json", adm); st["admission"] = adm
 jsave(Q + "/status.json", st)
 log("tick run=%s q=%d launched=%d reap=%d pause=%s wall=%.0fs" % (json.dumps(running), len(rest), len(launched), nreap, bool(pause), time.time() - NOW))

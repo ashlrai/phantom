@@ -43,7 +43,10 @@ ceiling are reapplied, so neither the overrides nor the ramp can lift a pool
 past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
 `status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
 admission --json` reports the same verdict read-only. `queue/LOADGATE_OFF` is the
-owner's off switch.
+owner's off switch. The `codex-local` mid-tier cap is 4 while the gate is clear
+and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
+`LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
+is recorded as `local_mid_cap` in `admission.json`.
 
 Install semaphore: `install-gate.py -- npm ci` takes `flock` on `queue/install.lock`
 so at most one `npm ci` / `pnpm install` / `bun install` runs fleet-wide; others
