@@ -11,6 +11,7 @@ import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
+import { appendMasonInboxOrder } from '../fleet/mason-inbox-append.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
@@ -178,7 +179,9 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     // two such instances must not dedupe across each other. The shipped
     // handleFleetRunsApi below passes the resolved default runsDir.
     receiptStore: deps.receiptStore ?? (deps.runsDir === undefined ? undefined : createLocalChannelDedupeStore(deps.runsDir)),
-    write: async (envelope) => (await append(envelope.body, pendingSources[0]?.source ?? DEFAULT_INBOX_SOURCE)) as InboxAppendResult,
+    write: async (envelope) => envelope.channel === 'mobile'
+      ? appendMasonInboxOrder({ src: 'phone', id: envelope.verifiedSenderId, message: envelope.body, receiptRoot: deps.runsDir })
+      : (await append(envelope.body, pendingSources[0]?.source ?? DEFAULT_INBOX_SOURCE)) as InboxAppendResult,
   });
   async function build(): Promise<FleetRunsV1> {
     const result: FleetRunsV1 = {
@@ -343,7 +346,9 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         // was never written and the request must not look accepted.
         sendJson(res, 503, { code: 'INBOX_RECEIPTS_UNREADABLE' });
       } else if (result.reason === 'write-failed' || typeof result.reason !== 'string' || !result.reason) {
-        sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' });
+        sendJson(res, 503, mobile
+          ? { code: 'INBOX_UNAVAILABLE', error: 'save failed, retry' }
+          : { code: 'INBOX_UNAVAILABLE' });
       } else {
         sendJson(res, 422, { code: 'INBOX_REFUSED', reason: project(result.reason, 'string') });
       }

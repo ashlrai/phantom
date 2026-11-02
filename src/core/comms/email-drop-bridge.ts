@@ -6,8 +6,8 @@
  * on the same channel. Email joins through a drop folder, not IMAP: any mail
  * path (Mail.app rule, fetchmail, a forwarder script) saves raw RFC 822
  * messages as `*.eml` into an inbound directory. Phantom parses them, verifies
- * the sender against an explicit allowlist, receipt-writes the body into
- * MASON-INBOX.md under channel `email`, mirrors to the durable agent bus, and
+ * the sender against an explicit allowlist, and hands the body to
+ * mason-inbox-append under channel `email`. It mirrors to the durable agent bus and
  * writes the acknowledgement as a reply `.eml` into an outbound directory the
  * same mail path can send. Transport stays outside Phantom; verification,
  * dedupe, attribution and ack live inside it. No new dependency, no
@@ -43,6 +43,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createChannelReceiver, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
+import { SAVE_FAILED_REPLY } from '../fleet/mason-inbox-append.js';
 import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
 import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
 import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
@@ -436,6 +437,15 @@ export async function recordEmailToInbox(
       acknowledge: reply,
     });
     const result = await receive(message);
+    if (!result.ok && result.reason === 'write-failed' && opts.outboxDir) {
+      try {
+        mkdirSync(opts.outboxDir, { recursive: true });
+        const name = `failed-${parsed.messageId ? sanitizeFileStem(parsed.messageId) : 'order'}.reply.eml`;
+        writeFileSync(join(opts.outboxDir, name),
+          `To: ${parsed.from}\r\nSubject: Re: Phantom\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${SAVE_FAILED_REPLY}\r\n`,
+          { mode: 0o600, flag: 'wx' });
+      } catch { /* the order was not saved; the reply is best effort */ }
+    }
     if (result.ok && result.ack.status === 'accepted' && parsed.messageId) {
       recordSeenMessageId(opts.runsDir, parsed.messageId);
     }
