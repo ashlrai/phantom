@@ -49,7 +49,7 @@ describe('fleet backlog claimed PR exclusions', () => {
     expect(report.plan.deferred).toMatchObject([{ number: 303 }]);
     expect(deps.gh).toHaveBeenCalledTimes(1);
     expect(deps.gh.mock.calls[0]![0]).toEqual(['pr', 'list', '--repo', 'example/project', '--state', 'open', '--limit', '500', '--json',
-      'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup']);
+      'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup,createdAt']);
     expect(deps.states).toHaveBeenCalledExactlyOnceWith('example/project');
   });
 

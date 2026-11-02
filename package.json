@@ -101,7 +101,8 @@
     "smol-toml",
     "tar",
     "web-push",
-    "yaml"
+    "yaml",
+    "zod"
   ],
   "exports": {
     ".": {
@@ -171,7 +172,8 @@
     "lint:verse-sync-io": "node scripts/check-verse-sync-io.mjs",
     "typecheck": "tsc --noEmit && npm run typecheck:web",
     "typecheck:web": "tsc --noEmit -p src/web-ui/tsconfig.json",
-    "test:fast": "node scripts/test-fast.mjs"
+    "test:fast": "node scripts/test-fast.mjs",
+    "install:worktree": "node scripts/worktree-install.mjs"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -232,7 +234,8 @@
     "smol-toml": "1.9.0",
     "tar": "7.5.22",
     "web-push": "3.6.7",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "4.6.7"
   },
   "bundleDependencies": [
     "@modelcontextprotocol/sdk",
@@ -244,6 +247,7 @@
     "smol-toml",
     "tar",
     "web-push",
-    "yaml"
+    "yaml",
+    "zod"
   ]
 }

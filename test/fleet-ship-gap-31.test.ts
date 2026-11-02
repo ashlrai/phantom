@@ -172,8 +172,8 @@ describe('ghShipGapReader', () => {
       },
     });
     const read = await ghShipGapReader(gh)('acme/app');
-    expect(read).toEqual({ ok: true, tag: 'v1.10.0', taggedAt: TAGGED_AT, ahead: 12 });
-    expect(calls.map((c) => c[1])).toEqual([
+    expect(read).toEqual({ ok: true, tag: 'v1.10.0', taggedAt: TAGGED_AT, ahead: 12, npmVersion: null, ciConclusion: null });
+    expect(calls.map((c) => c[1]).slice(0, 3)).toEqual([
       'repos/acme/app', 'repos/acme/app/tags?per_page=100', 'repos/acme/app/compare/v1.10.0...main',
     ]);
   });

@@ -126,6 +126,17 @@ def run(args):
             else:
                 db.execute('INSERT INTO recoveries VALUES (?, ?, ?)', (job, args.generation, now))
                 db.execute("UPDATE jobs SET state='queued', host=NULL, token=NULL, expires=NULL WHERE job=?", (job,))
+        elif args.action == 'withdraw':
+            row = db.execute('SELECT state, generation FROM jobs WHERE job=?', (job,)).fetchone()
+            if row is None:
+                result = {'ok': False, 'error': 'job not found'}
+            elif row[0] == 'queued':
+                db.execute("UPDATE jobs SET state='withdrawn' WHERE job=? AND state='queued'", (job,))
+                result.update(state='withdrawn', generation=row[1])
+            elif row[0] == 'withdrawn':
+                result.update(state='withdrawn', generation=row[1])
+            else:
+                result = {'ok': False, 'error': 'job is not queued'}
         elif args.action == 'status':
             row = db.execute('SELECT state, generation, host, expires FROM jobs WHERE job=?', (job,)).fetchone()
             if row is None:
@@ -178,6 +189,8 @@ def parser():
     recover.add_argument('--generation', type=int, required=True)
     recover.add_argument('--assert-safe', action='store_true', required=True,
                          help='assert prior execution is stopped and re-execution is safe')
+    withdraw = sub.add_parser('withdraw')
+    withdraw.add_argument('job')
     status = sub.add_parser('status')
     status.add_argument('job')
     return p

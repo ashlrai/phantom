@@ -1,4 +1,5 @@
 export const VERSE_FLEET_RUNS_PATH = '/api/verse/fleet/runs';
+export const VERSE_FLEET_RUNS_GLANCE_PATH = '/api/verse/fleet/runs/glance';
 export const VERSE_FLEET_RUNS_INBOX_PATH = '/api/verse/fleet/runs/inbox';
 export const FLEET_RUNS_INBOX_MAX_CHARS = 6000;
 export interface FleetRunsV1 {

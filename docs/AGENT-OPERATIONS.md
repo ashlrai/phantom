@@ -14,7 +14,8 @@ either name.
 | Need | Command |
 | --- | --- |
 | Node version | `>=22.15.0` (`package.json` `engines`) |
-| Install dependencies | `npm ci` |
+| Install dependencies in a trusted local worktree | `npm run install:worktree` (pnpm 10.28.2; shared same-volume store; see [setup](../CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)) |
+| Install dependencies in CI or for release packaging | `npm ci` |
 | Build `dist/` (CLI, assets, web console, build identity) | `npm run build` |
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
@@ -112,6 +113,18 @@ An accepted PR creates one deterministic follow-up asking for the next bounded,
 evidence-supported improvement. Replay is idempotent, even after completion;
 conflicting SHA/time metadata for the same PR is refused.
 
+### Outcome learning
+
+`phm fleet outcomes --events <log> --json` reads a dispatch event log and
+prints, for each resource, model, job type, and repo, the merge rate, time to
+merge, usage, and breakage rate. It also lists improvement jobs for recurring
+failures. `phm fleet outcomes route` adds the next assignment and a
+plain-language reason. The same types are exported from
+`src/core/routing/outcome-learning.ts` for the desktop app. There is no
+routing setting to tune: the log is the memory. Critical jobs are never held
+for an exhausted resource, and allowance that resets soon is still spent when
+that resource can finish the job.
+
 `phm fleet queue ask --json` reads one `ask.v1` record on stdin —
 `{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
 as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
@@ -189,6 +202,13 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   batching can change actual timing; these ranges are estimates, not deadlines.
   Missing/malformed history, unavailable required checks, or an unknown queue
   position yields `unknown`. History is bounded to 1 MiB / 10,000 rows.
+  Each row also attributes the PR's merge-queue wait (`waitingOn`): `position`
+  when entries ahead must land first, `checks` when the head entry waits on
+  the merge-group's required checks, or `conflict` when GitHub reports the PR
+  conflicting; `waitingMs` is the observed queue time from `enqueuedAt`.
+  A conflicting PR carries exactly one idempotent recut request,
+  `RQ-RECUT-<repo>-<pr>-<head7>` — the same conflicting head re-read yields
+  the same key, so consumers dedupe by it; a moved head makes a new request.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `--json` never prompts and prints one object.

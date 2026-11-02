@@ -54,6 +54,19 @@ const plan = () => JSON.parse(output.join('\n')) as {
 };
 
 describe('ashlr fleet backlog', () => {
+  it('uses GitHub creation time to select the oldest ready PR and conflict', async () => {
+    const rows = [
+      ghRow(1, { createdAt: '2026-10-31T00:00:00Z' }),
+      ghRow(2, { createdAt: '2026-09-01T00:00:00Z' }),
+      ghRow(3, { createdAt: '2026-10-31T00:00:00Z', mergeStateStatus: 'DIRTY' }),
+      ghRow(4, { createdAt: '2026-09-01T00:00:00Z', mergeStateStatus: 'DIRTY' }),
+    ];
+    expect(await cmdFleetBacklog(['--json', '--merges', '1', '--recuts', '1'],
+      { gh: ghOk(rows), states: noStates, now: clock })).toBe(0);
+    expect(plan().plan.merges.map(row => row.number)).toEqual([2]);
+    expect(plan().plan.recuts.map(row => row.number)).toEqual([4]);
+  });
+
   it('classifies a mixed backlog and joins merge-state records', async () => {
     const states: FleetBacklogDeps['states'] = () =>
       new Map([[6, { state: 'ok', record: trackedRecord(6, 'b'.repeat(40)) }]]);
@@ -94,7 +107,7 @@ describe('ashlr fleet backlog', () => {
     const gh: FleetBacklogDeps['gh'] = async (args) => { calls.push([...args]); return ghOk([ghRow(1), ghRow(2), ghRow(3)])(args); };
     expect(await cmdFleetBacklog(['--repo', 'acme/app', '--merges', '2', '--recuts', '0', '--json'], { gh, states: noStates, now: clock })).toBe(0);
     expect(calls).toEqual([['pr', 'list', '--repo', 'acme/app', '--state', 'open', '--limit', '500',
-      '--json', 'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup']]);
+      '--json', 'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup,createdAt']]);
     const report = plan();
     expect(report.repo).toBe('acme/app');
     expect(report.plan.merges).toHaveLength(2);
