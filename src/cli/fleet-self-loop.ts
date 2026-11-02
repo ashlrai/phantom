@@ -21,6 +21,17 @@
  * stream sink throws, admission stops safely, the signal handlers are still
  * removed, and the final summary names the failure (termination
  * 'observer-error', exit 1).
+ *
+ * --bus-to <label> --bus-root <abs-path> --bus-run-id <token> (one required
+ * group): after each completed pass, post a compact progress envelope to the
+ * existing durable bus transport (appendBusInbox).  No second bus is
+ * implemented; posting uses the real transport so the bus file is
+ * readable through listBusInboxAfter.  The body contains kind, run-id,
+ * pass, exit-code, state, consecutiveFailures, nextDelayMs — never raw
+ * reports, observer exceptions, or local paths.  An accepted duplicate
+ * counts as delivery; any other post result ends admission via
+ * observer-error semantics without re-running the tick, and produces
+ * nonzero exit.  Opt-in only: without the group, the bus is untouched.
  */
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -32,10 +43,15 @@ import {
   SELF_LOOP_DEFAULT_INTERVAL_MS,
   SELF_LOOP_MAX_DURATION_MS,
   SELF_LOOP_MIN_INTERVAL_MS,
-  type RunSelfLoopOptions,
   type SelfLoopPassEvent,
   type SelfLoopTick,
 } from '../core/fleet/self-loop.js';
+import {
+  parseBusConfigGroup,
+  buildProgressEnvelope,
+  postProgressEnvelope,
+  type SelfLoopBusConfig,
+} from '../core/fleet/self-loop-bus-progress.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 /** Hard cap on any streamed NDJSON line. Export lets tests assert the bound. */
@@ -69,80 +85,141 @@ const toStreamLine = (record: Record<string, unknown>, heavyKey: 'report' | 'las
   return out;
 };
 
-const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
-Repeat the self-management pass (fleet self-tick) for a bounded window:
-first pass immediately, then one pass every interval (default 60000ms,
-minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is
-reached. The deadline only gates admission — a pass already running finishes
-normally. SIGINT/SIGTERM stop admission and interrupt the wait without
-killing a running pass; the summary prints either way. Each pass is the real
-self-tick with its own queue/self-tick.lock: a contended pass counts 'busy'
-and the loop continues, as does a failed pass. --failure-backoff-max-ms
-opts into doubling the delay after consecutive failures, up to the given max
-(between the interval and 24h); success or busy resets it. Stream pass records
-include consecutiveFailures and nextDelayMs when enabled. --json prints one final
-sanitized summary line (unchanged default shape). --stream instead prints
-sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line per
-completed pass, then exactly one {"v":1,"record":"summary",...} line.
---stream and --json are mutually exclusive and rejected before any pass
-runs. Exit 0 when no pass failed, 1 when any did (or the stream sink did),
-2 on usage.`;
+const USAGE_TEXT = [
+  'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>]',
+  '  [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply]',
+  '  [--json | --stream]',
+  '  [--bus-to <label> --bus-root <abs> --bus-run-id <token>]',
+  '',
+  'Repeat the self-management pass (fleet self-tick) for a bounded window:',
+  'first pass immediately, then one pass every interval (default 60000ms,',
+  'minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is',
+  'reached. The deadline only gates admission — a pass already running finishes',
+  'normally. SIGINT/SIGTERM stop admission and interrupt the wait without',
+  'killing a running pass; the summary prints either way. Each pass is the real',
+  'self-tick with its own queue/self-tick.lock: a contended pass counts \'busy\'',
+  'and the loop continues, as does a failed pass. --failure-backoff-max-ms',
+  'opts into doubling the delay after consecutive failures, up to the given max',
+  '(between the interval and 24h); success or busy resets it. Stream pass records',
+  'include consecutiveFailures and nextDelayMs when enabled. --json prints one final',
+  'sanitized summary line (unchanged default shape). --stream instead prints',
+  'sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line per',
+  'completed pass, then exactly one {"v":1,"record":"summary",...} line.',
+  '--stream and --json are mutually exclusive and rejected before any pass',
+  'runs. --bus-to/--bus-root/--bus-run-id post a compact progress envelope (kind,',
+  'run-id, pass, exit-code, state, consecutiveFailures, nextDelayMs) to the',
+  'existing durable bus after each pass; all three flags are required together,',
+  'otherwise the bus is untouched. Ticks remain dry-run unless --apply.',
+  'Exit 0 when no pass failed, 1 when any did (or the stream/bus posted',
+  'a non-posted outcome).',
+].join('\n');
 
-interface Dependencies {
-  now?: () => number;
-  output?: (text: string) => void;
-  error?: (text: string) => void;
-  /** Full tick override; without it each pass is the real cmdFleetSelfTick. */
-  tick?: SelfLoopTick;
-  /** Sleep seam; rejects on abort. Defaults to the core real-time sleep. */
-  sleep?: RunSelfLoopOptions['sleep'];
-  /** Per-step overrides forwarded to cmdFleetSelfTick; tests fake them. */
-  steps?: Partial<SelfTickSteps>;
-  /** Lock seam forwarded to cmdFleetSelfTick. */
-  acquireLock?: RunSelfTickOptions['acquireLock'];
-  /** planner-tick spawn seam; tests fake it, never a shell. */
-  spawn?: SpawnLike;
-  /** Signal seam; defaults to SIGINT+SIGTERM on this process. Returns the unregister. */
-  onSignal?: (handler: () => void) => () => void;
+function printUsageAndExit(output: (text: string) => void): number {
+  output(USAGE_TEXT);
+  return 0;
 }
 
-export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}): Promise<number> {
+function reportUsageError(
+  error: (text: string) => void,
+  reason: string,
+): number {
+  error(`fleet self-loop: error: ${reason}`);
+  return 2;
+}
+
+export async function cmdFleetSelfLoop(
+  args: string[],
+  deps: RunSelfTickOptions & {
+    output?: (text: string) => void;
+    error?: (text: string) => void;
+    tick?: SelfLoopTick;
+    onSignal?: (handler: () => void) => () => void;
+    sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+    steps?: SelfTickSteps;
+    acquireLock?: typeof import('../core/fleet/local-store-lock.js').acquireLocalStoreLockWithOutcome;
+    spawn?: SpawnLike;
+  } = {} as RunSelfTickOptions,
+): Promise<number> {
   const output = deps.output ?? ((text: string) => console.log(text));
   const error = deps.error ?? ((text: string) => console.error(text));
-  const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
-  if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
-  let json = false, apply = false, stream = false;
-  let durationMs: number | undefined, intervalMs: number | undefined, failureBackoffMaxMs: number | undefined, runsDir: string | undefined;
-  const parseMs = (value: string | undefined): number | undefined => {
-    if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
+  const parseMs = (value: string): number | undefined => {
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) ? parsed : undefined;
   };
+  let json = false, stream = false, apply = false;
+  let durationMs: number | undefined;
+  let intervalMs: number | undefined;
+  let failureBackoffMaxMs: number | undefined;
+  let runsDir: string | undefined;
+  // Bus flags (one required group: all absent = inactive).
+  let busTo: string | undefined;
+  let busRoot: string | undefined;
+  let busRunId: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--json' && !json) json = true;
+    if (arg === '--help' && !json && !stream) {
+      return printUsageAndExit(output);
+    } else if (arg === '--json' && !json) json = true;
     else if (arg === '--stream' && !stream) stream = true;
     else if (arg === '--apply' && !apply) apply = true;
     else if (arg === '--duration-ms' && durationMs === undefined) {
       durationMs = parseMs(args[++i]);
-      if (durationMs === undefined || durationMs < 1 || durationMs > SELF_LOOP_MAX_DURATION_MS) return invalid();
+      if (durationMs === undefined || durationMs < 1 || durationMs > SELF_LOOP_MAX_DURATION_MS) {
+        return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+      }
     } else if (arg === '--interval-ms' && intervalMs === undefined) {
       intervalMs = parseMs(args[++i]);
-      if (intervalMs === undefined || intervalMs < SELF_LOOP_MIN_INTERVAL_MS) return invalid();
+      if (intervalMs === undefined || intervalMs < SELF_LOOP_MIN_INTERVAL_MS) {
+        return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+      }
     } else if (arg === '--failure-backoff-max-ms' && failureBackoffMaxMs === undefined) {
       failureBackoffMaxMs = parseMs(args[++i]);
-      if (failureBackoffMaxMs === undefined || failureBackoffMaxMs > SELF_LOOP_MAX_DURATION_MS) return invalid();
+      if (failureBackoffMaxMs === undefined || failureBackoffMaxMs > SELF_LOOP_MAX_DURATION_MS) {
+        return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+      }
     } else if (arg === '--runs-dir' && runsDir === undefined) {
       const value = args[++i];
-      if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
+      if (typeof value !== 'string' || !isAbsolute(value)) {
+        return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+      }
       runsDir = value;
-    } else return invalid();
+    } else if (arg === '--bus-to' && busTo === undefined) {
+      busTo = args[++i];
+      if (typeof busTo !== 'string' || busTo.length === 0) {
+        return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+      }
+    } else if (arg === '--bus-root' && busRoot === undefined) {
+      busRoot = args[++i];
+      if (typeof busRoot !== 'string' || !isAbsolute(busRoot)) {
+        return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+      }
+    } else if (arg === '--bus-run-id' && busRunId === undefined) {
+      busRunId = args[++i];
+      if (typeof busRunId !== 'string' || busRunId.length === 0) {
+        return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+      }
+    } else {
+      return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+    }
   }
   // Compatibility is explicit: --stream IS the machine-readable mode, so
   // combining it with --json is a usage error, refused before any pass runs.
-  if (stream && json) return invalid();
-  if (durationMs === undefined) return invalid();
-  if (failureBackoffMaxMs !== undefined && failureBackoffMaxMs < (intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS)) return invalid();
+  if (stream && json) {
+    return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+  }
+  if (durationMs === undefined) {
+    return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+  }
+  if (failureBackoffMaxMs !== undefined && failureBackoffMaxMs < (intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS)) {
+    return reportUsageError(error, 'Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]');
+  }
+  // Validate the bus config group (all absent = inactive).
+  let busConfig: SelfLoopBusConfig | null = null;
+  const busParse = parseBusConfigGroup(busTo, busRoot, busRunId);
+  if (!busParse.ok) {
+    return reportUsageError(error, busParse.reason);
+  }
+  busConfig = busParse.ok ? busParse.value : null;
   // One root for the lock and all three steps of every pass, resolved here
   // once — same fallbacks as self-tick, so nothing can drift between passes.
   const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
@@ -152,10 +229,10 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
     const exitCode = await cmdFleetSelfTick(
       ['--json', ...(apply ? ['--apply'] : []), '--runs-dir', root],
       {
+        steps: deps.steps,
         now,
         output: (text) => captured.push(text),
         error,
-        ...(deps.steps === undefined ? {} : { steps: deps.steps }),
         ...(deps.acquireLock === undefined ? {} : { acquireLock: deps.acquireLock }),
         ...(deps.spawn === undefined ? {} : { spawn: deps.spawn }),
       },
@@ -176,12 +253,35 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       process.removeListener('SIGTERM', handler);
     };
   });
-  // In --stream mode each completed pass is emitted as one sanitized bounded
-  // NDJSON line the moment it finishes — the real tick path included — so a
-  // supervisor sees progress while later passes are still deferred. A throw
-  // from the sink ends admission safely inside runSelfLoop ('observer-error').
-  const onPass = stream
-    ? (event: SelfLoopPassEvent): void => {
+  // When --bus-to/--bus-root/--bus-run-id are all present, write a compact
+  // progress envelope after each completed pass through the existing durable
+  // bus transport (appendBusInbox).  An accepted duplicate counts as delivery;
+  // any other post result ends admission via observer-error (the tick is NOT
+  // re-run) and produces nonzero exit.  An existing onPass is preserved and
+  // awaited; a bus error becomes an observer-error that stops admission, and
+  // the stream sink is still called first so existing --stream semantics
+  // remain unchanged.
+  let busPostFailure: { status: string } | undefined;
+  const busInboxOptions = busConfig === null ? {} : { root: busConfig.root };
+  const onBusPass = busConfig === null ? undefined : async (event: SelfLoopPassEvent) => {
+    const envelope = buildProgressEnvelope(
+      busConfig,
+      event.pass,
+      event.exitCode,
+      event.state,
+      event.consecutiveFailures,
+      event.nextDelayMs,
+    );
+    const posted = postProgressEnvelope(envelope, busInboxOptions);
+    if (posted.status !== 'posted' && posted.status !== 'duplicate') {
+      busPostFailure = { status: posted.status };
+    }
+  };
+  // Combine stream and bus observers into one onPass callback.  When neither
+  // is configured we pass nothing so runSelfLoop keeps its default behavior.
+  const combinedOnPass = (() => {
+    if (onBusPass === undefined && !stream) return undefined;
+    if (onBusPass === undefined) return (event: SelfLoopPassEvent) => {
       output(toStreamLine({
         v: 1, record: 'pass', pass: event.pass, exitCode: event.exitCode,
         state: event.state, report: event.report,
@@ -189,8 +289,21 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
           consecutiveFailures: event.consecutiveFailures, nextDelayMs: event.nextDelayMs,
         }),
       }, 'report'));
-    }
-    : undefined;
+    };
+    if (!stream) return onBusPass;
+    // Both stream and bus: call stream first (existing --stream behavior),
+    // then bus (new progress writing).
+    return async (event: SelfLoopPassEvent) => {
+      output(toStreamLine({
+        v: 1, record: 'pass', pass: event.pass, exitCode: event.exitCode,
+        state: event.state, report: event.report,
+        ...(event.consecutiveFailures === undefined ? {} : {
+          consecutiveFailures: event.consecutiveFailures, nextDelayMs: event.nextDelayMs,
+        }),
+      }, 'report'));
+      await onBusPass(event);
+    };
+  })();
   const removeSignalListeners = onSignal(() => controller.abort());
   let summary;
   try {
@@ -201,11 +314,15 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       tick: deps.tick ?? realTick,
       now,
       signal: controller.signal,
-      ...(onPass === undefined ? {} : { onPass }),
+      ...(combinedOnPass === undefined ? {} : { onPass: combinedOnPass }),
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
     });
   } finally {
     removeSignalListeners();
+  }
+  // If the bus posted a non-posted outcome, mark observer-error and return 1.
+  if (busPostFailure && busPostFailure.status !== 'posted' && busPostFailure.status !== 'duplicate') {
+    summary = { ...summary, observerError: `bus-${busPostFailure.status}`, termination: 'observer-error' as const };
   }
   if (stream) {
     // Flattened so the unbounded lastReport sits at the record's top level,
