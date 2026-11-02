@@ -70,3 +70,7 @@ Node router: `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave -
 Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
+
+Shared context: `phm ctxpack build --job <id> --lane <lane> --json` reads existing
+fleet and bus sources within a 2000-token ceiling and logs pack_tokens to the
+outcome store. See [context packs](docs/CONTEXT-PACK.md).

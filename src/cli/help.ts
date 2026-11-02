@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm ctxpack build --job <id> --lane <lane> [--max-tokens 256..2000] [--merges 0..100] [--json]', description: 'Build bounded fleet and bus context; append pack_tokens to the existing outcome log. Exit 1 includes recovery instructions.', safety: 'append', jsonShape: '{schema:"fleet.ctxpack.v1",job,lane,sections:[{name,rows}]}' },
   {
     usage: 'phm graph nodes|edges|status [--json]',
     description: 'Read-only GRAPH-1 nodes, edges, and availability. Exit 0 success/help, 1 unavailable or loader failure, 2 bad usage; unavailable counts are unknown.',
@@ -537,6 +538,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
+  { cmd: 'ctxpack build --job <id> --lane <lane> [--json]', desc: 'Build a bounded shared context pack. See phm ctxpack --help.', topic: 'core' },
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
   { cmd: 'router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', desc: 'Compare recorded router predictions with outcomes and usage.', topic: 'observability' },
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },

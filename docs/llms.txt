@@ -38,3 +38,4 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Hub reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet. Compatibility identifiers stay.
+- [Shared context packs](CONTEXT-PACK.md): phm ctxpack build --job <id> --lane <lane> --json; bounded fleet and bus context.

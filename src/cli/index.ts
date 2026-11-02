@@ -2378,6 +2378,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'ctxpack': {
+        process.exitCode = await (await import('./ctxpack.js')).cmdCtxpack(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).

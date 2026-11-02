@@ -283,3 +283,5 @@ canonical release guide for required hosted qualification and publication.
 - [cfg.foundry — Polyglot Backend Configuration](https://github.com/ashlrai/phantom/blob/master/docs/FOUNDRY-CONFIG.md)
 
 - [Standing lane freshness](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.
+
+- [Shared context packs](CONTEXT-PACK.md): bounded context for a fleet job.
