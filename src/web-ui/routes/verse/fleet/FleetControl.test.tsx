@@ -319,6 +319,17 @@ describe('the header', () => {
     expect(region).not.toHaveTextContent('last completed');
   });
 
+  it('renders recorded provider credits without inventing usage', async () => {
+    const state = fleetControl();
+    state.budgets = [{ provider: 'claude-org', asOf: null, monthlyCreditsUsd: 200, usdRemaining: null, usedPercent: null, resetsAt: null, pacingPercentPerDay: null }];
+    stubSurfaceFetch({ kind: 'live', routes: { '/api/verse/fleet/control': state } });
+    render(<FleetSection />);
+    const region = await control();
+    expect(region).toHaveTextContent('200 USD/mo credits');
+    expect(region).toHaveTextContent('reset unknown');
+    expect(region).not.toHaveTextContent('0% used');
+  });
+
   it('says what the fleet is doing, with the grant, spend, daemon and agents', async () => {
     stubSurfaceFetch({ kind: 'live' });
     render(<FleetSection />);
@@ -326,7 +337,9 @@ describe('the header', () => {
     expect(region).toHaveTextContent('Running');
     expect(region).toHaveTextContent('2 agents working');
     expect(region).toHaveTextContent('#2 · 2 repos · 20 d left · 2a (2/4)');
-    expect(region).toHaveTextContent('$3.5 of $20 cap');
+    expect(region).toHaveTextContent('Provider budgets');
+    expect(region).toHaveTextContent('claude-org: unknown');
+    expect(region).not.toHaveTextContent('$3.5 of $20 cap');
     expect(region).toHaveTextContent(/Running · pid 4242/);
     // Start is not needed while it runs; Pause and Stop are.
     expect(within(region).getByRole('button', { name: /^Start/ })).toBeDisabled();

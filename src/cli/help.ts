@@ -710,6 +710,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pulse-export',                 desc: 'Fleet→pulse OTLP backfill/manual export.', topic: 'observability' },
   { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
   { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
+  { cmd: 'app budgets [--json]', desc: 'Provider credits, usage, reset dates and pacing; missing readings are unknown. Same readings as Fleet.', topic: 'observability' },
   { cmd: 'resources [--json] [--watch]', desc: 'Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },

@@ -49,3 +49,9 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Keep backend tests in `test/` and web component tests beside their components. Add regression coverage for changed behavior; never weaken a test or security control to pass a check.
 - Do not read or print real credentials, environment dumps, or secret values. Use Phantom Secrets references and Locus for scoped account access; see [the toolchain guide](docs/AGENT-TOOLCHAIN.md).
 - Report the exact commands run, failures and remaining limitations. Keep documentation commands aligned with [package.json](package.json); the [AGENTS.md audit](docs/AGENTS-MD-AUDIT.md) records public-source gaps across the seven repos.
+
+## Article 2: Provider budget readings
+
+Use `phm app budgets --json` for the same safe readings shown in Fleet.
+Missing readings are unknown; never infer a percentage from a plan price.
+See [Provider budgets](docs/APP-BUDGETS.md) for the source and field contract.

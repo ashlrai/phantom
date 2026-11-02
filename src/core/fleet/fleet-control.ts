@@ -462,7 +462,8 @@ export async function readFleetControlState(deps: FleetControlDeps): Promise<Fle
     working: deps.working(),
     spend,
   };
-  return buildFleetControlState(inputs);
+  const { readAppBudgets } = await import('../resources/read-app-budgets.js');
+  return { ...buildFleetControlState(inputs), budgets: await readAppBudgets() };
 }
 
 // ---------------------------------------------------------------------------

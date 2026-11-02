@@ -4,7 +4,7 @@
  *
  *   ● Running · 3 agents working · stage shadow      [Start ⌘⌥S] [Pause ⌘⌥P] [Stop ⌘⌥.]
  *   Blocked: <one reason>  [one button]
- *   Agents 3 working | Grant #2 · 14 repos · 28 d · shadow 1/8 [Edit] | Spend $1.20 of $20 | Daemon running · ticked 1 m ago [Restart]
+ *   Agents 3 working | Grant #2 · 14 repos · 28 d · shadow 1/8 [Edit] | Provider budgets | Daemon running · ticked 1 m ago [Restart]
  *
  * Every control posts to /api/verse/fleet/control and renders the state the
  * server READ BACK afterwards — never an optimistic flip. Start confirms
@@ -16,13 +16,12 @@
  *
  * ⌘K and the keys (command-keys.ts fleet.*) run the same handlers.
  */
-import { formatMetricUsd } from '../../../components/charts/format-metric.js';
 import { PRODUCT_NAME } from '../../../app/product-brand.js';
 import { useRef, useState, type ReactNode } from 'react';
 import type { FleetControlActionResultV1, FleetControlStateV1, FleetNextAction } from '../../../../core/fleet/fleet-control-types.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { Input } from '../../../components/primitives/Input.js';
-import { Meter } from '../../../components/primitives/Meter.js';
+import { appBudgetLabel, projectAppBudgets } from '../../../../core/resources/app-budgets.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
 import { IconLock, IconPause, IconPlay, IconRefresh, IconStop } from '../../../components/primitives/icons.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
@@ -74,10 +73,7 @@ function keyHint(id: string): string | null {
   return chord ? formatChord(chord, detectKeyPlatform()) : null;
 }
 
-function money(n: number | null): string {
-  if (n === null) return '$—';
-  return formatMetricUsd(n);
-}
+
 
 /** Syntax only; native validates the actual directory, origin and installer. */
 function custodyCheckoutValid(value: string): boolean {
@@ -337,16 +333,9 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
           </dd>
         </div>
         <div className={styles.fact}>
-          <dt><MicroLabel>Spend today</MicroLabel></dt>
+          <dt><MicroLabel>Provider budgets</MicroLabel></dt>
           <dd className={styles.factValue}>
-            <Meter
-              value={state.spend.todayUsd}
-              max={state.spend.capUsd}
-              variant="line"
-              aria-label="Spend today against the daily cap"
-              valueText={`${money(state.spend.todayUsd)} of ${money(state.spend.capUsd)}`}
-            />
-            <span className={styles.factSub}>{money(state.spend.todayUsd)} of {money(state.spend.capUsd)} cap{state.spend.exhausted ? ' · spent' : ''}</span>
+            {(state.budgets ?? projectAppBudgets(null)).map(row => <span key={row.provider} className={styles.factSub}>{appBudgetLabel(row)}</span>)}
           </dd>
         </div>
         <div className={styles.fact}>

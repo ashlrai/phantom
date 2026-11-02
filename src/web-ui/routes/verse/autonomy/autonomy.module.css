@@ -48,14 +48,6 @@
 /* Budget: one line, never a labelled progress bar. */
 .budget { display: flex; flex-direction: column; gap: var(--space-2); }
 .budgetLine { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
-.budgetLabel { font-family: var(--font-display); font-size: var(--text-sm-size); color: var(--text-primary); }
-.budgetNote { font-size: var(--text-xs-size); color: var(--text-tertiary); }
-.meter { --meter-color: var(--accent-500); height: 2px; background: var(--meter-track); overflow: hidden; }
-.meter[data-state="warn"] { --meter-color: var(--status-warning-solid); }
-.meter[data-state="over"] { --meter-color: var(--status-danger-solid); }
-.meter[data-state="stopped"] { --meter-color: var(--status-danger-solid); }
-.meter[data-state="unknown"] { --meter-color: var(--status-unknown-solid); }
-.meterFill { height: 100%; background: var(--meter-color); transition: width var(--duration-base) var(--ease-decelerate); }
 
 /* --- controls ----------------------------------------------------------- */
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }

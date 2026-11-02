@@ -1,0 +1,5 @@
+--- /Users/masonwyatt/Library/LaunchAgents/ai.ashlr.daemon.plist
++++ /Users/masonwyatt/Library/LaunchAgents/ai.ashlr.daemon.plist
+@@ -15,2 +14,0 @@
+-		<string>--budget</string>
+-		<string>50</string>

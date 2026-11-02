@@ -9,9 +9,12 @@
  * The kill switch outranks everything: while it is engaged the header says so
  * regardless of what the daemon ledger claims.
  */
+import { appBudgetLabel, projectAppBudgets } from '../../../../core/resources/app-budgets.js';
+import { useQuery } from '../../../data/hooks.js';
+import { fleetControlQuery } from '../fleet/fleet-control-queries.js';
 import { isKnown } from '../../../components/primitives/Epistemic.js';
 import type { VerseControlSnapshot } from './control-types.js';
-import { budgetMeter, countdownLabel, describeTickOutcome, formatInterval, formatRelative, formatStamp, nextTickAt, UNKNOWN } from './format.js';
+import { countdownLabel, describeTickOutcome, formatInterval, formatRelative, formatStamp, nextTickAt, UNKNOWN } from './format.js';
 import { useNow } from './use-ticker.js';
 import styles from './autonomy.module.css';
 
@@ -47,15 +50,7 @@ export function StatusHeader({ snapshot }: { snapshot: VerseControlSnapshot }) {
 
   const interval = snapshot.caps?.intervalMs ?? null;
   const next = state === 'running' ? nextTickAt(daemon?.lastTickAt, interval) : null;
-  // `spend.todayUsd` belongs to `spend.todayDate`, and the daemon writes that
-  // figure once a day and leaves it there. Handing the meter the date lets it
-  // say "nothing recorded today" instead of presenting a three-week-old ledger
-  // day as today's spend. When only the legacy daemon observation exists there
-  // is no date to check, so it is passed as null and the meter behaves as before.
-  const spend = snapshot.spend;
-  const budget = spend
-    ? budgetMeter(spend.todayUsd, snapshot.caps?.dailyBudgetUsd ?? null, spend.todayDate)
-    : budgetMeter(daemon?.todaySpentUsd ?? null, snapshot.caps?.dailyBudgetUsd ?? null, null);
+  const budgets = useQuery(fleetControlQuery, { freshMs: 4_000 }).data?.value?.budgets ?? projectAppBudgets(null);
 
   return (
     <section className={styles.status} aria-label="Autonomy status">
@@ -108,22 +103,7 @@ export function StatusHeader({ snapshot }: { snapshot: VerseControlSnapshot }) {
       </div>
 
       <div className={styles.budget}>
-        <div className={styles.budgetLine}>
-          <span className={styles.budgetLabel}>{budget.label}</span>
-          <span className={styles.budgetNote}>{budget.note}</span>
-        </div>
-        <div
-          className={styles.meter}
-          data-state={budget.state}
-          role="meter"
-          aria-label="Today's spend against the daily budget"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={budget.percent ?? undefined}
-          aria-valuetext={`${budget.label}. ${budget.note}`}
-        >
-          <div className={styles.meterFill} style={{ width: `${budget.percent ?? 0}%` }} />
-        </div>
+        {budgets.map(row => <div key={row.provider} className={styles.budgetLine}>{appBudgetLabel(row)}</div>)}
       </div>
     </section>
   );

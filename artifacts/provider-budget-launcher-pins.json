@@ -1,0 +1,7 @@
+{
+  "path": "/Users/masonwyatt/Library/LaunchAgents/ai.ashlr.daemon.plist",
+  "beforeSha256": "6c2163df319036c0b05997577c56ebee54c247c270afacc3995f18502c0dd4c5",
+  "afterSha256": "6d4492782e7345f1f4d5641ad3861907cd467a46d53b70e4dad147ae9deba121",
+  "applied": false,
+  "securityReview": "required before application; removes only fixed --budget 50, preserves all other launcher bytes"
+}

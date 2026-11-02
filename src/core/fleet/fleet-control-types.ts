@@ -106,6 +106,7 @@ export interface FleetControlStateV1 {
     working: number | null;
   };
   grant: FleetControlGrantView;
+  budgets?: import('../resources/app-budgets.js').AppBudgets;
   spend: {
     todayUsd: number | null;
     capUsd: number | null;

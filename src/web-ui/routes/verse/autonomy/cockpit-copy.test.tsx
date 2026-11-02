@@ -102,10 +102,11 @@ describe('StatusHeader', () => {
     expect(cell).toHaveTextContent(clock);
   });
 
-  it('says "<1%" of the budget for a sliver of real spend, never "0%"', () => {
+  it('shows unknown provider usage when only daemon spend is available', () => {
     const snapshot = controlSnapshot({ spend: { ...controlSnapshot().spend!, todayUsd: 0.05 } });
     render(<StatusHeader snapshot={snapshot} />);
-    expect(screen.getByText('$0.05 of $25 today · <1%')).toBeInTheDocument();
+    expect(screen.getByText(/claude-org: unknown/)).toBeInTheDocument();
+    expect(screen.queryByText(/of \$25 today/)).not.toBeInTheDocument();
   });
 });
 

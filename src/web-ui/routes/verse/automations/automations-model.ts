@@ -103,7 +103,7 @@ export function inputFromForm(form: AutomationForm): { ok: true; input: Record<s
   const repos = list(form.repos);
   if (repos.length === 0) return { ok: false, error: 'List at least one repo (owner/name), or * for every repo in the standing grant.' };
   const numbers: Record<string, number> = {};
-  for (const [key, label] of [['maxConcurrent', 'Max in flight'], ['maxPerDay', 'Max per day'], ['queueDepth', 'Queue depth'], ['spendCapUsd', 'Spend cap']] as const) {
+  for (const [key, label] of [['maxConcurrent', 'Max in flight'], ['maxPerDay', 'Max per day'], ['queueDepth', 'Queue depth'], ['spendCapUsd', 'Per-automation monthly cap']] as const) {
     const v = num(form[key], label);
     if (typeof v === 'string') return { ok: false, error: v };
     numbers[key] = v;

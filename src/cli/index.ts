@@ -2349,6 +2349,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'app': {
+        if (wantsHelp(rest)) { console.log('usage: phm app budgets [--json]'); break; }
+        const { readAppBudgets } = await import('../core/resources/read-app-budgets.js');
+        const { appBudgetLabel } = await import('../core/resources/app-budgets.js');
+        if (rest[0] !== 'budgets' || rest.slice(1).some(arg => arg !== '--json')) {
+          console.error('usage: phm app budgets [--json]'); process.exitCode = 2; break;
+        }
+        const budgets = await readAppBudgets();
+        console.log(rest.includes('--json') ? JSON.stringify({ v: 1, budgets }) : budgets.map(appBudgetLabel).join('\n'));
+        break;
+      }
+
       case 'daemon': {
         const cmdDaemon = await loadDaemonCmd();
         process.exitCode = await cmdDaemon(rest);
