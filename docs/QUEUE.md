@@ -110,6 +110,14 @@ a whole old or new snapshot. Files use mode 0600 and newly created directories
 use 0700. The existing dispatchd directory's permissions are not changed.
 Corrupt snapshots fail closed instead of becoming empty queues.
 
+## Load-aware admission
+
+`phm pool admission [--json]` is a read-only report of the dispatchd load gate:
+1-min loadavg and its limit, `ncpu`, process and live-worktree counts, the daemon
+tick age, the global running cap, running jobs, the `queue/install.lock` holder and
+`admit` true or false with the reason. It claims and launches nothing. The gate
+logic itself lives in `contrib/mac/dispatchd.py`; see `contrib/mac/README.md`.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename

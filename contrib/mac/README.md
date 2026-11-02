@@ -26,6 +26,29 @@ down by 2, never below the floor 6, and at most once per new completion
 (`step_seen` in `slots.json`). A held devin lane never adjusts. The devin lane
 sits in dispatchd's restock trigger loop beside the codex lanes.
 
+Load-aware admission (RQ-LOADGATE-1). Each tick dispatchd probes the host and stops
+claiming (lines stay in `ready.tsv`) while any one gate is tripped: 1-min loadavg
+above `min(2 x ncpu, 36)`, more than 800 processes, more than 40 live job
+worktrees (`*.base` with an existing directory), or `ashlr daemon status --json`
+reporting a `lastTickAt` older than 15 minutes (a missing or unreadable status
+also trips). The +2/120s ramp pauses while the gate is tripped. Running jobs are
+also capped fleet-wide at `min(sum of unheld lane targets, ncpu, hard_cap)`. Every
+pool has a `hard_cap` in `slots.json` and so does the file itself (top-level
+`hard_cap`, default 18); the stored floor, ceiling and target are clamped to it
+every tick, immediately after the autopilot's `budget-overrides.json` floor and
+ceiling are reapplied, so neither the overrides nor the ramp can lift a pool
+past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
+`status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
+admission --json` reports the same verdict read-only. `queue/LOADGATE_OFF` is the
+owner's off switch.
+
+Install semaphore: `install-gate.py -- npm ci` takes `flock` on `queue/install.lock`
+so at most one `npm ci` / `pnpm install` / `bun install` runs fleet-wide; others
+wait (30 min default, then exit 75). The holder is written into the lock file
+while held and the kernel drops the lock if the holder dies. `install-gate.py
+--shims DIR` writes `npm`, `pnpm` and `bun` shims that route installs through the
+gate; put DIR first on the PATH that `launch.sh` gives the agent.
+
 Fixture tests run both scripts against a synthetic `~/.ashlr-runs` under a
 temporary HOME and never touch the live queue:
 
@@ -210,6 +233,8 @@ Enable either flag only for launches that should use it, for example:
 ASHLR_SHARED_CARGO_TARGET=1 ASHLR_SCCACHE=1 /path/to/launch.sh JOB phantom POOL
 ```
 
+When launching through `scripts/bridge/launch.sh`, `ASHLR_SCCACHE=1` is handled
+there (local-only, see `docs/BRIDGE-WORKTREES.md`) and this block is unnecessary.
 Install `sccache` separately before opting in. No installation, credential,
 remote cache or provider configuration is performed here. Cargo serializes
 concurrent builds sharing a target directory; this saves disk and repeated
@@ -217,3 +242,73 @@ compilation at the cost of possible build-lock waits. Keep different repositorie
 in separate target directories. Shared output and the optional sccache cache
 live outside `~/.ashlr-runs` and are never pruned by this helper. Existing
 caller-provided Rust environment settings are unchanged when the flags are off.
+
+# Staged-push drain trigger
+
+`staged_drain.py` is one deterministic tick for the Mac host, a pinned repo copy
+like `dispatchd.py` and `restock.py`. Install `staged_drain.py` and
+`staged-drain.sh` next to the #1066 queue scripts and fire the tick from launchd
+(`com.ashlr.staged-drain.plist.in`) or from a dispatchd tick. There is no model
+turn and no token creation; the only network call is the read-only
+`gh api repos/ashlrai/<repo>/actions/runs?status=queued --jq .total_count` poll
+across `locus`, `lexicon`, `ashlr-md`, `ashlr-stack` and `ashlr-plugin`.
+
+Each tick reads `$STAGED_DRAIN_WORK/staged-pushes.tsv` (default
+`/workspace/phantom-work/staged-pushes.tsv`). While the summed queued-run total
+is 50 or more, or the poll fails, the tick holds and changes nothing. Below 50
+it drains the file in row order under a `staged-pushes.tsv.lock` advisory lock;
+a busy lock holds the tick rather than piling up waiters.
+
+- `PARKED` rows are skipped and left untouched.
+- A row touching any `.github` path component, or any component starting with
+  `release` (dot-optional), is never pushed: the staged state is committed via
+  a scratch index onto the local branch `staged-drain/<job>` and the diff lands
+  at `handoff/<job>.diff` for manual handoff. The worktree's own HEAD, branch
+  and index are never moved. When the host `scrub.pl` is installed
+  (`STAGED_DRAIN_SCRUB`, default `~/.ashlr-runs/bin/scrub.pl`), the diff passes
+  its `--check --allow-fixtures` gate before it is written.
+- Every other staged row goes to the pinned publisher only:
+  `STAGED_DRAIN_PUBLISH <job>` (default `~/.ashlr-runs/bin/publish.sh`, the
+  mac-bridge publish.sh install path). The drain itself never runs git push,
+  fetch, pull or any remote command, and publisher output is never printed.
+- Each processed row is marked `done` or `failed` in place with a route note;
+  comment, blank, terminal and malformed lines are preserved verbatim.
+
+TSV row schema v1, one tab-separated row per staged push:
+
+    job<TAB>repo<TAB>worktree<TAB>base<TAB>status[<TAB>files][<TAB>note]
+
+`status` starts as `staged`. `files` is an optional comma-separated list of
+repo-relative paths; it is unioned with a read-only inspection of the worktree
+when one is available, so an under-reported `.github` drift still routes to
+handoff. `repo` must be on the seven-repo allowlist and `base` a hex commit.
+Job ids are restricted to `[A-Za-z0-9._-]`, no `..`, never `.lock`-suffixed.
+
+Logs carry one value-free line per row (`row`, `job`, `outcome`, `route`,
+`reason`) plus gate and summary counts; no paths, file contents, arguments or
+environment values are printed. `--dry-run` reports the gate result and each
+row's route plan without draining, rewriting the TSV, invoking the publisher
+or writing handoff diffs:
+
+```sh
+STAGED_DRAIN_WORK=/path/to/work bash staged-drain.sh --dry-run
+```
+
+launchd install sketch (substitute the deployed paths):
+
+```sh
+sed -e "s|__STAGED_DRAIN_SH__|/path/to/mac-bridge/staged-drain.sh|" \
+    -e "s|__INTERVAL__|300|" -e "s|__LOG_DIR__|$HOME/.ashlr-runs/logs|" \
+    -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
+    -e "s|__WORK__|/workspace/phantom-work|" \
+    -e "s|__PUBLISH__|$HOME/.ashlr-runs/bin/publish.sh|" \
+    com.ashlr.staged-drain.plist.in > ~/Library/LaunchAgents/com.ashlr.staged-drain.plist
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.staged-drain.plist
+```
+
+Fixture tests run a synthetic work dir under a temporary HOME and never touch
+the live queue or GitHub:
+
+```sh
+HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
+```
