@@ -1,2 +1,3 @@
 
+- [Node router](docs/NODE-ROUTER.md): `phm node join|pull|plan|status --json`; computers join as nodes, jobs carry an owner scope, per-job leases with fencing tokens so no job runs twice.
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
