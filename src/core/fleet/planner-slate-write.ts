@@ -1,12 +1,12 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { privateDirectory, inspectPrivateDirectory } from '../universe/artifacts.js';
 import { writePrivateFileAtomic } from '../verse/preferences.js';
 import { PLANNER_CANDIDATES_FILE } from './planner-candidates.js';
 
 export const MAX_SLATE_BYTES = 64 * 1024;
-type Candidate = { provider: string; argv: string[] };
-type Slate = { v: 1; candidates: Candidate[]; lastProvider?: string };
+export type Candidate = { provider: string; argv: string[] };
+export type Slate = { v: 1; candidates: Candidate[]; lastProvider?: string; promptPath?: string };
 const record = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 const keys = (x: Record<string, unknown>, allowed: string[]): boolean => Object.keys(x).every(k => allowed.includes(k));
 const bounded = (x: unknown, max: number): x is string => typeof x === 'string' && x.length <= max && !x.includes('\0');
@@ -16,7 +16,7 @@ export function parsePlannerSlate(bytes: Buffer): Slate | null {
   if (bytes.length > MAX_SLATE_BYTES) return null;
   try {
     const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    if (!record(value) || !keys(value, ['v', 'candidates', 'lastProvider']) || value['v'] !== 1 ||
+    if (!record(value) || !keys(value, ['v', 'candidates', 'lastProvider', 'promptPath']) || value['v'] !== 1 ||
         !Array.isArray(value['candidates']) || value['candidates'].length < 1 || value['candidates'].length > 64) return null;
     const candidates: Candidate[] = [], seen = new Set<string>();
     for (const row of value['candidates']) {
@@ -31,6 +31,10 @@ export function parsePlannerSlate(bytes: Buffer): Slate | null {
     if (Object.hasOwn(value, 'lastProvider')) {
       if (!bounded(value['lastProvider'], 128) || !seen.has(value['lastProvider'])) return null;
       slate.lastProvider = value['lastProvider'];
+    }
+    if (Object.hasOwn(value, 'promptPath')) {
+      if (!bounded(value['promptPath'], 1024) || !isAbsolute(value['promptPath'])) return null;
+      slate.promptPath = value['promptPath'];
     }
     return Buffer.byteLength(JSON.stringify(slate) + '\n') <= MAX_SLATE_BYTES ? slate : null;
   } catch { return null; }

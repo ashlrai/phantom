@@ -6,76 +6,27 @@ import type { CloudGh } from '../core/cloud/pr-actions.js';
 import { defaultGitRunner } from '../core/verse/git-ops.js';
 import { FLEET_PR_GH_VIEW_FIELDS, parseFleetPrGhState, type FleetPrGhState } from '../core/fleet/fleet-merge-state.js';
 import { classifyDiff3 } from '../core/fleet/dirty-union-preview.js';
+import { collectPrConflicts } from '../core/fleet/dirty-union-collect.js';
 
 const USAGE = 'ashlr fleet union-preview [--json] [--limit N]';
 const REPO = 'ashlrai/phantom';
-const SHA = /^[0-9a-f]{40}$/;
 type Verdict = 'union-safe' | 'needs-model';
 type Preview = { number: number; head: string; base: string | null; verdict: Verdict; files: string[]; reason?: string };
+
+export { parseConflictEntry } from '../core/fleet/dirty-union-collect.js';
 
 async function git(cwd: string, args: string[], maxStdoutBytes = 16 * 1024 * 1024) {
   return defaultGitRunner('git', args, { cwd, timeoutMs: 60_000, maxStdoutBytes });
 }
 
-export function parseConflictEntry(entry: string): { mode: string; oid: string; stage: string; path: string } | null {
-  const [, mode, oid, stage, path] = /^(\d{6}) ([0-9a-f]{40}) ([123])\t([\s\S]+)$/.exec(entry) ?? [];
-  if (!mode || !oid || !stage || !path) return null;
-  return { mode, oid, stage, path };
-}
-
 async function inspect(dir: string, pr: FleetPrGhState, remote: string): Promise<Preview> {
   const result: Preview = { number: pr.number, head: pr.headSha, base: null, verdict: 'needs-model', files: [] };
-  const fail = (reason: string): Preview => ({ ...result, reason });
-  // Fetch only into the disposable repository. A moved head is never classified.
-  const baseRef = `refs/heads/${pr.baseRef}`;
-  if ((await git(dir, ['check-ref-format', baseRef])).code !== 0) return fail('invalid base ref');
-  const fetch = await git(dir, ['-c', 'core.hooksPath=/dev/null', 'fetch', '--no-tags', '--no-write-fetch-head',
-    remote, `+${baseRef}:refs/preview/base`, `+refs/pull/${pr.number}/head:refs/preview/head`]);
-  if (fetch.code !== 0 || fetch.timedOut || fetch.truncated) return fail('fetch failed');
-  const head = (await git(dir, ['rev-parse', 'refs/preview/head'])).stdout.trim();
-  const base = (await git(dir, ['rev-parse', 'refs/preview/base'])).stdout.trim();
-  if (head !== pr.headSha || !SHA.test(base)) return fail('head moved or base unavailable');
-  result.base = base;
-  const merge = await git(dir, ['-c', 'core.hooksPath=/dev/null', 'merge-tree', '--write-tree', '-z', base, head]);
-  if (merge.code !== 1 || merge.timedOut || merge.truncated) return fail('merge-tree did not produce a conflict');
-  const parts = merge.stdout.split('\0');
-  if (!SHA.test(parts.shift() ?? '')) return fail('invalid merge-tree output');
-  const stages = new Map<string, Map<number, { mode: string; oid: string }>>();
-  while (parts.length && parts[0] !== '') {
-    const entry = parts.shift()!;
-    const parsed = parseConflictEntry(entry);
-    if (!parsed) return fail('unreadable conflict entry');
-    const { mode, oid, stage, path } = parsed;
-    const group = stages.get(path) ?? new Map();
-    if (group.has(Number(stage))) return fail('duplicate conflict stage');
-    group.set(Number(stage), { mode, oid }); stages.set(path, group);
-  }
-  parts.shift();
-  result.files = [...stages.keys()];
-  if (!result.files.length) return fail('no conflicting files');
-  // Git's structured messages identify non-content conflicts such as renames and binaries.
-  while (parts[0]) {
-    const count = Number(parts.shift());
-    if (!Number.isSafeInteger(count) || count < 1 || parts.length < count + 2) return fail('unreadable conflict message');
-    parts.splice(0, count);
-    const kind = parts.shift(); parts.shift();
-    if (kind !== 'CONFLICT (contents)' && kind !== 'Auto-merging') return fail('non-content conflict');
-  }
-  for (const group of stages.values()) {
-    const entries = [group.get(1), group.get(2), group.get(3)];
-    if (entries.some(entry => !entry || !['100644', '100755'].includes(entry.mode)) ||
-        entries.some(entry => entry!.mode !== entries[0]!.mode)) return fail('non-text or structural conflict');
-    const blobs: string[] = [];
-    for (const entry of entries) {
-      const blob = await git(dir, ['cat-file', 'blob', entry!.oid], 4 * 1024 * 1024);
-      if (blob.code !== 0 || blob.truncated || blob.timedOut || /\0|\ufffd/.test(blob.stdout) ||
-          (blob.stdout !== '' && !blob.stdout.endsWith('\n')) || /^(<{7}|\|{7}|={7}|>{7})/m.test(blob.stdout)) return fail('unsupported file content');
-      blobs.push(blob.stdout);
-    }
-    const names = ['base', 'ours', 'theirs'].map(name => join(dir, `preview-${name}`));
-    await Promise.all(names.map((name, i) => writeFile(name, blobs[i]!)));
-    const merged = await git(dir, ['merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', names[1]!, names[0]!, names[2]!]);
-    if (merged.code === null || merged.code < 1 || merged.code >= 127 || merged.timedOut || merged.truncated || classifyDiff3(merged.stdout) !== 'union-safe') return fail('conflict is not add-only');
+  const found = await collectPrConflicts(dir, pr, remote);
+  if (!found.ok) return { ...result, files: found.files ?? [], reason: found.reason };
+  result.base = found.base;
+  result.files = found.files.map(file => file.path);
+  for (const file of found.files) {
+    if (classifyDiff3(file.diff3) !== 'union-safe') return { ...result, reason: 'conflict is not add-only' };
   }
   result.verdict = 'union-safe';
   return result;

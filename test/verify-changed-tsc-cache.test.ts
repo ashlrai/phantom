@@ -1,14 +1,24 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 const fixtures: string[] = [];
+let template: string;
 
+// The git fixture is identical for every test: build it once and hand each
+// test a private copy (4 git calls per test -> one copy of a built repo).
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'verify-tsc-cache-'));
   fixtures.push(root);
+  cpSync(template, root, { recursive: true });
+  return root;
+}
+
+beforeAll(() => {
+  const root = mkdtempSync(join(tmpdir(), 'verify-tsc-cache-template-'));
+  template = root;
   mkdirSync(join(root, 'scripts'), { recursive: true });
   mkdirSync(join(root, 'node_modules/typescript/bin'), { recursive: true });
   writeFileSync(join(root, 'scripts/verify-changed.mjs'), readFileSync(resolve('scripts/verify-changed.mjs')));
@@ -37,8 +47,7 @@ function fixture() {
   git('add', '.');
   git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture');
   git('update-ref', 'refs/remotes/origin/master', 'HEAD');
-  return root;
-}
+});
 
 function run(root: string, env: Record<string, string> = {}) {
   return spawnSync(process.execPath, ['scripts/verify-changed.mjs'], {
@@ -50,6 +59,10 @@ function run(root: string, env: Record<string, string> = {}) {
 
 afterEach(() => {
   for (const path of fixtures.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  if (template) rmSync(template, { recursive: true, force: true });
 });
 
 describe('verify-changed TypeScript cache', () => {

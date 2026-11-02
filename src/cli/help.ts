@@ -286,6 +286,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'OrientResult',
   },
   {
+    usage: 'phm channels status [--json]',
+    description: 'Per-channel rollup: configured, credential custody, pairing, received, pendingOutbound, lastSeenAt. Counts are measured or "unknown", never fabricated. Exit 0 success/help, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ChannelsStatus {v:1, at, inbox, channels[]}',
+  },
+  {
+    usage: 'phm channels add <telegram <chat-id>|email <inboxDir> --from <a> [...]|mobile|cli|desktop|page> [--json]',
+    description: 'Writes channel configuration only — no transport, pairing, or credential IO. Credentials stay in existing custody (TELEGRAM_BOT_TOKEN, PHANTOM_OPERATOR_SECRET, private files) and are never accepted or printed. Exit 0 success/help, 1 error, 2 bad usage.',
+    safety: 'append',
+    jsonShape: 'ChannelAddResult {ok, kind, changed, credential, next}',
+  },
+  {
     usage: 'ashlr ask "<question>" [--json] | ashlr ask status [--jobs <path>] [--json]',
     description: 'Local RAG over the indexed portfolio; cites repo/file:line. Local models only unless --allow-cloud. status prints the ask.status.v1 stream derived from the metrics jobs ledger.',
     safety: 'read',
@@ -665,6 +677,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
+  { cmd: 'channels add <kind> | status [--json]', desc: 'Bring a channel up (config only, credentials stay in custody) or read the per-channel rollup.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
   { cmd: 'universe <demo|init|run|status|archive>', desc: 'Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.', topic: 'autonomy' },

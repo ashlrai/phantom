@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="t">
+  <title id="t">One MCP gateway for three editors</title>
+  <rect width="640" height="360" rx="24" fill="#141A2A"/>
+  <g font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" fill="#E8EEF9">
+    <rect x="36" y="48" width="160" height="72" rx="14" fill="#0B1020" stroke="#2A3550"/>
+    <text x="58" y="92">Claude</text>
+    <rect x="240" y="48" width="160" height="72" rx="14" fill="#0B1020" stroke="#2A3550"/>
+    <text x="270" y="92">Cursor</text>
+    <rect x="444" y="48" width="160" height="72" rx="14" fill="#0B1020" stroke="#2A3550"/>
+    <text x="474" y="92">Codex</text>
+  </g>
+  <path d="M116 120 V168 H524 V120" fill="none" stroke="#8B7CFF" stroke-width="3"/>
+  <rect x="170" y="168" width="300" height="140" rx="16" fill="#0B1020" stroke="#3DDC97"/>
+  <text x="198" y="230" fill="#3DDC97" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="24">ashlr-hub</text>
+  <text x="198" y="268" fill="#E8EEF9" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="22">ashlr mcp</text>
+</svg>

@@ -29,6 +29,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
+  'channels',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -92,9 +93,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   worker: ['setup', 'status'],
   fleet: [
-    'status', 'watch', 'lanes', 'direction', 'init', 'pause', 'resume', 'doctor',
+    'status', 'session', 'watch', 'lanes', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'backlog',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
@@ -111,6 +112,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   eval: ['attention', 'swe-bench', 'router'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand'],
+  channels: ['add', 'status', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
   ecosystem: ['doctor'],
   roadmap: ['run', 'resume', 'status'],
@@ -120,7 +122,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   skills: ['audit'],
   runtime: ['install', 'status', 'rollback', 'run'],
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
-  'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model'],
+  'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model', 'missing-model-guard'],
   // Mirrors the verb switch in src/cli/authority.ts (runAuthorityCli).
   authority: ['status', 'switch', 'stop', 'clear-stop', 'revoke', 'draft', 'grant', 're-approve', 'ledger', 'surface', 'protect', 'github-app', 'rotate-provenance', 'setup', 'resident', 'help'],
   // Mirror the verb switches in src/cli/leader.ts (runLeaderCli) and src/cli/mirror.ts (runMirrorCli).

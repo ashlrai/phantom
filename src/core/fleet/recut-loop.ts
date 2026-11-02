@@ -46,13 +46,15 @@
  */
 import { randomBytes } from 'node:crypto';
 import { constants, existsSync, type Stats } from 'node:fs';
-import { lstat, mkdir, open, readdir, link, unlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readdir, link, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import type { CloudGh } from '../cloud/pr-actions.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { renderBacklogRecutJob } from './backlog-recut-job.js';
+import { collectPrConflicts } from './dirty-union-collect.js';
+import { classifyDiff3 } from './dirty-union-preview.js';
 import {
   DROP_JOB_FILE,
   DROP_JOB_FILE_PREFIX,
@@ -116,6 +118,12 @@ export interface RecutLoopDeps {
   readMerged?: () => Promise<MergedFleetPr[]>;
   /** One candidate's observed head SHA. Defaults to the merge-state record, then a bounded `gh pr view`. */
   readHeadSha?: (pr: number) => Promise<string | null>;
+  /**
+   * Whether the union preview marks this head fully union-safe — then the
+   * prompt names `ashlr fleet union-apply`. Defaults to the preview's
+   * isolated inspection; a degraded read is `false`, never a skip.
+   */
+  readUnionSafe?: (pr: { number: number; headSha: string }) => Promise<boolean>;
   now?: () => number;
   /** Publish one job file (name + rendered body). Defaults to the drop-folder publish below. */
   writeJob?: (file: string, body: string) => Promise<void>;
@@ -207,6 +215,39 @@ function defaultReadHeadSha(repo: string, states: ReadonlyMap<number, FleetMerge
       return typeof sha === 'string' && SHA_RE.test(sha) ? sha : null;
     } catch {
       return null;
+    }
+  };
+}
+
+/**
+ * The preview verdict for one candidate: the same fetch + merge-tree +
+ * classifyDiff3 pipeline `ashlr fleet union-preview` runs, inside a
+ * disposable object store. The head SHA is re-observed first — a moved head
+ * is never classified.
+ */
+function defaultReadUnionSafe(repo: string): (pr: { number: number; headSha: string }) => Promise<boolean> {
+  const remote = `https://github.com/${repo}.git`;
+  return async ({ number, headSha }) => {
+    try {
+      const view = await defaultGh(['pr', 'view', String(number), '--repo', repo, '--json', 'headRefOid,baseRefName,state']);
+      if (!view.ok) return false;
+      const row: unknown = JSON.parse(view.stdout);
+      const baseRef = object(row) ? row['baseRefName'] : null;
+      if (!object(row) || row['headRefOid'] !== headSha || row['state'] !== 'OPEN' ||
+          typeof baseRef !== 'string' || baseRef === '') return false;
+      const dir = await mkdtemp(join(tmpdir(), 'recut-union-'));
+      try {
+        const init = await defaultGitRunner('git', ['init', '--bare', '--quiet'],
+          { cwd: dir, timeoutMs: 60_000, maxStdoutBytes: 1024 * 1024 });
+        if (init.code !== 0) return false;
+        await writeFile(join(dir, 'info', 'attributes'), '* merge\n');
+        const found = await collectPrConflicts(dir, { number, headSha, baseRef }, remote);
+        return found.ok && found.files.every(file => classifyDiff3(file.diff3) === 'union-safe');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    } catch {
+      return false;
     }
   };
 }
@@ -503,6 +544,7 @@ export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickR
     states = new Map(); // a degraded store just means every sha comes from the gh view
   }
   const readHeadSha = deps.readHeadSha ?? defaultReadHeadSha(backlog.repo, states);
+  const readUnionSafe = deps.readUnionSafe ?? defaultReadUnionSafe(backlog.repo);
 
   let allowance = Math.min(TICK_WRITE_CAP, Math.max(0, HOUR_WRITE_CAP - hourCount));
   let capped = false;
@@ -518,7 +560,8 @@ export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickR
     const id = await nextFreeId(runsDir, dropDir, pr);
     if (id === null) { skip('no-id'); continue; }
     const file = join(dropDir, `${DROP_JOB_FILE_PREFIX}${id}.md`);
-    const body = renderBacklogRecutJob(pr, headSha, item.title);
+    const unionSafe = await readUnionSafe({ number: pr, headSha }).catch(() => false);
+    const body = renderBacklogRecutJob(pr, headSha, item.title, { unionSafe });
     try {
       await writeJob(file, body);
     } catch (error) {
