@@ -25,6 +25,7 @@ phm mcp doctor --json
 phm wire status --json
 phm authority status --json
 phm authority setup --dry-run --json
+phm channels status --json
 ```
 
 `phm mcp doctor` exits 1 when a required server is down. `phm authority status --json` reports the grant. Autonomy ships dormant and is macOS-only. Status does not turn it on.

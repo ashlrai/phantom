@@ -93,6 +93,47 @@ class DiskLifecycleTests(unittest.TestCase):
         self.assertEqual(len([r for r in self.records() if r["event"] == "launch-finished"]), 3)
         self.assertTrue(all(r["free_bytes"] > disk.FLOOR for r in self.records()))
 
+    def fake_sccache(self):
+        binary = self.root / "tools" / "sccache"
+        binary.parent.mkdir(exist_ok=True)
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        return binary
+
+    def test_sccache_is_off_by_default(self):
+        command = [sys.executable, "-c", "import os; raise SystemExit(9 if 'RUSTC_WRAPPER' in os.environ or 'SCCACHE_DIR' in os.environ else 0)"]
+        with patch.dict(os.environ, {"PATH": str(self.fake_sccache().parent) + os.pathsep + os.environ["PATH"]}):
+            os.environ.pop("RUSTC_WRAPPER", None)
+            self.assertEqual(self.launch(command=command), 0)
+
+    def test_sccache_opt_in_is_local_only_and_drops_remote_settings(self):
+        binary = self.fake_sccache()
+        script = ("import os,json,pathlib; pathlib.Path('sccache-env').write_text(json.dumps("
+                  "{k:v for k,v in os.environ.items() if k.startswith(('SCCACHE_','RUSTC_','CARGO_INC','AWS_'))}))")
+        hostile = {"ASHLR_SCCACHE": "1", "PATH": str(binary.parent) + os.pathsep + os.environ["PATH"],
+                   "SCCACHE_BUCKET": "remote", "SCCACHE_REDIS": "redis://x", "SCCACHE_CONF": "/elsewhere",
+                   "SCCACHE_GHA_ENABLED": "true", "AWS_ACCESS_KEY_ID": "keep-out-of-test-output"}
+        with patch.dict(os.environ, hostile):
+            os.environ.pop("CARGO_INCREMENTAL", None)
+            self.assertEqual(self.launch(command=[sys.executable, "-c", script]), 0)
+        seen = json.loads((self.worktree / "sccache-env").read_text())
+        self.assertEqual(seen["RUSTC_WRAPPER"], str(binary))
+        self.assertEqual(seen["CARGO_INCREMENTAL"], "0")
+        for remote in ("SCCACHE_BUCKET", "SCCACHE_REDIS", "SCCACHE_GHA_ENABLED"):
+            self.assertNotIn(remote, seen)
+        self.assertTrue(seen["SCCACHE_DIR"].startswith(str(self.state / "sccache")))
+        self.assertTrue(seen["SCCACHE_CONF"].startswith(str(self.state / "sccache")))
+        config = Path(seen["SCCACHE_CONF"]).read_text()
+        self.assertIn("[cache.disk]", config)
+        self.assertNotIn("redis", config)
+        self.assertTrue(10000 < int(seen["SCCACHE_SERVER_PORT"]) < 40000)
+
+    def test_sccache_opt_in_without_binary_refuses_before_child_starts(self):
+        with patch.dict(os.environ, {"ASHLR_SCCACHE": "1"}), patch.object(disk.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(disk.Refused, "sccache-unavailable"):
+                self.launch(command=[sys.executable, "-c", "open('started','w').close()"])
+        self.assertFalse((self.worktree / "started").exists())
+
     def test_intermediate_output_override_is_cleared_without_printing_environment(self):
         command = [sys.executable, "-c", "import os,sys; sys.exit(9 if 'CARGO_BUILD_BUILD_DIR' in os.environ else 0)"]
         with patch.dict(os.environ, {"CARGO_BUILD_BUILD_DIR": str(self.root / "unmanaged")}):
