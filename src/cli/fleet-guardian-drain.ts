@@ -26,7 +26,7 @@ export async function cmdFleetGuardianDrain(
     if (flag === '--json' && !json) { json = true; continue; }
     if (flag === '--stream' && !stream) { stream = true; continue; }
     if (flag === '--apply' && !apply) { apply = true; continue; }
-    if (!['--manifest', '--source-state', '--output-dir', '--max-retries', '--timeout-ms'].includes(flag)
+    if (!['--manifest', '--source-state', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file'].includes(flag)
       || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       process.stderr.write('error: invalid guardian-drain arguments\n'); return 2;
     }
@@ -37,10 +37,12 @@ export async function cmdFleetGuardianDrain(
   const maxRetries = positive(values['--max-retries']);
   const timeoutMs = positive(values['--timeout-ms']);
   const paths = [values['--manifest'], values['--source-state'], values['--output-dir']];
-  if (!paths.every(p => p !== undefined && isAbsolute(p) && p.length <= 4096)
+  const stopFile = values['--stop-file'];
+  if ((stopFile !== undefined && (!isAbsolute(stopFile) || stopFile.length > 4096 || stopFile.includes('\0')))
+    || !paths.every(p => p !== undefined && isAbsolute(p) && p.length <= 4096)
     || !Number.isSafeInteger(maxRetries) || maxRetries < 1 || maxRetries > GUARDIAN_DRAIN_MAX_RETRIES
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > GUARDIAN_VERIFY_MAX_TIMEOUT_MS) {
-    process.stderr.write(`error: guardian-drain requires absolute --manifest/--source-state/--output-dir, --max-retries 1..${GUARDIAN_DRAIN_MAX_RETRIES} and --timeout-ms 1..${GUARDIAN_VERIFY_MAX_TIMEOUT_MS}\n`);
+    process.stderr.write(`error: guardian-drain requires absolute --manifest/--source-state/--output-dir, --max-retries 1..${GUARDIAN_DRAIN_MAX_RETRIES} and --timeout-ms 1..${GUARDIAN_VERIFY_MAX_TIMEOUT_MS}; optional --stop-file must be an absolute path\n`);
     return 2;
   }
   const [manifest, sourceState, outputDir] = paths as string[];
@@ -51,7 +53,7 @@ export async function cmdFleetGuardianDrain(
   let summary: GuardianDrainSummary;
   try {
     summary = await drainGuardianInfraRetries(
-      { manifest, sourceState, outputDir, maxRetries, timeoutMs, apply, signal: controller.signal, now: deps.now },
+      { manifest, sourceState, outputDir, maxRetries, timeoutMs, apply, stopFile, signal: controller.signal, now: deps.now },
       { ...deps, onAttempt: stream ? async attempt => {
         await deps.onAttempt?.(attempt);
         await writeStreamRecord({ record: 'attempt', ...attempt }, deps.writeLine);
