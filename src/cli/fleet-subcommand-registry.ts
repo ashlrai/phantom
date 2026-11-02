@@ -70,6 +70,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'job-read': () => import('./fleet-job-read.js'),
   'lane-autohold': () => import('./fleet-lane-autohold.js'),
   'lane-hold': () => import('./fleet-lane-hold.js'),
+  'lane-merges': () => import('./fleet-lane-merges.js'),
   'lane-model-set': () => import('./fleet-lane-model-set.js'),
   'lane-models': () => import('./fleet-lane-models.js'),
   'lane-reward': () => import('./fleet-lane-reward.js'),
