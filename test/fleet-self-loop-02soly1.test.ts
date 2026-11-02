@@ -97,10 +97,10 @@ describe('fleet self-loop', () => {
       { tick, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
     expect(startedAt).toEqual([0, 1000, 2000]);
-    expect(clock.sleeps).toEqual([1000, 1000, 1000]); // the last wait ends at the deadline
+    expect(clock.sleeps).toEqual([1000, 1000, 500]); // last wait caps to remaining budget
     expect(maxActive).toBe(1);
     expect(summary).toMatchObject({ ticks: 3, failures: 0, busy: 0, termination: 'duration',
-      durationMs: 2500, intervalMs: 1000, elapsedMs: 3000 });
+      durationMs: 2500, intervalMs: 1000, elapsedMs: 2500 });
   });
 
   it('admits no pass after the deadline; an over-running pass finishes normally', async () => {
