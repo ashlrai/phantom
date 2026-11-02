@@ -14,6 +14,7 @@ import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
+import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
@@ -40,6 +41,8 @@ interface Dependencies {
   acquireLock?: RunSelfTickOptions['acquireLock'];
   /** planner-tick spawn seam; tests fake it, never a shell. */
   spawn?: SpawnLike;
+  /** Home override for tests; the runs-dir fallback and the log cap use it. */
+  home?: string;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -86,7 +89,8 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // One root for the lock and all three steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
-  const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
+  const home = deps.home ?? homedir();
+  const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(home, '.ashlr-runs'));
   const now = deps.now ?? Date.now;
   if (last) {
     const view = readSelfTickLast(root, now());
@@ -102,6 +106,10 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     }
     return 0;
   }
+  // The scheduled log grows without bound (every tick appends each step's
+  // full JSON report); cap it in place before this run adds to it. Runs
+  // once per real run — never on --last — and never throws.
+  const logCap = capSelfTickLog(selfTickLogPath(home));
   const bind = (
     run: (argv: string[], io: { output: (text: string) => void; error: (text: string) => void }) => Promise<number>,
     extra: Record<string, unknown> = {},
@@ -125,7 +133,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     ...(deps.acquireLock === undefined ? {} : { acquireLock: deps.acquireLock }),
   });
   if (json) {
-    output(JSON.stringify(sanitizePublicJson(report)));
+    output(JSON.stringify(sanitizePublicJson({ ...report, logCap: { state: logCap.state } })));
   } else if (report.state === 'busy') {
     output(`fleet self-tick: BUSY — ${lock === 'contended'
       ? 'another self-tick holds the lock'
