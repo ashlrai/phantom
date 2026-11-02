@@ -11,6 +11,10 @@
  *                   origin/<base>), pushed as `<head>-recut`, then opened as a
  *                   replacement PR. The old PR is never closed here — only
  *                   after the recut merges does `close-superseded` close it.
+ *   requeue         the conflict dropped the lane's merge-queue slot: once the
+ *                   recut is mergeable and every check the base requires passed
+ *                   on its exact head, queue it again with `gh pr merge --auto
+ *                   --match-head-commit` — queueing only, never merging
  *   merge-base      `git merge origin/<base>`, on a head a strict base would
  *                   refuse as behind; conflicts go to the fixer, and every
  *                   conflict marker must be gone before anything commits
@@ -59,6 +63,7 @@ import {
   emptyState,
   fixBrief,
   plan as decide,
+  requiredCheckState,
   weakeningRefusals,
   type AutopilotState,
   type DiffFile,
@@ -67,7 +72,7 @@ import {
   type Observation,
   type Plan,
 } from './diagnose.js';
-import { closePr, commentOnPr, createPr, defaultGh, observe, readPr, readPrByBranch, rerunJob, type Gh } from './github.js';
+import { closePr, commentOnPr, createPr, defaultGh, observe, queueMerge, readChecks, readPr, readPrByBranch, readRequiredContexts, readStatuses, rerunJob, type Gh } from './github.js';
 import type { PrView } from './diagnose.js';
 
 const mergeKey = (obs: Observation) => `merge-base:${obs.pr.headSha}:${obs.pr.baseSha}`;
@@ -128,8 +133,8 @@ export interface TickResult {
   headSha: string;
   plan: Plan['action'];
   reason: string;
-  /** What happened when acting: pushed, recut (branch pushed and its PR opened), closed a superseded PR, rerun, refused, verify-failed, no-change, error, or `planned` without --apply. */
-  result: 'planned' | 'pushed' | 'recut' | 'closed' | 'rerun' | 'refused' | 'verify-failed' | 'no-change' | 'error' | 'none';
+  /** What happened when acting: pushed, recut (branch pushed and its PR opened), requeued a recut for merge, closed a superseded PR, rerun, refused, verify-failed, no-change, error, or `planned` without --apply. */
+  result: 'planned' | 'pushed' | 'recut' | 'requeued' | 'closed' | 'rerun' | 'refused' | 'verify-failed' | 'no-change' | 'error' | 'none';
   detail: string[];
   newHead: string | null;
 }
@@ -271,7 +276,17 @@ async function readRecut(repo: string, recut: { branch: string; number: number }
   try {
     if (!recut.number) return await readPrByBranch(repo, recut.branch, gh);
     const p = await readPr(repo, recut.number, gh);
-    return { number: p.number, state: p.state, merged: p.merged };
+    if (p.state !== 'open' || p.autoMerge) {
+      return { number: p.number, state: p.state, merged: p.merged, headSha: p.headSha, mergeable: p.mergeable, draft: p.draft, autoMerge: p.autoMerge };
+    }
+    // Only an open, not-yet-queued recut needs the requeue read: the checks the
+    // base requires and whether every one of them passed on its exact head.
+    const [contexts, checks, statuses] = await Promise.all([
+      readRequiredContexts(repo, p.baseRef, gh),
+      readChecks(repo, p.headSha, gh),
+      readStatuses(repo, p.headSha, gh),
+    ]);
+    return { number: p.number, state: p.state, merged: p.merged, headSha: p.headSha, mergeable: p.mergeable, draft: p.draft, autoMerge: p.autoMerge, requiredChecks: requiredCheckState(contexts, checks, statuses) };
   } catch {
     return null;
   }
@@ -320,7 +335,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     if ('failures' in p && p.failures) row.detail.push(...p.failures.map((f) => `${f.cause}: ${f.why}`));
     row.detail.push(...(obs.droppedReviews ?? []));
 
-    if (!['merge-base', 'fix-ci', 'address-review', 'rerun', 'recut', 'close-superseded'].includes(p.action)) { record(row, now()); return row; }
+    if (!['merge-base', 'fix-ci', 'address-review', 'rerun', 'recut', 'requeue', 'close-superseded'].includes(p.action)) { record(row, now()); return row; }
     if (!opts.apply) { row.result = 'planned'; record(row, now()); return row; }
 
     if (p.action === 'close-superseded') {
@@ -340,6 +355,26 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
         return row;
       }
       row.result = 'closed';
+      record(row, now());
+      return row;
+    }
+
+    if (p.action === 'requeue') {
+      const stopped = await stopNow(opts);
+      if (stopped) { row.result = 'refused'; row.detail.push(stopped); record(row, now()); return row; }
+      // Counted and saved before asking: a crash or a refused call is one of
+      // at most two tries, and GitHub's own auto_merge makes success idempotent —
+      // the next tick reads the queueing rather than asking again.
+      state.attempts[`requeue:${p.headSha}`] = (state.attempts[`requeue:${p.headSha}`] ?? 0) + 1;
+      saveState(opts.repo, opts.number, state);
+      try {
+        await queueMerge(opts.repo, p.recut, p.headSha, gh);
+        row.result = 'requeued';
+        row.detail.push(`queued #${p.recut} for merge at ${p.headSha.slice(0, 8)}`);
+      } catch (err) {
+        row.result = 'error';
+        row.detail.push(`could not queue the recut for merge: ${err instanceof Error ? err.message : String(err)}`);
+      }
       record(row, now());
       return row;
     }

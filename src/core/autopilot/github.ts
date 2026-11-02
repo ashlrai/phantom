@@ -7,7 +7,7 @@
 import { execFile } from 'node:child_process';
 
 import { scrubSecrets } from '../util/scrub.js';
-import type { CheckRun, Observation, PrView, ReviewItem } from './diagnose.js';
+import type { CheckRun, CommitStatus, Observation, PrView, ReviewItem } from './diagnose.js';
 
 export type Gh = (args: string[]) => Promise<string>;
 
@@ -62,7 +62,23 @@ export async function readPr(repo: string, number: number, gh: Gh = defaultGh): 
     baseSha: str(base['sha']),
     mergeable: typeof raw['mergeable'] === 'boolean' ? raw['mergeable'] : null,
     mergeableState: str(raw['mergeable_state']),
+    autoMerge: raw['auto_merge'] != null,
   };
+}
+
+/** Commit statuses on `ref` (the combined-status endpoint): the newest per context. */
+export async function readStatuses(repo: string, ref: string, gh: Gh = defaultGh): Promise<CommitStatus[]> {
+  const raw = obj(await api(gh, `repos/${assertRepo(repo)}/commits/${encodeURIComponent(ref)}/status`));
+  const out = new Map<string, CommitStatus & { id: number }>();
+  for (const s of (Array.isArray(raw['statuses']) ? raw['statuses'] : []).map(obj)) {
+    const context = str(s['context']);
+    const state = str(s['state']);
+    const id = Number(s['id']);
+    if (!context || !state) continue;
+    const prev = out.get(context);
+    if (!prev || id > prev.id) out.set(context, { context, state, id });
+  }
+  return [...out.values()].map(({ context, state }) => ({ context, state }));
 }
 
 export async function readChecks(repo: string, ref: string, gh: Gh = defaultGh): Promise<CheckRun[]> {
@@ -240,6 +256,55 @@ export async function listOwnedPrs(repo: string, viewer: string, prefixes: reado
 /** Re-run one Actions job (its check-run id is the job id). */
 export async function rerunJob(repo: string, jobId: number, gh: Gh = defaultGh): Promise<void> {
   await gh(['api', '-X', 'POST', `repos/${assertRepo(repo)}/actions/jobs/${jobId}/rerun`]);
+}
+
+/**
+ * The context names GitHub requires on `baseRef`: ruleset `required_status_checks`
+ * rules (readable with metadata permission) ∪ classic branch protection. Empty
+ * when nothing is required; null when neither source could be read, which the
+ * requeue gate treats like 'none' rather than guessing.
+ */
+export async function readRequiredContexts(repo: string, baseRef: string, gh: Gh = defaultGh): Promise<string[] | null> {
+  const out = new Set<string>();
+  let read = false;
+  try {
+    const rules = await api(gh, `repos/${assertRepo(repo)}/rules/branches/${encodeURIComponent(baseRef)}?per_page=100`);
+    read = true;
+    for (const rule of (Array.isArray(rules) ? rules : []).map(obj)) {
+      if (str(rule['type']) !== 'required_status_checks') continue;
+      const checks = obj(rule['parameters'])['required_status_checks'];
+      for (const check of (Array.isArray(checks) ? checks : []).map(obj)) {
+        const ctx = str(check['context']);
+        if (ctx) out.add(ctx);
+      }
+    }
+  } catch { /* no rulesets, or unreadable: classic protection may still name them */ }
+  try {
+    const protection = obj(await api(gh, `repos/${assertRepo(repo)}/branches/${encodeURIComponent(baseRef)}/protection`));
+    read = true;
+    const required = obj(protection['required_status_checks']);
+    // 'off' means listed but not enforced: not a required check (verified live).
+    if (required['enforcement_level'] !== 'off') {
+      for (const check of (Array.isArray(required['checks']) ? required['checks'] : []).map(obj)) {
+        const ctx = str(check['context']);
+        if (ctx) out.add(ctx);
+      }
+      for (const ctx of Array.isArray(required['contexts']) ? required['contexts'] : []) {
+        if (typeof ctx === 'string' && ctx) out.add(ctx);
+      }
+    }
+  } catch { /* no classic protection */ }
+  return read ? [...out].sort((a, b) => a.localeCompare(b)) : null;
+}
+
+/**
+ * Queue the recut's merge on GitHub, pinned to its exact head: branch
+ * protection and the required checks still decide the merge, a moved head
+ * disables the queueing again. `gh pr merge` is the only path — enabling
+ * auto-merge has no REST endpoint.
+ */
+export async function queueMerge(repo: string, number: number, headSha: string, gh: Gh = defaultGh): Promise<void> {
+  await gh(['pr', 'merge', String(number), '--repo', assertRepo(repo), '--squash', '--auto', '--match-head-commit', headSha]);
 }
 
 /**

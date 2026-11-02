@@ -7,8 +7,9 @@
  *
  *   1. closed or merged                → done
  *   2. guardrails (KILL, pause, owner) → stop, said in words
- *   3. a live recut supersedes it      → wait on the replacement, close this
- *      PR once it merged, stop when it died unmerged or the head moved
+ *   3. a live recut supersedes it      → wait on the replacement, requeue its
+ *      merge once every check the base requires passed on its exact head,
+ *      close this PR once it merged, stop when it died unmerged or the head moved
  *   4. a merge conflict with the base  → recut: replay the PR's changes onto
  *      a fresh branch cut from the current base and open a replacement PR
  *      (the old PR is closed only after the recut merges, never before)
@@ -61,6 +62,11 @@ export interface PrView {
   /** null while GitHub is still computing mergeability. */
   mergeable: boolean | null;
   mergeableState: string;
+  /**
+   * Auto-merge is enabled on the PR (it holds a merge-queue slot). GitHub
+   * drops the slot when the PR conflicts; the recut's `autoMerge` starts false.
+   */
+  autoMerge: boolean;
 }
 
 export interface ReviewItem {
@@ -78,8 +84,20 @@ export interface Observation {
   /**
    * The replacement PR this one was recut into, read fresh this tick.
    * Present only when `state.recut` names one; null when it could not be read.
+   * The requeue fields are filled only once its PR number is known and it is open.
    */
-  recut?: { number: number; state: 'open' | 'closed'; merged: boolean } | null;
+  recut?: {
+    number: number;
+    state: 'open' | 'closed';
+    merged: boolean;
+    headSha?: string;
+    mergeable?: boolean | null;
+    draft?: boolean;
+    /** Its merge-queue slot: true when auto-merge is already enabled on it. */
+    autoMerge?: boolean;
+    /** Whether every check the base requires passed on `headSha`. */
+    requiredChecks?: RequiredCheckState;
+  } | null;
   /** The login the autopilot acts as. */
   viewer: string;
   /** Every check run on the PR head, all attempts (`filter=all`). */
@@ -148,6 +166,7 @@ export type Plan =
   | { action: 'merge-base'; reason: string }
   | { action: 'recut'; reason: string }
   | { action: 'close-superseded'; reason: string; recut: number }
+  | { action: 'requeue'; reason: string; recut: number; headSha: string }
   | { action: 'fix-ci'; reason: string; signature: string; failures: Failure[]; attempt: number }
   | { action: 'address-review'; reason: string; reviews: ReviewItem[] }
   | { action: 'rerun'; reason: string; checks: CheckRun[] };
@@ -200,6 +219,37 @@ export function latestByName(runs: readonly CheckRun[]): CheckRun[] {
     if (!prev || r.id > prev.id) byName.set(r.name, r);
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** A required context can be satisfied by a commit status instead of a check run. */
+export interface CommitStatus { context: string; state: string }
+
+/**
+ * Whether every check the base requires passed on a head's check runs and
+ * commit statuses (the newest report per context). 'none' when protection
+ * names no required contexts or could not be read — requeueing then waits
+ * rather than guessing, because a head nothing gates must never be queued by
+ * the autopilot.
+ */
+export type RequiredCheckState = 'green' | 'pending' | 'red' | 'none';
+
+export function requiredCheckState(contexts: readonly string[] | null, runs: readonly CheckRun[], statuses: readonly CommitStatus[] = []): RequiredCheckState {
+  if (!contexts?.length) return 'none';
+  const latest = latestByName(runs);
+  const statusByContext = new Map(statuses.map((s) => [s.context, s.state]));
+  let pending = false;
+  for (const ctx of contexts) {
+    const run = latest.find((r) => r.name === ctx);
+    const state = statusByContext.get(ctx);
+    if (!run && state === undefined) { pending = true; continue; }
+    if (run) {
+      if (run.status === 'completed' && run.conclusion !== null && FAILING.has(run.conclusion)) return 'red';
+      if (run.status !== 'completed' || run.conclusion === null || !PASSING.has(run.conclusion)) pending = true;
+    }
+    if (state === 'error' || state === 'failure') return 'red';
+    if (state !== undefined && state !== 'success') pending = true;
+  }
+  return pending ? 'pending' : 'green';
 }
 
 const DEPENDENCY_FILE = /(^|\/)(package(-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.(toml|lock)|go\.(mod|sum)|requirements[^/]*\.txt|poetry\.lock|uv\.lock|Gemfile(\.lock)?)$/;
@@ -270,7 +320,25 @@ export function plan(obs: Observation, guards: Guards, state: AutopilotState, li
       return { action: 'close-superseded', reason: `recut #${obs.recut.number} merged into ${pr.baseRef}; closing this superseded PR`, recut: obs.recut.number };
     }
     if (obs.recut?.state === 'open') {
-      return { action: 'wait', reason: `recut #${obs.recut.number} (${recut.branch}) is open; this PR stays open until it merges` };
+      const r = obs.recut;
+      // The conflict ejected this lane from the merge queue: when the recut is
+      // mergeable and every check the base requires passed on the exact head
+      // being queued, queue it for merge again. An already-queued recut, a
+      // draft, a head still being computed or conflicting again, and pending,
+      // red or unknown required checks all wait — queueing restores the slot
+      // the conflict took; it never forces the merge itself.
+      if (!r.autoMerge && r.draft !== true && typeof r.headSha === 'string') {
+        if (r.mergeable === true && r.requiredChecks === 'green') {
+          if ((state.attempts[`requeue:${r.headSha}`] ?? 0) < 2) {
+            return { action: 'requeue', reason: `recut #${r.number} is mergeable and every required check passed; re-queueing it for merge at ${r.headSha.slice(0, 8)}`, recut: r.number, headSha: r.headSha };
+          }
+          return { action: 'wait', reason: `queueing recut #${r.number} for merge failed twice at ${r.headSha.slice(0, 8)}; a person decides` };
+        }
+        if (r.requiredChecks === 'red') {
+          return { action: 'wait', reason: `recut #${r.number} is open but a required check is red; its own lane decides the next fix` };
+        }
+      }
+      return { action: 'wait', reason: `recut #${r.number} (${recut.branch}) is open; this PR stays open until it merges` };
     }
     if (obs.recut) {
       return { action: 'stop', reason: `recut #${obs.recut.number} (${recut.branch}) was closed without merging; a person decides whether the lane is recut again` };

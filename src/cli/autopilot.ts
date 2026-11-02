@@ -5,8 +5,9 @@
  * feedback and base conflicts; fix, recut a conflicting lane on a fresh branch
  * off the current base, merge the base or re-run infrastructure failures;
  * re-verify; stop and say why when the failure is not the PR's. A superseded
- * PR is closed only after its recut merges. Without --apply it only prints
- * the plan. See core/autopilot/act.ts.
+ * PR is closed only after its recut merges, and the recut's merge is queued
+ * again once every required check passes on its head. Without --apply it only
+ * prints the plan. See core/autopilot/act.ts.
  */
 import { execFileSync } from 'node:child_process';
 
@@ -14,8 +15,9 @@ const USAGE = `Usage: phm autopilot <pr-number|pr-url|--all> [options]
   --all                  every open PR you authored on an autopilot branch prefix in --repo
   --repo <owner/name>    repository (default: the checkout's origin)
   --checkout <dir>       local clone to work from (default: current directory)
-  --apply                act: push fixes, recut conflicting lanes, merge the base,
-                         re-run infra failures (default: plan only)
+  --apply                act: push fixes, recut conflicting lanes and requeue the
+                         recut's merge, merge the base, re-run infra failures
+                         (default: plan only)
   --fixer "<command>"    agent that reads the brief on stdin and edits files
                          (default: "claude -p --permission-mode acceptEdits")
   --no-fixer             never change code; only merge clean bases and re-run infra

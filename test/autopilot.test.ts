@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 import { cmdAutopilot, parsePrRef, repoFromRemote, splitCommand } from '../src/cli/autopilot.js';
 import { tick, untrustedEnv, verifyPlan } from '../src/core/autopilot/act.js';
-import { emptyState, fixBrief, plan, weakeningRefusals, type CheckRun, type Guards, type Observation } from '../src/core/autopilot/diagnose.js';
-import { readReviews, type Gh } from '../src/core/autopilot/github.js';
+import { emptyState, fixBrief, plan, requiredCheckState, weakeningRefusals, type CheckRun, type Guards, type Observation } from '../src/core/autopilot/diagnose.js';
+import { readRequiredContexts, readReviews, type Gh } from '../src/core/autopilot/github.js';
 
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -16,7 +16,7 @@ const run = (id: number, name: string, conclusion: string | null, status = 'comp
 
 function obs(over: Partial<Observation> = {}, pr: Partial<Observation['pr']> = {}): Observation {
   return {
-    pr: { repo: 'o/r', number: 7, state: 'open', merged: false, draft: false, author: 'bot', title: 'the change', headRef: 'improve/x', headSha: HEAD, headRepo: 'o/r', baseRef: 'main', baseSha: BASE, mergeable: true, mergeableState: 'clean', ...pr },
+    pr: { repo: 'o/r', number: 7, state: 'open', merged: false, draft: false, author: 'bot', title: 'the change', headRef: 'improve/x', headSha: HEAD, headRepo: 'o/r', baseRef: 'main', baseSha: BASE, mergeable: true, mergeableState: 'clean', autoMerge: false, ...pr },
     viewer: 'bot',
     headChecks: [run(1, 'test', 'success'), run(2, 'lint', 'success')],
     baseChecks: [run(10, 'test', 'success'), run(11, 'lint', 'success')],
@@ -125,6 +125,79 @@ describe('autopilot plan', () => {
     expect(plan(o, guards, { ...pending, attempts: { 'recut-open:improve/x-recut': 2 } })).toMatchObject({ action: 'stop' });
     // A recut found under the branch by name waits or closes like a numbered one.
     expect(plan({ ...o, recut: { number: 9, state: 'open', merged: false } }, guards, pending)).toMatchObject({ action: 'wait' });
+  });
+
+  it('requeues an open recut for merge only once every required check passed on its exact head', () => {
+    const RECUT_HEAD = 'e'.repeat(40);
+    const live = (recut: Partial<NonNullable<Observation['recut']>> = {}) =>
+      obs({ recut: { number: 42, state: 'open' as const, merged: false, ...recut } }, { mergeable: false, mergeableState: 'dirty' });
+    const s = { ...emptyState(), recut: { branch: 'improve/x-recut', number: 42, fromHead: HEAD } };
+    const ready = { headSha: RECUT_HEAD, mergeable: true, draft: false, autoMerge: false, requiredChecks: 'green' as const };
+    expect(plan(live(ready), guards, s)).toMatchObject({ action: 'requeue', recut: 42, headSha: RECUT_HEAD });
+    // Anything less than verified-green waits, preserving the required checks:
+    // pending, red, a protection read that names none, or one never read at all.
+    expect(plan(live({ ...ready, requiredChecks: 'pending' }), guards, s)).toMatchObject({ action: 'wait' });
+    expect(plan(live({ ...ready, requiredChecks: 'red' }), guards, s)).toMatchObject({ action: 'wait', reason: expect.stringContaining('required check is red') });
+    expect(plan(live({ ...ready, requiredChecks: 'none' }), guards, s)).toMatchObject({ action: 'wait' });
+    expect(plan(live({ headSha: RECUT_HEAD, mergeable: true, draft: false, autoMerge: false }), guards, s)).toMatchObject({ action: 'wait' });
+    // A draft, a head GitHub cannot place (computing) or a fresh conflict, and
+    // a recut already holding its queue slot all wait without re-asking.
+    expect(plan(live({ ...ready, draft: true }), guards, s)).toMatchObject({ action: 'wait' });
+    expect(plan(live({ ...ready, mergeable: null }), guards, s)).toMatchObject({ action: 'wait' });
+    expect(plan(live({ ...ready, mergeable: false }), guards, s)).toMatchObject({ action: 'wait' });
+    expect(plan(live({ ...ready, autoMerge: true }), guards, s)).toMatchObject({ action: 'wait' });
+    // A branch-named recut without a full read (no head yet) waits too.
+    expect(plan(live({}), guards, { ...emptyState(), recut: { branch: 'improve/x-recut', number: 0, fromHead: HEAD } })).toMatchObject({ action: 'wait' });
+    // Idempotent retries: two refused queue calls at one head stop retrying;
+    // one failure leaves a second try.
+    expect(plan(live(ready), guards, { ...s, attempts: { [`requeue:${RECUT_HEAD}`]: 2 } })).toMatchObject({ action: 'wait', reason: expect.stringContaining('failed twice') });
+    expect(plan(live(ready), guards, { ...s, attempts: { [`requeue:${RECUT_HEAD}`]: 1 } })).toMatchObject({ action: 'requeue' });
+  });
+
+  it('judges required checks on the latest run of each required context', () => {
+    expect(requiredCheckState(null, [])).toBe('none');
+    expect(requiredCheckState([], [run(1, 'test', 'success')])).toBe('none');
+    // A required context that never reported is pending, never green.
+    expect(requiredCheckState(['test'], [])).toBe('pending');
+    expect(requiredCheckState(['test'], [run(1, 'test', null, 'in_progress')])).toBe('pending');
+    expect(requiredCheckState(['test'], [run(1, 'test', 'failure')])).toBe('red');
+    expect(requiredCheckState(['test'], [run(1, 'test', 'success')])).toBe('green');
+    expect(requiredCheckState(['test', 'lint'], [run(1, 'test', 'success'), run(2, 'lint', 'skipped')])).toBe('green');
+    // The newest run decides: a superseding pass clears an earlier failure.
+    expect(requiredCheckState(['test'], [run(1, 'test', 'failure'), run(2, 'test', 'success')])).toBe('green');
+    // A check that is not required does not hold the requeue back.
+    expect(requiredCheckState(['test'], [run(1, 'test', 'success'), run(2, 'advisory', 'failure')])).toBe('green');
+    // A commit status satisfies a required context exactly like a check run.
+    expect(requiredCheckState(['verify'], [], [{ context: 'verify', state: 'success' }])).toBe('green');
+    expect(requiredCheckState(['verify'], [], [{ context: 'verify', state: 'pending' }])).toBe('pending');
+    expect(requiredCheckState(['verify'], [], [{ context: 'verify', state: 'failure' }])).toBe('red');
+    // Both reporting systems under one context name must both be green.
+    expect(requiredCheckState(['verify'], [run(1, 'verify', 'success')], [{ context: 'verify', state: 'pending' }])).toBe('pending');
+    expect(requiredCheckState(['verify'], [run(1, 'verify', 'success')], [{ context: 'verify', state: 'failure' }])).toBe('red');
+  });
+
+  it('reads required contexts from rulesets and classic protection', async () => {
+    const gh: Gh = async (args) => {
+      const path = args[args.length - 1]!;
+      if (path.includes('/rules/branches/main')) return JSON.stringify([
+        { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Merge Gate' }] } },
+        { type: 'pull_request', parameters: {} },
+      ]);
+      if (path.includes('/branches/main/protection')) return JSON.stringify({ required_status_checks: { contexts: ['old-context'], checks: [{ context: 'test' }] } });
+      throw new Error(`unexpected ${path}`);
+    };
+    expect(await readRequiredContexts('o/r', 'main', gh)).toEqual(['Merge Gate', 'old-context', 'test'].sort((a, b) => a.localeCompare(b)));
+    // Neither source readable is unknown, which the gate treats as 'none'.
+    const unreadable: Gh = async () => { throw new Error('403'); };
+    expect(await readRequiredContexts('o/r', 'main', unreadable)).toBeNull();
+    // Read but empty: nothing is required.
+    const empty: Gh = async () => '[]';
+    expect(await readRequiredContexts('o/r', 'main', empty)).toEqual([]);
+    // Classic protection switched off lists contexts without enforcing them.
+    const off: Gh = async (args) => args[args.length - 1]!.includes('/protection')
+      ? JSON.stringify({ required_status_checks: { enforcement_level: 'off', contexts: ['test'] } })
+      : '[]';
+    expect(await readRequiredContexts('o/r', 'main', off)).toEqual([]);
   });
 
   it('brings the base into a head that a strict base would refuse, even while checks run', () => {
@@ -363,22 +436,37 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     const calls: string[] = [];
     let recut42: { state: 'open' | 'closed'; merged: boolean } | null = null;
     let closed7 = false;
-    const pr42 = () => ({ number: 42, state: recut42?.state ?? 'open', merged: recut42?.merged ?? false, draft: false, title: 'the change', user: { login: 'bot' }, head: { ref: 'improve/sum-recut', sha: head, repo: { full_name: 'o/r' } }, base: { ref: 'main', sha: base }, mergeable: true, mergeable_state: 'clean' });
+    // Live knobs for the recut's replacement PR: its pushed head, the check runs
+    // on that head, the contexts the base requires, its queue slot and whether
+    // asking GitHub to queue it fails.
+    const recut = { sha: '', checks: [] as object[], statuses: [] as object[], queued: false, draft: false, required: [] as string[], mergeCalls: [] as string[], failMerges: 0 };
+    const ghRun = (id: number, name: string, conclusion: string | null, status = 'completed') => ({ id, name, status, conclusion, app: { slug: 'github-actions' } });
+    const pr42 = () => ({ number: 42, state: recut42?.state ?? 'open', merged: recut42?.merged ?? false, draft: recut.draft, title: 'the change', user: { login: 'bot' }, head: { ref: 'improve/sum-recut', sha: recut.sha || head, repo: { full_name: 'o/r' } }, base: { ref: 'main', sha: base }, mergeable: true, mergeable_state: 'clean', auto_merge: recut.queued ? { merge_method: 'squash' } : null });
     const gh: Gh = async (args) => {
       const path = args[args.length - 1]!;
       calls.push(args.join(' '));
+      if (args[0] === 'pr' && args[1] === 'merge') {
+        recut.mergeCalls.push(args.join(' '));
+        if (recut.failMerges > 0) { recut.failMerges--; throw new Error('queue refused'); }
+        recut.queued = true;
+        return '';
+      }
       if (args[1] === '-X' && args[2] === 'POST' && args[3] === 'repos/o/r/pulls') { recut42 = { state: 'open', merged: false }; return JSON.stringify({ number: 42 }); }
       if (args[1] === '-X' && args[2] === 'POST' && args[3] === 'repos/o/r/issues/7/comments') return '{}';
       if (args[1] === '-X' && args[2] === 'PATCH' && args[3] === 'repos/o/r/pulls/7') { closed7 = true; return '{}'; }
       if (path.endsWith('/pulls/42')) return JSON.stringify(pr42());
       if (path.startsWith('repos/o/r/pulls?')) return JSON.stringify(recut42 ? [pr42()] : []);
+      if (path.includes('/rules/branches/')) return JSON.stringify(recut.required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: recut.required.map((context) => ({ context })) } }] : []);
+      if (path.endsWith('/protection')) throw new Error('404 Not Found');
+      if (path.includes('/check-runs') && recut.sha && path.includes(`/commits/${recut.sha}/`)) return JSON.stringify({ check_runs: recut.checks });
+      if (path.includes('/commits/') && path.endsWith('/status')) return JSON.stringify({ statuses: recut.statuses });
       if (path.endsWith('/pulls/7')) {
         const pr = JSON.parse(await f.gh(args));
         return JSON.stringify({ ...pr, title: 'the change', state: closed7 ? 'closed' : 'open', head: { ...pr.head, sha: head }, base: { ref: 'main', sha: base }, mergeable: false, mergeable_state: 'dirty' });
       }
       return f.gh(args);
     };
-    return { ...f, head, base, gh, calls, closed7: () => closed7, mergeRecut: () => { recut42 = { state: 'closed', merged: true }; } };
+    return { ...f, head, base, gh, calls, recut, ghRun, closed7: () => closed7, mergeRecut: () => { recut42 = { state: 'closed', merged: true }; } };
   }
 
   it('recuts a conflicting lane onto the current base, waits on the replacement, then closes the old PR once it merges', async () => {
@@ -429,6 +517,101 @@ describe('autopilot tick (real git, fake GitHub)', () => {
     expect(r2).toMatchObject({ plan: 'recut', result: 'recut' });
     expect(posts).toBe(2);
     expect(git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0]).toBe(r.newHead);
+  });
+
+  it('requeues the recut for merge once its required checks pass, pinned to its exact head', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    f.recut.required = ['test', 'verify'];
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
+
+    const r = await tick(opts);
+    expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'recut', result: 'recut' });
+    f.recut.sha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
+    expect(f.recut.sha).toBe(r.newHead);
+
+    // A required check still running on the recut head waits; nothing is queued.
+    f.recut.checks = [f.ghRun(9, 'test', null, 'in_progress')];
+    expect((await tick(opts)).plan).toBe('wait');
+    expect(f.recut.mergeCalls).toEqual([]);
+
+    // A required context a commit status reports is honored the same as a check run.
+    f.recut.statuses = [{ id: 5, context: 'verify', state: 'success' }];
+    expect((await tick(opts)).plan).toBe('wait');
+    expect(f.recut.mergeCalls).toEqual([]);
+
+    // Required checks green on the head → the recut's merge is queued, pinned to it.
+    f.recut.checks = [f.ghRun(9, 'test', 'success')];
+    const q = await tick(opts);
+    expect(q, q.detail.join(' | ')).toMatchObject({ plan: 'requeue', result: 'requeued' });
+    expect(f.recut.mergeCalls).toEqual([`pr merge 42 --repo o/r --squash --auto --match-head-commit ${f.recut.sha}`]);
+    const state = JSON.parse(readFileSync(join(f.root, 'home', 'autopilot', 'state', 'o__r__7.json'), 'utf8'));
+    expect(state.attempts[`requeue:${f.recut.sha}`]).toBe(1);
+
+    // GitHub now reports the queueing: the next tick waits without asking again.
+    expect((await tick(opts)).plan).toBe('wait');
+    expect(f.recut.mergeCalls).toHaveLength(1);
+
+    // A merged recut still supersedes and closes the old PR.
+    f.mergeRecut();
+    expect(await tick(opts)).toMatchObject({ plan: 'close-superseded', result: 'closed' });
+  });
+
+  it('never requeues a recut while a required check is missing, pending, red or it is a draft', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    f.recut.required = ['test', 'lint'];
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
+    const r = await tick(opts);
+    expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'recut', result: 'recut' });
+    f.recut.sha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
+
+    // lint never reported → the required set is pending, not green.
+    f.recut.checks = [f.ghRun(9, 'test', 'success')];
+    expect((await tick(opts)).plan).toBe('wait');
+    expect(f.recut.mergeCalls).toEqual([]);
+    // A red required check is surfaced, never queued over.
+    f.recut.checks = [f.ghRun(9, 'test', 'success'), f.ghRun(10, 'lint', 'failure')];
+    expect(await tick(opts)).toMatchObject({ plan: 'wait', reason: expect.stringContaining('required check is red') });
+    expect(f.recut.mergeCalls).toEqual([]);
+    // Even fully green, a draft recut is never queued.
+    f.recut.checks = [f.ghRun(9, 'test', 'success'), f.ghRun(10, 'lint', 'success')];
+    f.recut.draft = true;
+    expect((await tick(opts)).plan).toBe('wait');
+    expect(f.recut.mergeCalls).toEqual([]);
+    // Marked ready, it queues.
+    f.recut.draft = false;
+    expect(await tick(opts)).toMatchObject({ plan: 'requeue', result: 'requeued' });
+  });
+
+  it('retries a refused merge queue call once per head, then waits for a person', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    f.recut.required = ['test'];
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
+    const r = await tick(opts);
+    expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'recut', result: 'recut' });
+    f.recut.sha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
+    f.recut.checks = [f.ghRun(9, 'test', 'success')];
+    f.recut.failMerges = 2;
+
+    // Each refused call is counted before asking, so the retry cannot burst.
+    expect(await tick(opts)).toMatchObject({ plan: 'requeue', result: 'error' });
+    expect(await tick(opts)).toMatchObject({ plan: 'requeue', result: 'error' });
+    // Two refusals at one head stop asking; nothing is queued by accident.
+    expect(await tick(opts)).toMatchObject({ plan: 'wait', reason: expect.stringContaining('failed twice') });
+    expect(f.recut.mergeCalls).toHaveLength(2);
+    expect(f.recut.queued).toBe(false);
+  });
+
+  it('queues nothing when the base requires no checks or its protection cannot be read', async () => {
+    const f = conflicting(`echo 'module.exports = (a, b) => a + b;' > sum.js`);
+    const opts = { repo: 'o/r', number: 7, checkout: f.clone, apply: true, fixer: [f.fixer], verify: [] as string[][], ownedPrefixes: ['improve/'], gh: f.gh as Gh, guards: () => ({ killSwitch: false, paused: false }) };
+    const r = await tick(opts);
+    expect(r, r.detail.join(' | ')).toMatchObject({ plan: 'recut', result: 'recut' });
+    f.recut.sha = git(f.clone, 'ls-remote', f.origin, 'refs/heads/improve/sum-recut').split('\t')[0];
+    f.recut.checks = [f.ghRun(9, 'test', 'success')];
+    // No required contexts were read: the autopilot never queues a head nothing gates.
+    expect((await tick(opts)).plan).toBe('wait');
+    expect((await tick(opts)).plan).toBe('wait');
+    expect(f.recut.mergeCalls).toEqual([]);
   });
 
   it('pushes a conflict resolution that touches only the conflicted files', async () => {
