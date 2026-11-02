@@ -364,6 +364,7 @@ async function cmdCycle(): Promise<number> {
         processedDir: processedDir ?? join(inboxDir, '..', 'processed'),
         allowedSenders: new Set(from), runsDir, busRoot: join(ashlrHome(), 'fleet'),
       });
+      if (counts.unsafeFolder) console.error(`cycle: email-drop refused, the ${counts.unsafeFolder} folder is writable by other users; run chmod o-w on it`);
       console.log(`cycle: email-drop accepted=${counts.accepted} duplicate=${counts.duplicate} refused=${counts.refused} failed=${counts.failed}`);
       // RQ-PHX-EMAILOUTBOXSEND02: opt-in reply send. Off by default — a config
       // with no sendReplies field behaves exactly as before. A failed send
@@ -546,7 +547,7 @@ function printCommsHelp(): void {
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
-  console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (verified senders only)');
+  console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
   console.log('    status                       config + pending/outstanding + watermark');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
@@ -640,7 +641,7 @@ const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address
 
 async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records verified senders in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\n--send-replies with --save-config lets 'ashlr comms cycle' send queued replies via Mail.app.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
+    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records messages whose From is allowlisted in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\n--send-replies with --save-config lets 'ashlr comms cycle' send queued replies via Mail.app.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
     return 0;
   }
   const badOption = rejectUnknownOptions(args, {
@@ -697,7 +698,7 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   if (inboxDir === undefined) return badUsage();
   if (watchSeconds !== undefined && once) return badUsage('--once and --watch are mutually exclusive');
   if (senders.size === 0) {
-    return badUsage('email-drop needs at least one --from <address>; with no verified sender list every message is refused');
+    return badUsage('email-drop needs at least one --from <address>; with no allowlisted From address every message is refused');
   }
 
   const { runEmailDropOnce } = await import('../core/comms/email-drop-bridge.js');
@@ -708,7 +709,8 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
     allowedSenders: senders,
   };
   let savedConfig: string | undefined;
-  const emit = (counts: { accepted: number; duplicate: number; refused: number; failed: number }): void => {
+  const emit = (counts: { accepted: number; duplicate: number; refused: number; failed: number; unsafeFolder?: string }): void => {
+    if (counts.unsafeFolder) console.error(`email-drop: refused, the ${counts.unsafeFolder} folder is writable by other users; run chmod o-w on it`);
     console.log(json
       ? JSON.stringify(savedConfig ? { ...counts, savedConfig } : counts)
       : `email-drop: accepted=${counts.accepted} duplicate=${counts.duplicate} refused=${counts.refused} failed=${counts.failed}`);
