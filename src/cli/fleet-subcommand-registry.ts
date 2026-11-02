@@ -71,6 +71,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'guardian-resume': () => import('./fleet-guardian-resume.js'),
   'guardian-retry': () => import('./fleet-guardian-retry.js'),
   'guardian-verify': () => import('./fleet-guardian-verify.js'),
+  'guardian-wait-continue': () => import('./fleet-guardian-wait-continue.js'),
   'handoff-pipe': () => import('./fleet-handoff-pipe.js'),
   'handoff-receive': () => import('./fleet-handoff-receive.js'),
   'handoff-reply': () => import('./fleet-handoff-reply.js'),
@@ -141,4 +142,5 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'window-plan': () => import('./fleet-window-plan.js'),
   'workers': () => import('./fleet-workers.js'),
   'worktrees': () => import('./fleet-worktrees.js'),
+  'wt-reap': () => import('./fleet-wt-reap.js'),
 };
