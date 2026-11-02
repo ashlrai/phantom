@@ -1,0 +1,7 @@
+.scroll { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: var(--text-sm-size); }
+.table th, .table td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-subtle); }
+.caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.leader { font-weight: var(--font-weight-semibold); }
+.leaderNote { font-size: var(--text-sm-size); }
+.problem { margin: var(--space-2) 0 0; }

@@ -81,6 +81,7 @@ import {
   type PublicDaemonObservation,
 } from '../daemon/public-observation.js';
 import { serviceStatus } from '../daemon/service.js';
+import { buildNodesSnapshot } from '../nodes/view.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
@@ -2085,6 +2086,15 @@ export async function handleApi(
         ? await ctx.readProjections.read('control')
         : await buildControlSnapshot(cfg);
       sendJson(res, 200, snapshot);
+      return true;
+    }
+
+    // ── GET /api/nodes ───────────────────────────────────────────────────────
+    // phantom.nodes.v1: nodes, caps, heartbeat age, live jobs, leader. Read-only
+    // and secret-free by construction (src/core/nodes/view.ts); same read class
+    // as /api/control.
+    if (path === '/api/nodes' && method === 'GET') {
+      sendJson(res, 200, buildNodesSnapshot());
       return true;
     }
 
