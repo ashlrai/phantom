@@ -351,3 +351,15 @@ the live queue or GitHub:
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
 ```
+
+Restock and dispatch share `launch_precheck.py`: precheck exit codes 10–13
+retire a line as `DONE-NOOP` before restock writes a prompt, claim, or
+`ready.tsv` entry. Errors and timeouts keep the existing fail-open behavior;
+dispatch checks again at launch. Preview without changing queue files:
+
+```sh
+python3 contrib/mac/restock.py --dry-run --json
+# {"dry_run": true, "queued": 0, "done_noop": ["RQ-EXAMPLE"], "skips": {"done-noop": 1}}
+```
+
+`install.sh` installs the restocker and shared module alongside dispatchd.
