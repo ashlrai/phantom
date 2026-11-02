@@ -112,6 +112,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'reset-release': () => import('./fleet-reset-release.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
   'self-loop': () => import('./fleet-self-loop.js'),
+  'self-loop-await': () => import('./fleet-self-loop-await.js'),
   'self-loop-record': () => import('./fleet-self-loop-record.js'),
   'self-tick': () => import('./fleet-self-tick.js'),
   'self-tick-await': () => import('./fleet-self-tick-await.js'),
