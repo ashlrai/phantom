@@ -60,28 +60,58 @@ export async function readReceiptFile(path: string): Promise<ReadResult> {
 }
 
 interface Evaluated { startedAt: string; finishedAt: string; summary: Record<string, unknown>; fresh: boolean }
+type Outcome = Evaluated | 'running';
 
-// Returns undefined for any shape deviation; lastReport is deliberately dropped.
-function evaluate(text: string, after: number): Evaluated | undefined {
-  let value: unknown;
-  try { value = JSON.parse(text); } catch { return undefined; }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const r = value as Record<string, unknown>;
-  const s = r['summary'];
-  if (r['v'] !== 1 || !s || typeof s !== 'object' || Array.isArray(s)) return undefined;
-  const m = s as Record<string, unknown>;
-  const started = parseIso(r['startedAt']), finished = parseIso(r['finishedAt']);
-  if (started === undefined || finished === undefined || finished < started) return undefined;
-  const count = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+
+// Allowlisted copy of a loop summary, or undefined; lastReport is deliberately dropped.
+function pickSummary(m: Record<string, unknown>): Record<string, unknown> | undefined {
   const keys = ['elapsedMs', 'durationMs', 'intervalMs', 'ticks', 'failures', 'busy'] as const;
   if (m['v'] !== 1 || parseIso(m['startedAt']) === undefined || parseIso(m['endedAt']) === undefined
-    || !keys.every(k => count(m[k])) || (m['failures'] as number) > (m['ticks'] as number)
+    || !keys.every(k => isCount(m[k])) || (m['failures'] as number) > (m['ticks'] as number)
     || (m['busy'] as number) > (m['ticks'] as number)
     || typeof m['termination'] !== 'string' || !TERMINATIONS.includes(m['termination'])
-    || (m['maxTicks'] !== undefined && !(count(m['maxTicks']) && m['maxTicks'] > 0))) return undefined;
+    || (m['maxTicks'] !== undefined && !(isCount(m['maxTicks']) && m['maxTicks'] > 0))) return undefined;
   const summary: Record<string, unknown> = { startedAt: m['startedAt'], endedAt: m['endedAt'] };
   for (const k of [...keys, 'maxTicks'] as const) if (m[k] !== undefined) summary[k] = m[k];
   summary['termination'] = m['termination'];
+  return summary;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+// Live snapshot from `self-loop-record --live`: running (keep polling) or completed.
+// latest.report is never read, and latest.lastReport is dropped by pickSummary.
+function evaluateLive(r: Record<string, unknown>, after: number): Outcome | undefined {
+  const started = parseIso(r['startedAt']), updated = parseIso(r['updatedAt']);
+  const latest = r['latest'];
+  if (r['v'] !== 1 || started === undefined || updated === undefined || updated < started
+    || r['summary'] !== undefined || r['finishedAt'] !== undefined || !isObject(latest)) return undefined;
+  if (r['status'] === 'running') {
+    const pass = latest['pass'], exit = latest['exitCode'];
+    if (latest['v'] !== 1 || latest['record'] !== 'pass' || typeof pass !== 'number' || !Number.isSafeInteger(pass)
+      || pass < 1 || typeof exit !== 'number' || !Number.isSafeInteger(exit)) return undefined;
+    return 'running';
+  }
+  if (r['status'] !== 'completed' || latest['record'] !== 'summary') return undefined;
+  const summary = pickSummary(latest);
+  if (!summary) return undefined;
+  return { startedAt: r['startedAt'] as string, finishedAt: r['updatedAt'] as string, summary, fresh: started >= after };
+}
+
+// Returns undefined for any shape deviation.
+function evaluate(text: string, after: number): Outcome | undefined {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return undefined; }
+  if (!isObject(value)) return undefined;
+  const r = value;
+  if (Object.hasOwn(r, 'status')) return evaluateLive(r, after);
+  const s = r['summary'];
+  if (r['v'] !== 1 || !isObject(s)) return undefined;
+  const started = parseIso(r['startedAt']), finished = parseIso(r['finishedAt']);
+  if (started === undefined || finished === undefined || finished < started) return undefined;
+  const summary = pickSummary(s);
+  if (!summary) return undefined;
   return { startedAt: r['startedAt'] as string, finishedAt: r['finishedAt'] as string, summary, fresh: started >= after };
 }
 
@@ -119,7 +149,7 @@ export async function cmdFleetSelfLoopAwait(args: string[], deps: Dependencies =
     if (result.kind === 'text') {
       const record = evaluate(result.text, after);
       if (!record) { emit(false, 'malformed record'); return 1; }
-      if (record.fresh) {
+      if (record !== 'running' && record.fresh) {
         const failed = record.summary['termination'] === 'observer-error' || (record.summary['failures'] as number) > 0;
         emit(!failed, failed ? 'loop failed' : 'completed',
           { startedAt: record.startedAt, finishedAt: record.finishedAt, summary: record.summary });
