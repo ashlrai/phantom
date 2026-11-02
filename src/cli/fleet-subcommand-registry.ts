@@ -99,6 +99,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'reset-release': () => import('./fleet-reset-release.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
   'self-tick': () => import('./fleet-self-tick.js'),
+  'self-tick-schedule': () => import('./fleet-self-tick-schedule.js'),
   'session': () => import('./fleet-session.js'),
   'ship-gap': () => import('./fleet-ship-gap.js'),
   'skill-calibration': () => import('./fleet-skill-calibration.js'),
