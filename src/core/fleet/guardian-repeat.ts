@@ -1,4 +1,5 @@
 import { lstat } from 'node:fs/promises';
+import { readGuardianDrainCheckpoint } from './guardian-drain-checkpoint.js';
 import { createGuardianDrainSession, guardianDrainStopStatus } from './guardian-drain-session.js';
 import { drainGuardianInfraRetries, type GuardianDrainDeps, type GuardianDrainSummary, type GuardianDrainTermination } from './guardian-retry-drain.js';
 
@@ -22,7 +23,7 @@ export interface GuardianRepeatDrainRequest {
   manifest: string; sourceState: string; outputDir: string;
   maxRetries: number; timeoutMs: number; apply: boolean; stopFile?: string; signal?: AbortSignal;
 }
-export interface GuardianRepeatDrainResult { summary: GuardianDrainSummary; session: string | null }
+export interface GuardianRepeatDrainResult { summary: GuardianDrainSummary; session: string | null; checkpoint?: string | null }
 export type GuardianRepeatDrain = (request: GuardianRepeatDrainRequest) => Promise<GuardianRepeatDrainResult>;
 
 export interface GuardianRepeatDeps {
@@ -64,7 +65,10 @@ export const drainWithFreshSession = (deps: GuardianDrainDeps = {}, now?: () => 
     if (preflight || session === null) {
       return { summary: { mode: 'apply', termination: preflight ?? 'unsafe', attempts: 0, verified: 0, refused: 0, attempted: [], planned: [], latestOutput: null }, session: null };
     }
-    return { summary: await drainGuardianInfraRetries({ ...request, outputDir: session, now }, deps), session };
+    const summary = await drainGuardianInfraRetries({ ...request, outputDir: session, now }, deps);
+    let checkpoint: string | null = null;
+    try { checkpoint = readGuardianDrainCheckpoint(session)?.latestOutput ?? null; } catch { /* no safe resumable checkpoint */ }
+    return { summary, session, checkpoint };
   };
 
 const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise<void>(resolve => {
@@ -115,7 +119,6 @@ export async function repeatGuardianDrains(
     const drained = result.summary;
     summary.passes++; summary.attempts += drained.attempts;
     summary.verified += drained.verified; summary.refused += drained.refused;
-    if (result.session) summary.session = result.session;
     const ok = REPEATABLE.has(drained.termination);
     if (options.idleBackoffMaxMs !== undefined) {
       if (drained.termination === 'no-work' && drained.refused === 0) {
@@ -124,7 +127,11 @@ export async function repeatGuardianDrains(
       } else { consecutiveIdle = 0; nextDelayMs = options.intervalMs; }
     }
     // Only a completed successful drain's verified state becomes the next source.
-    if (ok && drained.latestOutput) { source = drained.latestOutput; summary.latestOutput = drained.latestOutput; }
+    if (ok && drained.latestOutput) source = drained.latestOutput;
+    const checkpoint = result.checkpoint === undefined ? drained.latestOutput : result.checkpoint;
+    if (options.apply && checkpoint && result.session) {
+      summary.latestOutput = checkpoint; summary.session = result.session;
+    }
     try {
       await deps.onPass?.({ pass: summary.passes, termination: drained.termination, attempts: drained.attempts,
         verified: drained.verified, refused: drained.refused, latestOutput: drained.latestOutput, session: result.session,
