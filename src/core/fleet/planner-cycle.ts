@@ -18,6 +18,7 @@
  * contents are never read here.
  */
 import { executePlannerPass } from './planner-pass.js';
+import { acquirePlannerCycleLock } from './planner-cycle-lock.js';
 import { readPlannerPassOutput, summarizePlannerPassOutput, type PlannerPassOutput } from './planner-pass-output.js';
 import type { PlannerRunResult } from './planner-run.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -118,12 +119,34 @@ function shellEvidence(
 /**
  * Run one planner cycle. `opts.runsRoot` and `opts.promptPath` must already be
  * absolute; `apply` false previews the selection without spawning. Apply mode
- * makes exactly one executePlannerPass call — no retry — then reads output
+ * that acquires the guard makes one executePlannerPass call — no retry — then reads output
  * evidence over the run's reported bounds.
  */
 export async function runPlannerCycle(
   opts: { runsRoot: string; promptPath: string; apply?: boolean; home?: string; now?: () => number },
   deps: PlannerCycleDeps = defaultPlannerCycleDeps,
+): Promise<{ report: PlannerCycleReport; exitCode: number }> {
+  if (opts.apply !== true) return runPlannerCycleUnlocked(opts, deps);
+  const refused = (verdict: 'skipped' | 'failed', reason: string): { report: PlannerCycleReport; exitCode: number } => ({
+    exitCode: plannerCycleExit(verdict), report: {
+      v: 1, mode: 'apply', verdict,
+      execution: { outcome: 'not-run', provider: null, exitCode: null, reason, logPath: null, startedAt: null, finishedAt: null, nextResetAt: null },
+      evidence: shellEvidence('not-collected', 'no planner run executed; nothing produced observable output'),
+    },
+  });
+  const lock = acquirePlannerCycleLock(opts.runsRoot);
+  if (lock.state === 'busy') return refused('skipped', 'planner cycle is busy; if abandoned, inspect and remove the apply lock after confirming no cycle is running');
+  if (lock.state !== 'acquired') return refused('failed', 'planner cycle lock storage is unavailable or unsafe');
+  let released = false;
+  let outcome: { report: PlannerCycleReport; exitCode: number };
+  try { outcome = await runPlannerCycleUnlocked(opts, deps); }
+  finally { released = lock.release(); }
+  return released ? outcome : refused('failed', 'planner cycle lock ownership was lost or release failed; inspect lock storage');
+}
+
+async function runPlannerCycleUnlocked(
+  opts: { runsRoot: string; promptPath: string; apply?: boolean; home?: string; now?: () => number },
+  deps: PlannerCycleDeps,
 ): Promise<{ report: PlannerCycleReport; exitCode: number }> {
   const apply = opts.apply === true;
   const done = (report: PlannerCycleReport): { report: PlannerCycleReport; exitCode: number } =>
