@@ -9,11 +9,14 @@
  *
  * Admission is decided by the clock, never by the loop counter: the first
  * pass starts immediately, and a further pass is admitted only while the
- * clock is still before the deadline and the abort signal is silent. A pass
- * already in flight when the deadline passes (or a signal arrives) finishes
- * normally — the loop never interrupts a tick. Sequencing is one awaited
- * tick, then one awaited sleep of the interval capped to the budget left
- * before the deadline: passes can therefore never overlap, and a window
+ * clock is still before the deadline and the abort signal is silent. If the
+ * abort signal is already set when runSelfLoop is called (pre-abort), the
+ * loop admits no pass at all, invokes neither tick nor sleep, and returns
+ * an interrupted summary with zero ticks, failures, and busy counters. A
+ * pass already in flight when the deadline passes (or a signal arrives)
+ * finishes normally — the loop never interrupts a tick. Sequencing is one
+ * awaited tick, then one awaited sleep of the interval capped to the budget
+ * left before the deadline: passes can therefore never overlap, and a window
  * shorter than the interval ends at its deadline, not one interval after it.
  * A nonzero or throwing tick ends that pass as a failure and the loop
  * continues; a tick reporting state 'busy' is counted and likewise
@@ -138,10 +141,29 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   let consecutiveBusy = 0, busyDelayMs = options.intervalMs;
   let lastReport: unknown = null;
   let observerError: string | undefined;
-  // The first pass is always admitted; after that, only before the deadline
-  // and while no interruption is pending. An in-flight pass always finishes.
-  while (ticks === 0 || (!signal.aborted && now() < deadline
-    && (maxTicks === undefined || ticks < maxTicks))) {
+  // A pre-aborted signal admits no pass at all: return immediately with
+  // zero ticks, failures, and busy counters (the summary still reads
+  // 'interrupted').  Otherwise the first pass is admitted; subsequent
+  // passes only before the deadline and while no interruption is pending.
+  // An in-flight pass always finishes.
+  if (signal.aborted) {
+    const end = now();
+    return {
+      v: 1,
+      startedAt: new Date(start).toISOString(),
+      endedAt: new Date(end).toISOString(),
+      elapsedMs: end - start,
+      durationMs: options.durationMs,
+      intervalMs: options.intervalMs,
+      ticks: 0,
+      failures: 0,
+      busy: 0,
+      termination: 'interrupted',
+      lastReport: null,
+    };
+  }
+  while (!signal.aborted && now() < deadline
+    && (maxTicks === undefined || ticks < maxTicks)) {
     let outcome: SelfLoopTickOutcome;
     try {
       outcome = await options.tick();
