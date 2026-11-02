@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">Phantom for agents</title>
+  <desc id="desc">Diagram of the agent path: one install command, one MCP gateway for Claude, Cursor, and Codex, and a JSON result beside a diff. This is not a live session and no work is running.</desc>
+  <rect width="1200" height="640" fill="#0B1020"/>
+  <text x="64" y="72" fill="#93A0B8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18">phm agent path</text>
+  <text x="64" y="118" fill="#E8EEF9" font-family="ui-sans-serif, system-ui, sans-serif" font-size="40" font-weight="700">Install once. Call JSON. Review the record.</text>
+  <g>
+    <rect x="64" y="168" width="500" height="400" rx="18" fill="#141A2A" stroke="#2A3550"/>
+    <text x="92" y="214" fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16">terminal</text>
+    <text x="92" y="268" fill="#E8EEF9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22">$ npm install -g @ashlr/phantom</text>
+    <text x="92" y="312" fill="#E8EEF9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22">$ phm docs --agent --json</text>
+    <text x="92" y="356" fill="#E8EEF9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22">$ phm mcp list --json</text>
+    <text x="92" y="400" fill="#E8EEF9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22">$ phm wire status --json</text>
+    <text x="92" y="470" fill="#93A0B8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18">stdout is JSON. Tokens from the console stay on this machine.</text>
+  </g>
+  <g>
+    <rect x="636" y="168" width="500" height="186" rx="18" fill="#141A2A" stroke="#2A3550"/>
+    <text x="664" y="214" fill="#8B7CFF" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16">mcp ashlr-hub</text>
+    <text x="664" y="262" fill="#E8EEF9" font-family="ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="650">Claude, Cursor, Codex</text>
+    <text x="664" y="306" fill="#93A0B8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18">command: ashlr    args: ["mcp"]</text>
+  </g>
+  <g>
+    <rect x="636" y="382" width="500" height="186" rx="18" fill="#141A2A" stroke="#2A3550"/>
+    <text x="664" y="428" fill="#3DDC97" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16">what you review</text>
+    <text x="664" y="476" fill="#E8EEF9" font-family="ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="650">JSON, diff, recorded run</text>
+    <text x="664" y="520" fill="#93A0B8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18">A green exit code is not a merge.</text>
+  </g>
+</svg>

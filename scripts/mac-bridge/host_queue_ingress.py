@@ -18,7 +18,9 @@ from types import SimpleNamespace
 import host_queue
 
 JOB_FILE = re.compile(r'(RQ-PHX-[A-Z0-9]{3,40})\.md\Z')
-HEADER = re.compile(rb'#job repo=phantom lane=(claude|codex-personal|devin|codex-local) tier=(frontier|work|mid|fast)\Z')
+LANES = ('claude', 'codex-personal', 'devin', 'codex-local')
+HEADER = re.compile(rb'#job repo=phantom lane=(%s) tier=(frontier|work|mid|fast)\Z'
+                    % '|'.join(LANES).encode('ascii'))
 MAX_SCAN = 4096
 BATCH = 100
 
@@ -59,6 +61,12 @@ def snapshot(directory, name):
         return None
 
 
+def header_lane(data):
+    """Lane named by the validated immutable snapshot's header line."""
+    match = HEADER.fullmatch(data.split(b'\n', 1)[0].removesuffix(b'\r'))
+    return match.group(1).decode('ascii') if match else None
+
+
 def existing(db_path, job, data):
     # mode=ro cannot create a new database if the coordinator disappears.
     uri = Path(db_path).absolute().as_uri() + '?mode=ro'
@@ -71,7 +79,8 @@ def existing(db_path, job, data):
 
 def cycle(args):
     result = {'eligible': [], 'inserted': [], 'duplicate': [], 'conflict': [],
-              'deferred': [], 'excluded': 0}
+              'deferred': [], 'excluded': 0, 'filtered': 0}
+    lanes = set(getattr(args, 'lane', None) or ())
     directory = os.open(args.drop_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         # Refuse oversized directories before submitting anything; never silently truncate.
@@ -92,6 +101,9 @@ def cycle(args):
             data = snapshot(directory, name)
             if data is None:
                 result['excluded'] += 1
+                continue
+            if lanes and header_lane(data) not in lanes:
+                result['filtered'] += 1
                 continue
             job = match.group(1)
             if not args.apply:
@@ -135,7 +147,12 @@ def parse_args(argv):
     schedule.add_argument('--cycles', type=bounded(1000))
     parser.add_argument('--interval', type=bounded(3600), default=1, help='seconds between cycles')
     parser.add_argument('--apply', action='store_true', help='submit eligible files')
-    return parser.parse_args(argv)
+    parser.add_argument('--lane', action='append', choices=LANES,
+                        help='admit only drop files with these header lanes (repeatable)')
+    args = parser.parse_args(argv)
+    if args.lane:
+        args.lane = sorted(set(args.lane))
+    return args
 
 
 def main(argv=None, deps=None, out=None):
