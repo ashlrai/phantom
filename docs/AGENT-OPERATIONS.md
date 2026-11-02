@@ -21,6 +21,7 @@ either name.
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
 | Type check (backend + web) | `npm run typecheck` |
+| Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
 | Fast unit lane with per-file timing | `npm run test:fast` (report: `.ashlr-gate/test-fast-durations.json`) |
