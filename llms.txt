@@ -1,2 +1,3 @@
 
+- [Provider capacity cards](docs/PROVIDER-CARDS.md): `phm resource --cards --json`, usage and burn-down per provider, unknown stays unknown.
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.

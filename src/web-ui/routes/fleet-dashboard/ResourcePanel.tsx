@@ -1,30 +1,20 @@
-import { useEffect } from 'react';
-import type { ResourceView } from '../../../core/fabric/resource-view.js';
-import { apiGet } from '../../data/client.js';
-import { useQuery, useRefetch, useRefresh } from '../../data/hooks.js';
-import type { QueryDef } from '../../data/queries.js';
+import { useRefresh } from '../../data/hooks.js';
+import { ProviderCards, resourceViewQuery, useResourceView } from '../resources/ProviderCards.js';
 import styles from './ResourcePanel.module.css';
 
-export const resourceViewQuery: QueryDef<ResourceView> = {
-  key: 'resource-view', fetch: signal => apiGet<ResourceView>('/api/resource', signal),
-};
 const pct = (value: number | null) => value === null ? 'unknown' : `${value.toFixed(1)}%`;
 const date = (value: string | null) => value === null ? 'unknown' : new Date(value).toLocaleString();
 
 /** Both fleet surfaces read the same file projection; no client-side quota or admission math. */
 export function ResourcePanel() {
-  const query = useQuery(resourceViewQuery);
-  const refresh = useRefetch(resourceViewQuery);
+  const query = useResourceView();
   const manualRefresh = useRefresh(resourceViewQuery);
-  useEffect(() => {
-    const timer = window.setInterval(refresh, 15_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
   const view = query.data;
   return <section className={styles.panel} aria-label="Resource capacity">
     <header className={styles.header}><h2>Resource capacity</h2><button type="button" onClick={manualRefresh}>Refresh</button></header>
     {query.status === 'error' ? <p role="alert">Resource capacity unavailable. Last readings are not current.</p>
       : !view ? <p role="status">Loading resource capacity...</p> : <>
+        <ProviderCards view={view} />
         <div className={styles.scroll}><table>
           <caption>Pool usage and pace to each reset</caption>
           <thead><tr><th scope="col">Pool</th><th scope="col">Status</th><th scope="col">Used</th><th scope="col">Burn / hour</th><th scope="col">Pace</th><th scope="col">Reset</th><th scope="col">Exhaustion estimate</th></tr></thead>

@@ -1,0 +1,12 @@
+Provider marks in the capacity cards
+
+The OpenAI, Anthropic, Cognition / Devin and xAI logos are trademarks of their
+owners. None ships with a licence compatible with this repository's MIT
+licence, so Phantom does not bundle them. The capacity cards
+(src/web-ui/routes/resources/ProviderMark.tsx) show one-letter monograms
+instead.
+
+The "local" chip is an SVG drawn for this repository and is covered by the same
+MIT licence as PHANTOM-ICON-LICENSE.txt.
+
+Add a real vendor logo only after recording its licence here.

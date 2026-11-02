@@ -31,6 +31,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 ## Tools for agents working here
 - This repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
+- Check provider capacity before launching work: `phm resource --cards --json` (usage numbers only, shown as unknown when unread). Guide: [docs/PROVIDER-CARDS.md](docs/PROVIDER-CARDS.md).
 
 ## Agents may
 - Create branches, commit, and open pull requests.
