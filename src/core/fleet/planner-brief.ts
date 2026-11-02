@@ -15,7 +15,9 @@ const INBOX_BUDGET = 256 * 1024;
 const INBOX_BUDGET_LABEL = '256 KiB';
 /** Public-shape job id; malformed ledger cells must never reach the prompt. */
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
-/** The only heading shape MASON-INBOX.md producers write; it opens an entry. */
+/** Channel-tagged timestamp lines also open independent inbox entries. */
+const INBOX_CHANNEL_LINE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})\s+\[src:[a-z0-9._-]{1,32}(?:\s+id:[A-Za-z0-9._:-]{1,64})?\]\s+\S/;
+/** The Markdown heading shape MASON-INBOX.md producers write; it opens an entry. */
 const INBOX_HEADING = /^## \d{4}-\d{2}-\d{2} \d{2}:\d{2} ET \(/;
 // eslint-disable-next-line no-control-regex -- ledger titles must stay a single printable line.
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
@@ -118,7 +120,7 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     const entries: Array<{ heading: string; body: string[] }> = [];
     let fragment = 0;
     for (const line of lines(inbox)) {
-      if (INBOX_HEADING.test(line)) entries.push({ heading: line, body: [] });
+      if (INBOX_HEADING.test(line) || (INBOX_CHANNEL_LINE.test(line) && Number.isFinite(Date.parse(line.split(/\s/, 1)[0]!)))) entries.push({ heading: line, body: [] });
       else if (entries.length) entries[entries.length - 1]!.body.push(line);
       else if (line.trim()) fragment++;
     }
