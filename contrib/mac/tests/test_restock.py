@@ -361,5 +361,81 @@ class DevinDefaultTests(unittest.TestCase):
         self.assertEqual(need_of(out)['devin'], 30)
 
 
+class NoopCutTests(unittest.TestCase):
+    """RQ-PSEL-4-NOOPCUT: PR/file dedupe and the 2-NOOPs-in-24h park."""
+
+    def make(self, rows, precheck_code=None):
+        tmp = build('\n'.join(rows) + '\n', slots={
+            **{l: {'held': True} for l in LANES}, 'devin': {'target': 6}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        if precheck_code is not None:
+            b = home / '.ashlr-runs' / 'bin'
+            b.mkdir(parents=True)
+            (b / 'precheck.sh').write_text(f'echo reason=already-done\nexit {precheck_code}\n')
+        return home
+
+    def set_md(self, home, rows):
+        (home / '.ashlr-runs' / 'queue' / 'router-queue.md').write_text('\n'.join(rows) + '\n')
+
+    def state(self, home):
+        return json.loads((home / '.ashlr-runs' / 'queue' / 'noop-streak.json').read_text())
+
+    def test_same_pr_and_same_file_collapse_to_one_pick(self):
+        home = self.make([
+            line('RQ-A', P=1, pool='devin', repo='phantom', text='FIXUP phantom#7 file=src/a.ts fix'),
+            line('RQ-B', P=1, pool='devin', repo='phantom', text='REBASE phantom#7 file=src/b.ts fix'),
+            line('RQ-C', P=1, pool='devin', repo='phantom', text='FIXUP phantom#8 file=src/a.ts fix'),
+            line('RQ-D', P=1, pool='devin', repo='phantom', text='FIXUP phantom#9 file=src/d.ts fix'),
+        ])
+        r = restock(home, '--dry-run')
+        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-D'], r.stdout)
+        self.assertEqual(skips(r.stdout).get('dup-pr'), 1)
+        self.assertEqual(skips(r.stdout).get('dup-file'), 1)
+
+    def test_two_noops_park_the_line_for_24h(self):
+        row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
+        home = self.make([row], precheck_code=10)
+        for n in (1, 2):
+            self.set_md(home, [row])
+            r = restock(home, '--per-lane', '4')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self.state(home)['RQ-N']['n'], n)
+        self.set_md(home, [row])   # third appearance: parked before any precheck runs
+        r = restock(home, '--per-lane', '4', '--json')
+        out = json.loads(r.stdout)
+        self.assertEqual(out['done_noop'], [])
+        self.assertEqual(out['skips'], {'noop-streak': 1})
+        self.assertEqual(self.state(home)['RQ-N']['n'], 2)
+        # the window expires: aged state no longer parks the line
+        st = self.state(home)
+        st['RQ-N']['at'] -= 24 * 3600 + 5
+        (home / '.ashlr-runs' / 'queue' / 'noop-streak.json').write_text(json.dumps(st))
+        r = restock(home, '--per-lane', '4', '--json')
+        self.assertEqual(json.loads(r.stdout)['done_noop'], ['RQ-N'])
+
+    def test_single_noop_does_not_park_and_a_real_run_clears(self):
+        row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
+        home = self.make([row], precheck_code=10)
+        restock(home, '--per-lane', '4')
+        self.assertEqual(self.state(home)['RQ-N']['n'], 1)
+        (home / '.ashlr-runs' / 'bin' / 'precheck.sh').write_text('exit 0\n')   # real work now
+        self.set_md(home, [row])
+        r = restock(home, '--per-lane', '4', '--json')
+        self.assertEqual(json.loads(r.stdout)['queued'], 1, r.stdout)
+        self.assertNotIn('RQ-N', self.state(home))
+
+    def test_dry_run_leaves_streak_state_alone(self):
+        home = self.make([line('RQ-N', P=1, pool='devin', repo='phantom')], precheck_code=10)
+        restock(home, '--dry-run', '--per-lane', '4')
+        self.assertFalse((home / '.ashlr-runs' / 'queue' / 'noop-streak.json').exists())
+
+    def test_corrupt_state_fails_open(self):
+        home = self.make([line('RQ-N', P=1, pool='devin', repo='phantom')])
+        (home / '.ashlr-runs' / 'queue' / 'noop-streak.json').write_text('{not json')
+        r = restock(home, '--dry-run', '--per-lane', '4')
+        self.assertEqual(dry_ids(r.stdout), ['RQ-N'], r.stdout + r.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

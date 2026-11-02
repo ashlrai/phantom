@@ -327,7 +327,7 @@ export async function addChannel(kind: InboundChannel, input: ChannelAddInput = 
     if (from.length < 1 || from.length > 32) {
       return {
         ok: false, kind, changed: [], credential: 'missing',
-        reason: 'email needs 1..32 verified senders: --from <address> (unlisted senders are refused)',
+        reason: 'email needs 1..32 allowlisted From addresses: --from <address> (unlisted senders are refused)',
       };
     }
     const path = await writeEmailDropConfig(runsDir, {
