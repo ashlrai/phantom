@@ -1,11 +1,13 @@
 # Dependency security policy
 
 Source reviewed on October 10, 2026 at
-`6a731457c7c7d8ad20af4e40cb09132f9270fead` configures Phantom's hosted
+`6a731457c7c7d8ad20af4e40cb09132f9270fead` configured Phantom's hosted
 [Dependency Audit](../.github/workflows/dependency-audit.yml) to audit the root
 and Raycast npm lockfiles plus
 `desktop/src-tauri/Cargo.lock` on pull requests, relevant `master` changes,
-its weekly schedule, and manual dispatch. Local releases must still reproduce
+its weekly schedule, and manual dispatch. The current workflow no longer runs
+on pull requests or branch pushes. It runs on the weekly schedule
+(`17 9 * * 1`) and on `workflow_dispatch`. Local releases must still reproduce
 every required lane before an exact-source receipt is accepted. The workflow
 pins every action to a full commit and verifies the SHA-256 of its exact
 RustSec scanner archive.

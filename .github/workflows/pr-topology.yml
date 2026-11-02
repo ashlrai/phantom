@@ -3,9 +3,10 @@ name: PR topology observation (non-authoritative)
 # Shadow telemetry only. Do not add this context to required status checks.
 
 on:
-  pull_request_target:
-    branches: ["**"]
-    types: [opened, reopened, synchronize, edited, closed]
+  # Not on pull_request_target. A daily idle run keeps the workflow on the
+  # once-a-day clock; inspecting a PR is workflow_dispatch only.
+  schedule:
+    - cron: "23 9 * * *"
   workflow_dispatch:
     inputs:
       pull_request_number:
@@ -19,11 +20,21 @@ permissions:
 
 concurrency:
   group: pr-topology-shadow-${{ github.event.pull_request.number || inputs.pull_request_number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+  cancel-in-progress: false
 
 jobs:
+  daily:
+    name: Daily topology idle
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Record that per-PR topology runs are off
+        run: echo "PR topology is not run per pull request. Dispatch this workflow with pull_request_number to inspect one open PR."
+
   topology:
     name: PR topology observation (non-authoritative)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -38,6 +49,8 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: trusted-auditor/package-lock.json
 
       - name: Install trusted auditor dependencies
         working-directory: trusted-auditor

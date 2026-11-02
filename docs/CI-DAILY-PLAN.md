@@ -23,10 +23,14 @@ this is a trigger migration proposal, not a global once-per-day rate limiter.
 Review retained events and workflows whose jobs depend on PR event payloads
 before applying; adding a schedule does not adapt those jobs automatically.
 
-After CI stops running for PRs, the required **Merge Gate** check never
-completes. Mason must remove that requirement in branch protection/rulesets
-and require **ashlr/verify**, the host-verified gate implemented in
-`src/core/fleet/host-merge.ts` and `src/core/fleet/verify-check-run.ts`.
+After CI stops running for PRs, a required **Merge Gate** check that is only
+produced by a `pull_request` workflow never completes. This repository still
+runs Merge Gate on `merge_group`, which is what the merge queue waits for, so
+the ruleset requirement stays. Agents run `node scripts/verify-changed.mjs`
+before merge (see [CONTRIBUTING.md](../CONTRIBUTING.md)). Repositories that
+also drop `merge_group` must switch the required check to **ashlr/verify**, the
+host-verified gate in `src/core/fleet/host-merge.ts` and
+`src/core/fleet/verify-check-run.ts`.
 Read current branch protection checks with:
 
 ```sh

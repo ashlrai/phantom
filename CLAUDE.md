@@ -28,7 +28,7 @@ npm run gate              # build, static checks and related tests together
 
 Before a PR, automated workers run `node scripts/verify-changed.mjs` once in
 the foreground instead of full lint and typecheck; do not poll it. Also run the
-documentation check and affected tests. Merge Gate stays the full check.
+documentation check and affected tests. Hosted CI does not run on pull requests. `node scripts/verify-changed.mjs` is the pre-merge check. The merge queue's Merge Gate is the short secret-shape scan and typecheck; the full suite runs daily at 09:03 UTC.
 
 ## Companion tools
 

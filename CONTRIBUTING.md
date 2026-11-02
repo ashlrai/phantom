@@ -57,7 +57,7 @@ To install the CLI while developing:
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
-| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Merge Gate still runs the full check. |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check. This is the pre-merge check agents run: hosted CI does not run on pull requests. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
@@ -197,18 +197,23 @@ only inactivity after Vitest's final summary is evidence of a possible leaked
 handle. The runner preserves the separate worker limits of the unit and
 serialized real-I/O lanes defined in [vitest.config.ts](vitest.config.ts).
 
-Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
-four exhaustive Mac partitions, a separate Mac lane for all isolated suites
-(two at a time, each in its own home with one worker; locally they stay serial
-unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
-and hosted checks prove different environments. Inspect each actual run and report unavailable or
-skipped coverage separately; do not weaken checks to make a release pass.
+Hosted CI does not run on pull requests or branch pushes. Before merge, run
+`node scripts/verify-changed.mjs` once in the foreground (do not poll it), plus
+the affected tests. The merge queue still runs **Merge Gate**: a secret-shape
+scan and a quick Ubuntu typecheck, about one minute. That check name is the
+required status check, so the queue can merge without a pull-request workflow.
+
+The full suite runs once a day at 09:03 UTC (`schedule`) and on
+`workflow_dispatch`. It includes exhaustive Ubuntu shards, named Windows
+portability contracts, a rotated Mac isolated lane (two suites at a time, each
+in its own home with one worker; locally they stay serial unless
+`ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native broker
+checks. The four exhaustive Mac general partitions are dispatch-only
+(`mac_shard=all`, or `0`–`6` for one slice): they repeat the Ubuntu suites on
+macos-15, which bills about ten times a Linux minute. Local tests and hosted
+checks prove different environments. Inspect each actual run and report
+unavailable or skipped coverage separately; do not weaken checks to make a
+release pass.
 
 The optional [qualified build handoff](docs/RELEASING.md#qualified-ci-build-handoff)
 reuses the same tested build and package bytes after complete CI qualification

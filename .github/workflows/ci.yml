@@ -1,22 +1,22 @@
 name: CI
 
 on:
-  # PRs and the merge queue run only the seconds-fast gate (Mason, Oct 28 2026:
-  # merge fast, test later, fix forward daily). Full suites run once a day on
-  # master, on manual dispatch, and on reusable workflow_call.
-  pull_request:
-    branches: ["**"]
-    types: [opened, synchronize, reopened]
+  # Pull requests do not run this workflow (Mason, Nov 2 2026: at most one full
+  # CI run per day, and no per-PR failure mail). The merge queue still runs the
+  # fast gate so the required "Merge Gate" check keeps reporting. Full suites
+  # run once a day on master, on manual dispatch, and on reusable workflow_call.
   merge_group:
   workflow_call:
   # Daily full suite on master at 05:03 ET (09:03 UTC). Staggered from the other
-  # six repos' daily runs so its seven macOS jobs never share the org's macOS
-  # concurrency with them (RQ-DAILY-15).
+  # six repos' daily runs so the remaining macOS jobs (isolated slice, shared
+  # queue, native broker) never share the org's macOS concurrency with them
+  # (RQ-DAILY-15). The redundant macOS general matrix is dispatch-only.
   schedule:
     - cron: "3 9 * * *"
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
-  # The scheduled run rotates the Mac exhaustive work over seven daily slices
-  # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
+  # The scheduled run rotates the Mac isolated work over seven daily slices
+  # (.github/scripts/ci-mac-rotation.mjs). Dispatch defaults to the complete
+  # Mac general set; the daily schedule does not run that lane.
   workflow_dispatch:
     inputs:
       mac_shard:
@@ -28,8 +28,9 @@ on:
 permissions:
   contents: read
 
-# PR runs cancel superseded revisions. merge_group, schedule, dispatch and
-# workflow_call runs each get their own group (keyed by run_id) and never cancel.
+# merge_group, schedule, dispatch and workflow_call each get their own group
+# (keyed by run_id) and never cancel. pull_request is not a trigger; the
+# pull_request concurrency key is unused.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -63,8 +64,8 @@ jobs:
           perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
 
   quick:
-    # The only per-PR build step: install plus the core TypeScript no-emit check.
-    # Docs-only PRs skip it. Full suites run in the daily run.
+    # The only merge-queue build step: install plus the core TypeScript no-emit
+    # check. Docs-only commits skip it. Full suites run in the daily run.
     name: Quick typecheck
     needs: classify
     if: needs.classify.outputs.lane != 'docs' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
@@ -566,14 +567,10 @@ jobs:
   mac-general:
     needs: classify
     # Cost: this 4-shard macos-15 lane was ~95% of CI billing (macOS bills
-    # ~10x Linux; median 15 min/shard, tail 155 min) and the main Mac queue
-    # bottleneck for agents. The same suites run on Linux/Windows in `ci` and
-    # the macOS-specific authority suites still run per PR (mac-isolated,
-    # ci-shared-macos, native-macos-broker-foundation). The exhaustive Mac
-    # partition runs on every master push, reusable workflow_call runs and any PR
-    # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
-    # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    # ~10x Linux; median 15 min/shard). The same suites already run on the
+    # Ubuntu `ci` shards, so the daily schedule skips this lane. Dispatch
+    # still runs it: mac_shard=all is the complete set, 0-6 is one rotation slice.
+    if: needs.classify.outputs.lane == 'full' && github.event_name == 'workflow_dispatch'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     timeout-minutes: 45
