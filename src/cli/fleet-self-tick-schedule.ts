@@ -64,6 +64,12 @@ function absolutePathArg(value: string | undefined): string | undefined {
   return [...value].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) ? undefined : value;
 }
 
+/** Absolute and control-free, checked before any write; the path need not exist here. */
+function absolutePathArg(value: string | undefined): string | undefined {
+  if (value === undefined || !isAbsolute(value)) return undefined;
+  return [...value].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) ? undefined : value;
+}
+
 /** Create only real directories below HOME; never follow a linked config root. */
 function scheduleDirectory(path: string, home: string): void {
   const root = lstatSync(home);
