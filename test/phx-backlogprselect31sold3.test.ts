@@ -13,7 +13,10 @@ const row = (number: number, conflicting = false) => ({
 });
 
 function fixture(rows: unknown[]) {
-  const gh = vi.fn<NonNullable<FleetBacklogDeps['gh']>>(async () => ({ ok: true, stdout: JSON.stringify(rows), stderr: '' }));
+  const gh = vi.fn<NonNullable<FleetBacklogDeps['gh']>>(async (args) => ({
+    ok: true, stdout: JSON.stringify(args[1] === 'view'
+      ? rows.find(value => (value as { number?: number }).number === Number(args[2])) ?? null : rows), stderr: '',
+  }));
   const record = newFleetMergeState({
     key: 'release', kind: 'change', proposalId: 'release', revertsLandingId: null,
     repo: 'ashlrai/phantom', repoPath: '/tmp/fake', enforcement: null, nowIso: now().toISOString(),
@@ -45,7 +48,7 @@ describe('fleet backlog explicit PR selection', () => {
     const report = JSON.parse(output[0]!);
     expect(deps.gh).toHaveBeenCalledTimes(1);
     expect(deps.gh.mock.calls[0]![0]).toEqual(['pr', 'list', '--repo', 'ashlrai/phantom', '--state', 'open', '--limit', '500', '--json',
-      'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup']);
+      'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup,createdAt']);
     expect(deps.states).toHaveBeenCalledExactlyOnceWith('ashlrai/phantom');
     expect(report).toMatchObject({ open: 3, complete: true, tracked: 1, unreadable: 0,
       selection: { requested: [101, 202], found: [101, 202], missing: [], complete: true },
@@ -66,7 +69,7 @@ describe('fleet backlog explicit PR selection', () => {
     expect(Object.values(report.plan).flat()).toEqual([]);
     output = [];
     expect(await cmdFleetBacklog(['--pr', '101', '--pr', '999'], deps)).toBe(0);
-    expect(output.join('\n')).toContain('selection incomplete: requested #101, #999; found #101; missing from fetched page #999');
+    expect(output.join('\n')).toContain('selection incomplete: requested #101, #999; found #101; unresolved #999');
     expect(output.join('\n')).not.toContain('#303');
   });
 
@@ -80,7 +83,7 @@ describe('fleet backlog explicit PR selection', () => {
     const deps = fixture([row(101), { number: 101 }, row(202, true)]);
     expect(await cmdFleetBacklog(['--pr', '101', '--pr', '202', '--json'], deps)).toBe(0);
     const report = JSON.parse(output[0]!);
-    expect(report.selection).toEqual({ requested: [101, 202], found: [202], missing: [101], complete: false });
+    expect(report.selection).toEqual({ requested: [101, 202], found: [202], missing: [101], complete: false, ambiguous: [101] });
     expect(report.plan.merges).toEqual([]);
     expect(report.plan.recuts).toMatchObject([{ number: 202 }]);
     output = [];
