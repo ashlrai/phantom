@@ -397,3 +397,21 @@
   font-size: var(--text-sm-size);
   line-height: var(--text-sm-line);
 }
+
+.statusLinkText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.statusLinkGlance {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.statusLinkGlance[data-tone='attention'] {
+  color: var(--status-warning-fg);
+}
