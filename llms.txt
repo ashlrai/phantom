@@ -1,4 +1,6 @@
 
 - [Node router](docs/NODE-ROUTER.md): `phm node join|pull|plan|status --json`; computers join as nodes, jobs carry an owner scope, per-job leases with fencing tokens so no job runs twice.
+- [Lane health](docs/LANE-HEALTH.md): `phm lanes health --json`, calls, error rate, p50 latency and deployed commit per lane over 12 h, with a stuck badge and phase age past a phase timeout.
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
 - [Team invite, join and remove](docs/TEAM.md#invite-join-and-remove-a-teammate): `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims.
+- [Learned skills](docs/SKILLS.md): `phm skills list --json`; reusable skills written after verified PR merges, scrubbed and size-capped, counts real or `unknown`.
