@@ -16,9 +16,9 @@ its dashboard and CLI.
 Universe turns a pinned Git seed, an objective and a resource budget into
 competing, evaluated artifacts. It runs isolated variants, freezes their
 artifacts, evaluates them against a fixed comparator, keeps the best result in
-each niche, and reuses those winners as parents in later generations. Its
-[North Star](NORTH-STAR.md) is useful accepted engineering changes per token
-and hour, not more generated code.
+each niche, and reuses those winners as parents in later generations. The
+product direction is the [vision](VISION.md). More generated code is not a
+successful experiment.
 
 Start with the [executable demo](DEMO.md): two generations, three competing
 variants, seven correctness cases, two retained niches and a deliberately broken

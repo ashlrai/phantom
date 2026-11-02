@@ -89,12 +89,11 @@ Opus-powered, grounded in NORTH-STAR + ECOSYSTEM-MAP. Invents bold net-new
 capabilities. Filters maintenance items, deduplicates by 7-day TTL. **Creative
 backlog generation — but no prioritization against real fleet state.**
 
-**NORTH-STAR.md** — the grand vision document  
-Three pillars: recursive self-improvement, ecosystem product factory, composition
-flywheel. Human Mason: sets direction + approves highest-stakes least-reversible
-calls. Fleet: conceives, builds, judges, ships, operates everything else. Measures:
-products shipped+adopted, capabilities invented, compounding velocity, safety never
-weakened.
+**NORTH-STAR.md** is a loader stub. The product vision is
+[VISION.md](VISION.md). `northStarDocSummary()` still reads the stub's old
+vision line and three pillar names, and the function appends its own yield
+paragraph. Retarget that loader before treating this spec's older prompt
+description as the product direction.
 
 ### 2.3 God-View (being built, M250+)
 
@@ -241,8 +240,10 @@ JSON. The system prompt encodes:
    Not a reporter — a director. Asks "what is the single highest-leverage move
    right now?" not "what happened today?"
 
-2. **NORTH-STAR grounding:** the three pillars + near-term bets are injected
-   verbatim so reasoning is anchored to the grand vision, not local plumbing.
+2. **Vision grounding:** `northStarDocSummary()` still injects the loader stub
+   in `docs/NORTH-STAR.md` (old vision line and three pillar names) plus a
+   yield paragraph hardcoded in `src/core/ecosystem/map.ts`. Near-term bets
+   are no longer in that file. The product vision is [VISION.md](VISION.md).
 
 3. **Resource-aware allocation rules:** if claude is `near/throttled/exhausted`,
    reason about which work can run on codex/kimi/local (mid-tier effort≤3) vs.
