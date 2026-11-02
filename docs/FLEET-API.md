@@ -1,6 +1,6 @@
 # Fleet HTTP API
 
-The machine-readable contract for this surface is [docs/api/fleet-openapi.json](api/fleet-openapi.json) (OpenAPI 3.1).
+The machine-readable contract for this surface is [docs/api/fleet-openapi.json](https://github.com/ashlrai/phantom/blob/master/docs/api/fleet-openapi.json) (OpenAPI 3.1).
 `test/fleet-openapi-coverage.test.ts` keeps it aligned with the remote gateway's reviewed route policy.
 
 Phantom's fleet coordinates and observes local agent work, queues, controls,

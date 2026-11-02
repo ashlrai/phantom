@@ -2071,6 +2071,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'lanes': {
+        const { cmdLanes } = await import('./lanes.js');
+        process.exitCode = await cmdLanes(rest);
+        break;
+      }
+
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);
