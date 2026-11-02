@@ -19,6 +19,14 @@
  * continues; a tick reporting state 'busy' is counted and likewise
  * does not stop the loop.
  *
+ * Two opt-in backoffs stretch the wait without changing admission. Failure
+ * backoff doubles the delay per consecutive failed pass (a busy pass resets
+ * it). Busy backoff, separately, doubles the delay per consecutive busy pass
+ * regardless of exit code; any other outcome resets only that busy streak.
+ * Each streak starts from the base interval after its own reset, so the two
+ * never compound: the wait is the larger of the two current delays, and a
+ * busy or failed pass leaves the other streak at zero.
+ *
  * Memory is bounded by construction: the loop keeps integer counters and the
  * latest parsed report only — no history of ticks is retained. Progress is
  * reported through an optional per-pass sink (onPass) that the loop awaits
@@ -49,6 +57,7 @@ export interface SelfLoopPassEvent {
   state: string | null;
   report: unknown;
   consecutiveFailures?: number;
+  consecutiveBusy?: number;
   nextDelayMs?: number;
 }
 /**
@@ -84,6 +93,8 @@ export interface RunSelfLoopOptions {
   durationMs: number;
   intervalMs: number;
   failureBackoffMaxMs?: number;
+  /** Opt-in busy backoff cap, between the interval and SELF_LOOP_MAX_DURATION_MS (CLI-validated). */
+  busyBackoffMaxMs?: number;
   tick: SelfLoopTick;
   now?: () => number;
   /** Sleep seam; must reject when the signal aborts so waiting stops at once. */
@@ -113,6 +124,7 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   const deadline = start + options.durationMs;
   let ticks = 0, failures = 0, busy = 0;
   let consecutiveFailures = 0, delayMs = options.intervalMs;
+  let consecutiveBusy = 0, busyDelayMs = options.intervalMs;
   let lastReport: unknown = null;
   let observerError: string | undefined;
   // The first pass is always admitted; after that, only before the deadline
@@ -139,13 +151,27 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
         delayMs = options.intervalMs;
       }
     }
+    if (options.busyBackoffMaxMs !== undefined) {
+      if (state === 'busy') {
+        consecutiveBusy = Math.min(Number.MAX_SAFE_INTEGER, consecutiveBusy + 1);
+        busyDelayMs = Math.min(options.busyBackoffMaxMs, busyDelayMs * 2);
+      } else {
+        consecutiveBusy = 0;
+        busyDelayMs = options.intervalMs;
+      }
+    }
+    // The larger current delay; with one streak reset to the base interval
+    // this is simply the active streak's delay.
+    const scheduledMs = Math.max(delayMs, busyDelayMs);
     lastReport = outcome.report;
     if (options.onPass) {
       try {
         await options.onPass({
           pass: ticks, exitCode: outcome.exitCode, state, report: outcome.report,
-          ...(options.failureBackoffMaxMs === undefined ? {} : {
-            consecutiveFailures, nextDelayMs: signal.aborted ? 0 : Math.max(0, Math.min(delayMs, deadline - now())),
+          ...(options.failureBackoffMaxMs === undefined ? {} : { consecutiveFailures }),
+          ...(options.busyBackoffMaxMs === undefined ? {} : { consecutiveBusy }),
+          ...(options.failureBackoffMaxMs === undefined && options.busyBackoffMaxMs === undefined ? {} : {
+            nextDelayMs: signal.aborted ? 0 : Math.max(0, Math.min(scheduledMs, deadline - now())),
           }),
         });
       } catch (error) {
@@ -158,7 +184,7 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
     // Wait the interval, but never past the deadline: the remaining budget is
     // positive here, so the capped wait is too.
     try {
-      await sleep(Math.min(delayMs, deadline - current), signal);
+      await sleep(Math.min(scheduledMs, deadline - current), signal);
     } catch {
       // An interrupted sleep ends admission; the pass that ran is kept.
       break;
