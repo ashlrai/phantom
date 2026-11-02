@@ -25,6 +25,7 @@ import {
   releaseLocalStoreLock,
   type LocalStoreLockAcquireResult,
 } from './local-store-lock.js';
+import { writeSelfTickLast } from './self-tick-last.js';
 
 export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick';
 /** Fixed execution order — release first so the planner sees freed slots. */
@@ -79,6 +80,12 @@ export interface RunSelfTickOptions {
   steps: SelfTickSteps;
   /** Lock seam; defaults to the local-store lock on queue/self-tick.lock. */
   acquireLock?: (path: string) => LocalStoreLockAcquireResult;
+  /**
+   * Last-report seam; defaults to writeSelfTickLast on
+   * queue/self-tick-last.json. Called only when the run state is 'ran',
+   * while the lock is still held; a throwing write changes nothing.
+   */
+  writeLast?: (runsDir: string, report: SelfTickReport) => void;
 }
 
 const parseReport = (output: string): unknown => {
@@ -118,6 +125,12 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
         report.steps.push({ step, state: 'failed', exitCode: 1, report: null });
       }
     }
+    // Persisted while the lock is still held so a `--last` read can never
+    // see a pass that is still mid-flight. A throwing write must not change
+    // the steps' exit code or skip the release in finally.
+    try {
+      (options.writeLast ?? writeSelfTickLast)(runsDir, report);
+    } catch { /* the record is best-effort; the run's result already stands */ }
   } finally {
     // Released on every path — a throwing step included. If the unlink itself
     // fails the dead-owner reclaim still frees the next tick.

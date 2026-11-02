@@ -1,3 +1,4 @@
+import { fanoutAskV1 } from '../core/ask/fanout.js';
 import { completeRouterJob, enqueueRouterFollowup, readRouterQueue, routerQueueAskFanout } from '../core/fleet/router-queue.js';
 
 interface QueueIO {
@@ -37,7 +38,7 @@ export async function cmdRouterQueue(args: string[], io: QueueIO = { input: proc
         chunks.push(buffer);
       }
       const record: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks)));
-      io.output(command === 'merged' ? enqueueRouterFollowup(record) : routerQueueAskFanout(record));
+      io.output(command === 'merged' ? enqueueRouterFollowup(record) : routerQueueAskFanout(record, fanoutAskV1));
     } else if (command === 'read') {
       io.output({ v: 1, jobs: readRouterQueue() });
     } else {
