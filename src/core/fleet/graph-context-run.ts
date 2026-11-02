@@ -1,4 +1,5 @@
 import { dirname, isAbsolute } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { Writable } from 'node:stream';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { taskReadyFrontier } from './task-ready-frontier.js';
@@ -10,6 +11,17 @@ type Row = { id: string; status: string; exitCode: number | null };
 const id = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
 const path = (s: unknown): s is string => typeof s === 'string' && isAbsolute(s) && !s.includes('\0') && s.length <= 4096;
 
+export interface GraphContextRunOptions {
+  /** Whole-apply execution budget in milliseconds (default 900000, valid range
+   * 1..3600000). One monotonic deadline shared by scheduling, control reads and
+   * every child: a launched worker only ever receives the remaining time, never
+   * a fresh budget. */
+  timeoutMs?: number;
+  /** Monotonic millisecond clock backing the shared deadline. A deterministic
+   * test seam; production callers leave the performance.now default. */
+  now?: () => number;
+}
+
 /**
  * Dependency-graph runner whose nodes launch through the existing context
  * worker: every ready node's literal argv runs with the bounded cited pack on
@@ -18,12 +30,22 @@ const path = (s: unknown): s is string => typeof s === 'string' && isAbsolute(s)
  * dependsOn orders admission; the snapshot file owns which upstream jobs are
  * cited — graph data never becomes a command. Independent nodes run
  * concurrently up to the concurrency bound; 1 preserves sequential behavior.
+ * One shared deadline bounds the whole apply: after it expires nothing new
+ * launches, active children end through their own worker timeout and are
+ * awaited, and unlaunched nodes report deadline-exhausted.
  */
-export async function graphContextRun(file: string, apply = false, io: ContextWorkerIO = {}, concurrency = 1): Promise<{ status: string; nodes: Row[] }> {
+export async function graphContextRun(file: string, apply = false, io: ContextWorkerIO = {}, concurrency = 1, options: GraphContextRunOptions = {}): Promise<{ status: string; nodes: Row[] }> {
+  // One monotonic deadline bounds the whole apply: control reads and every
+  // child share it, so a graph can never multiply the caller's budget.
+  const timeoutMs = options.timeoutMs ?? 900000;
+  const now = options.now ?? (() => performance.now());
+  const deadline = now() + timeoutMs;
+  const expired = (): boolean => now() >= deadline;
   let tasks: Task[];
   const order: string[] = [];
   try {
-    if (!path(file) || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw Error();
+    if (!path(file) || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8 ||
+        !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) throw Error();
     const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: 262144, remainingBytes: 262144 });
     if (!read.ok) throw Error();
     const v = JSON.parse(read.text);
@@ -65,21 +87,25 @@ export async function graphContextRun(file: string, apply = false, io: ContextWo
         const task = tasks.find(t => t.id === nodeId)!;
         const dependencies = task.dependsOn ?? [];
         if (cancelled) { results.set(nodeId, { id: nodeId, status: 'cancelled', exitCode: null }); continue; }
+        if (expired()) { results.set(nodeId, { id: nodeId, status: 'deadline-exhausted', exitCode: null }); continue; }
         if (dependencies.some(d => results.has(d) && results.get(d)!.status !== 'success')) {
           results.set(nodeId, { id: nodeId, status: 'blocked', exitCode: null }); continue;
         }
         if (active.size >= concurrency || dependencies.some(d => !results.has(d))) continue;
         const switches = await readRunsSwitches();
         const refused = switches.sourceState === 'degraded' || switches.switches.some(s => s.on && ['ORCH_OFF', 'PAUSE', 'HOLD', 'QUEUE_DISABLE'].includes(s.id));
-        // Cancellation must win even when delivered during the asynchronous control read.
-        if (cancelled || refused) {
-          results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : 'refused', exitCode: null }); continue;
+        const remaining = deadline - now();
+        // Cancellation must win even when delivered during the asynchronous control
+        // read; the same window can also exhaust the shared deadline.
+        if (cancelled || remaining <= 0 || refused) {
+          results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : remaining <= 0 ? 'deadline-exhausted' : 'refused', exitCode: null }); continue;
         }
         // The worker resolves snapshot, prompt and cited live outputs itself at
-        // launch; nothing about the context is precomputed by this scheduler.
-        const done = runContextWorker({ snapshot: task.snapshot, prompt: task.prompt, argv: task.argv }, workerIO())
+        // launch; nothing about the context is precomputed by this scheduler. It
+        // is given only the time left on the shared deadline — never a fresh budget.
+        const done = runContextWorker({ snapshot: task.snapshot, prompt: task.prompt, argv: task.argv, timeoutMs: Math.ceil(remaining) }, workerIO())
           .then(exitCode => {
-            results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : exitCode === 0 ? 'success' : 'failed', exitCode });
+            results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : exitCode === 0 ? 'success' : exitCode === 124 ? 'timeout' : 'failed', exitCode });
             active.delete(nodeId);
           }, () => {
             results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : 'failed', exitCode: null });
