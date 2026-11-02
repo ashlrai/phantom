@@ -32,6 +32,8 @@ import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 import { normalizePaneId } from './dock-catalog.js';
 import { setFocusMode } from './focus-mode.js';
+import { deriveCiNeedsYou } from './ci-needs-you.js';
+import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './fleet-ci-runs-query.js';
 import { deriveLaneStreakNeedsYou } from './lane-streak-needs-you.js';
 import { laneStreaksQuery } from './lane-streak-query.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
@@ -137,6 +139,7 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   const releaseRead = useQuery(releasePrQuery);
   const refetchRelease = useRefetch(releasePrQuery);
   usePollWhileVisible(refetchRelease, FLEET_NEEDS_YOU_POLL_MS, { enabled: releaseRead.data?.kind !== 'notInBuild' });
+  const ciRead = useQuery(fleetCiRunsQuery, { freshMs: FLEET_CI_RUNS_POLL_MS });
   const laneStreaksRead = useQuery(laneStreaksQuery);
   const refetchLaneStreaks = useRefetch(laneStreaksQuery);
   usePollWhileVisible(refetchLaneStreaks, FLEET_NEEDS_YOU_POLL_MS, { enabled: laneStreaksRead.data?.kind !== 'notInBuild' });
@@ -153,6 +156,8 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     () => deriveReleaseNeedsYou(releaseRead.status === 'error' ? undefined : releaseRead.data, nowMs),
     [releaseRead.data, releaseRead.status, nowMs],
   );
+  const ciItems = useMemo(() => deriveCiNeedsYou(ciRead.status === 'error' ? undefined : ciRead.data, nowMs),
+    [ciRead.data, ciRead.status, nowMs]);
   const laneStreakItems = useMemo(
     () => deriveLaneStreakNeedsYou(laneStreaksRead.status === 'error' ? undefined : laneStreaksRead.data, isFleetRuns(read.data) ? read.data : null, nowMs),
     [laneStreaksRead.data, laneStreaksRead.status, read.data, nowMs],
@@ -161,8 +166,8 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     [resetsRead.data, resetsRead.status, nowMs]);
   const phoneItems = useMemo(() => derivePhoneNeedsYou(phoneRead.status === 'error' ? undefined : phoneRead.data),
     [phoneRead.data, phoneRead.status]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...laneStreakItems, ...phoneItems] }, resetItems),
-    [result, releaseItems, laneStreakItems, phoneItems, resetItems]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...laneStreakItems, ...ciItems, ...phoneItems] }, resetItems),
+    [result, releaseItems, laneStreakItems, ciItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
@@ -183,11 +188,20 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
         const severity = SEVERITY[item.severity];
         const destination = item.open;
         const paneId = destination?.kind === 'pane' ? normalizePaneId(destination.paneId) : null;
-        const label = destination?.kind === 'terminal'
+        const label = destination?.kind === 'copy'
+          ? `Copy command${clipboard[item.id] === 'copied' ? ' · copied' : ''}`
+          : destination?.kind === 'terminal'
           ? `Open Terminal${clipboard[item.id] === 'copied' ? ' · command copied' : ''}`
           : `Open ${paneId ? PANE_NAME[paneId] ?? paneId : SURFACE_NAME[item.target]}`;
         const open = async () => {
-          if (destination?.kind === 'terminal') {
+          if (destination?.kind === 'copy') {
+            try {
+              await navigator.clipboard.writeText(destination.command);
+              setClipboard(previous => ({ ...previous, [item.id]: 'copied' }));
+            } catch {
+              setClipboard(previous => ({ ...previous, [item.id]: 'failed' }));
+            }
+          } else if (destination?.kind === 'terminal') {
             try {
               await navigator.clipboard.writeText(destination.command);
               setClipboard(previous => ({ ...previous, [item.id]: 'copied' }));
@@ -216,7 +230,7 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
               <span className={styles.rowTitle}>{item.title}</span>
               <span className={styles.runFacts}>{item.detail}</span>
               <span className={styles.runFacts}>Next: {item.nextStep}</span>
-              {destination?.kind === 'terminal' && clipboard[item.id] === 'failed' && (
+              {(destination?.kind === 'terminal' || destination?.kind === 'copy') && clipboard[item.id] === 'failed' && (
                 <code onClick={event => event.stopPropagation()}>Copy command: {destination.command}</code>
               )}
               <span className={styles.rowMeta}>
