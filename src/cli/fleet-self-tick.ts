@@ -13,17 +13,22 @@ import { cmdFleetLaneAutohold } from './fleet-lane-autohold.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
+import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply]
+const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
 One locked pass of Phantom's self-management: reset-release first (a lane it
 frees counts as a free slot for the planner step), then lane-autohold, then
 planner-tick. Without --apply nothing is released, held or spawned — the
 planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
 a held queue/self-tick.lock reports 'busy' and exits 0. A step that fails or
-throws never stops the later ones. Exit 0 when every step is ok or the run
-is busy, 1 when any step failed, 2 on usage.`;
+throws never stops the later ones. Each completed pass records itself to
+queue/self-tick-last.json while the lock is still held; --last prints that
+recorded run (or 'no recorded run') without running a step or taking the
+lock, combines only with --json and --runs-dir, and exits 0 even when
+nothing is recorded. Exit 0 when every step is ok or the run is busy, 1
+when any step failed, 2 on usage.`;
 
 interface Dependencies {
   now?: () => number;
@@ -63,22 +68,40 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   const error = deps.error ?? ((text: string) => console.error(text));
   const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
-  let json = false, apply = false, runsDir: string | undefined;
+  let json = false, apply = false, last = false, runsDir: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) json = true;
     else if (arg === '--apply' && !apply) apply = true;
+    else if (arg === '--last' && !last) last = true;
     else if (arg === '--runs-dir' && runsDir === undefined) {
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
       runsDir = value;
     } else return invalid();
   }
+  // --last is a read-only report of the last recorded pass: nothing runs,
+  // no lock is taken, so --apply has no meaning beside it.
+  if (last && apply) return invalid();
   // One root for the lock and all three steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
   const now = deps.now ?? Date.now;
+  if (last) {
+    const view = readSelfTickLast(root, now());
+    if (json) {
+      output(JSON.stringify(sanitizePublicJson(view)));
+    } else if (view === null) {
+      output('no recorded run');
+    } else if (view.state === 'unreadable') {
+      output('fleet self-tick: last run unreadable');
+    } else {
+      const failed = view.failedSteps.length > 0 ? view.failedSteps.join(',') : 'none';
+      output(`fleet self-tick: last run ${view.at} (${Math.floor(view.ageSeconds / 60)}m ago) ${view.mode} failed=${failed}`);
+    }
+    return 0;
+  }
   const bind = (
     run: (argv: string[], io: { output: (text: string) => void; error: (text: string) => void }) => Promise<number>,
     extra: Record<string, unknown> = {},
