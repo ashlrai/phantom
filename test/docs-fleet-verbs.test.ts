@@ -15,6 +15,7 @@ const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli
 const VERBS = [
   'backlog',
   'bet-trace',
+  'brains',
   'bus-thread',
   'canary-ladder',
   'ci-failures',
