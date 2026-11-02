@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/lane-quota-text.test.ts', // runs the dispatcher against temporary lane fixtures in Python
   'test/agent-bus-reply-file.test.ts', // execFileSync runs the bus-reply-file example as a real child
   'test/agent-context-replay.test.ts', // spawnSync runs the context-replay example as a real child
   'test/agentbootreport31ak1.test.ts', // spawnSync and spawn run the agent-boot-report script as real children
