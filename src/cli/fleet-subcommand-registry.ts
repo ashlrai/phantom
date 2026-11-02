@@ -60,6 +60,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'handoff-send': () => import('./fleet-handoff-send.js'),
   'job-class-share': () => import('./fleet-job-class-share.js'),
   'job-read': () => import('./fleet-job-read.js'),
+  'lane-autohold': () => import('./fleet-lane-autohold.js'),
   'lane-hold': () => import('./fleet-lane-hold.js'),
   'lane-model-set': () => import('./fleet-lane-model-set.js'),
   'lane-models': () => import('./fleet-lane-models.js'),
