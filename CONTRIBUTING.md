@@ -21,7 +21,8 @@ list in a guide.
 ## Setup
 
 ```sh
-npm ci          # clean, lockfile-exact install of devDependencies
+npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
+# CI and release packaging: npm ci
 ```
 
 Run focused verification locally while developing. Pull requests and default-branch
@@ -375,3 +376,40 @@ docs/
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full module map and the autonomous loop.
+
+### Shared installs for trusted local worktrees
+
+Use `npm run install:worktree` in place of `npm ci` when preparing local agent
+worktrees. Install pnpm **10.28.2** first (`npm install -g pnpm@10.28.2`). The
+helper installs the frozen `pnpm-lock.yaml` with lifecycle scripts disabled and
+places the shared store in `<git-common-dir>/phantom-pnpm-store`. It checks that
+store and worktree are on the same device (the Data APFS volume on our Macs).
+Each worktree keeps its own `node_modules` links; dependency graphs are shared.
+All store writers must be trusted. Never edit package files through these links.
+
+The workspace's `enableGlobalVirtualStore: true` is pnpm 10's spelling of the
+newer `virtualStoreType: global`; do not upgrade pnpm without updating the helper
+and validating the layout. CI and releases continue to use `npm ci`; the helper
+refuses CI because pnpm 10 disables its global virtual store there. Existing
+npm installations should be removed before switching (`rm -rf node_modules` in
+the intended checkout only). Test and development commands still use `npm run`.
+The full `npm run build` includes the release inventory, which requires a real
+npm dependency tree and intentionally rejects shared dependency symlinks. Use
+an npm-installed release checkout for that command; local source execution,
+`npm run typecheck`, tests, and `vite build --config vite.config.web.ts` work
+with the shared installation. Do not relax the release inventory's path checks.
+
+When changing dependencies, update `package-lock.json` with npm, mirror security
+`overrides` in `pnpm-workspace.yaml`, then run `pnpm import` and include the
+updated `pnpm-lock.yaml`. Run `npm run install:worktree` to verify the frozen
+install. The store persists after worktree removal. Remove it only after all
+linked worktrees are retired; deleting it breaks their dependency links.
+
+To repeat the install comparison, run
+`node scripts/benchmark-worktree-install.mjs . worktree-install-benchmark.json`.
+It creates disposable manifest snapshots on the checkout volume, measures cold
+and warm npm/pnpm installs with scripts disabled equally, verifies that pnpm
+snapshots resolve Vitest to the same shared package directory, and removes its
+temporary trees. The JSON separates per-checkout `du -sk` allocation from shared
+store allocation. It is a single-trial local measurement, not a physical APFS
+extent accounting or a general performance guarantee.
