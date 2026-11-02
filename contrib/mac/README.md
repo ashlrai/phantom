@@ -2,8 +2,9 @@
 
 `restock.py` and `dispatchd.py` are reviewable repository copies of the
 deterministic Mac queue scripts that run under `~/.ashlr-runs` on the dispatch
-host. They are pinned artifacts: the live installs are managed on that host,
-and changes here land by PR review, not by installing from the worktree. Both
+host. `dispatchd.py` here is the single source for the live dispatcher (see
+[Installing the dispatcher](#installing-the-dispatcher)). They are pinned artifacts: changes
+land by PR review, and Security re-pins the sha before any live install. Both
 are deterministic (no model or network calls of their own) and neither creates
 tokens.
 
@@ -18,7 +19,8 @@ Devin routing policy (RQ-DEVINROUTEDEFAULTQ7, DEVIN-LEVERAGE-20261026): a line
 that leaves its pool open (`pool=any` or no `pool=` attr) and is `tier=frontier`
 or carries a long-horizon marker (`horizon=long`, `long-horizon`) routes to
 `pool=devin` by default, matching how queuegen stamps new lines. Explicit
-`pool=` values always win. Devin's leverage target is 10 and its ceiling 16:
+`pool=` values always win. Devin's seeded defaults are target 6, floor 3, ceiling
+10 and `hard_cap` 10 (the live values; raise them per host in `slots.json`):
 restock never overbooks past the ceiling, and dispatchd's raise logic stops at
 it. When more than 3 of the last 10 devin completions end without a PR (abort
 or empty, versus the 5% baseline of 2 in 40), dispatchd steps the devin target
@@ -27,11 +29,12 @@ down by 2, never below the floor 6, and at most once per new completion
 sits in dispatchd's restock trigger loop beside the codex lanes.
 
 Load-aware admission (RQ-LOADGATE-1). Each tick dispatchd probes the host and stops
-claiming (lines stay in `ready.tsv`) while any one gate is tripped: 1-min loadavg
-above `min(2 x ncpu, 36)`, more than 800 processes, more than 40 live job
-worktrees (`*.base` with an existing directory), or `ashlr daemon status --json`
-reporting a `lastTickAt` older than 15 minutes (a missing or unreadable status
-also trips). The +2/120s ramp pauses while the gate is tripped. Running jobs are
+claiming (lines stay in `ready.tsv`) while either hard gate is tripped: 1-min
+loadavg above `min(2 x ncpu, 36)` or more than 800 processes. More than 40 live
+job worktrees (`*.base` with an existing directory) and an `ashlr daemon status
+--json` `lastTickAt` older than 15 minutes (or a missing or unreadable status) are
+non-tripping warnings: they are listed in `admission.json` `warnings` and logged
+once per change as `LOADGATE warn`, and never stop claims. The +2/120s ramp pauses while the gate is tripped. Running jobs are
 also capped fleet-wide at `min(sum of unheld lane targets, ncpu, hard_cap)`. Every
 pool has a `hard_cap` in `slots.json` and so does the file itself (top-level
 `hard_cap`, default 18); the stored floor, ceiling and target are clamped to it
@@ -47,7 +50,43 @@ so at most one `npm ci` / `pnpm install` / `bun install` runs fleet-wide; others
 wait (30 min default, then exit 75). The holder is written into the lock file
 while held and the kernel drops the lock if the holder dies. `install-gate.py
 --shims DIR` writes `npm`, `pnpm` and `bun` shims that route installs through the
-gate; put DIR first on the PATH that `launch.sh` gives the agent.
+gate; put DIR first on the PATH that `launch.sh` gives the agent. `launch-gate.sh`
+does exactly that: the pinned `launch.sh` sources it (one line, see below) and it
+writes the shims into `~/.ashlr-runs/install-shims` and prefixes `PATH`, failing
+open if the shims cannot be written.
+
+Per-tick budget (RQ-TICK-BUDGET): `dispatchd.py` runs its bounded external calls
+(git-safe, `gh`, `lsof`, `precheck.sh`, the finish metric's `git`) through `_run`,
+which starts the child in its own session and, on timeout, kills the whole process
+group so grandchildren (`git fetch` under `precheck.sh`) cannot pile up; calls over
+5 s log `SLOW`. After `TICK_BUDGET_S` seconds (default 90) the optional work waits
+a tick: extra reaps and new empty-run prechecks. Disk guard: below
+`DISK_REUSE_ONLY_GB` (100) free only FIXUP/LAND/SALVAGE reuse launches; below
+`DISK_HARD_STOP_GB` (30) nothing launches (`DISKGUARD hard_stop` event) while reaps
+still run to free space.
+
+## Installing the dispatcher
+
+`install.sh` diffs `dispatchd.py`, `install-gate.py` and `launch-gate.sh` against
+`~/.ashlr-runs/bin` (or `$ASHLR_RUNS_BIN`, or `--bin DIR`) and installs the ones that
+differ, copying each replaced file to `<file>.bak-macdispatch-<YYYYmmdd-HHMMSS>`
+first. It prints the new sha256 of every file for Security to pin, refuses symlink
+destinations, never creates the target directory, and touches nothing else. It does
+not install `launch.sh` (a pinned, host-managed file): add the line
+`. "${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}/launch-gate.sh"` to it before the agent
+starts. **Do not run it against the live directory until Security has reviewed
+`install.sh` and `dispatchd.py` and updated the pins (G1-CODE-PIN, `GS_SHA`).**
+
+```sh
+contrib/mac/install.sh --dry-run          # show the diff, write nothing
+contrib/mac/install.sh --dry-run --json   # machine-readable plan
+contrib/mac/install.sh                    # install with timestamped backups
+contrib/mac/install.sh --json             # same, one JSON object (schema macdispatch.install.v1)
+```
+
+Afterwards `shasum -a 256 contrib/mac/dispatchd.py ~/.ashlr-runs/bin/dispatchd.py`
+prints the same digest twice, and a second `install.sh` run reports every file
+`unchanged`.
 
 Fixture tests run both scripts against a synthetic `~/.ashlr-runs` under a
 temporary HOME and never touch the live queue:
