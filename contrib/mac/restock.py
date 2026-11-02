@@ -3,6 +3,7 @@
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7 rev.
 import os, re, sys, json, time, fcntl, subprocess
+from launch_precheck import precheck
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
@@ -135,22 +136,29 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
-out = []; ts = int(time.time())
+out = []; done = []; ts = int(time.time())
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
         p = (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n{j} ({attrs}): {text}\n\n"
              "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
              "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
              "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/.\n")
+        pc = precheck(j, repo, p, H, R)
+        if pc:
+            done.append((i, j, pc)); skip(j, "done-noop")
+            continue
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
 pk_n = sum(len(picks[l]) for l in CODEX); pk_b = sum(1 for l in CODEX for x in picks[l] if ISBOLD.search(x[4]))
-print("need", json.dumps(need), "picked", {l: len(picks[l]) for l in CODEX},
+if "--json" not in sys.argv:
+ print("need", json.dumps(need), "picked", {l: len(picks[l]) for l in CODEX},
       "bold ready=%d/%d(%.2f) picked=%d/%d(%.2f)%s" % (ready_bold, ready_n, bold_frac, pk_b, pk_n, pk_b / pk_n if pk_n else 0.0, " prefer=bold" if prefer_bold else ""),
       "skips", json.dumps(skips))
-for i, j in seclist: print(("DRY " if DRY else "") + "HOLD-SECURITY\t" + j)
-for j, repo, l, tier, pf, p, i in out: print(("DRY " if DRY else "") + "\t".join([j, repo, l, tier]))
-if DRY or (not out and not seclist): sys.exit(0)
+for i, j in ([] if "--json" in sys.argv else seclist): print(("DRY " if DRY else "") + "HOLD-SECURITY\t" + j)
+for j, repo, l, tier, pf, p, i in ([] if "--json" in sys.argv else out): print(("DRY " if DRY else "") + "\t".join([j, repo, l, tier]))
+if "--json" in sys.argv:
+    print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips}))
+if DRY or (not out and not seclist and not done): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
 # RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
 # timeouts; on timeout exit before claiming anything so the next pass retries the same lines.
@@ -175,6 +183,9 @@ with open(Q + "/claimed.tsv", "a") as f:
     for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, l, tier, HM, str(ts)]) + "\n")
 for j, repo, l, tier, pf, p, i in out:   # mark local copy so the next restock never re-picks
     lines[i] = re.sub(r"^- READY ", "- CLAIMED %s dispatchd %s " % (HM, l), lines[i], count=1)
+for i, j, pc in done:
+    lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
+    ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
 for i, j in seclist:   # park security-pinned lines; the tag stays on the line and READY is never restored
     lines[i] = re.sub(r"^- READY ", "- HOLD-SECURITY %s restock " % HM, lines[i], count=1)
     if PIN not in lines[i]: lines[i] = lines[i].rstrip() + " " + PIN
