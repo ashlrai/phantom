@@ -1375,9 +1375,62 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       if (!hookCtx.dryRun) {
         try {
           noteTickPhase('mirror prep', `${policy.repos.length} repo(s)`);
-          const prep = await deps.prepareMirrors(policy, hookCtx.signal);
+          // Lane observations belong to the running tick, not its completion.
+          // Re-probe while mirror prep waits; never renew an old usage reading.
+          let observing = false;
+          let observationClosed = false;
+          const observe = async (): Promise<void> => {
+            if (observationClosed || observing || hookCtx.signal?.aborted) return;
+            observing = true;
+            try {
+              const at = deps.now();
+              const currentPolicy = deps.standingPolicy();
+              if (!currentPolicy || currentPolicy.grantId !== policy.grantId) return;
+              const snapshot = deps.capacitySnapshot();
+              const reading = await deps.probeLocalRuntime(cfg, snapshot);
+              const observed = planLanes({
+                policy: currentPolicy,
+                directives: clampLeaderDirectives(deps.directives(), currentPolicy),
+                presence: await deps.presence(at),
+                localServingSlots: reading.reachable === true ? reading.slots : null,
+                engineUnavailable: resolveLaneEngines({
+                  allowedBackends: cfg.foundry?.allowedBackends ?? ['builtin'],
+                  installed: engine => installed(engine, cfg, at),
+                  localFleetEngine: deps.localFleetEngine(cfg),
+                  devinCli: await devinCliReadiness(cfg, currentPolicy,
+                    deps.clampBudget(deps.loadBudget(), currentPolicy, [...(snapshot?.seats ?? []).filter(seat => seat.engine !== 'local'), localSeat(reading)].map(seat => seat.seatId)), deps), cfg,
+                }).unavailable,
+                leaderPreferences: resolveLeaderPreferences(deps.liveLeaderConfig(cfg)),
+                admittedBatchCapacity: grokDispatchBatchCapacity(cfg),
+              });
+              const idle = measuredLocalIdle(reading, at);
+              if (idle !== null) observed.local.slots = Math.min(observed.local.slots, idle);
+              else if (localFleetEnabled(cfg)) observed.local = { lane: 'local', slots: 0,
+                capReason: 'Current llama-server slots, activity, or per-slot context could not be verified.' };
+              if (observationClosed || hookCtx.signal?.aborted) return;
+              deps.writeTick({
+                ...emptyState('Mirror preparation is in progress.', unknownPresence),
+                at: new Date(at).toISOString(),
+                standing: { grantId: currentPolicy.grantId, stageId: currentPolicy.rollout.stageId, switch: currentPolicy.switch },
+                lanes: laneStates(observed, {}),
+              });
+            } catch { /* A failed observation expires naturally; no fabricated capacity. */ }
+            finally { observing = false; }
+          };
+          await observe();
+          const laneTimer = setInterval(() => { void observe(); }, 60_000);
+          laneTimer.unref?.();
+          const stopObserving = (): void => { observationClosed = true; clearInterval(laneTimer); };
+          hookCtx.signal?.addEventListener('abort', stopObserving, { once: true });
+          if (hookCtx.signal?.aborted) stopObserving();
+          let prep: MirrorTickPreparation;
+          try { prep = await deps.prepareMirrors(policy, hookCtx.signal); }
+          finally { stopObserving(); hookCtx.signal?.removeEventListener('abort', stopObserving); }
+
           readyMirrors = prep.ready;
           for (const failed of prep.failed) {
+            deps.audit({ action: 'daemon:mirror-prep', repo: failed.nameWithOwner,
+              summary: `Mirror skipped: ${failed.reason}`, result: 'error' });
             if (!failed.path) continue;
             mirrorPaused.push({ path: failed.path, repo: failed.nameWithOwner, reason: `Its mirror is not current (${failed.reason}).` });
           }

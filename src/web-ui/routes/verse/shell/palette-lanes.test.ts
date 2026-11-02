@@ -7,7 +7,7 @@ it('maps all three fleet lanes and tolerates a missing snapshot', () => {
   runs.lanes.push({ ...runs.lanes[0]!, lane: 'fake-third', target: 0, held: true });
   const lanes = paletteLanes(runs, {});
   expect(lanes).toHaveLength(3);
-  expect(lanes[0]).toEqual({ lane: 'codex-personal', running: 3, target: 4, held: false, paused: false });
+  expect(lanes[0]).toEqual({ lane: 'codex-personal', running: 3, target: 4, held: false, heldReason: null, paused: false });
   expect(laneItemTitle(lanes[0]!)).toBe('Lane codex-personal: 3/4 running · pause');
   expect(laneItemTitle(lanes[2]!)).toBe('Lane fake-third: 3/0 running · paused · resume · held, resume target only');
   expect(paletteLanes(null, {})).toEqual([]);

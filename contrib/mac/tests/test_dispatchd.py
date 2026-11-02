@@ -87,6 +87,58 @@ def held_lanes():
     return {lane: {'held': True, 'target': 0, 'floor': 0, 'ceiling': 0, 'last_change': 0} for lane in LANES}
 
 
+# RQ-LANERECOVERNOV1Q8 fixtures: auth-vs-usage log lines, a finished/gone worker, a free lane slot.
+AUTH_401 = 'ERROR: unexpected status 401 Unauthorized: {"error":{"message":"expired token"}}'
+AUTH_REFRESH = 'ERROR: Failed to refresh access token: invalid_grant'
+USAGE_ACU = 'ERROR: ACU limit reached for this workspace'
+
+
+def dead(home, job, lane, lines, result='EMPTY'):
+    """A finished, gone worker: .base + fresh .log + a RESULT line; no worktree, so it is never reaped."""
+    r = home / '.ashlr-runs'
+    (r / f'{job}.base').write_text(f'deadbeef x {home}/Projects/ashlrai/wt/{job} {lane}\n')
+    (r / f'{job}.log').write_text(''.join(text + '\n' for text in lines))
+    (r / f'{job}.publish').write_text(f'RESULT {result}\n')
+
+
+def lane_slot(**kw):
+    return {'target': 10, 'floor': 0, 'ceiling': 16, 'last_change': 0, **kw}
+
+
+def queue_job(home, job, lane, tier='work'):
+    """A valid ready.tsv line (prompt inside queue/prompts) plus its router-queue.md READY row."""
+    q = home / '.ashlr-runs' / 'queue'
+    pf = q / 'prompts' / f'{job}.md'
+    pf.write_text('fixture prompt')
+    with (q / 'ready.tsv').open('a') as f:
+        f.write(f'{job}\tphantom\t{lane}\t{tier}\t{pf}\n')
+    with (q / 'router-queue.md').open('a') as f:
+        f.write(f'- READY {job} (pool={lane}): fixture\n')
+
+
+def launch_stubs(home):
+    """launch.sh + a green autopilot; returns the tick env that also lifts the disk guard."""
+    stub = home / '.ashlr-runs' / 'bin' / 'launch.sh'
+    stub.write_text('#!/bin/bash\necho "launched $@"\n')
+    stub.chmod(0o755)
+    (home / '.ashlr-runs' / 'bin' / 'autopilot.py').write_text(AP_GREEN)
+    (home / '.ashlr-runs' / 'DISKGUARD_TEST').write_text('')
+    return {'DISKGUARD_FREE_GB': '500'}
+
+
+def ready_lines(home):
+    return (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text().splitlines()
+
+
+def dispatched(home, job):
+    return (home / '.ashlr-runs' / 'queue' / 'run' / f'{job}.dispatched').exists()
+
+
+def auth_mark(home, job):
+    f = home / '.ashlr-runs' / 'queue' / 'run' / f'{job}.authfail.seen'
+    return f.read_text().strip() if f.exists() else None
+
+
 class SlotDefaultTests(unittest.TestCase):
     def test_missing_devin_slot_seeds_leverage_defaults(self):
         # No devin entry in slots.json: the DEFAULT row seeds target 10, floor 3, ceiling 16.
@@ -255,6 +307,125 @@ class RestockTriggerTests(unittest.TestCase):
         r = tick(home)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(called.exists())
+
+
+class AuthBackoffTests(unittest.TestCase):
+    """RQ-LANERECOVERNOV1Q8: repeated authentication failures hold the lane autobackoff-style.
+
+    Two or more distinct failed/EMPTY finishes on one lane whose logs carry a provider
+    auth-error line inside the 30-minute window set held/held_by=autobackoff/held_until.
+    Below that bar nothing holds; a produced PR never counts; manual holds are never
+    touched; an expired hold releases and the lane launches again. No fixture writes a
+    credential store.
+    """
+
+    def _home(self, lanes, queue_md='# queue\n'):
+        slots = held_lanes()
+        slots.update(lanes)
+        tmp = build(slots=slots, queue_md=queue_md)
+        self.addCleanup(tmp.cleanup)
+        # resolve(): /var -> /private/var on macOS, so the queue/prompts realpath check passes.
+        home = Path(tmp.name).resolve()
+        return home, launch_stubs(home)
+
+    def test_single_auth_failure_below_threshold(self):
+        home, env = self._home({'devin': lane_slot()})
+        dead(home, 'RQ-A1', 'devin', [AUTH_401])
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('held', slots_of(home)['devin'])
+        self.assertEqual(auth_mark(home, 'RQ-A1'), 'fail devin_auth_failure')
+        self.assertNotIn('LANE_HOLD devin', events(home))
+
+    def test_repeated_auth_failures_hold_lane(self):
+        home, env = self._home({'devin': lane_slot()})
+        dead(home, 'RQ-A1', 'devin', [AUTH_401])
+        dead(home, 'RQ-A2', 'devin', ['some output', AUTH_REFRESH])
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        devin = slots_of(home)['devin']
+        self.assertEqual((devin['held'], devin['held_by']), (True, 'autobackoff'))
+        self.assertIn('devin_auth_failure', devin['held_reason'])
+        self.assertIn('src=default', devin['held_reason'])
+        self.assertIn('LANE_HOLD devin autobackoff', events(home))
+
+    def test_failure_streak_accumulates_across_ticks(self):
+        home, env = self._home({'devin': lane_slot()})
+        dead(home, 'RQ-A1', 'devin', [AUTH_401])
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertNotIn('held', slots_of(home)['devin'])
+        dead(home, 'RQ-A2', 'devin', [AUTH_401])
+        self.assertEqual(tick(home, env).returncode, 0)
+        # The persisted verdict from the first tick makes this the second failure.
+        self.assertTrue(slots_of(home)['devin'].get('held'))
+
+    def test_produced_work_and_lane_isolation(self):
+        home, env = self._home({'devin': lane_slot(), 'codex-cmp': lane_slot()})
+        dead(home, 'RQ-A1', 'devin', [AUTH_401])
+        dead(home, 'RQ-PR', 'devin', [AUTH_401], result='PR https://example.invalid/pr/1')
+        dead(home, 'RQ-C1', 'codex-cmp', [AUTH_REFRESH])
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        slots = slots_of(home)
+        # One EMPTY + one PR on devin is a single countable failure: no hold.
+        self.assertNotIn('held', slots['devin'])
+        self.assertEqual(auth_mark(home, 'RQ-PR'), 'work devin_auth_failure')
+        # One failure on codex-cmp is likewise below its own threshold.
+        self.assertNotIn('held', slots['codex-cmp'])
+        dead(home, 'RQ-C2', 'codex-cmp', [AUTH_401])
+        self.assertEqual(tick(home, env).returncode, 0)
+        slots = slots_of(home)
+        self.assertTrue(slots['codex-cmp'].get('held'))
+        self.assertIn('codex_auth_failure', slots['codex-cmp']['held_reason'])
+        self.assertNotIn('held', slots['devin'])
+
+    def test_usage_limit_lines_are_not_auth_failures(self):
+        home, env = self._home({'devin': lane_slot()})
+        dead(home, 'RQ-U1', 'devin', [USAGE_ACU])
+        dead(home, 'RQ-U2', 'devin', [USAGE_ACU])
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        devin = slots_of(home)['devin']
+        # The usage backoff holds on one line; the auth path never counts these.
+        self.assertIn('devin_acu_exhausted', devin['held_reason'])
+        self.assertIsNone(auth_mark(home, 'RQ-U1'))
+
+    def test_manual_hold_is_never_touched(self):
+        home, env = self._home({'devin': lane_slot(
+            held=True, held_by='operator', held_until='2999-01-01T00:00:00+00:00',
+            held_reason='manual')})
+        dead(home, 'RQ-A1', 'devin', [AUTH_401])
+        dead(home, 'RQ-A2', 'devin', [AUTH_401])
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(slots_of(home)['devin']['held_by'], 'operator')
+        self.assertNotIn('LANE_HOLD devin autobackoff', events(home))
+
+    def test_held_lane_waits_while_healthy_lanes_dispatch(self):
+        home, env = self._home({'devin': lane_slot(), 'codex-cmp': lane_slot()})
+        dead(home, 'RQ-A1', 'devin', [AUTH_401])
+        dead(home, 'RQ-A2', 'devin', [AUTH_401])
+        queue_job(home, 'RQ-D-WAIT', 'devin')
+        queue_job(home, 'RQ-C-RUN', 'codex-cmp')
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(slots_of(home)['devin'].get('held'))
+        # Eligible work still reaches the healthy lane; the held lane's job stays queued.
+        self.assertTrue(dispatched(home, 'RQ-C-RUN'))
+        self.assertFalse(dispatched(home, 'RQ-D-WAIT'))
+        self.assertEqual([l.split('\t')[0] for l in ready_lines(home)], ['RQ-D-WAIT'])
+        self.assertIn('LAUNCH RQ-C-RUN', events(home))
+
+    def test_expired_auth_hold_recovers_and_launches(self):
+        home, env = self._home({'devin': lane_slot(
+            held=True, held_by='autobackoff', held_until='2020-01-01T00:00:00+00:00',
+            held_reason='autobackoff devin_auth_failure job=RQ-OLD until=2020-01-01 src=default')})
+        queue_job(home, 'RQ-D-OK', 'devin')
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('held', slots_of(home)['devin'])
+        self.assertIn('LANE_UNHOLD devin', events(home))
+        self.assertTrue(dispatched(home, 'RQ-D-OK'))
 
 
 if __name__ == '__main__':

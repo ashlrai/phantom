@@ -1,8 +1,8 @@
 /** Explicit bounded control of macOS GUI apps via scripts/mac-bridge/app_control.py. */
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -47,6 +47,25 @@ export function findAppControlScript(from: string = fileURLToPath(import.meta.ur
   }
 }
 
+/**
+ * <root>/mac-bridge/current/app_control.py as left by `ashlr fleet bridge-install`.
+ * `current` is a symlink to a release, so links are followed, but the final real
+ * path must be a regular file inside the real <root>/mac-bridge; anything that
+ * escapes (or is not a file) reads as absent. The script imports only the
+ * standard library, so running it under `python3 -I` needs no sibling modules.
+ */
+export function findInstalledAppControlScript(root: string): string | null {
+  try {
+    const base = realpathSync(join(resolve(root), 'mac-bridge'));
+    const real = realpathSync(join(base, 'current', 'app_control.py'));
+    const rel = relative(base, real);
+    if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+    return statSync(real).isFile() ? real : null;
+  } catch {
+    return null;
+  }
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -63,7 +82,7 @@ function formatFleetAppResult(result: Record<string, unknown>, fallback: string)
 
 export async function cmdFleetApp(args: string[], deps: FleetAppDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nExplicitly status, launch, focus, quit or restart one bounded macOS app (Cursor, Claude, Codex, ChatGPT, Phantom, Safari, Google Chrome, Grok Bot) through scripts/mac-bridge/app_control.py. App control needs a Phantom source checkout; the npm package does not ship the script. The script makes the final app decision and performs the action; this verb never runs automatic memory-path termination. Exit 0 ok, 1 failure or missing script, 2 invalid arguments.`);
+    console.log(`${usage}\nExplicitly status, launch, focus, quit or restart one bounded macOS app (Cursor, Claude, Codex, ChatGPT, Phantom, Safari, Google Chrome, Grok Bot) through scripts/mac-bridge/app_control.py. App control runs from a Phantom source checkout or from the copy that ashlr fleet bridge-install --apply puts under <root>/mac-bridge/current. The script makes the final app decision and performs the action; this verb never runs automatic memory-path termination. Exit 0 ok, 1 failure or missing script, 2 invalid arguments.`);
     return 0;
   }
   const [action, app, ...flags] = args;
@@ -91,9 +110,9 @@ export async function cmdFleetApp(args: string[], deps: FleetAppDeps = {}): Prom
       root = value;
     }
   }
-  const script = (deps.locateScript ?? findAppControlScript)();
+  const script = (deps.locateScript ?? findAppControlScript)() ?? findInstalledAppControlScript(root);
   if (script === null) {
-    console.error('fleet app: app control needs a Phantom source checkout (scripts/mac-bridge/app_control.py is not installed with the package)');
+    console.error('fleet app: app control script not found; use a Phantom source checkout or run ashlr fleet bridge-install --apply');
     return 1;
   }
   const exec = deps.exec ?? runAppControl;
