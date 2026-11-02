@@ -48,6 +48,8 @@ export interface SelfLoopPassEvent {
   exitCode: number;
   state: string | null;
   report: unknown;
+  consecutiveFailures?: number;
+  nextDelayMs?: number;
 }
 /**
  * Optional progress sink, awaited once per completed pass before any sleep.
@@ -81,6 +83,7 @@ export interface RunSelfLoopOptions {
   /** Finite positive pass budget; validated by the CLI wrapper. */
   durationMs: number;
   intervalMs: number;
+  failureBackoffMaxMs?: number;
   tick: SelfLoopTick;
   now?: () => number;
   /** Sleep seam; must reject when the signal aborts so waiting stops at once. */
@@ -109,6 +112,7 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
   const start = now();
   const deadline = start + options.durationMs;
   let ticks = 0, failures = 0, busy = 0;
+  let consecutiveFailures = 0, delayMs = options.intervalMs;
   let lastReport: unknown = null;
   let observerError: string | undefined;
   // The first pass is always admitted; after that, only before the deadline
@@ -126,10 +130,24 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
       ? (outcome.report as Record<string, unknown>)['state'] : undefined;
     const state = typeof rawState === 'string' ? rawState : null;
     if (state === 'busy') busy += 1;
+    if (options.failureBackoffMaxMs !== undefined) {
+      if (state !== 'busy' && outcome.exitCode !== 0) {
+        consecutiveFailures = Math.min(Number.MAX_SAFE_INTEGER, consecutiveFailures + 1);
+        delayMs = Math.min(options.failureBackoffMaxMs, delayMs * 2);
+      } else {
+        consecutiveFailures = 0;
+        delayMs = options.intervalMs;
+      }
+    }
     lastReport = outcome.report;
     if (options.onPass) {
       try {
-        await options.onPass({ pass: ticks, exitCode: outcome.exitCode, state, report: outcome.report });
+        await options.onPass({
+          pass: ticks, exitCode: outcome.exitCode, state, report: outcome.report,
+          ...(options.failureBackoffMaxMs === undefined ? {} : {
+            consecutiveFailures, nextDelayMs: signal.aborted ? 0 : Math.max(0, Math.min(delayMs, deadline - now())),
+          }),
+        });
       } catch (error) {
         observerError = error instanceof Error ? error.message : String(error);
         break; // safe termination: the pass counts, admission stops here
@@ -140,7 +158,7 @@ export async function runSelfLoop(options: RunSelfLoopOptions): Promise<SelfLoop
     // Wait the interval, but never past the deadline: the remaining budget is
     // positive here, so the capped wait is too.
     try {
-      await sleep(Math.min(options.intervalMs, deadline - current), signal);
+      await sleep(Math.min(delayMs, deadline - current), signal);
     } catch {
       // An interrupted sleep ends admission; the pass that ran is kept.
       break;
