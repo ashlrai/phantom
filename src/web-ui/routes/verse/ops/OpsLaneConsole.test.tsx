@@ -12,18 +12,18 @@ import { OpsLaneConsole } from './OpsLaneConsole.js';
 import type { FleetLaneSnapshot, FleetLaneView } from '../../../data/api-types.js';
 
 const lane = (over: Partial<FleetLaneView> = {}): FleetLaneView => ({
-  lane: 'codex-personal', queueDepth: 3, liveJobs: 2, mergesPerHour: 1.25,
+  hold: { held: false, reason: null, until: null, by: null, since: null }, lane: 'codex-personal', queueDepth: 3, liveJobs: 2, mergesPerHour: 1.25,
   credit: { state: 'observed', label: '64% weekly', remainingPct: 64, remainingCredits: null, creditsUnit: null, resetAt: null, burnPerHour: null, projectedExhaustionAt: new Date(Date.now() + 7_200_000).toISOString(), observedAt: null, source: 'budget-ledger' },
   ...over,
 });
 
 const UNKNOWN_LANE: FleetLaneView = {
-  lane: 'local-omlx', queueDepth: null, liveJobs: null, mergesPerHour: null,
+  hold: { held: false, reason: null, until: null, by: null, since: null }, lane: 'local-omlx', queueDepth: null, liveJobs: null, mergesPerHour: null,
   credit: { state: 'unknown', label: 'unknown', remainingPct: null, remainingCredits: null, creditsUnit: null, resetAt: null, burnPerHour: null, projectedExhaustionAt: null, observedAt: null, source: null },
 };
 
 const snapshot = (over: Partial<FleetLaneSnapshot> = {}): FleetLaneSnapshot => ({
-  schema: 'fleet.lanes.v1', generatedAt: new Date(Date.now() - 12_000).toISOString(), mergeWindowMinutes: 60,
+  holdSource: 'missing', notes: [], schema: 'fleet.lanes.v1', generatedAt: new Date(Date.now() - 12_000).toISOString(), mergeWindowMinutes: 60,
   sources: {
     queue: { state: 'healthy', file: 'ready.tsv', rows: 4, dropped: 0 }, queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 3 },
     ledger: { state: 'healthy', file: 'jobs.jsonl', events: 7, dropped: 0 }, usage: { state: 'healthy', files: ['usage-readings.log'], pools: 2, dropped: 0 },

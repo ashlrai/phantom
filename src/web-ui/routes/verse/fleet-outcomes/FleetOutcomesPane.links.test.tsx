@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
-import type { PaneProps } from '../panes/pane-registry.js';
+import { paneProps } from '../panes/pane-fixtures.test-support.js';
 import { FleetOutcomesPane } from './FleetOutcomesPane.js';
 
 vi.mock('../fleet-job-log/worker-log-selection.js', () => ({ requestWorkerLogJob: vi.fn() }));
@@ -20,7 +20,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('opens the selected worker log and links its PR without selecting the timeline', async () => {
   const openPane = vi.fn();
-  const props = { visible: true, host: { openPane } } as PaneProps;
+  const props = paneProps({ host: { openPane } });
   render(<FleetOutcomesPane {...props} />);
   const rows = within(await screen.findByRole('list', { name: 'Cases' })).getAllByRole('listitem');
   const link = within(rows[0]!).getByRole('link', { name: '#1234' });

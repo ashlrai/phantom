@@ -16,7 +16,7 @@ export function hubEmptyState(runs: FleetRuns | null): { kind: 'no-fleet' | 'not
 }
 
 /** Tile count string: appends "· N held" when any lane has `held === true`. */
-export function lanesTileCount(lanes: { running: number; target: number; held: boolean }[]) {
+export function lanesTileCount<T extends { running: number; target: number; held: boolean }>(lanes: T[]) {
   const running = lanes.reduce((n, lane) => n + lane.running, 0);
   const target = lanes.reduce((n, lane) => n + lane.target, 0);
   const held = lanes.filter((lane) => lane.held).length;

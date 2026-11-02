@@ -1,10 +1,11 @@
+import type { FleetRunsBadge } from './fleet-runs-badge.js';
 import { createElement } from 'react';
 import { render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
 import { formatWindowTitle, useWindowTitle } from './window-title.js';
 
-const badge = { workers: 23, merges: 2, switchesOn: [] as string[] };
+const badge: FleetRunsBadge = { workers: 23, merges: 2, switchesOn: [] as string[], paused: false, heldLanes: [], lanes: [], personalPct: null };
 const Title = () => { useWindowTitle(); return null; };
 
 afterEach(() => { vi.unstubAllGlobals(); evictAll(); });

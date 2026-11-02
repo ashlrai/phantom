@@ -1,7 +1,8 @@
+import type { FunnelInput } from './publish-funnel-model.js';
 import { describe, expect, it } from 'vitest';
 import { funnelCaveat, funnelStages, joinPublishes, mergeRateText, readFunnelInput } from './publish-funnel-model.js';
 
-const fixture = () => ({
+const fixture = (): FunnelInput => ({
   v: 1, generatedAt: '2026-10-31T10:00:00Z', workers: [{ job: 'running' }],
   publishesLastHour: [
     { job: 'RQ-ONE', lane: 'codex', url: null, at: '2026-10-31T09:10:00Z' },

@@ -5,7 +5,7 @@ import { evictAll } from '../../../data/cache.js';
 import { FleetGraphPane } from './FleetGraphPane.js';
 
 const fixture: FleetRunsV1 = {
-  v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
+  v: 1, host: null, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
   lanes: [{ lane: 'codex', running: 1, target: 2, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }],
   workers: [{ job: 'job-1', lane: 'codex', repo: 'ashlrai/phantom', tier: 'frontier', ageSeconds: 90 }],

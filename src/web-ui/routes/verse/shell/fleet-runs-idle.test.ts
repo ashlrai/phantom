@@ -1,9 +1,10 @@
+import type { FleetRunsBadge } from './fleet-runs-badge.js';
 import { describe, expect, it } from 'vitest';
 import { describeFleetRuns, fleetRunsIdle, fleetRunsTone } from './fleet-runs-badge.js';
 import { railBadgeFor } from './RailStatus.js';
 import { activity } from './shell-fixtures.test-support.js';
 
-const idle = { workers: 0, merges: 0, switchesOn: [] };
+const idle: FleetRunsBadge = { workers: 0, merges: 0, switchesOn: [], paused: false, heldLanes: [], lanes: [], personalPct: null };
 
 describe('fleet idle', () => {
   it('requires zero workers and a known zero merge count', () => {

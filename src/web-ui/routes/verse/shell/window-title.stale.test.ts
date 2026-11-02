@@ -1,9 +1,10 @@
+import type { FleetRunsBadge } from './fleet-runs-badge.js';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
 import { formatWindowTitle, useWindowTitle } from './window-title.js';
 
-const badge = { workers: 1, merges: 7, switchesOn: [], paused: false, heldLanes: [] };
+const badge: FleetRunsBadge = { workers: 1, merges: 7, switchesOn: [], paused: false, heldLanes: [], lanes: [], personalPct: null };
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); evictAll(); });
 
 it('appends failed read age, including when paused or held', () => {

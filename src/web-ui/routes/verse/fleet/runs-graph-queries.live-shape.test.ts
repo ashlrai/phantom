@@ -3,7 +3,7 @@ import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
 import { narrowRuns } from './runs-graph-queries.js';
 
 const fixture: FleetRunsV1 = {
-  v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
+  v: 1, host: null, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
   lanes: [{ lane: 'codex', running: 2, target: 4, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }],
   workers: [{ job: 'job-1', repo: 'ashlrai/phantom', lane: 'codex', tier: 'frontier', ageSeconds: 42 }],
