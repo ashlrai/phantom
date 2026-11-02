@@ -27,6 +27,7 @@ const DOCS = [
   'CLAUDE.md',
   'CONTRIBUTING.md',
   'docs/AGENT-OPERATIONS.md',
+  'docs/AGENT-MCP-CLI.md',
   'docs/HUB-REFERENCE.md',
   'docs/MISSION-OS.md',
   'docs/README.md',
