@@ -687,7 +687,6 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-port-errors.test.ts', // real 127.0.0.1 bind to provoke a genuine EADDRINUSE
   'test/site-seo.test.ts', // spawns real git (log/ls-files/status) to bound sitemap lastmod dates against commit dates
   'test/affected-map-audit.test.ts', // spawnSync node scripts/audit-affected-map.mjs against temp repo fixtures
-  'test/integration/locus-credential-boundary.test.ts', // spawnSync node children prove credential redaction across the process boundary
   'test/m30.merge-queue-reaper.test.ts', // execFileSync bash drives a real git fixture and the reaper script end to end
   'test/collision-free-edits.test.ts', // real temp git repos: init/commit/branch/merge fixtures for the concurrent-fragment merge cases
   'test/improve-reverted.test.ts', // real temp git repo fixture (init/commit/revert) for the revert-detection case
@@ -698,4 +697,9 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-dirty-landed.test.ts', // execFileSync drives a real git fixture (dirty landed classification)
   'test/remote-gateway-bus-read-session-nov01.test.ts', // binds a real loopback HTTP server (remote-gateway bus read session)
   'test/verify-changed-tsc-cache.test.ts', // spawnSync node scripts/verify-changed.mjs --tsc-cache as a real child
+  'test/bus-loop-active-control-01sole2.test.ts', // spawn runs a real node --import tsx child for the bus-loop active-control case
+  'test/config-set-help-exit.test.ts', // spawnSync runs the real CLI for config-set help/exit checks
+  'test/fleet-graph-process-tree-stop-nov01.test.ts', // spawns real node children to exercise process-tree stop
+  'test/phx-graph-node-stream01.test.ts', // spawn and spawnSync run the real `fleet graph-run` CLI
+  'test/planner-cycle-single-01solc5.test.ts', // spawnSync runs a real node child for the single-cycle planner fixture
 ];
