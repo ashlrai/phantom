@@ -59,6 +59,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Learned skills: `phm skills list --json` shows skills written from merged PR outcomes (metadata only, scrubbed, capped; counts real or `"unknown"`). See [docs/SKILLS.md](docs/SKILLS.md).
 - Channels: `phm channels add <kind>` writes config only (credentials stay in existing custody, never printed); `phm channels status --json` reports real counts or `"unknown"`. See [docs/CHANNELS.md](docs/CHANNELS.md).
 - Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/CONSOLE-LAYOUT.md](docs/CONSOLE-LAYOUT.md) (web console width breakpoints).
+- Resident daemon ticks are phased and bounded: every awaited stage has a deadline, an AbortSignal and a status record; `phm daemon status --json | jq .tick.phases` shows the last tick's ledger. See [docs/daemon-tick-phases.md](docs/daemon-tick-phases.md).
 
 ## Coding and verification conventions
 
@@ -76,3 +77,10 @@ timeout; unmeasured figures are `null`. See [lane health](docs/LANE-HEALTH.md).
 Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
+
+## Publish subscription capacity
+
+Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;
+usage metadata only, never credentials. Resident daemons publish at startup and
+on a timer outside ticks. Follow failure recovery instructions; see
+[capacity publication](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity).
