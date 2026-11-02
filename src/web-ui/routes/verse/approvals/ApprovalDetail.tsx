@@ -15,7 +15,7 @@
  *    carries a producer attestation, never the HMAC itself — the same rule
  *    that keeps launcher commands and tokens off every Verse payload.
  */
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { Epistemic } from '../../../components/primitives/Epistemic.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
@@ -48,6 +48,7 @@ import {
   repoName,
 } from './approvals-model.js';
 import styles from './approvals.module.css';
+const ApprovalCard = lazy(() => import('../../inbox/ApprovalCard.js').then((module) => ({ default: module.ApprovalCard })));
 
 const JUDGE_REASON_DISPLAY: Record<JudgeDecisionReasonCode, { label: string; tone: Tone }> = {
   'judge-ship-would-merge': { label: 'Ship (would merge)', tone: 'success' },
@@ -336,7 +337,12 @@ export function ApprovalDetail({ id, dispatchEnabled, onDispatchDisabled, onDeci
         <DiffViewer diff={p.diff} proposalKind={p.kind} />
       </section>
 
-      {p.status === 'pending' ? (
+      {new URLSearchParams(window.location.search).get('agentWorkspace') === '1' ? (
+        <Suspense fallback={<p role="status">Loading approval request…</p>}>
+          <ApprovalCard key={`${id}:${p.approvalRequest?.revision}:${p.status}`} proposal={p} request={p.approvalRequest}
+            dispatchEnabled={dispatchEnabled} onDispatchDisabled={onDispatchDisabled} onDecided={onDecided} />
+        </Suspense>
+      ) : p.status === 'pending' ? (
         <footer className={styles.actions}>
           <p className={styles.actionNote}>
             {dispatchEnabled ? consequence : 'Read-only session — approve and reject are unavailable without dispatch.'}

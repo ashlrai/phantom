@@ -251,7 +251,10 @@ example).
 
 **Talking.** Send plain text and it joins the thread; the Leader's reply comes
 back as a Telegram reply to your message. Reply to a Leader question to answer
-it. Directive prefixes work here too.
+it. Directive prefixes work here too. Replies to delivered memos and check-ins are
+recorded and acknowledged without a model. They do not approve work implicitly.
+Reply `approve`, `veto`, or `details` to a mapped memo to use its existing button
+flow, or use the buttons themselves.
 
 Structured questions use buttons for choices, selection and submission.
 Short answers use a reply prompt. Ordinary messages can be sent while a
@@ -263,6 +266,9 @@ replies remain available for refining an answer.
 |---|---|
 | `/leader` | The latest memo, with buttons |
 | `/leader <text>` | Message the Leader |
+| `/queue` | Local queue snapshot, without a daemon or model |
+| `/usage` | Local usage bars, without a provider probe |
+| `/approvals` | Pending Leader actions; approval still uses the existing gates |
 | `/status`, `/brief` | The instant brief: shipped, running, blockers, next ([Founder mode](#founder-mode-315)) |
 | `/task <owner/repo> <text>` | Hand work to an enabled Telegram automation ([Automations](VERSE.md#automations-315)) |
 | `/directives` | Your standing directives: id, kind and text |
@@ -271,6 +277,28 @@ replies remain available for refining an answer.
 
 `pause`, `resume`, `snapshot` and `revert:<id>:<repo>` are also understood as
 keywords.
+
+`ashlr comms health --json` reports a recent poll heartbeat (seven-minute
+freshness window), last poll, last successful poll, last update id, token presence
+as a boolean, and the last Leader tick outcome. A heartbeat is evidence of a
+recent cycle, not a launchd process inspection. Run `comms cycle` through the
+existing Phantom Secrets `phantom exec --` binding; a missing token fails before
+starting a Leader tick. Never paste a token into logs or command arguments.
+
+The poller calls `deleteWebhook` with `drop_pending_updates: false` before its
+first API poll in a process. API failures log numeric codes only, including 409
+conflicts. Inbound batches are stored privately before advancing the offset;
+failed acknowledgements retry on the next cycle. Local poll cycles are serialized.
+`resolved` includes recorded memo/check-in replies, local commands, and routed
+Leader buttons, as well as numbered answers. It does not mean an action was approved.
+
+Queue snapshots are read from `~/.ashlr/queue.v1.json` (or `queue.v1`), then
+`router/queue.json` or `ashlr-fleet-queue.json`. Rows use `items`, `queue`, or
+`tasks` arrays with `id`, `status`/`state`, and `title`. Usage reads
+`resource.v1.json` (or `resource.v1`), then `fleet.json`, with `pools`,
+`resources`, or `accounts` arrays containing `name`/`id`, `used`, and `limit`.
+Missing snapshots and unknown readings are reported explicitly. These are
+recorded values, not live quota probes.
 
 **Buttons.** Memos arrive with **[Approve] [Veto] [Details]**. Approve is
 shown only when an action is waiting on you: it applies a scheduled class-B

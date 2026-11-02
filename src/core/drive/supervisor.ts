@@ -1,4 +1,5 @@
 /** Scheduling policy is independent of DRIVER-1 storage and the host semaphore. */
+import { claudeApiHealth, type LaneHealth } from './lane-health.js';
 import { drivePoolAllowed, isPoolDayShare, pacedShareRemaining, type PoolDayShare } from './pool-routing.js';
 
 export type DriveJobState = 'READY' | 'HELD' | 'STARTING' | 'RUNNING' | 'FINISHED' | 'FAILED' | 'PUBLISHING' | 'PUBLISHED' | 'PUBLISH_UNKNOWN';
@@ -8,6 +9,9 @@ export interface DriveJob {
   state: DriveJobState;
   priority: number;
   exitCode?: number;
+  /** Bridge retains terminal health metadata, including after publication. */
+  completedAtMs?: number;
+  emptyFinish?: boolean;
 }
 export interface DrivePool {
   id: string;
@@ -40,6 +44,7 @@ export interface DriveReport {
   published: string[];
   publicationUnknown: string[];
   held: string | null;
+  laneHealth?: LaneHealth;
 }
 
 /**
@@ -99,10 +104,16 @@ export function parseDriveSnapshot(value: unknown): DriveSnapshot {
     if (!object(job) || !id(job.id) || ids.has(job.id) || typeof job.pool !== 'string' || !pools.has(job.pool) ||
         !states.has(job.state as DriveJobState) || !Number.isSafeInteger(job.priority) ||
         (job.exitCode !== undefined && !Number.isSafeInteger(job.exitCode)) ||
+        (job.completedAtMs !== undefined && (!Number.isSafeInteger(job.completedAtMs) || (job.completedAtMs as number) < 0 || job.exitCode === undefined || !['FINISHED', 'FAILED', 'PUBLISHED', 'PUBLISHING', 'PUBLISH_UNKNOWN'].includes(job.state as string))) ||
+        (job.emptyFinish !== undefined && (typeof job.emptyFinish !== 'boolean' || job.completedAtMs === undefined)) ||
+        (job.pool === 'claude-api' && ['FINISHED', 'FAILED', 'PUBLISHED', 'PUBLISHING', 'PUBLISH_UNKNOWN'].includes(job.state as string) &&
+          (job.completedAtMs === undefined || job.emptyFinish === undefined)) ||
         (job.state === 'FINISHED' && job.exitCode === undefined)) return invalid();
     ids.add(job.id);
     jobs.push({ id: job.id, pool: job.pool, state: job.state as DriveJobState,
-      priority: job.priority as number, ...(job.exitCode === undefined ? {} : { exitCode: job.exitCode as number }) });
+      priority: job.priority as number,
+      ...(job.completedAtMs === undefined ? {} : { completedAtMs: job.completedAtMs as number }),
+      ...(job.emptyFinish === undefined ? {} : { emptyFinish: job.emptyFinish as boolean }), ...(job.exitCode === undefined ? {} : { exitCode: job.exitCode as number }) });
   }
   return { version: 1, pools: [...pools.values()], maxRunning: value.maxRunning,
     paused: value.paused, admission: value.admission as DriveSnapshot['admission'], jobs };
@@ -125,10 +136,16 @@ export function planDrive(snapshot: DriveSnapshot, nowMs = Date.now()): string[]
   const shareLeft = new Map(snapshot.pools.map(pool =>
     [pool.id, pool.daily === undefined ? Number.POSITIVE_INFINITY : pacedShareRemaining(pool.daily, nowMs)]));
   let total = snapshot.jobs.filter(active).length;
+  const health = claudeApiHealth(snapshot.jobs, nowMs);
+  // Half-open: one ordinary eligible job probes recovery, never a synthetic paid call.
+  const apiLimit = health.reason ? (nowMs >= health.probeAtMs! ? 1 : 0) : Number.POSITIVE_INFINITY;
   const ready = snapshot.jobs.filter(job => job.state === 'READY' && drivePoolAllowed(job.id, job.pool));
   const result: string[] = [];
   while (total < snapshot.maxRunning) {
-    const eligible = ready.filter(job => counts.get(job.pool)! < pools.get(job.pool)!.ceiling && shareLeft.get(job.pool)! > 0);
+    const eligible = ready.filter(job => {
+      const ceiling = Math.min(pools.get(job.pool)!.ceiling, job.pool === 'claude-api' ? apiLimit : Number.POSITIVE_INFINITY);
+      return counts.get(job.pool)! < ceiling && shareLeft.get(job.pool)! > 0;
+    });
     eligible.sort((a, b) => {
       const deficit = (job: DriveJob): number => Number(counts.get(job.pool)! < pools.get(job.pool)!.floor);
       return deficit(b) - deficit(a) || b.priority - a.priority;
@@ -154,6 +171,7 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
   const snapshot = async (): Promise<DriveSnapshot> => {
     const state = parseDriveSnapshot(await bridge.snapshot(lease ?? undefined));
     state.paused ||= await deps.paused();
+    report.laneHealth = claudeApiHealth(state.jobs, nowMs());
     report.paused = state.paused;
     report.active = state.jobs.filter(active).length;
     report.ready = state.jobs.filter(job => job.state === 'READY').length;

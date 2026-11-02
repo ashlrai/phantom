@@ -1,0 +1,57 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "America/New_York",
+  "schedule": ["before 6am on Monday"],
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "automerge": false,
+  "minimumReleaseAge": "3 days",
+  "separateMajorMinor": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": false
+  },
+  "packageRules": [
+    {
+      "description": "One pull request for non-major updates, excluding GitHub Actions",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "excludeManagers": ["github-actions"],
+      "groupName": "non-major updates"
+    },
+    {
+      "description": "GitHub Actions non-major updates, including digest and pin updates",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "github-actions"
+    },
+    {
+      "description": "typescript-eslint peer range stops below 6.1.0",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["package.json"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<6.1.0"
+    },
+    {
+      "description": "ESLint 10 recommended rules are a deliberate migration",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["package.json"],
+      "matchPackageNames": ["eslint"],
+      "allowedVersions": "<10.0.0"
+    },
+    {
+      "description": "eslint-plugin-react-hooks 7 lifts with the ESLint 10 migration",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["package.json"],
+      "matchPackageNames": ["eslint-plugin-react-hooks"],
+      "allowedVersions": "<7.0.0"
+    },
+    {
+      "description": "jsdom 30 changes getByRole results that the console tests still assert",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["package.json"],
+      "matchPackageNames": ["jsdom"],
+      "allowedVersions": "<30.0.0"
+    }
+  ]
+}

@@ -36,6 +36,7 @@ import { sendIMessage } from '../integrations/imessage.js';
 import {
   sendTelegramMessage,
   pollTelegramUpdates,
+  acknowledgeTelegramUpdate,
   answerCallbackQuery,
   telegramEnabled,
   type InboundEvent,
@@ -54,6 +55,7 @@ import {
 import { runCommsMigrationsOnce, type CommsMigrationSummary } from './migrations.js';
 import {
   converseWithLeader,
+  recordMappedTelegramReply,
   createPacer,
   drainLeaderThread,
   handleLeaderButton,
@@ -64,6 +66,7 @@ import {
   sendReportViaTelegram,
   type SendPacer,
 } from './telegram-channel.js';
+import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
 
@@ -232,7 +235,7 @@ async function handleRevert(spec: string, event: InboundEvent, cfg: AshlrConfig)
 
 async function handleTelegramCallback(event: InboundEvent, cfg: AshlrConfig, result: CycleResult): Promise<void> {
   if (event.data?.startsWith(LEADER_CALLBACK_PREFIX)) {
-    await handleLeaderButton(event, cfg);
+    if (await handleLeaderButton(event, cfg)) result.resolved++;
     return;
   }
   if (event.data?.startsWith('revert:')) {
@@ -294,7 +297,19 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
   }
 
   // 3.14: /help /start /status /leader /directives (unknown /x → help).
+  const { localTelegramCommand } = await import('./telegram-local.js');
+  const local = await localTelegramCommand(text, cfg);
+  if (local !== null) {
+    const sent = await sendTelegramMessage(local, replyOpts(event), cfg);
+    if (!sent.ok) throw new Error('Telegram command reply failed');
+    result.resolved++;
+    return;
+  }
   if (await handleSlashCommand(event, text, cfg)) return;
+  if (await recordMappedTelegramReply(event, text, cfg)) {
+    result.resolved++;
+    return;
+  }
 
   // A Telegram reply to one of our Leader messages is conversation — even a
   // bare number ("2") answering a Leader question — so it never picks an
@@ -319,15 +334,23 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
 }
 
 async function pollTelegram(cfg: AshlrConfig, result: CycleResult): Promise<void> {
-  const { updates } = await pollTelegramUpdates(cfg);
-  for (const event of updates ?? []) {
-    try {
-      if (event.kind === 'callback') await handleTelegramCallback(event, cfg, result);
-      else if (event.kind === 'text' && event.text) await handleTelegramText(event, event.text, cfg, result);
-    } catch {
-      // one bad event must not stop the rest
+  const dir = join(homedir(), '.ashlr', 'comms');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const lock = acquireLocalStoreLock(join(dir, '.telegram-poll.lock'), 0);
+  if (!lock) { console.error('Telegram poll: another local cycle is active'); return; }
+  try {
+    const { updates } = await pollTelegramUpdates(cfg, true);
+    for (const event of updates ?? []) {
+      try {
+        if (event.kind === 'callback') await handleTelegramCallback(event, cfg, result);
+        else if (event.kind === 'text' && event.text) await handleTelegramText(event, event.text, cfg, result);
+        if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+      } catch {
+        console.error('Telegram inbound handling failed; update retained for retry');
+        break;
+      }
     }
-  }
+  } finally { releaseLocalStoreLock(lock); }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +410,10 @@ async function sendNextQuestion(cfg: AshlrConfig, isTelegram: boolean, state: Co
 export async function runCommsCycle(cfg: AshlrConfig, opts: CycleOptions = {}): Promise<CycleResult> {
   const result: CycleResult = { sent: 0, resolved: 0 };
   const isTelegram = telegramEnabled(cfg);
+  if (cfg.comms?.enabled && cfg.comms.channel === 'telegram' && !isTelegram) {
+    await pollTelegramUpdates(cfg);
+    return result;
+  }
 
   try {
     const { isPaused } = await import('./pause.js');

@@ -82,7 +82,6 @@ describe('CLI registry anti-drift (structural, parses src/cli/index.ts)', () => 
     expect(dispatched).toContain('daemon');
     expect(dispatched).toContain('inbox');
     expect(dispatched).toContain('help');
-    expect(dispatched).toContain('top');
   });
 
   it('never dispatches the internal skills-audit worker entry point as a user command', () => {

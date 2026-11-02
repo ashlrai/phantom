@@ -10,7 +10,11 @@ CI Efficiency owns workflow integration. This is a proposed additive cache plan,
 
 The root npm job below covers the root install. The independent `src/raycast/package-lock.json` and `examples/universe-site/package-lock.json` require separate keys and installs if their jobs are cached. Do not share a root key with those installs. There is currently no tracked `bun.lock`; do not enable a Bun cache until its owning package and lockfile are present. For that package replace `bun.lock` below with its actual repo-relative path and run the install in that package directory. Never cache `node_modules`, credentials, `.npmrc`, Cargo credentials, or an entire home directory.
 
-## Default-branch npm warmer
+## Fast-lane npm caching (current)
+
+The `quick` step in `ci.yml` uses `setup-node` with `cache: npm` for PR and merge_group runs. `setup-node` v7 manages restore and save automatically using key `npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/package-lock.json') }}`. Do not add a manual npm cache step to the quick job: it would conflict with the built-in handler and produce a stale cache key (the built-in globs `**/package-lock.json` while this plan pins to the root lockfile only).
+
+## Default-branch npm warmer (proposed)
 
 Add this job to the CI workflow and configure its push trigger for `master` without removing existing triggers. Mirror the OS/architecture matrix and Node version of consuming jobs. It is independent of required checks. Use the same restore step and key in consumers, without the save step or `setup-node`'s automatic npm cache. Run `npm ci` on hits as well as misses.
 

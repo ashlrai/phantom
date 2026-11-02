@@ -91,6 +91,8 @@ export type {
  */
 export type {
   Proposal,
+  ApprovalRequest,
+  ApprovalDecision,
   ProposalStatus,
   ProposalKind,
   ProposalVerifyResult,

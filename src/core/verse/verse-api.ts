@@ -421,6 +421,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   overnight: async () => {
     try { return (await import('./overnight-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'overnight-api.js'); }
   },
+  'fleet-runs': async () => {
+    try { return (await import('./fleet-runs-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-runs-api.js'); }
+  },
   'fleet-live': async () => {
     try { return (await import('./fleet-live-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-live-api.js'); }
   },
@@ -1979,6 +1982,10 @@ export async function handleVerseApi(
   if (!isVerseApiPath(path)) return false;
 
   try {
+    if (path === `${VERSE_API_PREFIX}/fleet/grok-ultra` || path.startsWith(`${VERSE_API_PREFIX}/fleet/grok-ultra/`)) {
+      if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
+      return (await import('./grok-ultra-api.js')).handleGrokUltraApi(req, res, path, method);
+    }
     if (path === `${VERSE_API_PREFIX}/adoption` || path.startsWith(`${VERSE_API_PREFIX}/adoption/`)) {
       // Metadata reads cannot evaluate legacy scheduler-owning mounted modules.
       if (path !== `${VERSE_API_PREFIX}/adoption` && path !== `${VERSE_API_PREFIX}/adoption/refresh`) {

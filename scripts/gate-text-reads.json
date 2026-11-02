@@ -1,0 +1,35 @@
+{
+  "src/core/vision/mission-graph.ts": [
+    "test/m491.ecosystem-mission-graph.test.ts"
+  ],
+  "src/cli/loop.ts": [
+    "test/m102.goal-conductor.test.ts"
+  ],
+  "src/core/run/verifier-execution-authority.ts": [
+    "test/m473.verifier-execution-authority.test.ts"
+  ],
+  "src/core/fleet/automerge-canary-ladder.ts": [
+    "test/automerge-canary-ladder.test.ts"
+  ],
+  "src/core/fleet/automerge-canary-cancel.ts": [
+    "test/automerge-canary-ladder.test.ts"
+  ],
+  "src/core/fleet/automerge-canary-store.ts": [
+    "test/automerge-canary-ladder.test.ts"
+  ],
+  "src/core/inbox/merge.ts": [
+    "test/m402.automerge-canary-shadow-hook.test.ts"
+  ],
+  "src/core/daemon/loop.ts": [
+    "test/h1.daemon-gates.test.ts"
+  ],
+  "src/cli/conductor-permit.ts": [
+    "test/m518.goal-conductor-permit-operator.test.ts"
+  ],
+  "src/core/authority/custody-client.ts": [
+    "test/custody-client-310b.test.ts"
+  ],
+  "scripts/gate-text-reads.json": [
+    "test/gate.test.ts"
+  ]
+}

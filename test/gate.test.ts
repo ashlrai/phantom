@@ -13,6 +13,7 @@ import {
   formatDuration,
   loadKnownFailures,
   loadSmoke,
+  loadTextReads,
   lockfileDependencyChanged,
   packageDependencyChanges,
   parseArgs,
@@ -121,6 +122,20 @@ describe('planTests', () => {
     expect(webSetup.backend.mode).toBe('related');
     const config = plan(['vitest.config.web.ts']);
     expect([config.backend.mode, config.web.mode]).toEqual(['full', 'full']);
+  });
+
+  it('includes mapped text readers for non-module changes in the correct suite', () => {
+    const p = planTests({ full: false, changed: ['docs/input.md'], dependencyKeys: [], smoke,
+      textReads: { 'docs/input.md': ['test/reader.test.ts', 'src/web-ui/reader.test.tsx'] } });
+    expect(p.backend.files).toContain('test/reader.test.ts');
+    expect(p.web.files).toContain('src/web-ui/reader.test.tsx');
+    expect(p.backend.files).not.toContain('src/web-ui/reader.test.tsx');
+    expect(p.backend.mode).toBe('related');
+  });
+
+  it('validates the text-read map and rejects missing tests', () => {
+    expect(Object.keys(loadTextReads()).length).toBeGreaterThan(0);
+    expect(() => loadTextReads({ 'src/a.ts': ['test/missing.test.ts'] })).toThrow(/Invalid text-read mapping/);
   });
 
   it('--full runs everything', () => {

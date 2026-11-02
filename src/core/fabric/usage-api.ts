@@ -17,8 +17,8 @@ import { readEnvironmentCredential } from '../integrations/secrets.js';
  *
  * Response shape (internal undocumented endpoint, confirmed from binary analysis):
  *   {
- *     five_hour:   { utilization: 0..1, resets_at: <unix-sec> }
- *     seven_day:   { utilization: 0..1, resets_at: <unix-sec> }
+ *     five_hour?:  { utilization: 0..1, resets_at: <unix-sec> } | null
+ *     seven_day?:  { utilization: 0..1, resets_at: <unix-sec> } | null
  *     extra_usage?: { is_enabled: bool, used_credits: number, monthly_limit: number, utilization: int% }
  *   }
  */
@@ -36,14 +36,14 @@ export interface ClaudeApiExtraUsage {
 }
 
 export interface ClaudeApiUsageResult {
-  /** 5-hour rolling window utilization as a percentage (0–100+). */
-  fiveHourPct: number;
-  /** 7-day rolling window utilization as a percentage (0–100+). */
-  weeklyPct: number;
-  /** Unix epoch seconds when the 5h window resets. */
-  fiveHourResetAt: number;
-  /** Unix epoch seconds when the 7d window resets. */
-  weeklyResetAt: number;
+  /** Null when unreported; otherwise 5-hour rolling window utilization as a percentage (0–100+). */
+  fiveHourPct: number | null;
+  /** Null when unreported; otherwise 7-day rolling window utilization as a percentage (0–100+). */
+  weeklyPct: number | null;
+  /** Null when unreported; otherwise Unix epoch seconds when the 5h window resets. */
+  fiveHourResetAt: number | null;
+  /** Null when unreported; otherwise Unix epoch seconds when the 7d window resets. */
+  weeklyResetAt: number | null;
   /** Extra/overage usage block, if present in response. */
   extraUsage?: ClaudeApiExtraUsage;
 }
@@ -167,30 +167,31 @@ function parseUsageResponse(body: unknown): ClaudeApiUsageResult | null {
     if (typeof body !== 'object' || body === null) return null;
     const b = body as Record<string, unknown>;
 
-    const fiveHour = b['five_hour'];
-    const sevenDay  = b['seven_day'];
-
-    if (typeof fiveHour !== 'object' || fiveHour === null) return null;
-    if (typeof sevenDay  !== 'object' || sevenDay  === null) return null;
-
-    const fh = fiveHour as Record<string, unknown>;
-    const sd = sevenDay  as Record<string, unknown>;
-
-    const fhUtil    = fh['utilization'];
-    const fhReset   = fh['resets_at'];
-    const sdUtil    = sd['utilization'];
-    const sdReset   = sd['resets_at'];
-
-    if (typeof fhUtil  !== 'number') return null;
-    if (typeof fhReset !== 'number') return null;
-    if (typeof sdUtil  !== 'number') return null;
-    if (typeof sdReset !== 'number') return null;
+    // Null/omitted blocks are absent. A present malformed block invalidates
+    // the response: discarding it could hide the account's governing limit.
+    const parseWindow = (value: unknown) => {
+      if (value === null || value === undefined) return null;
+      if (typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid window');
+      const window = value as Record<string, unknown>;
+      const utilization = window['utilization'];
+      const reset = window['resets_at'];
+      if (typeof utilization !== 'number' || !Number.isFinite(utilization) || utilization < 0 ||
+          !Number.isFinite(utilization * 100) ||
+          typeof reset !== 'number' || !Number.isFinite(reset) || reset <= 0 ||
+          !Number.isFinite(new Date(reset * 1000).getTime())) {
+        throw new Error('invalid window values');
+      }
+      return { pct: Math.round(utilization * 100), reset };
+    };
+    const fiveHour = parseWindow(b['five_hour']);
+    const sevenDay = parseWindow(b['seven_day']);
+    if (!fiveHour && !sevenDay) return null;
 
     const result: ClaudeApiUsageResult = {
-      fiveHourPct:    Math.round(fhUtil * 100),
-      weeklyPct:      Math.round(sdUtil * 100),
-      fiveHourResetAt: fhReset,
-      weeklyResetAt:   sdReset,
+      fiveHourPct: fiveHour?.pct ?? null,
+      weeklyPct: sevenDay?.pct ?? null,
+      fiveHourResetAt: fiveHour?.reset ?? null,
+      weeklyResetAt: sevenDay?.reset ?? null,
     };
 
     // Optional extra_usage block

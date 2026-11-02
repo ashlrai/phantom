@@ -1,0 +1,68 @@
+# Phantom — the engineering agent workbench
+
+> Full documentation bundle for agents. Everything below is plain Markdown.
+
+## Overview
+
+Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.
+
+Package: `@ashlr/phantom` v3.30.0.
+Node.js floor: >=22.15.0.
+
+## Install
+
+```sh
+npm install -g @ashlr/phantom
+ashlr --version
+ashlr verse
+```
+
+ashlr verse prints a read token and a mutation token; the server listens on
+`127.0.0.1` only. Neither token is written to disk.
+
+## Commands
+
+- `ashlr --help`: top-level command list
+- `ashlr verse`: serve the console
+- `ashlr docs --agent`: agent cheat sheet (plain text)
+- `ashlr docs --agent --json`: command registry as JSON
+
+## Use-case guides
+
+### [Coding agents on local models · Phantom use cases](https://verse.ashlr.ai/use-cases/local-models)
+
+Run coding agents on local models with Phantom: Ollama discovery, llama-server dispatch through a normalizing proxy, measured token and wall-clock numbers from the repo.
+
+### [Bring your own agent accounts · Phantom use cases](https://verse.ashlr.ai/use-cases/own-accounts)
+
+Drive the coding-agent CLIs and accounts you already use: Claude Code, Codex, Grok, Devin and local models. One workbench, pinned profiles, real usage readings.
+
+### [Review every agent change · Phantom use cases](https://verse.ashlr.ai/use-cases/review-agent-work)
+
+Review AI agent changes before they land: per-turn checkpoints, per-file and per-hunk accept and reject, undo and rewind previews, and a recorded decision log in Phantom.
+
+### [Autonomy inside a scope you sign · Phantom use cases](https://verse.ashlr.ai/use-cases/signed-autonomy)
+
+Phantom autonomy ships dormant and runs only inside a standing grant you sign with Touch ID: an eight-stage ladder, the same merge gates every time, reversible merges and a hash-chained ledger.
+
+## Comparison
+
+- [Phantom vs. driving each agent CLI directly · Phantom](https://verse.ashlr.ai/compare/agent-clis): An honest comparison of driving each coding-agent CLI directly versus running them inside Phantom, with every vendor statement linked to a public source and every Phantom claim linked to the repository.
+
+## Repository documentation
+
+- [README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview
+- [docs/README.md](https://github.com/ashlrai/phantom/blob/master/docs/README.md): task-indexed guide map
+- [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide
+- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations
+- [Architecture](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md): component boundaries
+- [Quickstart](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md): first useful turn
+- [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/CLI-REFERENCE.md): generated command table
+- [Agent readiness](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): scorer source and rubric
+
+## Agent-facing resources
+
+- [llms.txt](https://verse.ashlr.ai/llms.txt): concise agent index
+- [Sitemap](https://verse.ashlr.ai/sitemap.xml): complete page index
+- [server.json](https://github.com/ashlrai/phantom/blob/master/server.json): machine-readable server config
+- [Agent docs command](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): `ashlr docs --agent --json`

@@ -47,24 +47,6 @@ function fixture() {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('candidate version synchronization', () => {
-  it('parses exactly one candidate field in the repository README and preserves surrounding prose', () => {
-    const root = fixture();
-    const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
-    syncCandidateVersion(root, version);
-    const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-    writeFileSync(join(root, 'README.md'), readme);
-
-    expect(syncCandidateVersion(root, undefined, { check: true }).matches).toBe(true);
-    expect(read(root, 'README.md')).toBe(readme);
-    const nextVersion = `${Number(version.split('.')[0]) + 1}.0.0`;
-    syncCandidateVersion(root, nextVersion);
-    expect(read(root, 'README.md')).toBe(readme.replace(
-      `This source tree targets version ${version};`,
-      `This source tree targets version ${nextVersion};`,
-    ));
-    expect(syncCandidateVersion(root, nextVersion, { check: true }).matches).toBe(true);
-  });
-
   it('derives only read-only checks from the root and reports CLI drift without editing', () => {
     const root = fixture();
     mkdirSync(join(root, 'scripts'));

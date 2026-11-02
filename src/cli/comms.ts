@@ -20,10 +20,11 @@
  * Exit codes: 0 success, 1 error, 2 bad usage.
  */
 
+import { cmdCommsBus } from './comms-bus.js';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { loadConfig } from '../core/config.js';
 import { commsEnabled } from '../core/integrations/imessage.js';
-import { telegramEnabled } from '../core/integrations/telegram.js';
+import { readTelegramHealth, telegramEnabled } from '../core/integrations/telegram.js';
 import { listRequests, outstanding, postRequest } from '../core/comms/requests.js';
 import { runCommsCycle } from '../core/comms/dispatch.js';
 import { registerCommsHandlers } from '../core/comms/handlers.js';
@@ -292,6 +293,15 @@ async function cmdSendTest(): Promise<number> {
 
 async function cmdCycle(): Promise<number> {
   const cfg = await loadConfig();
+  if (cfg.comms?.channel === 'telegram' && cfg.comms.enabled && !telegramEnabled(cfg)) {
+    console.error(readTelegramHealth(cfg).tokenPresent
+      ? 'Telegram configuration incomplete: check the configured chat id.'
+      : 'Telegram bot token missing. Run comms cycle through Phantom Secrets: phantom exec -- <ashlr command>.');
+    return 1;
+  }
+
+  const priorTick = readTelegramHealth(cfg).leaderTick;
+  if (priorTick === 'failed' || priorTick === 'spawn-failed') console.error('cycle: previous Leader tick failed; inspect Leader health and model availability.');
 
   // M177: throttled cadence — drive digest + ask-vision from the working poller.
   if (channelEnabled(cfg)) {
@@ -499,11 +509,13 @@ function printCommsHelp(): void {
   console.log('  Usage: phm comms <status|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
+  console.log('    bus post|read                durable local JSON inbox (bus --help)');
   console.log('    status                       config + pending/outstanding + watermark');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
   console.log('    ask "<text>" -o a -o b       post a question with numbered options');
   console.log('    digest [--force]             send what changed since the last digest (silent if nothing)');
+  console.log('    health [--json]              value-free Telegram poll heartbeat and offset');
   console.log('    ask-vision                   run a Leader tick + deliver the latest memo via the Leader thread');
   console.log('    ask-merges                   post ship proposals for approval + run cycle');
   console.log('    setup-telegram               print Telegram setup steps + discover chat id');
@@ -518,6 +530,7 @@ function printCommsHelp(): void {
  * telegram-brand keeps its own strict parser.
  */
 const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> = {
+  health:           { allowed: { flags: ['--json'] }, usage: 'usage: phm comms health [--json]' },
   status:           { allowed: {}, usage: 'usage: phm comms status' },
   'send-test':      { allowed: {}, usage: 'usage: phm comms send-test' },
   cycle:            { allowed: {}, usage: 'usage: phm comms cycle' },
@@ -529,6 +542,7 @@ const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> 
 };
 
 export async function cmdComms(args: string[]): Promise<number> {
+  if (args[0] === 'bus') return cmdCommsBus(args.slice(1));
   if (args.includes('--help') || args.includes('-h')) {
     printCommsHelp();
     return 0;
@@ -547,6 +561,11 @@ export async function cmdComms(args: string[]): Promise<number> {
   const { sub, text, options } = parseArgs(args);
 
   switch (sub) {
+    case 'health': {
+      const health = readTelegramHealth(await loadConfig());
+      console.log(args.includes('--json') ? JSON.stringify(health) : `Telegram poller: ${health.pollerAlive ? 'alive (recent heartbeat)' : 'stale or never polled'}\nLast poll: ${health.lastPoll ?? 'never'}\nLast update id: ${health.lastUpdateId ?? 'none'}\nToken present: ${health.tokenPresent ? 'yes' : 'no'}\nError: ${health.error ?? 'none'}`);
+      return 0;
+    }
     case 'status':
       return cmdStatus();
     case 'send-test':

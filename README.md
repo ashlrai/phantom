@@ -36,7 +36,7 @@ onboarding path** — install, your first seat and your first task. The
 inside this repository.
 
 Canonical Phantom releases use `@ashlr/phantom` from `ashlrai/phantom`.
-This source tree targets version 3.30.0; check canonical release availability and exact matching assets before installation.
+Read the source candidate version from [package.json](package.json); check canonical release availability and exact matching assets before installation.
 Install the promoted npm `latest` release, or pin a published version from
 [GitHub releases](https://github.com/ashlrai/phantom/releases/latest) as
 `@ashlr/phantom@<version>`; the source candidate is not proof of publication.

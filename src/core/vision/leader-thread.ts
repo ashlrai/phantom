@@ -934,7 +934,7 @@ const REPLY_PROMPT_CHARS = 40_000;
  */
 export async function appendMasonMessage(
   text: string,
-  opts: { channel: LeaderThreadChannel; replyTo?: string; cfg?: AshlrConfig },
+  opts: { channel: LeaderThreadChannel; replyTo?: string; cfg?: AshlrConfig; recordOnly?: boolean },
 ): Promise<AppendMasonMessageResult> {
   const channel = checkChannel(opts.channel);
   const clean = checkMasonText(text);
@@ -943,6 +943,8 @@ export async function appendMasonMessage(
   const nowMs = d.now();
   const message = masonMessage(nowMs, { channel, kind: 'message', text: clean, ...(opts.replyTo ? { replyTo: opts.replyTo } : {}) });
   appendMessages([message], nowMs);
+  // Explicit transport receipt: record words without model calls or implied authority.
+  if (opts.recordOnly) return { message, reply: null };
 
   let directive: OperatorDirective | undefined;
   const explicit = parseExplicitDirective(clean);

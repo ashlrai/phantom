@@ -17,6 +17,7 @@ import type {
   FleetActivitySnapshot,
   FleetLaneSnapshot,
   FleetStatus,
+  ApprovalRequest,
   Proposal,
   ProposalStatus,
   PublicDaemonObservation,

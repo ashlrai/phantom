@@ -415,6 +415,29 @@ function directiveText(directive: unknown): string | null {
   return null;
 }
 
+/** A mapped memo/check-in reply is a durable acknowledgement, never implicit approval. */
+export async function recordMappedTelegramReply(event: InboundEvent, text: string, cfg: AshlrConfig): Promise<boolean> {
+  const target = lookupTelegramMessage(event.replyToMessageId);
+  if (!target || target.kind === 'question') return false;
+  const decision = /^\s*(approve|veto|details)\s*$/i.exec(text)?.[1]?.toLowerCase();
+  if (decision && (target.memoId || target.actionIds?.length)) {
+    const token = registerButtonTarget({ ...(target.memoId ? { memoId: target.memoId } : {}),
+      ...(target.actionIds ? { actionIds: target.actionIds } : {}), ...(target.threadId ? { threadId: target.threadId } : {}) });
+    return handleLeaderButton({ ...event, data: `lt:${decision === 'approve' ? 'a' : decision === 'veto' ? 'v' : 'd'}:${token}` }, cfg);
+  }
+  const mod = await thread();
+  if (!mod) throw new Error('Leader thread unavailable');
+  // Redelivery after a transport failure must not append the human message twice.
+  if (!lookupTelegramMessage(event.messageId)?.threadId) {
+    const body = target.memoId ? `(re: Leader memo ${target.memoId}) ${text}` : text;
+    const { message } = await mod.appendMasonMessage(body, { channel: 'telegram', cfg, recordOnly: true, ...(target.threadId ? { replyTo: target.threadId } : {}) });
+    if (event.messageId !== undefined) recordTelegramMessages([event.messageId], { threadId: message.id, kind: 'mason' });
+  }
+  const sent = await replyTo(event, 'Reply recorded. No action was approved. Use /approvals or the memo buttons for actions; /status, /queue and /usage work without the Leader model.', cfg);
+  if (!sent.ok) throw new Error('Telegram acknowledgement failed');
+  return true;
+}
+
 /**
  * Hand Mason's text to the Leader thread and send the Leader's reply back as
  * a Telegram reply to his message. Answers a Leader question when he replied
@@ -673,6 +696,7 @@ export async function handleLeaderButton(event: InboundEvent, cfg: AshlrConfig):
   const target = resolveButtonTarget(m[2]!);
   const ack = async (t: string): Promise<void> => {
     if (event.callbackQueryId) await answerCallbackQuery(event.callbackQueryId, cfg, t);
+    else await replyTo(event, t, cfg);
   };
   if (!target) {
     await ack('That button has expired.');
@@ -773,6 +797,9 @@ const TELEGRAM_HELP_SECTIONS = [
     ['/status or /brief', 'shipped, running, blockers and next'],
     ['status / update / what\'s up', 'the same instant brief'],
     ['/leader', 'latest Leader memo'],
+    ['/queue', 'local queue snapshot'],
+    ['/usage', 'local usage bars'],
+    ['/approvals', 'pending actions; existing approval gates apply'],
     ['snapshot', 'full fleet snapshot'],
   ]],
   ['Talk & work', [

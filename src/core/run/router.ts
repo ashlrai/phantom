@@ -60,6 +60,9 @@ import {
   operationalProducerScoresForRouting,
   selectCostAwareModel,
   codexModelForTier,
+  explicitModelTier,
+  modelTierForTask,
+  codexDefaultForTask,
   type EngineScoreMap,
 } from './learned-router.js';
 // LOCAL-ONLY: the ONE predicate. No parallel mechanism lives in this file.
@@ -282,46 +285,6 @@ function isTrivialItem(item: WorkItem): boolean {
 }
 
 /** Queue tiers select a model within an admitted engine, never an engine tier. */
-function explicitModelTier(item: WorkItem): ModelRoutingTier | null {
-  const tiers = new Set<ModelRoutingTier>();
-  for (const tag of item.tags ?? []) {
-    const match = /^tier[:=](fast|mid|computer|work|frontier)$/i.exec(tag.trim());
-    if (match) tiers.add(match[1].toLowerCase() as ModelRoutingTier);
-  }
-  // Conflicting tags do not silently downgrade a frontier/work request.
-  for (const tier of ['frontier', 'work', 'computer', 'mid', 'fast'] as const) {
-    if (tiers.has(tier)) return tier;
-  }
-  return null;
-}
-
-export function modelTierForTask(item: WorkItem): ModelRoutingTier {
-  const explicit = explicitModelTier(item);
-  if (explicit) return explicit;
-  const tags = new Set((item.tags ?? []).map(tag => tag.trim().toLowerCase()));
-  if (['computer', 'computer-use', 'gui', 'browser-use'].some(tag => tags.has(tag)) ||
-      /\b(computer[ -]use|GUI|browser automation)\b/i.test(item.title)) return 'computer';
-  if (item.source === 'doc' || item.source === 'test' ||
-      ['verify', 'test', 'fixup', 'pr-body', 'docs', 'triage'].some(tag => tags.has(tag)) ||
-      /^(?:\[?FIXUP\b|verify\b|run (?:the )?(?:tests?|verification)\b|triage\b|(?:write|draft|update) (?:the )?(?:PR|pull request) (?:body|description)\b)/i.test(item.title)) {
-    return 'fast';
-  }
-  if ((item.source as string) === 'escalation' || isHardItem(item)) return 'work';
-  if (isTrivialItem(item)) return 'fast';
-  // Ordinary implementation remains Sol; mid is an explicit queue choice.
-  return 'work';
-}
-
-function codexDefaultForTask(item: WorkItem, cfg: AshlrConfig): TaskRouteDecision {
-  const custom = cfg.foundry?.engines?.codex;
-  const model = custom
-    ? resolveSelectedEngineModel({ engine: 'codex', spec: resolveEngineSpec('codex', cfg) })
-    : codexModelForTier(modelTierForTask(item));
-  return { engine: 'codex', model,
-    catalogEntry: KNOWN_MODELS.find(entry => entry.id === `codex:${model}`) ?? null,
-    reason: custom ? 'Configured Codex engine default.' : `Codex ${modelTierForTask(item)} model default.` };
-}
-
 /** Capability required by a WorkItem's source type. */
 function capabilityForSource(source: string): ModelCapability | null {
   switch (source) {

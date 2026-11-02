@@ -607,12 +607,12 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
   // -------------------------------------------------------------------------
   // M254 OAUTH USAGE API PATH (authoritative when no fresh CLI event exists).
   //
-  // Fetches five_hour + seven_day utilization from the internal Claude Code
+  // Fetches reported five_hour and/or seven_day utilization from the internal Claude Code
   // OAuth endpoint. 60-second cache; never-throws; returns null on any error
   // or when CLAUDE_CODE_OAUTH_TOKEN / CLAUDE_BRIDGE_OAUTH_TOKEN are absent.
   //
   // When available: availability is classified using max(fiveHourPct, weeklyPct)
-  // vs protectPct thresholds. The reason string cites both windows. This is the
+  // vs protectPct thresholds. The reason string cites reported windows. This is the
   // most authoritative signal — reflects Mason's actual subscription headroom,
   // not just the fleet's transcript files.
   //
@@ -621,13 +621,20 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
   try {
     const apiUsage = await fetchClaudeUsageApi();
     if (apiUsage !== null) {
-      const combinedPct = Math.max(apiUsage.fiveHourPct, apiUsage.weeklyPct);
+      const windows = [
+        { pct: apiUsage.weeklyPct, reset: apiUsage.weeklyResetAt, label: 'weekly', capWindow: '7d' },
+        { pct: apiUsage.fiveHourPct, reset: apiUsage.fiveHourResetAt, label: '5h', capWindow: '5h' },
+      ].filter((window): window is typeof window & { pct: number; reset: number } =>
+        window.pct !== null && window.reset !== null);
+      // Weekly wins equal-utilization ties, consistent with CLI event priority.
+      const governing = windows.reduce((selected, window) => window.pct > selected.pct ? window : selected);
+      const combinedPct = governing.pct;
       const clampedPct  = Math.max(0, Math.min(combinedPct, 200));
 
       let availability: BackendAvailability;
       let reason: string;
 
-      const sourceNote = `(5h: ${apiUsage.fiveHourPct}%, weekly: ${apiUsage.weeklyPct}%; source=oauth-usage-api)`;
+      const sourceNote = `(${windows.map(window => `${window.label}: ${window.pct}%`).join(', ')}; source=oauth-usage-api)`;
 
       if (clampedPct >= 100) {
         availability = 'exhausted';
@@ -643,9 +650,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
         reason = `claude at ${clampedPct}% — within limit ${sourceNote}`;
       }
 
-      // resetsAt: use the higher (further out) of the two reset times, so we
-      // don't prematurely claim the window has reset.
-      const resetsAt = Math.max(apiUsage.fiveHourResetAt, apiUsage.weeklyResetAt);
+      const resetsAt = governing.reset;
 
       return {
         backend: 'claude',
@@ -653,7 +658,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
         usedPct: clampedPct,
         cap: 100,
         capUnit: null,    // utilization is already a percentage — no raw cap unit
-        capWindow: '7d',  // primary display: weekly (most conservative window)
+        capWindow: governing.capWindow,
         resetsAt,
         costPerMTokenOut: 0,
         p50LatencyMs: null,

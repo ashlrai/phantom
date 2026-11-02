@@ -47,6 +47,7 @@ import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, W
 import { RepoTable } from '../fleet/RepoTable.js';
 import { FleetScheduling } from '../resources/SchedulingEvidence.js';
 import { ExecutionFeedback } from '../fleet/ExecutionFeedback.js';
+import { GrokUltraRunway } from '../fleet/GrokUltraRunway.js';
 const ResetSpendingControl = lazyPanel(() => import('../budget/ResetSpendingControl.js').then((m) => m.ResetSpendingControl));
 import { nothingToDraw } from '../fleet/live-model.js';
 import { fleetDarkSince } from '../fleet/dark-since.js';
@@ -143,6 +144,7 @@ export function FleetSection() {
         </>
       }
     >
+      <Cell span={12}><GrokUltraRunway /></Cell>
       {auth && auth.grant.state === 'active' ? (
         // Needs-you's rollout and Stop items, and ⌘K "Autonomy status", point here.
         <Cell span={12}>

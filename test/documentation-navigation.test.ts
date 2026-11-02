@@ -178,6 +178,14 @@ describe('operator documentation navigation', () => {
     }
   });
 
+  it('links the source-only model inventory guide from the packaged documentation index', () => {
+    const root = packagedDocumentation();
+    const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
+    expect(index).toContain('https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md');
+    expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+    expect(checkDocumentation({ root: process.cwd(), entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+  });
+
   it.each(['RESIDENT-RUNTIME', 'DEVIN'])('refuses an omitted %s operator guide in the package', (guide) => {
     const root = packagedDocumentation();
     rmSync(join(root, 'docs', `${guide}.md`));
