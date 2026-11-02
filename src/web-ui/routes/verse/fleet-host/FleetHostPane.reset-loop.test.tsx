@@ -14,7 +14,7 @@ const runs: FleetRuns = {
   lastTick: null, paused: false, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
   lanes: [], workers: [], leaders: [], orchestratorAgents: 2, publishesLastHour: [], mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
-const releases: ResetReleases = { v: 1, generatedAt: at(0), loop: { started: true, lastRunAt: new Date(now - 40_000).toISOString(), lastResult: { at: at(0), checked: 1, released: [], errors: [] }, lastError: null }, releases: [{ v: 1, lane: 'codex-personal', state: 'reset-detected', usedPct: 0, readingAsOf: at(29), heldUntil: null, at: at(28), by: 'reset-detect', reason: 'reset' }] };
+const releases: ResetReleases = { v: 1, generatedAt: at(0), loop: { started: true, lastRunAt: new Date(now - 40_000).toISOString(), lastResult: { at: at(0), checked: 1, released: [], bus: [], errors: [] }, lastError: null }, releases: [{ v: 1, lane: 'codex-personal', state: 'reset-detected', usedPct: 0, readingAsOf: at(29), heldUntil: null, at: at(28), by: 'reset-detect', reason: 'reset' }] };
 const resets = { v: 1, generatedAt: at(0), sourceState: 'healthy', rows: [{ lane: 'codex-personal', held: true, heldReason: 'usage', heldUntil: null, holdSince: at(60), heldBy: 'autobackoff', usedPct: 0, readingAsOf: at(25), resetAt: at(25), state: 'reset-detected', releasable: true, tell: '' }] };
 function serve(loop: ResetReleases | null) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
