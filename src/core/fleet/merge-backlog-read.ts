@@ -34,10 +34,10 @@ import {
   type FleetMergeStateRead,
   type FleetPrClassification,
 } from './fleet-merge-state.js';
-import { planMergeBacklog, type MergeBacklogItem } from './merge-backlog-plan.js';
+import { mergeBacklogCreatedAt, planMergeBacklog, type MergeBacklogItem } from './merge-backlog-plan.js';
 
 /** The console view needs the title and update time on top of the planner's fields. */
-const MERGE_BACKLOG_GH_FIELDS = `${FLEET_PR_GH_VIEW_FIELDS},title,updatedAt,files`;
+const MERGE_BACKLOG_GH_FIELDS = `${FLEET_PR_GH_VIEW_FIELDS},createdAt,title,updatedAt,files`;
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -201,7 +201,7 @@ export async function readMergeBacklog(input: MergeBacklogReadInput): Promise<Me
     const github = parseFleetPrGhState(row);
     const number = github?.number ?? row['number'];
     if (!Number.isSafeInteger(number) || (number as number) < 1) continue;
-    kept.push({ raw: row, item: { repo, mergeState: (github && states.get(github.number)) || missing, github } });
+    kept.push({ raw: row, item: { repo, createdAt: mergeBacklogCreatedAt(row), mergeState: (github && states.get(github.number)) || missing, github } });
   }
 
   const planned = planMergeBacklog(

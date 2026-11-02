@@ -11,7 +11,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@ashlrai/locus-mcp@0.5.0"
+        "@ashlrai/locus-mcp@0.6.2"
       ]
     },
     "lexicon": {
