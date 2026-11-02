@@ -196,7 +196,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-self-tick';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-self-tick' | 'fleet-main-red-age';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -254,6 +254,9 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Exact path only, so it cannot claim /api/verse/fleet/graph/live. Last so the
   // registry mount stays visible beside the modules already on master.
   { id: 'fleet-graph', load: async () => (await import('./fleet-graph-api.js')).handleFleetGraphApi },
+  // Main guardian per-repo red-age: GET /api/verse/fleet/main-red-age
+  // (core/verse/fleet-main-red-age-api.ts); read-only.
+  { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
