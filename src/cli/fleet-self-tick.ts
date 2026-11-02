@@ -1,13 +1,16 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the three
- * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → planner-tick, each with --json (plus --apply and --runs-dir when given),
- * and folds their parsed reports into one run report. Only one self-tick runs
- * per runs dir; a step that fails or throws never stops the later ones.
+ * a host timer or an agent with no desktop app open. It runs four steps in
+ * the fixed order claude-quota → reset-release → lane-autohold →
+ * planner-tick — the first a bounded refreshClaudeQuota probe, the rest the
+ * existing one-shot verbs — each with --json (plus --apply and --runs-dir
+ * when given), and folds their parsed reports into one run report. Only one
+ * self-tick runs per runs dir; a step that fails or throws never stops the
+ * later ones.
  */
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { refreshClaudeQuota, type Probe as ClaudeQuotaProbe } from './fleet-claude-quota.js';
 import { cmdFleetResetRelease } from './fleet-reset-release.js';
 import { cmdFleetLaneAutohold } from './fleet-lane-autohold.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
@@ -17,11 +20,16 @@ import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
 import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
+/** The claude-quota step re-probes at most this often; fresher readings skip. */
+const CLAUDE_QUOTA_MIN_AGE_MS = 30 * 60_000;
+
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
-One locked pass of Phantom's self-management: reset-release first (a lane it
-frees counts as a free slot for the planner step), then lane-autohold, then
-planner-tick. Without --apply nothing is released, held or spawned — the
-planner step still appends its observational PLANNER_TICK line to
+One locked pass of Phantom's self-management: claude-quota first so the other
+steps see a fresh Claude weekly reading (re-probed at most every 30 minutes),
+then reset-release (a lane it frees counts as a free slot for the planner
+step), then lane-autohold, then planner-tick. Without --apply nothing is
+released, held, spawned or written — the quota probe still runs read-only and
+the planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
 a held queue/self-tick.lock reports 'busy' and exits 0. A step that fails or
 throws never stops the later ones. Each completed pass records itself to
@@ -41,6 +49,10 @@ interface Dependencies {
   acquireLock?: RunSelfTickOptions['acquireLock'];
   /** planner-tick spawn seam; tests fake it, never a shell. */
   spawn?: SpawnLike;
+  /** claude-quota probe seam; tests fake it, never a real claude spawn. */
+  claudeProbe?: ClaudeQuotaProbe;
+  /** claude-quota command-finder seam; tests pin it, never a real PATH scan. */
+  claudeFindCommand?: () => string | null;
   /** Home override for tests; the runs-dir fallback and the log cap use it. */
   home?: string;
 }
@@ -54,6 +66,13 @@ function summary(step: string, report: unknown): string {
   if (typeof report !== 'object' || report === null) return '';
   const row = report as Record<string, unknown>;
   const count = (value: unknown): number => Array.isArray(value) ? value.length : 0;
+  if (step === 'claude-quota') {
+    if (row['state'] === 'skipped-fresh') return 'skipped-fresh';
+    const weeklyPct = row['weeklyPct'];
+    if (typeof weeklyPct === 'number') return `weekly=${weeklyPct}%`;
+    const reason = row['reason'];
+    return typeof reason === 'string' ? reason : '';
+  }
   if (step === 'reset-release') {
     return `released=${count(row['released'])} planned=${count(row['planned'])}`;
   }
@@ -86,7 +105,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all three steps: the verbs' own fallbacks
+  // One root for the lock and all four steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -123,6 +142,30 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     return { exitCode, output: captured.join('\n') };
   };
   const defaults: SelfTickSteps = {
+    // A fresh weekly reading lands in metrics/claude-quota.json at most every
+    // 30 minutes; a 'skipped-fresh' pass spawns no probe at all. Exit 0
+    // whenever a reading was produced — claude absent is not a failure; exit
+    // 1 only when refreshClaudeQuota throws (a failed write).
+    'claude-quota': async (argv) => {
+      try {
+        const { state, reading } = await refreshClaudeQuota({
+          root, write: argv.includes('--apply'), minAgeMs: CLAUDE_QUOTA_MIN_AGE_MS,
+          now: () => new Date(now()),
+          ...(deps.claudeProbe === undefined ? {} : { probe: deps.claudeProbe }),
+          ...(deps.claudeFindCommand === undefined ? {} : { findCommand: deps.claudeFindCommand }),
+        });
+        const weekly = reading.windows.find((w) => w.id === 'seven_day');
+        return {
+          exitCode: 0,
+          output: JSON.stringify({
+            state, fresh: reading.fresh, weeklyPct: weekly?.usedPct ?? null,
+            observedAt: reading.observedAt, reason: reading.reason,
+          }),
+        };
+      } catch {
+        return { exitCode: 1, output: '' };
+      }
+    },
     'reset-release': bind(cmdFleetResetRelease, { now }),
     'lane-autohold': bind(cmdFleetLaneAutohold, { now: () => new Date(now()) }),
     'planner-tick': bind(cmdFleetPlannerTick, { now, spawn: deps.spawn }),

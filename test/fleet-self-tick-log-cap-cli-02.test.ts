@@ -27,6 +27,7 @@ let log: string;
 const stub = (name: string): SelfTickStep => async () =>
   ({ exitCode: 0, output: JSON.stringify({ ok: name }) });
 const steps: SelfTickSteps = {
+  'claude-quota': stub('claude-quota'),
   'reset-release': stub('reset-release'),
   'lane-autohold': stub('lane-autohold'),
   'planner-tick': stub('planner-tick'),

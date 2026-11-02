@@ -1,14 +1,17 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Three one-shot verbs already
+ * agent or a host timer with no desktop app open. Four one-shot verbs already
  * exist but nothing ran them together (reset-release's loop only arms from the
- * desktop's ops self-update GET; the planner sat on an external shell timer).
- * runSelfTick is the single pass, each step injected as a seam in fixed order:
+ * desktop's ops self-update GET; the planner sat on an external shell timer;
+ * nothing scheduled the Claude weekly-quota probe). runSelfTick is the single
+ * pass, each step injected as a seam in fixed order:
  *
- *   1. reset-release  — first, so a lane it frees counts as a free slot for
- *      the planner step's decision in the same pass.
- *   2. lane-autohold  — places the bounded burning-lane holds.
- *   3. planner-tick   — the autorun decision over the post-release picture.
+ *   1. claude-quota   — first, so reset detection and the planner see a fresh
+ *      Claude weekly reading in the resource ledger.
+ *   2. reset-release  — a lane it frees counts as a free slot for the planner
+ *      step's decision in the same pass.
+ *   3. lane-autohold  — places the bounded burning-lane holds.
+ *   4. planner-tick   — the autorun decision over the post-release picture.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -27,9 +30,10 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick';
-/** Fixed execution order — release first so the planner sees freed slots. */
+export type SelfTickStepName = 'claude-quota' | 'reset-release' | 'lane-autohold' | 'planner-tick';
+/** Fixed execution order — quota first so release and the planner see a fresh reading. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
+  'claude-quota',
   'reset-release',
   'lane-autohold',
   'planner-tick',
@@ -76,7 +80,7 @@ export interface RunSelfTickOptions {
   /** Resolved absolute runs dir; the lock and every step share it. */
   runsDir: string;
   now?: () => number;
-  /** The three step seams, keyed by step name. */
+  /** The step seams, keyed by step name. */
   steps: SelfTickSteps;
   /** Lock seam; defaults to the local-store lock on queue/self-tick.lock. */
   acquireLock?: (path: string) => LocalStoreLockAcquireResult;

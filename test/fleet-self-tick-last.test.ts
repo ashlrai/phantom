@@ -30,6 +30,7 @@ const report = (overrides: Partial<SelfTickReport> = {}): SelfTickReport => ({
   mode: 'apply',
   state: 'ran',
   steps: [
+    step('claude-quota', 'ok', { weeklyPct: 42 }),
     step('reset-release', 'ok', { released: ['devin'] }),
     step('lane-autohold', 'failed', { error: 'boom' }),
     step('planner-tick', 'ok', null),
@@ -47,7 +48,7 @@ describe('self-tick last record', () => {
     });
     const stored = JSON.parse(readFileSync(LAST(), 'utf8')) as Record<string, unknown>;
     expect(stored).toMatchObject({ v: 1, at: AT, mode: 'apply', state: 'ran' });
-    expect((stored['steps'] as unknown[]).length).toBe(3);
+    expect((stored['steps'] as unknown[]).length).toBe(4);
   });
 
   it('ageSeconds is measured from the injected now', () => {

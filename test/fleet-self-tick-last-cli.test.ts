@@ -25,6 +25,7 @@ beforeEach(() => { runsDir = mkdtempSync(join(tmpdir(), 'self-tick-last-cli-'));
 afterEach(() => { rmSync(runsDir, { recursive: true, force: true }); });
 
 const steps = (fails: string[] = []): SelfTickSteps => ({
+  'claude-quota': async () => ({ exitCode: fails.includes('claude-quota') ? 1 : 0, output: '{"ok":"claude-quota"}' }),
   'reset-release': async () => ({ exitCode: fails.includes('reset-release') ? 1 : 0, output: '{"ok":"reset-release"}' }),
   'lane-autohold': async () => ({ exitCode: fails.includes('lane-autohold') ? 1 : 0, output: '{"ok":"lane-autohold"}' }),
   'planner-tick': async () => ({ exitCode: fails.includes('planner-tick') ? 1 : 0, output: '{"ok":"planner-tick"}' }),
@@ -40,7 +41,7 @@ describe('fleet self-tick --last', () => {
     };
     expect(stored).toMatchObject({ at: AT, mode: 'dry-run', state: 'ran' });
     expect(stored.steps.map((s) => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['planner-tick', 'ok'],
+      ['claude-quota', 'ok'], ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['planner-tick', 'ok'],
     ]);
   });
 
@@ -83,6 +84,7 @@ describe('fleet self-tick --last', () => {
     writeSelfTickLast(runsDir, {
       v: 1, at: AT, mode: 'apply', state: 'ran',
       steps: [
+        { step: 'claude-quota', state: 'ok', exitCode: 0, report: {} },
         { step: 'reset-release', state: 'ok', exitCode: 0, report: {} },
         { step: 'lane-autohold', state: 'failed', exitCode: 1, report: {} },
         { step: 'planner-tick', state: 'ok', exitCode: 0, report: {} },
@@ -94,7 +96,7 @@ describe('fleet self-tick --last', () => {
     const code = await cmdFleetSelfTick(['--last', '--json', '--runs-dir', runsDir], {
       now: () => NOW_MS + 300_000,
       output: (t) => out.push(t), error: (t) => err.push(t),
-      steps: { 'reset-release': spy, 'lane-autohold': spy, 'planner-tick': spy },
+      steps: { 'claude-quota': spy, 'reset-release': spy, 'lane-autohold': spy, 'planner-tick': spy },
       acquireLock: () => { throw new Error('--last must not take the lock'); },
     });
     expect(code).toBe(0);

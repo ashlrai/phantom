@@ -1,10 +1,11 @@
 /**
  * `ashlr fleet self-loop` — keeps the self-management pass running for a
  * bounded window with no desktop app and no external shell timer. Each pass
- * is the real cmdFleetSelfTick (reset-release → lane-autohold → planner-tick
- * under queue/self-tick.lock, person's holds never released); this command
- * adds only repetition: first pass immediately, each later pass one full
- * interval after the previous pass completes, never overlapping. Admission
+ * is the real cmdFleetSelfTick (claude-quota → reset-release → lane-autohold
+ * → planner-tick under queue/self-tick.lock, person's holds never released);
+ * this command adds only repetition: first pass immediately, each later pass
+ * one full interval after the previous pass completes, never overlapping.
+ * Admission
  * stops at the deadline; a pass already running then finishes normally.
  * SIGINT/SIGTERM stop admission and interrupt the sleep — an in-flight pass
  * still finishes, then the summary is printed. Without --apply every pass is

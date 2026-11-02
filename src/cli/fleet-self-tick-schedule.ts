@@ -1,7 +1,7 @@
 /**
  * `ashlr fleet self-tick-schedule` — install the host timer that runs
  * `fleet self-tick` (RQ-PHX-SELFTICKSCHEDULE02). The tick verb already runs
- * reset-release, lane-autohold and planner-tick as one locked pass "for a
+ * claude-quota, reset-release, lane-autohold and planner-tick as one locked pass "for a
  * host timer", but nothing installed that timer: this verb writes the per-user
  * launchd agent (macOS, RunAtLoad + StartInterval) or systemd user service and
  * timer (Linux, OnBootSec + OnUnitActiveSec) modelled on `phm steward

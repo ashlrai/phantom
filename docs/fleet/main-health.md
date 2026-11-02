@@ -16,6 +16,16 @@ Reads `state.json` (or `--state <file>`) and prints each repo's state,
 minutes red, attempt count and the current job driving repair. Exit `0`
 when the state file is readable; `1` when it is missing or invalid.
 
+## Read it over HTTP
+
+`GET /api/verse/fleet/main-red-age` serves the same projection as
+`main-red-age --json`: `{v, generatedAt, known, repos}` where each repo
+carries `repo`, `state`, `redSince`, `redMinutes`, `attempts` and
+`currentJob`. A missing or unreadable state file answers `200` with
+`known: false` and no repos — unknown is never green. The Fleet surface
+(⌘2) shows one compact row per repo under "Main health"; agents read the
+typed route.
+
 ## How many merges rode red checks?
 
 ```

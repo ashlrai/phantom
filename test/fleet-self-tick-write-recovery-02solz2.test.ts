@@ -1,6 +1,6 @@
 /**
  * RQ-PHX-SELFTICKFAILRECOVERY02SOLZ2 — a failed last-report write must not
- * strand the self-management pass. All three steps still run in order, the
+ * strand the self-management pass. All four steps still run in order, the
  * exit code follows the steps alone, the real local-store lock is released,
  * and the next pass against the same runs dir acquires it and runs.
  */
@@ -30,6 +30,7 @@ const recordingSteps = (order: SelfTickStepName[], failing: SelfTickStepName[] =
     return { exitCode: failing.includes(name) ? 1 : 0, output: JSON.stringify({ ok: name }) };
   };
   return {
+    'claude-quota': step('claude-quota'),
     'reset-release': step('reset-release'),
     'lane-autohold': step('lane-autohold'),
     'planner-tick': step('planner-tick'),
@@ -42,7 +43,7 @@ const throwingWrite = (writes: SelfTickReport[]) => (_dir: string, report: SelfT
 };
 
 describe('self-tick survives a failed last-report write', () => {
-  it('runs all three steps in order and keeps the step failure as the exit code', async () => {
+  it('runs all four steps in order and keeps the step failure as the exit code', async () => {
     const order: SelfTickStepName[] = [];
     const writes: SelfTickReport[] = [];
     const first = await runSelfTick({
@@ -50,10 +51,10 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(order).toEqual(['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.map((s) => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['planner-tick', 'ok'],
+      ['claude-quota', 'ok'], ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['planner-tick', 'ok'],
     ]);
     expect(first.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
@@ -65,7 +66,7 @@ describe('self-tick survives a failed last-report write', () => {
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
     expect(second.exitCode).toBe(0);
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(orderAgain).toEqual(['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']);
     expect(existsSync(LOCK())).toBe(false);
   });
 
@@ -77,7 +78,7 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(order).toEqual(['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.every((s) => s.state === 'ok')).toBe(true);
     expect(first.exitCode).toBe(0);
@@ -89,7 +90,7 @@ describe('self-tick survives a failed last-report write', () => {
     });
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(orderAgain).toEqual(['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']);
     expect(second.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
   });

@@ -1,7 +1,7 @@
 /**
  * RQ-PHX-SELFTICKVERB02 — `ashlr fleet self-tick` runs one locked pass of
- * Phantom's self-management: reset-release, lane-autohold, planner-tick, in
- * that fixed order, through the real cmdFleetSelfTick against a temp runs
+ * Phantom's self-management: claude-quota, reset-release, lane-autohold,
+ * planner-tick, in that fixed order, through the real cmdFleetSelfTick against a temp runs
  * dir. The planner's spawn seam is always a fake — nothing real is spawned,
  * and a hold a person placed is never released.
  */
@@ -95,11 +95,12 @@ class FakeChild extends EventEmitter {
 interface Deps {
   steps?: Partial<Record<SelfTickStepName, SelfTickStep>>;
   spawn?: SpawnLike;
+  claudeFindCommand?: () => string | null;
 }
 const run = async (args: string[], deps: Deps = {}) => {
   const out: string[] = [], err: string[] = [];
   const code = await cmdFleetSelfTick(args, {
-    now: () => NOW_MS, ...deps,
+    now: () => NOW_MS, claudeFindCommand: () => null, ...deps,
     output: (text) => out.push(text), error: (text) => err.push(text),
   });
   return { code, stdout: out.join('\n'), stderr: err.join('\n'),
@@ -119,6 +120,7 @@ const recording = () => {
     return { exitCode, output: output ?? JSON.stringify({ ok: name }) };
   };
   const steps = {
+    'claude-quota': stub('claude-quota'),
     'reset-release': stub('reset-release'),
     'lane-autohold': stub('lane-autohold'),
     'planner-tick': stub('planner-tick'),
@@ -141,29 +143,29 @@ describe('fleet self-tick', () => {
     expect(help.stdout).toContain('PLANNER_TICK');
   });
 
-  it('runs the steps in order: reset release, autohold, planner', async () => {
+  it('runs the steps in order: claude quota, reset release, autohold, planner', async () => {
     const rec = recording();
     const { code, report } = await run(['--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(rec.order).toEqual(['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']);
     expect(report).toMatchObject({ v: 1, at: NOW_ISO, mode: 'dry-run', state: 'ran' });
     expect(report!.steps.map((s) => s.step)).toEqual(rec.order);
     expect(report!.steps.every((s) => s.state === 'ok' && s.exitCode === 0
       && (s.report as { ok: string }).ok === s.step)).toBe(true);
   });
 
-  it('a throwing first step still runs the later two and exits 1', async () => {
+  it('a throwing first step still runs the later three and exits 1', async () => {
     const rec = recording();
     const throwing: SelfTickStep = async (args) => {
-      await rec.steps['reset-release'](args);
+      await rec.steps['claude-quota'](args);
       throw new Error('boom');
     };
     const { code, report } = await run(['--json', '--runs-dir', runsDir], {
-      steps: { ...rec.steps, 'reset-release': throwing },
+      steps: { ...rec.steps, 'claude-quota': throwing },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
-    expect(report!.steps[0]).toMatchObject({ step: 'reset-release', state: 'failed', exitCode: 1, report: null });
+    expect(rec.order).toEqual(['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']);
+    expect(report!.steps[0]).toMatchObject({ step: 'claude-quota', state: 'failed', exitCode: 1, report: null });
     expect(report!.steps.slice(1).every((s) => s.state === 'ok')).toBe(true);
   });
 
@@ -173,8 +175,8 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'lane-autohold': rec.stub('lane-autohold', 1, 'not json') },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
-    expect(report!.steps[1]).toMatchObject({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
+    expect(rec.order).toEqual(['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']);
+    expect(report!.steps[2]).toMatchObject({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
   });
 
   it('dry-run writes no change to slots.json; planner still logs PLANNER_TICK', async () => {
@@ -194,7 +196,7 @@ describe('fleet self-tick', () => {
     const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
     expect(report!.mode).toBe('apply');
-    for (const name of ['reset-release', 'lane-autohold', 'planner-tick']) {
+    for (const name of ['claude-quota', 'reset-release', 'lane-autohold', 'planner-tick']) {
       expect(rec.argvs[name]).toContain('--apply');
       expect(rec.argvs[name]).toContain('--json');
       expect(rec.argvs[name]).toEqual(expect.arrayContaining(['--runs-dir', runsDir]));
@@ -204,7 +206,7 @@ describe('fleet self-tick', () => {
   it('--apply releases the reset autobackoff hold and leaves the manual hold held', async () => {
     const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir]);
     expect(code).toBe(0);
-    const release = report!.steps[0]!.report as { mode: string; released: { lane: string }[]; errors: unknown[] };
+    const release = report!.steps[1]!.report as { mode: string; released: { lane: string }[]; errors: unknown[] };
     expect(release.mode).toBe('apply');
     expect(release.released.map((r) => r.lane)).toEqual(['devin']);
     expect(release.errors).toEqual([]);
@@ -239,8 +241,8 @@ describe('fleet self-tick', () => {
     expect(code).toBe(0);
     expect(calls).toEqual(['fake-planner --plan']);
     expect(children[0]!.stdinText).toBe(PROMPT);
-    expect(report!.steps[2]).toMatchObject({ step: 'planner-tick', state: 'ok', exitCode: 0 });
-    expect(report!.steps[2]!.report).toMatchObject({ outcome: 'ran', verdict: 'productive' });
+    expect(report!.steps[3]).toMatchObject({ step: 'planner-tick', state: 'ok', exitCode: 0 });
+    expect(report!.steps[3]!.report).toMatchObject({ outcome: 'ran', verdict: 'productive' });
   });
 
   it('a held lock reports busy, exits 0 and runs no step', async () => {
