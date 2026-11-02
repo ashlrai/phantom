@@ -58,7 +58,13 @@ export const cmdFleetGuardianLoop = async (
       { manifest, sourceState, outputDir, durationMs, intervalMs, maxRetries, timeoutMs, apply, stopFile, signal: controller.signal },
       {
         now: deps.now, sleep: deps.sleep,
-        drain: deps.drain ?? drainWithFreshSession(deps, deps.now),
+        drain: deps.drain ?? drainWithFreshSession(stream ? {
+          ...deps,
+          onAttempt: async attempt => {
+            await deps.onAttempt?.(attempt);
+            await emit({ record: 'attempt', ...attempt });
+          },
+        } : deps, deps.now),
         onPass: stream ? record => emit({ record: 'pass', ...record }) : undefined,
       },
     );
