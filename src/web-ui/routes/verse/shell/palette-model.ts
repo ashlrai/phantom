@@ -92,6 +92,7 @@ export interface PaletteInput {
   backlog?: readonly PaletteBacklogItem[];
   phone?: PalettePhone | null;
   needsYou: readonly NeedsYouItem[];
+  fleetNeedsYou?: ReadonlyArray<{ id: string; title: string; detail: string }>;
   running: readonly VerseActivityRunning[];
   sessions: readonly VerseSession[];
   seats: readonly VerseSeat[];
@@ -268,6 +269,15 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       argument: null,
       tone: n.severity === 'high' ? 'danger' : n.severity === 'warn' ? 'warn' : 'neutral',
       payload: { kind: 'needs-you', itemId: n.id },
+    });
+  }
+
+  for (const item of input.fleetNeedsYou ?? []) {
+    items.push({
+      key: `needs-you:${item.id}`, kind: 'needs-you', group: 'needs-you', title: item.title,
+      subtitle: item.detail, shortcut: null, monogram: null, engine: null,
+      keywords: ['ci', 'fleet', 'needs you'], argument: null, tone: 'warn',
+      payload: { kind: 'needs-you', itemId: item.id },
     });
   }
 
