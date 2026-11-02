@@ -40,6 +40,7 @@ import { deriveMainHealthNeedsYou } from './main-health-needs-you.js';
 import { mainHealthQuery } from './main-health-query.js';
 import { selfTickNeedsYou } from './self-tick-needs-you.js';
 import { selfTickQuery } from './self-tick-query.js';
+import { runSelfTickNow, type SelfTickRunNowView } from './self-tick-run-now.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
 import { derivePhoneNeedsYou, PHONE_CONNECTION_PANE } from './phone-needs-you.js';
 import { phonePendingQuery } from './phone-pending-query.js';
@@ -98,6 +99,26 @@ function openSurface(target: FleetNeedsYouItem['target']): void {
   setVerseSection(target);
 }
 
+/** The self-tick row's action: one locked `fleet self-tick` pass in the server process. */
+function SelfTickRunNowButton({ onRan }: { onRan: (view: SelfTickRunNowView) => void }) {
+  const { hasHold, token, touch } = useMutationHold();
+  const [pending, setPending] = useState(false);
+  async function run() {
+    if (!hasHold || !token || pending) return;
+    setPending(true);
+    try {
+      const view = await runSelfTickNow(fetch, token);
+      touch();
+      onRan(view);
+    } finally { setPending(false); }
+  }
+  return <>
+    <Button size="sm" disabled={!hasHold || pending} title={!hasHold ? 'Unlock to run self-tick' : undefined}
+      aria-label="Run self-tick now" onClick={() => void run()}>{pending ? 'Running…' : 'Run now'}</Button>
+    {!hasHold && <span>Unlock to run</span>}
+  </>;
+}
+
 function ResetReleaseButton({ lane, onReleased }: { lane: string; onReleased: (lane: string) => void }) {
   const { hasHold } = useMutationHold();
   const [pending, setPending] = useState(false);
@@ -152,6 +173,7 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   usePollWhileVisible(refetchMainHealth, FLEET_NEEDS_YOU_POLL_MS, { enabled: mainHealthRead.data?.kind !== 'notInBuild' });
   const selfTickRead = useQuery(selfTickQuery);
   const refetchSelfTick = useRefetch(selfTickQuery);
+  const refreshSelfTick = useRefresh(selfTickQuery);
   usePollWhileVisible(refetchSelfTick, FLEET_NEEDS_YOU_POLL_MS, { enabled: selfTickRead.data?.kind !== 'notInBuild' });
   const notFound = read.error instanceof ApiError && read.error.status === 404;
   usePollWhileVisible(refetch, FLEET_NEEDS_YOU_POLL_MS, { enabled: !notFound });
@@ -257,6 +279,13 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
               </span>
             </span>
             <span onClick={(event) => event.stopPropagation()}>
+              {(item.id === 'self-tick-stale' || item.id === 'self-tick-failed') && <SelfTickRunNowButton onRan={view => {
+                setConfirmation(view.outcome === 'ran-ok' ? 'Self-tick ran, all steps ok'
+                  : view.outcome === 'ran-failed' ? `Failed: ${view.failedSteps.join(', ') || 'a step'}`
+                  : view.outcome === 'busy' ? 'Another tick is running'
+                  : 'The self-tick request failed.');
+                refreshSelfTick();
+              }} />}
               {item.id.startsWith('lane-reset:') && <ResetReleaseButton lane={item.id.slice('lane-reset:'.length)} onReleased={lane => {
                 setConfirmation(`Released hold for ${lane}.`);
                 refreshRuns();

@@ -420,6 +420,12 @@ export function runtimeDependencyPackageNameFromPath(path: string): string {
   return first.startsWith('@') ? `${first}/${segments[start + 1] ?? ''}` : first;
 }
 
+function isPortablePackageMemberPath(value: unknown): value is string {
+  return isBoundedText(value) && !value.includes('\\') && !value.startsWith('/') &&
+    !/^[A-Za-z]:/u.test(value) &&
+    value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+
 function packageIsPortable(packageJson: Record<string, unknown>, files: string[], label: string): void {
   for (const field of ['os', 'cpu', 'libc', 'optionalDependencies']) {
     const value = packageJson[field];
@@ -491,6 +497,7 @@ function rootPackageIsPortable(
     'bin',
     'dist',
     'docs/README.md',
+    'docs/FLEET-API.md',
     'docs/PHANTOM-BRAND.md',
     'docs/COMPANIONS.md',
     'docs/MEMORY-FOUNDATION.md',
@@ -553,8 +560,10 @@ function rootPackageIsPortable(
     'scripts/run-verify-command.mjs',
   ];
   if (!Array.isArray(declaredFiles) || declaredFiles.length === 0 ||
-    declaredFiles.some((entry) => typeof entry !== 'string' || !allowedFiles.has(entry)) ||
-    new Set(declaredFiles).size !== declaredFiles.length ||
+    declaredFiles.some((entry) => !isPortablePackageMemberPath(entry) || !allowedFiles.has(entry)) ||
+    // Entries differing only in case resolve to one path on macOS and Windows.
+    new Set(declaredFiles.map((entry) =>
+      typeof entry === 'string' ? entry.toLowerCase() : entry)).size !== declaredFiles.length ||
     requiredFiles.some((entry) => !declaredFiles.includes(entry))) {
     throw new Error('release package files declaration is not portable');
   }
@@ -747,15 +756,14 @@ function normalizePackagedFiles(
     const path = value['path'];
     const size = value['size'];
     const mode = value['mode'];
-    if (!isBoundedText(path) || path.includes('\\') || path.startsWith('/') ||
-      path.split('/').some((segment) => !segment || segment === '.' || segment === '..') ||
+    if (!isPortablePackageMemberPath(path) ||
       !Number.isSafeInteger(size) || (size as number) < 0 || (size as number) > MAX_FILE_BYTES ||
       !Number.isSafeInteger(mode) || (mode !== 0o644 && mode !== 0o755) ||
-      seen.has(path)) {
+      seen.has(path.toLowerCase())) {
       throw new Error('npm pack file report is invalid');
     }
     output.push({ mode: mode as number, path, size: size as number });
-    seen.add(path);
+    seen.add(path.toLowerCase());
   }
   return output.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
 }
