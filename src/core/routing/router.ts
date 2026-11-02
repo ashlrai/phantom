@@ -38,6 +38,14 @@ export interface RouteOptions {
   /** Actual selected-task opportunity; eligibility/quality remain mandatory. */
   scheduling?: Readonly<Record<string,AccountSchedulingView>>;
   advisorySeatId?: string | null;
+  /**
+   * Posterior penalty from outcome learning, added to the seat score (lower
+   * still wins). Absent leaves ranking byte-identical. Non-finite values are
+   * ignored; finite values are clamped to ±ROUTER_LAMBDA_MAX.
+   */
+  learnedPenalty?: Readonly<Record<string, number>>;
+  /** Plain sentence from the outcome loop, appended only when a seat is chosen. */
+  learningNote?: string;
 }
 
 /** Independent funding-category and headroom weights. lambdaLatency remains
@@ -211,13 +219,21 @@ function isDefaultWeights(w: RouterWeights): boolean {
     && w.lambdaLatency === DEFAULT_ROUTER_WEIGHTS.lambdaLatency;
 }
 
+function learnedPenaltyOf(penalties: Readonly<Record<string, number>> | undefined, seatId: string): number {
+  const raw = penalties?.[seatId];
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 0;
+  return Math.min(ROUTER_LAMBDA_MAX, Math.max(-ROUTER_LAMBDA_MAX, raw));
+}
+
 /** Lower is preferred. Neither unknown quality nor a provider label adds a
- * score. Cost is a funding category, not a dollar estimate or admission proof. */
-function seatScore(v: Verdict, position: number, w: RouterWeights): number {
+ * score. Cost is a funding category, not a dollar estimate or admission proof.
+ * A learned penalty is absent, or zero, unless outcome learning supplied one. */
+function seatScore(v: Verdict, position: number, w: RouterWeights, learnedPenalty?: Readonly<Record<string, number>>): number {
   const left = v.headroom?.autonomyHeadroomPercent ?? (v.capacity.windowless ? WINDOWLESS_HEADROOM : -1);
   return position
     + w.lambdaPressure * PRESSURE_SCALE * (100 - left) / 101
-    + w.lambdaCost * MARGINAL_COST_SCALE * marginalCost(v.capacity);
+    + w.lambdaCost * MARGINAL_COST_SCALE * marginalCost(v.capacity)
+    + learnedPenaltyOf(learnedPenalty, v.capacity.seatId);
 }
 
 /** Existing funding-category coefficient, worth about 20 headroom points
@@ -241,7 +257,7 @@ function rank(verdicts: Verdict[], rankOrder: RankOrder, w: RouterWeights, optio
     const index = tier === undefined ? -1 : rankOrder.order.indexOf(tier);
     return index === -1 ? 0 : index - 1;
   };
-  const score = new Map(verdicts.map((v) => [v, seatScore(v, position(v.capacity), w)]));
+  const score = new Map(verdicts.map((v) => [v, seatScore(v, position(v.capacity), w, options?.learnedPenalty)]));
   const ranked = [...verdicts].sort((a, b) => {
     const diff = score.get(a)! - score.get(b)!;
     if (Math.abs(diff) > SCORE_EPSILON) return diff;
@@ -417,6 +433,12 @@ export function routeSeat(
     why = `No seat can take ${who}${describeWork(req)} in ${policy.mode} mode (${describeExclusions(exclusions)})`
       + `${reopen ? `; the earliest known reopening is ${reopen}` : ''}.`;
     summary = `No seat can take this ${describeWork(req)} in ${policy.mode} mode right now.`;
+  }
+
+  const note = opts.learningNote?.trim();
+  if (chosen && note) {
+    why = `${why} ${note}`;
+    summary = `${summary} ${note}`;
   }
 
   return {
