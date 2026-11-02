@@ -51,7 +51,7 @@ const MISSING_RUNS: FleetRunsV1 = {
   v: 1,
   generatedAt: '2026-10-31T00:00:00.000Z',
   sources: { runsDir: 'missing', workers: 'missing', inbox: 'missing', codex: 'missing', merges: 'missing' },
-  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, host: null,
   lanes: [], workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [],
   mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };

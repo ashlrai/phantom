@@ -454,10 +454,24 @@ def precheck(j, repo, pf):
     return None
 
 # ---- queue
-def qlock():
-    fd = open(Q + "/ready.lock", "a"); fcntl.flock(fd, fcntl.LOCK_EX); return fd
-lk = qlock()
-lines = [l for l in rd(Q + "/ready.tsv").splitlines() if l.strip() and not l.startswith("#")] + requeue
+# RQ-READYLOCK-SCOPE: queue/ready.lock guards only the ready.tsv read and the ready.tsv rewrite, never the
+# tick body (a slow tick held it 4+ min and blocked restock.py / sync-router-queue.py appends). Every taker
+# polls LOCK_NB up to a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and logs waits over 1 s and timeouts.
+def qlock(who="dispatchd", timeout=None):
+    timeout = float(os.environ.get("ASHLR_READY_LOCK_TIMEOUT", 10)) if timeout is None else timeout
+    fd = open(Q + "/ready.lock", "a"); t0 = time.monotonic()
+    while True:
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+        except OSError:
+            if time.monotonic() - t0 >= timeout:
+                fd.close(); ev("READY_LOCK_TIMEOUT %s waited %.1fs" % (who, time.monotonic() - t0)); return None
+            time.sleep(0.05)
+    if time.monotonic() - t0 > 1: ev("READY_LOCK_WAIT %s %.1fs" % (who, time.monotonic() - t0))
+    return fd
+lk = qlock("dispatchd-read")
+if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
+_raw = rd(Q + "/ready.tsv").splitlines(); lk.close()   # snapshot taken; writers may append from here on
+lines = [l for l in _raw if l.strip() and not l.startswith("#")] + requeue
 qdepth = {l: 0 for l in LANES}
 for l in lines:
     f = l.split("\t")
@@ -623,6 +637,11 @@ if not pause:
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
 else:
     rest = lines
+# Rewrite under the lock, re-reading first: lines appended since the snapshot (the file is append-only for
+# every other writer) ride through after this tick's survivors so the whole-file replace never erases them.
+lk = qlock("dispatchd-write", 30)
+if lk is None: log("ready.lock busy; ready.tsv rewrite skipped (launched jobs stay guarded by alive/worktree checks)"); raise SystemExit(0)
+rest = rest + [l for l in rd(Q + "/ready.tsv").splitlines()[len(_raw):] if l.strip() and not l.startswith("#")]
 t = Q + "/ready.tsv.tmp"; open(t, "w").write("".join(l + "\n" for l in rest)); os.replace(t, Q + "/ready.tsv")
 lk.close()
 jsave(Q + "/slots.json", slots)
