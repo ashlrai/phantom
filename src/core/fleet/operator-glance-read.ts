@@ -12,6 +12,7 @@ import { readEmailDropConfig } from '../comms/email-drop-config.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readGuardianGlance } from './guardian-glance.js';
+import { readOperatorSecret, secretsMatch } from './operator-proof.js';
 import { buildOperatorGlance, type OperatorGlance } from './operator-glance.js';
 
 const MAX_BYTES = 32 * 1024;
@@ -98,8 +99,8 @@ export async function readOperatorGlance(opts: { runsDir?: string; now?: () => D
   return guardian.length > 0 ? { ...glance, guardian } : glance;
 }
 
-/** First verified owner message pairs. A later id does not replace it. */
-export function acceptTelegramPair(userId: number, runsDir = join(homedir(), '.ashlr-runs')): boolean {
+/** Existing private pairing, or an explicit /pair code from the configured owner. */
+export function acceptTelegramPair(userId: number, runsDir = join(homedir(), '.ashlr-runs'), code?: string): boolean {
   if (!Number.isSafeInteger(userId) || userId <= 0) return false;
   const path = join(runsDir, 'queue', 'telegram-pair.json');
   try {
@@ -110,6 +111,8 @@ export function acceptTelegramPair(userId: number, runsDir = join(homedir(), '.a
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
   }
+  const secret = readOperatorSecret();
+  if (!code || secret.state !== 'ready' || !secret.secret || !secretsMatch(code, secret.secret)) return false;
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     writeFileSync(path, `${JSON.stringify({ v: 1, userId })}\n`, { mode: 0o600, flag: 'wx' });

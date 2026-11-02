@@ -364,6 +364,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'ImpactResult',
   },
   {
+    usage: 'ashlr signals [--json]',
+    description: 'Read repository adoption signals; unavailable sources print no source.',
+    safety: 'read',
+    jsonShape: 'Repository signals (schemaVersion 1)',
+  },
+  {
     usage: 'ashlr pulse [--window 1d|7d|30d] --json',
     description: 'Token/cost/activity roll-up (sessions, tokens, est. cost, commits).',
     safety: 'read',
@@ -614,6 +620,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'enroll remove <repo>',         desc: 'Remove a repo from the enrollment registry.', topic: 'autonomy' },
   { cmd: 'enroll kill on|off',           desc: 'Toggle the global autonomous kill switch.', topic: 'autonomy' },
   { cmd: 'backlog',                      desc: 'Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).', topic: 'autonomy' },
+  { cmd: 'select [--json] [--dry-run] [--top <n>]', desc: 'Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.', topic: 'autonomy' },
   { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
   { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
   { cmd: 'backlog --source <src>',       desc: `Filter backlog by source: ${BACKLOG_SOURCE_FILTER_HELP}.`, topic: 'autonomy' },
@@ -736,6 +743,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
 
   { cmd: 'queue report --events <file> [--json]', desc: 'Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.', topic: 'observability' },
   { cmd: 'queue add|claim|done|block|list|import|export', desc: 'Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.', topic: 'autonomy' },
+  { cmd: 'signals [--json]', desc: 'Read real repository adoption signals.', topic: 'observability' },
   { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
   { cmd: 'pulse --json',                 desc: 'Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).', topic: 'observability' },
   { cmd: 'pulse --project <name>',       desc: 'Restrict pulse rollup to a single project.', topic: 'observability' },
