@@ -71,6 +71,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'lane-truth': () => import('./fleet-lane-truth.js'),
   'launch-proof': () => import('./fleet-launch-proof.js'),
   'local-gate': () => import('./fleet-local-gate.js'),
+  'main-repair-time': () => import('./fleet-main-repair-time.js'),
   'memory': () => import('./fleet-memory.js'),
   'meter-drop': () => import('./fleet-meter-drop.js'),
   'outcomes': () => import('./fleet-outcomes.js'),
