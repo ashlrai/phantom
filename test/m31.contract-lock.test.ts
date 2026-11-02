@@ -110,6 +110,7 @@ describe('native MCP tool surface lock', () => {
       'ashlr_website_publish:append',
       'ashlr_website_status:read',
       'phantom_fleet_graph:read',
+      'phantom_fleet_orders:read',
       'phantom_fleet_session:read',
       'phm_proactive_agents_create:append',
       'phm_proactive_agents_delete:append',
