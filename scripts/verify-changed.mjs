@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
@@ -40,15 +40,175 @@ export function eslintPreflight(root, exists = existsSync) {
   return { ok: false, reason: 'node_modules/eslint/lib/cli.js is absent; run npm ci to restore it' };
 }
 
+/** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
+export function tscSharedRoot(root, env = process.env, exec = execFileSync) {
+  return env.PHANTOM_TSC_CACHE_DIR
+    || resolve(root, exec('git', ['rev-parse', '--git-common-dir'], { cwd: root, encoding: 'utf8' }).trim(), 'phantom-tsc-cache');
+}
+
 /** Resolve the local and shared incremental build-info paths for this checkout. */
-export function tscCachePaths(root, env = process.env) {
+export function tscCachePaths(root, env = process.env, exec = execFileSync) {
   const config = readFileSync(resolve(root, 'tsconfig.json'));
   const lock = readFileSync(resolve(root, 'package-lock.json'));
   const buildInfo = JSON.parse(config.toString()).compilerOptions?.tsBuildInfoFile;
   if (typeof buildInfo !== 'string' || !buildInfo) throw new Error('tsconfig.json must specify tsBuildInfoFile');
   const hash = createHash('sha256').update(String(lock.length)).update(':').update(lock).update(config).digest('hex');
-  const commonDir = env.PHANTOM_TSC_CACHE_DIR || resolve(root, execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: root, encoding: 'utf8' }).trim(), 'phantom-tsc-cache');
-  return { local: resolve(root, buildInfo), shared: resolve(root, commonDir, `${hash}.tsbuildinfo`) };
+  return { local: resolve(root, buildInfo), shared: resolve(root, tscSharedRoot(root, env, exec), `${hash}.tsbuildinfo`) };
+}
+
+/** Slot dirs sit beside the cache so PHANTOM_TSC_CACHE_DIR relocates the whole shared root. */
+export function tscSlotsDir(root, env = process.env, exec = execFileSync) {
+  return resolve(root, tscSharedRoot(root, env, exec), '..', 'phantom-tsc-slots');
+}
+
+/** Machine-wide cap on concurrent typechecks; PHANTOM_TSC_SLOTS overrides the default of 3. */
+export function tscSlotCount(env = process.env) {
+  const raw = env.PHANTOM_TSC_SLOTS;
+  if (raw === undefined || raw === '') return 3;
+  const count = Number(raw);
+  if (!Number.isInteger(count) || count < 1 || count > 64) {
+    throw new Error('PHANTOM_TSC_SLOTS must be an integer from 1 to 64');
+  }
+  return count;
+}
+
+/** A pid with no process is gone; EPERM means it lives under another user. */
+export function tscSlotHolderAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+function sleepSync(milliseconds) {
+  if (milliseconds > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+/**
+ * Free slotPath when its holder is gone: a dead recorded pid, or a dir whose
+ * pid file never appeared (holder died between mkdir and write) past a grace
+ * window for an in-progress acquire. Returns true when the slot was removed.
+ */
+export function reclaimStaleTscSlot(slotPath, deps = {}) {
+  const {
+    read = readFileSync, stat = statSync, rm = rmSync,
+    alive = tscSlotHolderAlive, now = Date.now, graceMs = 30_000,
+  } = deps;
+  const pidPath = join(slotPath, 'pid');
+  let text;
+  try {
+    text = read(pidPath, 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    text = null;
+  }
+  const holder = text === null ? NaN : Number.parseInt(text, 10);
+  if (Number.isInteger(holder) && holder > 0) {
+    if (alive(holder)) return false;
+    rm(slotPath, { recursive: true, force: true });
+    return true;
+  }
+  let marker;
+  try {
+    marker = (text === null ? stat(slotPath) : stat(pidPath)).mtimeMs;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+  if (now() - marker < graceMs) return false;
+  rm(slotPath, { recursive: true, force: true });
+  return true;
+}
+
+/**
+ * Take one of `count` machine-wide slots via atomic mkdir, writing the holder
+ * pid inside. Polls until a slot frees or `maxWaitMs` elapses (returns null).
+ * The returned handle releases once; callers must invoke release() — or use
+ * withTscSlot, which also covers timeout and signal exits.
+ */
+export function acquireTscSlot(slotsDir, options = {}) {
+  const {
+    count = 3,
+    pid = process.pid,
+    maxWaitMs = 900_000,
+    pollMs = 250,
+    mkdir = mkdirSync,
+    rm = rmSync,
+    write = writeFileSync,
+    reclaim = reclaimStaleTscSlot,
+    sleep = sleepSync,
+    now = Date.now,
+  } = options;
+  mkdir(slotsDir, { recursive: true });
+  const deadline = now() + maxWaitMs;
+  for (;;) {
+    let reclaimed = false;
+    for (let index = 0; index < count; index += 1) {
+      const slotPath = join(slotsDir, `slot-${index}`);
+      try {
+        mkdir(slotPath);
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        if (reclaim(slotPath)) reclaimed = true;
+        continue;
+      }
+      try {
+        write(join(slotPath, 'pid'), `${pid}\n`);
+      } catch (error) {
+        rm(slotPath, { recursive: true, force: true });
+        throw error;
+      }
+      let released = false;
+      return {
+        index,
+        path: slotPath,
+        release: () => {
+          if (released) return;
+          released = true;
+          rm(slotPath, { recursive: true, force: true });
+        },
+      };
+    }
+    if (reclaimed) continue;
+    const remaining = deadline - now();
+    if (remaining <= 0) return null;
+    sleep(Math.min(pollMs, remaining));
+  }
+}
+
+/**
+ * Run body() while holding a typecheck slot. The slot is freed on success,
+ * thrown failure, and on 'exit'/SIGINT/SIGTERM/SIGHUP so a killed typecheck
+ * can never leak a slot. Returns { acquired: false } when no slot freed
+ * within the wait bound, otherwise { acquired: true, result }.
+ */
+export function withTscSlot(slotsDir, options, body) {
+  const slot = acquireTscSlot(slotsDir, options);
+  if (slot === null) return { acquired: false };
+  const release = () => {
+    try {
+      slot.release();
+    } catch { /* release must never throw during exit */ }
+  };
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const handlers = signals.map((signal) => {
+    const handler = () => {
+      release();
+      process.kill(process.pid, signal);
+    };
+    process.once(signal, handler);
+    return [signal, handler];
+  });
+  process.on('exit', release);
+  try {
+    return { acquired: true, result: body(slot) };
+  } finally {
+    process.off('exit', release);
+    for (const [signal, handler] of handlers) process.off(signal, handler);
+    release();
+  }
 }
 
 /** Copy through a unique sibling so readers never see a partially written cache. */
@@ -172,25 +332,31 @@ function main() {
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
     }
-    const native = runNativeTypecheck(root, timeout);
-    if (native !== null) {
-      console.log(`${native ? 'PASS' : 'FAIL'} tsgo --noEmit`);
-      if (!native) process.exitCode = 1;
-    } else {
-      const cache = tscCachePaths(root);
-      try {
-        copyBuildInfo(cache.shared, cache.local);
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
+    const held = withTscSlot(tscSlotsDir(root), { count: tscSlotCount(), maxWaitMs: timeout * 1000 }, () => {
+      const native = runNativeTypecheck(root, timeout);
+      if (native !== null) {
+        console.log(`${native ? 'PASS' : 'FAIL'} tsgo --noEmit`);
+        if (!native) process.exitCode = 1;
+      } else {
+        const cache = tscCachePaths(root);
+        try {
+          copyBuildInfo(cache.shared, cache.local);
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        if (run('tsc --noEmit', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'tsconfig.json'], timeout)) {
+          copyBuildInfo(cache.local, cache.shared);
+        }
       }
-      if (run('tsc --noEmit', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'tsconfig.json'], timeout)) {
-        copyBuildInfo(cache.local, cache.shared);
+      if (selection.webTypecheck) {
+        if (!runWebTypecheck(root, timeout, run)) process.exitCode = 1;
+      } else {
+        console.log('PASS web typecheck skipped: no changed path under src/web-ui/');
       }
-    }
-    if (selection.webTypecheck) {
-      if (!runWebTypecheck(root, timeout, run)) process.exitCode = 1;
-    } else {
-      console.log('PASS web typecheck skipped: no changed path under src/web-ui/');
+    });
+    if (!held.acquired) {
+      console.log(`FAIL tsc slot wait: no typecheck slot freed within ${timeout}s`);
+      process.exitCode = 1;
     }
   } catch (error) {
     console.error(`FAIL tsc cache: ${error.message}`);

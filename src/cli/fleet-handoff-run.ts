@@ -9,10 +9,10 @@ import { isFleetJobId } from '../core/fleet/runs-job-detail.js';
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 
 const usage = 'Usage: ashlr fleet handoff-run --file <absolute handoff JSON> [--upstream <job-id> ...] '
-  + '[--bus-address <address>] [--bus-after <cursor>] [--byte-budget <bytes>] [--timeout-ms <1..3600000>] -- <program> [args...]';
+  + '[--bus-address <address>] [--bus-after <cursor>] [--byte-budget <bytes>] [--cwd <absolute-directory>] [--timeout-ms <1..3600000>] -- <program> [args...]';
 const example = 'Example: ashlr fleet handoff-run --file /home/planner/handoff.json '
   + '--upstream RESEARCH-7 --upstream SCAN-2 --bus-address WORKER-9 --timeout-ms 120000 -- node worker.mjs --flag value';
-const SINGLETON = new Set(['--file', '--bus-address', '--bus-after', '--byte-budget', '--timeout-ms']);
+const SINGLETON = new Set(['--file', '--bus-address', '--bus-after', '--byte-budget', '--cwd', '--timeout-ms']);
 const digits = (value: string): boolean => /^\d+$/.test(value);
 const address = (value: string): boolean => /^[\x21-\x7e]{1,128}$/.test(value);
 
@@ -44,9 +44,10 @@ export async function cmdFleetHandoffRun(args: string[], io: ContextWorkerIO = {
   }
   const file = flags.get('--file'), busAddress = flags.get('--bus-address');
   const after = flags.get('--bus-after'), budget = flags.get('--byte-budget');
-  const timeout = flags.get('--timeout-ms');
+  const timeout = flags.get('--timeout-ms'), cwd = flags.get('--cwd');
   const upstreamJobIds = [...new Set(upstream)];
   if (!file || !isAbsolute(file) || file.includes('\0') ||
+      (cwd !== undefined && !isAbsolute(cwd)) ||
       (busAddress !== undefined && !address(busAddress)) ||
       (after !== undefined && (!digits(after) || !Number.isSafeInteger(Number(after)))) ||
       (after !== undefined && busAddress === undefined) ||
@@ -60,6 +61,7 @@ export async function cmdFleetHandoffRun(args: string[], io: ContextWorkerIO = {
     busAddress,
     busAfter: after === undefined ? undefined : Number(after),
     byteBudget: budget === undefined ? undefined : Number(budget),
+    cwd,
     timeoutMs: timeout === undefined ? undefined : Number(timeout),
     argv: args.slice(split + 1),
   }, io);
