@@ -61,6 +61,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Several symbols were already cleaned by intervening PRs (the original sweep targeted 150; 7 were superseded). No CLI command, flag or config key changes.
 
 ### Fixed
+- Resolve MCP gateway TS2300 duplicate-identifier error by deriving the
+  JSON-RPC message type from `serializeMessage` rather than importing from
+  a conflicting SDK module path.
 - Scrub stops flagging prose, code references and public digests as secrets.
 - Automations dedupe prunes against the wall clock (master was red), and the
   daily full-run drift — CLI registry, docs links, spawn-gate assertion and
@@ -95,6 +98,60 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ### Performance
 - The web console re-renders only the live turn's block of the transcript per
   streamed token.
+
+## [3.29.16] — 2026-11-01
+
+Tagged as `v3.29.16`. This section was written after the tag, so it does not
+show that the package is published to npm.
+
+### Added
+- Fleet console: keyboard shortcuts in the fleet pane, a runs history view, a
+  dispatch dock pane, a per-lane "Next up" queue view and a planner logins panel.
+- Shared bus: a durable local inbox, reply and watch commands, work claims so one
+  worker takes each job, consumer checkpoints that survive restarts and address
+  filters.
+- Planner: a brief builder that assembles context for each planner pass, and
+  single-flight cycles so two planner ticks never overlap.
+- Graph: neighbor and route queries, relation traversal, kind filters, Mermaid
+  export, streamed node output and per-node working directories.
+- Usage and resources: a resource ledger command with model usage, personal usage
+  for Claude weekly-only windows and the Codex weekly API meter, and detection of
+  usage resets.
+- Memory pressure and recovery: a memory pressure monitor and a recovery watch
+  that flags stalled runs, so unattended runs recover from crashes, hangs and
+  clock skew.
+- Multi-host queue: host queue ingress, a foreground worker per host, local
+  leader failover with a proof test, and the mobile fleet view of queue state.
+- Run receipts: an opt-in, signed `receipt.v1` record written when a run closes
+  (`ASHLR_RUN_RECEIPTS=1`), with CI, merge, survival and revert follow-ups chained to it.
+- Custody ledger: every engine spawn leaves a value-free record, and `phm status`
+  shows the strict preflight.
+- Local inference: a `localInference` config with loopback-only OpenAI-compatible
+  endpoints, and doctor and status probes of the models endpoint.
+- `phm upgrade` runs `phm update`, and Ashlr MD is the default Markdown opener.
+
+### Changed
+- Auto-merge canary: enforce mode stays unavailable while cancelling a merge is
+  unproven. A read-only Shadow Report is available.
+- The gateways config is validated when it loads, not on first use.
+- Docs-only PRs take a shorter CI lane. Mac lanes on master run one push at a
+  time and are skipped on draft PRs.
+- Dispatch limits understand Claude weekly-only usage windows.
+- Doctor shows one MCP warning instead of two on a fresh install, and one
+  local-model warning instead of four when no local model is running.
+- Product copy calls it Phantom, not Verse.
+
+### Fixed
+- `--help` never runs a command's side effects. Unknown options are refused
+  before anything acts, across fleet, sandbox, enroll, comms and more.
+- `--json` output stays machine-readable when a command refuses.
+- Provider error bodies that echo the API key have the key redacted.
+- The Pulse token is read from a hidden prompt or stdin, never from a command argument.
+- Agents killed mid-run are recovered cleanly, and the sandbox lock is held for less time.
+- Automation dedupe pruning no longer depends on the wall clock, which had kept master red.
+- Zombie process groups and stale keep-alive worker sockets are cleaned up.
+- Run receipts are written for real dispatches.
+- Mission console reads retry transient transport failures, within a bound.
 
 ## [3.29.15] — Unreleased
 

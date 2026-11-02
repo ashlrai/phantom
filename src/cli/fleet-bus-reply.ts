@@ -6,8 +6,8 @@ import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 /** Convention loader entry; root/clock/output injection is programmatic only. */
-export function cmdFleetBusReply(args: string[], options: BusInboxOptions = {},
-  deps: ReplyDependencies & { output?: (text: string) => void } = {}): number {
+export async function cmdFleetBusReply(args: string[], options: BusInboxOptions = {},
+  deps: ReplyDependencies & { output?: (text: string) => void } = {}): Promise<number> {
   const output = deps.output ?? console.log;
   const emit = (result: ReplyResult): number => {
     try { output(JSON.stringify(sanitizePublicJson(result))); } catch { return 1; }
