@@ -22,7 +22,7 @@ import {
 import type { ScheduleUnit } from '../core/steward/schedule.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = `Usage: ashlr fleet self-tick-schedule [--json] [--write] [--load] [--tick-apply] [--interval <s>] [--runs-dir <abs>]
+const usage = `Usage: ashlr fleet self-tick-schedule [--json] [--write] [--load] [--tick-apply] [--interval <s>] [--runs-dir <abs>] [--ashlr-path <abs>] [--node-path <abs>]
 Preview (default) or install the per-user timer that runs 'fleet self-tick'
 every interval and at boot/login. --write writes the unit files atomically and
 reports each path as written or unchanged (identical contents are skipped);
@@ -30,8 +30,13 @@ without it nothing is written. --load is only valid with --write and runs each
 unit's activation argv (launchctl bootstrap / systemctl --user enable) — never
 a shell string. The scheduled tick is a dry run unless --tick-apply is given.
 --interval is 300..3600 seconds (default 900); --runs-dir pins the runs dir the
-tick uses. This verb never unloads or removes any other service. Exit 0 on
-success, 1 on failure, 2 on usage.`;
+tick uses. --ashlr-path is the installed Phantom script the timer runs (default:
+this running CLI's script); --node-path is the Node runtime it runs under
+(default: this running Node). Both must be absolute, control-free and may name
+paths that do not exist on this machine, so a standby host can be prepared from
+a planner. The JSON preview reports the effective ashlrPath and nodePath. This
+verb never unloads or removes any other service. Exit 0 on success, 1 on
+failure, 2 on usage.`;
 
 interface Dependencies {
   output?: (text: string) => void;
@@ -43,6 +48,12 @@ interface Dependencies {
 }
 
 type UnitState = 'preview' | 'written' | 'unchanged';
+
+/** Absolute and control-free, checked before any write; the path need not exist here. */
+function absolutePathArg(value: string | undefined): string | undefined {
+  if (value === undefined || !isAbsolute(value)) return undefined;
+  return [...value].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) ? undefined : value;
+}
 
 /** Create only real directories below HOME; never follow a linked config root. */
 function scheduleDirectory(path: string, home: string): void {
@@ -80,6 +91,7 @@ export async function cmdFleetSelfTickSchedule(args: string[], deps: Dependencie
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
   let json = false, write = false, load = false, tickApply = false;
   let intervalSeconds: number | undefined, runsDir: string | undefined;
+  let ashlrPath: string | undefined, nodePath: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) json = true;
@@ -95,15 +107,26 @@ export async function cmdFleetSelfTickSchedule(args: string[], deps: Dependencie
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
       runsDir = value;
+    } else if (arg === '--ashlr-path' && ashlrPath === undefined) {
+      const value = absolutePathArg(args[++i]);
+      if (value === undefined) return invalid();
+      ashlrPath = value;
+    } else if (arg === '--node-path' && nodePath === undefined) {
+      const value = absolutePathArg(args[++i]);
+      if (value === undefined) return invalid();
+      nodePath = value;
     } else return invalid();
   }
   if (load && !write) return invalid();
   const home = deps.home ?? homedir();
+  // Defaults: this running CLI's own script (never a PATH lookup) and this Node.
+  const effectiveAshlrPath = ashlrPath ?? resolve(process.argv[1] ?? process.execPath);
+  const effectiveNodePath = nodePath ?? process.execPath;
   let units: ScheduleUnit[];
   try {
     units = selfTickSchedule({
-      // The running CLI's own script path, never a PATH lookup.
-      ashlrPath: resolve(process.argv[1] ?? process.execPath),
+      ashlrPath: effectiveAshlrPath,
+      nodePath: effectiveNodePath,
       apply: tickApply,
       ...(intervalSeconds === undefined ? {} : { intervalSeconds }),
       ...(runsDir === undefined ? {} : { runsDir }),
@@ -143,6 +166,8 @@ export async function cmdFleetSelfTickSchedule(args: string[], deps: Dependencie
     output(JSON.stringify(sanitizePublicJson({
       v: 1,
       apply: tickApply,
+      ashlrPath: effectiveAshlrPath,
+      nodePath: effectiveNodePath,
       intervalSeconds: intervalSeconds ?? 900,
       write,
       loaded: load,

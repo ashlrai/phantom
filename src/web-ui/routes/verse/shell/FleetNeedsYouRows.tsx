@@ -38,6 +38,8 @@ import { deriveLaneStreakNeedsYou } from './lane-streak-needs-you.js';
 import { laneStreaksQuery } from './lane-streak-query.js';
 import { deriveMainHealthNeedsYou } from './main-health-needs-you.js';
 import { mainHealthQuery } from './main-health-query.js';
+import { selfTickNeedsYou } from './self-tick-needs-you.js';
+import { selfTickQuery } from './self-tick-query.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
 import { derivePhoneNeedsYou, PHONE_CONNECTION_PANE } from './phone-needs-you.js';
 import { phonePendingQuery } from './phone-pending-query.js';
@@ -148,6 +150,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   const mainHealthRead = useQuery(mainHealthQuery);
   const refetchMainHealth = useRefetch(mainHealthQuery);
   usePollWhileVisible(refetchMainHealth, FLEET_NEEDS_YOU_POLL_MS, { enabled: mainHealthRead.data?.kind !== 'notInBuild' });
+  const selfTickRead = useQuery(selfTickQuery);
+  const refetchSelfTick = useRefetch(selfTickQuery);
+  usePollWhileVisible(refetchSelfTick, FLEET_NEEDS_YOU_POLL_MS, { enabled: selfTickRead.data?.kind !== 'notInBuild' });
   const notFound = read.error instanceof ApiError && read.error.status === 404;
   usePollWhileVisible(refetch, FLEET_NEEDS_YOU_POLL_MS, { enabled: !notFound });
 
@@ -171,12 +176,16 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     () => deriveMainHealthNeedsYou(mainHealthRead.status === 'error' ? undefined : mainHealthRead.data),
     [mainHealthRead.data, mainHealthRead.status],
   );
+  const selfTickItems = useMemo(
+    () => selfTickNeedsYou(selfTickRead.status === 'error' || selfTickRead.data?.kind !== 'available' ? undefined : selfTickRead.data.data.last, nowMs),
+    [selfTickRead.data, selfTickRead.status, nowMs],
+  );
   const resetItems = useMemo(() => deriveResetNeedsYou(resetsRead.status === 'error' ? null : resetsRead.data, nowMs),
     [resetsRead.data, resetsRead.status, nowMs]);
   const phoneItems = useMemo(() => derivePhoneNeedsYou(phoneRead.status === 'error' ? undefined : phoneRead.data),
     [phoneRead.data, phoneRead.status]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...ciItems, ...phoneItems] }, resetItems),
-    [result, releaseItems, laneStreakItems, mainHealthItems, ciItems, phoneItems, resetItems]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
+    [result, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
