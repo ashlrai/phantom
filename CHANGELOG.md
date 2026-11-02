@@ -61,6 +61,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Several symbols were already cleaned by intervening PRs (the original sweep targeted 150; 7 were superseded). No CLI command, flag or config key changes.
 
 ### Fixed
+- Resolve MCP gateway TS2300 duplicate-identifier error by deriving the
+  JSON-RPC message type from `serializeMessage` rather than importing from
+  a conflicting SDK module path.
 - Scrub stops flagging prose, code references and public digests as secrets.
 - Automations dedupe prunes against the wall clock (master was red), and the
   daily full-run drift — CLI registry, docs links, spawn-gate assertion and
