@@ -39,3 +39,5 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Hub reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet. Compatibility identifiers stay.
 - [Console layout](CONSOLE-LAYOUT.md): One set of width breakpoints for the web console. Compact phone, laptop, and wide-monitor views of the same live state.
+
+- [Subscription capacity](RESOURCE-EVIDENCE.md#publish-subscription-capacity): Run `phm capacity publish --json` on each node with its own local auth; usage metadata only. Resident daemons publish at startup and on a background timer.

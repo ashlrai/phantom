@@ -10670,7 +10670,7 @@ async function runDaemonInEnrollmentScope(
   clearInterval(killSwitchPoll);
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
-  if (!opts.dryRun && standing !== null) await stopResidentCapacityPublisher();
+  if (!opts.dryRun) await stopResidentCapacityPublisher();
   await cancelDaemonPostTickChildren(
     scheduledResolutionObserver,
     scheduledCutoffCapture,
@@ -10742,11 +10742,9 @@ async function runDaemonInEnrollmentScope(
  * calling `ensureDaemonCapacityPublisher` (idempotent), so this only moves
  * the start earlier and adds the stop.
  *
- * Only for a resident (non-once, non-dry) run under a standing session: that
- * is the only daemon whose paid-seat decisions read the snapshot. A one-shot
- * run ends in one tick and would leave a mid-sample collector behind; the
- * pass still covers it. The publisher itself refuses outside ASHLR_IN_DAEMON=1
- * and under vitest, so this never spawns probes from a test.
+ * Every resident (non-once, non-dry) daemon starts it, including runs without
+ * a standing session. The publisher owns startup sampling and its timer;
+ * neither waits for or blocks tick dispatch. Tests never spawn native probes.
  *
  * Lazy import: keeps capacity-publisher out of loop.ts's static closure, like
  * every other routing read here. Never throws.
@@ -10760,7 +10758,7 @@ const loadCapacityPublisher = async (): Promise<ResidentCapacityPublisherModule>
   import('./capacity-publisher.js');
 
 export function residentCapacityPublisherWanted(run: { dryRun: boolean; once: boolean; standing: boolean }): boolean {
-  return !run.dryRun && !run.once && run.standing;
+  return !run.dryRun && !run.once;
 }
 
 export async function startResidentCapacityPublisher(
