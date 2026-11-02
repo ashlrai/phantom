@@ -51,9 +51,10 @@ afterEach(async () => {
 // under $ASHLR_HOME/fleet; the envelope id and body.channel expose which
 // channel the hub route attributed the write to.
 function busEnvelopes(): { id: string; channel: string; text: string; dedupeKey: string }[] {
-  let rows: unknown;
-  try { rows = JSON.parse(readFileSync(join(ashlrHomeDir, 'fleet', 'bus-inbox', 'messages.json'), 'utf8')); }
+  let snapshot: unknown;
+  try { snapshot = JSON.parse(readFileSync(join(ashlrHomeDir, 'fleet', 'bus-inbox', 'messages.json'), 'utf8')); }
   catch { return []; }
+  const rows = Array.isArray(snapshot) ? snapshot : (snapshot as { rows?: unknown }).rows;
   if (!Array.isArray(rows)) return [];
   return rows.map((row) => {
     const envelope = (row as { envelope: { id: string; body: { channel: string; text: string; dedupeKey: string } } }).envelope;

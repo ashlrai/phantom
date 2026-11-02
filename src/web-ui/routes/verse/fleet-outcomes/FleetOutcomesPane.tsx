@@ -1,14 +1,16 @@
+import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
+import { reissueRequest, reissueText } from './reissue-action.js';
 import { useMemo, useRef, useState } from 'react';
 import { BarStack } from '../../../components/charts/BarStack.js';
 import { toneColor, type ChartTone } from '../../../components/charts/colors.js';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { invalidate } from '../../../data/cache.js';
-import { ApiError, readFailureReason } from '../../../data/client.js';
+import { apiPost, ApiError, readFailureReason } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
 import type { ExecutionFeedbackOutcome } from '../../../../core/fleet/execution-feedback-types.js';
 import { formatRelative } from '../autonomy/format.js';
 import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
-import { fleetSteeringQuery } from '../fleet-steering/fleet-steering-queries.js';
+import { fleetUsageRunsQuery } from '../fleet-usage/fleet-usage-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -16,6 +18,7 @@ import { filterCases, outcomeChips, readCase, readOutcomes, recutPrefill, wasteL
 import { outcomeCaseQuery, outcomesQuery } from './fleet-outcomes-queries.js';
 import { mergeWaitHref, mergeWaits, mergeWaitSummary, waitDuration } from './merge-wait-model.js';
 import { recutJob } from './recut-job-body.js';
+import { recallRecut, recutProgress, rememberRecut } from './recut-progress-model.js';
 import { queueRecut, recutDropJobsQuery } from './recut-queue-client.js';
 import styles from './fleet-outcomes.module.css';
 
@@ -69,10 +72,7 @@ function CaseTimeline({ caseId, visible, onClose }: { caseId: string; visible: b
   </section>;
 }
 
-function MergeWaitSection({ visible }: { visible: boolean }) {
-  const runs = useQuery(fleetSteeringQuery, { enabled: visible });
-  const refetch = useRefetch(fleetSteeringQuery);
-  usePollWhileVisible(refetch, POLL_MS, { enabled: visible });
+function MergeWaitSection({ runs }: { runs: ReturnType<typeof useQuery> }) {
   const rows = mergeWaits(runs.data, Date.now());
   const summary = mergeWaitSummary(rows);
   return <section aria-label="Merge wait (last hour)">
@@ -94,23 +94,31 @@ function MergeWaitSection({ visible }: { visible: boolean }) {
   </section>;
 }
 
-function QueueRecutButton({ row }: { row: Parameters<typeof recutJob>[0] }) {
+function QueueRecutButton({ row, runs, canQueue }: { row: Parameters<typeof recutJob>[0]; runs: unknown; canQueue: boolean }) {
   const hold = useMutationHold();
   const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [queuedId, setQueuedId] = useState<string | null>(null);
+  const prNumber = row.prLink?.url.match(/\/pull\/([1-9]\d{0,19})(?:\/|[?#]|$)/)?.[1];
+  const [queued, setQueued] = useState(() => {
+    try { return prNumber ? recallRecut(sessionStorage, prNumber) : null; } catch { return null; }
+  });
   const [error, setError] = useState<string | null>(null);
   const job = recutJob(row, Date.now());
+  const progress = queued ? recutProgress({ ...queued, runs, nowMs: Date.now() }) : null;
+  const active = progress?.phase === 'waiting' || progress?.phase === 'launched';
   async function queue() {
-    if (!job || !hold.hasHold || inFlight.current) return;
+    if (!job || !prNumber || !canQueue || active || !hold.hasHold || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
       const result = await queueRecut(job);
       if (result === 'queued') {
-        setQueuedId(job.id);
+        const recut = { id: job.id, queuedAtMs: Date.now() };
+        setQueued(recut);
+        try { rememberRecut(sessionStorage, prNumber, recut); } catch { /* Storage can be unavailable. */ }
         invalidate(recutDropJobsQuery.key);
+        invalidate(fleetUsageRunsQuery.key);
       } else setError(result);
     } catch (reason) {
       setError(readFailureReason(reason));
@@ -119,18 +127,50 @@ function QueueRecutButton({ row }: { row: Parameters<typeof recutJob>[0] }) {
       setBusy(false);
     }
   }
-  if (!job) return null;
-  if (queuedId) return <span className={styles.dim} role="status">Queued as RQ-PHX-{queuedId}</span>;
+  if (!job || (!canQueue && !queued)) return null;
   return <>
     <Button size="sm" variant="subtle" aria-label={`Queue recut of ${row.jobId}`}
-      disabled={!hold.hasHold || busy} busy={busy} onClick={() => void queue()}>Queue recut</Button>
+      disabled={!canQueue || !hold.hasHold || busy || active} busy={busy} onClick={() => void queue()}>Queue recut</Button>
+    {progress && <span className={styles.dim} role="status" data-phase={progress.phase}>
+      {progress.prUrl ? <>published → <a href={progress.prUrl} target="_blank" rel="noopener noreferrer">{progress.text.slice('published → '.length)}</a></> : progress.text}
+    </span>}
     {error && <span role="alert">{error}</span>}
+  </>;
+}
+
+function ReissueButton({ row }: { row: Parameters<typeof reissueRequest>[0] }) {
+  const hold = useMutationHold();
+  const lock = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [written, setWritten] = useState(false);
+  const request = reissueRequest(row);
+  if (!request) return null;
+  async function submit() {
+    const token = getMutationToken();
+    if (!request || !token || lock.current || written) return;
+    lock.current = true;
+    setBusy(true);
+    try {
+      const result = await apiPost<{ outcome: string; newId: string; reason?: string }>(request.path, request.body, token);
+      setMessage(reissueText(result));
+      setWritten(result.outcome === 'written');
+      touchMutationHold();
+    } catch (error) { setMessage(readFailureReason(error)); }
+    finally { lock.current = false; setBusy(false); }
+  }
+  return <>
+    <Button size="sm" variant="subtle" disabled={!hold.hasHold || busy || written} onClick={() => void submit()}>Re-issue</Button>
+    {message && <span role="status">{message}</span>}
   </>;
 }
 
 export function FleetOutcomesPane({ visible, host }: PaneProps) {
   const read = useQuery(outcomesQuery, { enabled: visible, freshMs: 0 });
   const dropJobs = useQuery(recutDropJobsQuery, { enabled: visible });
+  const runs = useQuery(fleetUsageRunsQuery, { enabled: visible, freshMs: 0 });
+  const refetchRuns = useRefetch(fleetUsageRunsQuery);
+  usePollWhileVisible(refetchRuns, POLL_MS, { enabled: visible });
   const canQueue = dropJobs.data !== undefined && dropJobs.status !== 'error';
   const refetch = useRefetch(outcomesQuery);
   usePollWhileVisible(refetch, POLL_MS, { enabled: visible });
@@ -165,7 +205,7 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
           categories={['Window']} height={160}
           segments={data.mix.map(row => ({ id: row.outcome, label: row.label, color: toneColor(OUTCOME_TONE[row.outcome]) }))}
           values={[data.mix.map(row => row.total ?? row.observed)]} />}
-    <MergeWaitSection visible={visible} />
+    <MergeWaitSection runs={runs} />
     <section>
       <div className={styles.filters} role="radiogroup" aria-label="Filter cases">
         {chips.map(item => <button key={item.outcome} type="button" role="radio" aria-checked={item.outcome === chip.outcome} onClick={() => setOutcome(item.outcome)}>{item.label} {item.count}</button>)}
@@ -190,7 +230,8 @@ export function FleetOutcomesPane({ visible, host }: PaneProps) {
             }}>Open worker log</Button> : null}
             {prefill !== null ? <Button size="sm" variant="subtle" aria-label={`Order recut of ${item.jobId}`}
               onClick={() => openInterjectDialog({ prefill })}>Order recut</Button> : null}
-            {canQueue && <QueueRecutButton row={item} />}
+            {reissueRequest(item) && <ReissueButton row={item} />}
+            {(canQueue || item.prLink) && <QueueRecutButton row={item} runs={runs.data} canQueue={canQueue} />}
           </li>;
         })}</ul>}
     </section>

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { recordEmailToInbox, runEmailDropOnce } from '../src/core/comms/email-drop-bridge.js';
 import { readFleetRunsDirState } from '../src/core/fleet/runs-dir-state.js';
 import { listLiveWorkers } from '../src/core/fleet/runs-live-workers.js';
+import { emailFleetStatus } from '../src/core/comms/email-fleet-status.js';
+import type { StatusSupply } from '../src/core/comms/status-supply-line.js';
 
 let root: string;
 let inboxDir: string;
@@ -27,6 +29,15 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe('drop-folder fleet status', () => {
+  it('appends supply and planner projections and contains reader failures', async () => {
+    const supply: StatusSupply = { v: 1, sourceState: 'healthy', lanes: [{ lane: 'devin', phxReady: 2, fillerReady: 3 }],
+      planner: { status: 'ok', lastGoodPassAt: '2026-11-01T04:07:00.000Z', reason: null } };
+    const workers = () => listLiveWorkers({ now: () => now().getTime(), runPs: async () => '' });
+    const body = await emailFleetStatus(runsDir, now, { workers, supply: async () => supply });
+    expect(body.split('\n').slice(-2)).toEqual(['Supply: devin 2 phantom / 3 filler', 'Planner: last good pass 2026-11-01T04:07:00.000Z']);
+    const failed = await emailFleetStatus(runsDir, now, { workers, supply: async () => { throw new Error('private'); } });
+    expect(failed.split('\n').slice(-2)).toEqual(['Supply: unavailable', 'Planner: unknown (unavailable)']);
+  });
   it('queues one threaded, counts-only reply and suppresses replays even with a changed body', async () => {
     const state = await readFleetRunsDirState({ runsDir, now: () => now().getTime() });
     state.sources.status = 'healthy'; state.paused = false;

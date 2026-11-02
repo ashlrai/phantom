@@ -12,12 +12,14 @@ const MAX_FIELD = 200;
 const MAX_LINE = 400;
 
 export type EvidenceStatus = 'ok' | 'jobs_unavailable' | 'jobs_truncated' | 'jobs_invalid' |
-  'job_not_found' | 'job_invalid' | 'log_unavailable' | 'log_truncated';
+  'job_not_found' | 'job_invalid' | 'log_unavailable' | 'log_truncated' |
+  'attempt_unavailable' | 'attempt_invalid' | 'attempt_mismatch';
 export interface CiEvidence {
   version: 1;
   repo: string;
   run: number;
   job: number;
+  attempt?: { requested: number; observed: number | null };
   source: { status: EvidenceStatus; truncated: boolean; outputTruncated: boolean };
   headSha: string | null;
   jobName: string | null;
@@ -37,7 +39,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 /** The only side effects are bounded GETs through the injected argv-only runner. */
-export async function readCiEvidence(repo: string, run: number, job: number, runner: GitRunner = defaultGitRunner): Promise<CiEvidence> {
+export async function readCiEvidence(repo: string, run: number, job: number, runner: GitRunner = defaultGitRunner, attempt?: number): Promise<CiEvidence> {
   const result: CiEvidence = {
     version: 1, repo: clean(repo), run, job, source: { status: 'jobs_unavailable', truncated: false, outputTruncated: false },
     headSha: null, jobName: null, conclusion: null, failedSteps: [], excerpts: [],
@@ -45,7 +47,37 @@ export async function readCiEvidence(repo: string, run: number, job: number, run
   const read = async (args: string[], maxStdoutBytes: number): Promise<GitRunResult | null> => {
     try { return await runner('gh', args, { cwd: tmpdir(), timeoutMs: TIMEOUT_MS, maxStdoutBytes }); } catch { return null; }
   };
-  const jobs = await read(['api', '--paginate', '--slurp', `repos/${repo}/actions/runs/${run}/jobs?filter=all&per_page=100`], JOBS_MAX_BYTES);
+  let attemptSha: string | undefined;
+  if (attempt !== undefined) {
+    result.attempt = { requested: attempt, observed: null };
+    result.source.status = 'attempt_invalid';
+    if (!Number.isSafeInteger(attempt) || attempt < 1) return result;
+    result.source.status = 'attempt_unavailable';
+    const response = await read(['api', `repos/${repo}/actions/runs/${run}/attempts/${attempt}`], JOBS_MAX_BYTES);
+    if (response?.truncated) {
+      result.source.status = 'attempt_invalid'; result.source.truncated = true; return result;
+    }
+    if (!response || response.code !== 0 || response.timedOut || response.missing) return result;
+    result.source.status = 'attempt_invalid';
+    let metadata: Record<string, unknown> | null;
+    try { metadata = record(JSON.parse(response.stdout)); } catch { return result; }
+    const repository = record(metadata?.['repository']);
+    if (!metadata || !Number.isSafeInteger(metadata['id']) || (metadata['id'] as number) < 1 ||
+        !Number.isSafeInteger(metadata['run_attempt']) || (metadata['run_attempt'] as number) < 1 ||
+        typeof metadata['head_sha'] !== 'string' || !/^[a-f\d]{40,64}$/i.test(metadata['head_sha']) ||
+        typeof repository?.['full_name'] !== 'string' || !repository['full_name']) return result;
+    result.attempt.observed = metadata['run_attempt'] as number;
+    if (metadata['id'] !== run || metadata['run_attempt'] !== attempt ||
+        repository['full_name'].toLowerCase() !== repo.toLowerCase()) {
+      result.source.status = 'attempt_mismatch'; return result;
+    }
+    attemptSha = metadata['head_sha'];
+  }
+  result.source.status = 'jobs_unavailable';
+  const jobsPath = attempt === undefined
+    ? `repos/${repo}/actions/runs/${run}/jobs?filter=all&per_page=100`
+    : `repos/${repo}/actions/runs/${run}/attempts/${attempt}/jobs?per_page=100`;
+  const jobs = await read(['api', '--paginate', '--slurp', jobsPath], JOBS_MAX_BYTES);
   if (jobs?.truncated) {
     result.source = { status: 'jobs_truncated', truncated: true, outputTruncated: false };
     return result;
@@ -73,6 +105,8 @@ export async function readCiEvidence(repo: string, run: number, job: number, run
   const selected = matches[0]!;
   if (matches.length !== 1 || selected['run_id'] !== run || typeof selected['name'] !== 'string' ||
       !selected['name'] || typeof selected['head_sha'] !== 'string' || !/^[a-f\d]{40,64}$/i.test(selected['head_sha']) ||
+      (attemptSha !== undefined && (selected['head_sha'].toLowerCase() !== attemptSha.toLowerCase() ||
+        (selected['run_attempt'] !== undefined && selected['run_attempt'] !== attempt))) ||
       typeof selected['conclusion'] !== 'string' || !Array.isArray(selected['steps']) ||
       selected['steps'].some((step: unknown) => !record(step) || typeof record(step)!['name'] !== 'string' ||
         typeof record(step)!['conclusion'] !== 'string' && record(step)!['conclusion'] !== null)) {

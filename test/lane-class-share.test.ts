@@ -8,8 +8,8 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('lane class share', () => {
   it('classifies bounded identifiers including generated filler', () => {
-    expect(['RQ-PHX-LANECLASSSHARE31', 'RQ-FIXUP-123Q8', 'RQ-PHX2A20261031Q8', 'RQ-STACK12A20261031Q8', 'RQ-unknown', 'RQ-STACK12A20261031Q8-retry'].map(classifyLaneJob))
-      .toEqual(['phx', 'fixup', 'filler', 'filler', 'other', 'other']);
+    expect(['RQ-PHX-LANECLASSSHARE31', 'RQ-FIXUP-123Q8', 'RQ-PHX2A20261031Q8', 'RQ-STACK12A20261031Q8', 'RQ-FILL-2', 'RQ-FILL-2-retry', 'RQ-unknown', 'RQ-STACK12A20261031Q8-retry'].map(classifyLaneJob))
+      .toEqual(['phx', 'fixup', 'filler', 'filler', 'filler', 'other', 'other', 'other']);
   });
 
   it('reports every class, missing finishes, per-lane totals and unique PRs', () => {

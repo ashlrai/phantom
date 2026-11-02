@@ -2,7 +2,8 @@
  * Dormant phone gateway HTTP adapter. No production startup path imports/calls
  * startRemoteReadGateway; Tunnel must target this listener, never Hub's :7777.
  * The browser receives a separate, short-lived device session. Hub's read
- * token and its read-session cookie stay exclusively on the loopback hop.
+ * token and its read-session cookie (for streams and agent-bus reads) stay
+ * exclusively on the loopback hop.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -18,6 +19,7 @@ import type { createRemotePairing } from './remote-pairing.js';
 import type { createRemotePush } from './remote-push.js';
 import { serveStatic } from './static.js';
 
+const READ_SESSION_ROUTES = new Set(['/api/verse/agent-bus', '/api/verse/agent-bus/status']);
 const COOKIE_NAME = '__Host-ashlr-remote';
 const PREAUTH_COOKIE_NAME = '__Host-ashlr-remote-preauth';
 const SESSION_MS = 15 * 60_000;
@@ -442,7 +444,8 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         return;
       }
       if (!session) { json(res, 401, { code: 'DEVICE_SESSION_REQUIRED', error: 'Device authentication required' }); return; }
-      if (route.kind === 'stream' && !(await localReadSession())) {
+      const sessionRead = route.kind === 'read' && READ_SESSION_ROUTES.has(route.path);
+      if ((route.kind === 'stream' || sessionRead) && !(await localReadSession())) {
         json(res, 503, { code: 'HUB_READ_UNAVAILABLE', error: 'Local read session unavailable' }); return;
       }
       const controller = new AbortController();
@@ -451,7 +454,9 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       const upstreamTarget = route.kind === 'stream'
         ? `${target}${target.includes('?') ? '&' : '?'}client=${localClient}` : target;
       const upstreamHeaders: Record<string, string> = route.kind === 'stream'
-        ? { cookie: localCookie } : { 'x-ashlr-token': options.hub.readToken };
+        ? { cookie: localCookie } : sessionRead
+          ? { cookie: localCookie, 'x-ashlr-read-client': localClient }
+          : { 'x-ashlr-token': options.hub.readToken };
       if (route.kind === 'stream') {
         const deadline = Math.min(session.expiresAt, identity.expiresAt);
         const close = () => { controller.abort(); if (!res.writableEnded) res.end(); };
@@ -464,7 +469,21 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         res.once('close', () => { clearTimeout(timer); clearInterval(poll); streams.delete(res); });
       }
       try {
-        const upstream = await fetch(`${hubOrigin}${upstreamTarget}`, { headers: upstreamHeaders, redirect: 'manual', signal: controller.signal });
+        let upstream = await fetch(`${hubOrigin}${upstreamTarget}`, { headers: upstreamHeaders, redirect: 'manual', signal: controller.signal });
+        if (sessionRead && upstream.status === 401) {
+          await upstream.body?.cancel();
+          localCookie = ''; localCookieUntil = 0;
+          if (!(await localReadSession())) {
+            json(res, 503, { code: 'HUB_READ_UNAVAILABLE', error: 'Local read session unavailable' }); return;
+          }
+          upstreamHeaders.cookie = localCookie;
+          upstream = await fetch(`${hubOrigin}${upstreamTarget}`, { headers: upstreamHeaders, redirect: 'manual', signal: controller.signal });
+          if (upstream.status === 401) {
+            localCookie = ''; localCookieUntil = 0;
+            await upstream.body?.cancel();
+            json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub refused read' }); return;
+          }
+        }
         if (upstream.status >= 300 && upstream.status < 400) {
           json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub refused read' }); return;
         }
@@ -472,7 +491,8 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
           const type = upstream.headers.get('content-type') ?? '';
           if (!type.startsWith('application/json')) { json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub returned unexpected content' }); return; }
           const bytes = await boundedResponse(upstream, MAX_JSON_BYTES);
-          if (!bytes || hubSecrets.some((secret) => bytes.includes(secret))) {
+          if (!bytes || [...hubSecrets, localCookie, upstreamHeaders.cookie ?? '']
+            .filter(Boolean).some((secret) => bytes.includes(secret) || bytes.includes(secret.replace(/^ashlr_read_session=/, '')))) {
             json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub response rejected' }); return;
           }
           res.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });

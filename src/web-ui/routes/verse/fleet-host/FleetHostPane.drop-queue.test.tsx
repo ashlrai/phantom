@@ -8,7 +8,7 @@ import { DropQueueCard } from './DropQueueCard.js';
 const runs: FleetRuns = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: null, paused: false, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
-  lanes: [], workers: [], leaders: [], orchestratorAgents: 0, publishesLastHour: [], mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
+  lanes: [], workers: [], claimed: [], leaders: [], orchestratorAgents: 0, publishesLastHour: [], mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
 beforeEach(() => { evictAll(); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -36,18 +36,23 @@ it('hides the card when the hub returns 404', async () => {
 
 it('polls every 30 seconds only while visible', async () => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => Response.json({ v: 1, items: [] }));
+  const fetcher = vi.fn(async (_url: string) => Response.json({ v: 1, items: [] }));
   vi.stubGlobal('fetch', fetcher);
+  const expectPolls = (count: number) => {
+    for (const suffix of ['/drop-jobs', '/drop-fates']) {
+      expect(fetcher.mock.calls.filter(call => String(call[0]).endsWith(suffix))).toHaveLength(count);
+    }
+  };
   const view = render(<DropQueueCard visible />);
   await act(async () => {});
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  expectPolls(1);
   await act(async () => { vi.advanceTimersByTime(29_999); });
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  expectPolls(1);
   await act(async () => { vi.advanceTimersByTime(1); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expectPolls(2);
   view.rerender(<DropQueueCard visible={false} />);
   await act(async () => { vi.advanceTimersByTime(60_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expectPolls(2);
   await act(async () => { view.rerender(<DropQueueCard visible />); });
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expectPolls(3);
 });

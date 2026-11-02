@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { invalidate } from '../../../data/cache.js';
+import { readFailureReason } from '../../../data/client.js';
+import { queueRecut, recutDropJobsQuery } from '../fleet-outcomes/recut-queue-client.js';
+import { jobBacklogQuery } from './job-backlog-query.js';
+import { backlogVerdict, parseLogPr, recutFromLog } from './log-recut-model.js';
 import { StatusBadge } from '../../../components/primitives/StatusBadge.js';
 import { Button } from '../../../components/primitives/index.js';
 import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
@@ -15,6 +20,7 @@ import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
 import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
 import { jobTextQuery } from './job-text-queries.js';
+import { jobStopEligible, postJobStop, STOP_CONFIRM_MS, stopConfirmLabel, stopFailureText, stopOutcomeText } from './job-stop-action.js';
 import { livenessText, livenessTone, newLinesLabel, trackGrowth, type TrackedLog } from './log-liveness-model.js';
 import styles from './worker-log.module.css';
 
@@ -82,6 +88,22 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     tracked.current.value = { ...tracked.current.value, unseenLines: 0 };
     setLiveness(tracked.current.value);
   };
+  const [stop, setStop] = useState<{ armedAt: number | null; busy: boolean; text: string }>({ armedAt: null, busy: false, text: '' });
+  useEffect(() => { setStop({ armedAt: null, busy: false, text: '' }); }, [job]);
+  const stopArmed = stop.armedAt !== null && now - stop.armedAt < STOP_CONFIRM_MS;
+  const pressStop = async () => {
+    if (stop.busy) return;
+    if (!stopArmed) { setStop((prev) => ({ ...prev, armedAt: Date.now(), text: '' })); return; }
+    setStop((prev) => ({ ...prev, armedAt: null, busy: true }));
+    try {
+      const result = await postJobStop(job);
+      setStop((prev) => ({ ...prev, busy: false, text: stopOutcomeText(result) }));
+      refreshRuns();
+      if (valid) refreshDetail();
+    } catch (error) {
+      setStop((prev) => ({ ...prev, busy: false, text: stopFailureText(error) }));
+    }
+  };
   const [search, setSearch] = useState('');
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
   const lines = detail.data?.log?.tail ?? EMPTY_LINES;
@@ -97,6 +119,11 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const moveMatch = (dir: 1 | -1) => setSelectedMatch(nextMatch(matches, current, dir));
   const retained = valid && !options.some(option => option.job === job);
   const url = safePrUrl(detail.data?.publish?.prUrl);
+  const pr = parseLogPr(url);
+  const backlogQuery = useMemo(() => jobBacklogQuery(pr?.repo ?? ''), [pr?.repo]);
+  const backlog = useQuery(backlogQuery, { enabled: active && pr !== null, freshMs: 60_000 });
+  const verdict = backlog.status === 'error' ? null : backlogVerdict(url, backlog.data, now);
+  const backlogUnavailable = pr !== null && (backlog.data === null || backlog.data?.source === 'gh-failed' || backlog.status === 'error');
   const { testLine, sensitive } = publishFacts(detail.data?.publish);
   const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
   const hint = detail.data ? logHint(detail.data, Date.now()) : null;
@@ -117,6 +144,11 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
       }} /></label>
       <Button size="sm" variant="subtle" aria-label="Copy as Markdown" disabled={!valid || !detail.data} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span>
       <Button size="sm" variant="subtle" aria-label="Steer this job" disabled={!valid} onClick={() => openInterjectDialog({ prefill: steerPrefill(job, detail.data?.lane ?? runs.data?.workers.find(worker => worker.job === job)?.lane) })}>Steer</Button>
+      {valid && jobStopEligible(state) && <>
+        <Button size="sm" variant="subtle" aria-label="Stop this job" disabled={stop.busy} onClick={() => void pressStop()}>{stopConfirmLabel(job, stopArmed)}</Button>
+        {stop.text !== '' && <span role="status">{stop.text}</span>}
+      </>}
+      {verdict && <LogRecut key={`${job}:${url}`} job={job} prUrl={url} lane={detail.data?.lane} verdict={verdict} />}
       <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
       <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
       <button type="button" aria-label="Next" disabled={matches.length === 0} onClick={() => moveMatch(1)}>↓</button>
@@ -135,6 +167,8 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         {' '}<StatusBadge status="output" tone={livenessTone(liveness?.lastGrowthAt ?? null, state, now)}>{livenessText(liveness?.lastGrowthAt ?? null, state, now)}</StatusBadge>
         {meta.slice(1).map((part, index) => <span key={`${part}-${index}`}> · {url && index === meta.length - 2 && part === prLabel(url) ? <a href={url} target="_blank" rel="noreferrer">{part}</a> : part}</span>)}
       </div>
+      {backlogUnavailable && <p role="status">merge backlog unavailable</p>}
+      {verdict && <p className={styles.meta}>{verdict.text}</p>}
       {(testLine !== null || sensitive !== null) && <section aria-label="Publish" className={styles.meta}>
         {testLine !== null && <p>Tests: <code>{testLine}</code></p>}
         {sensitive !== null && <p role="note">Touches owner-reviewed paths: {sensitive.join(', ')}</p>}
@@ -183,4 +217,31 @@ function JobText({ job, kind, enabled }: { job: string; kind: 'notes' | 'prompt'
                 : <p>{enabled ? 'Reading…' : 'Select a worker'}</p>}
     </>}
   </details>;
+}
+
+function LogRecut({ job, prUrl, lane, verdict }: { job: string; prUrl: string | null; lane: string | null | undefined; verdict: NonNullable<ReturnType<typeof backlogVerdict>> }) {
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState('');
+  const queued = useRef(false);
+  async function queue() {
+    const recut = recutFromLog({ job, prUrl, title: null, lane, nowMs: Date.now() });
+    if (!recut || inFlight.current || queued.current || !(verdict.action === 'recut' || verdict.mergeStateStatus === 'DIRTY')) return;
+    inFlight.current = true;
+    setBusy(true);
+    setResult('');
+    try {
+      const outcome = await queueRecut(recut);
+      if (outcome === 'queued') {
+        queued.current = true;
+        setResult(`Queued as RQ-PHX-${recut.id}`);
+        invalidate(recutDropJobsQuery.key);
+      } else if (outcome === 'already queued') {
+        queued.current = true;
+        setResult('Already queued');
+      } else setResult('Recut unavailable (drop-jobs route missing)');
+    } catch (error) { setResult(readFailureReason(error)); }
+    finally { inFlight.current = false; setBusy(false); }
+  }
+  return <><Button size="sm" variant="subtle" aria-label={`Recut PR ${verdict.number}`} disabled={busy || queued.current || !(verdict.action === 'recut' || verdict.mergeStateStatus === 'DIRTY')} onClick={() => void queue()}>Recut PR #{verdict.number}</Button><span role="status">{result}</span></>;
 }

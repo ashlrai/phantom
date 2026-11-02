@@ -64,12 +64,12 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
     {text.trim() !== '' && <p className={styles.message} role="status">{rows.length} of {kindRows.length} shown</p>}
     {rows.length === 0 ? <p className={styles.message}>{items.length ? 'No events match this filter.' : 'No fleet events yet.'}</p> :
       <ol className={styles.list} aria-label="Fleet event feed">{rows.map(item => {
-        const href = item.kind === 'publish' && item.url && /^https:\/\/github\.com\/[^\s?#]+$/.test(item.url) ? safeHref(item.url, 'github.com') : null;
+        const href = (item.kind === 'publish' || item.kind === 'ci') && item.url && /^https:\/\/github\.com\/[^\s?#]+$/.test(item.url) ? safeHref(item.url, 'github.com') : null;
         const valid = Number.isFinite(Date.parse(item.at));
         return <li key={item.id} className={styles.row}>
           <time className={styles.time} dateTime={valid ? item.at : undefined} title={valid ? new Date(item.at).toLocaleString() : undefined}>{formatRelative(item.at)}</time>
           <Tag size="sm">{item.kind}</Tag>
-          <span className={styles.text}><JobRefs text={item.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />{href && <> · <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`Pull request for ${item.text}`}>PR <IconExternalLink size={12} aria-hidden="true" /></a></>}</span>
+          <span className={styles.text}><JobRefs text={item.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />{href && <> · <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`${item.kind === 'ci' ? 'GitHub run' : 'Pull request'} for ${item.text}`}>{item.kind === 'ci' ? 'Run' : 'PR'} <IconExternalLink size={12} aria-hidden="true" /></a></>}</span>
         </li>;
       })}</ol>}
   </section>;

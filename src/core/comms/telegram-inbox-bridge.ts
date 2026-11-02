@@ -34,8 +34,11 @@ import { createChannelReceiver, type ChannelAck, type ChannelMessage, type Chann
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
 import { telegramFleetStatus, type TelegramFleetStatusDeps } from './telegram-fleet-status.js';
+import { shipCommandReply, TELEGRAM_SHIP_RE, type ShipCommandDeps } from './telegram-ship-command.js';
 
 export interface TelegramInboxDeps extends TelegramFleetStatusDeps {
+  /** Release command dependencies. */
+  ship?: ShipCommandDeps;
   /** Transport seam for tests. Default sendTelegramMessage. */
   send?: (text: string, opts?: TelegramSendOpts, cfg?: AshlrConfig) => Promise<TelegramSendResult>;
   /** Shared runs context (inbox + receipt store). Default ~/.ashlr-runs. */
@@ -70,6 +73,9 @@ function configuredOwnerIds(cfg: AshlrConfig): number[] {
 
 export type TelegramInboxResult = ChannelReceiveResult | { ok: false; reason: 'status-replied' | 'status-send-failed' };
 
+/** `/fleet-status` (optionally @bot) is answered by the bridge. */
+export const TELEGRAM_FLEET_STATUS_RE = /^\/fleet-status(?:@\w+)?$/;
+
 export async function recordTelegramToInbox(
   event: InboundEvent,
   text: string,
@@ -79,10 +85,21 @@ export async function recordTelegramToInbox(
   const message = telegramChannelMessage(event, text);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
   const send = deps.send ?? sendTelegramMessage;
-  if (/^\/fleet-status(?:@\w+)?$/.test(text)) {
+  if (TELEGRAM_FLEET_STATUS_RE.test(text)) {
     if (!configuredOwnerIds(cfg).includes(event.senderUserId!)) return { ok: false, reason: 'sender-not-allowed' };
     try {
       const reply = await telegramFleetStatus(deps);
+      const sent = await send(reply, typeof event.messageId === 'number' ? { replyToMessageId: event.messageId } : undefined, cfg);
+      return { ok: false, reason: sent.ok ? 'status-replied' : 'status-send-failed' };
+    } catch {
+      return { ok: false, reason: 'status-send-failed' };
+    }
+  }
+  if (TELEGRAM_SHIP_RE.test(text)) {
+    if (!configuredOwnerIds(cfg).includes(event.senderUserId!)) return { ok: false, reason: 'sender-not-allowed' };
+    try {
+      const reply = await shipCommandReply(text, deps.ship);
+      if (reply === null) return { ok: false, reason: 'status-send-failed' };
       const sent = await send(reply, typeof event.messageId === 'number' ? { replyToMessageId: event.messageId } : undefined, cfg);
       return { ok: false, reason: sent.ok ? 'status-replied' : 'status-send-failed' };
     } catch {

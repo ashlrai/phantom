@@ -15,13 +15,13 @@ function hashPost(to: string, text: string): string {
   return hash.toString(16).padStart(16, '0');
 }
 
-export function buildMasonEnvelope({ to, text, replyTo, now }: { to: string; text: string; replyTo?: string; now: number }) {
+export function buildMasonEnvelope({ to, text, replyTo, now, channel = 'desktop' }: { to: string; text: string; replyTo?: string; now: number; channel?: 'desktop' | 'phone' }) {
   const trimmed = trimPost(text);
   const dedupeKey = hashPost(to, trimmed);
   return {
-    id: `mason-desktop-${dedupeKey.slice(0, 16)}`, from: 'mason', to, priority: 'P0' as const,
+    id: `mason-${channel}-${dedupeKey.slice(0, 16)}`, from: 'mason', to, priority: 'P0' as const,
     ttl: 7 * 24 * 60 * 60 * 1000,
-    body: { kind: 'interjection', channel: 'desktop', text: trimmed, receivedAt: new Date(now).toISOString(), dedupeKey,
+    body: { kind: 'interjection', channel, text: trimmed, receivedAt: new Date(now).toISOString(), dedupeKey,
       ...(replyTo ? { replyTo } : {}) },
   };
 }

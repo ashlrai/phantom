@@ -24,8 +24,8 @@
  * (isUsageLimitText — the single shared matcher, not a second copy) or an
  * advertised "try again at <date>" makes the failure `usage-limit` and
  * yields `resetAt`. The date is parsed strictly and stays null rather than
- * guessed. A `LEADER <executor> rc=` row with no exhaustion evidence is
- * still a failed pass — `executor-fail`.
+ * guessed. Without exhaustion evidence, an authentication rejection becomes `auth-rejected`; other failures remain
+ * `executor-fail`.
  *
  * LaneHealth (drive/lane-health.ts) is deliberately not reused: it models
  * {reason, probeAtMs} for a single lane, while planner health needs a
@@ -49,7 +49,7 @@ export interface PlannerHealth {
   lastGoodPassAt: string | null;
   /** Account reset the newest run log advertises ("try again at …"), ISO; null when absent or unparseable. */
   resetAt: string | null;
-  /** ok → null. failing → 'usage-limit' | 'executor-fail'.
+  /** ok → null. failing → 'usage-limit' | 'auth-rejected' | 'executor-fail'.
    *  unknown → 'missing-events-log' | 'unreadable-events-log' | 'no-leader-rows'. */
   reason: string | null;
 }
@@ -57,6 +57,15 @@ export interface PlannerCandidate { provider: string; argv: readonly string[] }
 export type PlannerRunnerChoice =
   | { ok: true; provider: string; argv: readonly string[] }
   | { ok: false; reason: string; nextResetAt: string | null };
+
+/** Retry rejected logins after six hours, allowing externally repaired auth to recover. */
+export const AUTH_REJECTED_RETRY_MS = 6 * 60 * 60 * 1000;
+
+/** Conservative rejection signatures. Returns only a boolean; never exposes log text. */
+export function isAuthRejectedText(text: string): boolean {
+  return /\bauthentication_error\b|\binvalid x-api-key\b|\boauth token has expired\b|\btoken rejected\b|\bplease run \/login\b|\bnot logged in\b/i.test(text)
+    || /\b401\b[^\r\n]*\bunauthorized\b|\bunauthorized\b[^\r\n]*\b401\b/i.test(text);
+}
 
 const MAX_EVENTS_TAIL = 256 * 1024;
 const MAX_RUN_TAIL = 256 * 1024;
@@ -129,7 +138,7 @@ function assess(events: { state: Source; text: string }, runLogText: string, now
     failingSince: rows[depth]!.at,
     lastGoodPassAt: rows[depth + 1]?.at ?? null,
     resetAt,
-    reason: usage ? 'usage-limit' : 'executor-fail',
+    reason: usage ? 'usage-limit' : isAuthRejectedText(runLogText) ? 'auth-rejected' : 'executor-fail',
   };
 }
 
@@ -171,35 +180,42 @@ export async function readPlannerHealth(
   return assess(events, runLog.text, now);
 }
 
-/** A provider is limited while its health shows an unreset usage-limit failure. */
-export function isProviderLimited(health: PlannerHealth | undefined, now: number): boolean {
-  if (health?.status !== 'failing' || health.reason !== 'usage-limit') return false;
-  const reset = health.resetAt === null ? Number.NaN : Date.parse(health.resetAt);
-  // A missing or unparseable reset can never be proven past: still limited.
-  return !Number.isFinite(reset) || reset > now;
+/** Earliest retry supported by the failure evidence; NaN means unknown. */
+function providerRetryAt(health: PlannerHealth): number {
+  if (health.reason === 'auth-rejected') {
+    return Date.parse(health.failingSince ?? '') + AUTH_REJECTED_RETRY_MS;
+  }
+  return Date.parse(health.resetAt ?? '');
 }
 
-/**
- * The first candidate whose provider is not usage-limited, in list order —
- * the caller's priority order. Providers failing for other reasons, unread
- * or unknown are not "limited": failover exists for exhausted logins, other
- * failure kinds stay the caller's problem. All limited (or none) → ok:false.
- */
+/** Usage exhaustion and rejected auth remain limited until their retry time. */
+export function isProviderLimited(health: PlannerHealth | undefined, now: number): boolean {
+  if (health?.status !== 'failing'
+    || (health.reason !== 'usage-limit' && health.reason !== 'auth-rejected')) return false;
+  const retry = providerRetryAt(health);
+  // A missing or unparseable retry time can never be proven past: still limited.
+  return !Number.isFinite(retry) || retry > now;
+}
+
+/** First candidate without active usage exhaustion or auth rejection, in priority order. */
 export function selectPlannerRunner(
   candidates: readonly PlannerCandidate[],
   healthByProvider: Readonly<Record<string, PlannerHealth>>,
   now: number,
 ): PlannerRunnerChoice {
   let nextReset = Number.POSITIVE_INFINITY;
+  let authRejected = false;
   for (const candidate of candidates) {
     const health = healthByProvider[candidate.provider];
     if (!isProviderLimited(health, now)) return { ok: true, provider: candidate.provider, argv: candidate.argv };
-    const reset = health.resetAt === null ? Number.NaN : Date.parse(health.resetAt);
+    authRejected ||= health.reason === 'auth-rejected';
+    const reset = providerRetryAt(health);
     if (Number.isFinite(reset) && reset > now) nextReset = Math.min(nextReset, reset);
   }
   return {
     ok: false,
-    reason: candidates.length > 0 ? 'all candidates are usage-limited' : 'no candidates',
+    reason: candidates.length === 0 ? 'no candidates'
+      : authRejected ? 'all candidates are usage-limited or auth-rejected' : 'all candidates are usage-limited',
     nextResetAt: Number.isFinite(nextReset) ? new Date(nextReset).toISOString() : null,
   };
 }

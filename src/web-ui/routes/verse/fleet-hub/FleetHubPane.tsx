@@ -10,9 +10,13 @@ import { relativeText } from '../ops/ops-runs-model.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { usePanes, type PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { pairedDevicesQuery } from '../sections/paired-devices-query.js';
+import { pendingPhonesQuery } from '../sections/pending-phones-query.js';
+import { setVerseSection } from '../verse-ui-store.js';
 import { curatedWorkspace, hubEmptyState, hubTiles, snapshotAge } from './fleet-hub-model.js';
 import { lastOrderLine } from './hub-last-order.js';
 import { busTile } from './hub-bus-tile.js';
+import { phoneTile } from './hub-phone-tile.js';
 import { hubBacklogQuery } from './hub-backlog-queries.js';
 import { backlogTile } from './hub-backlog-tile.js';
 import styles from './fleet-hub.module.css';
@@ -39,6 +43,12 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   usePollWhileVisible(() => {
     if (!agentBusMissing()) { refreshStatus(); if (pageEnabled) refreshPage(); }
   }, 15_000, { enabled: visible && !agentBusMissing() });
+  const phoneEnabled = visible && sectionVisible && documentVisible;
+  const devices = useQuery(pairedDevicesQuery, { enabled: phoneEnabled, freshMs: 15_000 });
+  const pending = useQuery(pendingPhonesQuery, { enabled: phoneEnabled, freshMs: 15_000 });
+  const refreshDevices = useRefetch(pairedDevicesQuery);
+  const refreshPending = useRefetch(pendingPhonesQuery);
+  usePollWhileVisible(() => { refreshDevices(); refreshPending(); }, 15_000, { enabled: visible });
   const missingBus = agentBusMissing() || [status.error, page.error].some(error => error instanceof ApiError && error.status === 404);
   const bus = missingBus
     ? { title: 'Bus', reading: 'Update the hub for the durable bus', caption: 'Store status unknown', tone: 'unknown' as const }
@@ -50,6 +60,10 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   const workspaceIds = curatedWorkspace(presentIds);
   const empty = hubEmptyState(read.data ?? null);
   const now = Date.now();
+  const phone = devices.data && 'kind' in devices.data ? null
+    : devices.status === 'error' || pending.status === 'error'
+      ? { title: 'Phone', reading: 'Phone status unavailable', detail: 'Phone status unavailable.', tone: 'warn' as const }
+      : phoneTile(devices.data ?? null, pending.data ?? null, now);
   const backlog = backlogTile(backlogRead.data, now);
   const backlogButton = backlog && <button type="button" className={styles.tile} data-tone={backlog.tone} onClick={() => openDockPane('fleet-merges')}>
     <strong>Merge backlog</strong>
@@ -91,6 +105,11 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
         <span className={styles.count}>{bus.reading}</span>
         <span className={styles.count}>{bus.caption}</span>
       </button>
+      {phone && <button type="button" className={styles.tile} data-tone={phone.tone} title={phone.detail}
+        onClick={() => setVerseSection('settings', 'fleet-sources')}>
+        <strong>{phone.title}</strong>
+        <span className={styles.count}>{phone.reading}</span>
+      </button>}
     </div>
   </section>;
 }

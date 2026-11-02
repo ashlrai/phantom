@@ -1,5 +1,6 @@
 /** Successful receipts only. The sink append and receipt commit are separate:
  * a crash between them can append again on retry; this is not exactly-once. */
+import type { InboundChannel } from './channel-envelope.js';
 import { randomUUID } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -11,7 +12,13 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 
 export const CHANNEL_RECEIPT_LIMIT = 10_000;
 const MAX_BYTES = 2 * 1024 * 1024;
-export interface ChannelReceipt { at: number; key: string }
+export interface ChannelReceipt {
+  at: number;
+  key: string;
+  /** Original source; body/sender are recovered only through the matching hash.
+   * Absent on legacy receipts, whose source must never be guessed. */
+  mirror?: { channel: InboundChannel; pending: boolean };
+}
 export interface ChannelDedupeStore {
   /** Serialize lookup, awaited sink persistence, and commit across all users.
    * Commit must persist before resolving. Exceptions fail the receive explicitly. */
@@ -45,15 +52,21 @@ export function createLocalChannelDedupeStore(runsDir = join(homedir(), '.ashlr-
           const rows: unknown = JSON.parse(read.text);
           if (!Array.isArray(rows) || rows.length > CHANNEL_RECEIPT_LIMIT) throw new Error('Invalid channel receipts');
           for (const row of rows) {
-            if (!Array.isArray(row) || row.length !== 3 || typeof row[0] !== 'string' || typeof row[2] !== 'string' || !/^[a-f0-9]{64}$/.test(row[0]) ||
+            if (!Array.isArray(row) || (row.length !== 3 && row.length !== 4) || typeof row[0] !== 'string' || typeof row[2] !== 'string' || !/^[a-f0-9]{64}$/.test(row[0]) ||
                 !/^[a-f0-9]{64}$/.test(row[2]) || !Number.isSafeInteger(row[1]) || row[1] < 0 ||
                 receipts.has(row[0])) throw new Error('Invalid channel receipt');
-            receipts.set(row[0], { at: row[1], key: row[2] });
+            const mirror = row[3];
+            if (row.length === 4 && (!mirror || typeof mirror !== 'object' ||
+                !['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'].includes(mirror.channel) ||
+                typeof mirror.pending !== 'boolean' || Object.keys(mirror).sort().join() !== 'channel,pending')) {
+              throw new Error('Invalid channel mirror receipt');
+            }
+            receipts.set(row[0], { at: row[1], key: row[2], ...(mirror ? { mirror } : {}) });
           }
         }
         return await work(receipts, () => {
           if (!ownsLocalStoreLock(lock) || receipts.size > CHANNEL_RECEIPT_LIMIT) throw new Error('Channel receipt commit unavailable');
-          const text = JSON.stringify([...receipts].map(([hash, receipt]) => [hash, receipt.at, receipt.key]));
+          const text = JSON.stringify([...receipts].map(([hash, receipt]) => [hash, receipt.at, receipt.key, ...(receipt.mirror ? [receipt.mirror] : [])]));
           if (Buffer.byteLength(text) > MAX_BYTES) throw new Error('Channel receipts too large');
           writePrivateFileAtomically(join(parent, `.${randomUUID()}.tmp`), file, text,
             { anchorPath: parent, label: 'Channel receipts' });

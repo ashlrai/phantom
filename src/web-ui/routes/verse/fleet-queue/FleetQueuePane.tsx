@@ -19,6 +19,7 @@ import { restockNotice } from './queue-repo-mix.js';
 import { DropJobSheet } from './DropJobSheet.js';
 import { dropJobsQuery } from './drop-job-queries.js';
 import { waitingRows } from './drop-job-model.js';
+import { fillerFirst, nextUpCaption, nextUpClasses } from './next-up-class-model.js';
 import styles from './fleet-queue.module.css';
 
 export function FleetQueuePane({ visible, host }: PaneProps) {
@@ -78,7 +79,11 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
         const drain = laneDrainText(lane, snapshotLanes.find((snapshotLane) => snapshotLane.lane === lane.lane));
         const held = heldLaneLine(holds.data?.lanes.find((row) => row.lane === lane.lane), Date.now());
         const next = data.nextUp?.find((entry) => entry.lane === lane.lane);
-        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{held && <><span className={styles.muted}>{held}</span><Button size="sm" aria-label={`Release hold on ${lane.lane}`} busy={pending} onClick={() => void release(lane.lane)}>Release hold</Button></>}{error?.lane === lane.lane && <span role="status">{error.message}</span>}{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <span className={styles.muted} data-testid="lane-next">Next: <JobRefs text={next.jobs.join(', ')} onOpenJob={openJob} /></span>}</li>;
+        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{held && <><span className={styles.muted}>{held}</span><Button size="sm" aria-label={`Release hold on ${lane.lane}`} busy={pending} onClick={() => void release(lane.lane)}>Release hold</Button></>}{error?.lane === lane.lane && <span role="status">{error.message}</span>}{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <>
+          <span className={`${styles.muted} ${styles.nextLine}`} data-testid="lane-next">Next: {nextUpClasses(next.jobs).map(({ job, cls, label }, index) => <span key={`${job}:${index}`}>{index > 0 && ', '}<JobRefs text={job} onOpenJob={openJob} /> <span className={styles.chip} data-class={cls}>{label}</span></span>)}</span>
+          <span className={`${styles.muted} ${styles.nextLine}`}>{nextUpCaption(lane.lane, next.jobs)}</span>
+          {fillerFirst(next.jobs) && <span className={`${styles.warning} ${styles.nextLine}`} role="status">filler launches before Phantom work on {lane.lane}</span>}
+        </>}</li>;
       })}</ul>}
     </section>
     <section aria-label="Parked groups"><h3 className={styles.heading}>Parked groups</h3>

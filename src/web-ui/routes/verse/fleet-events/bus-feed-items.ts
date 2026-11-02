@@ -1,4 +1,5 @@
 import { narrowBusFeedPage } from './agent-bus-feed-query.js';
+import { ciIncidentItem } from './ci-incident-items.js';
 import { sortNewestFirst, type FeedItem } from './fleet-events-model.js';
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
@@ -17,6 +18,8 @@ export function busFeedItems(page: unknown): FeedItem[] {
     // Prefer the interjection's event time, then an optional page timestamp. The
     // receipt time is transport metadata, not the time the agent said it.
     const at = iso(body.receivedAt) ? body.receivedAt : iso(data.timestamp) ? data.timestamp : '';
+    const incident = ciIncidentItem(envelope, at);
+    if (incident) return incident;
     return { id: `bus:${envelope.id}`, kind: 'bus', at,
       text: `${envelope.from} -> ${envelope.to} [${envelope.priority}] ${excerpt}`, url: null };
   });

@@ -14,6 +14,7 @@ import { busStatusLine, envelopeRows, isMasonInterjection } from './agent-bus-mo
 import { takeBusPostRequest, useBusPostRequest } from './bus-post-request.js';
 import { BusPostBox, type BusPostPrefill } from './BusPostBox.js';
 import { recentSenders } from './bus-post-model.js';
+import { replyCounts, threadHeadline, threadOf } from './bus-thread-model.js';
 import styles from './fleet-bus.module.css';
 
 // Include an occurrence number so identical log lines remain separate events.
@@ -121,6 +122,7 @@ function DurableBus({ visible, query, setQuery, tell }: { visible: boolean; quer
   const refreshPostedStatus = useRefresh(agentBusStatusQuery);
   const refreshPostedPage = useRefresh(pageQuery);
   const [prefill, setPrefill] = useState<BusPostPrefill | null>(null);
+  const [thread, setThread] = useState<string | null>(null);
   const [about, setAbout] = useState('');
   useEffect(() => { if (tell) { setPrefill(tell); setAbout(tell.quote); } }, [tell]);
   usePollWhileVisible(() => { if (!agentBusMissing()) { refreshStatus(); if (status.data) refreshPage(); } }, 10_000,
@@ -150,19 +152,25 @@ function DurableBus({ visible, query, setQuery, tell }: { visible: boolean; quer
   const error = status.error ?? page.error ?? olderError;
   const errorText = agentBusMissing() ? 'This hub has no durable bus route yet (update the hub).' : error ? durableError(error) : null;
   const allRows = envelopeRows(messages, Date.now());
-  const rows = allRows.filter(row =>
+  const selected = thread === null ? null : threadOf(messages, thread);
+  const counts = replyCounts(messages);
+  const rowsById = new Map(allRows.map(row => [row.id, row]));
+  const rows = selected ? selected.ids.flatMap(id => { const row = rowsById.get(id); return row ? [row] : []; }) : allRows.filter(row =>
     [row.from, row.to, row.priority, row.kind, row.channel ?? '', row.excerpt].some(value => value.toLowerCase().includes(query.toLowerCase())));
   return <section className={styles.root} aria-label="Durable bus">
     {status.data && <p className={styles.header}>{busStatusLine(status.data)}</p>}
     {errorText && <p className={styles.notice} role="status">{errorText}</p>}
     {!errorText && (status.data === null || page.data === null) && <p className={styles.notice}>Durable bus is unavailable.</p>}
     <input className={styles.search} type="search" aria-label="Filter bus events" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setQuery(''); }} />
+    {selected && <><p className={styles.header}>{threadHeadline(selected, messages)}</p><Button size="sm" onClick={() => setThread(null)}>Back to all</Button></>}
     {rows.length > 0 ? <ol className={styles.list} aria-label="Durable bus envelopes">{rows.map(row =>
       <li key={row.cursor} className={`${styles.row} ${styles.envelope} ${isMasonInterjection(row) ? styles.interjection : ''}`} aria-label={isMasonInterjection(row) ? 'Interjection' : undefined}>
         <Tag size="sm">{row.priority}</Tag><span>{row.from} → {row.to}</span><Tag size="sm">{row.kind}</Tag>
         {row.kind === 'interjection' && row.channel && <Tag size="sm">via {channelLabels[row.channel]}</Tag>}
         <span className={styles.text}>{row.excerpt}</span>{row.expired && <Tag size="sm">expired</Tag>}
         <time className={styles.time} dateTime={row.at} title={new Date(row.at).toLocaleString()}>{row.ageText}</time>
+        {row.from === 'mason' && !!counts.get(row.id) && <span>Replies: {counts.get(row.id)}</span>}
+        <Button size="sm" variant="subtle" aria-label={`Open thread ${row.id}`} onClick={() => setThread(row.id)}>Thread</Button>
         {row.from !== 'mason' && <Button size="sm" variant="subtle" onClick={() => { setAbout(''); setPrefill({ to: row.from, replyTo: row.id, quote: row.excerpt }); }}>Reply</Button>}
       </li>)}</ol> : status.data && page.data && <p className={styles.message}>{messages.length ? 'No events match this filter.' : 'No durable bus messages yet.'}</p>}
     {olderBoundary !== null && olderBoundary > 0 && <Button size="sm" onClick={() => { void loadOlder(); }} disabled={loadingOlder}>{loadingOlder ? 'Loading…' : 'Load older'}</Button>}

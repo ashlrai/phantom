@@ -94,7 +94,8 @@ it('resumes a saved cursor in a fresh invocation and reads only the live remaind
 
   // Reads are pure: the durable store keeps every retained row, expired included.
   expect(readFileSync(file, 'utf8')).toBe(persisted);
-  expect(JSON.parse(persisted)).toEqual(envelopes.map((envelope, index) => receipt(index + 1, envelope)));
+  const stored = JSON.parse(persisted) as { rows?: unknown } | unknown[];
+  expect(Array.isArray(stored) ? stored : stored.rows).toEqual(envelopes.map((envelope, index) => receipt(index + 1, envelope)));
   expect(await after(['status'], RESUMED_AT)).toEqual({
     source: 'available', retainedCount: 5, retainedBytes: statSync(file).size,
     maxMessages: 1024, maxBytes: 1024 * 1024, liveCount: 4, expiredCount: 1,

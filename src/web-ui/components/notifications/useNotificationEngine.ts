@@ -18,7 +18,7 @@
  * cadence as the other probes.
  * The native updater uses event-driven state and never polls.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { refetchQuery } from '../../data/cache.js';
 import { laneTargetsQuery } from '../../routes/verse/ops/lane-targets-queries.js';
 import type { LaneTargetsV1 } from '../../routes/verse/ops/lane-targets-model.js';
@@ -43,6 +43,10 @@ import { derivePhonePendingNotifications } from './derivePhonePendingNotificatio
 import { phonePendingQuery } from './phone-pending-query.js';
 import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
 import { reconcileNotifications } from './notification-store.js';
+import { getLatestAgentBusPage, subscribeAgentBusPage } from '../../routes/verse/fleet-bus/agent-bus-queries.js';
+import { deriveBusReplyNotifications } from './deriveBusReplyNotifications.js';
+import { plannerPlanQuery } from '../../routes/verse/fleet-dispatch/planner-plan-queries.js';
+import { derivePlannerNotifications } from './derivePlannerNotifications.js';
 
 /** Match the Updates and Releases surfaces; never poll faster. */
 const NOTIFY_POLL_MS = 60_000;
@@ -61,6 +65,8 @@ export function useNotificationEngine(): void {
   const ledger = useQuery(fleetLedgerQuery);
   const nativeUpdates = useDesktopUpdates();
   const phonePending = useQuery(phonePendingQuery);
+  const plannerPlan = useQuery(plannerPlanQuery);
+  const busPage = useSyncExternalStore(subscribeAgentBusPage, getLatestAgentBusPage, () => null);
   usePollWhileVisible(() => {
     void refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch()).then(() =>
       refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch()));
@@ -69,6 +75,7 @@ export function useNotificationEngine(): void {
   usePollWhileVisible(useRefetch(releasePrQuery), NOTIFY_POLL_MS);
   usePollWhileVisible(useRefetch(fleetLedgerQuery), NOTIFY_POLL_MS);
   usePollWhileVisible(useRefetch(phonePendingQuery), 30_000);
+  usePollWhileVisible(useRefetch(plannerPlanQuery), NOTIFY_POLL_MS);
 
   const controlData = control.data;
   const fleetData = fleet.data;
@@ -80,6 +87,7 @@ export function useNotificationEngine(): void {
   const releasePrData = releasePr.data;
   const ledgerData = ledger.data;
   const phonePendingData = phonePending.data;
+  const plannerPlanData = plannerPlan.data;
 
   useEffect(() => {
     const now = Date.now();
@@ -114,7 +122,9 @@ export function useNotificationEngine(): void {
         deriveUpdateNotifications(updateData ?? null, now, nativeUpdates),
         deriveReleasePrNotifications(releasePrData, now),
         derivePhonePendingNotifications({ approvals: phonePendingData, nowMs: now }),
+        deriveBusReplyNotifications(busPage, now),
+        derivePlannerNotifications(plannerPlanData, now),
       ),
     );
-  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates, phonePendingData]);
+  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates, phonePendingData, busPage, plannerPlanData]);
 }

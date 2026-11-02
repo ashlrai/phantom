@@ -98,7 +98,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { id: 'handoff', title: '/handoff', description: 'Continue in a fresh chat with a handoff note' },
   { id: 'compact', title: '/compact', description: 'Summarise earlier turns to free context (sent as a turn)' },
   { id: 'new', title: '/new', description: 'Start a new chat on this seat' },
-  { id: 'plan', title: '/plan', description: 'Switch this chat to Plan mode — nothing is edited' },
+  { id: 'plan', title: '/plan', description: 'Run one fleet planner pass: /plan [reason]' },
   { id: 'effort', title: '/effort', description: 'Choose the reasoning effort' },
   { id: 'model', title: '/model', description: 'Choose the model' },
   { id: 'bus', title: '/bus', description: 'Post to the agent bus: /bus <to> <text> (to = leaders, an agent name, or a job id)' },
@@ -222,4 +222,10 @@ export function parseReleaseCommand(draft: string): { lane: string; reason: stri
   const lane = match[1]!;
   if (!/^[a-z][a-z0-9-]{1,39}$/.test(lane)) return { error: 'Enter a valid lane name (2–40 lowercase letters, digits or hyphens).' };
   return { lane, reason: (match[2] ?? '').trim().slice(0, 200).trim() };
+}
+
+/** Consume planner commands locally, with the same reason bound as release. */
+export function parsePlanCommand(draft: string): { reason: string } | null {
+  if (!/^\/plan(?=\s|$)/.test(draft)) return null;
+  return { reason: draft.slice('/plan'.length).trim().slice(0, 200).trim() };
 }

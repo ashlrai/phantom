@@ -20,6 +20,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 const token = 'a'.repeat(64);
 
 beforeEach(() => {
+  sessionStorage.clear();
   evictAll();
   getStatus = 200;
   postStatus = 200;
@@ -34,7 +35,7 @@ beforeEach(() => {
   });
   vi.stubGlobal('fetch', fetchMock);
 });
-afterEach(() => { cleanup(); clearMutationToken(); evictAll(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); clearMutationToken(); evictAll(); sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const mount = () => render(<FleetOutcomesPane {...({ visible: true, host: { openPane: vi.fn() } } as unknown as PaneProps)} />);
 
 it('hides queue recut when the drop API answers 404, keeping Order recut', async () => {
@@ -50,14 +51,14 @@ it('posts the exact recut job with mutation authority and invalidates the drop l
   const button = await screen.findByRole('button', { name: 'Queue recut of RQ-PHX-EXAMPLE31' });
   expect(screen.queryByRole('button', { name: 'Queue recut of RQ-PHX-NOPR31' })).not.toBeInTheDocument();
   fireEvent.click(button);
-  expect(await screen.findByText('Queued as RQ-PHX-RECUT12341101')).toBeInTheDocument();
+  expect(await screen.findByText('queued · waiting for ingest')).toBeInTheDocument();
   const expected = recutJob(readOutcomes(feedback)!.cases[0]!, Date.now());
   expect(fetchMock).toHaveBeenCalledWith(path, expect.objectContaining({
     method: 'POST', body: JSON.stringify(expected),
     headers: { 'Content-Type': 'application/json', 'x-ashlr-token': token },
   }));
   await waitFor(() => expect(fetchMock.mock.calls.filter(([url, init]) => url === path && init?.method === 'GET')).toHaveLength(2));
-  expect(screen.queryByRole('button', { name: /^Queue recut/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^Queue recut/ })).toBeDisabled();
 });
 
 it('shows already queued inline on a duplicate ID', async () => {

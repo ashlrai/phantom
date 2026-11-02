@@ -54,7 +54,9 @@ describe('channel to context example', { timeout: 30_000 }, () => {
     expect(inbox.entries[0]).toMatchObject({ source: 'desktop', priority: 'P0', text: result.first.envelope.body });
     const receipts = JSON.parse(readFileSync(join(root, 'runs/channel-receipts/receipts.json'), 'utf8')) as unknown[];
     expect(receipts).toHaveLength(1);
-    const stored = JSON.parse(readFileSync(join(root, 'bus/bus-inbox/messages.json'), 'utf8')) as Array<{ envelope: { id: string; body: unknown } }>;
+    const persisted = JSON.parse(readFileSync(join(root, 'bus/bus-inbox/messages.json'), 'utf8')) as
+      { rows?: Array<{ envelope: { id: string; body: unknown } }> } | Array<{ envelope: { id: string; body: unknown } }>;
+    const stored = (Array.isArray(persisted) ? persisted : persisted.rows)!;
     expect(stored).toHaveLength(1);
     const page = listBusInboxAfter(0, 10, { root: join(root, 'bus') });
     expect(page.status).toBe('ok');

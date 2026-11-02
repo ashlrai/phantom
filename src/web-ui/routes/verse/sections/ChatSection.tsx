@@ -49,6 +49,7 @@ import { useSessionRoots } from '../chat/use-session-roots.js';
 import { useChatPanelSizing } from '../use-chat-panel-sizing.js';
 import { CHAT_PANEL_RANGES, MIN_TRANSCRIPT_WIDTH, setChatPanelFit } from '../chat-panel-sizing.js';
 import { activateDockChat, clearDockRequests, closeDock, getDockState, openDockPane, requestTerminal, toggleDock, toggleDockPane, toggleDockPlacement, useDockValue } from '../dock/dock-store.js';
+import { jumpToDockTab } from '../dock/tab-jump.js';
 import type { DockPaneId } from '../shell/dock-catalog.js';
 import type { SeatChoice } from '../SeatSelector.js';
 import { clampDockHeight, clampDockWidth, DOCK_LAYOUT, dockPresentation } from '../shell/dock-catalog.js';
@@ -641,6 +642,15 @@ export function ChatSection() {
     ['chat.turn-prev', () => requestTranscriptStep(-1)],
     ['chat.turn-next', () => requestTranscriptStep(1)],
     ['dock.toggle', toggleDock],
+    ['dock.tab-1', () => jumpToDockTab(1)],
+    ['dock.tab-2', () => jumpToDockTab(2)],
+    ['dock.tab-3', () => jumpToDockTab(3)],
+    ['dock.tab-4', () => jumpToDockTab(4)],
+    ['dock.tab-5', () => jumpToDockTab(5)],
+    ['dock.tab-6', () => jumpToDockTab(6)],
+    ['dock.tab-7', () => jumpToDockTab(7)],
+    ['dock.tab-8', () => jumpToDockTab(8)],
+    ['dock.tab-9', () => jumpToDockTab(9)],
     ['dock.terminal', openTerminal],
     ['dock.terminal-new', newTerminalTab],
     ['dock.preview', () => showOrTogglePane('browser')],
@@ -657,6 +667,15 @@ export function ChatSection() {
   useCommandHandler('chat.turn-prev', handlerMap.get('chat.turn-prev')!);
   useCommandHandler('chat.turn-next', handlerMap.get('chat.turn-next')!);
   useCommandHandler('dock.toggle', handlerMap.get('dock.toggle')!);
+  useCommandHandler('dock.tab-1', handlerMap.get('dock.tab-1')!);
+  useCommandHandler('dock.tab-2', handlerMap.get('dock.tab-2')!);
+  useCommandHandler('dock.tab-3', handlerMap.get('dock.tab-3')!);
+  useCommandHandler('dock.tab-4', handlerMap.get('dock.tab-4')!);
+  useCommandHandler('dock.tab-5', handlerMap.get('dock.tab-5')!);
+  useCommandHandler('dock.tab-6', handlerMap.get('dock.tab-6')!);
+  useCommandHandler('dock.tab-7', handlerMap.get('dock.tab-7')!);
+  useCommandHandler('dock.tab-8', handlerMap.get('dock.tab-8')!);
+  useCommandHandler('dock.tab-9', handlerMap.get('dock.tab-9')!);
   useCommandHandler('dock.terminal', handlerMap.get('dock.terminal')!);
   useCommandHandler('dock.terminal-new', handlerMap.get('dock.terminal-new')!);
   useCommandHandler('dock.preview', handlerMap.get('dock.preview')!);

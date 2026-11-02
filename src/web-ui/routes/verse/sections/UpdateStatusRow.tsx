@@ -6,6 +6,7 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { APP_VERSION, installedDesktopVersion } from './app-version.js';
 import { UpdateNowButton } from './UpdateNowButton.js';
 import { SettingRow } from './SettingRow.js';
+import { behindLines } from './update-behind-model.js';
 import { describeUpdateStatus } from './update-status-model.js';
 import { updateStatusQuery } from './update-status-queries.js';
 import { fetchOriginNow } from './update-fetch-client.js';
@@ -39,6 +40,7 @@ export function UpdateStatusRow() {
   const bridge = (window as unknown as { __ASHLR_DESKTOP__?: { updates?: { refresh?: unknown } } }).__ASHLR_DESKTOP__;
   const status = describeUpdateStatus({ native, server: query.status === 'error' ? null : query.data ?? null,
     appVersion: APP_VERSION, desktopVersion: installedDesktopVersion(), now: Date.now(), nativeBridge: typeof bridge?.updates?.refresh === 'function' });
+  const behind = behindLines(query.status === 'error' ? null : query.data ?? null);
   async function checkNow() {
     if (checking) return;
     setChecking(true);
@@ -54,7 +56,17 @@ export function UpdateStatusRow() {
   }
   return (
     <>
-    <SettingRow label="Updates" description={<span aria-live="polite">{checking ? 'Checking origin…' : status.headline} · {checkedAgo(lastFetchAt)}<br />{status.detail}{fetchFailed && !checking ? ' · fetch failed' : ''}</span>}>
+    <SettingRow label="Updates" description={<>
+      <span aria-live="polite">{checking ? 'Checking origin…' : status.headline} · {checkedAgo(lastFetchAt)}<br />{status.detail}{fetchFailed && !checking ? ' · fetch failed' : ''}</span>
+      {behind && <>
+        <br />
+        <span>Newest: {behind.first}{behind.moreCount > 0 ? ` (+${behind.moreCount} more)` : ''}</span>
+        <details>
+          <summary>Show all</summary>
+          <ul role="list">{behind.all.map((subject, index) => <li key={index}>{subject}</li>)}</ul>
+        </details>
+      </>}
+    </>}>
       <StatusBadge status={status.tone} tone={status.tone} />
       <Button size="sm" busy={checking} onClick={() => void checkNow()}>Check now</Button>
       <UpdateNowButton status={query.data} onDone={refresh} />

@@ -56,6 +56,7 @@ import {
   closeDock,
   closeDockTab,
   closeDockTabs,
+  moveDockTab,
   openDockPane,
   setDockHeight,
   setDockSplitRatio,
@@ -207,6 +208,13 @@ export function Dock(props: DockProps) {
   const tiled = workspace && presentation === 'column' && WORKSPACE_PANES.some((id) => id === state.active);
   const panelRef = useRef<HTMLElement>(null);
   const tabRefs = useRef(new Map<DockPaneId, HTMLButtonElement>());
+  const movedTabFocus = useRef<DockPaneId | null>(null);
+  useLayoutEffect(() => {
+    if (movedTabFocus.current !== null) {
+      tabRefs.current.get(movedTabFocus.current)?.focus();
+      movedTabFocus.current = null;
+    }
+  }, [state.tabs]);
   const idBase = useId();
   const [menu, setMenu] = useState<
     | { kind: 'add' | 'split'; anchor: MenuAnchor; from: HTMLElement }
@@ -307,6 +315,15 @@ export function Dock(props: DockProps) {
   }
 
   function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, pane: DockPaneId) {
+    if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      const delta = event.key === 'ArrowLeft' ? -1 : 1;
+      const index = state.tabs.indexOf(pane);
+      if (index >= 0 && index + delta >= 0 && index + delta < state.tabs.length) movedTabFocus.current = pane;
+      moveDockTab(pane, delta);
+      tabRefs.current.get(pane)?.focus();
+      return;
+    }
     // The keyboard's context-menu keys open the same menu a right-click does.
     if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
       event.preventDefault();
@@ -352,9 +369,12 @@ export function Dock(props: DockProps) {
   // open, and the way back to one was one click per tab.
   const tabItems = (id: DockPaneId): ActionMenuItem[] => {
     const others = closable.filter((pane) => pane !== id);
+    const index = tabs.indexOf(id);
     return [
-      ...(closable.includes(id) ? [{ id: 'close', label: `Close ${titleOf(id)}`, onSelect: () => closeDockTab(id) }] : []),
-      { id: 'close-others', label: 'Close other panes', disabled: others.length === 0, onSelect: () => closeDockTabs(others) },
+      { id: 'move-left', label: 'Move left', disabled: index === 0, onSelect: () => moveDockTab(id, -1) },
+      { id: 'move-right', label: 'Move right', disabled: index === tabs.length - 1, onSelect: () => moveDockTab(id, 1) },
+      ...(closable.includes(id) ? [{ id: 'close', label: `Close ${titleOf(id)}`, separated: true, onSelect: () => closeDockTab(id) }] : []),
+      { id: 'close-others', label: 'Close other panes', separated: !closable.includes(id), disabled: others.length === 0, onSelect: () => closeDockTabs(others) },
       { id: 'close-all', label: 'Close all panes', separated: true, disabled: closable.length === 0, onSelect: () => closeDockTabs(closable) },
     ];
   };

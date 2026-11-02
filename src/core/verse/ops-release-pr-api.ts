@@ -1,8 +1,9 @@
 /** Release PR status (GET, cached fifteen seconds per process) and the one-tap merge (POST .../merge). */
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { nameWithOwnerFromRemote } from '../fleet/repo-identity.js';
 import { listEnrolled } from '../sandbox/policy.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -11,6 +12,7 @@ import type { ApiModule } from './api-modules.js';
 import { mapLimited } from './folder-io.js';
 import type { OpsRunner } from './ops-releases.js';
 import { isReleasePrRepoName, mergeReleasePr, probeReleasePr, type ReleasePrV1 } from './ops-release-pr.js';
+import { releaseVersionLine, releaseVersionVerdict, treeVersionFromPackageJson, type ReleaseVersionVerdict } from './release-version-guard.js';
 import type { VerseApiContext } from './verse-api.js';
 
 export const VERSE_RELEASE_PR_PATH = '/api/verse/release-pr';
@@ -19,7 +21,8 @@ export interface ReleasePrResponseV1 {
   v: 1;
   generatedAt: string;
   sourceState: 'healthy' | 'degraded';
-  repos: { repo: string; path: string; pr: ReleasePrV1 | null; notes: string[] }[];
+  repos: { repo: string; path: string; pr: ReleasePrV1 | null; notes: string[];
+    treeVersion: string | null; versionVerdict: ReleaseVersionVerdict }[];
 }
 const realRunner: OpsRunner = (bin, args) => new Promise((resolve) => {
   try {
@@ -33,7 +36,14 @@ export interface ReleasePrApiDeps {
   run?: OpsRunner;
   enrolled?: () => string[];
   now?: () => number;
+  readTreeVersion?: (path: string) => Promise<string | null>;
 }
+
+/** Reads `<checkout>/package.json` — never a path outside the enrolled checkout. */
+const readTreeVersionFile = async (path: string): Promise<string | null> => {
+  try { return treeVersionFromPackageJson(await readFile(join(path, 'package.json'), 'utf8')); }
+  catch { return null; }
+};
 
 function sendInvalid(res: ServerResponse, message: string): void {
   sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
@@ -74,27 +84,57 @@ export function createReleasePrApi(deps: ReleasePrApiDeps = {}): ApiModule {
   const run: OpsRunner = async (bin, args) => {
     try { return await (deps.run ?? realRunner)(bin, args); } catch { return null; }
   };
+  const treeVersion = async (path: string): Promise<string | null> => {
+    try { return await (deps.readTreeVersion ?? readTreeVersionFile)(path); } catch { return null; }
+  };
   /** One merge at a time: a double-click must not interleave two gh calls. */
   let mergeInFlight: Promise<unknown> | null = null;
   const handleMerge = async (ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<true> => {
     const body = await readMutationBody(ctx, req, res);
     if (!body) return true;
-    const { repo, number } = body;
-    if (Object.keys(body).some((key) => key !== 'repo' && key !== 'number')
-      || !isReleasePrRepoName(repo) || typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0) {
-      sendInvalid(res, 'body must be { repo: "owner/name", number: <positive integer> }');
+    const { repo, number, confirmVersion } = body;
+    if (Object.keys(body).some((key) => key !== 'repo' && key !== 'number' && key !== 'confirmVersion')
+      || !isReleasePrRepoName(repo) || typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0
+      || (confirmVersion !== undefined && typeof confirmVersion !== 'string')) {
+      sendInvalid(res, 'body must be { repo: "owner/name", number: <positive integer>, confirmVersion?: <version string> }');
       return true;
     }
     if (mergeInFlight) {
       sendJson(res, 409, { code: 'busy', error: 'A release PR merge is still running — try again in a moment.' });
       return true;
     }
-    const work = mergeReleasePr(repo, number, run);
+    /** The version check lives inside the latch with the merge, so the tap is refused before `gh pr merge` can ship a downgrade. */
+    const work = (async (): Promise<{ status: number; body: unknown }> => {
+      let paths: string[] = [];
+      try { paths = (deps.enrolled ?? listEnrolled)(); } catch { paths = []; }
+      let checkout: string | null = null;
+      for (const path of [...new Set(paths)]) {
+        const origin = await run('git', ['-C', path, 'remote', 'get-url', 'origin']);
+        if (origin && nameWithOwnerFromRemote(origin.trim()) === repo) { checkout = path; break; }
+      }
+      // An enrolled list that cannot prove this repo refuses; with no enrolled
+      // checkouts there is no tree to compare, the verdict is 'unknown' and the
+      // merge below keeps its own not-found answer.
+      if (checkout === null && paths.length > 0) {
+        return { status: 404, body: { code: 'not-found', error: `${repo} is not an enrolled checkout` } };
+      }
+      const tree = checkout === null ? null : await treeVersion(checkout);
+      const pr = await probeReleasePr(repo, run);
+      const verdict = releaseVersionVerdict(pr?.version ?? null, tree);
+      if (verdict === 'downgrade' && pr !== null && confirmVersion !== pr.version) {
+        return { status: 409, body: { code: 'version-downgrade',
+          error: releaseVersionLine(pr.number, pr.version, tree, verdict),
+          prVersion: pr.version, treeVersion: tree } };
+      }
+      const result = await mergeReleasePr(repo, number, run);
+      if (!result.ok) return { status: MERGE_STATUS[result.code], body: { code: result.code, error: result.detail } };
+      const confirmed = typeof confirmVersion === 'string' && pr !== null && confirmVersion === pr.version;
+      return { status: 200, body: confirmed ? { ...result, confirmedVersion: confirmVersion } : result };
+    })();
     mergeInFlight = work;
     try {
-      const result = await work;
-      if (result.ok) sendJson(res, 200, result);
-      else sendJson(res, MERGE_STATUS[result.code], { code: result.code, error: result.detail });
+      const outcome = await work;
+      sendJson(res, outcome.status, outcome.body);
     } catch {
       sendJson(res, 500, { code: 'release-pr-merge-failed', error: 'the release PR merge request failed' });
     } finally { mergeInFlight = null; }
@@ -109,6 +149,7 @@ export function createReleasePrApi(deps: ReleasePrApiDeps = {}): ApiModule {
       const origin = await run('git', ['-C', path, 'remote', 'get-url', 'origin']);
       const repo = origin ? nameWithOwnerFromRemote(origin.trim()) : null;
       const notes: string[] = [];
+      const tree = await treeVersion(path);
       let pr: ReleasePrV1 | null = null;
       if (!repo) notes.push('No GitHub origin could be proven for this checkout.');
       else {
@@ -119,7 +160,9 @@ export function createReleasePrApi(deps: ReleasePrApiDeps = {}): ApiModule {
           return raw;
         });
       }
-      return { repo: scrubSecrets(repo ?? basename(path)).slice(0, 140), path, pr, notes };
+      const versionVerdict = releaseVersionVerdict(pr?.version ?? null, tree);
+      if (versionVerdict === 'downgrade' && pr !== null) notes.push(releaseVersionLine(pr.number, pr.version, tree, versionVerdict));
+      return { repo: scrubSecrets(repo ?? basename(path)).slice(0, 140), path, pr, notes, treeVersion: tree, versionVerdict };
     });
     return { v: 1, generatedAt: new Date(now).toISOString(), sourceState: degraded ? 'degraded' : 'healthy', repos };
   };

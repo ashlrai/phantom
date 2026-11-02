@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -10,6 +11,8 @@ import { SectionVisibilityProvider, useDocumentVisible, usePollWhileVisible, use
 import { liveHeadline, liveIssuesText, liveNodeRows } from './graph-live-model.js';
 import { graphLiveMissing, graphLiveQuery, type GraphLiveState } from './graph-live-queries.js';
 import { liveNodeSteerPrefill, liveNodeSteerVisible } from './live-node-steer-prefill.js';
+import { agentChoices, routeRows, routesHeadline } from './agent-routes-model.js';
+import { agentRoutesQuery, validAgentId } from './agent-routes-query.js';
 import { workerAgeSummary } from './graph-summary.js';
 import styles from './fleet-graph.module.css';
 
@@ -25,12 +28,16 @@ export function FleetGraphPane({ visible }: Pick<PaneProps, 'visible'>) {
   const refetch = useRefetch(runsGraphQuery);
   usePollWhileVisible(refetch, 10_000, { enabled: visible && read.data !== null, refreshOnShow: false });
   const liveRead = useQuery(graphLiveQuery, { enabled, freshMs: 0 });
+  const [agentId, setAgentId] = useState('');
+  const validAgent = validAgentId(agentId);
+  const routesRead = useQuery(agentRoutesQuery(agentId), { enabled: enabled && validAgent });
   const refetchLive = useRefetch(graphLiveQuery);
   usePollWhileVisible(() => { if (!graphLiveMissing()) refetchLive(); }, 15_000, { enabled: visible && !graphLiveMissing(), refreshOnShow: false });
   const runs = read.data;
   const summary = runs ? workerAgeSummary(runs.workers) : null;
   const live = liveRead.data;
   const issues = live ? liveIssuesText(live) : null;
+  const routes = routesRead.data ? routeRows(routesRead.data, Date.now()) : null;
   return <div className={styles.pane} aria-label="Fleet graph">
     <header className={styles.summary}>
       {runs ? `${countLabel(runs.lanes?.length ?? 0, 'lane')} · ${countLabel(runs.workers.length, 'worker')} · ${runs.mergesLastHour.count === null ? 'merges unknown' : countLabel(runs.mergesLastHour.count, 'merge')} last hour`
@@ -38,6 +45,24 @@ export function FleetGraphPane({ visible }: Pick<PaneProps, 'visible'>) {
       {summary && <span>{` · ${summary}`}</span>}
     </header>
     <SectionVisibilityProvider visible={visible}><RunsGraph /></SectionVisibilityProvider>
+    <section className={styles.live} aria-label="Agent routes">
+      <h2>Routes</h2>
+      <label>Agent <select aria-label="Agent" value={agentId} onChange={event => setAgentId(event.target.value)}>
+        <option value="">Select an agent</option>
+        {live && agentChoices(live).map(agent => <option key={agent.id} value={agent.id}>{agent.label}</option>)}
+      </select></label>
+      {agentId && !validAgent ? <p>Invalid agent identifier.</p>
+        : agentId && routesRead.error ? <p>Routes unavailable: {readFailureReason(routesRead.error)}</p>
+          : agentId && routes ? <>
+            <p>{routesHeadline(agentId, routes)}</p>
+            {routes.length === 0 ? <p>no routes recorded for this agent</p> : <ul className={styles.rows}>
+              {routes.map((row, index) => <li className={styles.row} key={`${row.resourceId}-${index}`}>
+                <strong>{row.label}</strong><span>{row.kind}</span><span>{row.edgeLabel}</span>
+                <span className={`${styles.chip} ${tone(row.state)}`}>{row.stateText}</span>
+              </li>)}
+            </ul>}
+          </> : null}
+    </section>
     <section className={styles.live} aria-label="Seats and engines">
       <h2>Seats and engines</h2>
       {liveRead.error ? <p>Live node state unavailable: {readFailureReason(liveRead.error)}</p>

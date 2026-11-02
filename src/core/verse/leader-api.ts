@@ -58,7 +58,8 @@
  * A load that FAILED (not merely "no files yet") still throws: activity then
  * reports `sources.leader: 'error'`, never a false all-clear on broken state.
  */
-import { readFile } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -89,6 +90,12 @@ import {
   syncLeaderMemosToThread,
 } from '../vision/leader-thread.js';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import { runPlannerPass, type RunPlannerPassOpts, type PlannerRunResult } from '../fleet/planner-run.js';
+import { readPlannerCandidates } from '../fleet/planner-candidates.js';
+import { readPlannerPromptPath } from '../fleet/planner-prompt.js';
+import { composePlannerSlate, resolvePlannerPreset, PLANNER_SLATE_PRESETS, type PlannerPresetId, plannerBriefPaths, briefCandidates, defaultPlannerBriefPath } from '../fleet/planner-slate-presets.js';
+import { parsePlannerSlate, writePlannerSlate } from '../fleet/planner-slate-write.js';
+import { readSource } from '../fleet/runs-parked-queue.js';
 import type { PlannerHealth } from '../fleet/planner-failover.js';
 
 // ---------------------------------------------------------------------------
@@ -436,9 +443,11 @@ interface LeaderApiHooks {
   now?: () => number;
   /** Test seam for the planner-plan route: the runs root to read. */
   plannerRunsRoot?: () => string;
+  plannerRun?: (opts: RunPlannerPassOpts) => Promise<PlannerRunResult>;
 }
 
 let hooks: LeaderApiHooks = {};
+let plannerRunStartedAt: string | null = null;
 
 /** Test hook: inject deps (fakes for the ledger, seats, …). Pass {} to restore. */
 export function setLeaderApiHooksForTest(next: LeaderApiHooks): void {
@@ -463,7 +472,7 @@ function hasOnlyKeys(body: Record<string, unknown>, allowed: readonly string[]):
   return null;
 }
 
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
+async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, allowEmpty = true): Promise<Record<string, unknown> | null> {
   if (!ctx.allowDispatch) {
     sendJson(res, 404, { error: 'not found' });
     return null;
@@ -478,7 +487,7 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
   }
   let parsed: unknown;
   try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
+    parsed = raw.length === 0 && allowEmpty ? {} : (JSON.parse(raw) as unknown);
   } catch {
     sendInvalid(res, 'invalid JSON body');
     return null;
@@ -811,6 +820,90 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
         const { readUsageResets } = await import('../fleet/usage-reset-detect.js');
         sendJson(res, 200, await readUsageResets({ now }));
       }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/slate`) {
+      if (method !== 'GET' && method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const body = method === 'POST' ? await readMutationBody(ctx, req, res, false) : null;
+      if (method === 'POST' && !body) return true;
+      if ((req.url ?? '').includes('?')) { sendInvalid(res, 'this route takes no query parameters'); return true; }
+      const runsRoot = hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs');
+      const context = { home: homedir(), runsRoot };
+      // Gather metadata asynchronously; composition itself only sees an in-memory lookup.
+      const briefs = plannerBriefPaths(runsRoot);
+      const metadata = new Map<string, Stats>();
+      for (const brief of briefs) {
+        try { metadata.set(brief, await stat(brief)); } catch { /* absent or inaccessible */ }
+      }
+      const availableBriefs = briefCandidates(runsRoot, path => {
+        const info = metadata.get(path);
+        if (!info) throw new Error('unavailable');
+        return info;
+      });
+      if (body) {
+        const ids = body['presets'];
+        if (hasOnlyKeys(body, ['presets', 'promptPath']) || !Array.isArray(ids) || ids.length < 1 || ids.length > 8 ||
+            ids.some(id => typeof id !== 'string' || !PLANNER_SLATE_PRESETS.includes(id as PlannerPresetId)) || new Set(ids).size !== ids.length ||
+            (Object.hasOwn(body, 'promptPath') && !parsePlannerSlate(Buffer.from(JSON.stringify({ v: 1, candidates: [{ provider: 'validation', argv: ['validation'] }], promptPath: body['promptPath'] }))))) {
+          sendInvalid(res, 'invalid presets or promptPath'); return true;
+        }
+        const promptPath = body['promptPath'] as string | undefined ?? defaultPlannerBriefPath(runsRoot, path => metadata.get(path)?.isFile() ?? false);
+        if (promptPath === null) { sendJson(res, 409, { error: 'no-brief', checked: briefs }); return true; }
+        let slate;
+        try { slate = composePlannerSlate(ids as string[], promptPath, context); }
+        catch { sendInvalid(res, 'invalid preset paths'); return true; }
+        if ('error' in slate) { sendJson(res, 409, { error: 'preset-unavailable', preset: slate.preset }); return true; }
+        const status = writePlannerSlate(runsRoot, slate);
+        sendJson(res, status === 'refused' ? 409 : 200, { v: 1, status, candidateCount: slate.candidates.length, promptPath });
+      } else {
+        const path = join(runsRoot, 'queue', 'planner-candidates.json');
+        const input = await readSource(path, 64 * 1024, false);
+        const slate = input.state === 'healthy' ? parsePlannerSlate(Buffer.from(input.text)) : null;
+        const promptPath = slate?.promptPath ?? null;
+        let promptInfo = null;
+        try { if (promptPath) promptInfo = await stat(promptPath); } catch { /* missing prompt */ }
+        const presets = PLANNER_SLATE_PRESETS.map(id => resolvePlannerPreset(id, context));
+        sendJson(res, 200, {
+          v: 1, generatedAt: new Date(now()).toISOString(), source: input.state === 'missing' ? 'missing' : slate ? 'ok' : 'invalid', path,
+          candidates: (slate?.candidates ?? []).map(candidate => ({
+            provider: candidate.provider,
+            preset: presets.find(preset => preset.provider === candidate.provider && JSON.stringify(preset.argv) === JSON.stringify(candidate.argv))?.id ?? null,
+            argvLength: candidate.argv.length,
+          })), promptPath, promptExists: promptInfo?.isFile() ?? false,
+          promptAgeSeconds: promptInfo?.isFile() ? Math.max(0, (now() - promptInfo.mtimeMs) / 1000) : null,
+          presets: presets.map(({ id, provider, available, binary, dropDir }) => ({ id, provider, available, binary, dropDir })),
+          briefCandidates: availableBriefs,
+        });
+      }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/run`) {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const body = await readMutationBody(ctx, req, res, false);
+      if (!body) return true;
+      if (hasOnlyKeys(body, ['reason']) || (body['reason'] !== undefined
+        && (typeof body['reason'] !== 'string' || body['reason'].length > 200))) {
+        sendInvalid(res, 'body must contain only an optional reason of at most 200 characters');
+        return true;
+      }
+      if (plannerRunStartedAt !== null) {
+        sendJson(res, 409, { error: 'pass-in-flight', startedAt: plannerRunStartedAt });
+        return true;
+      }
+      const timestamp = now();
+      plannerRunStartedAt = new Date(timestamp).toISOString();
+      try {
+        const runsRoot = hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs');
+        const slate = await readPlannerCandidates(runsRoot);
+        if (slate.source !== 'ok') { sendJson(res, 409, { error: 'no-slate', path: slate.path }); return true; }
+        const promptPath = await readPlannerPromptPath(runsRoot);
+        if (promptPath === null) { sendJson(res, 409, { error: 'no-prompt-declared', path: slate.path }); return true; }
+        const result = await (hooks.plannerRun ?? runPlannerPass)({
+          runsRoot, candidates: slate.candidates, lastProvider: slate.lastProvider ?? '', promptPath, now: timestamp,
+        });
+        const { v, provider, outcome, exitCode, logPath, startedAt, finishedAt, nextResetAt, planError } = result;
+        sendJson(res, 200, { v, provider, outcome, exitCode, logPath, startedAt, finishedAt, nextResetAt, planError });
+      } finally { plannerRunStartedAt = null; }
       return true;
     }
     if (path === `${VERSE_LEADER_PATH}/planner/plan`) {

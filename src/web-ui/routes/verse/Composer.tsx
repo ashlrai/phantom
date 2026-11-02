@@ -57,6 +57,8 @@ import { refetchQuery } from '../../data/cache.js';
 import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './composer/fleet-interject.js';
 import { runBusCommand } from './composer/bus-post-command.js';
 import { parseJobCommand, runJobCommand } from './composer/job-drop-command.js';
+import { runPlanCommand } from './composer/planner-run-command.js';
+import { decidePlannerWake, getLastPlannerWakeAt, wakePlannerForOrder } from './composer/planner-wake.js';
 import { runReleaseCommand } from './composer/lane-release-command.js';
 import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
 import { laneTargetsQuery } from './ops/lane-targets-queries.js';
@@ -79,6 +81,7 @@ import {
   parseFleetCommand,
   parseLaneCommand,
   parseReleaseCommand,
+  parsePlanCommand,
   parsePaneCommand,
   mentionFor,
   removeAttachmentRef,
@@ -548,13 +551,14 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Bus, fleet, lane, release, pane and compact insert text; other commands consume their token.
+    // Bus, fleet, lane, release, plan, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
       case 'job':
       case 'bus':
       case 'fleet':
       case 'lane':
+      case 'plan':
       case 'release':
       case 'pane':
       case 'compact': {
@@ -571,11 +575,6 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       case 'handoff':
         setDraft(without);
         onHandoff?.();
-        return;
-      case 'plan':
-        setDraft(without);
-        placeCaret(0);
-        void changePermission('plan');
         return;
       case 'effort':
       case 'model':
@@ -738,6 +737,20 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       }
       return;
     }
+    if (parsePlanCommand(text)) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runPlanCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
     const release = parseReleaseCommand(text);
     if (release) {
       laneConfirmation.current = null;
@@ -831,7 +844,19 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       try {
         const ack = await postFleetInterjection(fleet.text);
         setDraft((current) => draftAfterSend(ack.outcome, current, text));
-        setFleetStatus({ ...fleetSendLanding(ack), error: false });
+        const landing = fleetSendLanding(ack);
+        const wake = decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
+        const wakingText = `${landing.text} · planner waking`;
+        setFleetStatus({ ...landing, text: wake ? wakingText : landing.text, error: false });
+        if (wake) {
+          void wakePlannerForOrder(fleet.text).then(result => {
+            if (result.kind === 'unavailable') {
+              setFleetStatus(current => current?.text === wakingText ? { ...landing, error: false } : current);
+            } else {
+              setFleetStatus({ text: result.text, error: result.kind === 'failed' || result.kind === 'locked' || result.kind === 'no-slate' });
+            }
+          });
+        }
         await refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true);
       } catch (error) {
         setFleetStatus({ text: readFailureReason(error), error: true });

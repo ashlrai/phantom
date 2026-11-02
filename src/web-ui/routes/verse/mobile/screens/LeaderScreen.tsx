@@ -52,6 +52,7 @@ import { unansweredRows } from '../leader-unanswered-model.js';
 import { showMobileToast } from '../mobile-toast.js';
 import { inboxLinesFor } from '../leader-inbox-lines.js';
 import { LeaderPasses } from '../LeaderPasses.js';
+import { LeaderRefsRow } from '../LeaderRefsRow.js';
 import { MicButton } from '../MicButton.js';
 import { MobileComposer } from '../MobileComposer.js';
 import { runMobileAction } from '../mobile-actions.js';
@@ -193,6 +194,7 @@ function Bubble({ message, ctx }: { message: LeaderThreadMessage; ctx: ThreadPro
       {question ? <span className={styles.replyTo}>Re: {previewText(question.text, 90)}</span> : null}
       {/* Untrusted text: plain, line breaks kept, never HTML. */}
       <p className={styles.text}>{displayThreadText(message)}</p>
+      {message.from === 'leader' ? <LeaderRefsRow text={displayThreadText(message)} /> : null}
       {isQuestion ? (
         answer ? (
           <span className={styles.answered}>Answered</span>

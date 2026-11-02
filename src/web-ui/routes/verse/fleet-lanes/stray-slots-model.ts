@@ -28,3 +28,10 @@ export function strayTotalsLine(totals: ReturnType<typeof strayTotals>): string 
   const breakdown = totals.lanes.map(({ lane, slotsLost }) => `${lane} ${slotsLost}`).join(', ');
   return `${totals.slotsLost} counted ${totals.slotsLost === 1 ? 'slot has' : 'slots have'} no worker (${breakdown}). Run leader/STOP-STRAYS.sh to list them.`;
 }
+
+export function strayRows(lane: string, data: StraySlotsV1 | null | undefined) {
+  return (data?.lanes.find(entry => entry.lane === lane)?.strays ?? []).map(stray => ({
+    ...stray,
+    label: `${stray.job} pid ${stray.pid}, ${stray.ageSeconds === null ? 'age unknown' : `${Math.floor(stray.ageSeconds / 60)} min`}`,
+  }));
+}

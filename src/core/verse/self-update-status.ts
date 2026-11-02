@@ -71,7 +71,7 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
   const result: OpsSelfUpdateWithLastApply = {
     lastApply, v: 1, generatedAt: new Date(now).toISOString(), sourceState: 'healthy',
     installedVersion: null, candidateVersion: null, repoRoot: false, headSha: null, processHeadSha, headAt: null, originSha: null,
-    branch: null, behind: null, ahead: null, dirty: null, lastFetchAt: null,
+    branch: null, behindSubjects: null, behind: null, ahead: null, dirty: null, lastFetchAt: null,
     processStartedAt: new Date(now - uptimeSeconds * 1000).toISOString(), uptimeSeconds, pid: process.pid,
     canFastForward: null,
   };
@@ -115,6 +115,17 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
   result.headSha = head; result.processHeadSha = processHeadSha; result.headAt = at; result.originSha = origin; result.branch = branch;
   if (counts !== null) [result.ahead, result.behind] = counts.split(/\s+/).map(Number) as [number, number];
   result.candidateVersion = result.behind !== null && result.behind > 0 ? candidate : null;
+  if (result.behind !== null && result.behind > 0) {
+    try {
+      const out = await (deps.runGit ?? runGit)(['log', '--format=%s', '-n', '5', 'HEAD..origin/master'], root);
+      if (out.code === 0) {
+        const subjects = out.stdout.split('\n').slice(0, 5)
+          .map((subject) => subject.replace(/[\p{Cc}\p{Cf}]/gu, '').trim().slice(0, 120))
+          .filter(Boolean);
+        result.behindSubjects = subjects.length > 0 ? subjects : null;
+      }
+    } catch { /* Commit subjects are advisory; preserve the status probes. */ }
+  }
   result.dirty = status === null ? null : status.length > 0;
   if (result.behind !== null && result.ahead !== null && result.dirty !== null) {
     result.canFastForward = result.behind > 0 && result.ahead === 0 && result.dirty === false;

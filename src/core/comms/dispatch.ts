@@ -66,7 +66,8 @@ import {
   sendReportViaTelegram,
   type SendPacer,
 } from './telegram-channel.js';
-import { recordTelegramToInbox } from './telegram-inbox-bridge.js';
+import { recordTelegramToInbox, TELEGRAM_FLEET_STATUS_RE } from './telegram-inbox-bridge.js';
+import { TELEGRAM_SHIP_RE } from './telegram-ship-command.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
@@ -297,6 +298,14 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
     return;
   }
 
+  // Ship is an owner-only bridge command, including replies to mapped messages.
+  if (TELEGRAM_SHIP_RE.test(text)) {
+    const inbox = await recordTelegramToInbox(event, text, cfg);
+    if (!inbox.ok && inbox.reason === 'status-send-failed') throw new Error('Telegram ship reply failed');
+    if (!inbox.ok && inbox.reason === 'status-replied') result.resolved++;
+    return;
+  }
+
   // 3.14: /help /start /status /leader /directives (unknown /x → help).
   const { localTelegramCommand } = await import('./telegram-local.js');
   const local = await localTelegramCommand(text, cfg);
@@ -307,7 +316,9 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
     return;
   }
   if (await handleSlashCommand(event, text, cfg)) return;
-  if (await recordMappedTelegramReply(event, text, cfg)) {
+  // /fleet-status is the inbox bridge's to answer — even a reply to a Leader
+  // message is a status request, never a mapped memo reply.
+  if (!TELEGRAM_FLEET_STATUS_RE.test(text) && await recordMappedTelegramReply(event, text, cfg)) {
     result.resolved++;
     return;
   }
@@ -333,7 +344,14 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
   // dropped messages from foreign chat ids, so this path is Mason-only.
   // The same verified message is also receipted into MASON-INBOX.md through
   // the shared channel receiver (channel `telegram`, deduped, acked here).
-  await recordTelegramToInbox(event, text, cfg);
+  const inbox = await recordTelegramToInbox(event, text, cfg);
+  // The bridge answered /fleet-status itself — resolved, never a Leader turn.
+  if (!inbox.ok && inbox.reason === 'status-replied') {
+    result.resolved++;
+    return;
+  }
+  // A failed status send is a dispatch failure, not a question for the Leader.
+  if (!inbox.ok && inbox.reason === 'status-send-failed') throw new Error('Telegram status reply failed');
   await converseWithLeader(event, text, cfg);
 }
 

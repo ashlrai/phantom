@@ -242,6 +242,7 @@ export interface OpsSelfUpdateV1 {
    * Null when the repo is unavailable, the probe fails, or the checkout is not behind. */
   candidateVersion: string | null;
   headSha: string | null; processHeadSha: string | null; headAt: string | null; originSha: string | null; branch: string | null;
+  behindSubjects?: string[] | null;
   behind: number | null; ahead: number | null; dirty: boolean | null; lastFetchAt: string | null;
   processStartedAt: string; uptimeSeconds: number; pid: number; canFastForward: boolean | null;
 }

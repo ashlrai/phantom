@@ -27,6 +27,11 @@ export async function localTelegramCommand(text: string, cfg: AshlrConfig): Prom
   if (!match) return null;
   switch (match[1]!.toLowerCase()) {
     case 'status': {
+      try {
+        const { telegramFleetStatus } = await import('./telegram-fleet-status.js');
+        const fleet = await telegramFleetStatus();
+        if (fleet) return fleet;
+      } catch { /* fall back to the local snapshot below */ }
       const health = readTelegramHealth(cfg);
       const { buildBrief } = await import('./leader-line.js');
       const brief = await buildBrief('instant', cfg, { narrativeTimeoutMs: 0 });

@@ -34,6 +34,8 @@ import { join } from 'node:path';
 import { readUsageResets, type UsageResetRow, type UsageResetsV1 } from './usage-reset-detect.js';
 import { releaseLaneHold, type LaneHoldOptions } from './runs-lane-hold.js';
 import type { LaneTargetsV1 } from './runs-lane-targets.js';
+import type { appendBusInbox } from './bus-inbox.js';
+import { postResetReleaseNotice, type ResetReleaseBusPost } from './reset-release-bus-notice.js';
 
 export const RESET_RELEASES_FILE = 'queue/reset-releases.jsonl';
 const DISPATCH_EVENTS_FILE = 'dispatch-events.log';
@@ -55,6 +57,7 @@ export interface ResetReleaseRecord extends ResetReleaseRow {
 export interface ResetReleaseResult {
   at: string; checked: number;
   released: ResetReleaseRow[];
+  bus: ResetReleaseBusPost[];
   errors: { lane: string; message: string }[];
 }
 export interface ResetReleaseLoopState {
@@ -65,6 +68,7 @@ export interface RunResetReleaseOptions {
   runsDir?: string; now?: () => number;
   read?: (opts: { runsDir?: string; now?: () => number }) => Promise<UsageResetsV1>;
   release?: (lane: string, opts: LaneHoldOptions) => Promise<LaneTargetsV1>;
+  postBus?: typeof appendBusInbox; busRoot?: string;
 }
 export interface ResetReleaseScheduler {
   set(fn: () => void, ms: number): { unref?(): unknown };
@@ -106,7 +110,7 @@ export async function runResetReleaseOnce(opts: RunResetReleaseOptions = {}): Pr
   const now = opts.now ?? Date.now;
   const nowMs = now();
   const at = new Date(nowMs).toISOString();
-  const result: ResetReleaseResult = { at, checked: 0, released: [], errors: [] };
+  const result: ResetReleaseResult = { at, checked: 0, released: [], bus: [], errors: [] };
   const resets = await (opts.read ?? readUsageResets)({ runsDir: opts.runsDir, now: () => nowMs });
   result.checked = resets.rows.length;
   // Degraded or missing sources prove nothing about the real window — hold still.
@@ -133,6 +137,7 @@ export async function runResetReleaseOnce(opts: RunResetReleaseOptions = {}): Pr
     } catch (error) {
       result.errors.push({ lane: row.lane, message: `release recorded but audit append failed: ${message(error)}` });
     }
+    result.bus.push(postResetReleaseNotice(record, opts.postBus, { root: opts.busRoot, now: () => nowMs }));
     // Observational only — releaseLaneHold audits lane-target-changes.log but
     // not dispatch-events.log, so this line is what the Events pane narrates.
     await appendLine(join(runsDir, DISPATCH_EVENTS_FILE),

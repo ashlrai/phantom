@@ -41,7 +41,10 @@ describe('durable fleet bus request', () => {
     post(reply('fake-expired', { ttl: 1 }));
     // Seed a valid snapshot in bulk; all reads and subsequent posts use the real store.
     const snapshot = join(root, 'bus-inbox', 'messages.json');
-    const rows = JSON.parse(readFileSync(snapshot, 'utf8')) as { cursor: number; receivedAt: number; envelope: BusEnvelope }[];
+    const stored = JSON.parse(readFileSync(snapshot, 'utf8')) as
+      { rows?: { cursor: number; receivedAt: number; envelope: BusEnvelope }[] } |
+      { cursor: number; receivedAt: number; envelope: BusEnvelope }[];
+    const rows = (Array.isArray(stored) ? stored : stored.rows) as { cursor: number; receivedAt: number; envelope: BusEnvelope }[];
     const add = (envelope: BusEnvelope): void => { rows.push({ cursor: rows.length + 1, receivedAt: storeTime, envelope }); };
     for (let i = 0; i < 405; i++) add(reply(`fake-unmatched-${i}`, { body: { inReplyTo: 'fake-other' } }));
     add(reply('fake-wrong-sender', { from: 'fake-other' }));
