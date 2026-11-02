@@ -17,10 +17,11 @@ export async function cmdFleetBusWorkLoop(args: string[], io: ContextWorkerIO = 
     flags.set(key, value);
   }
   const number = (key: string) => { const s = flags.get(key); return s && /^\d+(?![\s\S])/.test(s) ? Number(s) : NaN; };
+  const cwd = flags.get('--cwd');
   const opts: BusWorkLoopOptions = { to: flags.get('--to')!, owner: flags.get('--owner')!, root: flags.get('--root'),
     leaseMs: number('--lease-ms'), waitMs: number('--wait-ms'), maxJobs: number('--max-jobs'),
     snapshot: flags.get('--snapshot')!, prompt: flags.get('--prompt')!, argv: args.slice(split + 1),
-    ...(flags.has('--cwd') ? { cwd: flags.get('--cwd') } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
     ...(flags.has('--timeout-ms') ? { timeoutMs: number('--timeout-ms') } : {}),
     ...(flags.has('--total-timeout-ms') ? { totalTimeoutMs: number('--total-timeout-ms') } : {}) };
   if (!validBusWorkLoopOptions(opts)) return invalid();
