@@ -126,6 +126,16 @@ routing setting to tune: the log is the memory. Critical jobs are never held
 for an exhausted resource, and allowance that resets soon is still spent when
 that resource can finish the job.
 
+### Selector
+
+`phm select --json` ranks candidates in `~/.ashlr-runs/selector/candidates.jsonl`
+by value x leverage / (time + usage), using the outcome log for what a candidate
+leaves out. It prints the top five as `READY` lines, appends them with their
+predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
+twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
+hourly launchd agent on the Mac. See
+[the selector contract](contracts/CONTRACT-SELECTOR.md).
+
 `phm fleet queue ask --json` reads one `ask.v1` record on stdin —
 `{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
 as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid

@@ -35,6 +35,15 @@ def devin_default(tm, attrs):   # open pool + frontier tier or a long-horizon ma
 def rd(p, d=""):
     try: return open(p).read()
     except Exception: return d
+# RQ-PSEL-4-NOOPCUT: a line whose last NOOP_STREAK runs both retired as DONE-NOOP is parked for NOOP_WINDOW seconds
+# instead of being re-picked, re-prechecked and re-retired every pass. State is job -> {n: consecutive NOOPs, at: last NOOP epoch};
+# a pass that really queues the job clears it. Unreadable state reads as empty (fail open: nothing is suppressed).
+NOOP_STREAK = 2; NOOP_WINDOW = 24 * 3600; NOOPF = Q + "/noop-streak.json"
+def load_noops():
+    try: raw = json.loads(rd(NOOPF, "{}") or "{}")
+    except Exception: return {}
+    return {j: e for j, e in raw.items() if isinstance(e, dict) and isinstance(e.get("n"), int) and isinstance(e.get("at"), int)} if isinstance(raw, dict) else {}
+def noop_parked(noops, j, now): e = noops.get(j); return bool(e and e["n"] >= NOOP_STREAK and now - e["at"] < NOOP_WINDOW)
 st = json.loads(rd(Q + "/status.json", "{}") or "{}"); lanes = st.get("lanes", {})
 slots = json.loads(rd(Q + "/slots.json", "{}") or "{}")
 hold = set(rd(R + "/HOLD").split())
@@ -78,6 +87,7 @@ def busy(j):
     if "RESULT PR" in rd("%s/%s.publish" % (R, j)): return "published"
     return None
 def prio(a): m = re.search(r"\bP(\d)\b", a); return int(m.group(1)) if m else 3
+noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
 skips = {}; picks = {l: [] for l in CODEX}
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
 # bold census before the restock (RQ-QUEUEGEN-BOLD-30): the READY stock's share of bet=bold decides prefer_bold
@@ -130,12 +140,19 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps): skip(j, "after-unlanded"); continue
     b = busy(j)
     if b: skip(j, b); continue
+    if noop_parked(noops, j, time.time()): skip(j, "noop-streak"); continue
+    # dedupe by target PR and target file: sibling lines for the same PR or file would retire as NOOP together
+    fm = re.search(r"\bfile=(\S+)", attrs + " " + text); fkey = (rm.group(1), fm.group(1)) if fm else None
+    if prp & seen_pr: skip(j, "dup-pr"); continue
+    if fkey and fkey in seen_file: skip(j, "dup-file"); continue
     if any(j == x[0] for l2 in CODEX for x in picks[l2]): skip(j, "dup-line"); continue
     tier = tm.group(1) if tm and tm.group(1) in ("frontier", "work", "mid", "fast") else "work"
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
     lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
+    seen_pr |= prp
+    if fkey: seen_file.add(fkey)
 out = []; done = []; ts = int(time.time())
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
@@ -186,6 +203,11 @@ for j, repo, l, tier, pf, p, i in out:   # mark local copy so the next restock n
 for i, j, pc in done:
     lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
     ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
+if not DRY:   # NOOP streaks: +1 per retirement, cleared when the job really queues, expired entries dropped
+    for _, j, _pc in done: e = noops.get(j) or {"n": 0}; noops[j] = {"n": e["n"] + 1, "at": ts}
+    for j, *_r in out: noops.pop(j, None)
+    noops = {j: e for j, e in noops.items() if ts - e["at"] < NOOP_WINDOW}
+    open(NOOPF + ".tmp", "w").write(json.dumps(noops)); os.replace(NOOPF + ".tmp", NOOPF)
 for i, j in seclist:   # park security-pinned lines; the tag stays on the line and READY is never restored
     lines[i] = re.sub(r"^- READY ", "- HOLD-SECURITY %s restock " % HM, lines[i], count=1)
     if PIN not in lines[i]: lines[i] = lines[i].rstrip() + " " + PIN
