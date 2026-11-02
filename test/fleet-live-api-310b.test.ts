@@ -306,6 +306,12 @@ describe('GET /api/verse/fleet/live — states', () => {
       repo: REPO, stage: 'merge', enforcement: 'server', maxMergesPerDay: 6, mergesToday: 1, openFleetPrs: 0, holds: [],
     })]);
     expect(body.repos[0]!.greenTrend).toHaveLength(14);
+    tick.at = iso(45 * MIN);
+    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
+    tick.at = iso(0); // A new observation while the old tick is still preparing mirrors.
+    expect((await buildFleetLiveSnapshot()).snapshot.lanes.find(lane => lane.lane === 'local')?.slots).toBe(2);
+    tick.at = iso(-MIN);
+    expect((await buildFleetLiveSnapshot()).snapshot.lanes.every(lane => lane.slots === 0)).toBe(true);
   });
 });
 

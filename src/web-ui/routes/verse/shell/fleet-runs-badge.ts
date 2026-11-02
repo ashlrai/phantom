@@ -20,10 +20,10 @@ export interface FleetRunsBadge {
   workers: number;
   merges: number | null;
   switchesOn: string[];
-  paused: boolean;
-  heldLanes: string[];
-  lanes: Array<{ lane: string; short: string; running: number; target: number; held: boolean }>;
-  personalPct: number | null;
+  paused?: boolean;
+  heldLanes?: string[];
+  lanes?: Array<{ lane: string; short: string; running: number; target: number; held: boolean }>;
+  personalPct?: number | null;
   staleSeconds?: number;
 }
 
@@ -77,7 +77,7 @@ export function fleetRunsTone(b: FleetRunsBadge): 'warning' | 'running' {
     ? 'warning' : 'running';
 }
 
-export function underTargetLanes(b: FleetRunsBadge): FleetRunsBadge['lanes'] {
+export function underTargetLanes(b: FleetRunsBadge): NonNullable<FleetRunsBadge['lanes']> {
   return (b.lanes ?? []).filter(lane => !lane.held && lane.target > 0 && lane.running < lane.target);
 }
 

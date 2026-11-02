@@ -222,6 +222,8 @@ export const MIRROR_LOCAL_TIMEOUT_MS = 2 * 60_000;
 export const MIRROR_LEASE_WAIT_MS = 5 * 60_000;
 /** Mirrors synced in parallel by `prepareMirrorsForTick` (network-bound, but gentle on the machine). */
 export const MIRROR_TICK_CONCURRENCY = 2;
+/** One repo cannot occupy a prep worker for the entire tick. */
+export const MIRROR_REPO_PREP_TIMEOUT_MS = 3 * 60_000;
 /**
  * A lockfile install (first install of a large monorepo is the slow case).
  * HARD: at the deadline the install's whole process group gets SIGTERM, then
@@ -2446,6 +2448,29 @@ export interface MirrorTickPreparation {
   pausedRepoPaths: string[];
 }
 
+export async function withMirrorRepoDeadline<T>(
+  sync: (signal: AbortSignal) => Promise<T>, parent: AbortSignal,
+  timeoutMs = MIRROR_REPO_PREP_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
+  const cancel = (): void => controller.abort();
+  parent.addEventListener('abort', cancel, { once: true });
+  if (parent.aborted) cancel();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`mirror prep timed out after ${describeLimit(timeoutMs)}; repo skipped`));
+      }, Math.max(1, timeoutMs));
+    });
+    return await Promise.race([sync(controller.signal), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    parent.removeEventListener('abort', cancel);
+  }
+}
+
 /**
  * Create and reset every mirror the standing policy's current stage names
  * (SPEC-310B §2: "reset to origin/<base> every tick"), at most
@@ -2463,7 +2488,7 @@ export interface MirrorTickPreparation {
  */
 export async function prepareMirrorsForTick(
   policy: Pick<EffectivePolicy, 'repos'>,
-  deps: MirrorDeps & { concurrency?: number; deadlineMs?: number; abortGraceMs?: number } = {},
+  deps: MirrorDeps & { concurrency?: number; deadlineMs?: number; abortGraceMs?: number; repoTimeoutMs?: number } = {},
 ): Promise<MirrorTickPreparation> {
   const repos = [...new Set(policy.repos.map((repo) => repo.nameWithOwner))];
   const result: MirrorTickPreparation = { ready: [], failed: [], pausedRepoPaths: [] };
@@ -2526,7 +2551,10 @@ export async function prepareMirrorsForTick(
           try {
             const before = (waitsFor.get(next) ?? []).map((sibling) => settled.get(sibling)!.promise);
             if (before.length > 0) await Promise.race([Promise.all(before), aborted]);
-            synced = await ensureMirror({ nameWithOwner: next }, inner);
+            synced = await withMirrorRepoDeadline(
+              signal => ensureMirror({ nameWithOwner: next }, { ...inner, signal }),
+              controller.signal, deps.repoTimeoutMs,
+            );
           } catch (error) {
             // ensureMirror never throws by contract; a bug must not sink the others.
             synced = { ok: false, nameWithOwner: next, path: pathOf(next), base: null, headSha: null, created: false, changed: false, quarantinedTo: null, auth: null, reason: (error as Error).message, durationMs: 0 };
