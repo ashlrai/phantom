@@ -8,6 +8,7 @@
  */
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { selfTickLogPath } from './self-tick-log-cap.js';
 import type { ScheduleUnit } from '../steward/schedule.js';
 
 export const SELF_TICK_LABEL = 'ai.ashlr.phantom.self-tick';
@@ -45,7 +46,7 @@ export function selfTickSchedule(opts: {
     ...(opts.apply ? ['--apply'] : []),
     ...(opts.runsDir === undefined ? [] : ['--runs-dir', opts.runsDir]),
   ];
-  const log = join(home, '.ashlr', 'logs', 'self-tick.jsonl');
+  const log = selfTickLogPath(home);
   if (platform === 'darwin') {
     const path = join(home, 'Library', 'LaunchAgents', `${SELF_TICK_LABEL}.plist`);
     const contents = `<?xml version="1.0" encoding="UTF-8"?>
