@@ -1,2 +1,3 @@
 
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
+- [Team invite, join and remove](docs/TEAM.md#invite-join-and-remove-a-teammate): `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims.
