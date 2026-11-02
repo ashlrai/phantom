@@ -2,7 +2,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { cmdFleetGuardianResume } from './fleet-guardian-resume.js';
 
 const LIMIT = 32 * 1024;
-const valueFlags = new Set(['--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms', '--idle-backoff-max-ms']);
+const valueFlags = new Set(['--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms', '--idle-backoff-max-ms', '--max-passes']);
 const switches = new Set(['--stdin', '--apply', '--json', '--stream']);
 const terminations = new Set(['planned', 'no-work', 'drained', 'exhausted', 'max-retries', 'stopped', 'deadline', 'refused', 'collision', 'cancelled', 'unsafe', 'observer-error', 'duration']);
 
@@ -47,6 +47,7 @@ function sessionFrom(input: string | Uint8Array): string | null {
 // and owns all continuation behavior, including whether apply is requested.
 export const cmdFleetGuardianContinue = async (args: string[], deps: ContinueDeps = {}): Promise<number> => {
   const seen = new Set<string>();
+  let maxPasses: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
     if (seen.has(flag) || (!switches.has(flag) && !valueFlags.has(flag))) {
@@ -56,9 +57,16 @@ export const cmdFleetGuardianContinue = async (args: string[], deps: ContinueDep
     if (valueFlags.has(flag) && (!args[i + 1] || args[i + 1]!.startsWith('--'))) {
       process.stderr.write('error: invalid guardian-continue arguments\n'); return 2;
     }
-    if (valueFlags.has(flag)) i++;
+    if (valueFlags.has(flag)) {
+      if (flag === '--max-passes') maxPasses = args[i + 1];
+      i++;
+    }
   }
   if (!seen.has('--stdin') || (seen.has('--json') && seen.has('--stream'))) {
+    process.stderr.write('error: invalid guardian-continue arguments\n'); return 2;
+  }
+  if (maxPasses !== undefined && (!seen.has('--duration-ms') || !seen.has('--interval-ms')
+    || !/^[1-9]\d*$/.test(maxPasses) || !Number.isSafeInteger(Number(maxPasses)) || Number(maxPasses) > 1000)) {
     process.stderr.write('error: invalid guardian-continue arguments\n'); return 2;
   }
   let session: string | null;

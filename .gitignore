@@ -45,3 +45,7 @@ undefined/
 
 # Routing eval report (npm run eval:routing). The corpus stays checked in.
 eval/routing/out/
+
+# Python bytecode
+__pycache__/
+*.pyc
