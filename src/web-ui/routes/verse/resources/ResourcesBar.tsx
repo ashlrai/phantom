@@ -1,3 +1,4 @@
+import { QueueResources } from './QueueResources.js';
 /**
  * routes/verse/resources/ResourcesBar.tsx — the always-on resource bar in the
  * rail foot (3.11.1).
@@ -623,6 +624,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
           renderResource={resource => <div data-resource-id={resource.resourceId}>{entryByKey.get(resource.resourceId)?.content}</div>} />
       </Suspense> : null}
       {providerView === 2 && expanded ? null : ordinaryRows}
+      <QueueResources expanded={expanded} />
     </div>
   );
 }

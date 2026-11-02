@@ -1,3 +1,4 @@
+import { QueueResources } from './QueueResources.js';
 /**
  * routes/verse/resources/ResourcesDrawer.tsx — RESOURCES: every account,
  * local runtime and cloud credit the operator can spend, on every surface
@@ -456,6 +457,7 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
       </header>
 
       <div className={styles.body}>
+        <QueueResources />
         <Suspense fallback={<p className={styles.subtle}>Loading allowance controls…</p>}>
           <ResetSpendingControl view={data.budget} nowMs={now} onReviewGrant={() => go('fleet', 'authority-grant')} />
         </Suspense>

@@ -2787,3 +2787,32 @@ qualification. Legacy pending records remain held under their original rules.
 ### Installed desktop metadata self-check
 
 After installing the qualified signed app, run `/Applications/Phantom.app/Contents/MacOS/ashlr-desktop --_phantom-desktop-metadata-self-check`. This closed entry verifies the physical signed app, launches only its paired sidecar, and checks the sidecar’s actual native parent and embedded source identity before ordinary CLI boot. It returns a scalar `pass` or `held`. It does not acquire a collector lease, touch an old quota fence, contact providers, read credentials or authorize spending. A staged or unsigned fixture cannot establish this installed-host result. Existing signature verification and help/version checks remain narrower evidence.
+
+## Read the app resource bar
+
+Run `phm app resources --json` to read the same numeric snapshot as the left
+resource bar and Resources drawer (`GET /api/app/resources`). No provider call
+or setup step is needed. The read is local and does not change routing.
+
+```sh
+phm app resources --json
+# Use a captured queue directory instead:
+phm app resources --queue-dir /tmp/resource-queue --json
+```
+
+The `app.resources.v1` response lists Codex company and personal, Claude CLI,
+Claude API organization, Devin, omlx, codex-local and Grok pools. Each row has
+`pool`, `remainingPercent`, `resetAt` and `liveJobs`. Null means unknown,
+including Devin reports without daily consumption buckets. An observed zero
+remains zero. Remaining quota is never inferred from a connected account,
+slot target, consumption alone or the passage of a reset deadline.
+
+Inputs live in `~/.ashlr-runs/queue`: `resources.json` (pool-keyed or under
+`resources`), `budget-overrides.json` (pool-keyed), `slots.json` (pool-keyed
+`running` counts, optionally under `lanes`), and `usage-readings.log` via the fleet lane reader. Direct
+quota entries require numeric `remainingPercent` (or `remaining_pct`),
+`as_of` (or `observedAt`) and `resetAt` (or `reset_at`). Readings older than
+30 minutes, future readings and elapsed resets show unknown. The lane reader
+also supplies live job counts from queue state when slot counts are absent.
+Only fixed pool names, numbers and normalized timestamps leave this projection;
+extra fields, credentials and provider messages are never returned.

@@ -2367,6 +2367,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'app': {
+        const { cmdApp } = await import('./app.js');
+        process.exitCode = await cmdApp(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).

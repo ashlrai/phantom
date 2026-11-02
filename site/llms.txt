@@ -37,3 +37,5 @@ Node.js >=22.15.0 or newer is required.
 - [llms-full.txt](https://verse.ashlr.ai/llms-full.txt): detailed agent guide
 - [Sitemap](https://verse.ashlr.ai/sitemap.xml): complete page index
 - [Capabilities](https://github.com/ashlrai/phantom/blob/master/server.json): machine-readable server config
+
+- App resource bar: `phm app resources --json` reads remaining usage, reset times and live jobs from the local queue. Unknown readings are null. Guide: docs/RESOURCE-POOLS.md#read-the-app-resource-bar

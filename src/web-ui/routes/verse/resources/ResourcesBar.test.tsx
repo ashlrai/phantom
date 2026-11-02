@@ -266,7 +266,7 @@ describe('barRows', () => {
     expect(result).toMatchObject({ value: 'no usage', level: 'unknown', leftPercent: null });
     expect(result.detail).toContain('Connection: CLI mismatch');
     expect(result.detail).toContain(`Connection checked ${new Date(NOW - 60_000).toLocaleString()}`);
-    expect(result.summary).toContain('No current usage reading');
+    expect(result.summary).toContain('Usage unknown');
   });
   it('never projects a reset forecast or usability from stale quota without a connection check', () => {
     const resetAt = new Date(NOW + 60_000).toISOString();
@@ -481,11 +481,11 @@ describe('fresh Devin sidebar readbacks', () => {
     expect(screen.getByRole('button', { name: 'Devin (cloud): consumption not reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = { ...reading, report: { totalAcus: 0, days: [] } };
     view.rerender(<ResourcesBar expanded />);
-    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Devin (cloud): unknown · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = reading; clock.mockReturnValue(NOW + 400_000); view.rerender(<ResourcesBar expanded />);
     expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs consumed · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     consumption = { ...reading, report: { totalAcus: 0, days: [] } }; view.rerender(<ResourcesBar expanded />);
-    expect(screen.getByRole('button', { name: 'Devin (cloud): 0 ACUs reported · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Devin (cloud): unknown · last · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /40 ACUs held exposure/ })).toBeInTheDocument();
   });
 });

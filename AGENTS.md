@@ -62,3 +62,12 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Keep backend tests in `test/` and web component tests beside their components. Add regression coverage for changed behavior; never weaken a test or security control to pass a check.
 - Do not read or print real credentials, environment dumps, or secret values. Use Phantom Secrets references and Locus for scoped account access; see [the toolchain guide](docs/AGENT-TOOLCHAIN.md).
 - Report the exact commands run, failures and remaining limitations. Keep documentation commands aligned with [package.json](package.json); the [AGENTS.md audit](docs/AGENTS-MD-AUDIT.md) records public-source gaps across the seven repos.
+
+## Article 2: App resource evidence
+
+`phm app resources --json` and `GET /api/app/resources` back the left resource
+bar and drawer. See [resource pools](docs/RESOURCE-POOLS.md#read-the-app-resource-bar)
+for the copy-paste command and input contract. Unknown usage stays null in JSON
+and renders unknown. Never infer a quota from connection state or empty Devin
+consumption reports. Keep desktop mission-control work bc-124196c5 and
+bc-a46f053b separate; RQ-DEVINROUTEFIX shares this unknown-reading rule.

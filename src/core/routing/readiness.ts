@@ -218,7 +218,7 @@ function paidChat(seat: VerseSeat | null, account: ReadinessAccount | null, inpu
     return verdict(true, 'warn', 'Ready · tight', seat.capacity.binding ? 'A usage window is near its limit.' : 'Some usage is near its limit.');
   }
   if (!account || account.state !== 'observed') {
-    return verdict(true, 'warn', 'Ready', 'No current usage reading — the provider decides at send time.',
+    return verdict(true, 'warn', 'Ready', 'Usage unknown; the provider decides at send time.',
       { kind: 'check-again', label: 'Check again', seatId: seat.id });
   }
   return verdict(true, 'ok', 'Ready', '');

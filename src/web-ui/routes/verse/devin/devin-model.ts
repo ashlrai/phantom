@@ -110,7 +110,7 @@ export function devinConsumptionEvidence(raw: unknown, now = Date.now()): { valu
   lines.push(`Retrieved ${new Date(fetched).toLocaleString()}${stale ? ' · last reading, current consumption unconfirmed' : ' · retrieval is current; provider publication delay is unknown'}.`);
   lines.push(`${report.days.length} daily reporting bucket${report.days.length === 1 ? '' : 's'}; dates retained as provider values.`);
   const value = report.days.length === 0 && report.totalAcus === 0
-    ? '0 ACUs reported'
+    ? 'unknown'
     : `${formatConsumptionAcu(report.totalAcus)} consumed`;
   return { value: `${value}${stale ? ' · last' : ''}`, lines, stale, report };
 }
