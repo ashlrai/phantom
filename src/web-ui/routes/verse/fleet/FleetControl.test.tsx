@@ -728,10 +728,10 @@ describe('lane observations', () => {
     render(<FleetSection />);
     const lanes = await screen.findByRole('list', { name: 'Lanes: busy of slots' });
     const grok = within(lanes).getByText('Grok').closest('li');
-    expect(grok).toHaveTextContent('1 working · capacity unobserved');
+    expect(grok).toHaveTextContent('1 working · capacity unknown');
     expect(grok).not.toHaveAttribute('data-off');
     expect(lanes).not.toHaveTextContent('off');
-    expect(screen.getByText(/no completed standing tick has reported lanes/)).toBeInTheDocument();
+    expect(screen.getByText(/no standing lane observation has arrived/)).toBeInTheDocument();
   });
 });
 

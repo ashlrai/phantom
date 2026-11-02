@@ -258,3 +258,5 @@ canonical release guide for required hosted qualification and publication.
 - [ashlr-hub roadmap](https://github.com/ashlrai/phantom/blob/master/docs/ROADMAP.md)
 - [ashlr-plugin Leverage Maximization Plan](https://github.com/ashlrai/phantom/blob/master/docs/PLUGIN-LEVERAGE-PLAN.md)
 - [cfg.foundry — Polyglot Backend Configuration](https://github.com/ashlrai/phantom/blob/master/docs/FOUNDRY-CONFIG.md)
+
+- [Standing lane freshness](FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.
