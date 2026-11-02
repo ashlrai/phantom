@@ -53,7 +53,12 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
   const entries: InboxEntry[] = [];
   let heading: string | undefined;
   let body: string[] = [];
+  let channelEntry: Omit<InboxEntry, 'text'> | undefined;
   const finish = (): void => {
+    if (channelEntry) {
+      entries.push({ ...channelEntry, text: body.join('\n').trim().slice(0, INBOX_MAX_CHARS) });
+      return;
+    }
     if (heading === undefined) return;
     const match = /^## (.+?) ET \([^,\n]+, (.+?)\) PRIORITY (\S+)(?:.*)$/.exec(heading);
     const dated = match ? null : /^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?: ET)?/.exec(heading);
@@ -67,11 +72,23 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
     });
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
-    if (line.startsWith('## ')) {
+    const channel = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2}))\s+\[src:([a-z0-9._-]{1,32})(?:\s+id:([A-Za-z0-9._:-]{1,64}))?\]\s+(.+)$/.exec(line);
+    const date = channel ? new Date(channel[1]!) : undefined;
+    if (channel && date && Number.isFinite(date.getTime())) {
       finish();
+      heading = undefined;
+      channelEntry = {
+        at: localTimestamp(date),
+        source: `${channel[2]}${channel[3] ? ` (${channel[3]})` : ''}`.slice(0, 80),
+        priority: null,
+      };
+      body = [channel[4]!];
+    } else if (line.startsWith('## ')) {
+      finish();
+      channelEntry = undefined;
       heading = line;
       body = [];
-    } else if (heading !== undefined) {
+    } else if (heading !== undefined || channelEntry) {
       body.push(line);
     }
   }
