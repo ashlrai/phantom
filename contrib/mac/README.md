@@ -26,6 +26,29 @@ down by 2, never below the floor 6, and at most once per new completion
 (`step_seen` in `slots.json`). A held devin lane never adjusts. The devin lane
 sits in dispatchd's restock trigger loop beside the codex lanes.
 
+Load-aware admission (RQ-LOADGATE-1). Each tick dispatchd probes the host and stops
+claiming (lines stay in `ready.tsv`) while any one gate is tripped: 1-min loadavg
+above `min(2 x ncpu, 36)`, more than 800 processes, more than 40 live job
+worktrees (`*.base` with an existing directory), or `ashlr daemon status --json`
+reporting a `lastTickAt` older than 15 minutes (a missing or unreadable status
+also trips). The +2/120s ramp pauses while the gate is tripped. Running jobs are
+also capped fleet-wide at `min(sum of unheld lane targets, ncpu, hard_cap)`. Every
+pool has a `hard_cap` in `slots.json` and so does the file itself (top-level
+`hard_cap`, default 18); the stored floor, ceiling and target are clamped to it
+every tick, immediately after the autopilot's `budget-overrides.json` floor and
+ceiling are reapplied, so neither the overrides nor the ramp can lift a pool
+past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
+`status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
+admission --json` reports the same verdict read-only. `queue/LOADGATE_OFF` is the
+owner's off switch.
+
+Install semaphore: `install-gate.py -- npm ci` takes `flock` on `queue/install.lock`
+so at most one `npm ci` / `pnpm install` / `bun install` runs fleet-wide; others
+wait (30 min default, then exit 75). The holder is written into the lock file
+while held and the kernel drops the lock if the holder dies. `install-gate.py
+--shims DIR` writes `npm`, `pnpm` and `bun` shims that route installs through the
+gate; put DIR first on the PATH that `launch.sh` gives the agent.
+
 Fixture tests run both scripts against a synthetic `~/.ashlr-runs` under a
 temporary HOME and never touch the live queue:
 

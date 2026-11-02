@@ -160,7 +160,7 @@ export function defaultLaneTruthReaders(home = homedir(), now = Date.now()): Lan
         }
         const file = await boundedRead(join(home, '.ashlr-runs/queue/slots.json'), 64 * 1024);
         const raw = object(JSON.parse(file.text));
-        return Object.entries(object(raw.lanes ?? raw)).map(([lane, value]) => {
+        return Object.entries(object(raw.lanes ?? raw)).filter(([lane]) => lane !== 'hard_cap').map(([lane, value]) => {
           const row = object(value);
           return { lane, target: count(row.target), running: count(row.running), queued: count(row.queued), held: fresh(new Date(file.mtime).toISOString(), now) && typeof row.held === 'boolean' ? row.held : null };
         });
