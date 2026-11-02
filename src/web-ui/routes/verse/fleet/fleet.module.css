@@ -84,6 +84,37 @@
   color: var(--text-tertiary);
 }
 
+/* Per-lane health: calls, errors, latency, commit — one row per lane. */
+.laneHealth {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
+.laneHealthRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.laneHealthWindow {
+  color: var(--text-tertiary);
+}
+
+.laneStuck {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Chips, then each distinct cap reason once — wrapped, never truncated. */
 .laneStrip {
   display: flex;
