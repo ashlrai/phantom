@@ -82,6 +82,24 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; dryRun=true, executable=false, registry.status=stub, steps',
   },
   {
+    usage: 'phm node join [--name <id>] [--owner person|team|org:<id>] [--json]',
+    description: 'Join this machine to the fleet with its own gh login: register owner and capabilities, start the heartbeat. Idempotent; exit 0 ok, 1 fix-it error, 2 bad usage.',
+    safety: 'append',
+    jsonShape: 'NodeStatus (schemaVersion 1): state, nodeId, owner{kind,id}, ghUser, caps, leader, peers; action joined|already-joined; errors {error,fix}',
+  },
+  {
+    usage: 'phm node status [--json]',
+    description: 'Show this machine\'s fleet membership, owner, capabilities, leader and registered peers. Exit 0 even when not joined.',
+    safety: 'read',
+    jsonShape: 'NodeStatus (schemaVersion 1); state live|expired|not-joined; fix names the next command',
+  },
+  {
+    usage: 'phm node leave [--json]',
+    description: 'Leave the fleet: revoke the lease at once so failover needn\'t wait. Idempotent.',
+    safety: 'append',
+    jsonShape: '{schemaVersion:1,action:left|not-joined,nodeId}',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -742,6 +760,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
 
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
+  { cmd: 'node join [--name <id>] [--owner person|team|org:<id>] [--json]', desc: 'Join this machine to the fleet using its own gh login; registers owner and caps, starts the heartbeat.', topic: 'safety' },
+  { cmd: 'node status [--json]', desc: 'Show fleet membership, owner, caps, leader and peers for this machine.', topic: 'safety' },
+  { cmd: 'node leave [--json]', desc: 'Leave the fleet cleanly (idempotent).', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
   { cmd: 'sandbox diff <id>',            desc: 'Show diff of a sandbox vs its base HEAD.', topic: 'safety' },
   { cmd: 'sandbox cleanup <id>',         desc: 'Remove a sandbox worktree and scratch branch.', topic: 'safety' },

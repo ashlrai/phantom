@@ -272,6 +272,9 @@ Every command, grouped by topic.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]  Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
     worktrees report [--dir <path>] [--json]                                           Report worktree age, size, last log time and job state.
     node bootstrap --dry-run [--json]                                                  Plan a persistent Linux node; registry integration is a stub, no provisioning.
+    node join [--name <id>] [--owner person|team|org:<id>] [--json]                    Join this machine to the fleet using its own gh login; registers owner and caps, starts the heartbeat.
+    node status [--json]                                                               Show fleet membership, owner, caps, leader and peers for this machine.
+    node leave [--json]                                                                Leave the fleet cleanly (idempotent).
     sandbox list                                                                       List active git-worktree sandboxes (M21 safety foundation).
     sandbox diff <id>                                                                  Show diff of a sandbox vs its base HEAD.
     sandbox cleanup <id>                                                               Remove a sandbox worktree and scratch branch.

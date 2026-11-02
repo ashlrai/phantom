@@ -1,8 +1,16 @@
 import type { LeaderLease, NodeSession, QueueJobV1 } from './queue-v1.js';
 
+/** Who runs a node and what it can do; advertised in the shared registry. */
+export interface NodeMeta {
+  owner: { kind: 'person' | 'team' | 'org'; id: string };
+  ghUser: string;
+  caps: Record<string, unknown>;
+}
+
 export interface NodeRecord extends NodeSession {
   heartbeatAt: number;
   expiresAt: number;
+  meta?: NodeMeta;
 }
 
 export interface NodesState {
@@ -39,7 +47,10 @@ export function parseState(value: unknown): NodesState {
   const token = (v: unknown): boolean => integer(v) && v > 0 && v <= sequence;
   const session = (v: Record<string, unknown>): boolean => validId(v.nodeId) && token(v.session);
   const lease = (v: Record<string, unknown>): boolean => session(v) && token(v.token) && integer(v.expiresAt);
-  if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt))) return fail();
+  const meta = (v: unknown): boolean => v === undefined || (object(v) && object(v.owner) && validId(v.owner.id) &&
+    ['person', 'team', 'org'].includes(String(v.owner.kind)) && typeof v.ghUser === 'string' && object(v.caps));
+  if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt) &&
+    meta(n.meta))) return fail();
   if (new Set(value.nodes.map(n => n.nodeId)).size !== value.nodes.length) return fail();
   if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();
   if (!value.jobs.every(j => object(j) && validId(j.id) &&

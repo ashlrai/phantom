@@ -1,8 +1,8 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
-import { validId, type NodesState, type NodesStore } from './state.js';
+import { validId, type NodeMeta, type NodesState, type NodesStore } from './state.js';
 export { LocalNodesStore } from './local-store.js';
 export type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
-export type { NodeRecord, NodesState, NodesStore } from './state.js';
+export type { NodeMeta, NodeRecord, NodesState, NodesStore } from './state.js';
 
 export interface NodesOptions {
   nodeTtlMs?: number;
@@ -60,12 +60,13 @@ export class DriveNodes implements QueueV1 {
     return leader && leader.expiresAt > now && this.liveNode(state, leader, now) ? leader : null;
   }
 
-  join(nodeId: string): NodeSession | null {
+  join(nodeId: string, meta?: NodeMeta): NodeSession | null {
     if (!validId(nodeId)) throw new Error('Invalid drive node ID');
     return this.transaction((state, now) => {
       const existing = state.nodes.find(n => n.nodeId === nodeId);
       if (existing && existing.expiresAt > now) return null;
-      const node = { nodeId, session: nextToken(state), heartbeatAt: now, expiresAt: now + this.nodeTtl };
+      const node = { nodeId, session: nextToken(state), heartbeatAt: now, expiresAt: now + this.nodeTtl,
+        ...(meta ? { meta } : {}) };
       state.nodes = state.nodes.filter(n => n.nodeId !== nodeId);
       state.nodes.push(node);
       return { nodeId, session: node.session };

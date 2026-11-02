@@ -26,5 +26,6 @@
 
 - [Fleet API](FLEET-API.md): Loopback HTTP endpoints exposing projections for desktop, phone, and Leader coordination.
 - [Cloud Lane](CLOUD.md): Start Claude Code cloud sessions from chat, Command, or CLI; Phantom can also start them itself.
+- [Join a node](NODE-JOIN.md): `phm node join|status|leave` adds this computer to the fleet using its own gh login; owner and capabilities recorded.
 - [Drive](DRIVE.md): Mac queue supervisor running serial ticks, reaping workers, and admitting READY jobs.
 - [Hub Reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet — compatibility identifiers retained.
