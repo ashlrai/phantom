@@ -9,6 +9,7 @@ import { mergeBacklogQuery } from '../fleet-merges/merge-backlog-queries.js';
 import { fleetSupplyQuery } from '../fleet-supply/fleet-supply-queries.js';
 import { draftBytes, lanes, outcomeText, suggestId, tiers, validateDraft, type DropJobDraft } from './drop-job-model.js';
 import { dropJobsQuery, postDropJob } from './drop-job-queries.js';
+import { freeLaneAlternative } from './drop-job-lane-switch.js';
 import { dropJobPreflight, laneLine } from './drop-job-preflight.js';
 import { dropJobDraftStorageKey, readDropJobDraftStorage } from './drop-job-sheet-store.js';
 import { laneHoldsQuery } from './queue-holds-model.js';
@@ -48,13 +49,24 @@ export function DropJobSheet({ open, onClose, seed }: { open: boolean; onClose: 
   const selected = targets?.lanes.find(row => row.lane === draft.lane);
   const blocked = selected?.held || (selected?.running !== undefined && selected.running >= selected.target) || selected?.target === 0;
   const availability = blocked ? laneLine(draft.lane, targets, Date.now()) : null;
+  const alternative = freeLaneAlternative(draft.lane, targets);
+  const switchButton = useRef<HTMLButtonElement>(null);
+  const focusPending = useRef(false);
   useEffect(() => {
     try { sessionStorage.setItem(storageKey, JSON.stringify(draft)); } catch { /* Keep the in-memory draft. */ }
   }, [draft]);
   // A seed only fills an empty body — an unsent draft is never overwritten.
   useEffect(() => {
+    focusPending.current = !!seed;
     if (seed) setDraft(previous => previous.body.trim() ? previous : { ...seed });
   }, [seed]);
+  // A seeded lane that cannot start now is never swapped silently: focus the move button once instead.
+  useEffect(() => {
+    if (open && alternative && focusPending.current && switchButton.current) {
+      focusPending.current = false;
+      switchButton.current.focus();
+    }
+  }, [open, alternative]);
   function change(key: keyof DropJobDraft, value: string) {
     setDraft(previous => {
       const next = { ...previous, [key]: value };
@@ -94,7 +106,7 @@ export function DropJobSheet({ open, onClose, seed }: { open: boolean; onClose: 
           const numbers = warning.prNumbers.length ? ` (${warning.prNumbers.map(number => `#${number}`).join(', ')}${openPrs > warning.prNumbers.length ? ', …' : ''})` : '';
           return <li key={warning.path}>{warning.path} is in {openPrs} open {openPrs === 1 ? 'PR' : 'PRs'}{numbers} — a job that edits it will go DIRTY; name a new file instead</li>;
         })}
-        {availability && <li>{availability}</li>}
+        {availability && <li>{availability}{alternative && <> <Button ref={switchButton} type="button" disabled={sending} onClick={() => change('lane', alternative.lane)}>Move to {alternative.lane}</Button></>}</li>}
       </ul>}
       {hits.length > 0 && <p><label><input type="checkbox" checked={oneHunk} disabled={sending} onChange={event => setPledged(event.target.checked ? hitsKey : '')} /> I will keep edits to these files to one hunk</label></p>}
       {!validation.ok && <ul aria-label="Draft validation">{validation.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
