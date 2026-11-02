@@ -69,7 +69,7 @@ const toStreamLine = (record: Record<string, unknown>, heavyKey: 'report' | 'las
   return out;
 };
 
-const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
+const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--busy-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
 Repeat the self-management pass (fleet self-tick) for a bounded window:
 first pass immediately, then one pass every interval (default 60000ms,
 minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is
@@ -79,8 +79,12 @@ killing a running pass; the summary prints either way. Each pass is the real
 self-tick with its own queue/self-tick.lock: a contended pass counts 'busy'
 and the loop continues, as does a failed pass. --failure-backoff-max-ms
 opts into doubling the delay after consecutive failures, up to the given max
-(between the interval and 24h); success or busy resets it. Stream pass records
-include consecutiveFailures and nextDelayMs when enabled. --json prints one final
+(between the interval and 24h); success or busy resets it. --busy-backoff-max-ms
+opts into the same doubling for consecutive busy passes (any exit code), up to
+the given max (between the interval and 24h); any other outcome resets only
+that busy streak. With both enabled the longer current delay is used. Stream
+pass records include consecutiveFailures, consecutiveBusy (when enabled) and
+nextDelayMs (when either is enabled). --json prints one final
 sanitized summary line (unchanged default shape). --stream instead prints
 sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line per
 completed pass, then exactly one {"v":1,"record":"summary",...} line.
@@ -112,7 +116,8 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
   let json = false, apply = false, stream = false;
-  let durationMs: number | undefined, intervalMs: number | undefined, failureBackoffMaxMs: number | undefined, runsDir: string | undefined;
+  let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
+  let failureBackoffMaxMs: number | undefined, busyBackoffMaxMs: number | undefined;
   const parseMs = (value: string | undefined): number | undefined => {
     if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
     const parsed = Number(value);
@@ -132,6 +137,9 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
     } else if (arg === '--failure-backoff-max-ms' && failureBackoffMaxMs === undefined) {
       failureBackoffMaxMs = parseMs(args[++i]);
       if (failureBackoffMaxMs === undefined || failureBackoffMaxMs > SELF_LOOP_MAX_DURATION_MS) return invalid();
+    } else if (arg === '--busy-backoff-max-ms' && busyBackoffMaxMs === undefined) {
+      busyBackoffMaxMs = parseMs(args[++i]);
+      if (busyBackoffMaxMs === undefined || busyBackoffMaxMs > SELF_LOOP_MAX_DURATION_MS) return invalid();
     } else if (arg === '--runs-dir' && runsDir === undefined) {
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
@@ -143,6 +151,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   if (stream && json) return invalid();
   if (durationMs === undefined) return invalid();
   if (failureBackoffMaxMs !== undefined && failureBackoffMaxMs < (intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS)) return invalid();
+  if (busyBackoffMaxMs !== undefined && busyBackoffMaxMs < (intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS)) return invalid();
   // One root for the lock and all three steps of every pass, resolved here
   // once — same fallbacks as self-tick, so nothing can drift between passes.
   const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
@@ -185,9 +194,9 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       output(toStreamLine({
         v: 1, record: 'pass', pass: event.pass, exitCode: event.exitCode,
         state: event.state, report: event.report,
-        ...(event.consecutiveFailures === undefined ? {} : {
-          consecutiveFailures: event.consecutiveFailures, nextDelayMs: event.nextDelayMs,
-        }),
+        ...(event.consecutiveFailures === undefined ? {} : { consecutiveFailures: event.consecutiveFailures }),
+        ...(event.consecutiveBusy === undefined ? {} : { consecutiveBusy: event.consecutiveBusy }),
+        ...(event.nextDelayMs === undefined ? {} : { nextDelayMs: event.nextDelayMs }),
       }, 'report'));
     }
     : undefined;
@@ -198,6 +207,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       durationMs,
       intervalMs: intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS,
       ...(failureBackoffMaxMs === undefined ? {} : { failureBackoffMaxMs }),
+      ...(busyBackoffMaxMs === undefined ? {} : { busyBackoffMaxMs }),
       tick: deps.tick ?? realTick,
       now,
       signal: controller.signal,
