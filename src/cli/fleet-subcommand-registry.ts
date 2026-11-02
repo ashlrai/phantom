@@ -45,6 +45,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'dispatch-summary': () => import('./fleet-dispatch-summary.js'),
   'edit-collisions': () => import('./fleet-edit-collisions.js'),
   'gate-run': () => import('./fleet-gate-run.js'),
+  'glance': () => import('./fleet-glance.js'),
   'graph-context-pipe': () => import('./fleet-graph-context-pipe.js'),
   'graph-context-run': () => import('./fleet-graph-context-run.js'),
   'graph-goals': () => import('./fleet-graph-goals.js'),
