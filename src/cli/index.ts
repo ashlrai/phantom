@@ -2711,6 +2711,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'app': {
+        const { cmdApp } = await import('./app.js');
+        process.exitCode = await cmdApp(rest);
+        break;
+      }
+
       case 'resource': {
         const { cmdResource } = await import('./resource.js');
         process.exitCode = await cmdResource(rest);

@@ -67,3 +67,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
+
+## Article 2: Agent-native app control
+
+Use `phm app steer pause|resume --json` and `phm app prefs '<update-json>' --json` for existing app controls. The same actions use `app.control.v1` over the existing loopback console and `phm_app_control` in the existing stdio MCP bridge. See [app control](docs/APP-CONTROL.md). Unknown usage stays unknown. RQ-AGENTNATIVE-phantom-DESKTOPPREFS is done for Verse preferences; RQ-MACCU-1 owns `phm computer`.

@@ -1,3 +1,4 @@
+import { APP_ACTIONS, parseAppRequest } from './app-control.js';
 /**
  * core/web/api.ts — M14 JSON API handler.
  *
@@ -1298,7 +1299,7 @@ export async function handleApi(
     readProjections?: ReadProjectionReader;
   },
 ): Promise<boolean> {
-  const path = reqPath(req);
+  let path = reqPath(req);
 
   // Only handle /api/* paths.
   if (!path.startsWith('/api/') && path !== '/api') {
@@ -1308,6 +1309,21 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === '/api/app/v1/control') {
+      if (method !== 'POST' || !ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let action;
+      try { action = parseAppRequest(JSON.parse(await readBody(req))); }
+      catch { sendJson(res, 400, { error: 'invalid app.control.v1 request' }); return true; }
+      path = APP_ACTIONS[action.action];
+      if (action.action === 'prefs') {
+        // Feed the validated update through the existing preference handler and guards.
+        const { Readable } = await import('node:stream');
+        const forwarded = Readable.from([JSON.stringify(action.update)]) as IncomingMessage;
+        forwarded.headers = req.headers; forwarded.method = 'POST'; forwarded.url = path;
+        return handleVerseApi({ cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession }, forwarded, res, path, method);
+      }
+    }
     if (path === HOST_SUMMARY_PATH) {
       if (method !== 'GET') {
         res.setHeader('Allow', 'GET');

@@ -38,6 +38,8 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm app <status|resources|budgets|state|prefs> --json', description: 'Read existing app projections through a private loopback connection file. Usage stays numeric or unknown.', safety: 'read', jsonShape: 'app.control.v1 result' },
+  { usage: 'phm app steer pause|resume --json; phm app prefs <update-json> --json', description: 'Write existing app controls through dispatch and mutation-token guards. PHM_APP_CONNECTION_FILE required.', safety: 'append', jsonShape: 'app.control.v1 result; exit 1 refused' },
   {
     usage: 'phm graph nodes|edges|status [--json]',
     description: 'Read-only GRAPH-1 nodes, edges, and availability. Exit 0 success/help, 1 unavailable or loader failure, 2 bad usage; unavailable counts are unknown.',

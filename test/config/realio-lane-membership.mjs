@@ -43,6 +43,11 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/changelog-current-version-01.test.ts', // Real changelog extraction child process.
+  'test/fleet-bridge-install-01.test.ts', // Real installed Python bridge child process.
+  'test/fleet-guardian-exclusive-02-solx1.test.ts', // Real lease holder child process.
+  'test/fleet-standby-verb-02.test.ts', // Real Python lease and snapshot processes.
+  'test/gitignore-routing-eval.test.ts', // Real git check-ignore process.
   'test/agent-bus-reply-file.test.ts', // execFileSync runs the bus-reply-file example as a real child
   'test/agent-context-replay.test.ts', // spawnSync runs the context-replay example as a real child
   'test/agentbootreport31ak1.test.ts', // spawnSync and spawn run the agent-boot-report script as real children

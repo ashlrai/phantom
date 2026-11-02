@@ -37,3 +37,5 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Hub reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet. Compatibility identifiers stay.
+
+- [App control](APP-CONTROL.md): phm app steer and prefs --json, app.control.v1 writes through existing console guards.
