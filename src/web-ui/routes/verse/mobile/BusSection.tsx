@@ -3,6 +3,7 @@ import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { ago } from '../command/ladder-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { AgentBusMessages } from './AgentBusMessages.js';
 import { BusRefs } from './BusRefs.js';
 import { busLiteQuery } from './bus-query.js';
 import { useMobile } from './mobile-context.js';
@@ -10,6 +11,10 @@ import { Button } from './ui.js';
 import { Badge, EmptyState, ErrorState, Row, Section, ui } from './ui-parts.js';
 
 export function BusSection() {
+  return <><AgentBusMessages /><HopBusSection /></>;
+}
+
+function HopBusSection() {
   const { navigate } = useMobile();
   const query = useQuery(busLiteQuery);
   const refetch = useRefetch(busLiteQuery);

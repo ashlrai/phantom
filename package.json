@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.30.0",
+  "version": "3.29.16",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -51,6 +51,7 @@
     "docs/MEMORY-FOUNDATION.md",
     "docs/MEMORY-EVALUATION.md",
     "docs/QUICKSTART.md",
+    "docs/SELF-HOSTING.md",
     "docs/AUTOMATIC-OUTCOMES.md",
     "docs/VERSE.md",
     "docs/PROACTIVE-COORDINATION.md",
@@ -188,6 +189,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/web-push": "^3.6.4",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "@vitejs/plugin-react": "^6.1.0",
     "@vitest/coverage-v8": "4.1.12",
     "@xterm/addon-fit": "^0.11.0",

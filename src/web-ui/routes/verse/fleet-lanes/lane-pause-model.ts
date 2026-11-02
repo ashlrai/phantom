@@ -14,13 +14,16 @@ export function pauseTransition(lane: string, currentTarget: number, remembered:
   return { target: 0, record: positive(currentTarget) ? { ...remembered, [lane]: currentTarget } : { ...remembered } };
 }
 
-export function resumeTransition(lane: string, remembered: PauseRecord, floor = 0) {
+export function resumeTransition(lane: string, remembered: PauseRecord, floor = 0, pausedFrom?: number | null) {
   const record = { ...remembered };
-  const target = positive(record[lane]) ? record[lane] : positive(floor) ? floor : 1;
+  const target = positive(record[lane]) ? record[lane]
+    : positive(pausedFrom) && pausedFrom > floor ? pausedFrom
+    : positive(floor) ? floor : 1;
   delete record[lane];
   return { target, record };
 }
 
-export function pauseLabel(lane: string, record: PauseRecord): string | null {
-  return positive(record[lane]) ? `Paused · was ${record[lane]}` : null;
+export function pauseLabel(lane: string, record: PauseRecord, pausedFrom?: number | null): string | null {
+  const value = positive(record[lane]) ? record[lane] : positive(pausedFrom) ? pausedFrom : null;
+  return value ? `Paused · was ${value}` : null;
 }

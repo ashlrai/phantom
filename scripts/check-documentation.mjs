@@ -8,12 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
 
 export const OPERATOR_DOCUMENTATION = Object.freeze([
-  'README.md', 'docs/README.md', 'docs/PHANTOM-BRAND.md', 'docs/QUICKSTART.md', 'docs/DEMO.md', 'docs/ARCHITECTURE.md',
+  'README.md', 'docs/README.md', 'docs/PHANTOM-BRAND.md', 'docs/QUICKSTART.md', 'docs/SELF-HOSTING.md', 'docs/DEMO.md', 'docs/ARCHITECTURE.md',
   'docs/COMPANIONS.md',
   'docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md',
   'docs/ASHLR-UNIVERSE.md', 'docs/RESOURCE-POOLS.md', 'docs/NORTH-STAR.md', 'docs/MISSION-OS.md',
   'docs/VERSE.md', 'docs/AUTONOMY-SETUP.md', 'docs/AUTOMATIC-OUTCOMES.md',
-  'docs/FLEET-API.md',
   'docs/RESIDENT-RUNTIME.md',
   'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
   'docs/AUTHORITY.md',

@@ -1,6 +1,7 @@
 import type { AppNotification, NotificationSeverity } from './types.js';
 import { ackState, newestLeaderPassMs, parseInboxAt } from '../../routes/verse/fleet/interject-ack-model.js';
 import { LEADER_OVERDUE_MS } from '../../routes/verse/shell/fleet-needs-you.js';
+import type { LaneTargetsV1 } from '../../routes/verse/ops/lane-targets-model.js';
 import { paneLinkUrl } from '../../routes/verse/dock/pane-link.js';
 
 type RecordValue = Record<string, unknown>;
@@ -13,7 +14,7 @@ interface FleetRuns {
   codexPersonal?: { resetsAt?: string | null } | null;
   switches?: string[];
   sources?: { runsDir?: string | null } | null;
-  lanes: Array<{ lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null }>;
+  lanes: Array<{ lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null; heldUntil?: string | null; changedBy?: string | null }>;
   workers: Array<{ ageSeconds: number | null }>;
   mergesLastHour: { count: number | null };
   drop: { pending: Array<{ lane: string; file: string }>; done: unknown } | null;
@@ -157,4 +158,26 @@ export function deriveFleetRunsNotifications(data: unknown, now: number): AppNot
     }
   }
   return out;
+}
+
+/** Derive release events only from two valid runs snapshots. */
+export function deriveFleetLaneReleases(data: unknown, previous: unknown, targets: LaneTargetsV1 | null | undefined,
+  previousTargets: LaneTargetsV1 | null | undefined, now: number): AppNotification[] {
+  if (!isFleetRuns(data) || !isFleetRuns(previous)) return [];
+  const base = typeof window === 'undefined' ? undefined : new URL('/verse/', window.location.href).toString();
+  return data.lanes.flatMap((lane) => {
+    const before = previous.lanes.find((row) => row.lane === lane.lane);
+    if (lane.held || !before?.held) return [];
+    const target = targets?.lanes.find((row) => row.lane === lane.lane && !row.held);
+    const oldTarget = previousTargets?.lanes.find((row) => row.lane === lane.lane && row.held);
+    const until = before.heldUntil ?? oldTarget?.heldUntil;
+    const reason = before.heldReason || oldTarget?.heldReason
+      || (date(until) && Date.parse(until) <= now ? 'hold expired' : 'reason unknown');
+    const by = typeof lane.changedBy === 'string' && lane.changedBy ? lane.changedBy : target?.changedBy || 'unknown';
+    const actionHref = paneLinkUrl('fleet-lanes', null, false, base);
+    return [{ id: `fleet-lane-released-${lane.lane}-${target?.lastChange || data.generatedAt}`, category: 'fleet' as const,
+      severity: 'medium' as const, title: `${scrub(lane.lane)} released`,
+      detail: `by ${scrub(by)} · ${scrub(reason)} · ${lane.queued} jobs can start`, ts: data.generatedAt,
+      ...(actionHref ? { actionLabel: 'Open lanes', actionHref } : {}) }];
+  });
 }

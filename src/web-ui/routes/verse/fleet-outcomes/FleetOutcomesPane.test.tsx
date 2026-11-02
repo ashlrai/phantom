@@ -98,16 +98,22 @@ it('notes a stale reading', async () => {
 
 it('polls every thirty seconds only while visible', async () => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => Response.json(fixture()));
+  const fetcher = vi.fn(async (_url: string) => Response.json(fixture()));
   vi.stubGlobal('fetch', fetcher);
   const view = render(<FleetOutcomesPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetOutcomesPane {...props} />); });
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  const callsTo = (path: string) => fetcher.mock.calls.filter(([url]) => url === path).length;
+  const outcomes = '/api/verse/fleet/live/feedback';
+  const runs = '/api/verse/fleet/runs';
+  expect(callsTo(outcomes)).toBe(1);
+  expect(callsTo(runs)).toBe(1);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(callsTo(outcomes)).toBe(2);
+  expect(callsTo(runs)).toBe(2);
   view.rerender(<FleetOutcomesPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(callsTo(outcomes)).toBe(2);
+  expect(callsTo(runs)).toBe(2);
 });

@@ -4,6 +4,8 @@
 # G1-CODE-PIN; this revision is not installed on the Mac). RQ-DEVINROUTEDEFAULTQ7 +
 # DEVIN-LEVERAGE-20261026 rev: devin sits in the restock trigger loop and the failure-spike step-down
 # is computed in dispatchd itself (Masbot 21:19 Oct 26); devin leverage defaults target 10, ceiling 16.
+# RQ-LANERECOVERNOV1Q8 rev: repeated authentication failures (>=2 distinct failed/EMPTY finishes with a
+# provider auth-error line) hold the lane autobackoff-style; no credential store is ever written.
 import os, re, json, time, fcntl, subprocess, glob
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
@@ -209,6 +211,73 @@ def ab_scan(lane, alive_):
         s_["held_reason"] = "autobackoff %s job=%s until=%s src=%s" % (pid, j, until, src)
         ev("LANE_HOLD %s autobackoff pattern=%s job=%s until=%s src=%s" % (lane, pid, j, until, src))
         metric({"event": "autobackoff_hold", "lane": lane, "job": j, "pattern": pid, "until": until, "src": src})
+# ---- auth backoff (RQ-LANERECOVERNOV1Q8): hold a lane on REPEATED authentication failures. Usage/quota
+# lines hold on one match because the provider names the reset; a dead credential names none, so the bar
+# is higher: at least AB_AUTH_MIN distinct failed or EMPTY finishes on the lane whose log tails carry a
+# provider auth-error line inside the 30-minute window. One transient or forged line never holds; a run
+# that produced work never counts (codex-cmp: any work; others: clean work only — ab_run's own rule).
+# Per-job verdicts persist in <job>.authfail.seen ("<verdict> <pattern>"), so the streak accumulates
+# across ticks while git re-evaluation stays once per job. The hold is autobackoff-attributed and
+# bounded by AB_DEF like every software hold: it never touches credential storage, and ab_unhold's
+# expiry is the recovery probe — a rotated credential resumes on the next launch, a still-dead one
+# re-arms after two more failures. Eligible work on healthy lanes keeps dispatching the whole time.
+AB_AUTH_MIN = 2
+_A_TOK = (r"401\b|unauthorized|authentication(?:_error| failed)?|invalid_grant|refresh token|"
+          r"re-?authenticate|session expired|token (?:has )?expired|"
+          r"credentials? (?:are )?(?:expired|invalid|revoked)|not logged in|"
+          r"please (?:re-?)?(?:log ?in|authenticate)|invalid (?:x-)?api[-_ ]?key")
+AB_AUTH_RX = {
+    "codex": [("codex_auth_failure", re.compile(r"(?im)" + _CX + r"[^\n]*(?:" + _A_TOK + r")[^\n]*$"))],
+    "devin": [("devin_auth_failure", re.compile(r"(?im)^(?:\[[0-9T:.\-]+Z?\]\s*)?(?:ERROR|Error): [^\n]*(?:" + _A_TOK + r")[^\n]*$"))],
+    "anthropic": [("claude_auth_401", re.compile(r"(?im)^API Error: 401\b[^\n]*$")),
+                  ("claude_auth_error", re.compile(r"(?im)^[^\n]*(?:authentication_error|invalid (?:x-)?api[-_ ]?key|"
+                                                  r"oauth token (?:has )?expired|not logged in|please (?:re-?)?log ?in)[^\n]*$"))],
+}
+def ab_auth_scan(lane, alive_):
+    s_ = slots[lane]; pats = AB_AUTH_RX.get(AB_PROV.get(lane, ""))
+    if not pats or (s_.get("held") and s_.get("held_by") != AB_BY): return   # manual hold: never touch
+    newest, count = None, 0
+    for bp in glob.glob(R + "/*.base"):
+        j = os.path.basename(bp)[:-5]
+        if not JID.match(j) or j in alive_: continue
+        b = rd(bp).split()
+        if len(b) < 4 or b[3] != lane: continue
+        lp = "%s/%s.log" % (R, j); mk = "%s/%s.authfail.seen" % (RUN, j)
+        try:
+            if os.path.getmtime(lp) < NOW - 1800: continue
+        except Exception: continue
+        mark = rd(mk).strip().split(" ", 1)
+        verdict, pid = mark[0], (mark[1] if len(mark) > 1 else None)
+        if verdict not in ("fail", "work", "skip"):
+            tail = "\n".join(logtail(lp, AB_TAIL).splitlines()[-60:])
+            hit = next(((p, m) for p, rx in pats for m in [rx.search(tail)] if m), None)
+            if not hit: continue
+            pid, m = hit
+            failed, work, osrc = ab_run(j, b)
+            if osrc == "helper_unavailable":
+                ev("AUTH_FAILURE_SEEN %s %s %s: helper_unavailable, no hold" % (lane, j, pid))
+                metric({"event": "authbackoff_skip", "lane": lane, "job": j, "pattern": pid, "src": "helper_unavailable"}); continue
+            if osrc == "unknown":
+                ev("AUTH_FAILURE_SEEN %s %s %s: worktree path refused (containment), no hold" % (lane, j, pid))
+            produced = work if lane == "codex-cmp" else (work and not failed)
+            verdict = "skip" if osrc == "unknown" else "work" if produced else "fail"
+            if produced: ev("AUTH_FAILURE_SEEN %s %s %s: run produced work, no hold" % (lane, j, pid))
+            try: open(mk, "w").write("%s %s\n" % (verdict, pid))
+            except Exception: pass
+        if verdict != "fail": continue
+        count += 1
+        if newest is None or os.path.getmtime(lp) > newest[0]: newest = (os.path.getmtime(lp), j, pid)
+    if count < AB_AUTH_MIN or newest is None: return
+    pid, j = newest[2] or "auth_failures", newest[1]
+    rs = min(NOW + AB_DEF, NOW + AB_CAP)   # no provider reset to parse: a bounded probe window only
+    if s_.get("held"):
+        cur = ab_epoch(s_.get("held_until"))
+        if cur is not None and cur >= rs: return
+    until = ab_iso(rs)
+    s_["held"] = True; s_["held_by"] = AB_BY; s_["held_until"] = until; s_["last_change"] = NOW
+    s_["held_reason"] = "autobackoff %s job=%s until=%s src=default (%d auth-failed runs)" % (pid, j, until, count)
+    ev("LANE_HOLD %s autobackoff pattern=%s job=%s until=%s src=default (%d auth-failed runs)" % (lane, pid, j, until, count))
+    metric({"event": "autobackoff_hold", "lane": lane, "job": j, "pattern": pid, "until": until, "src": "default", "auth_failures": count})
 ab_unhold()
 # ---- resource autopilot (RQ-RESOURCE-AUTOPILOT): read-only disk, inode, swap-growth and devin readings
 def _autopilot():
@@ -454,10 +523,24 @@ def precheck(j, repo, pf):
     return None
 
 # ---- queue
-def qlock():
-    fd = open(Q + "/ready.lock", "a"); fcntl.flock(fd, fcntl.LOCK_EX); return fd
-lk = qlock()
-lines = [l for l in rd(Q + "/ready.tsv").splitlines() if l.strip() and not l.startswith("#")] + requeue
+# RQ-READYLOCK-SCOPE: queue/ready.lock guards only the ready.tsv read and the ready.tsv rewrite, never the
+# tick body (a slow tick held it 4+ min and blocked restock.py / sync-router-queue.py appends). Every taker
+# polls LOCK_NB up to a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and logs waits over 1 s and timeouts.
+def qlock(who="dispatchd", timeout=None):
+    timeout = float(os.environ.get("ASHLR_READY_LOCK_TIMEOUT", 10)) if timeout is None else timeout
+    fd = open(Q + "/ready.lock", "a"); t0 = time.monotonic()
+    while True:
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+        except OSError:
+            if time.monotonic() - t0 >= timeout:
+                fd.close(); ev("READY_LOCK_TIMEOUT %s waited %.1fs" % (who, time.monotonic() - t0)); return None
+            time.sleep(0.05)
+    if time.monotonic() - t0 > 1: ev("READY_LOCK_WAIT %s %.1fs" % (who, time.monotonic() - t0))
+    return fd
+lk = qlock("dispatchd-read")
+if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
+_raw = rd(Q + "/ready.tsv").splitlines(); lk.close()   # snapshot taken; writers may append from here on
+lines = [l for l in _raw if l.strip() and not l.startswith("#")] + requeue
 qdepth = {l: 0 for l in LANES}
 for l in lines:
     f = l.split("\t")
@@ -485,6 +568,8 @@ def _devin_spike():   # DEVIN-LEVERAGE-20261026, computed in dispatchd itself (M
 for lane in LANES:
     try: ab_scan(lane, alive)
     except Exception as e: log("autobackoff err %s %s" % (lane, type(e).__name__))
+    try: ab_auth_scan(lane, alive)
+    except Exception as e: log("authbackoff err %s %s" % (lane, type(e).__name__))
 for lane in LANES:
     s = slots[lane]
     if lane == "claude-api":
@@ -623,6 +708,11 @@ if not pause:
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
 else:
     rest = lines
+# Rewrite under the lock, re-reading first: lines appended since the snapshot (the file is append-only for
+# every other writer) ride through after this tick's survivors so the whole-file replace never erases them.
+lk = qlock("dispatchd-write", 30)
+if lk is None: log("ready.lock busy; ready.tsv rewrite skipped (launched jobs stay guarded by alive/worktree checks)"); raise SystemExit(0)
+rest = rest + [l for l in rd(Q + "/ready.tsv").splitlines()[len(_raw):] if l.strip() and not l.startswith("#")]
 t = Q + "/ready.tsv.tmp"; open(t, "w").write("".join(l + "\n" for l in rest)); os.replace(t, Q + "/ready.tsv")
 lk.close()
 jsave(Q + "/slots.json", slots)

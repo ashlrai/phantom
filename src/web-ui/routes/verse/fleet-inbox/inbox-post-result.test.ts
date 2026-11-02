@@ -1,15 +1,16 @@
 import { expect, it } from 'vitest';
 import { ApiError } from '../../../data/client.js';
 import { VerseMutationLockedError } from '../verse-queries.js';
-import { postResultText, retryable } from './inbox-post-result.js';
+import { retryable } from './inbox-post-result.js';
+import { postAckLine } from './inbox-post-ack-model.js';
 
-it('formats the local time in 24-hour form', () => {
-  const at = new Date(2026, 9, 31, 5, 42).toISOString();
-  expect(postResultText({ at, duplicate: false }, 'en-US')).toBe('Sent · 05:42');
-  expect(postResultText({ at: 'invalid', duplicate: false })).toBe('Sent');
+it('formats the inbox time in 24-hour ET and handles invalid timestamps', () => {
+  const now = Date.parse('2026-10-31T09:42:00Z');
+  expect(postAckLine({ at: '2026-10-31T09:42:00Z' }, null, now)?.text).toBe('Landed 05:42 · waiting for the next leader pass');
+  expect(postAckLine({ at: 'invalid' }, null, now)?.text).toBe('Landed · Leader status unknown');
 });
 it('reports a duplicate without formatting its timestamp', () => {
-  expect(postResultText({ at: 'invalid', duplicate: true })).toBe('Already in the inbox · sent within the last 10 minutes');
+  expect(postAckLine({ at: 'invalid', duplicate: true }, null, 0)?.text).toBe('Already in the inbox (same text within the dedupe window)');
 });
 it.each([400, 401, 404, 429, 500, 502, 503, 504])('classifies HTTP %s', status => {
   expect(retryable(new ApiError('failure', status, '/inbox'))).toBe([502, 503, 504].includes(status));

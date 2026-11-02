@@ -28,6 +28,12 @@ describe('fleet switch and runs-dir notifications', () => {
     expect(out[0]?.title).toBe('Dispatch paused by HOLD-ALL, HOLD-B, … +2 more');
   });
 
+  it('groups multiple active switches into one stable incident', () => {
+    const out = derive(snapshot({ switches: ['HOLD-ALL', 'HOLD-CODEX'] }), now);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ id: 'fleet-switches-on', title: 'Dispatch paused by HOLD-ALL, HOLD-CODEX' });
+  });
+
   it('emits fleet-runs-dir-missing when sources.runsDir reports missing', () => {
     const out = derive(snapshot({ sources: { runsDir: 'missing' } }), now);
     expect(out).toHaveLength(1);
@@ -54,6 +60,14 @@ describe('fleet switch and runs-dir notifications', () => {
   it('still accepts snapshots without switches or sources keys', () => {
     expect(derive(snapshot(), now)).toEqual([]);
     expect(derive(snapshot({ claudeLane: 'down' }), now).map((n) => n.id)).toEqual(['fleet-claude-lane-down']);
+  });
+
+  it('preserves unrelated notifications when optional fields are healthy or absent', () => {
+    const incident = { claudeLane: 'down', workers: [{ ageSeconds: 2040 }] };
+    const before = derive(snapshot(incident), now);
+    expect(before.map((item) => item.id)).toEqual(['fleet-stall', 'fleet-claude-lane-down']);
+    expect(derive(snapshot({ ...incident, switches: [], sources: { runsDir: 'healthy' } }), now)).toEqual(before);
+    expect(derive(snapshot({ ...incident, sources: null }), now)).toEqual(before);
   });
 
   it.each([

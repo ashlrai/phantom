@@ -69,13 +69,13 @@ describe('MobileReleaseCard', () => {
     expect(await screen.findByText('v3.30.0 candidate · PR #2222 · blocked: Dependency audit (root + Raycast)')).toBeInTheDocument();
     expect(screen.getByText('3.30.0 blocked by Dependency audit (root + Raycast)')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open PR' })).toHaveAttribute('href', FAKE_PR_URL);
-    expect(stub.calls.map((call) => call.url)).toEqual(['/api/verse/release-pr']);
+    expect(stub.calls.map((call) => call.url)).toEqual(expect.arrayContaining(['/api/verse/release-pr', '/api/verse/fleet/ci-runs?hours=48']));
   });
 
   it('renders nothing when the route answers 404', async () => {
     const stub = stubFetch({ 'GET /api/verse/release-pr': json({ error: 'not found' }, 404) });
     const { container } = renderMobile(<MobileReleaseCard />);
-    await waitFor(() => expect(stub.calls).toHaveLength(1));
+    await waitFor(() => expect(stub.calls).toHaveLength(2));
     await waitFor(() => expect(container).toBeEmptyDOMElement());
   });
 

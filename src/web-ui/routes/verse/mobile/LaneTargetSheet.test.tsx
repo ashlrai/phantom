@@ -8,7 +8,7 @@ import { MobileGuardSheet } from './MobileGuardSheet.js';
 import { MobileToasts, resetMobileToastsForTest } from './mobile-toast.js';
 import { json, renderMobile, stubFetch, TOKEN } from './mobile.test-support.js';
 
-const row = { lane: 'claude', running: 2, queued: 1, target: 2, floor: 1, ceiling: 3, held: false, heldReason: null, writable: true };
+const row = { lane: 'claude', running: 2, queued: 1, target: 2, floor: 1, ceiling: 3, held: false, heldReason: null, writable: true, pausedFrom: null };
 const response = { v: 1, generatedAt: '', sourceState: 'healthy', lanes: [{ ...row, heldUntil: null, lastChange: null, changedBy: null }] };
 function mount(overrides = {}, onDone = vi.fn()) {
   renderMobile(<><LaneTargetSheet row={{ ...row, ...overrides }} open onClose={vi.fn()} onDone={onDone} /><MobileGuardSheet /><MobileToasts /></>);

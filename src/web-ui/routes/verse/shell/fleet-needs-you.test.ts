@@ -42,7 +42,8 @@ describe('deriveFleetNeedsYou', () => {
   it('the incident snapshot: lane down, a held lane, a switch, low disk — four items', () => {
     const result = deriveFleetNeedsYou(snapshot({
       claudeLane: 'down token rejected 2026-10-31 01:03:35',
-      lanes: [{ lane: 'codex-cmp', running: 0, target: 2, queued: 4, held: true, heldReason: 'credit exhausted', tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 }],
+      lanes: [{ lane: 'claude', running: 0, target: 12, queued: 0, held: false, heldReason: null, tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 },
+        { lane: 'codex-cmp', running: 0, target: 2, queued: 4, held: true, heldReason: 'credit exhausted', tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 }],
       switches: ['HOLD'],
       diskFreeGb: 4,
     }), NOW);
@@ -51,8 +52,9 @@ describe('deriveFleetNeedsYou', () => {
     const byId = new Map(result.items.map((i) => [i.id, i]));
     expect(byId.get('claude-lane-down')).toMatchObject({
       severity: 'urgent',
-      detail: 'Claude lane: down token rejected 2026-10-31 01:03:35',
-      nextStep: "Run the Claude lane fix script from the runs directory's bin folder, then check Fleet",
+      title: 'Claude lane is down: 12 slots idle',
+      detail: expect.stringMatching(/^token rejected · since 01:03, \d+ h ago · every hour idle is 12 worker-hours unused$/),
+      nextStep: 'runs claude setup-token, saves the token silently; the fleet rechecks within 5 minutes',
       target: 'fleet',
     });
     expect(byId.get('switches-on')).toMatchObject({
@@ -136,9 +138,10 @@ describe('deriveFleetNeedsYou', () => {
 
   it('reads a lane-down only from "down", and never prints a path', () => {
     expect(ids(deriveFleetNeedsYou(snapshot({ claudeLane: 'claude-cli' }), NOW))).toEqual([]);
-    expect(ids(deriveFleetNeedsYou(snapshot({ claudeLane: 'down: quota' }), NOW))).toContain('claude-lane-down');
-    const unsafe = deriveFleetNeedsYou(snapshot({ claudeLane: 'down /Users/mason/runs state' }), NOW);
-    expect(unsafe.items[0]!.detail).toBe('The lane reported itself down.');
+    const claude = { ...snapshot().lanes[0]!, lane: 'claude' };
+    expect(ids(deriveFleetNeedsYou(snapshot({ claudeLane: 'down: quota', lanes: [claude] }), NOW))).toContain('claude-lane-down');
+    const unsafe = deriveFleetNeedsYou(snapshot({ claudeLane: 'down /fake/private', lanes: [claude] }), NOW);
+    expect(unsafe.items[0]!.detail).toBe('The lane reported itself down · every hour idle is 2 worker-hours unused');
     expect(unsafe.items[0]!.detail).not.toContain('/Users');
   });
 });

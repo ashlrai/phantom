@@ -34,7 +34,7 @@ function snapshot(over: Partial<FleetRuns> = {}): FleetRuns {
 it('assigns every fleet destination and keeps section fallbacks', () => {
   const variants = [
     snapshot({ claudeLane: 'down', switches: ['HOLD'], diskFreeGb: 2,
-      lanes: [{ ...snapshot().lanes[0]!, lane: 'fake-lane', held: true }] }),
+      lanes: [{ ...snapshot().lanes[0]!, lane: 'claude' }, { ...snapshot().lanes[0]!, lane: 'fake-lane', held: true }] }),
     snapshot({ workers: [], mergesLastHour: { count: 0, items: [] }, events: [] }),
     snapshot({ leaders: [] }),
     snapshot({ codexPersonal: { usedPct: 100, resetsAt: '2026-11-01T12:00:00Z', asOf: new Date(NOW).toISOString() } }),

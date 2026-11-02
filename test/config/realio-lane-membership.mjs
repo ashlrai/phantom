@@ -43,6 +43,68 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/agent-bus-reply-file.test.ts', // execFileSync runs the bus-reply-file example as a real child
+  'test/agent-context-replay.test.ts', // spawnSync runs the context-replay example as a real child
+  'test/agentbootreport31ak1.test.ts', // spawnSync and spawn run the agent-boot-report script as real children
+  'test/agentcapacitywatchcli31ak4.test.ts', // spawn runs the agent-wait-capacity script as a real child
+  'test/artifactpackcli31ak3.test.ts', // spawnSync and spawn run the agent-artifact-pack script as real children
+  'test/channel-ack-replay-31za.test.ts', // spawnSync runs the channel-ack-replay example as a real child
+  'test/cli-legacy-exit-codes.test.ts', // spawnSync runs real CLI children to check exit codes
+  'test/composer-commands-doc-31.test.ts', // execSync runs git show against origin/master as a real child
+  'test/devin-bus-abort-races-oct31.test.ts', // spawn starts a real Node child for the abort race fixture
+  'test/docs-desktop-command-center.test.ts', // execFileSync runs git grep as a real child
+  'test/docs-glossary.test.ts', // execSync runs git ls-tree and grep as real children
+  'test/docs-llms-txt.test.ts', // execSync runs git ls-tree and grep as real children
+  'test/fleet-bus-request.integration.test.ts', // spawnSync runs scripts/fleet-bus-request.ts as a real child
+  'test/fleet-context-send.integration.test.ts', // spawnSync runs scripts/fleet-context-send.ts as real children
+  'test/fleet-fanout-resume.integration.test.ts', // spawnSync runs scripts/fleet-fanout-resume.ts as a real child
+  'test/fleet-runs-job-changes.test.ts', // execFileSync runs git commands in a real child
+  'test/graph-delegation-path-31za.test.ts', // spawnSync runs the graph-delegation-path example as a real child
+  'test/graph-review-candidates-31za.test.ts', // spawnSync runs the graph-review-candidates example as a real child
+  'test/handoffwaitcli31ak2.test.ts', // spawn runs scripts/agent-wait-handoff.mjs as a real child
+  'test/harness-citation-pack-31za.test.ts', // spawnSync runs the harness-citation-pack example as a real child
+  'test/harnesscitationcontract31aj6.test.ts', // spawnSync runs the harness-digest CLI as a real child
+  'test/job-notes-to-bus-31za.test.ts', // spawnSync runs the job-notes-to-bus example as a real child
+  'test/knowledge-index-vector-31q.test.ts', // execFileSync runs git init as a real child
+  'test/mcp-gateway-stdin-eof.test.ts', // spawn runs a real Node child for the gateway stdin lifecycle
+  'test/no-orig-files-31.test.ts', // execSync runs git ls-files and grep as real children
+  'test/perf-budget.test.ts', // spawnSync runs scripts/perf-budget.mjs as a real child
+  'test/phx-agentbusresume31j3.test.ts', // spawnSync runs the bus-resume example as a real child
+  'test/phx-agentbusroundtask31k2.test.ts', // execFileSync runs the bus-task-roundtrip example as real children
+  'test/phx-agentchangessnap31j2.test.ts', // spawnSync runs the job-changes example as a real child
+  'test/phx-agentgraphdependents31j5.test.ts', // spawnSync runs the graph-dependents example as a real child
+  'test/phx-agentgraphupstream31j6.test.ts', // execFileSync runs the graph-upstream example as a real child
+  'test/phx-agentharnessworklist31j9.test.ts', // spawnSync runs the harness-worklist example via npx as a real child
+  'test/phx-agentjobsnap31j1.test.ts', // spawnSync and execFileSync run the job snapshot example as real children
+  'test/phx-buscheckpoint31solb2.test.ts', // spawnSync runs the comms bus CLI as a real child
+  'test/phx-buseventlocaltime31y1.test.ts', // execFileSync runs a Node child for the bus event time check
+  'test/phx-changesdeleted31h8.test.ts', // execFileSync and execFile run real git and CLI children
+  'test/phx-channelpackrecipe31sold7.test.ts', // spawnSync runs the channel-context-roundtrip example as a real child
+  'test/phx-contextbudgetrecipe31solda.test.ts', // spawnSync runs the context-budget-selection example as a real child
+  'test/phx-digest-actionable-31v5.test.ts', // spawnSync runs the harness-digest CLI as a real child
+  'test/phx-digestcheck31e5.test.ts', // spawnSync runs the harness-digest CLI as a real child
+  'test/phx-digesttakeawaycli31x4.test.ts', // spawnSync runs the harness-digest CLI as a real child
+  'test/phx-dispatchintentrecipe31soldb.test.ts', // execFileSync and spawnSync run the dispatch intent example as real children
+  'test/phx-job-log-only-31v4.test.ts', // spawnSync runs the fleet job CLI as a real child
+  'test/phx-job-path-spaces-31r4.test.ts', // execFileSync runs git commands in a real child
+  'test/phx-jobartifactcli31x1.test.ts', // spawnSync runs the fleet job CLI as a real child
+  'test/phx-remote-ledger-route-31s5.test.ts', // binds a loopback HTTP server for the ledger gateway route
+  'test/phx-remote-local-doctor-01soll1.test.ts', // binds a loopback TCP server for the local doctor probe
+  'test/phx-remote-shell-reload-01soll2.test.ts', // binds a loopback HTTP server for the shell reload route
+  'test/phx-remoterevokeflow31f5.test.ts', // binds a loopback HTTP server for the remote revoke flow
+  'test/phx-rewardevidence31solc2.test.ts', // execFileSync runs git commands in a real child
+  'test/phx-taskfrontiercommand31af2.test.ts', // execFileSync runs the task-frontier example as real children
+  'test/phx-upgrade-learning-digest-31w1.test.ts', // spawnSync runs the harness-digest CLI as a real child
+  'test/phx-upgradeackaudit31q9.test.ts', // spawnSync runs the channel-receipt-upgrade-audit example as a real child
+  'test/phx-upgradegraphaudit31q8.test.ts', // spawnSync runs the graph-upgrade-audit example as a real child
+  'test/phx-upgradehistoryaudit31q6.test.ts', // spawnSync runs the history-upgrade-audit example as real children
+  'test/phx-upgrademeterparity31q3.test.ts', // execFile runs the personal usage CLI in a real Node child
+  'test/phx-upgradeworkerlinks31q5.test.ts', // spawnSync runs the worker-evidence-audit example as real children
+  'test/phx-usagemotionrecipe31sold9.test.ts', // execFileSync runs the usage-motion-incident example as a real child
+  'test/phx-usagevalidationreport31solc5.test.ts', // spawnSync runs the usage validate CLI as real children
+  'test/resolve-remote-branch-head.test.ts', // execSync runs git commands in a real child
+  'test/realio-lane-guard-green.test.ts', // execFileSync runs the real lane guard in a Node child
+  'test/fleet-ci-daily-plan-nov01.test.ts', // Applies generated patches with real git in a temporary repo.
   'test/mcp-gateway-lazy-start.test.ts', // Real stdio gateway + downstream subprocesses.
   // test/integration/lane-membership.mjs DERIVES its view by filtering this
   // array for `test/integration/` — importing it here instead would be a
@@ -91,6 +153,9 @@ export const REAL_IO_TEST_FILES = [
   'test/remote-gateway-auth.test.ts', // real loopback gateway and Mac-only Unix socket pairing ceremony
   'test/remote-admin-race.test.ts', // real owned Unix socket child killed to reproduce stale-admin startup races
   'test/remote-gateway-http.test.ts', // real loopback Hub and gateway servers, Access assertion and SSE lifecycle
+  'test/remote-gateway-inbox-source-pin-nov1.test.ts', // real loopback Hub and gateway servers through the mutation-token boundary
+  'test/remote-inbox-mobile-channel-31.test.ts', // real loopback Hub and gateway servers plus the durable channel receipt and bus stores
+  'test/gatewayjobreadrecut31.test.ts', // real loopback Hub and gateway servers forwarding the reviewed fleet job read
   'test/remote-fleet-feed.test.ts', // real paired-device gateway and loopback fleet feed
   'test/api-error-no-echo.test.ts', // one real loopback web server per test sweeping the /api error paths
   'test/builtin-activity-pgid-reuse.test.ts', // private activity journals with synthetic identity reuse probes
@@ -539,6 +604,7 @@ export const REAL_IO_TEST_FILES = [
   'test/confine-autonomous-darwin-310b.test.ts', // real sandbox-exec children + a real net server as an egress target
   'test/engines-judges-310b.test.ts', // execs the grok-cli launcher (fake pinned binary in a seat fixture) exactly as the fleet would, to inspect env scrubbing
   'test/fleet-live-api-310b.test.ts', // real web server bind for /api/verse/fleet/live
+  'test/fleet-live-api-drop-jobs.test.ts', // real web server bind for /api/verse/fleet/live/drop-jobs
   'test/overnight-api-310b.test.ts', // real web server bind for /api/verse/overnight
   'test/w1.post-merge-halt.test.ts', // real git in h1 fixture repos for the post-merge halt
   // Added at the 3.10 protected-infra pass (R3e): two the guard flagged, one it cannot see.
@@ -621,9 +687,19 @@ export const REAL_IO_TEST_FILES = [
   'test/cli-port-errors.test.ts', // real 127.0.0.1 bind to provoke a genuine EADDRINUSE
   'test/site-seo.test.ts', // spawns real git (log/ls-files/status) to bound sitemap lastmod dates against commit dates
   'test/affected-map-audit.test.ts', // spawnSync node scripts/audit-affected-map.mjs against temp repo fixtures
-  'test/integration/locus-credential-boundary.test.ts', // spawnSync node children prove credential redaction across the process boundary
   'test/m30.merge-queue-reaper.test.ts', // execFileSync bash drives a real git fixture and the reaper script end to end
   'test/collision-free-edits.test.ts', // real temp git repos: init/commit/branch/merge fixtures for the concurrent-fragment merge cases
   'test/improve-reverted.test.ts', // real temp git repo fixture (init/commit/revert) for the revert-detection case
   'test/desktop-nightly-build.test.ts', // real `node <script> --check` and `tar` children plus an on-disk .app.tar.gz fixture
+  'test/fleet-bus-work-claims-01.test.ts', // spawnSync runs fleet-bus-work-claims as a real child
+  'test/fleet-context-run-solu3.test.ts', // execFileSync runs fleet-context-run-solu3 example as a real child
+  'test/fleet-dirty-union-preview-nov01.test.ts', // spawnSync drives a real git fixture (dirty union preview)
+  'test/fleet-dirty-landed.test.ts', // execFileSync drives a real git fixture (dirty landed classification)
+  'test/remote-gateway-bus-read-session-nov01.test.ts', // binds a real loopback HTTP server (remote-gateway bus read session)
+  'test/verify-changed-tsc-cache.test.ts', // spawnSync node scripts/verify-changed.mjs --tsc-cache as a real child
+  'test/bus-loop-active-control-01sole2.test.ts', // spawn runs a real node --import tsx child for the bus-loop active-control case
+  'test/config-set-help-exit.test.ts', // spawnSync runs the real CLI for config-set help/exit checks
+  'test/fleet-graph-process-tree-stop-nov01.test.ts', // spawns real node children to exercise process-tree stop
+  'test/phx-graph-node-stream01.test.ts', // spawn and spawnSync run the real `fleet graph-run` CLI
+  'test/planner-cycle-single-01solc5.test.ts', // spawnSync runs a real node child for the single-cycle planner fixture
 ];

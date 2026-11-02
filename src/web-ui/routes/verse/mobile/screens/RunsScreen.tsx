@@ -33,7 +33,9 @@ import { busLiteQuery } from '../bus-query.js';
 import { mergeLaneRows } from '../lane-target-model.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
-import { fleetRunsQuery, postFleetRunsInbox } from '../runs-queries.js';
+import { postFleetRunsInbox } from '../runs-queries.js';
+import { waitingRunsQuery as fleetRunsQuery } from '../runs-waiting-query.js';
+import { waitingView } from '../runs-waiting-model.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
 import { Badge, EmptyState, ErrorState, Meter, Row, Section, ui } from '../ui-parts.js';
 import styles from './RunsScreen.module.css';
@@ -133,6 +135,7 @@ export function RunsScreen() {
     }
   } else {
     const now = Date.now();
+    const waiting = waitingView(data, now);
     const laneDown = data.claudeLane !== null && data.claudeLane.toLowerCase().includes('down');
     const leaderAge = data.leaders.reduce<number | null>((best, l) => (l.ageSeconds !== null && (best === null || l.ageSeconds < best) ? l.ageSeconds : best), null);
     const workers = data.workers.slice(0, WORKER_CAP);
@@ -163,6 +166,15 @@ export function RunsScreen() {
                   trailing={lane.held ? <Badge tone="warning">held</Badge> : undefined}
                 />
               ))}
+            </div>
+          )}
+        </Section>
+        <Section title="Waiting to launch" flat>
+          <p className={ui.sectionFooter}>{waiting.verdict}</p>
+          {waiting.rows.length === 0 ? <EmptyState title="Nothing waiting" /> : (
+            <div className={ui.group}>
+              {waiting.rows.map((row) => <Row key={row.key} title={row.title} subtitle={row.subtitle}
+                trailing={row.badge ? <Badge tone={row.tone}>{row.badge}</Badge> : undefined} />)}
             </div>
           )}
         </Section>

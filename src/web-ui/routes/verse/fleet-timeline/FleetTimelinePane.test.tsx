@@ -7,7 +7,7 @@ import { FleetTimelinePane } from './FleetTimelinePane.js';
 
 const fixture: FleetRunsV1 = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
-  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, host: null,
   lanes: [
     { lane: 'codex', running: 2, target: 3, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null },
     { lane: 'devin', running: 0, target: 1, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null },
@@ -58,13 +58,15 @@ it('polls every ten seconds only while visible', async () => {
   let visibility = 'visible';
   vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility as DocumentVisibilityState);
   const view = render(<FleetTimelinePane visible />);
+  const fleetReads = () => vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/verse/fleet/runs').length;
   await act(async () => {});
-  await act(async () => { vi.advanceTimersByTime(10_000); }); expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => { vi.advanceTimersByTime(10_000); }); expect(fleetReads()).toBe(2);
+  const callsBeforeHidden = vi.mocked(fetch).mock.calls.length;
   visibility = 'hidden'; act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-  await act(async () => { vi.advanceTimersByTime(20_000); }); expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => { vi.advanceTimersByTime(20_000); }); expect(fetch).toHaveBeenCalledTimes(callsBeforeHidden);
   view.rerender(<FleetTimelinePane visible={false} />);
   visibility = 'visible'; act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-  await act(async () => { vi.advanceTimersByTime(10_000); }); expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => { vi.advanceTimersByTime(10_000); }); expect(fetch).toHaveBeenCalledTimes(callsBeforeHidden);
   await act(async () => { view.rerender(<FleetTimelinePane visible />); });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fleetReads()).toBe(3);
 });

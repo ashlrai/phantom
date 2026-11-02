@@ -19,6 +19,7 @@ import { useToast } from '../../../components/primitives/Toast.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { Panel, SettingRow } from './SettingRow.js';
 import { PairedDevicesRows } from './PairedDevicesRows.js';
+import { PhoneAccessRows } from './PhoneAccessRows.js';
 import { FleetSourcesRows } from './FleetSourcesRows.js';
 import styles from './SettingsSection.module.css';
 
@@ -121,6 +122,7 @@ export function ConnectionPanel() {
 
       <h4 className={styles.panelTitle} data-verse-anchor="fleet-sources">Fleet on this Mac</h4>
       <FleetSourcesRows />
+      <PhoneAccessRows />
       <PairedDevicesRows />
 
       {unlockOpen && <MutationTokenDialog

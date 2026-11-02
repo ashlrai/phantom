@@ -15,26 +15,26 @@ function compose(onPosted = vi.fn()) {
 it('reports a duplicate, clears the draft and does not highlight', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ at: 'now', duplicate: true, accepted: false })));
   const { box, onPosted } = compose();
-  await screen.findByText('Already in the inbox · sent within the last 10 minutes');
+  await screen.findByText('Already in the inbox (same text within the dedupe window)');
   expect(box).toHaveValue('');
   expect(onPosted).not.toHaveBeenCalled();
 });
-it('shows the local time after a write', async () => {
-  const at = new Date(2026, 9, 31, 5, 42).toISOString();
+it('shows the inbox time after a write', async () => {
+  const at = '2026-10-31T09:42:00Z';
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ at, duplicate: false, accepted: true })));
   const { onPosted } = compose();
-  await screen.findByText('Sent · 05:42');
+  await screen.findByText('Landed 05:42 · waiting for the next leader pass');
   expect(onPosted).toHaveBeenCalledWith('Hello');
 });
 it('keeps the draft on 503 and retries the same text', async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: 'Unavailable' }, { status: 503 }))
-    .mockResolvedValueOnce(Response.json({ at: new Date(2026, 9, 31, 5, 42).toISOString(), accepted: true }));
+    .mockResolvedValueOnce(Response.json({ at: '2026-10-31T09:42:00Z', accepted: true }));
   vi.stubGlobal('fetch', fetcher);
   const { box, onPosted } = compose();
   await screen.findByText('Unavailable');
   expect(box).toHaveValue('Hello');
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  await screen.findByText('Sent · 05:42');
+  await screen.findByText('Landed 05:42 · waiting for the next leader pass');
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(JSON.parse(String(fetcher.mock.calls[1]![1]!.body)).text).toBe('Hello');
   expect(box).toHaveValue('');

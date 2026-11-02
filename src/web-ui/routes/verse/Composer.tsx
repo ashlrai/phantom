@@ -39,7 +39,7 @@
  * ATTACHMENTS: [+] / ⌘U, paste or drop. Each becomes a private copy on the
  * server and an `@path` token in the text, which the engine grants with
  * exactly that folder. `@` fuzzy-finds project files; `/` at the start offers
- * handoff, compact, new, plan, effort, model, fleet, lane and pane.
+ * handoff, compact, new, plan, effort, model, fleet, lane, release and pane.
  *
  * At 375px (or a column too narrow for the pickers) the footer folds to
  * [+] [mic] · seat · ⋯ (the pickers in a bottom sheet) · Send.
@@ -55,6 +55,11 @@ import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
 import { readFailureReason } from '../../data/client.js';
 import { refetchQuery } from '../../data/cache.js';
 import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './composer/fleet-interject.js';
+import { runBusCommand } from './composer/bus-post-command.js';
+import { parseJobCommand, runJobCommand } from './composer/job-drop-command.js';
+import { runPlanCommand } from './composer/planner-run-command.js';
+import { decidePlannerWake, getLastPlannerWakeAt, wakePlannerForOrder } from './composer/planner-wake.js';
+import { runReleaseCommand } from './composer/lane-release-command.js';
 import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
 import { laneTargetsQuery } from './ops/lane-targets-queries.js';
 import { opsRunsQuery } from './ops/ops-runs-queries.js';
@@ -72,8 +77,11 @@ import {
   applyCompletion,
   insertAttachmentRef,
   matchSlashCommands,
+  parseBusCommand,
   parseFleetCommand,
   parseLaneCommand,
+  parseReleaseCommand,
+  parsePlanCommand,
   parsePaneCommand,
   mentionFor,
   removeAttachmentRef,
@@ -322,7 +330,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const queueFull = (queue?.items.length ?? 0) >= VERSE_QUEUE_MAX;
   const hasText = text.trim().length > 0;
   const blockedByUpload = attachments.uploading;
-  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/fleet(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
+  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/(?:bus|fleet)(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
   const showHint = !hintSeen && !sentHere;
   const showHandoffHelp = handoffDraft && !sentHere && hasText;
   const cost = useMemo(
@@ -543,11 +551,15 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Fleet, lane, pane and compact insert text; other commands consume their token.
+    // Bus, fleet, lane, release, plan, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
+      case 'job':
+      case 'bus':
       case 'fleet':
       case 'lane':
+      case 'plan':
+      case 'release':
       case 'pane':
       case 'compact': {
         if (command.id === 'fleet') setFleetStatus({ text: 'Type what to tell the leaders', error: false });
@@ -563,11 +575,6 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       case 'handoff':
         setDraft(without);
         onHandoff?.();
-        return;
-      case 'plan':
-        setDraft(without);
-        placeCaret(0);
-        void changePermission('plan');
         return;
       case 'effort':
       case 'model':
@@ -730,6 +737,41 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       }
       return;
     }
+    if (parsePlanCommand(text)) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runPlanCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    const release = parseReleaseCommand(text);
+    if (release) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runReleaseCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) {
+          setDraft(current => current === text ? '' : current);
+          await Promise.all([
+            refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+            refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+          ]);
+        }
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
     const lane = parseLaneCommand(text);
     if (lane) {
       if ('error' in lane) {
@@ -765,6 +807,32 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       return;
     }
     laneConfirmation.current = null;
+    if (parseBusCommand(text)) {
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runBusCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    if (parseJobCommand(text)) {
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runJobCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
     const fleet = parseFleetCommand(text);
     if (fleet || /^\/fleet\s*$/.test(text)) {
       if (!fleet) {
@@ -776,7 +844,19 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       try {
         const ack = await postFleetInterjection(fleet.text);
         setDraft((current) => draftAfterSend(ack.outcome, current, text));
-        setFleetStatus({ ...fleetSendLanding(ack), error: false });
+        const landing = fleetSendLanding(ack);
+        const wake = decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
+        const wakingText = `${landing.text} · planner waking`;
+        setFleetStatus({ ...landing, text: wake ? wakingText : landing.text, error: false });
+        if (wake) {
+          void wakePlannerForOrder(fleet.text).then(result => {
+            if (result.kind === 'unavailable') {
+              setFleetStatus(current => current?.text === wakingText ? { ...landing, error: false } : current);
+            } else {
+              setFleetStatus({ text: result.text, error: result.kind === 'failed' || result.kind === 'locked' || result.kind === 'no-slate' });
+            }
+          });
+        }
         await refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true);
       } catch (error) {
         setFleetStatus({ text: readFailureReason(error), error: true });

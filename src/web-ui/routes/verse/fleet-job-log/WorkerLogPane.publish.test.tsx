@@ -19,7 +19,7 @@ afterEach(() => { vi.restoreAllMocks(); evictAll(); });
 function serve(publish: unknown) {
   spy = vi.spyOn(client, 'apiGet').mockImplementation(async (path: string) => path === '/api/verse/fleet/runs' ? fixture : { ...base, publish });
 }
-it('renders the worker TEST line, the owner-review note, and auto-merge off', async () => {
+it('renders the worker TEST line and the owner-review note', async () => {
   serve({ prUrl: 'https://github.com/example/repo/pull/1', autoMerge: false, testLine: 'TEST vitest 12 passed', sensitive: ['src/cli/desktop.ts'] });
   render(<WorkerLogPane visible />);
   const publish = await screen.findByRole('region', { name: 'Publish' });
@@ -28,13 +28,12 @@ it('renders the worker TEST line, the owner-review note, and auto-merge off', as
   expect(publish).toHaveTextContent('Tests: TEST vitest 12 passed');
   const note = within(publish).getByRole('note');
   expect(note).toHaveTextContent('Touches owner-reviewed paths: src/cli/desktop.ts');
-  expect(note).toHaveTextContent('needs an owner review before it can merge');
-  expect(within(publish).getByText('Auto-merge: off')).toBeInTheDocument();
+  expect(note).toHaveTextContent(/^Touches owner-reviewed paths: src\/cli\/desktop.ts$/);
   expect(screen.getByRole('link', { name: 'PR #1' })).toBeInTheDocument();
   expect(spy).toHaveBeenCalledWith('/api/fleet/job?id=RQ-OLD', undefined);
 });
 it('renders no publish facts when none apply', async () => {
-  serve({ prUrl: 'https://github.com/example/repo/pull/1', autoMerge: true, testLine: null, sensitive: null });
+  serve({ prUrl: 'https://github.com/example/repo/pull/1', autoMerge: false, testLine: null, sensitive: null });
   render(<WorkerLogPane visible />);
   await screen.findByRole('log');
   expect(screen.getByRole('link', { name: 'PR #1' })).toBeInTheDocument();
@@ -49,20 +48,18 @@ it('renders nothing for an empty sensitive list', async () => {
   await screen.findByRole('log');
   expect(screen.queryByRole('region', { name: 'Publish' })).not.toBeInTheDocument();
 });
-it('collapses whitespace and caps a long TEST line at 200 characters', async () => {
+it('preserves whitespace and the full TEST line', async () => {
   serve({ prUrl: 'https://github.com/example/repo/pull/1', autoMerge: true, testLine: `${'a'.repeat(100)}   \n\t ${'b'.repeat(220)}`, sensitive: null });
   render(<WorkerLogPane visible />);
   const publish = await screen.findByRole('region', { name: 'Publish' });
-  const code = within(publish).getByText(/^a+ b+…$/);
-  expect(code.tagName).toBe('CODE');
-  expect(code.textContent).toBe(`${'a'.repeat(100)} ${'b'.repeat(98)}…`);
-  expect(code.textContent).toHaveLength(200);
+  const code = publish.querySelector('code');
+  expect(code).not.toBeNull();
+  expect(code?.textContent).toBe(`${'a'.repeat(100)}   \n\t ${'b'.repeat(220)}`);
 });
-it('caps owner-reviewed paths at five with a +N more tail', async () => {
+it('shows every owner-reviewed path', async () => {
   serve({ prUrl: 'https://github.com/example/repo/pull/1', autoMerge: true, testLine: null, sensitive: ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts'] });
   render(<WorkerLogPane visible />);
   const note = await screen.findByRole('note');
-  expect(note).toHaveTextContent('Touches owner-reviewed paths: a.ts, b.ts, c.ts, d.ts, e.ts +2 more');
-  expect(note).not.toHaveTextContent('f.ts');
+  expect(note).toHaveTextContent('Touches owner-reviewed paths: a.ts, b.ts, c.ts, d.ts, e.ts, f.ts, g.ts');
   expect(screen.queryByText('Auto-merge: off')).not.toBeInTheDocument();
 });

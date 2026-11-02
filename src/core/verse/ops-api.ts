@@ -51,7 +51,7 @@ import { createCompanionCoordinator } from '../proactive/coordination.js';
 import type { CompanionList, CompanionTask } from '../proactive/coordination-types.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { fetchOrigin, readSelfUpdateStatus, type SelfUpdateDeps } from './self-update-status.js';
-import { applySelfUpdate, detectRestartMode, scheduleRestart, realSelfUpdateRunner, type SelfUpdateApplyResult } from './self-update-apply.js';
+import { applySelfUpdate, detectRestartMode, scheduleRestart, realSelfUpdateRunner, selfUpdateApplyInProgress, type SelfUpdateApplyResult } from './self-update-apply.js';
 import { probeReleases, type OpsReleaseProbeDeps } from './ops-releases.js';
 import {
   OPS_BOARD_JOURNAL_WINDOW_MS,
@@ -67,6 +67,7 @@ import {
   VERSE_OPS_LEADERS_PATH,
   VERSE_OPS_PATH,
   VERSE_OPS_RELEASES_PATH,
+  VERSE_OPS_RESET_RELEASES_PATH,
   VERSE_OPS_SELF_UPDATE_PATH,
   type OpsBoardColumn,
   type OpsBoardV1,
@@ -76,10 +77,13 @@ import {
   type OpsLeadersV1,
   type OpsReleasesV1,
   type OpsRouteDecision,
+  type OpsSelfUpdateV1,
   type OpsSourceState,
   type OpsTaskRow,
   type OpsTaskSource,
 } from './ops-types.js';
+
+export type OpsSelfUpdateWithApplying = OpsSelfUpdateV1 & { applying: { startedAt: string } | null };
 
 /** Test seams : production defaults are the real buses, never fixtures. */
 export interface OpsApiDeps {
@@ -460,12 +464,20 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
 
     if (path === VERSE_OPS_SELF_UPDATE_PATH && method === 'GET') {
       if (!queryParam(req, res, [])) return true;
+      // The desktop gear badge polls this route whenever the app is open: it
+      // is the heartbeat that arms the autobackoff reset-release loop, once
+      // per process and only while mutations are on. Never under Vitest.
+      if (ctx.allowDispatch && !process.env.VITEST) {
+        const { startResetReleaseLoop } = await import('../fleet/usage-reset-release.js');
+        startResetReleaseLoop({ now });
+      }
       if (!statusCache || now() - statusCache.at >= 2000) {
         const entry = { at: Infinity, value: readSelfUpdateStatus(deps.selfUpdate) };
         statusCache = entry;
         void entry.value.then(() => { entry.at = now(); });
       }
-      sendJson(res, 200, await statusCache.value);
+      const status = await statusCache.value;
+      sendJson(res, 200, { ...status, applying: selfUpdateApplyInProgress() } satisfies OpsSelfUpdateWithApplying);
       return true;
     }
     if (path === '/api/verse/ops/leader-journal' && method === 'GET') {
@@ -542,6 +554,19 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
         repos: paths ? await releases(paths) : [],
         sourceState: paths ? 'healthy' : 'degraded',
       } satisfies OpsReleasesV1);
+      return true;
+    }
+
+    if (path === VERSE_OPS_RESET_RELEASES_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!queryParam(req, res, [])) return true;
+      const { getResetReleaseState, readResetReleases } = await import('../fleet/usage-reset-release.js');
+      sendJson(res, 200, {
+        v: 1,
+        generatedAt: new Date(now()).toISOString(),
+        loop: getResetReleaseState(),
+        releases: await readResetReleases(),
+      });
       return true;
     }
 

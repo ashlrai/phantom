@@ -152,8 +152,23 @@ for i, j in seclist: print(("DRY " if DRY else "") + "HOLD-SECURITY\t" + j)
 for j, repo, l, tier, pf, p, i in out: print(("DRY " if DRY else "") + "\t".join([j, repo, l, tier]))
 if DRY or (not out and not seclist): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
-with open(Q + "/ready.lock", "a") as lk:
-    fcntl.flock(lk, fcntl.LOCK_EX)
+# RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
+# timeouts; on timeout exit before claiming anything so the next pass retries the same lines.
+def ev(msg):
+    with open(EV, "a") as f: f.write("%s %s\n" % (TS, msg))
+def ready_lock(who="restock"):
+    timeout = float(os.environ.get("ASHLR_READY_LOCK_TIMEOUT", 10))
+    lk = open(Q + "/ready.lock", "a"); t0 = time.monotonic()
+    while True:
+        try: fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+        except OSError:
+            if time.monotonic() - t0 >= timeout:
+                lk.close(); ev("READY_LOCK_TIMEOUT %s waited %.1fs" % (who, time.monotonic() - t0))
+                sys.exit("restock: ready.lock busy for %.0fs; nothing claimed" % timeout)
+            time.sleep(0.05)
+    if time.monotonic() - t0 > 1: ev("READY_LOCK_WAIT %s %.1fs" % (who, time.monotonic() - t0))
+    return lk
+with ready_lock() as lk:
     with open(Q + "/ready.tsv", "a") as f:
         for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
 with open(Q + "/claimed.tsv", "a") as f:
@@ -163,5 +178,9 @@ for j, repo, l, tier, pf, p, i in out:   # mark local copy so the next restock n
 for i, j in seclist:   # park security-pinned lines; the tag stays on the line and READY is never restored
     lines[i] = re.sub(r"^- READY ", "- HOLD-SECURITY %s restock " % HM, lines[i], count=1)
     if PIN not in lines[i]: lines[i] = lines[i].rstrip() + " " + PIN
+# RQ-PHX-RESTOCKAPPENDRACE31: the early read is stale by now, and a writer appending in between had
+# its lines erased by the whole-file replace. Re-read just before it and carry the appended tail
+# through; same-index lines keep this pass's CLAIMED/HOLD-SECURITY marks.
+lines += rd(Q + "/router-queue.md").splitlines()[len(lines):]
 open(Q + "/router-queue.md.tmp", "w").write("\n".join(lines) + "\n"); os.replace(Q + "/router-queue.md.tmp", Q + "/router-queue.md")
 with open(EV, "a") as f: f.write("%s RESTOCK queued %d (%s) bold=%.2f sec=%d\n" % (TS, len(out), ", ".join("%s=%d" % (l, len(picks[l])) for l in CODEX), bold_frac, len(seclist)))

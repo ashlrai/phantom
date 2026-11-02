@@ -3,14 +3,16 @@ import { VERSE_FLEET_RUNS_PATH } from '../../../../core/verse/fleet-runs-types.j
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { hasMutationHold } from '../../../data/auth-store.js';
 import { refetchQuery } from '../../../data/cache.js';
-import { apiGet, readFailureReason } from '../../../data/client.js';
+import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import { useNow } from '../autonomy/use-ticker.js';
+import { formatRelative } from '../autonomy/format.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { JobRefs } from '../fleet/JobRefs.js';
 import { DirectivesStrip } from '../leader/DirectivesStrip.js';
 import { ChannelBadge } from '../leader/ThreadItems.js';
@@ -21,6 +23,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
+import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
 import { fleetInbox, lineChannel, lineSourceLabel, mergeThread, type MergedLine } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { mentionedRefs } from './thread-refs.js';
@@ -52,6 +55,7 @@ function LineView({ line }: { line: MergedLine }) {
         <span className={leaderStyles.avatar} data-from={line.who} aria-hidden="true">{leader ? 'L' : 'M'}</span>
         <span className={leaderStyles.who}>{leader ? 'Leader' : 'You'}</span>
         {leader && channel ? <ChannelBadge channel={channel} /> : <span className={leaderStyles.channel} data-channel={channel ?? undefined} title={`Sent via ${label}`}>{label}</span>}
+        {!leader && line.ack ? <span className={leaderStyles.channel} data-ack={line.ack.state}>{line.ack.text}</span> : null}
         <time className={leaderStyles.time} dateTime={iso ?? undefined} title={iso ? new Date(line.at).toLocaleString('en-US') : 'Time unknown'}>{clock}</time>
       </header>
       <div className={leaderStyles.groupBody}>
@@ -70,13 +74,32 @@ function LineView({ line }: { line: MergedLine }) {
   );
 }
 
+function BusReplyView({ row, now }: { row: BusReply; now: number }) {
+  return <section className={leaderStyles.group} aria-label="Bus reply">
+    <header className={leaderStyles.groupHead}>
+      <span className={leaderStyles.who}>{row.from}</span>
+      <span className={leaderStyles.channel}>Via bus</span>
+      <span className={leaderStyles.channel}>{row.kind}</span>
+      {row.expired ? <span className={leaderStyles.channel}>expired</span> : null}
+      <time className={leaderStyles.time} dateTime={row.at} title={new Date(row.at).toLocaleString()}>{formatRelative(row.at, now)}</time>
+    </header>
+    <div className={leaderStyles.groupBody}><div className={leaderStyles.entry}>{row.excerpt}</div></div>
+  </section>;
+}
+
 export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const thread = useQuery(leaderThreadQuery, { enabled: visible, freshMs: 5_000 });
   const runs = useQuery(fleetRunsQuery, { enabled: visible, freshMs: 5_000 });
   const directives = useQuery(leaderDirectivesQuery, { enabled: visible, freshMs: 30_000 });
+  const busStatus = useQuery(agentBusStatusQuery, { enabled: visible && !agentBusMissing(), freshMs: 10_000 });
+  const after = Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100);
+  const busPageQuery = useMemo(() => agentBusPageQuery(after, 100), [after]);
+  const busPage = useQuery(busPageQuery, { enabled: visible && busStatus.data?.source === 'available' && !agentBusMissing(), freshMs: 10_000 });
   const refetchThread = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetRunsQuery);
   const refetchDirectives = useRefetch(leaderDirectivesQuery);
+  const refetchBusStatus = useRefetch(agentBusStatusQuery);
+  const refetchBusPage = useRefetch(busPageQuery);
   const actions = useSurfaceActions();
   const logRef = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
@@ -92,29 +115,34 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
 
   usePollWhileVisible(() => { refetchThread(); refetchRuns(); }, 5_000, { enabled: visible });
   usePollWhileVisible(refetchDirectives, 30_000, { enabled: visible });
+  usePollWhileVisible(() => {
+    if (!agentBusMissing()) { refetchBusStatus(); if (busStatus.data?.source === 'available') refetchBusPage(); }
+  }, 10_000, { enabled: visible && !agentBusMissing() });
 
   const read = thread.data;
   const messages = read?.value?.messages ?? NO_MESSAGES;
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
-  const merged = useMemo(() => mergeThread(messages, inbox, now), [messages, inbox, now]);
+  const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data), [messages, inbox, now, runs.data]);
+  const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now), [busPage.data, now]);
 
   // One row per line, keeping the conversation's day separators; undated lines go last.
   const items = useMemo(() => {
-    const out: ({ type: 'day'; key: string; label: string } | { type: 'line'; key: string; line: MergedLine })[] = [];
+    const out: ({ type: 'day'; key: string; label: string } | { type: 'line'; key: string; line: MergedLine } | { type: 'bus'; key: string; row: BusReply })[] = [];
     let day = '';
-    for (const line of [...merged.lines, ...merged.undated]) {
-      if (Number.isFinite(line.at)) {
-        const d = new Date(line.at);
+    for (const item of mergeByTime([...merged.lines, ...merged.undated], busRows)) {
+      const at = item.type === 'line' ? item.line.at : Date.parse(item.row.at);
+      if (Number.isFinite(at)) {
+        const d = new Date(at);
         const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
         if (key !== day) {
           day = key;
           out.push({ type: 'day', key: `day-${key}`, label: dayLabel(d.toISOString(), now) });
         }
       }
-      out.push({ type: 'line', key: line.id, line });
+      out.push(item.type === 'line' ? { ...item, key: item.line.id } : { ...item, key: item.row.key });
     }
     return out;
-  }, [merged, now]);
+  }, [merged, busRows, now]);
 
   const lastKey = items.length ? items[items.length - 1]!.key : null;
   const forcedAt = useRef(scrollVersion);
@@ -166,7 +194,10 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
 
   const threadMissing = read !== undefined && read.value === null;
   const empty = items.length === 0;
-  const loading = read === undefined && runs.data === undefined && runs.error === undefined;
+  const loading = empty && read === undefined && runs.data === undefined && runs.error === undefined;
+  const busError = busStatus.error ?? busPage.error;
+  const busUnavailable = agentBusMissing() || (busError instanceof ApiError && (busError.status === 404 || busError.status === 503))
+    || busStatus.data?.source === 'missing' || busStatus.data?.source === 'unavailable';
   let note: string | null = null;
   if (!empty && threadMissing) note = read!.reason ?? 'The Leader conversation is not available on this server.';
   else if (!empty && !inbox.length && runs.error !== undefined) note = 'The fleet inbox could not be reached.';
@@ -182,12 +213,14 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   } else {
     body = items.map(item => item.type === 'day'
       ? <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>
-      : <LineView key={item.key} line={item.line} />);
+      : item.type === 'line' ? <LineView key={item.key} line={item.line} /> : <BusReplyView key={item.key} row={item.row} now={now} />);
   }
 
   return <div className={styles.root}>
     <ActionStatus actions={actions} />
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
+    <p className={styles.note}>{busRows.length} bus replies</p>
+    {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
         const el = logRef.current;

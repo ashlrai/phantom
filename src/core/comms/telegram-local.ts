@@ -2,9 +2,10 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
+import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import type { AshlrConfig } from '../types.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { readTelegramHealth } from '../integrations/telegram.js';
 
 function snapshot(names: string[]): Record<string, unknown> | null {
   for (const name of names) {
@@ -23,15 +24,17 @@ function label(value: unknown): string {
 }
 
 export async function localTelegramCommand(text: string, cfg: AshlrConfig): Promise<string | null> {
-  const match = /^\s*\/?(status|queue|usage|approvals)(?:@\w+)?\s*$/i.exec(text);
+  void cfg;
+  if (isOperatorStatusAsk(text)) {
+    try {
+      return formatOperatorGlance(await readOperatorGlance());
+    } catch {
+      return 'Fleet status unavailable.';
+    }
+  }
+  const match = /^\s*\/?(queue|usage|approvals)(?:@\w+)?\s*$/i.exec(text);
   if (!match) return null;
   switch (match[1]!.toLowerCase()) {
-    case 'status': {
-      const health = readTelegramHealth(cfg);
-      const { buildBrief } = await import('./leader-line.js');
-      const brief = await buildBrief('instant', cfg, { narrativeTimeoutMs: 0 });
-      return `${brief.text}\n\nTelegram poller: ${health.pollerAlive ? 'recent heartbeat' : 'no recent heartbeat'}\nLast poll: ${health.lastPoll ?? 'never'}\nLast update: ${health.lastUpdateId ?? 'none'}\nToken present: ${health.tokenPresent ? 'yes' : 'no'}\nLast Leader tick: ${health.leaderTick}\nLocal recorded state; no daemon or model required.`;
-    }
     case 'queue': {
       const state = snapshot(['queue.v1.json', 'queue.v1', 'router/queue.json', 'ashlr-fleet-queue.json']);
       if (!state) return 'Queue snapshot unavailable. No local queue.v1 or router mirror was found.';

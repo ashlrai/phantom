@@ -5,6 +5,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { Panel, SettingRow } from './SettingRow.js';
 import { lastUsedText, revokeCommand, sortDevices } from './paired-devices-model.js';
 import { pairedDevicesQuery } from './paired-devices-query.js';
+import { PendingPhoneRows } from './PendingPhoneRows.js';
 
 export function PairedDevicesRows() {
   const read = useQuery(pairedDevicesQuery);
@@ -21,6 +22,7 @@ export function PairedDevicesRows() {
     }
   }
   return <Panel title="Paired devices">
+    <PendingPhoneRows />
     {read.error ? <p>Paired devices unavailable.</p> : !read.data ? <p>Loading paired devices…</p>
       : read.data.devices.length === 0 ? <p>No phones are paired. Run <code>phm verse remote invite &lt;Access-subject&gt;</code> to pair one.</p>
         : sortDevices(read.data.devices).map(device => {

@@ -15,6 +15,8 @@ const n = nullable(num);
 const s = nullable(str);
 const source: Check<'healthy' | 'degraded' | 'missing' | 'not-landed'> = (v): v is 'healthy' | 'degraded' | 'missing' | 'not-landed' =>
   v === 'healthy' || v === 'degraded' || v === 'missing' || v === 'not-landed';
+const mergeItem: Check<{ repo: string; number: number; title: string; mergedAt?: string | null; openedAt?: string | null }> =
+  shape({ repo: str, number: num, title: str, mergedAt: optional(s), openedAt: optional(s) });
 const fleetRunsShape = shape({
   v: ((v): v is 1 => v === 1), generatedAt: str,
   sources: shape({ runsDir: source, workers: source, inbox: source, codex: source, merges: source }),
@@ -24,7 +26,7 @@ const fleetRunsShape = shape({
   claimed: optional(array(shape({ job: str, lane: str, tier: str, at: str }))),
   leaders: array(shape({ label: str, ageSeconds: n })), orchestratorAgents: n,
   publishesLastHour: array(shape({ job: str, lane: s, url: s, at: str })),
-  mergesLastHour: shape({ count: n, items: array(shape({ repo: str, number: num, title: str })) }),
+  mergesLastHour: shape({ count: n, items: array(mergeItem) }),
   events: array(shape({ at: str, kind: str, text: str })),
   codexPersonal: nullable(shape({ usedPct: n, resetsAt: s, asOf: s })),
   inbox: array(shape({ at: str, source: str, text: str })),
@@ -33,7 +35,7 @@ const fleetRunsShape = shape({
 const hostShape = nullable(shape({ load1: n, load5: n, load15: n, cores: n, ratio: n }));
 type Host = typeof hostShape extends Check<infer T> ? T : never;
 type BaseFleetRuns = typeof fleetRunsShape extends Check<infer T> ? T : never;
-export type FleetRuns = BaseFleetRuns & { host?: Host };
+export type FleetRuns = Omit<BaseFleetRuns, 'claimed'> & { claimed?: BaseFleetRuns['claimed']; host?: Host };
 export const isFleetRuns: Check<FleetRuns> = (v): v is FleetRuns =>
   fleetRunsShape(v) && (!('host' in v) || hostShape(v.host));
 export const countText = (n: number | null): string => n === null ? '—' : String(n);

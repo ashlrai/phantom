@@ -75,7 +75,7 @@ async function confirmMacOperator(action: OperatorAction, id: string): Promise<b
   });
 }
 
-async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unknown, confirm: ConfirmMacOperator): Promise<unknown> {
+async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unknown, confirm: ConfirmMacOperator, info?: { publicOrigin: string }): Promise<unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'Invalid operator command' };
   const value = input as Record<string, unknown>;
   switch (value.action) {
@@ -84,6 +84,12 @@ async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unkn
       if (!(await confirm('invite', value.subject))) return { error: 'Mac operator confirmation required' };
       const result = pairing.mac.issueInvitation(value.subject, { read: true, act: value.scope === 'act' });
       return result ?? { error: 'Invitation unavailable' };
+    }
+    case 'info': {
+      const all = devices.list();
+      return { publicOrigin: info?.publicOrigin ?? null, phonePath: '/verse/m',
+        pending: pairing.mac.pendingApprovals().length,
+        devices: { active: all.filter(d => d.revokedAt === null).length, revoked: all.filter(d => d.revokedAt !== null).length } };
     }
     case 'pending': return { approvals: pairing.mac.pendingApprovals() };
     case 'devices': return { devices: devices.list().map((d) => ({ id: d.id, label: d.label, email: d.email,
@@ -108,9 +114,9 @@ async function command(pairing: Pairing, devices: RemoteDeviceStore, input: unkn
   }
 }
 
-/** The socket is mode 0600 in a private directory; no HTTP endpoint exists. */
+/** The socket is mode 0600 in a private directory; never expose it through the phone gateway. */
 export async function startRemoteAdminSocket(pairing: Pairing, devices: RemoteDeviceStore, root = defaultVerseRoot(),
-  confirmOperator: ConfirmMacOperator = confirmMacOperator) {
+  confirmOperator: ConfirmMacOperator = confirmMacOperator, info?: { publicOrigin: string }) {
   privateDirectory(root);
   const path = remoteAdminSocketPath(root);
   await clearStaleSocket(root, path);
@@ -132,7 +138,7 @@ export async function startRemoteAdminSocket(pairing: Pairing, devices: RemoteDe
       socket.removeAllListeners('data');
       void (async () => {
         let answer: unknown;
-        try { answer = await command(pairing, devices, JSON.parse(text.slice(0, end)) as unknown, guardedConfirm); }
+        try { answer = await command(pairing, devices, JSON.parse(text.slice(0, end)) as unknown, guardedConfirm, info); }
         catch { answer = { error: 'Invalid operator command' }; }
         socket.end(`${JSON.stringify(answer)}\n`);
       })();

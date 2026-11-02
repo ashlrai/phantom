@@ -6,6 +6,7 @@ export interface LaneTargetRow {
   held: boolean;
   heldReason: string | null;
   heldUntil: string | null;
+  pausedFrom?: number | null;
   lastChange: string | null;
   changedBy: string | null;
 }
@@ -28,7 +29,8 @@ export function isLaneTargets(value: unknown): value is LaneTargetsV1 {
       && typeof row.lane === 'string' && Number.isSafeInteger(row.target)
       && Number.isSafeInteger(row.floor) && Number.isSafeInteger(row.ceiling)
       && typeof row.held === 'boolean' && nullableString(row.heldReason)
-      && nullableString(row.heldUntil) && nullableString(row.lastChange) && nullableString(row.changedBy));
+      && nullableString(row.heldUntil) && nullableString(row.lastChange) && nullableString(row.changedBy)
+      && (row.pausedFrom === undefined || row.pausedFrom === null || Number.isSafeInteger(row.pausedFrom)));
 }
 
 export function stepAllowed(row: LaneTargetRow, delta: number): boolean {

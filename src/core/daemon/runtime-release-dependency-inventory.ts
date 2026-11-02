@@ -496,6 +496,7 @@ function rootPackageIsPortable(
     'docs/MEMORY-FOUNDATION.md',
     'docs/MEMORY-EVALUATION.md',
     'docs/QUICKSTART.md',
+    'docs/SELF-HOSTING.md',
     'docs/AUTOMATIC-OUTCOMES.md',
     'docs/VERSE.md',
     'docs/PROACTIVE-COORDINATION.md',

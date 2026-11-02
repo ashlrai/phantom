@@ -1,4 +1,5 @@
 import { relativeText, type FleetRuns } from '../ops/ops-runs-model.js';
+import { mergeSpeedReading } from './hub-merge-speed.js';
 
 const panes = [
   ['fleet-lanes', 'Lanes'], ['fleet-events', 'Fleet events'],
@@ -8,6 +9,11 @@ const panes = [
 ] as const;
 
 export const CURATED_FLEET_WORKSPACE = ['fleet-lanes', 'fleet-inbox', 'fleet-merges', 'fleet-bus', 'fleet-releases', 'fleet-usage'] as const;
+
+export function hubEmptyState(runs: FleetRuns | null): { kind: 'no-fleet' | 'not-landed' } | null {
+  if (runs === null || runs.sources.runsDir === 'not-landed') return { kind: 'not-landed' };
+  return runs.sources.runsDir === 'missing' ? { kind: 'no-fleet' } : null;
+}
 
 /** Tile count string: appends "· N held" when any lane has `held === true`. */
 export function lanesTileCount(lanes: { running: number; target: number; held: boolean }[]) {
@@ -47,11 +53,13 @@ export function curatedWorkspace(presentIds: readonly string[]) {
 
 /** Stable tile order and readings; registration is supplied by the caller. */
 export function hubTiles(runs: FleetRuns | null, registered: readonly { id: string; title: string; description?: string | null; order?: number }[]) {
+  const mergeSpeed = mergeSpeedReading(runs?.mergesLastHour);
+  const tones: Record<string, typeof mergeSpeed.tone | undefined> = { 'fleet-merges': mergeSpeed.tone };
   const counts: Record<string, string> = runs ? {
     'fleet-lanes': lanesTileCount(runs.lanes),
     'fleet-events': String(runs.events.length),
     'fleet-inbox': String(runs.inbox.length),
-    'fleet-merges': String(runs.mergesLastHour.count ?? '—'),
+    'fleet-merges': mergeSpeed.text,
     'fleet-supply': String(runs.workers.length),
     'fleet-job-log': String(runs.workers.length),
     'worker-log': String(runs.workers.length),
@@ -71,7 +79,7 @@ export function hubTiles(runs: FleetRuns | null, registered: readonly { id: stri
     .filter(({ id }) => !legacyIds.has(id) && (id.startsWith('fleet-') || id.startsWith('leader-') || id === 'worker-log'))
     .sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || a.title.localeCompare(b.title));
   return [
-    ...panes.map(([id, title]) => ({ id, title: byId.get(id)?.title ?? title, count: counts[id] ?? '—', present: byId.has(id) })),
-    ...discovered.map(({ id, title }) => ({ id, title, count: counts[id] ?? '—', present: true })),
+    ...panes.map(([id, title]) => ({ id, title: byId.get(id)?.title ?? title, count: counts[id] ?? '—', present: byId.has(id), ...(tones[id] === undefined ? {} : { tone: tones[id] }) })),
+    ...discovered.map(({ id, title }) => ({ id, title, count: counts[id] ?? '—', present: true, ...(tones[id] === undefined ? {} : { tone: tones[id] }) })),
   ];
 }

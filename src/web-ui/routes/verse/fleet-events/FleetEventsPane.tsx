@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Input, SkeletonLine, Tag } from '../../../components/primitives/index.js';
 import { IconExternalLink } from '../../../components/primitives/icons.js';
 import { ApiError } from '../../../data/client.js';
@@ -9,15 +9,21 @@ import { JobRefs } from '../fleet/JobRefs.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { agentBusFeedQuery } from './agent-bus-feed-query.js';
+import { busFeedItems, mergeFeeds } from './bus-feed-items.js';
 import { diffNew, filterByKinds, filterByText, readFeed, sortNewestFirst, summarizeKinds, type FeedItem } from './fleet-events-model.js';
 import { fleetEventsQuery } from './fleet-events-queries.js';
 import styles from './fleet-events.module.css';
 
 export function FleetEventsPane({ visible, host }: PaneProps) {
   const read = useQuery(fleetEventsQuery, { enabled: visible, freshMs: 0 });
+  const busRead = useQuery(agentBusFeedQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(fleetEventsQuery);
-  usePollWhileVisible(refetch, 5_000, { enabled: visible });
+  const refetchBus = useRefetch(agentBusFeedQuery);
+  const refresh = useCallback(() => { refetch(); refetchBus(); }, [refetch, refetchBus]);
+  usePollWhileVisible(refresh, 5_000, { enabled: visible });
   const feed = useMemo(() => readFeed(read.data), [read.data]);
+  const liveItems = useMemo(() => mergeFeeds(feed.items, busFeedItems(busRead.data)), [feed.items, busRead.data]);
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<FeedItem[]>([]);
   const [arrivals, setArrivals] = useState<FeedItem[]>([]);
@@ -26,10 +32,10 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
   const [text, setText] = useState('');
   useEffect(() => {
     if (!paused || read.data == null) return;
-    setArrivals(current => [...current, ...diffNew(new Set([...frozen, ...current].map(item => item.id)), feed.items)]);
-  }, [feed, frozen, paused, read.data]);
-  useEffect(() => { setMerged(null); }, [read.data]);
-  const items = paused ? frozen : merged ?? feed.items;
+    setArrivals(current => [...current, ...diffNew(new Set([...frozen, ...current].map(item => item.id)), liveItems)]);
+  }, [liveItems, frozen, paused, read.data]);
+  useEffect(() => { setMerged(null); }, [read.data, busRead.data]);
+  const items = paused ? frozen : merged ?? liveItems;
   const kinds = [...new Set([...items.map(item => item.kind), 'publish'])].sort();
   const kindRows = filterByKinds(items, new Set(kind ? [kind] : []));
   const rows = filterByText(kindRows, text);
@@ -37,7 +43,7 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
   const togglePause = () => {
     if (!paused) { setFrozen(items); setArrivals([]); setPaused(true); }
     else {
-      const added = diffNew(new Set([...frozen, ...arrivals].map(item => item.id)), feed.items);
+      const added = diffNew(new Set([...frozen, ...arrivals].map(item => item.id)), liveItems);
       setMerged(sortNewestFirst([...frozen, ...arrivals, ...added]));
       setPaused(false);
     }
@@ -58,12 +64,12 @@ export function FleetEventsPane({ visible, host }: PaneProps) {
     {text.trim() !== '' && <p className={styles.message} role="status">{rows.length} of {kindRows.length} shown</p>}
     {rows.length === 0 ? <p className={styles.message}>{items.length ? 'No events match this filter.' : 'No fleet events yet.'}</p> :
       <ol className={styles.list} aria-label="Fleet event feed">{rows.map(item => {
-        const href = item.kind === 'publish' && item.url && /^https:\/\/github\.com\/[^\s?#]+$/.test(item.url) ? safeHref(item.url, 'github.com') : null;
+        const href = (item.kind === 'publish' || item.kind === 'ci') && item.url && /^https:\/\/github\.com\/[^\s?#]+$/.test(item.url) ? safeHref(item.url, 'github.com') : null;
         const valid = Number.isFinite(Date.parse(item.at));
         return <li key={item.id} className={styles.row}>
           <time className={styles.time} dateTime={valid ? item.at : undefined} title={valid ? new Date(item.at).toLocaleString() : undefined}>{formatRelative(item.at)}</time>
           <Tag size="sm">{item.kind}</Tag>
-          <span className={styles.text}><JobRefs text={item.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />{href && <> · <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`Pull request for ${item.text}`}>PR <IconExternalLink size={12} aria-hidden="true" /></a></>}</span>
+          <span className={styles.text}><JobRefs text={item.text} onOpenJob={job => { requestWorkerLogJob(job); host.openPane('worker-log'); }} />{href && <> · <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`${item.kind === 'ci' ? 'GitHub run' : 'Pull request'} for ${item.text}`}>{item.kind === 'ci' ? 'Run' : 'PR'} <IconExternalLink size={12} aria-hidden="true" /></a></>}</span>
         </li>;
       })}</ol>}
   </section>;

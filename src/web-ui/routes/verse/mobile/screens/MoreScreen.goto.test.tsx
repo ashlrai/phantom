@@ -5,6 +5,7 @@ import { MoreScreen } from './MoreScreen.js';
 
 describe('MoreScreen — Go to', () => {
   it.each([
+    ['Hand the fleet a job', 'drop-job'],
     ['Leaders', 'leader'],
     ['Agents', 'agents'],
     ['Inbox', 'inbox'],

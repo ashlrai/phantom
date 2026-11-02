@@ -41,9 +41,12 @@ import { fleetLedgerQuery } from '../../usage/fleet-ledger-queries.js';
 import { decisionPrUrl } from '../decision-link.js';
 import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
+import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
 import { MobileReleaseCard } from '../MobileReleaseCard.js';
 import { homeRunsQuery } from '../home-runs-query.js';
+import { mergeSpeedLines } from '../merge-speed-lines.js';
+import { runningMixLines, runningMixSummary } from '../running-mix-lines.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -161,12 +164,14 @@ export function FleetScreen() {
   const control = useQuery(verseControlQuery);
   const live = useQuery(fleetLiveQuery);
   const runs = useQuery(homeRunsQuery);
+  const ledger = useQuery(fleetLedgerQuery);
   const authority = useQuery(authorityQuery);
   const budget = useQuery(budgetQuery);
   const decisions = useQuery(decisionsQuery);
   const refetchControl = useRefetch(verseControlQuery);
   const refetchLive = useRefetch(fleetLiveQuery);
   const refetchRuns = useRefetch(homeRunsQuery);
+  const refetchLedger = useRefetch(fleetLedgerQuery);
   const refetchAuthority = useRefetch(authorityQuery);
   const refetchBudget = useRefetch(budgetQuery);
   const refetchDecisions = useRefetch(decisionsQuery);
@@ -174,10 +179,11 @@ export function FleetScreen() {
     refetchControl();
     refetchLive();
     refetchRuns();
+    refetchLedger();
     refetchAuthority();
     refetchBudget();
     refetchDecisions();
-  }, [refetchControl, refetchLive, refetchRuns, refetchAuthority, refetchBudget, refetchDecisions]);
+  }, [refetchControl, refetchLive, refetchRuns, refetchLedger, refetchAuthority, refetchBudget, refetchDecisions]);
   usePollWhileVisible(poll, FLEET_POLL_MS);
   const [reposOpen, setReposOpen] = useState(false);
 
@@ -360,6 +366,7 @@ export function FleetScreen() {
   }
 
   const hostRuns = runs.status !== 'error' && isFleetRuns(runs.data) ? runs.data : null;
+  const runningMix = runningMixLines(hostRuns ? { ...hostRuns, host: hostRuns.host ?? null } : null);
   const host = hostView(hostRuns, Date.now());
   const load = hostRuns?.host?.load1 ?? null;
   const hostUnavailable = load === null || host.memory.pct === null || host.disk.gb === null || host.tick.ageSeconds === null;
@@ -378,6 +385,8 @@ export function FleetScreen() {
   const decisionList = decisions.data?.value?.decisions ?? null;
   const endedRuns: FleetLiveRun[] = (snapshot?.runs ?? []).filter((r) => r.endedAt && r.outcome && RUN_OUTCOME[r.outcome]).slice(0, DECISION_ROWS);
   const now = Date.now();
+  const waste = wasteLines(ledger.data, now);
+  const merges = mergeSpeedLines(runs.status === 'error' ? null : runs.data, now);
   let decisionsBody;
   if (decisions.status === 'loading' && !decisions.data) decisionsBody = <SkeletonList rows={3} label="Loading recent decisions" />;
   else if (decisionList) {
@@ -429,6 +438,13 @@ export function FleetScreen() {
   return (
     <Screen title="Fleet" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshFleetScreen} header={header} label="Fleet">
       {fleetCard}
+      {runningMix.length > 0 ? (
+        <Section title="Running mix" trailing={runningMixSummary(runningMix)}>
+          {runningMix.map((line) => (
+            <Row key={line.lane} title={line.lane} trailing={<span data-tone={line.tone}><Badge tone={line.tone}>{line.text}</Badge></span>} />
+          ))}
+        </Section>
+      ) : null}
       <MobileSwitches />
       <Section title="This Mac" flat>
         {runs.status === 'idle' || runs.status === 'loading' ? <SkeletonList rows={1} label="Loading Mac host numbers" /> : (
@@ -442,6 +458,29 @@ export function FleetScreen() {
       </Section>
       <Section title="Right now" flat>{liveBody}</Section>
       <FleetUsageCard />
+      <Section title="Waste forecast">
+        {ledger.status === 'error' ? (
+          <ErrorState title="Couldn’t read waste forecast" reason={readFailureReason(ledger.error)} onRetry={refetchLedger} />
+        ) : ledger.status === 'idle' || ledger.status === 'loading' ? (
+          <SkeletonList rows={2} label="Loading waste forecast" />
+        ) : !ledger.data ? (
+          <Row title="Ledger not readable from this Mac yet" />
+        ) : !ledger.data.lanes.some((lane) => lane.window === 'weekly') ? (
+          <Row title="No weekly windows reported" />
+        ) : waste.headline === null ? (
+          <Row title="Weekly forecast unavailable" />
+        ) : (
+          <>
+            <Row title={waste.headline} />
+            {waste.rows.map((row, index) => <div key={`${row.lane}-${index}`} data-tone={row.tone}><Row title={row.text} /></div>)}
+          </>
+        )}
+      </Section>
+      {merges.length > 0 ? (
+        <Section title="Merges">
+          {merges.map((line) => <div key={line.text} data-tone={line.tone}><Row title={line.text} /></div>)}
+        </Section>
+      ) : null}
       <MobileReleaseCard />
       <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>

@@ -6,13 +6,13 @@ import { FleetGraphPane } from './FleetGraphPane.js';
 
 const fixture: FleetRunsV1 = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
-  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, host: null,
   lanes: [{ lane: 'codex', running: 1, target: 2, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }],
   workers: [{ job: 'job-1', lane: 'codex', repo: 'ashlrai/phantom', tier: 'frontier', ageSeconds: 90 }],
   leaders: [{ label: 'Fleet leader', ageSeconds: 12 }], orchestratorAgents: null, publishesLastHour: [], mergesLastHour: { count: 2, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
 
-beforeEach(() => { evictAll(); vi.stubGlobal('fetch', vi.fn(async () => Response.json(fixture))); });
+beforeEach(() => { evictAll(); vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === '/api/verse/fleet/graph/live' ? { v: 1, live: { nodes: [] } } : fixture))); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it('shows the live counts and graph nodes from the runs API', async () => {
@@ -29,13 +29,13 @@ it('stops both graph and pane polls while hidden and resumes on show', async () 
   const view = render(<FleetGraphPane visible />);
   await act(async () => {});
   await act(async () => { vi.advanceTimersByTime(10_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(3);
   view.rerender(<FleetGraphPane visible={false} />);
   await act(async () => { vi.advanceTimersByTime(30_000); });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(3);
   view.rerender(<FleetGraphPane visible />);
   await act(async () => {});
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(5);
   await act(async () => { vi.advanceTimersByTime(10_000); });
-  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(fetch).toHaveBeenCalledTimes(6);
 });

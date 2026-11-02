@@ -156,10 +156,12 @@ nextCursor}`; each message row is the stored receipt — the persistent integer
 - `phm comms bus watch` polls the same pages for a live tail.
 
 Full store: retained capacity is 1 MiB or 1024 records, whichever is reached
-first, and nothing is ever evicted — expired records still occupy capacity.
-Detect it from `status` (`retainedCount` at `maxMessages`, or `retainedBytes`
-at `maxBytes`) or from a `post` answering `{status:"full"}`; do not retry a
-full store as if it were contention.
+first. A live record is never evicted for another; records already expired are
+reclaimed by the next post, so `{status:"full"}` means live data fills the
+bound — an expired-only store accepts new posts again without resetting
+cursors. Detect it from `status` (`retainedCount` at `maxMessages`, or
+`retainedBytes` at `maxBytes`) or from a `post` answering `{status:"full"}`;
+do not retry a full store as if it were contention.
 
 ## 5. Trust boundary — local owner vs verified remote identity
 

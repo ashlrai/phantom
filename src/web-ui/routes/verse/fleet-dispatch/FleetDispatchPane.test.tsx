@@ -66,7 +66,7 @@ it('polls only while visible, advances stale verdicts and shares cache updates',
   vi.setSystemTime(Date.parse('2026-10-31T05:05:00Z'));
   await act(async () => { view.rerender(<FleetDispatchPane {...props} />); });
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-  expect(screen.getByText(/— launching/)).toBeInTheDocument();
+  expect(screen.getByText('1 free, 17 queued — last launch 2 min ago')).toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(screen.getByText(/last tick 5 min ago/)).toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(2);
@@ -75,4 +75,13 @@ it('polls only while visible, advances stale verdicts and shares cache updates',
   view.rerender(<FleetDispatchPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
   expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it('shows a stalled lane and its Tell button', async () => {
+  const runs = fleetRunsFixture({ claudeLane: null, lastTick: new Date(nowMs).toISOString(), lanes: [{ ...base, lane: 'devin', running: 0, target: 4, queued: 14 }], workers: [{ job: 'RQ-DEVIN', repo: 'fake/repo', lane: 'devin', tier: 'mid', ageSeconds: 25 * 60 }] });
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(runs)));
+  render(<FleetDispatchPane {...props} />);
+  const row = (await screen.findByText('4 free, 14 queued — nothing launched for 25 min')).closest('li')!;
+  expect(within(row).getByText('stalled')).toBeInTheDocument();
+  expect(within(row).getByRole('button', { name: 'Tell the leaders about devin' })).toBeInTheDocument();
 });
