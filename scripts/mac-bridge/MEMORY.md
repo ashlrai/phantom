@@ -73,7 +73,14 @@ historical peak can legitimately be too large for the currently available RAM.
 
 Nested npm/tsc commands reuse an active inherited lease or the recorded process
 group, avoiding a second slot and nested queue deadlock. A token alone does not
-authorize reuse by another group. Heavy children receive `CARGO_BUILD_JOBS=4`.
+authorize reuse by another group. Heavy children receive `CARGO_BUILD_JOBS=4`
+and a Vitest unit-lane cap of `ASHLR_VITEST_UNIT_MAX_WORKERS=2`; a stricter
+caller setting is preserved. Every admitted command execs at an absolute nice
+level of 10 and, on macOS, under `taskpolicy -c utility` (`/usr/sbin/taskpolicy`);
+where the clamp tool cannot exec, the niced workload still runs. Pool build/test
+work therefore yields the performance cores to agents and the daemon, which
+never pass through this gate and are never demoted. Nested admissions cannot
+stack the demotion or promote an already-nicer process.
 SIGINT, SIGTERM, and SIGHUP cancel queued work or terminate the active group,
 with a five-second grace period before SIGKILL. Child exit codes are preserved.
 Waiting has no default deadline. Explicit `run --wait-seconds N` returns 75 on
@@ -83,6 +90,10 @@ queue timeout; its caller must resubmit if it wants to keep that job queued.
 
 Private `receipts/*.json` files record job/profile, timing, admission telemetry,
 exit status, and peak RSS; `peaks.json` supplies conservative profile history.
+`loadavgStart`/`loadavgEnd` hold the host's [1, 5, 15]-minute load averages at
+admission and completion, and `durationSeconds` the admitted run's wall-clock,
+so scheduling-policy changes can be compared before and after; a job that never
+started records a null duration.
 No command arguments, environments, or credentials are persisted by the gate.
 Child stdout/stderr continue to their original destinations.
 

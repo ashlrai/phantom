@@ -36,6 +36,8 @@ def build(slots=None, lanes_status=None, finishes=(), publishes=(), ready=(), qu
     stub = home / 'stubbin' / 'ps'   # sandboxed runs cannot exec ps; empty output marks nothing alive
     stub.write_text('#!/bin/bash\nexit 0\n')
     stub.chmod(0o755)
+    set_daemon_tick(home, 'now')   # RQ-LOADGATE-1: a healthy host by default: fresh daemon tick, load and ncpu pinned in tick()
+    (r / 'LOADGATE_TEST').write_text('')
     rows = [json.dumps(m) for m in list(finishes) + list(publishes)]
     (r / 'metrics' / 'jobs.jsonl').write_text(''.join(row + '\n' for row in rows))
     if slots is not None:
@@ -50,10 +52,29 @@ def build(slots=None, lanes_status=None, finishes=(), publishes=(), ready=(), qu
     return tmp
 
 
+ASHLR_STUB = ('#!/bin/bash\n'   # stands in for `ashlr daemon status --json`; the tick time comes from $HOME/ashlr-last-tick
+              'f="$HOME/ashlr-last-tick"; [ -f "$f" ] || exit 1\nv="$(cat "$f")"\n'
+              '[ "$v" = now ] && v="$(date -u +%Y-%m-%dT%H:%M:%SZ)"\n'
+              'if [ "$v" = null ]; then echo \'{"lastTickAt": null}\'; else echo "{\\"lastTickAt\\": \\"$v\\"}"; fi\n')
+
+
+def set_daemon_tick(home, value):
+    """value: 'now', 'null', an ISO timestamp, or None to make the stub fail (daemon status unavailable)."""
+    home = Path(home)
+    stub = home / 'stubbin' / 'ashlr'
+    stub.write_text(ASHLR_STUB)
+    stub.chmod(0o755)
+    f = home / 'ashlr-last-tick'
+    if value is None:
+        f.unlink(missing_ok=True)
+    else:
+        f.write_text(value)
+
+
 def tick(home, env_extra=None):
     env = {'HOME': str(home),
            'PATH': str(Path(home) / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin'),
-           'LANG': 'C'}
+           'LANG': 'C', 'LOADGATE_LOADAVG': '1.0', 'LOADGATE_NCPU': '18'}
     if env_extra:
         env.update(env_extra)
     return subprocess.run([sys.executable, '-B', str(SCRIPT)], env=env,

@@ -12,12 +12,18 @@ WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 NOW = time.time(); TS = time.strftime("%F %T")
 MAX_LAUNCH_PER_TICK = 4; MAX_REAPS = 6; GRACE = 120; RAISE_GAP = 120
 LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"]   # tie-break order: cmp first
-DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32},
-           "codex-personal": {"target": 10, "floor": 10, "ceiling": 32},
-           "claude": {"target": 0, "floor": 0, "ceiling": 8},
-           "devin": {"target": 10, "floor": 3, "ceiling": 16},   # DEVIN-LEVERAGE-20261026
-           "claude-api": {"target": 4, "floor": 0, "ceiling": 8},   # target is re-paced every tick by claude-api.py
-           "codex-local": {"target": 6, "floor": 0, "ceiling": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
+# hard_cap (RQ-LOADGATE-1): per-pool absolute bound, seeded to the ceiling so nothing changes until an operator lowers it in
+# slots.json. Neither the floor, the autopilot overrides, the +2 ramp nor a stored target may exceed it. GLOBAL_HARD_CAP is the
+# top-level slots.json "hard_cap" bound on the whole fleet (seeded to the 18-core Mac this was sized for).
+DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
+           "codex-personal": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
+           "claude": {"target": 0, "floor": 0, "ceiling": 8, "hard_cap": 8},
+           "devin": {"target": 10, "floor": 3, "ceiling": 16, "hard_cap": 16},   # DEVIN-LEVERAGE-20261026
+           "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
+           "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
+GLOBAL_HARD_CAP = 18
+# RQ-LOADGATE-1 admission gate limits: any one tripping stops claims and pauses the ramp.
+GATE_LOAD_MAX = 36.0; GATE_PROCS_MAX = 800; GATE_WORKTREES_MAX = 40; GATE_TICK_MAX_S = 15 * 60; GATE_STATUS_TIMEOUT = 30
 LOCAL_MID_CAP = 2   # RQ-LOCAL-LANE: at most 2 concurrent tier=mid ('strong', 27B) codex-local jobs; fast uses the rest
 LOCAL_HEALTH = "http://127.0.0.1:8123/v1/models"   # loopback only, no auth header, 2 s timeout, checked at most once per tick
 TIERS = {"frontier", "work", "mid", "fast"}
@@ -72,6 +78,13 @@ os.makedirs(RUN, exist_ok=True); os.makedirs(Q + "/prompts", exist_ok=True)
 slots = jload(Q + "/slots.json", {})
 for k, v in DEFAULT.items():
     s = slots.setdefault(k, dict(v)); [s.setdefault(a, b) for a, b in v.items()]; s.setdefault("last_change", 0)
+def _cap(v, d):   # a hard_cap is a non-negative int; anything else (missing, bool, garbage) falls back to the default
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else d
+slots["hard_cap"] = _cap(slots.get("hard_cap"), GLOBAL_HARD_CAP)
+def clamp_lane(lane):   # hard_cap wins over floor, ceiling and target, whoever last wrote them (overrides reload included)
+    s_ = slots[lane]; hc = s_["hard_cap"] = _cap(s_.get("hard_cap"), DEFAULT[lane]["hard_cap"])
+    s_["ceiling"] = min(s_["ceiling"], hc); s_["floor"] = min(s_["floor"], s_["ceiling"]); s_["target"] = min(s_["target"], hc)
+for _l in LANES: clamp_lane(_l)
 # ---- usage backoff (RQ-USAGE-BACKOFF-11 rev2): auto-hold a pool on a provider CLI usage/quota error line.
 # Only exact CLI error lines (anchored, CLI prefix) count, and only on a failed or EMPTY run (codex-cmp: only a run
 # with no work). Only held_by == "autobackoff" entries are ever auto-unheld or extended; manual holds are never touched.
@@ -294,6 +307,7 @@ if AP:   # devin limits: 10/3/16 by default (DEVIN-LEVERAGE-20261026); a devin b
     lim = AP.get("devin", {}).get("limits") or {}
     for a in ("floor", "ceiling"):
         if isinstance(lim.get(a), int): slots["devin"][a] = lim[a]
+    clamp_lane("devin")   # RQ-LOADGATE-1: the overrides floor/ceiling are reapplied every tick, so hard_cap is reapplied right after
 hold = set(rd(R + "/HOLD").split())
 def _ph_check():   # auto-release PUBLISH_HOLD once org Actions backlog < 50 queued runs; checks at most every 10 min
     ph, st = R + "/PUBLISH_HOLD", R + "/PUBLISH_HOLD.checked"
@@ -487,6 +501,49 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
                      stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
     log("REAP %s (%s)" % (j, pool))
 
+# ---- admission gate (RQ-LOADGATE-1). Read-only host probes; no claims while the Mac is starved, and the ramp pauses with them.
+# Trips on: 1-min loadavg > min(2 x ncpu, 36), more than 800 processes, more than 40 live job worktrees, or the ashlr daemon's
+# lastTickAt older than 15 min (missing or unreadable status also trips: a daemon that cannot be seen is not a daemon that ticks).
+# queue/LOADGATE_OFF is the owner's off switch. LOADGATE_LOADAVG / LOADGATE_NCPU are honored only while $R/LOADGATE_TEST exists.
+def _daemon_tick_age():   # -> (seconds since lastTickAt | None, why)
+    import datetime as dt
+    try:
+        r = subprocess.run(["ashlr", "daemon", "status", "--json"], capture_output=True, text=True, timeout=GATE_STATUS_TIMEOUT, stdin=subprocess.DEVNULL)
+        v = json.loads(r.stdout).get("lastTickAt")
+        if not isinstance(v, str): return (None, "no lastTickAt")
+        return (max(0.0, NOW - dt.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()), None)
+    except Exception as e: return (None, type(e).__name__)
+def _install_holder():   # the install-gate.py wrapper writes its holder JSON into queue/install.lock; a dead pid is no holder
+    try:
+        h = json.loads(rd(Q + "/install.lock") or "null")
+        if isinstance(h, dict) and isinstance(h.get("pid"), int) and h["pid"] > 0: os.kill(h["pid"], 0); return h
+    except PermissionError: return h   # exists, owned by another user
+    except Exception: pass
+    return None
+def admission_gate():
+    g = {"tripped": False, "reasons": [], "disabled": os.path.exists(Q + "/LOADGATE_OFF")}
+    test = os.path.exists(R + "/LOADGATE_TEST")
+    try: ncpu = int(os.environ["LOADGATE_NCPU"]) if test and os.environ.get("LOADGATE_NCPU") else (os.cpu_count() or 1)
+    except ValueError: ncpu = os.cpu_count() or 1
+    try: load1 = float(os.environ["LOADGATE_LOADAVG"]) if test and os.environ.get("LOADGATE_LOADAVG") else os.getloadavg()[0]
+    except (ValueError, OSError): load1 = float("inf")   # unreadable load: fail closed
+    procs = sum(1 for l in ps.splitlines() if l.strip())
+    wts = sum(1 for bp in glob.glob(R + "/*.base") if (lambda b: bool(b) and os.path.isdir(b[2]))(base(os.path.basename(bp)[:-5])))
+    age, why = _daemon_tick_age()
+    load_max = min(2.0 * ncpu, GATE_LOAD_MAX)
+    if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f" % (load1, load_max))
+    if procs > GATE_PROCS_MAX: g["reasons"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
+    if wts > GATE_WORKTREES_MAX: g["reasons"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
+    if age is None: g["reasons"].append("daemon_status_unavailable (%s)" % why)
+    elif age > GATE_TICK_MAX_S: g["reasons"].append("daemon_tick_stale %ds > %ds" % (age, GATE_TICK_MAX_S))
+    g.update(load1=load1, ncpu=ncpu, load_max=load_max, procs=procs, worktrees=wts, daemon_tick_age_s=None if age is None else int(age))
+    g["tripped"] = bool(g["reasons"]) and not g["disabled"]
+    return g
+GATE = admission_gate()
+def global_cap():   # min(sum of unheld lane targets, ncpu, global hard_cap); held lanes launch nothing so they add nothing
+    live = [l for l in LANES if not (slots[l].get("held") or l in hold)]
+    return max(0, min(sum(slots[l]["target"] for l in live), GATE["ncpu"], slots["hard_cap"]))
+
 # ---- (c) adapt
 def ratelimited(lane, since):
     for bp in glob.glob(R + "/*.base"):
@@ -599,11 +656,11 @@ for lane in LANES:
         if nt != s["target"]:
             ev("SLOTS %s %d->%d %s seen (%s)" % (lane, s["target"], nt, hit[1], hit[0])); s["target"] = nt
     elif (running[lane] >= s["target"] and qdepth[lane] > 0 and s["target"] < s["ceiling"]
-          and DISK_GATE == "green"
+          and DISK_GATE == "green" and not GATE["tripped"]   # LOADGATE: the ramp pauses while the gate is tripped
           and (AP["memory"]["raise_ok"] if AP and AP.get("memory", {}).get("known")
                else (free is not None and free > 30))   # fallback when autopilot is unavailable: free memory only, no absolute swap block
           and NOW - s["last_change"] >= RAISE_GAP):
-        nt = min(s["ceiling"], s["target"] + 2)
+        nt = min(s["ceiling"], s["hard_cap"], s["target"] + 2)
         ev("SLOTS %s %d->%d (free=%s%% swap=%.1fG)" % (lane, s["target"], nt, free, swap or 0))
         s["target"] = nt; s["last_change"] = NOW
     if lane == "devin":   # more than 3 of the last 10 devin runs without a PR: -2, floor 6, once per new finish
@@ -624,7 +681,11 @@ except Exception as e: log("autopilot disk-level write failed %s" % type(e).__na
 
 # ---- (b) fill
 launched = []; rest = []; bad = 0
-if not pause:
+GCAP = global_cap()
+_prev = jload(Q + "/admission.json", {}).get("gate_reason"); _now_reason = "; ".join(GATE["reasons"]) if GATE["tripped"] else None
+if _now_reason and _prev != _now_reason: ev("LOADGATE tripped: " + _now_reason)
+elif not _now_reason and _prev: ev("LOADGATE clear")
+if not pause and not GATE["tripped"]:
     # interleave lanes so neither starves: take candidates round-robin, cmp first
     cand = {l: [] for l in LANES}
     for l in lines:
@@ -671,7 +732,7 @@ if not pause:
             if not os.path.exists(mk): open(mk, "w").close(); ev("DISKGUARD defer %s %dG" % (j, disk_free_gb))
             rest.append(line); seen.add(j); continue
         if (len(launched) >= MAX_LAUNCH_PER_TICK or s.get("held") or lane in hold
-                or running[lane] >= s["target"] or j in alive or j in reaping or j in publishing):
+                or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
         if lane == "codex-local":
             if tier == "mid" and local_mid >= LOCAL_MID_CAP: rest.append(line); seen.add(j); continue
@@ -742,7 +803,7 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
       "autopilot": AP,
       "lanes": {l: {"running": running[l], "target": slots[l]["target"], "floor": slots[l]["floor"],
-                    "ceiling": slots[l]["ceiling"], "held": bool(slots[l].get("held") or l in hold),
+                    "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
                     "queued": qdepth[l]} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
       "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
@@ -801,5 +862,11 @@ if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
     open(stamp, "w").close()
     subprocess.Popen(["/bin/bash", R + "/bin/metrics-outcomes.sh"], stdin=subprocess.DEVNULL, stdout=open(MD + "/outcomes.log", "a"),
                      stderr=subprocess.STDOUT, start_new_session=True)
+_at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(running.values()) >= GCAP else None
+_block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
+adm = {"schema": "dispatchd.admission.v1", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "reason": "; ".join(_block) or None,
+       "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
+       "daemon_tick_age_s": GATE["daemon_tick_age_s"], "cap": GCAP, "running": sum(running.values()), "hard_cap": slots["hard_cap"], "install_lock_holder": _install_holder()}
+jsave(Q + "/admission.json", adm); st["admission"] = adm
 jsave(Q + "/status.json", st)
 log("tick run=%s q=%d launched=%d reap=%d pause=%s" % (json.dumps(running), len(rest), len(launched), nreap, bool(pause)))
