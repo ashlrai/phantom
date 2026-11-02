@@ -11,15 +11,26 @@ import {
 type Terminal = 'pass' | 'fail' | 'unknown';
 type Entry = { key: string; repo: string; sha: string; terminal: Terminal; checkedAt: string; reason: string; failureCategory: string | null; cleanup: string };
 type State = { version: 1; entries: Entry[] };
+export const GUARDIAN_VERIFY_MAX_TIMEOUT_MS = 86_400_000;
+export const GUARDIAN_VERIFY_DEADLINE: unique symbol = Symbol('guardian-verify-deadline');
 export interface GuardianOptions {
   manifest: string;
   state: string;
   maxPasses: number;
   intervalMs: number;
+  /**
+   * Total elapsed-time budget in milliseconds: a positive safe integer of at most
+   * GUARDIAN_VERIFY_MAX_TIMEOUT_MS (one day). When omitted the loop has no total
+   * deadline. The caller composes it with SIGINT/SIGTERM through the AbortController
+   * behind `signal`, expiring it with `abort(GUARDIAN_VERIFY_DEADLINE)`; the loop then
+   * records deadline-interrupted work as 'verification-timeout'/'timeout', sets
+   * `deadlineExceeded` on the summary and leaves `cancelled` false.
+   */
+  timeoutMs?: number;
   signal?: AbortSignal;
   run?: typeof runDetachedPostMergeVerification;
 }
-export interface GuardianSummary { passes: number; pass: number; fail: number; unknown: number; cancelled: boolean }
+export interface GuardianSummary { passes: number; pass: number; fail: number; unknown: number; cancelled: boolean; deadlineExceeded: boolean }
 
 const required = ['repo', 'cohortId', 'proposalId', 'baseBranch', 'baseHead', 'candidateHead', 'mergeCommit'] as const;
 const optional = ['runId', 'trajectoryId', 'workItemId'] as const;
@@ -84,19 +95,20 @@ async function save(path: string, state: State): Promise<void> {
     await rename(temp, path);
   } finally { await unlink(temp).catch(() => {}); }
 }
-function entry(input: DetachedPostMergeRunnerInput, result: DetachedPostMergeRunnerResult | null, interrupted: boolean): Entry {
+function entry(input: DetachedPostMergeRunnerInput, result: DetachedPostMergeRunnerResult | null, interrupted: boolean, deadline: boolean): Entry {
   const terminal = !interrupted && result && ['pass', 'fail', 'unknown'].includes(result.terminal) ? result.terminal : 'unknown';
   return { key: key(input), repo: resolve(input.repo), sha: input.mergeCommit, terminal, checkedAt: new Date().toISOString(),
-    reason: result && reasons.has(result.reason) && !interrupted ? result.reason : 'verification-infrastructure',
-    failureCategory: interrupted ? 'cancelled' : result?.failureCategory && categories.has(result.failureCategory) ? result.failureCategory : null,
+    reason: result && reasons.has(result.reason) && !interrupted ? result.reason : deadline ? 'verification-timeout' : 'verification-infrastructure',
+    failureCategory: interrupted ? (deadline ? 'timeout' : 'cancelled') : result?.failureCategory && categories.has(result.failureCategory) ? result.failureCategory : null,
     cleanup: result && cleanups.has(result.cleanup) ? result.cleanup : 'failed' };
 }
 export async function runGuardianVerifyLoop(options: GuardianOptions): Promise<GuardianSummary> {
   if (!isAbsolute(options.manifest) || !isAbsolute(options.state) || options.manifest === options.state ||
     !Number.isSafeInteger(options.maxPasses) || options.maxPasses < 1 || options.maxPasses > 100 ||
-    !Number.isSafeInteger(options.intervalMs) || options.intervalMs < 1 || options.intervalMs > 60000) throw new Error('invalid paths or bounds');
+    !Number.isSafeInteger(options.intervalMs) || options.intervalMs < 1 || options.intervalMs > 60000 ||
+    (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > GUARDIAN_VERIFY_MAX_TIMEOUT_MS))) throw new Error('invalid paths or bounds');
   const state = await readState(options.state);
-  const summary: GuardianSummary = { passes: 0, pass: 0, fail: 0, unknown: 0, cancelled: false };
+  const summary: GuardianSummary = { passes: 0, pass: 0, fail: 0, unknown: 0, cancelled: false, deadlineExceeded: false };
   for (let pass = 0; pass < options.maxPasses && !options.signal?.aborted; pass++) {
     const inputs = await manifest(options.manifest);
     summary.passes++;
@@ -110,7 +122,7 @@ export async function runGuardianVerifyLoop(options: GuardianOptions): Promise<G
         if (!existing && state.entries.length >= 1000) throw new Error('state capacity exceeded');
         let result: DetachedPostMergeRunnerResult | null = null;
         try { result = await (options.run ?? runDetachedPostMergeVerification)(input, { signal: options.signal }); } catch { /* infrastructure failure */ }
-        existing = entry(input, result, options.signal?.aborted === true);
+        existing = entry(input, result, options.signal?.aborted === true, options.signal?.reason === GUARDIAN_VERIFY_DEADLINE);
         state.entries = state.entries.filter(e => e.key !== k);
         state.entries.push(existing);
         await save(options.state, state);
@@ -123,6 +135,7 @@ export async function runGuardianVerifyLoop(options: GuardianOptions): Promise<G
       }
     }
   }
-  summary.cancelled = options.signal?.aborted === true;
+  summary.deadlineExceeded = options.signal?.reason === GUARDIAN_VERIFY_DEADLINE;
+  summary.cancelled = options.signal?.aborted === true && !summary.deadlineExceeded;
   return summary;
 }
