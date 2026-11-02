@@ -10,8 +10,8 @@ const orders = buildSteering({ inbox: [
 ] });
 function journal(minutesAgo: number): LeaderJournalV1 {
   return { v: 1, generatedAt: new Date(now).toISOString(),
-    sources: { planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
-    passes: [
+    sources: { orchestration: 'missing', planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' },
+    notes: [], passes: [
       { at: 'invalid', sections: [] },
       { at: new Date(now - 120 * 60_000).toISOString(), sections: [] },
       { at: new Date(now - minutesAgo * 60_000).toISOString(), sections: [{ title: 'Pass', bullets: ['Acknowledged; workers moving', 'second bullet'] }] },

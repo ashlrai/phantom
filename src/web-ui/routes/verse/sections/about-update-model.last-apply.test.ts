@@ -1,9 +1,10 @@
+import type { SelfUpdateLastApply } from '../../../../core/verse/self-update-last.js';
 import { describe, expect, it } from 'vitest';
 import { aboutUpdateLines, lastApplyOf } from './about-update-model.js';
 import type { UpdateServerStatus } from './update-status-queries.js';
 
 const now = Date.parse('2026-10-31T12:00:00Z');
-const last = { outcome: 'updated', reason: null, startedAt: '2026-10-31T09:59:00Z', finishedAt: '2026-10-31T10:00:00Z',
+const last: SelfUpdateLastApply = { outcome: 'updated', reason: null, startedAt: '2026-10-31T09:59:00Z', finishedAt: '2026-10-31T10:00:00Z',
   fromCommit: 'a'.repeat(40), toCommit: 'b'.repeat(40), restartRequired: true, restartMode: 'manual' };
 const status: UpdateServerStatus = {
   v: 1, sourceState: 'healthy', installedVersion: '1.0.0', headSha: last.toCommit,

@@ -48,6 +48,7 @@ function paneProps(paneId: string): PaneProps {
 
 /** Every source reports 'missing': valid shape, empty fleet — the day-one Mac. */
 const MISSING_RUNS: FleetRunsV1 = {
+  host: null,
   v: 1,
   generatedAt: '2026-10-31T00:00:00.000Z',
   sources: { runsDir: 'missing', workers: 'missing', inbox: 'missing', codex: 'missing', merges: 'missing' },

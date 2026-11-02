@@ -10,14 +10,15 @@ const fixture = {
   v: 1, workers: [{ job: 'one' }, { job: 'two' }, { job: 'three' }],
   leaders: [{ name: 'leader' }], mergesLastHour: { count: 12 }, switches: ['HOLD'], sources: { workers: 'local' },
 };
-const runs = { workers: 3, merges: 12, switchesOn: ['HOLD'] };
+const expectedRuns = { workers: 3, merges: 12, switchesOn: ['HOLD'] };
+const runs = fleetRunsBadge(fixture)!;
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); evictAll(); });
 
 describe('fleet runs badge', () => {
   it('validates the local wire contract and counts workers', () => {
-    expect(fleetRunsBadge(fixture)).toEqual(runs);
-    expect(fleetRunsBadge({ ...fixture, mergesLastHour: { count: null } })).toEqual({ ...runs, merges: null });
+    expect(fleetRunsBadge(fixture)).toEqual(expectedRuns);
+    expect(fleetRunsBadge({ ...fixture, mergesLastHour: { count: null } })).toEqual({ ...expectedRuns, merges: null });
     for (const bad of [null, {}, { ...fixture, v: 2 }, { ...fixture, workers: [{}] },
       { ...fixture, mergesLastHour: { count: -1 } }, { ...fixture, switches: [1] }, { ...fixture, sources: { a: 1 } }]) {
       expect(fleetRunsBadge(bad)).toBeNull();
@@ -60,14 +61,14 @@ describe('fleet runs badge', () => {
     vi.useFakeTimers();
     const view = renderHook(() => useFleetRunsBadge());
     await act(async () => {});
-    expect(view.result.current).toEqual(runs);
+    expect(view.result.current).toEqual(expectedRuns);
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(fetch).toHaveBeenCalledTimes(2);
     visibility = 'hidden';
     act(() => document.dispatchEvent(new Event('visibilitychange')));
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(view.result.current).toEqual(runs);
+    expect(view.result.current).toEqual(expectedRuns);
     visibility = 'visible';
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(fetch).toHaveBeenCalledTimes(3);

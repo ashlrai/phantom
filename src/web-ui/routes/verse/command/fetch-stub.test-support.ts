@@ -35,7 +35,7 @@ export interface StubOptions {
 
 export interface StubHandle {
   posted: { url: string; body: Record<string, unknown> }[];
-  fetchMock: ReturnType<typeof vi.fn>;
+  fetchMock: ReturnType<typeof vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>>;
 }
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });

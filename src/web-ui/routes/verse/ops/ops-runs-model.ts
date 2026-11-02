@@ -5,8 +5,11 @@ const num: Check<number> = (v): v is number => typeof v === 'number' && Number.i
 const bool: Check<boolean> = (v): v is boolean => typeof v === 'boolean';
 const nullable = <T>(check: Check<T>): Check<T | null> => (v): v is T | null => v === null || check(v);
 const array = <T>(check: Check<T>): Check<T[]> => (v): v is T[] => Array.isArray(v) && v.every(check);
-function shape<S extends Record<string, Check<unknown>>>(schema: S): Check<{ [K in keyof S]: S[K] extends Check<infer T> ? T : never }> {
-  return (v): v is { [K in keyof S]: S[K] extends Check<infer T> ? T : never } =>
+type Checked<C> = C extends Check<infer T> ? T : never;
+type Shape<S> = { [K in keyof S as undefined extends Checked<S[K]> ? never : K]: Checked<S[K]> }
+  & { [K in keyof S as undefined extends Checked<S[K]> ? K : never]?: Checked<S[K]> };
+function shape<S extends Record<string, Check<unknown>>>(schema: S): Check<Shape<S>> {
+  return (v): v is Shape<S> =>
     v !== null && typeof v === 'object' && !Array.isArray(v)
     && Object.entries(schema).every(([key, check]) => check((v as Record<string, unknown>)[key]));
 }
@@ -15,8 +18,8 @@ const n = nullable(num);
 const s = nullable(str);
 const source: Check<'healthy' | 'degraded' | 'missing' | 'not-landed'> = (v): v is 'healthy' | 'degraded' | 'missing' | 'not-landed' =>
   v === 'healthy' || v === 'degraded' || v === 'missing' || v === 'not-landed';
-const mergeItem: Check<{ repo: string; number: number; title: string; mergedAt?: string; openedAt?: string }> =
-  shape({ repo: str, number: num, title: str, mergedAt: optional(str), openedAt: optional(str) });
+const mergeItem: Check<{ repo: string; number: number; title: string; mergedAt?: string | null; openedAt?: string | null }> =
+  shape({ repo: str, number: num, title: str, mergedAt: optional(s), openedAt: optional(s) });
 const fleetRunsShape = shape({
   v: ((v): v is 1 => v === 1), generatedAt: str,
   sources: shape({ runsDir: source, workers: source, inbox: source, codex: source, merges: source }),

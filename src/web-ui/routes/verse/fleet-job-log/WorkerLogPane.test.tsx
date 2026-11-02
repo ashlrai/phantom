@@ -78,7 +78,7 @@ it('polls the detail at its state interval only while visible', async () => {
   vi.useFakeTimers(); serve();
   const view = render(<WorkerLogPane visible />);
   await act(async () => {});
-  const detailCalls = () => spy.mock.calls.filter(call => String(call[0]).startsWith('/api/fleet/job?')).length;
+  const detailCalls = () => spy.mock.calls.filter((call: [string, ...unknown[]]) => String(call[0]).startsWith('/api/fleet/job?')).length;
   expect(detailCalls()).toBe(1);
   await act(async () => { vi.advanceTimersByTime(4000); });
   expect(detailCalls()).toBe(2);

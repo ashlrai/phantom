@@ -1,7 +1,8 @@
+import type { FleetRunsBadge } from './fleet-runs-badge.js';
 import { expect, it } from 'vitest';
 import { formatWindowTitle } from './window-title.js';
 
-const badge = { workers: 24, merges: 7, switchesOn: [] as string[], paused: false, heldLanes: [] as string[] };
+const badge: FleetRunsBadge = { workers: 24, merges: 7, switchesOn: [] as string[], paused: false, heldLanes: [] as string[], lanes: [], personalPct: null };
 
 it('shows paused status and worker count', () => {
   expect(formatWindowTitle({ badge: { ...badge, paused: true, workers: 0 } })).toBe('Phantom · ⏸ paused · 0 working');

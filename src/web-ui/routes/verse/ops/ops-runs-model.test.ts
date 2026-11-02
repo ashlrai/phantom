@@ -26,6 +26,16 @@ describe('live runs model', () => {
       { ...fixture, lanes: [{ ...fixture.lanes[0], held: 1 }] },
       { ...fixture, diskFreeGb: Infinity }, { ...fixture, drop: {} }]) expect(isFleetRuns(bad)).toBe(false);
   });
+  it('accepts omitted optional fields and null merge timestamps from the backend', () => {
+    const runs: FleetRuns = {
+      ...fixture,
+      mergesLastHour: { count: 1, items: [{ repo: 'phantom', number: 12, title: 'Fleet view', openedAt: null, mergedAt: null }] },
+    };
+    expect(isFleetRuns(runs)).toBe(true);
+    expect(isFleetRuns({ ...runs, claimed: [{ job: 'job', lane: 'codex', tier: 'mid', at: runs.generatedAt }] })).toBe(true);
+    expect(isFleetRuns({ ...runs, claimed: [{ job: 'job' }] })).toBe(false);
+    expect(isFleetRuns({ ...runs, mergesLastHour: { count: 1, items: [{ ...runs.mergesLastHour.items[0], openedAt: 42 }] } })).toBe(false);
+  });
   it('keeps unknown distinct from zero and derives readable time', () => {
     expect(countText(null)).toBe('—'); expect(countText(0)).toBe('0');
     expect(ageText(65)).toBe('01:05'); expect(ageText(3660)).toBe('1:01'); expect(ageText(null)).toBe('—');
