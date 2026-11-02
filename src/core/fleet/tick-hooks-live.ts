@@ -203,6 +203,7 @@ import {
 } from './fleet-runtime-journal.js';
 import { repoIdentityOfPath, resolveRepoLabel } from './repo-identity.js';
 import { noteTickPhase } from '../daemon/tick-progress.js';
+import { runTickPhase } from '../daemon/tick-phases.js';
 import { DEVIN_CLI_LANE, FLEET_ENGINES, grantEngineOfLane, type DispatchOutcome, type FleetEngine, type LandingRecord, type RepoHold, type RepoHoldChange, type SetRepoHoldRequest } from './fleet-types.js';
 
 // ---------------------------------------------------------------------------
@@ -1373,14 +1374,15 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const mirrorPaused: { path: string; repo: string; reason: string }[] = [];
       let readyMirrors: MirrorTickPreparation['ready'] = [];
       if (!hookCtx.dryRun) {
-        try {
+        const { MIRROR_TICK_PREP_DEADLINE_MS, MIRROR_TICK_ABORT_GRACE_MS } = await import('./mirrors.js');
+        const mirrorPhase = await runTickPhase('mirror-prep', async (signal) => {
           noteTickPhase('mirror prep', `${policy.repos.length} repo(s)`);
           // Lane observations belong to the running tick, not its completion.
           // Re-probe while mirror prep waits; never renew an old usage reading.
           let observing = false;
           let observationClosed = false;
           const observe = async (): Promise<void> => {
-            if (observationClosed || observing || hookCtx.signal?.aborted) return;
+            if (observationClosed || observing || signal.aborted) return;
             observing = true;
             try {
               const at = deps.now();
@@ -1407,7 +1409,7 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               if (idle !== null) observed.local.slots = Math.min(observed.local.slots, idle);
               else if (localFleetEnabled(cfg)) observed.local = { lane: 'local', slots: 0,
                 capReason: 'Current llama-server slots, activity, or per-slot context could not be verified.' };
-              if (observationClosed || hookCtx.signal?.aborted) return;
+              if (observationClosed || signal.aborted) return;
               deps.writeTick({
                 ...emptyState('Mirror preparation is in progress.', unknownPresence),
                 at: new Date(at).toISOString(),
@@ -1418,15 +1420,21 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
             finally { observing = false; }
           };
           await observe();
+          if (signal.aborted) throw new Error('Mirror preparation cancelled.');
           const laneTimer = setInterval(() => { void observe(); }, 60_000);
           laneTimer.unref?.();
           const stopObserving = (): void => { observationClosed = true; clearInterval(laneTimer); };
-          hookCtx.signal?.addEventListener('abort', stopObserving, { once: true });
-          if (hookCtx.signal?.aborted) stopObserving();
-          let prep: MirrorTickPreparation;
-          try { prep = await deps.prepareMirrors(policy, hookCtx.signal); }
-          finally { stopObserving(); hookCtx.signal?.removeEventListener('abort', stopObserving); }
-
+          signal.addEventListener('abort', stopObserving, { once: true });
+          if (signal.aborted) stopObserving();
+          try { return await deps.prepareMirrors(policy, signal); }
+          finally { stopObserving(); signal.removeEventListener('abort', stopObserving); }
+        }, {
+          deadlineMs: MIRROR_TICK_PREP_DEADLINE_MS + MIRROR_TICK_ABORT_GRACE_MS + 30_000,
+          parentSignal: hookCtx.signal,
+          log: (line) => console.warn('[ashlr] daemon:tick', line),
+        });
+        if (mirrorPhase.status === 'ok' && mirrorPhase.value !== undefined) {
+          const prep = mirrorPhase.value;
           readyMirrors = prep.ready;
           for (const failed of prep.failed) {
             deps.audit({ action: 'daemon:mirror-prep', repo: failed.nameWithOwner,
@@ -1439,8 +1447,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               mirrorPaused.push({ path, repo: dirLabel(path), reason: 'Its mirror is not current.' });
             }
           }
-        } catch (err) {
-          mirrorProblem = `The fleet mirrors could not be prepared (${describeError(err)}), so no repo is known to be current.`;
+        } else if (mirrorPhase.status === 'timeout') {
+          mirrorProblem = 'The fleet mirrors could not be prepared in time (mirror-prep exceeded its deadline), so no repo is known to be current.';
+        } else {
+          mirrorProblem = `The fleet mirrors could not be prepared (${mirrorPhase.error ?? 'unavailable'}), so no repo is known to be current.`;
         }
         if (mirrorProblem === null) {
           try {

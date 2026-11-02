@@ -321,7 +321,7 @@ describe('beforeTick — fail closed', () => {
 });
 
 describe('lanes, presence and the router seam', () => {
-  it('publishes fresh lanes during 45 minutes of stuck mirror prep and stops on abort', async () => {
+  it('publishes fresh lanes during stuck mirror prep and stops on abort', async () => {
     vi.useFakeTimers();
     let now = NOW;
     let release!: (value: { ready: []; failed: []; pausedRepoPaths: [] }) => void;
@@ -336,7 +336,7 @@ describe('lanes, presence and the router seam', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(release).toBeTypeOf('function');
-      for (let minute = 1; minute <= 45; minute++) {
+      for (let minute = 1; minute <= 15; minute++) {
         now = NOW + minute * 60_000;
         await vi.advanceTimersByTimeAsync(60_000);
       }
@@ -350,6 +350,25 @@ describe('lanes, presence and the router seam', () => {
     } finally {
       release({ ready: [], failed: [], pausedRepoPaths: [] });
       await running;
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops lane observations when mirror preparation reaches its deadline', async () => {
+    vi.useFakeTimers();
+    h.deps.prepareMirrors = () => new Promise(() => {});
+    const hooks = createLiveTickHooks({ deps: h.deps });
+    hooks.effectiveConfig(CFG);
+    const running = hooks.beforeTick(hookCtx);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(17 * 60_000);
+      await running;
+      expect(h.ticks.at(-1)?.holdProduction).toContain('mirror-prep exceeded its deadline');
+      const count = h.ticks.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.ticks).toHaveLength(count);
+    } finally {
       vi.useRealTimers();
     }
   });
