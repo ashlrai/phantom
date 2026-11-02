@@ -30,7 +30,7 @@ function savePostedAt(at: number | null): void {
   } catch { /* Storage may be unavailable. */ }
 }
 
-export function MobileInterject() {
+export function MobileInterject({ title = 'Tell the leaders', placeholder = 'A prompt, a thought, a correction. The next leader pass reads it.' }: { title?: string; placeholder?: string } = {}) {
   const { permissions, reachability } = useMobile();
   const query = useQuery(inboxTailQuery);
   const refetch = useRefetch(inboxTailQuery);
@@ -78,7 +78,7 @@ export function MobileInterject() {
   }
 
   return (
-    <Section title="Tell the leaders">
+    <Section title={title}>
       {missing ? <Row title="This build has no fleet inbox yet." /> : <>
         {canShowActions(permissions) ? (
           <form className={`${ui.stack} ${ui.row}`} onSubmit={(event) => void send(event)}>
@@ -96,7 +96,7 @@ export function MobileInterject() {
             ) : null}
             <div className={ui.composerRow}>
               <textarea ref={textareaRef} id="mobile-interject" className={ui.textarea} maxLength={6000} value={displayedText} disabled={busy}
-                placeholder="A prompt, a thought, a correction. The next leader pass reads it."
+                placeholder={placeholder}
                 onChange={(event) => { setInterim(''); setText(event.target.value); }} />
               <MicButton size="inline" disabled={busy || !reachable} onInterim={setInterim}
                 onFinal={(phrase) => {
