@@ -9,7 +9,8 @@ const help = `${usage}\n` +
   'per-node timeout: one monotonic deadline is shared by control reads and every child.\n' +
   'After it expires no node launches, active children are stopped through the worker TERM\n' +
   'then KILL escalation and awaited, and nodes that never started are reported as\n' +
-  'deadline-exhausted.';
+  'deadline-exhausted. Each task may set cwd to an existing absolute directory; otherwise\n' +
+  'it runs in the runner working directory.';
 export async function cmdFleetGraphContextRun(args: string[], io: ContextWorkerIO = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     (io.stdout ?? process.stdout).write(`${help}\n`);
