@@ -73,15 +73,17 @@ async function readSourceState(path: string): Promise<State> {
 }
 // Validate the entire input before reporting no work, using the same schemas as
 // retry preparation. The key binds every manifest field, including optional IDs.
-export async function selectNextGuardianInfraRetry(options: { manifest: string; sourceState: string; outputState: string }): Promise<{ repo: string; sha: string } | null> {
+export async function selectNextGuardianInfraRetry(options: { manifest: string; sourceState: string; outputState: string; exclude?: readonly { repo: string; sha: string }[] }): Promise<{ repo: string; sha: string } | null> {
   if (![options.manifest, options.sourceState, options.outputState].every(p => isAbsolute(p) && p.length <= 4096) ||
     resolve(options.sourceState) === resolve(options.outputState)) throw new Error('invalid guardian-retry paths');
   const inputs = await manifest(options.manifest);
   const state = await readSourceState(options.sourceState);
+  if (options.exclude !== undefined && (!Array.isArray(options.exclude) || options.exclude.length > 100 || options.exclude.some(e => !e || typeof e.repo !== 'string' || !isAbsolute(e.repo) || e.repo.length > 4096 || !isSafeText(e.repo) || typeof e.sha !== 'string' || !sha.test(e.sha)))) throw new Error('invalid retry exclusions');
+  const excluded = new Set((options.exclude ?? []).map(e => `${resolve(e.repo)}\0${e.sha}`));
   const identities = new Map(inputs.map(input => [key(input), input]));
   const eligible = state.entries.filter(e => {
     const input = identities.get(e.key);
-    return input !== undefined && resolve(input.repo) === resolve(e.repo) && input.mergeCommit === e.sha &&
+    return !excluded.has(`${resolve(e.repo)}\0${e.sha}`) && input !== undefined && resolve(input.repo) === resolve(e.repo) && input.mergeCommit === e.sha &&
       e.terminal === 'fail' && e.failureCategory === 'infra' && (e.cleanup === 'removed' || e.cleanup === 'not-created');
   });
   eligible.sort((a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
