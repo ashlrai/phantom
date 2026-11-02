@@ -17,6 +17,7 @@ is keyed so the next loop iteration skips already-verified work.
 | `ashlr fleet guardian-compact` | Prunes stale entries so the state file reflects only active manifests |
 | `ashlr fleet guardian-retry` | Removes a failed entry so it can be re-verified |
 | `ashlr fleet main-repair-time` | Measures how long each `FIXUP-MAIN` repair takes |
+| `ashlr fleet stuck-fixes` | Lists `FIXUP-MAIN` jobs whose PR is still open past 20 minutes |
 | `ashlr fleet main-red-age` | Reports each repo's guardian state and minutes red from `~/.ashlr-runs/guardian/state.json` (read-only; `--state <file>` overrides) |
 
 Exit codes: `0` pass, `1` fail, `2` invalid args, `3` unknown/cancelled,

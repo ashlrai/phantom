@@ -17,7 +17,7 @@ const server = (over: Partial<UpdateServerStatus> & Record<string, unknown> = {}
   processStartedAt: '2026-10-31T08:00:00Z', uptimeSeconds: 15_300, canFastForward: false, ...over,
 });
 
-const lastApply = (over: Record<string, unknown> = {}) => ({
+const lastApply = (over: Record<string, unknown> = {}): NonNullable<UpdateServerStatus['lastApply']> => ({
   outcome: 'failed', reason: 'update failed', startedAt: '2026-10-31T12:00:00Z',
   finishedAt: '2026-10-31T12:01:00Z', fromCommit: sha('a'), toCommit: sha('b'),
   restartRequired: false, restartMode: 'manual', ...over,

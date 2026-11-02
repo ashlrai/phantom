@@ -69,7 +69,7 @@ const toStreamLine = (record: Record<string, unknown>, heavyKey: 'report' | 'las
   return out;
 };
 
-const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
+const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
 Repeat the self-management pass (fleet self-tick) for a bounded window:
 first pass immediately, then one pass every interval (default 60000ms,
 minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is
@@ -77,7 +77,10 @@ reached. The deadline only gates admission — a pass already running finishes
 normally. SIGINT/SIGTERM stop admission and interrupt the wait without
 killing a running pass; the summary prints either way. Each pass is the real
 self-tick with its own queue/self-tick.lock: a contended pass counts 'busy'
-and the loop continues, as does a failed pass. --json prints one final
+and the loop continues, as does a failed pass. --failure-backoff-max-ms
+opts into doubling the delay after consecutive failures, up to the given max
+(between the interval and 24h); success or busy resets it. Stream pass records
+include consecutiveFailures and nextDelayMs when enabled. --json prints one final
 sanitized summary line (unchanged default shape). --stream instead prints
 sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line per
 completed pass, then exactly one {"v":1,"record":"summary",...} line.
@@ -109,7 +112,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
   let json = false, apply = false, stream = false;
-  let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
+  let durationMs: number | undefined, intervalMs: number | undefined, failureBackoffMaxMs: number | undefined, runsDir: string | undefined;
   const parseMs = (value: string | undefined): number | undefined => {
     if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
     const parsed = Number(value);
@@ -126,6 +129,9 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
     } else if (arg === '--interval-ms' && intervalMs === undefined) {
       intervalMs = parseMs(args[++i]);
       if (intervalMs === undefined || intervalMs < SELF_LOOP_MIN_INTERVAL_MS) return invalid();
+    } else if (arg === '--failure-backoff-max-ms' && failureBackoffMaxMs === undefined) {
+      failureBackoffMaxMs = parseMs(args[++i]);
+      if (failureBackoffMaxMs === undefined || failureBackoffMaxMs > SELF_LOOP_MAX_DURATION_MS) return invalid();
     } else if (arg === '--runs-dir' && runsDir === undefined) {
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
@@ -136,6 +142,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   // combining it with --json is a usage error, refused before any pass runs.
   if (stream && json) return invalid();
   if (durationMs === undefined) return invalid();
+  if (failureBackoffMaxMs !== undefined && failureBackoffMaxMs < (intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS)) return invalid();
   // One root for the lock and all three steps of every pass, resolved here
   // once — same fallbacks as self-tick, so nothing can drift between passes.
   const root = resolve(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
@@ -178,6 +185,9 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       output(toStreamLine({
         v: 1, record: 'pass', pass: event.pass, exitCode: event.exitCode,
         state: event.state, report: event.report,
+        ...(event.consecutiveFailures === undefined ? {} : {
+          consecutiveFailures: event.consecutiveFailures, nextDelayMs: event.nextDelayMs,
+        }),
       }, 'report'));
     }
     : undefined;
@@ -187,6 +197,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
     summary = await runSelfLoop({
       durationMs,
       intervalMs: intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS,
+      ...(failureBackoffMaxMs === undefined ? {} : { failureBackoffMaxMs }),
       tick: deps.tick ?? realTick,
       now,
       signal: controller.signal,
