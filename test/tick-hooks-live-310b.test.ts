@@ -321,6 +321,39 @@ describe('beforeTick — fail closed', () => {
 });
 
 describe('lanes, presence and the router seam', () => {
+  it('publishes fresh lanes during 45 minutes of stuck mirror prep and stops on abort', async () => {
+    vi.useFakeTimers();
+    let now = NOW;
+    let release!: (value: { ready: []; failed: []; pausedRepoPaths: [] }) => void;
+    const controller = new AbortController();
+    h.deps.now = () => now;
+    h.deps.prepareMirrors = () => new Promise(resolve => { release = resolve; });
+    h.deps.probeLocalRuntime = async () => ({ reachable: true, slots: 4, busySlots: 0,
+      idleSlots: 4, observedAt: new Date(now).toISOString(), contextPerSlot: 65_536, detail: 'observed' });
+    const hooks = createLiveTickHooks({ deps: h.deps });
+    hooks.effectiveConfig(CFG);
+    const running = hooks.beforeTick({ ...hookCtx, signal: controller.signal });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(release).toBeTypeOf('function');
+      for (let minute = 1; minute <= 45; minute++) {
+        now = NOW + minute * 60_000;
+        await vi.advanceTimersByTimeAsync(60_000);
+      }
+      expect(h.ticks.at(-1)).toMatchObject({ at: new Date(now).toISOString(),
+        holdProduction: 'Mirror preparation is in progress.' });
+      expect(h.ticks.at(-1)!.lanes.find(l => l.lane === 'local')?.slots).toBeGreaterThan(0);
+      controller.abort();
+      const count = h.ticks.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.ticks).toHaveLength(count);
+    } finally {
+      release({ ready: [], failed: [], pausedRepoPaths: [] });
+      await running;
+      vi.useRealTimers();
+    }
+  });
+
   it('probes the dispatch endpoint and preserves the original total, activity and time', async () => {
     const health = await import('../src/core/local-runtime/llama/health.js');
     const baseUrl = 'http://127.0.0.1:9864/v1';
@@ -529,8 +562,8 @@ describe('lanes, presence and the router seam', () => {
     const hooks = createLiveTickHooks({ deps: { ...h.deps, clampBudget: (p, _standing, ids) => { seen.push([...ids]); return p; } } });
     hooks.effectiveConfig(CFG);
     await hooks.beforeTick(hookCtx);
-    expect(seen).toHaveLength(1);
-    expect([...seen[0]!].sort()).toEqual(['claude', 'grok', 'local']);
+    expect(seen).toHaveLength(2); // Observation and dispatch each clamp all seats.
+    for (const seats of seen) expect([...seats].sort()).toEqual(['claude', 'grok', 'local']);
   });
 
   it('routes through the SeatRouter once per item per tick and logs the shadow decision', async () => {
@@ -1339,7 +1372,9 @@ describe('exhausted positive USD allowance maintenance', () => {
     expect(h.insightCalls).toBe(1);
     expect(leader).not.toHaveBeenCalled();
     expect(experiment).not.toHaveBeenCalled();
-    expect(h.ticks).toHaveLength(1);
+    expect(h.ticks).toHaveLength(2);
+    expect(h.ticks[0]!.holdProduction).toBe('Mirror preparation is in progress.');
+    expect(h.ticks[1]!.holdProduction).toBeNull();
     // Without the narrowing hint the established runners remain available.
     await hooks.beforeTick({ ...hookCtx, nowMs: NOW + 10 * 60_000 });
     expect(leader).toHaveBeenCalledOnce();
