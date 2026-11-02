@@ -8,12 +8,37 @@ import {
 export interface MergeBacklogItem {
   /** Canonical owner/name; PR numbers are only unique within a repository. */
   repo: string;
+  /** PR creation time; updates do not reset time waiting for merge. */
+  createdAt?: string;
   mergeState: FleetMergeStateRead;
   github: FleetPrGhState | null;
 }
 
 export interface MergeBacklogEntry extends MergeBacklogItem {
   classification: FleetPrClassification;
+}
+
+/** Read age metadata independently of the protected merge-state classifier. */
+export function mergeBacklogCreatedAt(raw: unknown): string | undefined {
+  if (raw === null || typeof raw !== 'object' || !('createdAt' in raw)) return undefined;
+  return typeof raw.createdAt === 'string' ? raw.createdAt : undefined;
+}
+
+/** Unknown age sorts last; stable sort preserves discovery order for ties. */
+function waitingSince(entry: MergeBacklogEntry): number {
+  const openedAt = entry.mergeState.state === 'ok' ? entry.mergeState.record.pr?.openedAt : undefined;
+  for (const value of [entry.createdAt, openedAt]) {
+    if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) continue;
+    const time = Date.parse(value);
+    if (Number.isFinite(time)) return time;
+  }
+  return Infinity;
+}
+
+function oldestFirst(a: MergeBacklogEntry, b: MergeBacklogEntry): number {
+  const left = waitingSince(a);
+  const right = waitingSince(b);
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 /**
@@ -58,7 +83,11 @@ export function planMergeBacklog(
     }
   }
   // Independent limits are load-bearing: even an arbitrarily long conflict
-  // prefix cannot spend a ready merge slot. Preserve input order within lanes.
+  // prefix cannot spend a ready merge slot. Age ordering happens before limits
+  // so stale conflicts get recut capacity without starving eligible merges.
+  ready.sort(oldestFirst);
+  recut.sort(oldestFirst);
+  refreshes.sort(oldestFirst);
   return {
     merges: ready.slice(0, limits.merges),
     recuts: recut.slice(0, limits.recuts),
