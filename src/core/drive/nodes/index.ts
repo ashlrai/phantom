@@ -1,5 +1,7 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { validId, type NodesState, type NodesStore } from './state.js';
+import { scrubSecrets } from '../../util/scrub-secrets.js';
+import { TenancyError, ownerKey, validOwner, type Owner } from '../../tenancy/owner.js';
 export { LocalNodesStore } from './local-store.js';
 export type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 export type { NodeRecord, NodesState, NodesStore } from './state.js';
@@ -60,12 +62,14 @@ export class DriveNodes implements QueueV1 {
     return leader && leader.expiresAt > now && this.liveNode(state, leader, now) ? leader : null;
   }
 
-  join(nodeId: string): NodeSession | null {
+  join(nodeId: string, owner?: Owner): NodeSession | null {
     if (!validId(nodeId)) throw new Error('Invalid drive node ID');
+    if (owner !== undefined && !validOwner(owner)) throw new Error('Invalid drive node owner');
     return this.transaction((state, now) => {
       const existing = state.nodes.find(n => n.nodeId === nodeId);
       if (existing && existing.expiresAt > now) return null;
-      const node = { nodeId, session: nextToken(state), heartbeatAt: now, expiresAt: now + this.nodeTtl };
+      const node = { nodeId, session: nextToken(state), heartbeatAt: now, expiresAt: now + this.nodeTtl,
+        ...(owner ? { owner: { kind: owner.kind, id: owner.id } } : {}) };
       state.nodes = state.nodes.filter(n => n.nodeId !== nodeId);
       state.nodes.push(node);
       return { nodeId, session: node.session };
@@ -106,11 +110,13 @@ export class DriveNodes implements QueueV1 {
     return this.transaction(state => state);
   }
 
-  enqueue(jobId: string): boolean {
+  /** Callers check the enqueuer may act for `owner` (tenancy assertOwnerAccess) before calling. */
+  enqueue(jobId: string, owner?: Owner): boolean {
     if (!validId(jobId)) throw new Error('Invalid drive job ID');
+    if (owner !== undefined && !validOwner(owner)) throw new Error('Invalid drive job owner');
     return this.transaction(state => {
       if (state.jobs.some(j => j.id === jobId)) return false;
-      state.jobs.push({ id: jobId, state: 'pending' });
+      state.jobs.push({ id: jobId, state: 'pending', ...(owner ? { owner: { kind: owner.kind, id: owner.id } } : {}) });
       return true;
     });
   }
@@ -130,6 +136,12 @@ export class DriveNodes implements QueueV1 {
           !this.liveNode(state, worker, now)) return null;
       const job = state.jobs.find(j => j.id === jobId);
       if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
+      const node = state.nodes.find(n => sameSession(n, worker))!;
+      // Router scope: a job (and so its lease) never crosses tenants, in either direction.
+      if (ownerKey(job.owner) !== ownerKey(node.owner)) {
+        throw new TenancyError(`Job ${jobId} (${ownerKey(job.owner) || 'unowned'}) cannot run on node ${node.nodeId} (${ownerKey(node.owner) || 'unowned'}).`,
+          `Route it to a node owned by ${ownerKey(job.owner) || 'nobody (an unowned node)'}, or join one with that owner.`);
+      }
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,
         expiresAt: now + this.claimTtl };
       job.state = 'running';
@@ -153,7 +165,8 @@ export class DriveNodes implements QueueV1 {
       if (!this.currentClaim(state, claim, now)) return false;
       const job = state.jobs.find(j => j.id === claim.jobId)!;
       job.state = 'completed';
-      job.result = result;
+      // Results are shared logs: never persist a credential-shaped value.
+      job.result = scrubSecrets(result);
       return true;
     });
   }

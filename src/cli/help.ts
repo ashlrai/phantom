@@ -76,6 +76,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MetricsFeed (schemaVersion 1); unknown measurements are null; refused input exits 2',
   },
   {
+    usage: 'phm whoami [--json]',
+    description: 'Your person, teams, orgs and owner scopes from this machine\'s own local auth; no token read. Exit 0 identity, 1 identity error with fix, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'Principal {schemaVersion:1, person, actor, teams:[{id,role}], orgs, scopes} | {error, fix}',
+  },
+  {
+    usage: 'phm org list|add <org> [--team <team>] [--json]',
+    description: 'List orgs you belong to, or create/extend one with you as a member (idempotent, $ASHLR_HOME/tenancy/orgs.json). Exit 0, 1 tenancy error with fix, 2 bad usage.',
+    safety: 'append',
+    jsonShape: 'list {schemaVersion:1, person, orgs:[{id,members,teams}]}; add {schemaVersion:1, action, org} | {error, fix}',
+  },
+  {
     usage: 'phm node bootstrap --dry-run [--json]',
     description: 'Print persistent Linux node setup and future registry lease steps; no provisioning or registry calls. Exit 0 plan, 2 bad usage.',
     safety: 'read',
@@ -754,6 +766,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
 
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
+  { cmd: 'whoami [--json]',             desc: 'Who am I: person, teams, orgs and owner scopes from local auth (no tokens).', topic: 'safety' },
+  { cmd: 'org list|add <org> [--team <team>] [--json]', desc: 'List your orgs or add one grouping teams; nodes, jobs, forum and packs are owner-scoped.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
   { cmd: 'sandbox diff <id>',            desc: 'Show diff of a sandbox vs its base HEAD.', topic: 'safety' },

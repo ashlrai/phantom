@@ -2319,6 +2319,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'whoami': {
+        const { cmdWhoami } = await import('./tenancy.js');
+        process.exitCode = await cmdWhoami(rest);
+        break;
+      }
+
+      case 'org': {
+        const { cmdOrg } = await import('./tenancy.js');
+        process.exitCode = await cmdOrg(rest);
+        break;
+      }
+
       case 'node': {
         const cmdNode = await loadNodeCmd();
         process.exitCode = await cmdNode(rest);

@@ -1,8 +1,10 @@
+import { validOwner, type Owner } from '../../tenancy/owner.js';
 import type { LeaderLease, NodeSession, QueueJobV1 } from './queue-v1.js';
 
 export interface NodeRecord extends NodeSession {
   heartbeatAt: number;
   expiresAt: number;
+  owner?: Owner;
 }
 
 export interface NodesState {
@@ -39,10 +41,11 @@ export function parseState(value: unknown): NodesState {
   const token = (v: unknown): boolean => integer(v) && v > 0 && v <= sequence;
   const session = (v: Record<string, unknown>): boolean => validId(v.nodeId) && token(v.session);
   const lease = (v: Record<string, unknown>): boolean => session(v) && token(v.token) && integer(v.expiresAt);
-  if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt))) return fail();
+  const owner = (v: Record<string, unknown>): boolean => v.owner === undefined || validOwner(v.owner);
+  if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt) && owner(n))) return fail();
   if (new Set(value.nodes.map(n => n.nodeId)).size !== value.nodes.length) return fail();
   if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();
-  if (!value.jobs.every(j => object(j) && validId(j.id) &&
+  if (!value.jobs.every(j => object(j) && validId(j.id) && owner(j) &&
     ['pending', 'running', 'completed'].includes(String(j.state)) &&
     (j.result === undefined || typeof j.result === 'string') &&
     (j.state !== 'completed' || typeof j.result === 'string') &&

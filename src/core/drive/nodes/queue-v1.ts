@@ -1,3 +1,5 @@
+import type { Owner } from '../../tenancy/owner.js';
+
 /** Provisional queue.v1 contract until RQ-PHANTOM-DRIVER-1-QUEUE lands.
  * Queue state and lease state MUST commit in the same transaction. A remote
  * adapter must perform compare-and-set at the authority, never read then write.
@@ -7,6 +9,8 @@ export interface QueueJobV1 {
   state: 'pending' | 'running' | 'completed';
   claim?: JobClaim;
   result?: string;
+  /** Tenancy: only a node with the same owner may claim it. */
+  owner?: Owner;
 }
 
 export interface NodeSession {

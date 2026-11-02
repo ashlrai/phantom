@@ -25,6 +25,11 @@ export function ownerConfigPath(): string { return join(ashlrHome(), 'teams', 'o
 export function localHumanActor(env: NodeJS.ProcessEnv = process.env): TeamActor {
   const marker = AGENT_ENV_MARKERS.find((k) => env[k] !== undefined && env[k] !== '');
   if (marker) throw new Error(`Approvals must come from the local human owner, not an agent process (${marker} is set).`);
+  return { kind: 'human', id: `human:${localHumanName()}` };
+}
+
+/** The accountable local person (OS user, optionally pinned by owner.json); agents act on their behalf. */
+export function localHumanName(): string {
   const osUser = norm(userInfo().username);
   let name = osUser;
   const p = ownerConfigPath();
@@ -34,7 +39,7 @@ export function localHumanActor(env: NodeJS.ProcessEnv = process.env): TeamActor
     if (typeof cfg.human === 'string' && norm(cfg.human)) name = norm(cfg.human);
   }
   if (!name || name.startsWith('agent')) throw new Error('Could not derive a human approval identity.');
-  return { kind: 'human', id: `human:${name}` };
+  return name;
 }
 
 /** Throws unless `actor` is exactly the identity derived for this local process. */
