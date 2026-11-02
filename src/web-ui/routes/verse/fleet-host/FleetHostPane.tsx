@@ -9,6 +9,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
+import { StandbyCard } from './StandbyCard.js';
 import { AppsCard } from './AppsCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
 import { hostView } from './fleet-host-model.js';
@@ -99,6 +100,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <DropQueueCard visible={visible} />
         <MemoryGuardCard visible={visible} />
         <AppsCard visible={visible} />
+        <StandbyCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
   </div>;
