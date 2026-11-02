@@ -199,7 +199,7 @@ export function ollamaInstalled(): boolean {
   try {
     // Cross-platform probe: `where` on Windows, `which` on POSIX.
     // execFileSync throws when exit code != 0.
-    execFileSync(process.platform === 'win32' ? 'where' : 'which', ['ollama'], { stdio: 'pipe' });
+    execFileSync(process.platform === 'win32' ? 'where' : 'which', ['ollama'], { stdio: 'pipe', timeout: 2_000 });
     return true;
   } catch {
     return false;
