@@ -136,6 +136,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'supply': () => import('./fleet-supply.js'),
   'task-check': () => import('./fleet-task-check.js'),
   'thread-run': () => import('./fleet-thread-run.js'),
+  'tick-gaps': () => import('./fleet-tick-gaps.js'),
   'union-apply': () => import('./fleet-union-apply.js'),
   'union-preview': () => import('./fleet-union-preview.js'),
   'verdict': () => import('./fleet-verdict.js'),
