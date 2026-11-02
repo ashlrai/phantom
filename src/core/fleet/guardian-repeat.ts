@@ -14,6 +14,7 @@ export type GuardianRepeatTermination = GuardianDrainTermination | 'duration';
 export interface GuardianRepeatOptions {
   manifest: string; sourceState: string; outputDir: string;
   durationMs: number; intervalMs: number; maxRetries: number; timeoutMs: number;
+  idleBackoffMaxMs?: number;
   apply: boolean; stopFile?: string; signal?: AbortSignal;
 }
 
@@ -35,6 +36,7 @@ export interface GuardianRepeatDeps {
 export interface GuardianRepeatPass {
   pass: number; termination: string; attempts: number; verified: number; refused: number;
   latestOutput: string | null; session: string | null;
+  consecutiveIdle?: number; nextDelayMs?: number;
 }
 
 export interface GuardianRepeatSummary {
@@ -82,6 +84,10 @@ export async function repeatGuardianDrains(
   options: GuardianRepeatOptions,
   deps: GuardianRepeatDeps = {},
 ): Promise<GuardianRepeatSummary> {
+  if (options.idleBackoffMaxMs !== undefined && (!Number.isSafeInteger(options.idleBackoffMaxMs)
+    || options.idleBackoffMaxMs < options.intervalMs || options.idleBackoffMaxMs > 86_400_000)) {
+    throw new RangeError('idleBackoffMaxMs must be a safe integer between intervalMs and 86400000');
+  }
   const now = deps.now ?? Date.now;
   const drain = deps.drain ?? drainWithFreshSession({}, deps.now);
   const sleep = deps.sleep ?? defaultSleep;
@@ -91,6 +97,7 @@ export async function repeatGuardianDrains(
   };
   const startedAt = now();
   let source = options.sourceState;
+  let consecutiveIdle = 0, nextDelayMs = options.intervalMs;
   for (;;) {
     const halted = options.signal?.aborted ? 'cancelled' as const : await stopFileExists(options.stopFile);
     if (halted) { summary.termination = halted; return summary; }
@@ -110,11 +117,18 @@ export async function repeatGuardianDrains(
     summary.verified += drained.verified; summary.refused += drained.refused;
     if (result.session) summary.session = result.session;
     const ok = REPEATABLE.has(drained.termination);
+    if (options.idleBackoffMaxMs !== undefined) {
+      if (drained.termination === 'no-work' && drained.refused === 0) {
+        consecutiveIdle++;
+        nextDelayMs = Math.min(options.idleBackoffMaxMs, nextDelayMs * 2);
+      } else { consecutiveIdle = 0; nextDelayMs = options.intervalMs; }
+    }
     // Only a completed successful drain's verified state becomes the next source.
     if (ok && drained.latestOutput) { source = drained.latestOutput; summary.latestOutput = drained.latestOutput; }
     try {
       await deps.onPass?.({ pass: summary.passes, termination: drained.termination, attempts: drained.attempts,
-        verified: drained.verified, refused: drained.refused, latestOutput: drained.latestOutput, session: result.session });
+        verified: drained.verified, refused: drained.refused, latestOutput: drained.latestOutput, session: result.session,
+        ...(options.idleBackoffMaxMs !== undefined ? { consecutiveIdle, nextDelayMs } : {}) });
     } catch { summary.termination = 'observer-error'; return summary; }
     if (!options.apply) { summary.termination = drained.termination; return summary; }
     if (!ok) {
@@ -124,10 +138,10 @@ export async function repeatGuardianDrains(
       return summary;
     }
     const left = Math.floor(options.durationMs - (now() - startedAt));
-    if (left <= options.intervalMs) { summary.termination = 'duration'; return summary; }
+    if (left <= nextDelayMs) { summary.termination = 'duration'; return summary; }
     // Wait in short slices so a stop file also interrupts the interval.
-    for (let waited = 0; waited < options.intervalMs && !options.signal?.aborted;) {
-      const slice = Math.min(STOP_POLL_MS, options.intervalMs - waited);
+    for (let waited = 0; waited < nextDelayMs && !options.signal?.aborted;) {
+      const slice = Math.min(STOP_POLL_MS, nextDelayMs - waited);
       await sleep(slice, options.signal);
       waited += slice;
       const stopped = await stopFileExists(options.stopFile);
