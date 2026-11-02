@@ -1,7 +1,9 @@
 import { isAbsolute, resolve } from 'node:path';
 import { readGuardianDrainCheckpoint } from '../core/fleet/guardian-drain-checkpoint.js';
 import type { GuardianDrainDeps } from '../core/fleet/guardian-retry-drain.js';
+import type { GuardianRepeatDeps } from '../core/fleet/guardian-repeat.js';
 import { cmdFleetGuardianDrain } from './fleet-guardian-drain.js';
+import { cmdFleetGuardianLoop } from './fleet-guardian-loop.js';
 
 // `fleet guardian-resume` — restart continuity for guardian-drain. After a
 // guardian process restarts, the supervisor never transcribes the last
@@ -20,7 +22,7 @@ import { cmdFleetGuardianDrain } from './fleet-guardian-drain.js';
 // raw checkpoint or filesystem exceptions are never printed.
 export async function cmdFleetGuardianResume(
   args: string[],
-  deps: GuardianDrainDeps & { now?: () => number; writeLine?: (line: string) => void | Promise<void> } = {},
+  deps: GuardianDrainDeps & GuardianRepeatDeps & { writeLine?: (line: string) => void | Promise<void> } = {},
 ): Promise<number> {
   const values: Record<string, string> = {};
   let json = false, stream = false, apply = false;
@@ -29,13 +31,19 @@ export async function cmdFleetGuardianResume(
     if (flag === '--json' && !json) { json = true; continue; }
     if (flag === '--stream' && !stream) { stream = true; continue; }
     if (flag === '--apply' && !apply) { apply = true; continue; }
-    if (!['--checkpoint-dir', '--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file'].includes(flag)
+    if (!['--checkpoint-dir', '--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms'].includes(flag)
       || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       process.stderr.write('error: invalid guardian-resume arguments\n'); return 2;
     }
     values[flag] = args[++i]!;
   }
   if (json && stream) { process.stderr.write('error: --json and --stream are mutually exclusive\n'); return 2; }
+  const duration = values['--duration-ms'], interval = values['--interval-ms'];
+  const validRepeat = (v: string | undefined, min: number): boolean =>
+    v !== undefined && /^[1-9]\d*$/.test(v) && Number(v) >= min && Number(v) <= 86_400_000;
+  if ((duration !== undefined || interval !== undefined) && (!validRepeat(duration, 1) || !validRepeat(interval, 1000))) {
+    process.stderr.write('error: guardian-resume requires --duration-ms 1..86400000 and --interval-ms 1000..86400000 together\n'); return 2;
+  }
   const checkpointDir = values['--checkpoint-dir'];
   if (checkpointDir === undefined || !isAbsolute(checkpointDir) || checkpointDir.length > 4096
     || checkpointDir.includes('\0') || resolve(checkpointDir) !== checkpointDir) {
@@ -53,7 +61,9 @@ export async function cmdFleetGuardianResume(
   }
   // The drain command re-validates every forwarded flag; the checkpoint is
   // the only validated input added by this wrapper.
-  const forwarded = ['--source-state', latestOutput, '--new-session'];
+  const forwarded = ['--source-state', latestOutput];
+  if (duration === undefined) forwarded.push('--new-session');
+  else forwarded.push('--duration-ms', duration, '--interval-ms', interval!);
   for (const flag of ['--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file'] as const) {
     const value = values[flag];
     if (value !== undefined) forwarded.push(flag, value);
@@ -61,5 +71,5 @@ export async function cmdFleetGuardianResume(
   if (apply) forwarded.push('--apply');
   if (json) forwarded.push('--json');
   if (stream) forwarded.push('--stream');
-  return cmdFleetGuardianDrain(forwarded, deps);
+  return duration === undefined ? cmdFleetGuardianDrain(forwarded, deps) : cmdFleetGuardianLoop(forwarded, deps);
 }
