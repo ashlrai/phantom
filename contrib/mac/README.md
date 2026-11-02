@@ -210,6 +210,8 @@ Enable either flag only for launches that should use it, for example:
 ASHLR_SHARED_CARGO_TARGET=1 ASHLR_SCCACHE=1 /path/to/launch.sh JOB phantom POOL
 ```
 
+When launching through `scripts/bridge/launch.sh`, `ASHLR_SCCACHE=1` is handled
+there (local-only, see `docs/BRIDGE-WORKTREES.md`) and this block is unnecessary.
 Install `sccache` separately before opting in. No installation, credential,
 remote cache or provider configuration is performed here. Cargo serializes
 concurrent builds sharing a target directory; this saves disk and repeated
