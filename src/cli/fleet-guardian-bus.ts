@@ -11,11 +11,16 @@ type BusDeps = DrainDeps & {
   append?: (envelope: unknown, options: BusInboxOptions) => BusInboxPost | Promise<BusInboxPost>;
 };
 
+// Each bus append may wait at most 1 second by default; callers may set
+// --bus-delivery-timeout-ms to 1..60000. This does not cancel the write.
+const DEFAULT_DELIVERY_TIMEOUT_MS = 1000;
+const MAX_DELIVERY_TIMEOUT_MS = 60000;
+
 /** Route sanitized drain observations to the shared inbox. Routing labels are not authority. */
 export async function cmdFleetGuardianBus(args: string[], deps: BusDeps = {}): Promise<number> {
   const values: Record<string, string> = {};
   const forwarded: string[] = [];
-  const flags = ['--bus-from', '--bus-to', '--bus-run-id', '--bus-runs-dir'];
+  const flags = ['--bus-from', '--bus-to', '--bus-run-id', '--bus-runs-dir', '--bus-delivery-timeout-ms'];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (flags.includes(arg)) {
@@ -32,7 +37,11 @@ export async function cmdFleetGuardianBus(args: string[], deps: BusDeps = {}): P
   const token = (value: string | undefined): value is string =>
     value !== undefined && value.length <= 128 && /^[\x21-\x7e]+(?![\s\S])/.test(value);
   const root = values['--bus-runs-dir'];
-  if (!token(from) || !token(to) || !token(run) ||
+  const timeoutValue = values['--bus-delivery-timeout-ms'];
+  const timeoutMs = timeoutValue === undefined ? DEFAULT_DELIVERY_TIMEOUT_MS
+    : /^[1-9]\d*$/.test(timeoutValue) ? Number(timeoutValue) : NaN;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_DELIVERY_TIMEOUT_MS ||
+    !token(from) || !token(to) || !token(run) ||
     (root !== undefined && (!isAbsolute(root) || root.length > 4096 || root.includes('\0')))) {
     process.stderr.write('error: invalid guardian-bus arguments\n'); return 2;
   }
@@ -58,7 +67,13 @@ export async function cmdFleetGuardianBus(args: string[], deps: BusDeps = {}): P
     const checked = validateBusEnvelope({ id, from, to, priority: 'P2', ttl: 86400000, body });
     if (!checked.ok) { failed = true; throw new Error('Invalid guardian observation'); }
     try {
-      const result = await append(checked.value, root === undefined ? {} : { root });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        Promise.resolve().then(() => append(checked.value, root === undefined ? {} : { root })),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Inbox delivery timed out')), timeoutMs);
+        }),
+      ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
       if (result.status !== 'posted' && result.status !== 'duplicate') throw new Error('Inbox refused observation');
     } catch { failed = true; throw new Error('Inbox refused observation'); }
   } });
