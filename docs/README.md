@@ -46,6 +46,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Read the enrolled knowledge graph through a loopback-only HTTP API | [Graph HTTP API](https://github.com/ashlrai/phantom/blob/master/docs/GRAPH-HTTP.md) |
 | Look up a command, flag or topic the CLI itself prints | [CLI reference (generated, source guide)](https://github.com/ashlrai/phantom/blob/master/docs/cli.md) |
 | Configure experiments, campaigns, portfolios and artifact delivery | [Universe operator guide](ASHLR-UNIVERSE.md) |
+| Record manual fleet usage and inspect burn pacing | [Fleet Usage Pacing](FLEET-USAGE-PACING.md) |
 | Inspect station/pool queue rates, wait, WIP and Little’s law drift | [Queue statistics](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE-STATS.md) |
 | Manage a local job queue and import router snapshots | [Job queue](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE.md) |
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
