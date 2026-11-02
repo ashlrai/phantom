@@ -4,6 +4,7 @@ import { GUARDIAN_VERIFY_DEADLINE, GUARDIAN_VERIFY_MAX_TIMEOUT_MS, type Guardian
 import { runGuardianVerifyExclusive, type GuardianVerifyExclusiveDeps, type GuardianVerifyExclusiveResult } from './guardian-verify-exclusive.js';
 import { selectNextGuardianInfraRetry } from './guardian-retry-next.js';
 import { prepareGuardianRetryState } from './guardian-retry-state.js';
+import { writeGuardianDrainCheckpoint } from './guardian-drain-checkpoint.js';
 
 // Bounded drain of the guardian retry queue: where `guardian-retry` prepares
 // and optionally verifies exactly one eligible infrastructure failure, the
@@ -134,6 +135,10 @@ export async function drainGuardianInfraRetries(
       summary.verified++;
       // Only a complete verified state is carried forward.
       current = attemptPath; summary.latestOutput = attemptPath;
+      try {
+        writeGuardianDrainCheckpoint(resolve(options.outputDir), { version: 1, latestOutput: resolve(attemptPath),
+          repo, sha: selected.sha, completedAt: new Date(now()).toISOString() });
+      } catch { summary.termination = 'unsafe'; break; }
     }
     try {
       await deps.onAttempt?.({ attempt: summary.attempts, repo, sha: selected.sha,
