@@ -19,6 +19,8 @@ describe('fleet self-tick-schedule CLI (darwin)', () => {
   let spawnStatus: number;
   const spawn = (argv: readonly string[]) => {
     spawnCalls = [...spawnCalls, [...argv]];
+    // `launchctl print` is the loaded-label probe: nonzero means not loaded.
+    if (argv[0] === 'launchctl' && argv[1] === 'print') return { status: 1 };
     return { status: spawnStatus };
   };
   const run = (args: string[], deps: Parameters<typeof cmdFleetSelfTickSchedule>[1] = {}) =>
@@ -90,9 +92,10 @@ describe('fleet self-tick-schedule CLI (darwin)', () => {
     expect(spawnCalls).toEqual([]);
   });
 
-  it('--write --load calls the spawn seam exactly once with the launchctl argv', async () => {
+  it('--write --load probes the label then calls the launchctl bootstrap argv once', async () => {
     expect(await run(['--write', '--load'])).toBe(0);
     expect(spawnCalls).toEqual([
+      ['launchctl', 'print', expect.stringMatching(new RegExp(`^gui/\\d+/${SELF_TICK_LABEL.replace(/\./g, '\\.')}$`))],
       ['launchctl', 'bootstrap', expect.stringMatching(/^gui\/\d+$/), plist()],
     ]);
     expect(out.join('\n')).toContain('INSTALLED + LOADED');
