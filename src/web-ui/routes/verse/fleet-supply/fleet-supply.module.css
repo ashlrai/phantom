@@ -13,3 +13,6 @@
 .exhaustion { display: block; font-weight: 400; color: var(--text-secondary); }
 .exhaustion[data-tone="warn"] { color: var(--status-warning-fg); }
 .exhaustion[data-tone="bad"] { color: var(--status-danger-fg); }
+.waste { font-size: var(--text-xs-size); }
+.wasteHeadline { margin: 0 0 var(--space-2); font-size: inherit; }
+.wasteList { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }

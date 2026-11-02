@@ -51,7 +51,9 @@ it('does not offer an unsafe revoke command', async () => {
 });
 
 it('polls every minute only while visible', async () => {
-  const fetch = vi.fn(async () => Response.json({ v: 1, devices: [] }));
+  const fetch = vi.fn(async (url: string) => url.endsWith('/remote-pending')
+    ? Response.json({ error: 'not found' }, { status: 404 }) : Response.json({ v: 1, devices: [] }));
+  const deviceReads = () => fetch.mock.calls.filter(([url]) => url.endsWith('/remote-devices'));
   vi.stubGlobal('fetch', fetch);
   const view = (visible: boolean) => <ToastProvider><SectionVisibilityProvider visible={visible}><PairedDevicesRows /></SectionVisibilityProvider></ToastProvider>;
   vi.useFakeTimers();
@@ -60,11 +62,11 @@ it('polls every minute only while visible', async () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(screen.getByText(/No phones are paired/)).toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(59_999); });
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(deviceReads()).toHaveLength(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(deviceReads()).toHaveLength(2);
     rerender(view(false));
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(deviceReads()).toHaveLength(2);
   } finally { vi.useRealTimers(); }
 });

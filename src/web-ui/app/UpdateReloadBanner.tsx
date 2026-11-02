@@ -26,9 +26,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { Button } from '../components/primitives/Button.js';
 import { useQuery, useRefetch } from '../data/hooks.js';
+import { autoPolicyEvent, readAutoUpdatePolicy } from '../routes/verse/sections/update-auto-model.js';
 import { APP_VERSION } from '../routes/verse/sections/app-version.js';
 import { subscribeChunkErrors } from './chunk-error.js';
 import { SIDECAR_RESTARTED_EVENT } from './sidecar-restart.js';
+import { countdownText, decideAutoReload, pausedText, type AutoReloadDecision } from './update-auto-reload-model.js';
 import { decideReload, type UpdateReloadReading } from './update-reload-model.js';
 import { updateReloadQuery } from './update-reload-query.js';
 
@@ -47,11 +49,23 @@ function readDismissed(): string | null {
   try { return window.sessionStorage.getItem(DISMISSED_KEY); } catch { return null; }
 }
 
+function isTyping(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return false;
+  if (active.isContentEditable || active.closest('[contenteditable]:not([contenteditable="false"])')) return true;
+  if (active instanceof HTMLTextAreaElement) return true;
+  return active instanceof HTMLInputElement && ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(active.type);
+}
+
 export function UpdateReloadBanner() {
   const isVisible = useSyncExternalStore(subscribeVisibility, visible, () => true);
   const { data } = useQuery(updateReloadQuery, { enabled: isVisible });
   const refetch = useRefetch(updateReloadQuery);
   const firstRef = useRef<UpdateReloadReading | null>(null);
+  const lastReadingRef = useRef<UpdateReloadReading | null>(null);
+  const [policy, setPolicy] = useState(readAutoUpdatePolicy);
+  const [autoReload, setAutoReload] = useState<{ sha: string | null; value: AutoReloadDecision } | null>(null);
+  const armedRef = useRef<{ sha: string | null; at: number; reloaded: boolean } | null>(null);
   const [chunkError, setChunkError] = useState(false);
   const [dismissedSha, setDismissedSha] = useState<string | null>(readDismissed);
   // "Later" has no sha to remember on an interface-behind reading without a
@@ -59,10 +73,11 @@ export function UpdateReloadBanner() {
   // the same lifetime.
   const [nullShaDismissed, setNullShaDismissed] = useState(false);
 
-  const reading: UpdateReloadReading | null = data ?? null;
+  const reading: UpdateReloadReading | null = data ?? (!isVisible ? lastReadingRef.current : null);
   useEffect(() => {
+    if (data) lastReadingRef.current = data;
     if (!firstRef.current && reading?.sourceState === 'healthy') firstRef.current = reading;
-  }, [reading]);
+  }, [data, reading]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -90,6 +105,32 @@ export function UpdateReloadBanner() {
   }), [refetch]);
 
   const decision = decideReload({ first: firstRef.current, current: reading, appVersion: APP_VERSION, dismissedSha, chunkError });
+  const sha = decision.show ? decision.sha : null;
+  const reason = decision.show ? decision.reason : null;
+
+  useEffect(() => {
+    const onPolicy = (): void => setPolicy(readAutoUpdatePolicy());
+    window.addEventListener(autoPolicyEvent, onPolicy);
+    return () => window.removeEventListener(autoPolicyEvent, onPolicy);
+  }, []);
+
+  useEffect(() => {
+    if (!decision.show || reason === 'chunk-missing' || !policy.enabled || (sha === null && nullShaDismissed)) return;
+    if (!armedRef.current || armedRef.current.sha !== sha) armedRef.current = { sha, at: Date.now(), reloaded: false };
+    const armed = armedRef.current;
+    const tick = (): void => {
+      const value = decideAutoReload({ decision, policy, typing: isTyping(), dismissed: false, hidden: !visible(), nowMs: Date.now(), armedAtMs: armed.at });
+      setAutoReload({ sha, value });
+      if (value.kind === 'reload' && !armed.reloaded) {
+        armed.reloaded = true;
+        window.location.reload();
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 1_000);
+    return () => window.clearInterval(timer);
+  }, [decision.show, reason, sha, policy, nullShaDismissed, isVisible]);
+
   if (!decision.show || (decision.reason !== 'chunk-missing' && decision.sha === null && nullShaDismissed)) return null;
 
   const later = (): void => {
@@ -103,7 +144,10 @@ export function UpdateReloadBanner() {
   return (
     <div role="status" style={barStyle}>
       <span style={messageStyle}>{decision.message}</span>
+      {policy.enabled && reason !== 'chunk-missing' && autoReload?.sha === sha && autoReload.value.kind === 'counting' && <span>{countdownText(autoReload.value.secondsLeft)}</span>}
+      {policy.enabled && reason !== 'chunk-missing' && autoReload?.sha === sha && autoReload.value.kind === 'paused' && <span>{pausedText(autoReload.value.why)}</span>}
       <Button size="sm" variant="primary" onClick={() => window.location.reload()}>Reload</Button>
+      {decision.reason !== 'chunk-missing' && policy.enabled && <Button size="sm" variant="ghost" onClick={later}>Keep this page</Button>}
       {decision.reason !== 'chunk-missing' && <Button size="sm" variant="ghost" onClick={later}>Later</Button>}
     </div>
   );

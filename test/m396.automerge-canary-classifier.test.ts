@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
@@ -13,7 +14,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   classifyAutoMergeCanaryFacts,
@@ -27,6 +28,8 @@ import {
 
 let repo: string;
 let baseHead: string;
+let template: string;
+let templateHead: string;
 
 function git(args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -86,8 +89,11 @@ function fact(overrides: Partial<AutoMergeCanaryFileFact> = {}): AutoMergeCanary
   };
 }
 
-beforeEach(() => {
-  repo = mkdtempSync(join(tmpdir(), 'ashlr-m396-'));
+// The fixture repo is identical for every test: build it once and hand each
+// test a private copy (7 git calls per test -> one copy of a built repo).
+beforeAll(() => {
+  template = mkdtempSync(join(tmpdir(), 'ashlr-m396-template-'));
+  repo = template;
   git(['init', '-q', '--initial-branch=main']);
   git(['config', 'user.email', 'm396@ashlr.test']);
   git(['config', 'user.name', 'M396']);
@@ -98,11 +104,21 @@ beforeEach(() => {
   write('src/app.ts', 'export const value = 1;\n');
   git(['add', '--', 'README.md', 'docs/guide.md', 'docs/remove.md', 'src/app.ts']);
   git(['commit', '-qm', 'base']);
-  baseHead = git(['rev-parse', 'HEAD']);
+  templateHead = git(['rev-parse', 'HEAD']);
+});
+
+beforeEach(() => {
+  repo = mkdtempSync(join(tmpdir(), 'ashlr-m396-'));
+  cpSync(template, repo, { recursive: true });
+  baseHead = templateHead;
 });
 
 afterEach(() => {
   rmSync(repo, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  rmSync(template, { recursive: true, force: true });
 });
 
 describe('M396 staged docs-only canary inspector', () => {

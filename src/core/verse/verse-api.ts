@@ -161,6 +161,8 @@ import { handleVerseEventsSse, VERSE_EVENTS_PATH_RE, VERSE_SESSION_ID_RE } from 
 import type { ApiModule } from './api-modules.js';
 import { REASONING_API_PREFIX } from '../reasoning/types.js';
 import { VERSE_FLEET_CONTROL_HOLDS_PATH } from '../fleet/runs-lane-hold.js';
+import { VERSE_FLEET_GRAPH_PATH } from './fleet-graph-api.js';
+import { VERSE_FLEET_GRAPH_LIVE_PATH } from './fleet-graph-live-api.js';
 import {
   VERSE_TERMINAL_AGENT_STATE_PATH_RE,
   WORKBENCH_ROUTE_FAMILIES,
@@ -194,7 +196,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -239,6 +241,17 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'release-pr', load: async () => (await import('./ops-release-pr-api.js')).handleReleasePrApi },
   // Lane hold release: /api/verse/fleet/control/holds (core/verse/fleet-holds-api.ts).
   { id: 'fleet-holds', load: async () => (await import('./fleet-holds-api.js')).handleFleetHoldsApi },
+  // Fleet graph live projection: GET /api/verse/fleet/graph/live (core/verse/fleet-graph-live-api.ts); read-only.
+  { id: 'fleet-graph-live', load: async () => (await import('./fleet-graph-live-api.js')).handleFleetGraphLiveApi },
+  // Usage meter motion audit; read-only.
+  { id: 'fleet-ci-runs', load: async () => (await import('./fleet-ci-runs-api.js')).handleFleetCiRunsApi },
+  { id: 'fleet-usage-audit', load: async () => (await import('./fleet-usage-audit-api.js')).handleFleetUsageAuditApi },
+  // Host memory guard projection: GET /api/verse/fleet/memory (core/verse/fleet-memory-api.ts); read-only.
+  { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
+  // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
+  // Exact path only, so it cannot claim /api/verse/fleet/graph/live. Last so the
+  // registry mount stays visible beside the modules already on master.
+  { id: 'fleet-graph', load: async () => (await import('./fleet-graph-api.js')).handleFleetGraphApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -561,8 +574,12 @@ async function dispatchWorkbenchModules(
   // One exact path inside a family prefix belongs to an A10 module: the
   // fleet-holds mount owns /api/verse/fleet/control/holds — added after the
   // fleet-control family froze — so it falls through to the mounted modules.
+  // The fleet-graph and fleet-graph-live mounts get the same protection: no
+  // family claims these paths today, and they must still reach their modules
+  // if a broader /api/verse/fleet prefix family ever lands.
   // Every other path the family claims stays its exclusive route.
   if (path === VERSE_FLEET_CONTROL_HOLDS_PATH) return false;
+  if (path === VERSE_FLEET_GRAPH_PATH || path === VERSE_FLEET_GRAPH_LIVE_PATH) return false;
   const family = workbenchFamilyFor(path);
   if (!family) return false;
   if (method !== 'GET') {

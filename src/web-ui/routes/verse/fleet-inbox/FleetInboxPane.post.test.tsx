@@ -27,7 +27,7 @@ it('refreshes the inbox after posting and highlights the newest matching entry f
   await screen.findByText('Ship this');
   fireEvent.change(screen.getByRole('textbox', { name: 'Prompt, thought or interjection' }), { target: { value: 'Ship this' } });
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await screen.findByText(/^Sent ·/);
+  await screen.findByText(/^Landed 00:13 ·/);
   await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(2));
   expect(fetcher.mock.calls.filter(([url, init]) => String(url).includes('/inbox?') && init?.method === 'GET')).toHaveLength(2);
   const post = fetcher.mock.calls.find(([, init]) => init?.method === 'POST')!;
@@ -60,7 +60,7 @@ it('expires the highlight after five seconds and cleans up timers when hidden', 
   const view = render(<FleetInboxPane {...props} />);
   fireEvent.change(screen.getByRole('textbox', { name: 'Prompt, thought or interjection' }), { target: { value: 'Hello' } });
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send' })); });
-  expect(screen.getByText(/^Sent ·/)).toBeInTheDocument();
+  expect(screen.getByText(/^Landed 00:13 ·/)).toBeInTheDocument();
   expect(screen.getByRole('article').className).toContain('highlight');
   await act(() => vi.advanceTimersByTimeAsync(5_000));
   expect(within(screen.getByRole('article')).getByText('Hello').closest('article')!.className).not.toContain('highlight');

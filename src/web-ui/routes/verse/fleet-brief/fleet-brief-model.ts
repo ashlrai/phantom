@@ -1,6 +1,7 @@
 import { ageText, newest, type FleetRuns } from '../ops/ops-runs-model.js';
 import { isOpsReleases } from '../fleet-releases/fleet-releases-model.js';
 import { releaseLine } from './release-line.js';
+import { mergeSpeedLine } from './merge-speed-line.js';
 import type { visitDelta } from '../fleet/visit-delta.js';
 
 const limit = 2000;
@@ -26,6 +27,8 @@ export function fleetBriefText(runs: FleetRuns, nowMs: number): string {
     `Lanes: ${lanes}`,
     `Merged last hour: ${runs.mergesLastHour.count}`,
   ];
+  const speed = mergeSpeedLine(runs.mergesLastHour, nowMs);
+  if (speed !== null) lines.push(speed);
   const merges = runs.mergesLastHour.items.slice(0, 5).map((m) => `- ${singleLine(m.repo)} #${m.number} ${singleLine(m.title)}`);
   const tail = [
     `Claude lane: ${singleLine(runs.claudeLane ?? '') || 'ok'}`,

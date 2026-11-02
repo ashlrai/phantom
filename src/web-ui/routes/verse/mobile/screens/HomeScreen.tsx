@@ -5,10 +5,10 @@
  * FIRST PAINT (SPEC-310A's arrangement, as the workbench's Chat section does
  * it): this frame is the phone app's first-paint root, measured by
  * scripts/check-first-paint-budget.mjs against 250 KB — React alone is
- * ~220 KB of that. The cards (HomeBody.tsx: fleet, needs-you, working, spend,
- * seats) are a preloaded chunk: its download starts when this module
+ * ~220 KB of that. The glance (OperatorGlance.tsx) is a preloaded chunk: its download starts when this module
  * evaluates, in parallel with the session probe, and it renders synchronously
  * once in. On a warm launch (service worker cache) that is the same frame.
+ * The opening card is one glance: running, usage, merges, main, incidents, and an order.
  */
 import { PRODUCT_NAME } from '../../../../app/product-brand.js';
 import { Suspense } from 'react';
@@ -18,8 +18,8 @@ import { PlusGlyph } from '../mobile-icons.js';
 import { Button, Screen, SkeletonList, ui } from '../ui.js';
 import styles from './HomeScreen.module.css';
 
-const loadBody = () => import('./HomeBody.js');
-const Body = preloadedLazy<object>(() => loadBody().then((m) => m.HomeBody));
+const loadBody = () => import('./OperatorGlance.js');
+const Body = preloadedLazy<object>(() => loadBody().then((m) => m.OperatorGlance));
 
 /** The cards' shape, drawn until they arrive. */
 export function HomeSkeleton() {
@@ -40,7 +40,7 @@ export function HomeSkeleton() {
 export function HomeScreen() {
   const { permissions, navigate, refreshActivity } = useMobile();
   const canAct = canShowActions(permissions);
-  const onRefresh = () => Promise.all([refreshActivity(), loadBody().then((m) => m.refreshHome())]);
+  const onRefresh = () => Promise.all([refreshActivity(), loadBody().then((m) => m.refreshOperatorGlance())]);
   return (
     <Screen
       title={PRODUCT_NAME}

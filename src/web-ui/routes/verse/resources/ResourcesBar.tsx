@@ -270,10 +270,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   });
   const personalRead = useQuery(personalQuery, { enabled: resources.bar && sectionVisible && documentVisible, freshMs: 30_000 });
   const refreshPersonal = useRefetch(personalQuery);
-  // 'verse-fleet-runs' is a shared projection: the notification engine and any
-  // open fleet surface fetch it, so the bar subscribes once the key holds a
-  // snapshot and lets the personal row's own poll keep it current rather than
-  // issuing a second request for the same route.
+  // The personal reader hits the same endpoint. Once another surface warms the
+  // shared fleet snapshot, subscribe and refresh it without a second cold read.
   const runsWarm = useSyncExternalStore(
     useCallback((listener: () => void) => subscribeQuery(opsRunsQuery.key, listener), []),
     () => getQuerySnapshot(opsRunsQuery.key).data !== undefined,
@@ -390,9 +388,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const personalStatus = personal
     ? `Personal Codex weekly · ${personal.usedPct === null ? 'usage unknown' : `${usedPercentText(personal.usedPct)} used`} · ${personal.resetsAt ? formatResetInstant(personal.resetsAt, now) ?? 'reset unknown' : 'reset unknown'} · as of ${personalAge === 'just measured' ? 'just now' : personalAge} · from this Mac's session logs${personalPaceStatus ? ` · ${personalPaceStatus}` : ''}`
     : `no session-log reading yet · source ${personalRead.error !== undefined ? 'unavailable' : personalRead.data?.sourceState ?? 'unknown'}`;
+  const laneFacts = personalLaneFacts(runs.data?.lanes);
   const personalRow: BarRow = { key: 'codex-personal:sessions', engine: 'codex', name: 'Codex personal · session logs',
     leftPercent: personalLeft, level: personalLevel(personalLeft), value: personal?.usedPct == null ? 'No reading' : `${usedPercentText(personal.usedPct)} used${personalRunway ? ` · ${personalRunway.split(' at ')[0]}` : ''}`,
-    summary: `Codex personal · session logs: ${personalStatus}`, detail: runs.error === undefined ? personalLaneFacts(runs.data?.lanes) : [] };
+    summary: `Codex personal · session logs: ${personalStatus}`, detail: runs.error && laneFacts.length ? [...laneFacts, 'Last known lane facts · latest refresh failed.'] : laneFacts };
   entries.push({ key: personalRow.key, name: personalRow.name, content: (
     <Tooltip content={<RowTip row={personalRow} />} placement="right">
       <button type="button" className={styles.row} data-level={personalRow.level}

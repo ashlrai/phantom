@@ -8,7 +8,8 @@ import { setFocusMode } from './focus-mode.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 const state = vi.hoisted(() => ({ data: undefined as unknown }));
 vi.mock('../../../data/hooks.js', () => ({
-  useQuery: () => ({ data: state.data, status: 'success' }), useRefetch: () => () => {},
+  useQuery: (query: { key: string }) => ({ data: query.key === 'verse-usage-resets' ? null : state.data, status: 'success' }),
+  useRefetch: () => () => {}, useRefresh: () => () => {},
 }));
 vi.mock('../dock/dock-store.js', () => ({ openDockPane: vi.fn(), requestTerminal: vi.fn() }));
 vi.mock('../verse-ui-store.js', () => ({ closeVerseOverlay: vi.fn(), setVerseSection: vi.fn() }));
@@ -61,7 +62,7 @@ it('closes the overlay and reveals Lanes from outside Chat', () => {
 it('copies the exact fix and opens Terminal without sending a request', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-  show(snapshot({ claudeLane: 'down' }));
+  show(snapshot({ claudeLane: 'down', lanes: [{ ...snapshot().lanes[0]!, lane: 'claude' }] }));
   fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
   await screen.findByRole('button', { name: 'Open Terminal · command copied' });
   expect(writeText).toHaveBeenCalledWith('~/.ashlr-runs/bin/fix-claude-lane.sh');
@@ -71,7 +72,7 @@ it('copies the exact fix and opens Terminal without sending a request', async ()
 });
 it('keeps a failed clipboard command visible for manual copying', async () => {
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
-  show(snapshot({ claudeLane: 'down' }));
+  show(snapshot({ claudeLane: 'down', lanes: [{ ...snapshot().lanes[0]!, lane: 'claude' }] }));
   fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
   await waitFor(() => expect(screen.getByText('Copy command: ~/.ashlr-runs/bin/fix-claude-lane.sh')).toBeVisible());
   expect(closeVerseOverlay).not.toHaveBeenCalled();

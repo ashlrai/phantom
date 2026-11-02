@@ -1,3 +1,4 @@
+import { parseInboxAt } from '../fleet/interject-ack-model.js';
 import { stateWord, type OrderTraceJob } from '../fleet-inbox/order-trace-model.js';
 
 /**
@@ -161,6 +162,32 @@ export function buildSteering(snapshot: unknown): SteeringEntry[] {
       events: windowed.map(({ at, kind, text }) => ({ at, kind, text })),
     };
   });
+}
+
+export type UnansweredOrder<T extends SteeringEntry = SteeringEntry> = T & { ageMinutes: number };
+
+/** Inbox stamps are Eastern wall times; exclude invalid and future timestamps. */
+export function unansweredOrders<T extends SteeringEntry>(entries: readonly T[], nowMs: number, minMinutes = 30): UnansweredOrder<T>[] {
+  if (!Number.isFinite(nowMs)) return [];
+  return entries.flatMap((entry) => {
+    if (entry.after.passes + entry.after.launches + entry.after.publishes !== 0) return [];
+    const atMs = parseInboxAt(entry.at, nowMs);
+    if (atMs === null || atMs > nowMs) return [];
+    const ageMinutes = Math.floor((nowMs - atMs) / 60_000);
+    return ageMinutes >= minMinutes ? [{ ...entry, ageMinutes }] : [];
+  }).sort((a, b) => b.ageMinutes - a.ageMinutes);
+}
+
+export function orderAge(ageMinutes: number): string {
+  const hours = Math.floor(ageMinutes / 60);
+  const minutes = ageMinutes % 60;
+  return hours ? `${hours} h${minutes ? ` ${minutes} min` : ''}` : `${minutes} min`;
+}
+
+export function unansweredHeadline(list: readonly UnansweredOrder[]): string | null {
+  if (!list.length) return null;
+  const oldest = list[0]!;
+  return `${list.length} ${list.length === 1 ? 'order has' : 'orders have'} had no leader reaction for 30+ min; oldest ${orderAge(oldest.ageMinutes)} (${oldest.source}).`;
 }
 
 const PART_LABELS: ReadonlyArray<readonly [keyof ReactionCounts, string, string]> = [

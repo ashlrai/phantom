@@ -60,7 +60,7 @@ it('shows the reading age, the spendable-credits fact, the plan and a working co
   expect(time).not.toBeNull();
   expect(time?.getAttribute('dateTime')).toBe(observed);
   expect(time).toHaveTextContent('as of 10m ago');
-  expect(codexRow).toHaveTextContent('Credits 42 — credits keep this account usable past the weekly limit');
+  expect(codexRow).toHaveTextContent('credits: 42 — credits keep this account usable past the weekly limit');
 
   fireEvent.click(within(codexRow).getByRole('button', { name: 'Copy reconnect command' }));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('ashlr auth login codex'));
@@ -69,7 +69,27 @@ it('shows the reading age, the spendable-credits fact, the plan and a working co
 
   // The reconnect action also reaches a signed-out row beneath its reason.
   const grokRow = (await screen.findByText('Grok')).closest('li') as HTMLElement;
-  expect(within(grokRow).getByRole('button', { name: 'Copy reconnect command' })).toBeInTheDocument();
+  fireEvent.click(within(grokRow).getByRole('button', { name: 'Copy reconnect command' }));
+  await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('ashlr auth login grok'));
+  expect(await within(grokRow).findByRole('status')).toHaveTextContent('Copied');
+});
+
+it.each([
+  [true, '42', 'the provider reports credit spending held'],
+  [undefined, '42', 'credit spending control is unconfirmed'],
+  [false, '0', 'no spendable credit balance is reported'],
+])('describes credit spending honestly with hold %s and balance %s', async (hold, balance, message) => {
+  const body = accountsBody(inMs(-10 * MINUTE));
+  stubReads({
+    ...body,
+    accounts: body.accounts.map((account) => account.id === 'codex-1'
+      ? { ...account, credits: { hasCredits: true, unlimited: false, balance, spendControlReached: hold } }
+      : account),
+  });
+  render(<FleetUsagePane {...props} />);
+  const row = (await screen.findByText('Codex Personal · pro')).closest('li') as HTMLElement;
+  expect(row).toHaveTextContent(`credits: ${balance} — ${message}`);
+  expect(row).not.toHaveTextContent('credits keep this account usable past the weekly limit');
 });
 
 it('renders exactly the plain row when the account carries none of the four facts', async () => {

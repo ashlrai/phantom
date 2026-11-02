@@ -19,7 +19,8 @@ it('renders merged PRs, waiting publishes and lane throughput', async () => {
   render(<FleetMergesPane {...props} />);
   expect(await screen.findByText('1 merged in the last hour · 1 publishes waiting')).toBeInTheDocument();
   const merged = within(screen.getByRole('list', { name: 'Merged PRs' }));
-  expect(merged.getByText('bridge: RQ-DONE')).toBeInTheDocument();
+  expect(merged.getByRole('listitem')).toHaveTextContent('bridge: RQ-DONE');
+  expect(merged.getByRole('button', { name: 'Open log for RQ-DONE' })).toBeInTheDocument();
   expect(merged.getByRole('link')).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/12');
   const pending = within(screen.getByRole('list', { name: 'Publishes waiting' }));
   expect(pending.getAllByRole('listitem')).toHaveLength(1);

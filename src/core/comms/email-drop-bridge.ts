@@ -43,6 +43,10 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createChannelReceiver, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
+import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
+import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
+import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
+import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
 
 export interface ParsedEml {
   from: string;
@@ -50,6 +54,7 @@ export interface ParsedEml {
   subject: string;
   body: string;
   inReplyTo: string | null;
+  authenticationResults: string | null;
 }
 
 export interface EmailDropRecordOptions {
@@ -63,7 +68,15 @@ export interface EmailDropRecordOptions {
   outboxDir?: string;
   /** Store root for the default bus publish sink (test seam). */
   busRoot?: string;
+  /** Trusted test seams for the local status readers. */
+  statusReaders?: EmailFleetStatusReaders;
 }
+
+// `ok` retains its meaning as inbox-receiver success. Status replies are not
+// inbox receipts, so they have an explicit outcome instead of a fabricated ack.
+export type EmailDropResult = ChannelReceiveResult | {
+  ok: false; kind: 'status'; reason: 'status-queued' | 'status-duplicate';
+};
 
 export interface EmailDropRunOptions extends EmailDropRecordOptions {
   inboxDir: string;
@@ -76,6 +89,8 @@ export interface EmailDropCounts {
   duplicate: number;
   refused: number;
   failed: number;
+  /** Present when the pass handled status messages; accepted counts include queued replies. */
+  status?: { queued: number; duplicate: number };
 }
 
 const BODY_CAP_BYTES = 8 * 1024;
@@ -126,6 +141,16 @@ function splitMessage(raw: string): { headerSection: string; body: string } {
   return match
     ? { headerSection: raw.slice(0, match.index), body: raw.slice(match.index + match[0].length) }
     : { headerSection: raw, body: '' };
+}
+
+/** Match the actual text part, before quote/signature stripping or truncation. */
+function isFleetStatusRequest(raw: string): boolean {
+  const { headerSection, body } = splitMessage(raw);
+  const contentType = parseHeaders(headerSection).get('content-type');
+  const text = /^multipart\//i.test(contentType ?? '')
+    ? firstTextPlain(contentType, body)
+    : !contentType || /^text\/plain(?:\s*;|$)/i.test(contentType) ? body : null;
+  return text !== null && text.trim() === '/fleet-status';
 }
 
 /**
@@ -207,6 +232,7 @@ export function parseEmlMessage(raw: string): ParsedEml | null {
     subject: headers.get('subject') ?? '',
     body: capUtf8Bytes(kept.join('\n'), BODY_CAP_BYTES).trim(),
     inReplyTo: messageIdToken(headers.get('in-reply-to')),
+    authenticationResults: headers.get('authentication-results') ?? null,
   };
 }
 
@@ -232,6 +258,18 @@ function runsRoot(runsDir: string | undefined): string {
 
 function seenFilePath(runsDir: string | undefined): string {
   return join(runsRoot(runsDir), 'queue', 'email-drop-seen.jsonl');
+}
+
+// Status requests use permanent exclusive claims rather than the bounded,
+// best-effort inbox journal: a replay must not read or queue a second reply.
+function statusClaimPath(runsDir: string | undefined, id: string): string {
+  const hash = createHash('sha256').update(id).digest('hex');
+  return join(runsRoot(runsDir), 'queue', 'email-status-seen', hash);
+}
+
+function statusWasClaimed(path: string): boolean {
+  try { statSync(path); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }
 
 /** Message-IDs recorded for accepted receipts — the last SEEN_LIMIT lines win. */
@@ -294,11 +332,78 @@ function writeReplyEml(outboxDir: string, parsed: ParsedEml, ack: ChannelAck, pr
 export async function recordEmailToInbox(
   raw: string,
   opts: EmailDropRecordOptions,
-): Promise<ChannelReceiveResult> {
-  const parsed = parseEmlMessage(raw);
-  if (!parsed) return { ok: false, reason: 'invalid' };
+): Promise<EmailDropResult> {
+  const received = parseEmlMessage(raw);
+  if (!received) return { ok: false, reason: 'invalid' };
+  if (!opts.allowedSenders.has(received.from)) return { ok: false, reason: 'sender-not-allowed' };
+  const secret = readOperatorSecret();
+  if (secret.state === 'invalid') return { ok: false, reason: 'sender-not-allowed' };
+  let parsed = received;
+  if (secret.state === 'ready' && secret.secret) {
+    if (!dkimPasses(parsed.authenticationResults, parsed.from)) return { ok: false, reason: 'sender-not-allowed' };
+    const stripped = stripPairingSecret(parsed.body, secret.secret);
+    const paired = opts.runsDir ? emailPaired(parsed.from, opts.runsDir) : false;
+    if (!stripped.presented && !paired) return { ok: false, reason: 'sender-not-allowed' };
+    if (stripped.presented && opts.runsDir) rememberEmailPair(parsed.from, opts.runsDir);
+    parsed = { ...parsed, body: stripped.body };
+    if (!parsed.body && stripped.presented) {
+      if (!opts.outboxDir || !parsed.messageId) return { ok: false, reason: 'invalid' };
+      try {
+        mkdirSync(opts.outboxDir, { recursive: true });
+        writeFileSync(join(opts.outboxDir, `paired-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+          `To: ${parsed.from}\r\nSubject: Re: Phantom\r\nIn-Reply-To: <${parsed.messageId}>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPaired.\r\n`,
+          { mode: 0o600, flag: 'wx' });
+      } catch { return { ok: false, reason: 'write-failed' }; }
+      return { ok: false, kind: 'status', reason: 'status-queued' };
+    }
+  } else if (parsed.authenticationResults && /\bdkim=/i.test(parsed.authenticationResults) && !dkimPasses(parsed.authenticationResults, parsed.from)) {
+    return { ok: false, reason: 'sender-not-allowed' };
+  }
+  if (!allowOperatorMessage(`email:${parsed.from}`, (opts.now ?? (() => new Date()))().getTime())) {
+    if (opts.outboxDir && parsed.messageId) {
+      try {
+        mkdirSync(opts.outboxDir, { recursive: true });
+        writeFileSync(join(opts.outboxDir, `slow-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+          `To: ${parsed.from}\r\nSubject: Re: Phantom\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSlow down.\r\n`,
+          { mode: 0o600, flag: 'wx' });
+      } catch { /* best-effort */ }
+    }
+    return { ok: false, reason: 'full' };
+  }
   const message = emailChannelMessage(parsed, opts.allowedSenders);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
+  // Allowlist is the first gate. When a pairing secret is configured, DKIM
+  // for the sender domain and that secret are required as well. The secret
+  // line is removed before the order is logged. Inbound text is never a command.
+  try {
+    const ask = isOperatorStatusAsk(parsed.body.trim() || parsed.subject.trim());
+    const status = isFleetStatusRequest(raw) || ask;
+    const claim = parsed.messageId ? statusClaimPath(opts.runsDir, parsed.messageId) : null;
+    if (claim && statusWasClaimed(claim)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
+    if (status) {
+      // A safe Message-ID is required for threading and durable replay protection.
+      if (!parsed.messageId || !/^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9.-]+$/.test(parsed.messageId) || !claim || !opts.outboxDir) {
+        return { ok: false, reason: 'invalid' };
+      }
+      if (readSeenMessageIds(opts.runsDir).has(parsed.messageId)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
+      mkdirSync(dirname(claim), { recursive: true });
+      try { writeFileSync(claim, '', { flag: 'wx', mode: 0o600 }); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, kind: 'status', reason: 'status-duplicate' };
+        throw error;
+      }
+      const body = ask
+        ? formatOperatorGlance(await readOperatorGlance({ runsDir: opts.runsDir, now: opts.now }))
+        : await emailFleetStatus(opts.runsDir, opts.now ?? (() => new Date()), opts.statusReaders);
+      mkdirSync(opts.outboxDir, { recursive: true });
+      const headers = [`To: ${parsed.from}`, `Subject: Re: ${ask ? 'Phantom' : 'Phantom fleet status'}`,
+        `In-Reply-To: <${parsed.messageId}>`, `References: <${parsed.messageId}>`,
+        'Content-Type: text/plain; charset=utf-8'];
+      writeFileSync(join(opts.outboxDir, `status-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+        `${headers.join('\r\n')}\r\n\r\n${body}\r\n`, { flag: 'wx', mode: 0o600 });
+      return { ok: false, kind: 'status', reason: 'status-queued' };
+    }
+  } catch { return { ok: false, reason: 'write-failed' }; }
   // Same normalization the receiver applies, so the preview matches the entry.
   const normalized = message.body.normalize('NFC').replace(/\r\n?/g, '\n').trim();
   const preview = normalized.slice(0, 60);
@@ -376,7 +481,7 @@ export async function runEmailDropOnce(opts: EmailDropRunOptions): Promise<Email
     }
   };
   for (const name of names) {
-    let result: ChannelReceiveResult = { ok: false, reason: 'invalid' };
+    let result: EmailDropResult = { ok: false, reason: 'invalid' };
     try {
       const raw = readFileSync(join(opts.inboxDir, name), 'utf8');
       result = await recordEmailToInbox(raw, opts);
@@ -386,6 +491,11 @@ export async function runEmailDropOnce(opts: EmailDropRunOptions): Promise<Email
       continue;
     }
     if (result.ok) counts[result.ack.status === 'accepted' ? 'accepted' : 'duplicate'] += 1;
+    else if (result.reason === 'status-queued' || result.reason === 'status-duplicate') {
+      counts.status ??= { queued: 0, duplicate: 0 };
+      if (result.reason === 'status-queued') { counts.accepted += 1; counts.status.queued += 1; }
+      else { counts.duplicate += 1; counts.status.duplicate += 1; }
+    }
     else if (result.reason === 'sender-not-allowed') counts.refused += 1;
     else counts.failed += 1;
   }

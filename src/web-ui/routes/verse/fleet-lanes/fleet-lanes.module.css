@@ -10,6 +10,7 @@
 .lane, .merge, .worker, .headline { overflow-wrap: anywhere; }
 .count { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .badge { padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--status-unknown-bg); color: var(--status-unknown-fg); }
+.badge[data-tone='danger'] { background: var(--status-danger-bg); color: var(--status-danger-fg); }
 .track { height: var(--space-1); margin-top: var(--space-1); overflow: hidden; border-radius: var(--radius-sm); background: var(--meter-track); }
 .fill { height: 100%; background: var(--data-seq-4); }
 .fill[data-tone='held'] { background: var(--status-unknown-solid); }

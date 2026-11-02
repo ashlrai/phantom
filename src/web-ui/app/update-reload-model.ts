@@ -9,9 +9,8 @@
  *   - interface-behind: the server reports a different installedVersion
  *     than this page was built from — the running server is newer code and
  *     the page still shows the old interface build.
- *   - server-restarted: the server's commit (headSha) changed since the
- *     page's first healthy reading — the sidecar restarted on new code,
- *     version number or not.
+ *   - server-restarted: the process commit changed since the page's first
+ *     healthy reading (or headSha changed when process commits are unknown).
  *
  * Status-based triggers require a reading and respect a dismissed headSha;
  * a failed chunk always requires a reload.
@@ -56,7 +55,14 @@ export function decideReload({ chunkError, first, current, appVersion, dismissed
       sha,
     };
   }
-  if (first && typeof first.headSha === 'string' && sha !== null && first.headSha !== sha) {
+  const firstProcessHeadSha = (first as { processHeadSha?: unknown } | null)?.processHeadSha;
+  const currentProcessHeadSha = (current as { processHeadSha?: unknown }).processHeadSha;
+  const firstProcessSha = typeof firstProcessHeadSha === 'string' ? firstProcessHeadSha : null;
+  const currentProcessSha = typeof currentProcessHeadSha === 'string' ? currentProcessHeadSha : null;
+  const restarted = firstProcessSha !== null && currentProcessSha !== null
+    ? firstProcessSha !== currentProcessSha
+    : first !== null && typeof first.headSha === 'string' && sha !== null && first.headSha !== sha;
+  if (restarted) {
     return {
       show: true,
       reason: 'server-restarted',

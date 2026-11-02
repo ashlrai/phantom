@@ -12,7 +12,8 @@ export type ChannelPublishState = 'published' | 'skipped' | 'failed';
 export interface ChannelBusPublishOptions { root?: string; now?: () => number }
 
 /** One bus id per durable dedupe key keeps republication idempotent across
- * receiver restarts. Validation encodes the exact wire bytes, so an
+ * receiver restarts. Recovery must supply the original channel, timestamp and
+ * normalized body: the bus compares the entire envelope on replay. Validation encodes the exact wire bytes, so an
  * interjection too large for one envelope is refused here — never truncated.
  * `now` is accepted for clock symmetry with `publishChannelEnvelope` and is
  * currently unused: the envelope carries only the receipt's own timestamp. */

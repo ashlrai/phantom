@@ -189,6 +189,8 @@ function printHelp(): void {
   out(`    ${cyan('ashlr reflect playbooks')} [--persist] [--allow-cloud]`);
   out(`    ${cyan('ashlr reflect propose')}`);
   out(`    ${cyan('phm reflect harness-digest')} --file <markdown> --json [--stale-days <n>]`);
+  out(`    ${cyan('phm reflect attempt-reward')} --proposal <id> --tokens <positive-integer> [--weight <positive-number>] --json`);
+  out('      Observation only; caller-supplied usage/weight. No routing, score policy changes or credit release.');
   out('');
   out('  ' + bold('Options:'));
   const opts: [string, string][] = [
@@ -344,6 +346,10 @@ function printReportHuman(report: ReflectionReport): void {
  * Exit codes: 0 success, 1 runtime error, 2 bad usage.
  */
 export async function cmdReflect(args: string[]): Promise<number> {
+  if (args[0] === 'attempt-reward') {
+    const { cmdReflectAttemptReward } = await import('./reflect-attempt-reward.js');
+    return cmdReflectAttemptReward(args.slice(1));
+  }
   if (args[0] === 'harness-digest') {
     const { cmdReflectHarnessDigest } = await import('./reflect-harness-digest.js');
     return cmdReflectHarnessDigest(args.slice(1));

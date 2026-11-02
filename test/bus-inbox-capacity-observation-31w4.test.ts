@@ -63,7 +63,7 @@ it('counts retained live and expired records at the exact TTL boundary without r
   expect(appendBusInbox(message('expired', 10), { root, now: () => 110 }).status).toBe('duplicate');
 });
 
-it('exposes a full retained store even when every record has expired', () => {
+it('exposes a full retained store of expired records until a post reclaims it', () => {
   const root = setup(), directory = join(root, 'bus-inbox');
   mkdirSync(directory, { mode: 0o700 });
   const rows = Array.from({ length: BUS_INBOX_MAX_MESSAGES }, (_, index) => ({
@@ -74,9 +74,12 @@ it('exposes a full retained store even when every record has expired', () => {
   expect(inspectBusInbox({ root, now: () => 1 })).toEqual({ source: 'available', ...unknown,
     retainedCount: BUS_INBOX_MAX_MESSAGES, retainedBytes: Buffer.byteLength(text),
     liveCount: 0, expiredCount: BUS_INBOX_MAX_MESSAGES });
-  expect(appendBusInbox(message('extra'), { root, now: () => 1 }).status).toBe('full');
-  expect(readFileSync(file, 'utf8')).toBe(text);
-  writeFileSync(file, JSON.stringify([...rows, { cursor: rows.length + 1, receivedAt: 0, envelope: message('extra') }]));
+  // The next append reclaims the expired receipts and keeps advancing cursors.
+  expect(appendBusInbox(message('extra'), { root, now: () => 1 })).toEqual({
+    status: 'posted', id: 'extra', cursor: BUS_INBOX_MAX_MESSAGES + 1,
+  });
+  expect(inspectBusInbox({ root, now: () => 1 })).toMatchObject({ retainedCount: 1, liveCount: 1, expiredCount: 0 });
+  writeFileSync(file, JSON.stringify([...rows, { cursor: rows.length + 1, receivedAt: 0, envelope: message('other') }]));
   expect(inspectBusInbox({ root, now: () => 1 })).toEqual({ source: 'unavailable', ...unknown });
 });
 
@@ -94,7 +97,8 @@ it('fails closed on corrupt rows, oversized files and unsafe paths without expos
   const root = setup();
   expect(appendBusInbox(message('private-synthetic-id'), { root, now: () => 0 }).status).toBe('posted');
   const file = fileOf(root), original = readFileSync(file, 'utf8');
-  const row = JSON.parse(original)[0];
+  const parsed = JSON.parse(original) as { rows?: unknown[] } | unknown[];
+  const row = (Array.isArray(parsed) ? parsed : parsed.rows!)[0];
   for (const text of ['[', JSON.stringify([{ ...row, cursor: 2 }]), JSON.stringify([row, { ...row, cursor: 2 }]),
     JSON.stringify([{ ...row, envelope: { ...row.envelope, ttl: 0 } }]), ' '.repeat(BUS_INBOX_MAX_BYTES + 1)]) {
     writeFileSync(file, text);

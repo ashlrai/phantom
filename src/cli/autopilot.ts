@@ -3,10 +3,11 @@
  *
  * Drive one of Phantom's own pull requests to green: diagnose red CI, review
  * feedback and base conflicts; fix, recut a conflicting lane on a fresh branch
- * off the current base, merge the base or re-run infrastructure failures;
- * re-verify; stop and say why when the failure is not the PR's. A superseded
- * PR is closed only after its recut merges. Without --apply it only prints
- * the plan. See core/autopilot/act.ts.
+ * off the current base (requeued through the merge queue when the lane was
+ * queued), merge the base or re-run infrastructure failures; re-verify; stop
+ * and say why when the failure is not the PR's. A superseded PR is closed
+ * only after its recut merges. Without --apply it only prints the plan.
+ * See core/autopilot/act.ts.
  */
 import { execFileSync } from 'node:child_process';
 

@@ -6,13 +6,18 @@ export interface PaletteLane {
   running: number;
   target: number;
   held: boolean;
+  heldReason: string | null;
   paused: boolean;
 }
 
 export function paletteLanes(runs: FleetRuns | null | undefined, record: PauseRecord): PaletteLane[] {
-  return (runs?.lanes ?? []).map(({ lane, running, target, held }) => ({
-    lane, running, target, held, paused: target === 0 || record[lane] > 0,
+  return (runs?.lanes ?? []).map(({ lane, running, target, held, heldReason }) => ({
+    lane, running, target, held, heldReason: heldReason || null, paused: target === 0 || record[lane] > 0,
   }));
+}
+
+export function releaseItemTitle(l: PaletteLane): string {
+  return `Release hold on ${l.lane} · ${l.heldReason || 'held'}`;
 }
 
 export function laneItemTitle(l: PaletteLane): string {

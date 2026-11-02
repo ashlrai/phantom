@@ -153,7 +153,13 @@ convenient:
   which point `KeepAlive` would respawn llama-server against a missing file every ten seconds
   forever while every surface reported only `state: 'down'`. The shim checks the frozen path, falls
   back to `ashlr local-runtime resolve-model` to re-read the manifest, and `exec`s — so launchd
-  still supervises llama-server's own pid.
+  still supervises llama-server's own pid. And when the blob is gone for good (say `~/.ollama`
+  was recreated empty and the reference no longer resolves), the shim hands the attempt to
+  `ashlr local-runtime missing-model-guard` instead of `exec`: it stamps the failure in
+  `~/.ashlr/local-runtime/missing-model.json`, reports one line naming the model and the fix,
+  and holds the attempt inside a 30-minute backoff — so a missing model is one blocked state
+  with a clear report, not a ten-second restart loop. It starts normally by itself the moment
+  the file exists again.
 
 A launchd `KeepAlive` restart gives the runtime a new pid that nothing rewrites into the ownership
 record, so `probeLlamaRuntime` re-adopts it read-only when exactly one llama-server on the port was
