@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -298,8 +299,136 @@ export function runFleetRegistryCheck(selected, run) {
   return false;
 }
 
+/**
+ * Real tree hash of the working state. The live index is copied to a private
+ * GIT_INDEX_FILE so `git add -A` stages committed, staged, unstaged and
+ * untracked (non-ignored) content in one pass, then `write-tree` emits the
+ * hash. Copying the live index preserves its stat cache, so unchanged files
+ * are not rehashed; the real index is never touched. A missing index (before
+ * the first checkout materializes one) is seeded from HEAD.
+ */
+export function workingTreeHash(root, exec = execFileSync) {
+  const gitDir = exec('git', ['rev-parse', '--git-dir'], { cwd: root, encoding: 'utf8' }).trim();
+  const index = join(tmpdir(), `phantom-verify-index-${process.pid}-${randomUUID()}`);
+  const env = { ...process.env, GIT_INDEX_FILE: index };
+  try {
+    try {
+      copyFileSync(resolve(root, gitDir, 'index'), index);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      exec('git', ['read-tree', 'HEAD'], { cwd: root, env });
+    }
+    exec('git', ['add', '-A'], { cwd: root, env });
+    return exec('git', ['write-tree'], { cwd: root, env, encoding: 'utf8' }).trim();
+  } finally {
+    rmSync(index, { force: true });
+    rmSync(`${index}.lock`, { force: true });
+  }
+}
+
+/** Marker root shared across worktrees through the git common dir; PHANTOM_VERIFY_PASSED_DIR relocates it. */
+export function verifyPassedDir(root, env = process.env, exec = execFileSync) {
+  return env.PHANTOM_VERIFY_PASSED_DIR
+    || resolve(root, exec('git', ['rev-parse', '--git-common-dir'], { cwd: root, encoding: 'utf8' }).trim(), 'phantom-verify-passed');
+}
+
+/**
+ * Inputs a recorded pass is valid for: the working-tree hash, the merge-base
+ * (changed-file selection depends on it), and the installed checker
+ * identities, whose drift can change a verdict on an identical tree.
+ */
+export function verifyDedupeInput(root, exec = execFileSync, exists = existsSync, read = readFileSync) {
+  const version = (pkg) => {
+    try {
+      const parsed = JSON.parse(read(resolve(root, 'node_modules', pkg, 'package.json'), 'utf8'));
+      return typeof parsed.version === 'string' ? parsed.version : '';
+    } catch {
+      return '';
+    }
+  };
+  return {
+    base: exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8' }).trim(),
+    tree: workingTreeHash(root, exec),
+    eslint: eslintPreflight(root, exists).ok ? version('eslint') : '',
+    typescript: version('typescript'),
+    tsgo: exists(resolve(root, 'node_modules/.bin/tsgo')),
+    node: process.version,
+    platform: process.platform,
+  };
+}
+
+/** Stable key for a dedupe marker: one sha256 over the JSON input record. */
+export function verifyDedupeKey(input) {
+  return createHash('sha256').update(JSON.stringify(input)).digest('hex');
+}
+
+/** Marker lookup: a readable record whose key matches means this state already passed. */
+export function readVerifyPassed(dir, key, read = readFileSync) {
+  try {
+    const record = JSON.parse(read(join(dir, `${key}.json`), 'utf8'));
+    return record && record.key === key ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+export const VERIFY_PASSED_CAP = 256;
+
+/**
+ * Record a passing state as <dir>/<key>.json through a unique sibling so
+ * readers never see a partial write, then prune the oldest markers past `cap`.
+ */
+export function recordVerifyPassed(dir, input, options = {}) {
+  const {
+    key = verifyDedupeKey(input), cap = VERIFY_PASSED_CAP, pid = process.pid,
+    mkdir = mkdirSync, readdir = readdirSync, rename = renameSync, rm = rmSync,
+    stat = statSync, write = writeFileSync, now = Date.now,
+  } = options;
+  mkdir(dir, { recursive: true });
+  const target = join(dir, `${key}.json`);
+  const temp = `${target}.${pid}.${randomUUID()}.tmp`;
+  try {
+    write(temp, `${JSON.stringify({ ...input, key, recordedAt: new Date(now()).toISOString() })}\n`);
+    rename(temp, target);
+  } finally {
+    rm(temp, { force: true });
+  }
+  const entries = readdir(dir).filter((name) => name.endsWith('.json'));
+  if (entries.length <= cap) return target;
+  const oldest = entries.map((name) => {
+    try {
+      return { name, mtime: stat(join(dir, name)).mtimeMs };
+    } catch {
+      return { name, mtime: 0 };
+    }
+  }).sort((a, b) => a.mtime - b.mtime);
+  for (const entry of oldest.slice(0, entries.length - cap)) rm(join(dir, entry.name), { force: true });
+  return target;
+}
+
+/** Bypass flag: `--force` on argv or a truthy PHANTOM_VERIFY_FORCE reruns verify instead of skipping. */
+export function verifyForceRequested(argv, env = process.env) {
+  if (argv.includes('--force')) return true;
+  return /^(?:1|true|yes|on)$/i.test(env.PHANTOM_VERIFY_FORCE ?? '');
+}
+
 function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  let dedupe = null;
+  try {
+    const input = verifyDedupeInput(root);
+    dedupe = { dir: verifyPassedDir(root), input, key: verifyDedupeKey(input) };
+    if (!verifyForceRequested(process.argv.slice(2))) {
+      const hit = readVerifyPassed(dedupe.dir, dedupe.key);
+      if (hit) {
+        console.log(`SKIP verify-changed: tree ${input.tree.slice(0, 12)} already passed${hit.recordedAt ? ` at ${hit.recordedAt}` : ''}; rerun with --force`);
+        return;
+      }
+    }
+  } catch (error) {
+    console.warn(`WARN verify dedupe unavailable: ${error.message}`);
+    dedupe = null;
+  }
   let selection;
   let changed;
   try {
@@ -378,6 +507,14 @@ function main() {
   }
   if (!runRealioCheck(root, changed)) process.exitCode = 1;
   run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
+  if (dedupe && !process.exitCode) {
+    try {
+      recordVerifyPassed(dedupe.dir, dedupe.input, { key: dedupe.key });
+      console.log(`PASS verify dedupe: recorded tree ${dedupe.input.tree.slice(0, 12)}`);
+    } catch (error) {
+      console.warn(`WARN verify dedupe record failed: ${error.message}`);
+    }
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
