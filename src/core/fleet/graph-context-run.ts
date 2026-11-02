@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { Writable } from 'node:stream';
@@ -6,7 +7,7 @@ import { taskReadyFrontier } from './task-ready-frontier.js';
 import { readRunsSwitches } from './runs-switches.js';
 import { runContextWorker, type ContextWorkerIO } from './context-worker-run.js';
 
-type Task = { id: string; dependsOn?: string[]; snapshot: string; prompt: string; argv: string[] };
+type Task = { id: string; dependsOn?: string[]; snapshot: string; prompt: string; argv: string[]; cwd?: string };
 type Row = { id: string; status: string; exitCode: number | null };
 const id = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
 const path = (s: unknown): s is string => typeof s === 'string' && isAbsolute(s) && !s.includes('\0') && s.length <= 4096;
@@ -33,6 +34,9 @@ export interface GraphContextRunOptions {
  * One shared deadline bounds the whole apply: after it expires nothing new
  * launches, active children end through their own worker timeout and are
  * awaited, and unlaunched nodes report deadline-exhausted.
+ * An optional per-task cwd selects that node's working directory only; the
+ * runner's own process.cwd() is never touched and nothing is derived from
+ * cited context or bus content.
  */
 export async function graphContextRun(file: string, apply = false, io: ContextWorkerIO = {}, concurrency = 1, options: GraphContextRunOptions = {}): Promise<{ status: string; nodes: Row[] }> {
   // One monotonic deadline bounds the whole apply: control reads and every
@@ -52,10 +56,11 @@ export async function graphContextRun(file: string, apply = false, io: ContextWo
     if (v.version !== 1 || Object.keys(v).some(k => !['version', 'tasks'].includes(k)) || !Array.isArray(v.tasks) || v.tasks.length > 32) throw Error();
     tasks = v.tasks;
     for (const t of tasks) {
-      if (!t || Object.keys(t).some(k => !['id', 'dependsOn', 'snapshot', 'prompt', 'argv'].includes(k)) || !id(t.id) ||
+      if (!t || Object.keys(t).some(k => !['id', 'dependsOn', 'snapshot', 'prompt', 'argv', 'cwd'].includes(k)) || !id(t.id) ||
         !path(t.snapshot) || !path(t.prompt) ||
         !Array.isArray(t.argv) || !t.argv.length || t.argv.length > 128 || !t.argv[0] ||
         t.argv.some(a => typeof a !== 'string' || a.includes('\0') || a.length > 8192) ||
+        (t.cwd !== undefined && (typeof t.cwd !== 'string' || !t.cwd || t.cwd.includes('\0') || !isAbsolute(t.cwd) || !statSync(t.cwd).isDirectory())) ||
         (t.dependsOn !== undefined && (!Array.isArray(t.dependsOn) || t.dependsOn.length > 32 || !t.dependsOn.every(id)))) throw Error();
     }
     const ids = new Set(tasks.map(t => t.id));
@@ -103,7 +108,7 @@ export async function graphContextRun(file: string, apply = false, io: ContextWo
         // The worker resolves snapshot, prompt and cited live outputs itself at
         // launch; nothing about the context is precomputed by this scheduler. It
         // is given only the time left on the shared deadline — never a fresh budget.
-        const done = runContextWorker({ snapshot: task.snapshot, prompt: task.prompt, argv: task.argv, timeoutMs: Math.ceil(remaining) }, workerIO())
+        const done = runContextWorker({ snapshot: task.snapshot, prompt: task.prompt, argv: task.argv, cwd: task.cwd, timeoutMs: Math.ceil(remaining) }, workerIO())
           .then(exitCode => {
             results.set(nodeId, { id: nodeId, status: cancelled ? 'cancelled' : exitCode === 0 ? 'success' : exitCode === 124 ? 'timeout' : 'failed', exitCode });
             active.delete(nodeId);
