@@ -1,2 +1,3 @@
 
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
+- [Steer the leaders](docs/APP-STEER.md): `phm app steer --text "<message>" --json`, the steer box and the Steer and Hand off buttons on each graph node.

@@ -10,7 +10,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { SectionVisibilityProvider, useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { liveHeadline, liveIssuesText, liveNodeRows } from './graph-live-model.js';
 import { graphLiveMissing, graphLiveQuery, type GraphLiveState } from './graph-live-queries.js';
-import { liveNodeSteerPrefill, liveNodeSteerVisible } from './live-node-steer-prefill.js';
+import { liveNodeSteerPrefill } from './live-node-steer-prefill.js';
 import { agentChoices, routeRows, routesHeadline } from './agent-routes-model.js';
 import { agentRoutesQuery, validAgentId } from './agent-routes-query.js';
 import { workerAgeSummary } from './graph-summary.js';
@@ -78,10 +78,10 @@ export function FleetGraphPane({ visible }: Pick<PaneProps, 'visible'>) {
                 return <li key={row.id} title={row.reasons.join('; ')}>
                   {clickable ? <button type="button" className={styles.row} onClick={() => openDockPane('fleet-usage')}>{content}</button>
                     : <div className={styles.row}>{content}</div>}
-                  {liveNodeSteerVisible(row) && <Button size="sm" aria-label={`Steer ${row.id}`} onClick={event => {
+                  {(['steer', 'handoff'] as const).map(mode => <Button key={mode} size="sm" aria-label={`${mode === 'steer' ? 'Steer' : 'Hand off'} ${row.id}`} onClick={event => {
                     event.stopPropagation();
-                    openInterjectDialog({ prefill: liveNodeSteerPrefill(row) });
-                  }}>Steer</Button>}
+                    openInterjectDialog({ prefill: liveNodeSteerPrefill(row, mode) });
+                  }}>{mode === 'steer' ? 'Steer' : 'Hand off'}</Button>)}
                 </li>;
               })}
             </ul>

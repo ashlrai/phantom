@@ -21,7 +21,10 @@ it('opens a prepared interjection and preserves the usage row action', async () 
   vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === '/api/verse/fleet/graph/live' ? live : runs)));
   render(<FleetGraphPane visible />);
   const steer = await screen.findByRole('button', { name: 'Steer seat-fake' });
-  expect(screen.queryByRole('button', { name: 'Steer ready-fake' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Steer ready-fake' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Hand off ready-fake' }));
+  expect(vi.mocked(openInterjectDialog).mock.calls[0]![0]!.prefill).toContain('Hand off this node');
+  vi.mocked(openInterjectDialog).mockClear();
   fireEvent.click(steer);
   expect(openInterjectDialog).toHaveBeenCalledWith({ prefill: 'Graph node seat-fake (seat) is exhausted: 100% used, reset unknown, no dated reading. Reasons: quota. Decide: route around it or wait for the reset.' });
   expect(openDockPane).not.toHaveBeenCalled();

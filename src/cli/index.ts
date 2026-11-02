@@ -676,6 +676,12 @@ const loadCommsCmd = lazyCmd(
   'comms command requires src/cli/comms.ts (M137 module not yet built).',
 );
 
+const loadAppCmd = lazyCmd(
+  () => import('./app.js'),
+  (m) => m.cmdApp as Cmd,
+  'app command requires src/cli/app.ts.',
+);
+
 const loadChannelsCmd = lazyCmd(
   () => import('./channels.js'),
   (m) => m.cmdChannels as Cmd,
@@ -2580,6 +2586,12 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'app': {
+        const cmdApp = await loadAppCmd();
+        process.exitCode = await cmdApp(rest);
         break;
       }
 
