@@ -3,6 +3,8 @@ import { Button, EmptyState, Input, SkeletonLine, Tag } from '../../../component
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { refetchQuery } from '../../../data/cache.js';
+import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
+import { orderJobDraft } from './order-job-draft.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { channelKey, channelLabel, type ChannelKey } from '../fleet-channels/fleet-channels-model.js';
 import { JobRefs } from '../fleet/JobRefs.js';
@@ -35,6 +37,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const refreshRoute = useRefetch(fleetInboxQuery), refreshSnapshot = useRefetch(fleetRunsQuery);
   usePollWhileVisible(refreshRoute, 10_000, { enabled: visible });
   usePollWhileVisible(refreshOrders, 15_000, { enabled: visible });
+  const [draftStatus, setDraftStatus] = useState('');
   const [source, setSource] = useState('');
   const [channel, setChannel] = useState<ChannelKey | null>(null);
   const requestedChannel = useRequestedInboxChannel();
@@ -77,6 +80,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     openDockPane('worker-log');
   }
   return <div className={styles.pane}>
+    {draftStatus && <p role="status">{draftStatus}</p>}
     <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {
       setSource(''); setChannel(null); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
       void refetchQuery(fleetInboxQuery.key, () => fleetInboxQuery.fetch(), true);
@@ -95,7 +99,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     {groups.length === 0 && <EmptyState compact title={inbox.entries.length ? 'No matching orders' : 'No orders yet'} />}
     {groups.map(group => <section key={group.day} aria-label={group.label}>
       <h3 className={styles.day}>{group.label}{group.day !== '—' && ' · ET'}</h3>
-      {group.entries.map((entry, i) => { const jobs = jobsForEntry(trace, entry.at); return <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
+      {group.entries.map((entry, i) => { const jobs = jobsForEntry(trace, entry.at); const draft = trace && jobs.length === 0 ? orderJobDraft(entry, Date.now()) : null; return <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
         <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]} data-overdue={entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
         <p className={styles.text}>{entry.text}</p>
         {jobs.length > 0 && <div className={styles.jobs}>
@@ -113,6 +117,15 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
           {jobs.length > 6 && <span>+{jobs.length - 6} more</span>}
         </div>}
         <Button size="sm" onClick={() => host.addToMessage(quoteForMessage(entry))}>Add to message</Button>
+        {draft && <Button size="sm" variant="ghost" aria-label={`Draft job for order at ${entry.at.slice(11, 16)}`} onClick={async () => {
+          if (openDropJobSheet(draft) === 'kept') {
+            setDraftStatus('You have an unsent draft; the fix draft was not applied.');
+            return;
+          }
+          const { closeVerseOverlay, setVerseSection } = await import('../verse-ui-store.js');
+          const { setFocusMode } = await import('../shell/focus-mode.js');
+          setDraftStatus(''); closeVerseOverlay(); setFocusMode(false); setVerseSection('chat'); openDockPane('fleet-queue');
+        }}>Draft job</Button>}
         {canResend(entry) && <Button size="sm" variant="ghost" aria-label={`Resend order from ${entry.at.slice(11)}`} onClick={() => openInterjectDialog({ prefill: resendPrefill(entry) })}>Resend</Button>}
       </article>; })}
     </section>)}
