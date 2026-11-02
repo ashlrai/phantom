@@ -1,6 +1,6 @@
 /** Explicit argv authorizes execution; bus addresses and bodies do not. */
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -70,34 +70,46 @@ function writeClaimPrompt(promptPath: string, receipt: BusInboxReceipt, director
 }
 
 export function validBusWorkLoopOptions(opts: BusWorkLoopOptions): boolean {
-  return validBusWaitClaimRequest(opts) && Number.isSafeInteger(opts.maxJobs) && opts.maxJobs >= 1 && opts.maxJobs <= 16 &&
+  let validCwd = true;
+  try {
+    if (opts.cwd !== undefined) validCwd = typeof opts.cwd === 'string' && isAbsolute(opts.cwd) &&
+      !opts.cwd.includes('\0') && statSync(opts.cwd).isDirectory();
+  } catch { validCwd = false; }
+  return validCwd && (opts.signal === undefined || opts.signal instanceof AbortSignal) &&
+    (opts.timeoutMs === undefined || (Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 1 && opts.timeoutMs <= 3600000)) &&
+    (opts.busAddress === undefined || (typeof opts.busAddress === 'string' && /^[\x21-\x7e]{1,128}$/.test(opts.busAddress))) &&
+    (opts.busAfter === undefined || (Number.isSafeInteger(opts.busAfter) && opts.busAfter >= 0)) &&
+    validBusWaitClaimRequest(opts) && Number.isSafeInteger(opts.maxJobs) && opts.maxJobs >= 1 && opts.maxJobs <= 16 &&
     [opts.snapshot, opts.prompt].every(p => typeof p === 'string' && isAbsolute(p) && !p.includes('\0')) &&
     Array.isArray(opts.argv) && opts.argv.length > 0 && !!opts.argv[0] &&
     opts.argv.every(a => typeof a === 'string' && !a.includes('\0'));
 }
 
-/** Sequential bounded consumer. Ownership loss cannot undo a running child. */
+/** Sequential bounded consumer. Ownership loss stops the child but cannot undo its effects. */
 export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkLoopResult> {
   let completed = 0;
   const done = (status: BusWorkLoopResult['status']): BusWorkLoopResult => ({ status, completed });
   if (!validBusWorkLoopOptions(opts)) return done('invalid');
   const controller = new AbortController();
+  const signal = opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal;
   const stop = () => controller.abort();
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
     while (completed < opts.maxJobs) {
-      const acquired = await waitClaimBusWork(opts, controller.signal);
+      const acquired = await waitClaimBusWork(opts, signal);
       if (acquired.status !== 'acquired' || !('receipt' in acquired)) {
         return done(acquired.status === 'timeout' ? 'timeout' : acquired.status === 'cancelled' ? 'cancelled' : 'failed');
       }
       const { receipt, token } = acquired;
       const id = receipt.envelope.id, root = opts.root;
       // Cancellation can race a successful acquisition; release without launching.
-      if (controller.signal.aborted) {
+      if (signal.aborted) {
         mutateBusWorkClaim({ action: 'release', id, token, root });
         return done('cancelled');
       }
       let directory: string | undefined, lost = false, leaseUntil = acquired.leaseUntil;
+      const ownership = new AbortController();
+      const attemptSignal = AbortSignal.any([signal, ownership.signal]);
       let succeeded = false;
       let timer: ReturnType<typeof setInterval> | undefined;
       try {
@@ -113,13 +125,19 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
           const renewal = mutateBusWorkClaim({ action: 'renew', id, token, root });
           if (renewal.status === 'renewed' && renewal.leaseUntil !== undefined) leaseUntil = renewal.leaseUntil;
           else if (renewal.status !== 'retryable' || Date.now() >= leaseUntil) lost = true;
-          if (lost && timer) clearInterval(timer);
+          if (lost) { if (timer) clearInterval(timer); ownership.abort(); }
         }, Math.max(1, Math.floor(opts.leaseMs / 3)));
         timer.unref();
         // The child may echo its input or emit arbitrary text; discard both streams.
         const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
-        const result = await runContextReply({ snapshot: opts.snapshot, prompt: claimPrompt, argv: opts.argv, requestFile, replyId },
-          { stdout: sink, stderr: sink }, { root });
+        // The reply publisher rejects an invalid clock, suppressing publication
+        // after cancellation or the last confirmed lease horizon.
+        const result = await runContextReply({ snapshot: opts.snapshot, prompt: claimPrompt, argv: opts.argv, requestFile, replyId,
+          cwd: opts.cwd, timeoutMs: opts.timeoutMs, busAddress: opts.busAddress, busAfter: opts.busAfter, signal: attemptSignal },
+          { stdout: sink, stderr: sink }, { root, now: () => {
+            const now = Date.now();
+            return attemptSignal.aborted || now >= leaseUntil ? NaN : now;
+          } });
         succeeded = result.workerExit.status === 'returned' && result.workerExit.exitCode === 0 &&
           (result.replyReceipt.status === 'posted' || result.replyReceipt.status === 'duplicate') &&
           !!result.reply && typeof result.reply.body === 'object' && result.reply.body !== null &&
@@ -135,7 +153,7 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
       const settled = mutateBusWorkClaim({ action: succeeded ? 'complete' : 'release', id, token, root });
       if (!succeeded || settled.status !== 'completed') return done('failed');
       completed++;
-      if (controller.signal.aborted) return done('cancelled');
+      if (signal.aborted) return done('cancelled');
     }
     return done('max-jobs');
   } catch { return done('failed'); }

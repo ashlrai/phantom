@@ -20,6 +20,7 @@
 | lane-models | `src/cli/fleet-lane-models.ts` | The effective model per lane and tier from models.json, cross-checked against the newest launch row in metrics/jobs.jsonl; read-only | no |
 | lane-truth | `src/cli/fleet-lane-truth.ts` | Offline advisory only; never changes a hold or grants dispatch authority | no |
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
+| memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |
 | real-supply | `src/cli/fleet-real-supply.ts` | Read-only live supply for the planner: Dependabot alerts, red scheduled suites and open issues across the seven repos | no |
 | runs-read | `src/cli/fleet-runs-read.ts` | Reads runs dir state, leader journal and parked queue | no |

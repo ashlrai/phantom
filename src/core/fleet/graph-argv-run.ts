@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import type { Readable } from 'node:stream';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { taskReadyFrontier } from './task-ready-frontier.js';
 import { readRunsSwitches } from './runs-switches.js';
@@ -16,6 +17,51 @@ export interface GraphArgvRunOptions {
    * A rejection stops new launches (running children still finish and are
    * delivered) and the run reports failed. */
   onNodeTerminal?: (node: GraphArgvNodeResult) => void | Promise<void>;
+  /** Shared cap, in bytes, on child stdout+stderr forwarded to this process's
+   * stderr across the whole run (default and maximum 262144, minimum 1). This
+   * is a resource bound on diagnostics, not a secrets control: output past
+   * the cap is still drained but dropped so noisy children cannot block. */
+  outputBudgetBytes?: number;
+}
+/** Written to the diagnostic destination once per run when the shared output
+ * budget is spent. Charged to a separate small allowance, never to the data
+ * budget, so byte accounting for child output stays exact. */
+const OUTPUT_TRUNCATION_MARKER = '\n[phm] graph child output truncated: shared diagnostic budget exhausted\n';
+/** Bounded diagnostic forwarding for child stdio. At most `budget` bytes reach
+ * `dest` per run across every stream of every node; once the budget is spent
+ * chunks are dropped while sources keep flowing, so a noisy child can never
+ * block on a full pipe and is never buffered or killed for being loud.
+ * Backpressure is honoured by pausing the reporting source until `dest`
+ * drains: state stays bounded by the live pipe set (at most two per child)
+ * plus one pending 'drain' listener, and no byte queue beyond the pipes' own
+ * high-water marks is grown. */
+function diagnosticForwarder(dest: NodeJS.WritableStream, budget: number): (chunk: Buffer, source: Readable) => void {
+  let remaining = budget, markerAllowance = 256, marked = false, waiting = false;
+  const paused = new Set<Readable>();
+  const resumeAll = (): void => { for (const source of [...paused]) { paused.delete(source); source.resume(); } };
+  const onDrain = (): void => { waiting = false; resumeAll(); };
+  const mark = (): void => {
+    if (marked) return;
+    marked = true;
+    const marker = Buffer.from(OUTPUT_TRUNCATION_MARKER).subarray(0, markerAllowance);
+    markerAllowance -= marker.length;
+    dest.write(marker);
+  };
+  return (chunk, source) => {
+    if (remaining <= 0) { mark(); return; }
+    const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+    remaining -= slice.length;
+    const flushed = dest.write(slice);
+    if (remaining <= 0) {
+      if (slice.length < chunk.length) mark();
+      if (waiting) { waiting = false; dest.off('drain', onDrain); }
+      resumeAll();
+    }
+    else if (!flushed && !paused.has(source)) {
+      paused.add(source); source.pause();
+      if (!waiting) { waiting = true; dest.once('drain', onDrain); }
+    }
+  };
 }
 export async function graphArgvRun(file: string, apply = false, timeoutMs = 900000, concurrency = 1, options: GraphArgvRunOptions = {}): Promise<{ status: string; nodes: Row[] }> {
   // One monotonic deadline bounds the whole apply: control reads and every
@@ -23,9 +69,14 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
   const deadline = performance.now() + timeoutMs;
   const expired = (): boolean => performance.now() >= deadline;
   let tasks: Task[];
+  let outputBudget = 262144;
   const order: string[] = [];
   try {
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8 || !isAbsolute(file) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000) throw Error();
+    if (options.outputBudgetBytes !== undefined) {
+      if (!Number.isSafeInteger(options.outputBudgetBytes) || options.outputBudgetBytes < 1 || options.outputBudgetBytes > 262144) throw Error();
+      outputBudget = options.outputBudgetBytes;
+    }
     const read = readStableRegularFile(file, { anchorPath: dirname(file), maxFileBytes: 262144, remainingBytes: 262144 });
     if (!read.ok) throw Error();
     const v = JSON.parse(read.text);
@@ -48,6 +99,9 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
     }
   } catch { return { status: 'invalid', nodes: [] }; }
   if (!apply) return { status: 'preview', nodes: order.map(id => ({ id, status: 'planned', exitCode: null })) };
+  // Child stdio forwards to stderr as diagnostics under one shared byte budget;
+  // stdout is reserved for machine-readable CLI output and never sees it.
+  const forward = diagnosticForwarder(process.stderr, outputBudget);
   const results = new Map<string, Row>();
   const active = new Map<string, { stop: () => void; done: Promise<void> }>();
   let cancelled = false, halted = false;
@@ -87,7 +141,8 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
         let stop = (): void => {};
         const done = new Promise<Row>(resolve => {
           const child = spawn(task.argv[0]!, task.argv.slice(1), { cwd: task.cwd, shell: false, detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
-          child.stdout.pipe(process.stderr, { end: false }); child.stderr.pipe(process.stderr, { end: false });
+          child.stdout.on('data', (chunk: Buffer) => forward(chunk, child.stdout));
+          child.stderr.on('data', (chunk: Buffer) => forward(chunk, child.stderr));
           let timedOut = false, failed = false;
           let escalation: ReturnType<typeof setTimeout> | undefined;
           stop = () => { child.kill('SIGTERM'); escalation ??= setTimeout(() => child.kill('SIGKILL'), 250); };
