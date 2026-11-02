@@ -32,6 +32,14 @@ function encodePath(rel: string): string {
   return encodeURI(rel).replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
+function isRepoRelativePath(file: string): boolean {
+  return !!file && !file.startsWith('/') && !/^[A-Za-z]:/.test(file)
+    && !file.includes('\\') && !Array.from(file).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || (code >= 127 && code <= 159);
+    }) && !file.split('/').some((part) => part === '..' || part === '.');
+}
+
 export function citationLabel(c: WikiCitation): string {
   return c.endLine && c.endLine > c.line ? `${c.file}:${c.line}-${c.endLine}` : `${c.file}:${c.line}`;
 }
@@ -50,14 +58,14 @@ export function parseCitationHref(href: string): WikiCitation | null {
   if (!m) return null;
   let file: string;
   try {
-    file = decodeURI(m[1]!).replace(/%28/g, '(').replace(/%29/g, ')');
+    file = decodeURIComponent(m[1]!);
   } catch {
     return null;
   }
-  if (!file || file.startsWith('/') || file.split('/').includes('..')) return null;
+  if (!isRepoRelativePath(file)) return null;
   const line = Number(m[2]);
   const endLine = m[3] ? Number(m[3]) : undefined;
-  if (line < 1) return null;
+  if (line < 1 || (endLine !== undefined && endLine < line)) return null;
   return { file, line, ...(endLine && endLine > line ? { endLine } : {}) };
 }
 
@@ -107,9 +115,7 @@ export interface CitationResolver {
 
 /** Exact read-index check shared by prose citations and local graph evidence. */
 export function checkedCitation(c: WikiCitation, count: number | null): WikiCitation | null {
-  if (typeof c.file !== 'string' || !c.file || c.file.startsWith('/') || /^[A-Za-z]:/.test(c.file)
-    || c.file.includes('\\') || Array.from(c.file).some((character) => character.charCodeAt(0) < 32)
-    || c.file.split('/').some((part) => part === '..' || part === '.')
+  if (typeof c.file !== 'string' || !isRepoRelativePath(c.file)
     || count === null || !Number.isInteger(count) || count < 1
     || !Number.isInteger(c.line) || c.line < 1 || c.line > count
     || (c.endLine !== undefined && (!Number.isInteger(c.endLine) || c.endLine < c.line))) return null;

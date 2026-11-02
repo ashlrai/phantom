@@ -270,8 +270,8 @@ describe('Auto-merge verdict', () => {
     expect(autoMergeVerdict(base)).toMatchObject({ allowed: true });
     expect(autoMergeVerdict({ ...base, autoMerge: false }).allowed).toBe(false);
     expect(autoMergeVerdict({ ...base, killOn: true }).reason).toMatch(/kill switch/);
-    expect(autoMergeVerdict({ ...base, pr: { ...pr, checks: 'pending' } }).reason).toMatch(/still running/);
-    expect(autoMergeVerdict({ ...base, pr: { ...pr, checks: 'failing' } }).allowed).toBe(false);
+    expect(autoMergeVerdict({ ...base, pr: { ...pr, checks: 'pending' }, checks: [{ name: 'CI', state: 'pending', url: null }] }).reason).toMatch(/still running/);
+    expect(autoMergeVerdict({ ...base, pr: { ...pr, checks: 'failing' }, checks: [{ name: 'CI', state: 'failing', url: null }] }).allowed).toBe(false);
     expect(autoMergeVerdict({ ...base, pr: { ...pr, mergeable: false } }).reason).toMatch(/conflicts/);
     expect(autoMergeVerdict({ ...base, pr: { ...pr, state: 'draft' } }).allowed).toBe(false);
     expect(autoMergeVerdict({ ...base, protectedHit: { path: '.github/workflows/ci.yml', why: 'CI config' } }).reason).toMatch(/\.github\/workflows\/ci\.yml/);
@@ -288,6 +288,13 @@ describe('Auto-merge verdict', () => {
     expect(autoMergeVerdict({ ...base, checks: [{ name: 'Vercel', state: 'passing', url: null }] }).reason).toMatch(/CI has not passed/);
     expect(autoMergeVerdict({ ...base, checks: [{ name: 'CI', state: 'pending', url: null }] }).allowed).toBe(false);
     expect(autoMergeVerdict({ ...base, checks: [...base.checks, ...base.checks] }).allowed).toBe(false);
+  });
+
+  it('requires passing evidence and ignores optional failures', () => {
+    for (const state of ['failing', 'pending'] as const) {
+      expect(autoMergeVerdict({ ...base, checks: [{ name: 'CI', state, url: null }] }).allowed).toBe(false);
+      expect(autoMergeVerdict({ ...base, pr: { ...pr, checks: state }, checks: [...base.checks, { name: 'optional', state, url: null }] }).allowed).toBe(true);
+    }
   });
 
   it('treats a missing or malformed owner code-gate setting as auto-merge off', () => {

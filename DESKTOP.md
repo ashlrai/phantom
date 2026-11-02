@@ -26,6 +26,12 @@ See `desktop/README.md` for full setup, build, and open-item details, and
 - The webview only ever loads `http://127.0.0.1:7777`; the CSP and the
   init-script origin check both pin it there.
 
+## Watch and steer
+
+Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append to
+`~/.ashlr-runs/leader/MASON-INBOX.md`. Updates and kill switches are covered in
+[Watch and steer the fleet](docs/VERSE.md#watch-and-steer-the-fleet-330).
+
 ## Desktop control ("computer use", macOS)
 
 Chat seats can drive apps on this Mac through the `computer_*` tools
@@ -63,6 +69,14 @@ macOS build (from the repo root): `npm run build:binary` →
 `node desktop/scripts/prepare-sidecar.mjs` → `cd desktop && npm run icons`
 (once) → `npm run build:debug` or `npm run build`. The `.app` lands in
 `desktop/src-tauri/target/{debug,release}/bundle/macos/Phantom.app`.
+
+Nightly dev build (scheduled master CI): `npm run build:desktop:nightly` runs
+the whole pipeline reproducibly and packs an **unsigned** debug `Phantom.app`
+tarball plus provenance manifest under `desktop/dist-nightly/` — macOS only, no
+release output, 7-day artifact retention. See the
+[nightly section](desktop/README.md#nightly-dev-build-scheduled-master-ci) of
+`desktop/README.md` for the job contract and
+`node scripts/build-desktop-nightly.mjs --check` for a preflight-only plan.
 
 Current releases provide the signed `Phantom_<version>_aarch64.app.tar.gz`
 archive and paired `latest.json`, rather than a DMG. The historical 3.27.0

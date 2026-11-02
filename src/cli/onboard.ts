@@ -37,6 +37,7 @@ import { tick } from '../core/daemon/loop.js';
 import { loadBacklog, buildBacklog } from '../core/portfolio/backlog.js';
 import { sweepRepoSandboxesDetailed } from '../core/sandbox/worktree.js';
 import { makeColors, isTty } from './ui.js';
+import { FIRST_TASK_READINESS_LINES } from './first-run-guidance.js';
 import type { AshlrConfig, WorkItem } from '../core/types.js';
 import { stackInstalled, stackStatus, stackProjectConfigured } from '../core/integrations/stack.js';
 import {
@@ -375,6 +376,7 @@ function printBlockers(report: ReadinessReport): void {
   for (const b of report.blockers) {
     console.log(`  ${red('✗')} ${b.detail}${b.fix ? `\n      ${dim('fix:')} ${cyan(b.fix)}` : ''}`);
   }
+  for (const line of FIRST_TASK_READINESS_LINES) console.log(`  ${line}`);
   console.log('');
 }
 
@@ -386,6 +388,8 @@ function printBlockers(report: ReadinessReport): void {
 function printSteps(repoHint: string): void {
   console.log('');
   console.log(bold('  ashlr onboard') + dim('  — first safe activation (steps)'));
+  console.log('');
+  for (const line of FIRST_TASK_READINESS_LINES) console.log(`  ${line}`);
   console.log('');
   console.log(`  ${dim('Run these in order. Each step is the explicit human gate — nothing runs on its own.')}`);
   console.log('');
@@ -551,6 +555,7 @@ export async function cmdOnboard(args: string[]): Promise<number> {
       warnings: report.warnings,
       info: report.info,
       next: ['ashlr preflight'],
+      firstTaskGuidance: FIRST_TASK_READINESS_LINES,
     });
     return 1;
   }
@@ -585,6 +590,7 @@ export async function cmdOnboard(args: string[]): Promise<number> {
       ok: true,
       mode: 'steps',
       ready: true,
+      firstTaskGuidance: FIRST_TASK_READINESS_LINES,
       repo: candidate,
       enrolled: false,
       warnings: report.warnings,
@@ -616,7 +622,7 @@ export async function cmdOnboard(args: string[]): Promise<number> {
   console.log(bold('  ashlr onboard') + dim('  — first safe activation'));
   console.log('');
   console.log(
-    `  ${green('✓')} ${bold('ready')}` +
+    `  ${green('✓')} ${bold('preflight ready')} (resource usability still needs checking)` +
       (report.warnings.length ? dim(`  (${report.warnings.length} warning(s) — non-blocking)`) : ''),
   );
   for (const w of report.warnings) {
@@ -628,6 +634,7 @@ export async function cmdOnboard(args: string[]): Promise<number> {
   console.log('');
 
   // ── Step 2: Enroll ONE repo (the explicit human gate; H6-audited) ──────────
+  for (const line of FIRST_TASK_READINESS_LINES) console.log(`  ${line}`);
   const before = listEnrolled();
   const confirmed = await _internals.confirm(`  Enroll ${cyan(candidate)} for autonomous work?`);
   if (!confirmed) {

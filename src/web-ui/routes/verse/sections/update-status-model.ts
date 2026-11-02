@@ -1,0 +1,68 @@
+import { describeDesktopUpdateReason } from '../../../app/desktop-update-reasons.js';
+import type { DesktopUpdateState } from '../../../app/desktop-updates.js';
+import { newerVersion } from '../fleet-releases/post-merge-update-model.js';
+import { lastApplyOf } from './about-update-model.js';
+import type { ServerObservation } from './update-status-queries.js';
+
+type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+export function describeUpdateStatus({ native, server, appVersion, desktopVersion, now, nativeBridge = native !== null }: {
+  native: DesktopUpdateState | null; server: ServerObservation; appVersion: string;
+  desktopVersion: string | null; now: number; nativeBridge?: boolean;
+}): { headline: string; detail: string | null; tone: Tone; canRefresh: boolean } {
+  const facts = server && !('kind' in server) ? server : null;
+  const parts = [`Phantom ${appVersion}`];
+  if (desktopVersion && desktopVersion !== appVersion) parts.push(`desktop ${desktopVersion}`);
+  if (facts?.headSha) parts.push(facts.headSha.slice(0, 7));
+  if (facts?.uptimeSeconds != null) parts.push(`up ${duration(facts.uptimeSeconds)}`);
+  if (facts) parts.push(`fetched ${facts.lastFetchAt ? `${duration(Math.max(0, (now - Date.parse(facts.lastFetchAt)) / 1000))} ago` : 'never'}`);
+  const last = lastApplyOf(facts);
+  if (last && (last.outcome === 'refused' || last.outcome === 'failed')) {
+    parts.push(`last update ${last.outcome} ${relative(last.finishedAt, now)}${last.reason ? ` · ${last.reason}` : ''}`);
+  } else if (last?.outcome === 'updated') {
+    parts.push(last.toCommit ? `updated to ${last.toCommit.slice(0, 7)} ${relative(last.finishedAt, now)}` : `last update updated ${relative(last.finishedAt, now)}`);
+  }
+  let headline = 'Update status unavailable';
+  let tone: Tone = 'neutral';
+  const version = native?.version ?? 'update';
+  const readyVersion = native?.version ? ` ${native.version}` : '';
+  const candidate = (facts as { candidateVersion?: unknown } | null)?.candidateVersion;
+  const newerCandidate = typeof candidate === 'string' && newerVersion(candidate, appVersion) ? candidate : null;
+  switch (native?.phase) {
+    case 'installing': headline = `Installing ${version}…`; tone = 'success'; break;
+    case 'installed': headline = `Installed ${version}; restarts when idle`; tone = 'success'; break;
+    case 'staged': case 'waiting-for-idle': case 'waiting-for-app-quit':
+      headline = `Update${readyVersion} ready · installs when idle`; tone = 'info'; break;
+    case 'adoption-held': headline = `Update held: ${describeDesktopUpdateReason(native.reason)}`; tone = 'warning'; break;
+    case 'downloading': headline = `Downloading ${version}${native.bytesTotal ? ` · ${Math.floor(native.bytesReceived / native.bytesTotal * 100)}%` : ''}`; tone = 'info'; break;
+    case 'failed': headline = `Update failed: ${describeDesktopUpdateReason(native.reason)}`; tone = 'danger'; break;
+    case 'disabled': case 'uncommissioned': headline = 'Automatic updates off'; break;
+    case 'current': headline = 'Up to date'; tone = 'success'; break;
+    case 'checking': headline = 'Checking for updates…'; tone = 'info'; break;
+    case 'idle': headline = 'Automatic updates on · checks when idle'; tone = 'neutral'; break;
+    default:
+      if (native?.phase === 'available') { headline = `Update${readyVersion} available · downloads when idle`; tone = 'info'; }
+      else if (facts?.sourceState === 'unavailable') headline = 'Not running from a git checkout';
+      else if (facts?.behind != null && facts.behind > 0 && facts.canFastForward) { headline = newerCandidate ? `${newerCandidate} ready · ${commits(facts.behind)} behind ${facts.branch ?? 'master'} · fast-forward` : `${commits(facts.behind)} behind ${facts.branch ?? 'master'} · ready to fast-forward`; tone = 'info'; }
+      else if (facts?.behind != null && facts.behind > 0 && facts.dirty) { headline = `${newerCandidate ? `${newerCandidate} available · ` : ''}${facts.behind} behind · local changes block the update`; tone = 'warning'; }
+      else if (facts?.behind != null && facts.behind > 0 && facts.canFastForward === false && facts.ahead != null && facts.ahead > 0) { headline = `${facts.behind} behind · ${facts.ahead} local commit${facts.ahead === 1 ? '' : 's'} ahead · diverged, update by hand`; tone = 'warning'; }
+      else if (facts?.behind != null && facts.behind > 0) { headline = `${newerCandidate ? `${newerCandidate} available · ` : ''}${facts.behind} behind · fast-forward unavailable`; tone = 'warning'; }
+      else if (facts?.behind === 0) { headline = `Up to date with ${facts.branch ?? 'master'}`; tone = 'success'; }
+      else if (server && 'kind' in server) headline = 'Update status is not in this build yet';
+  }
+  return { headline, detail: parts.join(' · '), tone, canRefresh: nativeBridge };
+}
+
+function commits(count: number): string { return `${count} commit${count === 1 ? '' : 's'}`; }
+
+function relative(iso: string, now: number): string {
+  const seconds = (now - Date.parse(iso)) / 1000;
+  return seconds < 0 ? `in ${duration(-seconds)}` : `${duration(seconds)} ago`;
+}
+
+function duration(seconds: number): string {
+  const n = Math.floor(seconds);
+  if (n < 60) return `${n}s`;
+  if (n < 3600) return `${Math.floor(n / 60)}m`;
+  if (n < 86400) return `${Math.floor(n / 3600)}h`;
+  return `${Math.floor(n / 86400)}d`;
+}

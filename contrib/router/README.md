@@ -1,6 +1,13 @@
 # ashlr-router
 
+The separate, uncommissioned Mac router supervisor is documented in
+[SUPERVISOR.md](SUPERVISOR.md). Its commissioning and security prerequisites
+apply independently of this runner.
+
 A Mac launchd runner that claims labelled GitHub issues and opens one draft pull request per job. It does not merge, tag, or publish. The queue runs around the clock. There is no quiet-hours window.
+
+The separate, uninstalled PR supervisor and its commissioning requirements are
+documented in [SUPERVISOR.md](SUPERVISOR.md).
 
 From a checkout of this branch:
 
@@ -146,7 +153,7 @@ The model flag is omitted when the probe rejected the configured model. Codex pr
 
 - A metered Grok login is detected and then skipped. There is no key exception and no `grok update`.
 - Claude's recorded model list is the aliases `fable`, `opus`, and `sonnet`. `claude auth status` decides whether Claude is logged in.
-- Codex can reject a catalog name, including `gpt-6.1-sol`. `gpt-6-astra` stays unverified until the exec probe accepts it. A runtime rejection retries once without `--model`.
+- Codex can reject a catalog name, including `gpt-6.1-sol`. `gpt-6-astra` stays unverified until the exec probe accepts it. A runtime rejection drops the model into `probed_bad`, retries once without `--model`, and reroutes a codex job to the next pool when the default is rejected too. The pool stays up; an unknown model is never treated as an auth failure.
 - The work `~/.codex` pool stays dead after an auth failure until the pool state is edited by hand.
 - Local oMLX applies a unified diff and never downloads. It is off by default. `omlx-mac.sh download` is a separate, disk-guarded step.
 - `phantom route --json` is optional. An invalid pick falls back to the spend order. A returned `ollama` cli is treated as `omlx`.

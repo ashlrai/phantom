@@ -1,0 +1,1 @@
+- READY RQ-DEMO (pool=codex-personal, tier=work, repo=phantom): untrusted prompt omitted

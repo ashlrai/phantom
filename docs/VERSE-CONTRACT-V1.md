@@ -68,7 +68,7 @@ docs/VERSE.md              [D] user guide
 - Store writes are atomic (temp + rename), events appended with `appendFileSync`; `VERSE_MAX_EVENTS_PER_SESSION` enforced (oldest dropped on read, not deleted).
 
 ### Adapters
-Each exports `buildLaunch(session, text, seat): VerseTurnLaunch` and `createParser(turnId): { push(line: string): VerseEvent[]; finish(exitCode: number|null): VerseEvent[] }`.
+Each exports `buildLaunch(session, text, seat): VerseTurnLaunch` and `createParser(turnId, session?): { push(line: string): VerseEvent[]; finish(exitCode: number|null): VerseEvent[] }`.
 Events omit `seq`/`at` (engine stamps them). Parsers must never throw on garbage lines (drop them).
 
 - **claude** (`engine=claude` and `engine=local`):
@@ -77,6 +77,11 @@ Events omit `seq`/`at` (engine stamps them). Parsers must never throw on garbage
     '--permission-mode', 'acceptEdits', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']`
   plus `['--resume', nativeSessionId]` when `session.turnCount > 0` else `['--session-id', nativeSessionId]`.
   local env: `ANTHROPIC_BASE_URL=<ollama base without /v1>`, `ANTHROPIC_AUTH_TOKEN=ollama`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
+  Any non-first-party `--model` id — a local tag, or a gateway id configured on a claude seat — also gets
+  `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0` and `CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK=1` (full prompt, no silent fallback);
+  first-party ids get neither. The parser compares the CLI's reported model (`init`, assistant frames, `modelUsage` keys)
+  to the requested id and emits one `status { kind: 'model-switch' }` naming both when they differ; the engine also writes
+  it to the session log.
   V3.9 adds: `--model` is the canonical id (`canonicalModelId`); claude seats pass `--autocompact <400000|auto>` per the session's
   mode; local adds env `CLAUDE_CODE_MAX_CONTEXT_TOKENS=<session window>` and `--exclude-dynamic-system-prompt-sections`; when the
   launch record carries memory, `--add-dir <dir>` (when the snapshot is writable) and `--append-system-prompt=<block>` — the same

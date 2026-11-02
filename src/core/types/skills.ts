@@ -38,6 +38,10 @@ export interface SkillCard {
   summary: string;
   status: SkillCardStatus;
   source: SkillCardSource;
+  /** Shadow learning recipe; metadata only, never raw job output. */
+  trigger?: string;
+  steps?: string[];
+  sourceJobIds?: string[];
   tags?: string[];
   taskKinds?: string[];
   commandKinds?: string[];

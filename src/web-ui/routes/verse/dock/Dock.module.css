@@ -140,7 +140,7 @@
 .tabWrap[data-selected] .tab { color: var(--text-primary); font-weight: var(--font-weight-medium); }
 .tab:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
 
-.tabClose {
+.tabClose, .tabCopy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -160,6 +160,9 @@
 .tabWrap[data-selected] .tabClose,
 .tabClose:focus-visible { opacity: 1; }
 .tabClose:hover { color: var(--text-primary); background: var(--bg-active); }
+.tabCopy { width: auto; min-width: var(--control-h-xs); padding: 0 var(--space-1); opacity: 1; font: inherit; font-size: var(--text-sm-size); white-space: nowrap; }
+.tabCopy:hover { color: var(--text-primary); background: var(--bg-active); }
+.tabCopy:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
 
 .headActions {
   flex: none;
@@ -301,3 +304,68 @@
 }
 :root[data-motion='reduce'] .scrim,
 :root[data-motion='reduce'] .sheetLayer .dock { animation: none; }
+
+.body[data-workspace] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+.body[data-workspace] .pane:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+}
+.body[data-workspace] .pane:not([hidden]) > :last-child { flex: 1; min-height: 0; height: auto; }
+.workspaceTitle { flex: none; padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); font-weight: 600; }
+
+/* The add-pane picker keeps search visible while its grouped results scroll. */
+.addMenu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  width: min(260px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  padding: var(--space-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-raised);
+  box-shadow: var(--shadow-menu);
+}
+.addSearch {
+  flex: none;
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+.addSearch:focus-visible { outline: 1px solid var(--border-focus); }
+.addResults { overflow-y: auto; }
+.addGroupLabel, .addEmpty {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+}
+.addItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--density-row-sm);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm-size);
+  text-align: left;
+  cursor: pointer;
+}
+.addItem:hover, .addItem:focus-visible { background: var(--bg-hover); }
+.addItem:focus-visible { outline: 1px solid var(--border-focus); }

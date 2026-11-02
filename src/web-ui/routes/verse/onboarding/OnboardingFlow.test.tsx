@@ -93,7 +93,7 @@ describe('OnboardingFlow — the chip', () => {
   it('starts as a one-line chip naming the step, not the full card', () => {
     render(<OnboardingFlow />);
     const chip = screen.getByRole('region', { name: 'Getting started' });
-    expect(chip).toHaveTextContent('Getting started1/6');
+    expect(chip).toHaveTextContent('Getting started1/7');
     expect(within(chip).getByRole('button', { name: /Getting started/ })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('Welcome to Phantom')).not.toBeInTheDocument();
     // The chip reads nothing: no step has mounted, so no step's query ran.
@@ -105,7 +105,7 @@ describe('OnboardingFlow — the chip', () => {
     render(<OnboardingFlow />);
     await user.click(screen.getByRole('button', { name: /Getting started/ }));
     expect(screen.getByText('Welcome to Phantom')).toBeInTheDocument();
-    expect(screen.getByText('Getting started · 1 of 6')).toBeInTheDocument();
+    expect(screen.getByText('Getting started · 1 of 7')).toBeInTheDocument();
     expect(getOnboardingState().expanded).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Minimize getting started' }));
@@ -115,13 +115,34 @@ describe('OnboardingFlow — the chip', () => {
     expect(getOnboardingState()).toMatchObject({ open: true, expanded: false, dismissedAt: null, completedAt: null });
   });
 
+  it('opens with Enter and returns focus to the chip on Escape so Space can reopen it', async () => {
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await user.tab();
+    expect(screen.getByRole('button', { name: /Getting started/ })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('region', { name: 'Welcome to Phantom' })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Minimize getting started' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: /Getting started/ })).toHaveFocus();
+    await user.keyboard(' ');
+    expect(screen.getByRole('region', { name: 'Welcome to Phantom' })).toHaveFocus();
+    expect(getOnboardingState()).toMatchObject({ open: true, dismissedAt: null, completedAt: null });
+  });
+
+  it('does not take focus from the app when first mounted', () => {
+    render(<><button autoFocus>Composer</button><OnboardingFlow /></>);
+    expect(screen.getByRole('button', { name: 'Composer' })).toHaveFocus();
+  });
+
   it('keeps the step it was on, so the chip counts where the operator left off', async () => {
     const user = userEvent.setup();
     expandOnboarding();
     render(<OnboardingFlow />);
     await stepTo(user, 2);
     await user.click(screen.getByRole('button', { name: 'Minimize getting started' }));
-    expect(screen.getByRole('region', { name: 'Getting started' })).toHaveTextContent('3/6');
+    expect(screen.getByRole('region', { name: 'Getting started' })).toHaveTextContent('3/7');
     expect(JSON.parse(localStorage.getItem(VERSE_ONBOARDING_STORAGE_KEY)!)).toMatchObject({ expanded: false, step: 2 });
   });
 
@@ -144,7 +165,7 @@ describe('OnboardingFlow — presence and dismissal', () => {
   it('opens on a first run and names the step it is on', () => {
     render(<OnboardingFlow />);
     expect(screen.getByText('Welcome to Phantom')).toBeInTheDocument();
-    expect(screen.getByText('Getting started · 1 of 6')).toBeInTheDocument();
+    expect(screen.getByText('Getting started · 1 of 7')).toBeInTheDocument();
   });
 
   it('welcomes in one sentence', () => {
@@ -221,7 +242,7 @@ describe('OnboardingFlow — presence and dismissal', () => {
     expect(getOnboardingState().dismissedAt).toBeNull();
   });
 
-  it('walks forward and back through all six steps', async () => {
+  it('walks forward and back through all seven steps', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
     await stepTo(user, 1);
@@ -232,15 +253,57 @@ describe('OnboardingFlow — presence and dismissal', () => {
     expect(screen.getByText('Your seats')).toBeInTheDocument();
     await stepTo(user, 2);
     expect(screen.getByText('Turn on autonomy')).toBeInTheDocument();
-    await stepTo(user, 2);
+    await stepTo(user, 1);
+    expect(screen.getByText('Your fleet')).toBeInTheDocument();
+    await stepTo(user, 1);
+    expect(screen.getByText('Three ways to stop')).toBeInTheDocument();
+    await stepTo(user, 1);
     expect(screen.getByText('Make it yours')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
+  });
+
+  it('tabs through the controls and out of the card in both directions', async () => {
+    const user = userEvent.setup();
+    render(<><button>Before</button><OnboardingFlow /><button>After</button></>);
+    screen.getByRole('region', { name: 'Welcome to Phantom' }).focus();
+    for (const name of ['Minimize getting started', 'Skip setup', 'Next', 'After']) {
+      await user.tab();
+      expect(screen.getByRole('button', { name })).toHaveFocus();
+    }
+    for (const name of ['Next', 'Skip setup', 'Minimize getting started', 'Before']) {
+      await user.tab({ shift: true });
+      expect(screen.getByRole('button', { name })).toHaveFocus();
+    }
+    await user.keyboard('{Escape}');
+    expect(getOnboardingState().expanded).toBe(true);
+  });
+
+  it('focuses the updated card after keyboard step changes, including removed Back and Next controls', async () => {
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    screen.getByRole('button', { name: 'Next' }).focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('region', { name: 'Your seats' })).toHaveFocus();
+    screen.getByRole('button', { name: 'Back' }).focus();
+    await user.keyboard(' ');
+    expect(screen.getByRole('region', { name: 'Welcome to Phantom' })).toHaveFocus();
+    for (const title of ['Your seats', 'Local runtime', 'Turn on autonomy', 'Three ways to stop', 'Make it yours']) {
+      screen.getByRole('button', { name: 'Next' }).focus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByRole('region', { name: title })).toHaveFocus();
+    }
+    screen.getByRole('button', { name: 'Back' }).focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('region', { name: 'Three ways to stop' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: /Getting started/ })).toHaveFocus();
+    expect(getOnboardingState()).toMatchObject({ step: 4, expanded: false, dismissedAt: null, completedAt: null });
   });
 
   it('the last step records completion and hands the shell a new-chat request', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
-    await stepTo(user, 5);
+    await stepTo(user, 6);
     await user.click(screen.getByRole('button', { name: 'Start a first chat' }));
 
     expect(getOnboardingState().completedAt).not.toBeNull();
@@ -270,6 +333,34 @@ describe('OnboardingFlow — what it says about the machine', () => {
     // The 3.9 accounts narrower is gone: the tour reads what Apps & Accounts reads.
     const calls = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
     expect(calls.some((u) => u.startsWith('/api/verse/accounts'))).toBe(false);
+  });
+
+  it('shows a pending account read while the roster is loading', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => String(input).startsWith('/api/verse/bootstrap')
+      ? new Promise<Response>(() => {}) : Promise.resolve(json({}))));
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await stepTo(user, 1);
+    expect(screen.getByText('Reading seats…')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
+  });
+
+  it('shows when account information is unavailable', async () => {
+    vi.stubGlobal('fetch', routes({ '/api/verse/bootstrap': () => new Response('', { status: 404 }) }));
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await stepTo(user, 1);
+    expect(await screen.findByText('Account information is unavailable in this build.')).toBeInTheDocument();
+    expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
+  });
+
+  it('shows an account read error instead of an empty roster', async () => {
+    vi.stubGlobal('fetch', routes({ '/api/verse/bootstrap': () => new Response('', { status: 503 }) }));
+    const user = userEvent.setup();
+    render(<OnboardingFlow />);
+    await stepTo(user, 1);
+    expect(await screen.findByText('Could not read accounts. The server answered HTTP 503.')).toBeInTheDocument();
+    expect(screen.queryByText(/No seats reported yet/)).not.toBeInTheDocument();
   });
 
   it('says no seats were reported, rather than inventing a roster, when there are none', async () => {
@@ -322,7 +413,7 @@ describe('OnboardingFlow — what it says about the machine', () => {
   it('states the three stops at their real blast radius, and never calls the kill switch a pause', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
-    await stepTo(user, 4);
+    await stepTo(user, 5);
 
     expect(screen.getByText('Pause')).toBeInTheDocument();
     expect(screen.getByText('Stop loop')).toBeInTheDocument();
@@ -432,7 +523,7 @@ describe('OnboardingFlow — what it says about the machine', () => {
   it('points at Settings from the last step', async () => {
     const user = userEvent.setup();
     render(<OnboardingFlow />);
-    await stepTo(user, 5);
+    await stepTo(user, 6);
     await user.click(screen.getByRole('button', { name: 'Open Settings' }));
     expect(getVerseUiState().section).toBe('settings');
     // Opening Settings does not answer the tour — it is still there to finish.

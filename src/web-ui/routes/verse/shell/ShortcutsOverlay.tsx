@@ -2,12 +2,15 @@
  * routes/verse/shell/ShortcutsOverlay.tsx — ⌘/ (unit C1). Every key the
  * workbench answers, read straight from C0's command catalog: the overlay
  * cannot list a key that does not exist, or miss one that does, because it
- * is the same table the key handlers match against.
+ * is the same table the key handlers match against. The fleet panes' own
+ * chords come from the pane registry, the same list the pane key matcher
+ * reads.
  *
  * Also rendered inline by Settings ▸ Keyboard (`ShortcutsTable`).
  */
 import { useId, useMemo } from 'react';
 import { Dialog } from '../../../components/primitives/Dialog.js';
+import { FleetPaneShortcuts } from '../sections/FleetPaneShortcuts.js';
 import { closeVerseOverlay } from '../verse-ui-store.js';
 import { detectKeyPlatform, formatChord, shortcutSections, type KeyPlatform } from './command-catalog.js';
 import styles from './ShortcutsOverlay.module.css';
@@ -45,11 +48,14 @@ export function ShortcutsTable({ platform }: { platform?: KeyPlatform }) {
 
 export function ShortcutsOverlay({ onClose = closeVerseOverlay }: { onClose?: () => void }) {
   const titleId = useId();
+  const platform = useMemo(() => detectKeyPlatform(), []);
   return (
     <Dialog open onClose={onClose} titleId={titleId} title="Keyboard shortcuts" widthClassName={styles.dialog}
       description="Letters in Needs you work while its list has focus. ⌘ is Ctrl off a Mac.">
       <div data-verse-overlay="shortcuts" className={styles.scroll}>
         <ShortcutsTable />
+        {/* Here, not in ShortcutsTable: Settings ▸ Keyboard appends this list itself. */}
+        <FleetPaneShortcuts platform={platform} />
       </div>
     </Dialog>
   );

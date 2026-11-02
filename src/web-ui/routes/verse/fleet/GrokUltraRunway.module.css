@@ -1,0 +1,14 @@
+.panel { min-width: 0; padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); }
+.title { margin: 0 0 var(--space-3); font-size: var(--text-sm-size); color: var(--text-primary); }
+.note { margin: var(--space-2) 0; color: var(--text-tertiary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow-wrap: anywhere; }
+.remaining { margin: var(--space-3) 0; font-size: var(--text-lg-size); font-variant-numeric: tabular-nums; }
+.remaining span { font-size: var(--text-xs-size); color: var(--text-secondary); }
+.pace { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0; font-size: var(--text-xs-size); }
+.pace dd { margin: 0; font-variant-numeric: tabular-nums; }
+.windows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.window { min-width: 0; padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
+.window h4 { margin: 0 0 var(--space-2); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.window dl { margin: 0; font-size: var(--text-xs-size); }
+.window dt { color: var(--text-tertiary); margin-top: var(--space-2); }
+.window dd { margin: var(--space-1) 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .windows { grid-template-columns: minmax(0, 1fr); } }

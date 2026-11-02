@@ -25,6 +25,7 @@
  */
 
 import { makeColors, isTty } from './ui.js';
+import { readTeamAudit } from '../core/teams/workspace.js';
 import type { AuditEntry } from '../core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -69,6 +70,7 @@ function moduleNotBuilt(): void {
 interface AuditViewOptions {
   limit?: number;
   json: boolean;
+  team?: string;
   /** Action filter — bare verb (matches `verb:*`) or exact `verb:sub`. */
   action?: string;
   /** Outcome filter. */
@@ -97,6 +99,8 @@ function parseArgs(args: string[]): AuditViewOptions | { error: string } {
       } else {
         return { error: `invalid --limit value: ${args[i + 1]}` };
       }
+    } else if (a === '--team' && args[i + 1] !== undefined) {
+      opts.team = args[++i];
     } else if (a === '--json') {
       opts.json = true;
     } else if (a === '--action' && args[i + 1] !== undefined) {
@@ -214,10 +218,11 @@ function printAuditHelp(): void {
   console.log(bold('  ashlr audit') + dim(' — READ-ONLY audit-trail viewer (tails ~/.ashlr/audit/*.jsonl)'));
   console.log('');
   console.log(dim(
-    'Usage: ashlr audit [N | --limit N] [--json] [--action <verb>] ' +
+    'Usage: ashlr audit [N | --limit N] [--team <id>] [--json] [--action <verb>] ' +
       '[--result ok|refused|error] [--since <ISO|YYYY-MM-DD>]',
   ));
   console.log('');
+  console.log('    --team <id>             list workspace actions (invite, role change, repo link)');
   console.log(`    ${dim('N')}                       positional shorthand for --limit N`);
   console.log(`    ${dim('--action <verb>')}         filter by action; bare verb matches verb:*`);
   console.log(`    ${dim('--result <ok|refused|error>')}  filter by outcome`);
@@ -236,11 +241,29 @@ export async function cmdAudit(args: string[]): Promise<number> {
     console.error(red('error: ') + parsed.error);
     console.error(
       dim(
-        'Usage: ashlr audit [N | --limit N] [--json] [--action <verb>] ' +
+        'Usage: ashlr audit [N | --limit N] [--team <id>] [--json] [--action <verb>] ' +
           '[--result ok|refused|error] [--since <ISO|YYYY-MM-DD>]',
       ),
     );
     return 2;
+  }
+
+  if (parsed.team !== undefined) {
+    if (parsed.result !== undefined) {
+      console.error('Team audit has no result filter; only successful workspace actions are recorded.');
+      return 2;
+    }
+    try {
+      let entries = readTeamAudit(parsed.team);
+      if (parsed.action !== undefined) entries = entries.filter(e => e.type === parsed.action);
+      if (parsed.sinceMs !== undefined) entries = entries.filter(e => Date.parse(e.ts) >= parsed.sinceMs!);
+      if (parsed.limit !== undefined) entries = entries.slice(0, parsed.limit);
+      console.log(parsed.json ? JSON.stringify(entries, null, 2) : entries.map(e => `${e.ts}  ${e.actor.id}  ${e.type}  ${JSON.stringify(e.payload)}`).join('\n') || 'No team audit entries found.');
+      return 0;
+    } catch (err) {
+      console.error(`Team audit: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
   }
 
   const readAudit = await loadReadAudit();

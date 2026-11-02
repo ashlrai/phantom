@@ -171,6 +171,7 @@ function govLevelColor(level: 'ok' | 'warn' | 'over'): (s: string) => string {
  * Returns a process exit code: 0 = ok, 1 = error.
  */
 export async function cmdTelemetry(args: string[]): Promise<number> {
+  if (args[0] === 'merge-throughput') return cmdMergeThroughput(args.slice(1));
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printTelemetryHelp();
     return 0;
@@ -363,6 +364,7 @@ function printTelemetryHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
+    ['merge-throughput', 'Diagnose captured merge observations; --help for the input contract.'],
     ['status (default)', 'Show endpoint + PAT configured (booleans only — values never printed),'],
     ['',                 'active sink mode (local/otlp), local telemetry dir + file count,'],
     ['',                 'and spend governance summary.'],
@@ -413,4 +415,110 @@ function printTelemetryHelp(): void {
   console.log(`    ${cyan('ashlr telemetry test')}         ${dim('# emit one synthetic test span')}`);
   console.log(`    ${cyan('ashlr telemetry test --json')}  ${dim('# test + JSON result')}`);
   console.log('');
+}
+
+/** Captured evidence only: completeness must be asserted by the collector. */
+export function diagnoseMergeThroughput(input: unknown) {
+  const invalid = () => new Error('Invalid merge snapshot; see merge-throughput --help.');
+  if (!input || typeof input !== 'object') throw invalid();
+  const data = input as Record<string, unknown>;
+  const timestamp = (value: unknown): number => {
+    if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value)) throw invalid();
+    const time = Date.parse(value);
+    if (!Number.isFinite(time) || new Date(time).toISOString().replace('.000Z', 'Z') !== value.replace('.000Z', 'Z')) throw invalid();
+    return time;
+  };
+  const start = timestamp(data.start);
+  const end = timestamp(data.end);
+  if (end <= start || typeof data.complete !== 'boolean' || !Array.isArray(data.observations)) throw invalid();
+  if (data.observations.length > 20_000) throw invalid();
+  let completed = 0;
+  let waiting = 0;
+  let unknown = 0;
+  const ids = new Set<string>();
+  for (const value of data.observations) {
+    if (!value || typeof value !== 'object') throw invalid();
+    const row = value as Record<string, unknown>;
+    if (typeof row.id !== 'string' || !row.id.trim() || ids.has(row.id)) throw invalid();
+    ids.add(row.id);
+    if (row.state === 'merged') {
+      const mergedAt = timestamp(row.mergedAt);
+      if (mergedAt >= start && mergedAt < end) completed++;
+    } else if (row.state === 'waiting') {
+      waiting++;
+    } else if (row.state === 'unknown') {
+      unknown++;
+    } else {
+      throw invalid();
+    }
+  }
+  const known = data.complete && unknown === 0;
+  return {
+    schema: 'merge-throughput.v1',
+    window: { start: data.start, end: data.end, hours: (end - start) / 3_600_000 },
+    coverage: known ? 'complete' : 'partial',
+    completedMergesObserved: completed,
+    waitingObservedAtEnd: waiting,
+    unknownObservations: unknown,
+    completedMerges: known ? completed : null,
+    mergesPerHour: known ? completed / ((end - start) / 3_600_000) : null,
+  };
+}
+
+export async function cmdMergeThroughput(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: phm fleet merge-throughput --input <snapshot.json> [--json]');
+    console.log('Alias: phm telemetry merge-throughput. Offline, read-only; no provider calls.');
+    console.log('Input: {start,end,complete,observations:[{id,state,mergedAt?}]}');
+    console.log('UTC ISO timestamps; window [start,end). States: merged, waiting, unknown.');
+    console.log('Unique IDs; waiting is the end-of-window backlog. complete asserts exhaustive coverage.');
+    console.log('Partial coverage or unknown rows yields null throughput, never an inferred zero.');
+    return 0;
+  }
+  let path: string | undefined;
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--json' && !json) json = true;
+    else if (args[i] === '--input' && !path && args[i + 1] && !args[i + 1]!.startsWith('-')) path = args[++i];
+    else {
+      process.stderr.write('Invalid merge-throughput arguments; use --help.\n');
+      return 2;
+    }
+  }
+  if (!path) {
+    process.stderr.write('merge-throughput requires --input; use --help.\n');
+    return 2;
+  }
+  try {
+    const { open } = await import('node:fs/promises');
+    const file = await open(path, 'r');
+    let raw: string;
+    try {
+      if (!(await file.stat()).isFile()) throw new Error('not a file');
+      const buffer = Buffer.alloc(1_048_577);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+      if (length > 1_048_576) throw new Error('too large');
+      raw = buffer.subarray(0, length).toString('utf8');
+    } finally {
+      await file.close();
+    }
+    const result = diagnoseMergeThroughput(JSON.parse(raw));
+    if (json) console.log(JSON.stringify(result, null, 2));
+    else {
+      console.log(`Merge window: ${result.window.start} to ${result.window.end} (end exclusive)`);
+      console.log(`Coverage: ${result.coverage}; completed observed: ${result.completedMergesObserved}`);
+      console.log(`Waiting at end observed: ${result.waitingObservedAtEnd}; unknown observations: ${result.unknownObservations}`);
+      console.log(`Throughput: ${result.mergesPerHour === null ? 'unknown' : `${result.mergesPerHour} merges/hour`}`);
+    }
+    return 0;
+  } catch {
+    // Never echo captured contents, paths, or parser errors from untrusted input.
+    process.stderr.write('Cannot read or validate merge snapshot; use --help.\n');
+    return 1;
+  }
 }

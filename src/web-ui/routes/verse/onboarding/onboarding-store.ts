@@ -15,6 +15,9 @@
  * later build can tell "has seen it" from "chose not to", and it makes the
  * Settings replay affordance honest about what it is replaying.
  *
+ * `seenRelease` records the last acknowledged interface release independently
+ * of the tour answer, so returning operators can discover new features.
+ *
  * Two UI prefs ride along in the same record:
  *
  *   - `expanded` — the tour starts as a one-line chip ("Getting started
@@ -31,7 +34,12 @@
  * the app is fully usable without it, and it is reachable from Settings.
  */
 
+import { APP_VERSION } from '../sections/app-version.js';
+import { clampStep } from './onboarding-model.js';
+
 export interface OnboardingRecord {
+  /** Last interface release acknowledged by the operator. */
+  seenRelease: string | null;
   /** ISO timestamp of the run that reached the last step. */
   completedAt: string | null;
   /** ISO timestamp of a skip or an early close. */
@@ -55,7 +63,7 @@ export interface OnboardingState extends OnboardingRecord {
 
 export const VERSE_ONBOARDING_STORAGE_KEY = 'ashlr.verse.onboarding.v1';
 
-const EMPTY: StoredOnboarding = { completedAt: null, dismissedAt: null, expanded: false, step: 0 };
+const EMPTY: StoredOnboarding = { completedAt: null, dismissedAt: null, seenRelease: null, expanded: false, step: 0 };
 
 function readStored(): StoredOnboarding {
   try {
@@ -66,17 +74,19 @@ function readStored(): StoredOnboarding {
     return {
       completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : null,
       dismissedAt: typeof parsed.dismissedAt === 'string' ? parsed.dismissedAt : null,
+      seenRelease: typeof parsed.seenRelease === 'string' ? parsed.seenRelease : null,
       expanded: parsed.expanded === true,
-      step: typeof parsed.step === 'number' && Number.isFinite(parsed.step) ? Math.max(0, Math.trunc(parsed.step)) : 0,
+      step: typeof parsed.step === 'number' ? clampStep(parsed.step) : 0,
     };
   } catch {
     // Unreadable storage means "answered" — see the fail-safe note above.
-    return { ...EMPTY, dismissedAt: new Date(0).toISOString() };
+    return { ...EMPTY, dismissedAt: new Date(0).toISOString(), seenRelease: APP_VERSION };
   }
 }
 
 function persist(): void {
   const stored: StoredOnboarding = {
+    seenRelease: state.seenRelease,
     completedAt: state.completedAt,
     dismissedAt: state.dismissedAt,
     expanded: state.expanded,
@@ -90,13 +100,35 @@ function persist(): void {
 }
 
 /** True when neither answer has been recorded yet. */
-export function isFirstRun(record: OnboardingRecord): boolean {
+export function isFirstRun(record: Pick<OnboardingRecord, 'completedAt' | 'dismissedAt'>): boolean {
   return record.completedAt === null && record.dismissedAt === null;
+}
+
+export function releaseKey(version: string | null): string | null {
+  return version?.match(/^(\d+\.\d+)(?:\.|$)/)?.[1] ?? null;
+}
+
+export function whatsNewPending(record: OnboardingRecord, appVersion: string): boolean {
+  return !isFirstRun(record) && releaseKey(record.seenRelease) !== releaseKey(appVersion);
+}
+
+/** The inverse of `whatsNewPending` for the running build — pure, so the
+ * Settings row can word itself ("Seen. / Not dismissed yet.") without
+ * duplicating the release-key comparison. On an unanswered first run the
+ * card is neither pending nor seen-able, and this still reports "seen":
+ * the row's button is disabled then anyway (the tour is on screen). */
+export function whatsNewSeen(record: OnboardingRecord, appVersion: string): boolean {
+  return !whatsNewPending(record, appVersion);
+}
+
+export function markReleaseSeen(appVersion: string): void {
+  patch({ seenRelease: appVersion }, true);
 }
 
 const initialStored = readStored();
 
 let state: OnboardingState = {
+  seenRelease: initialStored.seenRelease,
   completedAt: initialStored.completedAt,
   dismissedAt: initialStored.dismissedAt,
   open: isFirstRun(initialStored),
@@ -125,7 +157,7 @@ export function getOnboardingState(): OnboardingState {
 }
 
 export function setOnboardingStep(step: number): void {
-  patch({ step: Math.max(0, Math.trunc(step)) }, true);
+  patch({ step: clampStep(step) }, true);
 }
 
 /** The chip was clicked: show the full card. */
@@ -140,12 +172,12 @@ export function collapseOnboarding(): void {
 
 /** Skip, or the chip's × — the same answer. */
 export function dismissOnboarding(): void {
-  patch({ dismissedAt: new Date().toISOString(), open: false }, true);
+  patch({ dismissedAt: new Date().toISOString(), open: false, seenRelease: APP_VERSION }, true);
 }
 
 /** Walked to the end. */
 export function completeOnboarding(): void {
-  patch({ completedAt: new Date().toISOString(), open: false }, true);
+  patch({ completedAt: new Date().toISOString(), open: false, seenRelease: APP_VERSION }, true);
 }
 
 /** Settings → "Replay onboarding". Reopens at the first step, as the full
@@ -155,6 +187,14 @@ export function replayOnboarding(): void {
   patch({ open: true, expanded: true, step: 0 });
 }
 
+/** Settings → "Show what's new again". Forgets the acknowledged release so
+ * `whatsNewPending` is true again and the card comes back. The tour is never
+ * opened by this — if it is on screen it collapses back to the chip — and
+ * the stored answer is kept, so this cannot re-arm the first run. */
+export function replayWhatsNew(): void {
+  patch({ seenRelease: null, expanded: false }, true);
+}
+
 /** Test hygiene — forgets the stored answer and re-arms the first run (as the chip). */
 export function resetOnboarding(): void {
   try {
@@ -162,6 +202,6 @@ export function resetOnboarding(): void {
   } catch {
     /* ignore */
   }
-  state = { completedAt: null, dismissedAt: null, open: true, expanded: false, step: 0 };
+  state = { completedAt: null, dismissedAt: null, seenRelease: null, open: true, expanded: false, step: 0 };
   for (const l of listeners) l();
 }

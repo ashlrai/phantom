@@ -43,7 +43,7 @@ is `phm fleet xreview`.
    - The model is not asked at all when the change escalates anyway.
 2. **Decide.** `phm fleet xreview decide --request <file> --head <sha>` is the
    step the bridge runs immediately before
-   `gh pr merge --auto --match-head-commit <sha>`. It is pure and takes no
+   `gh pr merge --auto --match-head-commit <sha>`. It reads GitHub through host custody and takes no
    model input. It returns `enable-auto-merge` only when all of these hold:
    - the KILL switch is off and the PAUSE file (`$ASHLR_HOME/PAUSE`, or
      `--pause-file`) is absent;
@@ -52,7 +52,12 @@ is `phm fleet xreview`.
    - it reviewed the same diff bytes (sha256);
    - the sensitive scan is clean;
    - the reviewer was pool- and family-independent;
-   - the verdict is approve.
+   - the verdict is approve;
+   - required checks exist and all report success on the exact head SHA, with
+     matching App identities and an unchanged PR head after reading checks.
+
+   Missing, pending, stale, failing or unreadable checks produce a logged hold
+   reason. API errors fail closed without logging response bodies.
 
    Otherwise the action is `re-review` (the head moved, the diff changed, or
    there is no review), `escalate`, `reject` or `hold`. Only an

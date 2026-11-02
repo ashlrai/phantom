@@ -101,13 +101,12 @@ describe('buildCapacityRows', () => {
     const [row] = buildCapacityRows([CLAUDE]);
     expect(row!.windows.map((w) => [w.label, w.usedPercent, w.binding])).toEqual([
       ['weekly fable window', 92, true],
-      ['5-hour window', 15, false],
       ['weekly window', 85, false],
     ]);
     expect(row!.plan).toBe('max');
     expect(row!.monogram).toBe('C');
     // Prose resets stay prose.
-    expect(row!.windows[1]!.resetText).toBe('resets Sep 21 at 1:40am (America/New_York)');
+    expect(row!.windows[1]!.resetText).toBe('resets Sep 25 at 7pm (America/New_York)');
   });
 
   it('never gives a flagged limit a percentage', () => {
@@ -380,7 +379,7 @@ describe('account status', () => {
     expect(status('codex-cmp', { checking: true })).toMatchObject({ kind: 'checking', label: 'Checking…', detail: null });
     const unread = buildCapacityRows([UNREAD_SEAT], { health: null })[0]!;
     expect(accountStatus(unread, { healthRead: false, now: NOW })).toMatchObject({ kind: 'checking', label: 'Checking…' });
-    expect(accountStatus(unread, { healthRead: true, now: NOW })).toMatchObject({ kind: 'not-checked', label: 'Not checked', detail: 'no reading yet' });
+    expect(accountStatus(unread, { healthRead: true, now: NOW })).toMatchObject({ kind: 'not-checked', label: 'Not checked', detail: 'no reading yet · Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.' });
   });
 
   it('labels a degraded retained window as a last reading without counting it usable', () => {
@@ -396,7 +395,7 @@ describe('account status', () => {
   });
 
   it('tight seats read as running low, or usable on credits when the window is spent but credits are not', () => {
-    expect(status('claude-a')).toMatchObject({ kind: 'low', label: 'Connected', detail: 'running low', tone: 'warning' });
+    expect(status('claude-a')).toMatchObject({ kind: 'low', label: 'Connected', detail: 'running low · Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.', tone: 'warning' });
     const credits = buildCapacityRows([CODEX_CREDITS_SEAT], { health: [report('codex-personal', { engine: 'codex' })] })[0]!;
     expect(accountStatus(credits, { healthRead: true, now: NOW })).toMatchObject({ kind: 'low', label: 'Credits available', detail: 'subscription window spent · autonomous credit spending is not admitted' });
   });
@@ -482,7 +481,8 @@ describe('one percent rule on the row itself', () => {
   it('the summary and the bar agree: "99%", never a rounded "100%"; "<1%", never "0%"', () => {
     const row = (usedPercent: number) => {
       const w = seatWindow({ id: 'five_hour', usedPercent });
-      return buildCapacityRows([nativeSeat(capacity({ windows: [w], binding: w, usability: 'tight' }))])[0]!;
+      // Codex still has a 5-hour window; Claude's was retired by Anthropic.
+      return buildCapacityRows([nativeSeat(capacity({ windows: [w], binding: w, usability: 'tight' }), { engine: 'codex' })])[0]!;
     };
     const high = row(99.6);
     expect(high.summary).toBe('99% of 5-hour window used');

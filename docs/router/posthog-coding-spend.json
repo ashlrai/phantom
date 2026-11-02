@@ -1,0 +1,26 @@
+{
+  "name": "Coding pools: task and merged PR spend",
+  "description": "Metadata-only router feed. USD and tokens are known subtotals; inspect missing and estimated coverage before comparing rewards. Import insights as HogQLQuery nodes.",
+  "tiles": [
+    {
+      "name": "Tokens and cost per task class",
+      "query": {
+        "kind": "DataTableNode",
+        "source": {
+          "kind": "HogQLQuery",
+          "query": "SELECT properties.repo AS repo, properties.pool AS pool, properties.taskClass AS taskClass, properties.engine AS engine, properties.model AS model, count() AS spendRecords, uniqExact(properties.taskId) AS tasks, sum(toFloat(properties.tokensIn)) AS tokensIn, sum(toFloat(properties.tokensOut)) AS tokensOut, sum(toFloat(properties.costUsd)) AS costUsd, countIf(isNull(properties.costUsd)) AS missingCost, countIf(isNull(properties.tokensIn)) AS missingTokensIn, countIf(isNull(properties.tokensOut)) AS missingTokensOut, countIf(properties.costBasis = 'estimated') AS estimatedCostRecords FROM events WHERE event = 'coding_spend_recorded' AND timestamp >= now() - INTERVAL 30 DAY GROUP BY repo, pool, taskClass, engine, model"
+        }
+      }
+    },
+    {
+      "name": "Tokens and cost per merged PR",
+      "query": {
+        "kind": "DataTableNode",
+        "source": {
+          "kind": "HogQLQuery",
+          "query": "SELECT properties.repo AS repo, properties.prNumber AS prNumber, properties.pool AS pool, properties.taskClass AS taskClass, properties.engine AS engine, properties.model AS model, count() AS spendRecords, uniqExact(properties.taskId) AS tasks, sum(toFloat(properties.tokensIn)) AS tokensIn, sum(toFloat(properties.tokensOut)) AS tokensOut, sum(toFloat(properties.costUsd)) AS costUsd, countIf(isNull(properties.costUsd)) AS missingCost, countIf(isNull(properties.tokensIn)) AS missingTokensIn, countIf(isNull(properties.tokensOut)) AS missingTokensOut, countIf(properties.costBasis = 'estimated') AS estimatedCostRecords FROM events WHERE event = 'coding_merged_pr_spend' AND timestamp >= now() - INTERVAL 30 DAY GROUP BY repo, prNumber, pool, taskClass, engine, model"
+        }
+      }
+    }
+  ]
+}

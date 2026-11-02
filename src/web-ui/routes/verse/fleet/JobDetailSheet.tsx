@@ -1,0 +1,133 @@
+import { useEffect, useId, useState } from 'react';
+import { Button } from '../../../components/primitives/Button.js';
+import { Sheet } from '../../../components/primitives/Sheet.js';
+import { StatusBadge, type Tone } from '../../../components/primitives/StatusBadge.js';
+import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
+import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
+import { runQuery } from '../../../data/cache.js';
+import { useQuery } from '../../../data/hooks.js';
+import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { formatRelative } from '../autonomy/format.js';
+import { openDockPane } from '../dock/dock-store.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import { jobTextQuery } from '../fleet-job-log/job-text-queries.js';
+import { jobChangesQuery } from '../fleet-job-log/worker-changes-queries.js';
+import { busTellPrefill, requestBusPost } from '../fleet-bus/bus-post-request.js';
+import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
+import { jobBusMentions, mentionSummary } from './job-bus-mentions.js';
+import { changesHeadline, collisionTell, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
+import { openInterjectDialog } from './interject-dialog-store.js';
+import { sheetActions, steerPrefill } from './job-sheet-actions.js';
+import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
+import { JobRefs } from './JobRefs.js';
+import { jobBacklogQuery, jobBacklogRepo } from './job-backlog-queries.js';
+import { jobBacklogState } from './job-backlog-state.js';
+import { closesRefs, notesHeadline, notesPreview } from './job-notes-model.js';
+import styles from './workers-card.module.css';
+
+const tones: Record<string, Tone> = { running: 'success', published: 'info', archived: 'neutral', unknown: 'warning' };
+const fileStatus: Record<FleetJobChangesV1['files'][number]['status'], string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', untracked: '?' };
+export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: string | null; onClose: () => void }) {
+  const id = useId();
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    if (notice !== 'Copied') return;
+    const timer = setTimeout(() => setNotice(''), 2_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const query = jobDetailQuery(job);
+  const read = useQuery(query);
+  const changesQuery = jobChangesQuery(job);
+  const changes = useQuery(changesQuery, { freshMs: 0 });
+  const notesQuery = jobTextQuery(job, 'notes');
+  const notes = useQuery(notesQuery, { freshMs: 0 });
+  const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
+    && repo.split('/').every(part => part !== '.' && part !== '..') ? repo : null;
+  const backlogRepo = jobBacklogRepo(repo, read.data?.publish?.prUrl);
+  const backlog = useQuery(jobBacklogQuery(backlogRepo ?? ''), { enabled: backlogRepo !== null });
+  const prState = backlog.error ? null : jobBacklogState(backlog.data, job);
+  const busStatus = useQuery(agentBusStatusQuery, { freshMs: 10_000 });
+  const busPageQuery = agentBusPageQuery(Math.max(0, (busStatus.data?.retainedCount ?? 0) - 100), 100);
+  const busPage = useQuery(busPageQuery, { freshMs: 10_000, enabled: busStatus.data?.source === 'available' && busStatus.data.retainedCount !== null });
+  usePollWhileVisible(() => {
+    if (agentBusMissing()) return;
+    void runQuery(agentBusStatusQuery.key, () => agentBusStatusQuery.fetch());
+    if (busStatus.data?.source === 'available' && busStatus.data.retainedCount !== null) void runQuery(busPageQuery.key, () => busPageQuery.fetch());
+  }, 10_000);
+  usePollWhileVisible(() => { void runQuery(query.key, () => query.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
+  usePollWhileVisible(() => { void runQuery(changesQuery.key, () => changesQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
+  usePollWhileVisible(() => { void runQuery(notesQuery.key, () => notesQuery.fetch()); }, 10_000, { enabled: read.data?.state === 'running' });
+  const busUnavailable = agentBusMissing() || !!busStatus.error || !!busPage.error || busStatus.data === null
+    || (busStatus.data !== undefined && (busStatus.data.source !== 'available' || busStatus.data.retainedCount === null)) || busPage.data === null;
+  const mentions = jobBusMentions(busPage.data?.messages ?? [], job, Date.now());
+  const d = read.data;
+  const collision = changes.data ? collisionTell(changes.data) : null;
+  const preview = notes.data?.state === 'ok' ? notesPreview(notes.data.text) : null;
+  const issues = notes.data?.state === 'ok' ? closesRefs(notes.data.text) : [];
+  const copyBranch = async (branch: string) => {
+    try { await navigator.clipboard.writeText(branch); setNotice('Copied'); }
+    catch { setNotice('Copy failed'); }
+  };
+  const facts = d ? [['Lane', d.lane], ['Tier', d.tier], ['Model', d.model], ['Launched', formatRelative(d.launchedAt)], ['Base', d.baseSha?.slice(0, 7)], ['Branch', d.branch]] : [];
+  return <Sheet open titleId={id} title={job} onClose={onClose}>
+    {read.status === 'refreshing' ? <RefreshIndicator /> : null}
+    {d ? <StatusBadge status={d.state} tone={tones[d.state]} /> : null}
+    <div role="group" aria-label="Job actions" className={styles.actions}>
+      {sheetActions(job, d).map(action => action.href
+        ? <a key={action.id} href={action.href} target="_blank" rel="noopener noreferrer">{action.label}</a>
+        : <Button key={action.id} size="sm" onClick={() => {
+          if (action.id === 'log') { requestWorkerLogJob(job); openDockPane('worker-log'); }
+          else { openInterjectDialog({ prefill: steerPrefill(job, d?.lane) }); }
+          onClose();
+        }}>{action.label}</Button>)}
+      <Button size="sm" disabled={agentBusMissing()} title={agentBusMissing() ? 'Durable bus is missing' : undefined} onClick={() => {
+        requestBusPost(busTellPrefill(job, d)); openDockPane('fleet-bus'); onClose();
+      }}>Tell on bus</Button>
+    </div>
+    {notInBuild(read.error) ? <p>Job detail is not in this build yet.</p> : read.error ? <p>Job detail unavailable.</p> : !d ? <SkeletonLine /> : <>
+      <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><span aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</span>{label === 'Branch' && value ? <> <Button size="sm" onClick={() => void copyBranch(value)}>Copy</Button> <span role="status">{notice}</span></> : null}</dd></div>)}</dl>
+      {d.publish?.prUrl ? <p><a href={d.publish.prUrl} target="_blank" rel="noreferrer">PR for job {job}</a></p> : null}
+      {prState ? <p><StatusBadge status={prState.state} tone={{ danger: 'danger', warn: 'warning', ok: 'success', neutral: 'neutral' }[prState.tone] as Tone}>{prState.text}</StatusBadge></p> : null}
+      {prState?.action === 'recut' ? <p style={{ color: 'var(--text-secondary)' }}>Queue a recut from the Outcomes pane</p> : null}
+      {d.publish?.autoMerge != null ? <p>Auto-merge {d.publish.autoMerge ? 'on' : 'off'}</p> : null}
+      <section aria-label="Changed files">
+        <h3>Changed files</h3>
+        {changes.error ? <p role="status">Changes unavailable</p> : changes.data === null ? <p>Changes are not in this build yet</p> : !changes.data ? <SkeletonLine /> : <>
+          <p>{changesHeadline(changes.data)}{collision === null ? null : <> <StatusBadge status="collision" tone="warning">{collision}</StatusBadge></>}</p>
+          {changes.data.state === 'missing' ? <p>Worktree not available</p> : <>
+            {changes.data.state === 'degraded' && <p role="status">Changes could not fully refresh.</p>}
+            {changes.data.files.length === 0 ? (changes.data.state === 'live' ? <p>No changes yet</p> : null) : <ul>
+              {sortFiles(changes.data.files).slice(0, 40).map(file => <li key={file.path}><code>{fileStatus[file.status]} {file.path}</code></li>)}
+            </ul>}
+            {changes.data.files.length > 40 && <p>+{changes.data.files.length - 40} more</p>}
+            {changes.data.truncated && <p>Showing a limited set of changes.</p>}
+          </>}
+        </>}
+      </section>
+      <section aria-label="Bridge notes">
+        <h3>Bridge notes</h3>
+        {notes.error ? <p role="status">Bridge notes unavailable</p> : notes.data === undefined ? <SkeletonLine /> : <>
+          <p>{notes.data === null && d.hasNotes === null ? 'Notes unknown in this build' : notesHeadline(notes.data)}</p>
+          {notes.data?.state === 'ok' && preview ? <>
+            {issues.length > 0 && <p>Closes {issues.map((number, index) => <span key={number}>{index > 0 ? ', ' : ''}{validRepo ? <a href={`https://github.com/${validRepo}/issues/${number}`} target="_blank" rel="noopener noreferrer">#{number}</a> : <span title="repository unknown">#{number}</span>}</span>)}</p>}
+            <pre className={styles.log}>{preview.lines.join('\n').split(/((?:^|\s)(?:closes|fixes|resolves)\s*:?\s+#\d+(?![\w]|\.\d))/gim).map((part, index) => index % 2
+              ? part : <JobRefs key={index} text={part} onOpenJob={id => { requestWorkerLogJob(id); openDockPane('worker-log'); onClose(); }} />)}</pre>
+            {preview.more > 0 && <p>+{preview.more} more lines</p>}
+          </> : null}
+        </>}
+      </section>
+      <section aria-label="On the bus">
+        <h3>On the bus</h3>
+        {busUnavailable ? <p role="status" style={{ color: 'var(--text-secondary)' }}>Durable bus unavailable.</p> : !busPage.data ? <SkeletonLine /> : <>
+          <p>{mentionSummary(mentions, 100)}</p>
+          {mentions.length > 0 && <ul>{mentions.map(row => <li key={row.key}>
+            <span>{row.from} → {row.to} · {row.kind} · {row.excerpt}</span>{' '}
+            {row.expired && <span>expired </span>}<time dateTime={row.at}>{row.ageText}</time>
+          </li>)}</ul>}
+        </>}
+      </section>
+      {d.log.source === 'missing' ? <p>No log yet.</p> : <><h3>Log tail ({d.log.source}, {d.log.tail.length} lines{d.log.truncated ? ', truncated' : ''})</h3>
+        <pre className={styles.log}>{d.log.tail.join('\n')}</pre></>}
+    </>}
+  </Sheet>;
+}

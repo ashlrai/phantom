@@ -267,8 +267,3 @@ export async function restoreWorkspace(
   }, opts);
 }
 
-/** Delete an archive's private snapshot ref (after a merge nothing is left to restore). */
-export async function dropSnapshotRef(rootPath: string, ref: string, opts: WorkspaceOpsOptions = {}): Promise<void> {
-  if (!ref.startsWith(ARCHIVE_REF_PREFIX)) return;
-  await runnerOf(opts)('git', ['update-ref', '-d', ref], { cwd: rootPath });
-}

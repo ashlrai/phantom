@@ -1,6 +1,6 @@
 /**
  * routes/verse/reasoning/dock-panes.tsx — the Sources and Reasoning panels as
- * registry panes (reasoning.pane.tsx registers them).
+ * registry panes (sources.pane.tsx and reasoning.pane.tsx register them).
  *
  * Adapters only: the panels are presentational over derived turns
  * (SourcesPanel / ReasoningPanel); this is where the dock's PaneProps meet

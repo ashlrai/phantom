@@ -701,8 +701,6 @@ export type VerseTraceEvent =
   | { type: 'source'; turnId: string | null; source: VerseSource }
   | { type: 'summary'; turnId: string; text: string; stats: VerseTurnStats; ok: boolean; durationMs: number | null };
 
-export type VerseTraceEventType = VerseTraceEvent['type'];
-
 /** A VerseEvent before the engine stamps `seq`/`at` (mirrors adapters/index.ts, which is node-side). */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 export type VerseUnstampedEvent = DistributiveOmit<VerseEvent, 'seq' | 'at'>;

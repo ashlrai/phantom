@@ -317,6 +317,8 @@ const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
       'scripts/hosted-build-artifact.mjs',
       // These coordinate the owned native app, current release and rollback links.
       'scripts/ship-local.mjs', 'scripts/local-app-transaction.mjs', 'scripts/install-desktop-artifacts.mjs',
+      // Release-path policy verifier gating npm `latest` on the live publisher.
+      'scripts/verify-release-policy.mjs',
       'tools/custody/**', '**/*.plist', '**/*.entitlements', '**/src-tauri/capabilities/**',
       '**/src-tauri/tauri.conf.json', '**/src-tauri/tauri.*.conf.json',
     ],

@@ -215,6 +215,21 @@ describe('the service worker', () => {
     expect(show.mock.calls[1]![1]).toMatchObject({ body: 'A run completed. Open Phantom for details.', data: { path: '/verse/m/#/' } });
     expect(JSON.stringify(show.mock.calls)).not.toMatch(/PRIVATE|secret/);
   });
+  it('renders fleet summaries and routes both kinds to runs', async () => {
+    const { dispatchPush, self } = loadWorker(async () => ok(''));
+    const show = (self.registration as { showNotification: ReturnType<typeof vi.fn> }).showNotification;
+    await dispatchPush({ json: () => ({ kind: 'fleet-merged', count: 3, detail: '#1719 bridge: work' }) });
+    await dispatchPush({ json: () => ({ kind: 'fleet-lane-held', detail: 'codex-personal: usage_limit' }) });
+    await dispatchPush({ json: () => ({ kind: 'fleet-merged' }) });
+    expect(show.mock.calls[0]).toEqual(['Phantom fleet', expect.objectContaining({
+      body: 'Merged 3 PRs · #1719 bridge: work', tag: 'ashlr-fleet-merged', data: { path: '/verse/m/#/runs' },
+    })]);
+    expect(show.mock.calls[1]![1]).toMatchObject({
+      body: 'Lane codex-personal is held: usage_limit', tag: 'ashlr-fleet-lane-held', data: { path: '/verse/m/#/runs' },
+    });
+    expect(show.mock.calls[2]![1]).toMatchObject({ body: 'Phantom has an update. Open the app to see it.' });
+  });
+
   it('routes: never /api/, never another origin or method; shell, hashed assets and its own files only', () => {
     const { api } = loadWorker(async () => ok(''));
     const o = 'https://mac.local';

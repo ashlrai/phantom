@@ -5,9 +5,9 @@
  *   [C] Claude Max · max
  *       ● Spent · resets Sat 11:46 PM · usable again in 1d 7h
  *       checked 2m ago
- *       5-hour  ▇▇▇▇▇▇▇▇▇▇▇▇│▨▨  limit reached
+ *       Weekly  ▇▇▇▇▇▇▇▇▇▇▇▇│▨▨  limit reached
  *               resets Sat 11:46 PM
- *       Weekly  ▇▇▇▇░░░░░░░░       40%
+ *       Anthropic removed the 5-hour limit on this plan.
  *       Reserved for you 40% · balanced mode
  *       [Check again]
  *

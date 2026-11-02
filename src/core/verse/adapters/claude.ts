@@ -428,6 +428,13 @@ function splitInlineThink(text: string): { reasoning: string; answer: string } |
 /** Options for the shared parser. `now` is the clock (a test seam). */
 export interface AnthropicStreamParserOptions {
   now?: () => number;
+  /**
+   * The model the launch asked the CLI to run (the session's stored id). When
+   * the CLI reports a different model — a fuzzy-matched unknown id, a refusal
+   * fallback — the parser emits ONE `status { kind: 'model-switch' }` naming
+   * both ids, so a silent substitution is never invisible. Absent = no check.
+   */
+  expectedModel?: string;
 }
 
 /**
@@ -519,6 +526,15 @@ export function createAnthropicStreamParser(
   /** The model the CLI says it runs (`system/init.model`, else the latest assistant frame's). */
   let initModel: string | null = null;
   let frameModel: string | null = null;
+  /**
+   * The requested model, canonicalised for comparison (a stored
+   * `claude-opus-5.5` record launches `claude-opus-5-5`, which is what the CLI
+   * was really asked for). `reportedModel` keeps the raw spelling for messages.
+   */
+  const expectedModel = typeof options.expectedModel === 'string' && options.expectedModel.trim() !== ''
+    ? canonicalModelId(options.expectedModel)
+    : null;
+  let modelSwitchNoted = false;
   const open = new Map<number, OpenBlock>();
   const emittedText = new Set<string>();
   const emittedThinking = new Set<string>();
@@ -639,6 +655,25 @@ export function createAnthropicStreamParser(
   /** The trailing estimate the rate limit held back, so the counter ends on the true figure. */
   function flushThinkingProgress(out: VerseParsedEvent[]): void {
     emitThinkingProgress(out);
+  }
+
+  /**
+   * The first CLI-reported model that is NOT the one the launch requested —
+   * a fuzzy-matched unknown `--model`, a refusal fallback — is an automatic
+   * model switch: one `status` notice per turn naming both ids. Comparison is
+   * canonical on both sides, so a stored alias resolving to its intended model
+   * (`claude-opus-5.5` → the CLI reporting `claude-opus-5-5`) is no switch.
+   */
+  function noteReportedModel(out: VerseParsedEvent[], reported: string): void {
+    if (modelSwitchNoted || expectedModel === null || !reported) return;
+    if (canonicalModelId(reported) === expectedModel) return;
+    modelSwitchNoted = true;
+    out.push({
+      type: 'status',
+      turnId,
+      kind: 'model-switch',
+      message: `requested ${expectedModel}, running ${reported}`,
+    });
   }
 
   function emitText(out: VerseParsedEvent[], text: string): void {
@@ -852,7 +887,10 @@ export function createAnthropicStreamParser(
         const message = isObject(ev['message']) ? ev['message'] : null;
         currentCall = str(message?.['id']) || syntheticKey('wire');
         currentCallFirstBlockAt = null;
-        if (typeof message?.['model'] === 'string' && message['model']) frameModel = message['model'];
+        if (typeof message?.['model'] === 'string' && message['model']) {
+          frameModel = message['model'];
+          noteReportedModel(out, frameModel);
+        }
         recordReported(currentCall, message?.['usage']);
         const usage = readAnthropicUsage(message?.['usage']);
         if (usage) recordCall(currentCall, usage);
@@ -971,7 +1009,10 @@ export function createAnthropicStreamParser(
     if (subtype === 'init') {
       // Non-empty only: grok's signed-out init carries `session_id: ""`.
       if (typeof ev['session_id'] === 'string' && ev['session_id']) nativeId = ev['session_id'];
-      if (typeof ev['model'] === 'string' && ev['model']) initModel = ev['model'];
+      if (typeof ev['model'] === 'string' && ev['model']) {
+        initModel = ev['model'];
+        noteReportedModel(out, initModel);
+      }
     } else if (subtype === 'compact_boundary') {
       const compaction = compactionFrom(turnId, ev);
       postCompactionTokens = compaction.postTokens;
@@ -1002,6 +1043,11 @@ export function createAnthropicStreamParser(
     const usage = readAnthropicUsage(ev['usage']);
     if (usage) { resultTotals = usage; resultReported = reportedAnthropicTokens(ev['usage']); }
     runtimeWindow = runtimeContextWindow(ev['modelUsage'], initModel ?? frameModel);
+    // `modelUsage` keys name every model that served a call — a refusal
+    // fallback shows here even when init reported the requested id.
+    if (isObject(ev['modelUsage'])) {
+      for (const model of Object.keys(ev['modelUsage'])) noteReportedModel(out, model);
+    }
     const subtype = str(ev['subtype']);
     const errors = resultErrorsText(ev['errors']);
     if (subtype && subtype !== 'success') {
@@ -1030,7 +1076,10 @@ export function createAnthropicStreamParser(
         const message = isObject(ev['message']) ? ev['message'] : null;
         if (!message) return true;
         if (type === 'assistant') {
-          if (typeof message['model'] === 'string' && message['model']) frameModel = message['model'];
+          if (typeof message['model'] === 'string' && message['model']) {
+            frameModel = message['model'];
+            noteReportedModel(out, frameModel);
+          }
           const key = str(message['id']) || currentCall || syntheticKey('envelope');
           recordReported(key, message['usage']);
           const usage = readAnthropicUsage(message['usage']);
@@ -1444,6 +1493,42 @@ export function claudeThinkingDisplayArgs(session: Pick<VerseSession, 'engine'>,
   return ['--thinking-display', 'summarized'];
 }
 
+/**
+ * Ids the Claude Code binary resolves from Anthropic's own catalog — `claude-*`
+ * full ids plus the CLI's short aliases (`sonnet`, `opus`, `haiku`, `opusplan`,
+ * `default`, `best`, each optionally version- or `[1m]`-suffixed). Anything
+ * else — an Ollama tag, `vendor/model`, a gateway path — is a NON-FIRST-PARTY
+ * id: whatever stands behind it is served by an Anthropic-compatible endpoint,
+ * not the first-party API, and the CLI needs the gateway env below.
+ */
+const FIRST_PARTY_CLAUDE_MODEL =
+  /^(?:claude-[a-z0-9.-]+|sonnet|opus|haiku|opusplan|default|best)(?:-\d[\da-z.-]*)?(?:\[1m\])?$/i;
+
+/** True when `id` names a model the CLI resolves from Anthropic's own catalog. */
+export function firstPartyClaudeModelId(id: string): boolean {
+  return FIRST_PARTY_CLAUDE_MODEL.test(canonicalModelId(id));
+}
+
+/**
+ * Spawn env for a NON-first-party model id (a gateway model: an Ollama tag,
+ * `nim/…`, any id the CLI cannot resolve to a first-party Claude):
+ *
+ *  - `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0` pins the FULL system prompt — the
+ *    CLI's simple-prompt fallback for unknown ids strips the instructions a
+ *    coding agent actually runs on;
+ *  - `CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK=1` stops the CLI from answering a
+ *    refusal by silently retrying on a DIFFERENT model the seat never chose —
+ *    exactly the automatic switch the `model-switch` status event exists to
+ *    report, so on a gateway id it must not happen at all.
+ *
+ * Non-secret feature controls, so `buildTurnEnv`'s credential filter passes
+ * them through.
+ */
+export const CLAUDE_CODE_GATEWAY_MODEL_ENV: Readonly<Record<string, string>> = {
+  CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT: '0',
+  CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK: '1',
+};
+
 function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSeatLaunch): VerseTurnLaunch {
   if (!session.nativeSessionId) {
     throw new Error('claude session is missing its native session id');
@@ -1529,17 +1614,21 @@ function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSea
       ANTHROPIC_BASE_URL: anthropicEnvBaseUrl(launch.anthropicBaseUrl ?? launch.ollamaBaseUrl),
       ANTHROPIC_AUTH_TOKEN: 'ollama',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // A local seat runs a non-first-party model by definition — even a tag
+      // that happens to look like a Claude id is served by the local endpoint.
+      ...CLAUDE_CODE_GATEWAY_MODEL_ENV,
       // An Ollama tag is not a Claude id, so the CLI honours this as the
       // model's window: auto-compaction and `result.modelUsage.contextWindow`
       // then match what the runner actually serves. Not credential-shaped
       // (`_TOKENS`), so the engine's env filter passes it through.
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(localContextWindow(session, launch)),
     }
-    : {};
+    : firstPartyClaudeModelId(session.model) ? {} : { ...CLAUDE_CODE_GATEWAY_MODEL_ENV };
   return { argv, cwd: session.projectPath, env, stdin: null };
 }
 
 export const claudeAdapter: VerseAdapter = {
   buildLaunch: buildClaudeLaunch,
-  createParser: (turnId: string) => createAnthropicStreamParser(turnId, 'claude'),
+  createParser: (turnId: string, session?: VerseSession) =>
+    createAnthropicStreamParser(turnId, 'claude', { expectedModel: session?.model }),
 };

@@ -1,0 +1,12 @@
+# Metrics jobs ledger fixture: lifecycle events derive the ask.status.v1 stream.
+{"event":"enqueue","job_id":"RQ-ASK-20261027-7K2Q-A","ask_id":"RQ-ASK-20261027-7K2Q","pool":"devin","at":"2026-10-27T01:00:00Z"}
+{"event":"launch","job_id":"RQ-ASK-20261027-7K2Q-A","ask_id":"RQ-ASK-20261027-7K2Q","pool":"devin","at":"2026-10-27T01:05:00Z","tokens_total":1200}
+{"event":"enqueue","job_id":"RQ-ASK-20261027-9B4F-B","ask_id":"RQ-ASK-20261027-9B4F","pool":"claude","at":"2026-10-27T01:10:00Z"}
+{"event":"finish","job_id":"RQ-ASK-20261027-7K2Q-A","ask_id":"RQ-ASK-20261027-7K2Q","at":"2026-10-27T01:45:00Z","outcome":"merged","pr":1234,"pr_url":"https://github.com/ashlrai/phantom/pull/1234","merged_at":"2026-10-27T01:44:00Z","checks":"success","tokens_total":182000,"wall_s":2400}
+{"event":"launch","job_id":"RQ-ASK-20261027-9B4F-B","ask_id":"RQ-ASK-20261027-9B4F","pool":"claude","at":"2026-10-27T01:15:00Z"}
+{"event":"finish","job_id":"RQ-ASK-20261027-9B4F-B","ask_id":"RQ-ASK-20261027-9B4F","at":"2026-10-27T02:00:00Z"}
+{"event":"outcome","job_id":"RQ-ASK-20261027-9B4F-B","ask_id":"RQ-ASK-20261027-9B4F","at":"2026-10-27T02:05:00Z","outcome":"closed","reason":"empty_diff"}
+{"event":"finish","job_id":"RQ-ASK-20261027-3C7D","ask_id":"RQ-ASK-20261027-3C7D","pool":"codex-cmp","queued_at":"2026-10-27T03:00:00Z","started_at":"2026-10-27T03:02:00Z","finished_at":"2026-10-27T03:30:00Z","outcome":"merged","merged_at":"2026-10-27T03:30:00Z","tokens_total":55000}
+{"event":"cancel","job_id":"RQ-ASK-20261027-8H2K-A","ask_id":"RQ-ASK-20261027-8H2K","at":"2026-10-27T04:00:00Z"}
+{"event":"enqueue","job_id":"RQ-DRAIN-999","at":"2026-10-27T05:00:00Z"}
+{"event":"launch","job_id":"RQ-ASK-20261027-7K2Q-A","ask_id":"RQ-ASK-20261027-7K2Q","at":"2026-10-27T01:06:00Z"}

@@ -1,27 +1,34 @@
 /**
  * routes/verse/ops/OpsView.tsx : the Ops tray section body: the desktop
- * command center's four views behind one segmented switch.
+ * command center's six views behind one segmented switch.
  *
+ *   Live runs   current Mac workers and fleet activity
+ *   Queue       parked jobs and precheck drops
  *   Board       every task with its assignee, estimate and outcome
  *   Fleet       lanes, router holds and decisions, A/B calibration results
  *   Releases    read-only release status per enrolled repo
  *   Leaders     the leaders' channel on the shared team bus
  *
- * Each view reads a /api/verse/ops projection of the buses the CLI and
+ * Views read fleet and Ops projections of the buses the CLI and
  * Telegram already share; the view adds no state of its own beyond which
  * pane is on screen.
  */
 import { useState } from 'react';
 import { Segmented } from '../../../components/primitives/Segmented.js';
+import { OpsRuns } from './OpsRuns.js';
+import { OpsQueue } from './OpsQueue.js';
 import { OpsBoard } from './OpsBoard.js';
 import { OpsFleet } from './OpsFleet.js';
 import { OpsLeaders } from './OpsLeaders.js';
 import { OpsReleases } from './OpsReleases.js';
 import styles from './ops.module.css';
+import runsStyles from './ops-runs.module.css';
 
-type OpsView = 'board' | 'fleet' | 'releases' | 'leaders';
+type OpsView = 'runs' | 'queue' | 'board' | 'fleet' | 'releases' | 'leaders';
 
 const VIEWS: ReadonlyArray<{ value: OpsView; label: string }> = [
+  { value: 'runs', label: 'Live runs' },
+  { value: 'queue', label: 'Queue' },
   { value: 'board', label: 'Board' },
   { value: 'fleet', label: 'Fleet & router' },
   { value: 'releases', label: 'Releases' },
@@ -29,16 +36,19 @@ const VIEWS: ReadonlyArray<{ value: OpsView; label: string }> = [
 ];
 
 export function OpsView() {
-  const [view, setView] = useState<OpsView>('board');
+  const [view, setView] = useState<OpsView>('runs');
   return (
     <div className={styles.section}>
       <Segmented<OpsView>
+        className={runsStyles.views}
         options={VIEWS}
         value={view}
         onChange={setView}
         aria-label="Ops view"
       />
-      {view === 'board' ? <OpsBoard />
+      {view === 'runs' ? <OpsRuns />
+        : view === 'queue' ? <OpsQueue />
+        : view === 'board' ? <OpsBoard />
         : view === 'fleet' ? <OpsFleet />
         : view === 'releases' ? <OpsReleases />
         : <OpsLeaders />}

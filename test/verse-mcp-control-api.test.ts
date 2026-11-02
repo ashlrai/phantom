@@ -17,7 +17,7 @@
  * Hermetic: an in-memory request/response pair, an explicit tmp accounts root,
  * no socket bind and no subprocess — so this belongs in the fast unit lane.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -25,6 +25,9 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 import type { AshlrConfig } from '../src/core/types.js';
+import * as connectorManager from '../src/core/verse/connector-manager.js';
+import * as mcpScope from '../src/core/verse/mcp-scope.js';
+import * as auditModule from '../src/core/sandbox/audit.js';
 import {
   handleVerseMcpApi,
   isVerseMcpPath,
@@ -95,9 +98,10 @@ async function call(
 // ---------------------------------------------------------------------------
 
 describe('isVerseMcpPath', () => {
-  it('matches exactly the five routes', () => {
+  it('matches the MCP management routes', () => {
     for (const path of [
       '/api/verse/mcp',
+      '/api/verse/mcp/connectors',
       '/api/verse/mcp/cli-health',
       '/api/verse/mcp/cli-probe',
       '/api/verse/mcp/proposal',
@@ -144,7 +148,7 @@ describe('the two GETs are free', () => {
 // ---------------------------------------------------------------------------
 
 describe('every mutating route is behind the same gate', () => {
-  const mutating = ['/api/verse/mcp/cli-probe', '/api/verse/mcp/proposal', '/api/verse/mcp/apply'];
+  const mutating = ['/api/verse/mcp/connectors', '/api/verse/mcp/cli-probe', '/api/verse/mcp/proposal', '/api/verse/mcp/apply'];
 
   it('404s when the server was started without --allow-dispatch', async () => {
     for (const path of mutating) {
@@ -251,5 +255,54 @@ describe('verseMcpSeatInputs', () => {
     const seats = verseMcpSeatInputs(accountsRoot);
     expect(seats.map((s) => s.id)).toEqual(['claude', 'local']);
     expect(seats.find((s) => s.id === 'local')?.engine).toBe('local');
+  });
+});
+
+describe('connector mutation contract', () => {
+  it('rejects missing confirmation and unknown fields without echoing their values', async () => {
+    for (const body of [
+      { name: 'locus', enabled: true, revision: 'a'.repeat(40) },
+      { name: 'locus', enabled: true, revision: 'a'.repeat(40), confirm: true, capability: 'synthetic-capability' },
+    ]) {
+      const response = await call('POST', '/api/verse/mcp/connectors', { token: TOKEN, contentType: 'application/json', body });
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(response.body)).not.toContain('synthetic-capability');
+    }
+  });
+});
+
+describe('connector scope and response boundary', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('returns only the manager projection and keeps the read free', async () => {
+    const snapshot = { revision: 'a'.repeat(40), connectors: [{ name: 'locus', enabled: false }] };
+    vi.spyOn(connectorManager, 'listConnectors').mockResolvedValue(snapshot);
+    const gate = vi.spyOn(mcpScope, 'readVerseMcpScopeGateAsync');
+    expect(await call('GET', '/api/verse/mcp/connectors')).toEqual({ status: 200, body: snapshot });
+    expect(gate).not.toHaveBeenCalled();
+  });
+
+  it('honors Locus refusal before writing and audits allowed writes without configuration', async () => {
+    const snapshot = { revision: 'b'.repeat(40), connectors: [{ name: 'locus', enabled: true }] };
+    const gateValue: Awaited<ReturnType<typeof mcpScope.readVerseMcpScopeGateAsync>> = {
+      allow: false, mode: 'enforce', blockers: ['synthetic-capability'],
+      scope: { available: false, pinned: false, aliasRef: null, tenantRef: null, principalRef: null,
+        bindingRef: null, sealOk: null, expired: null, frozen: null, expiresAt: null,
+        status: null, statusOneline: null, reason: 'mcp-scope-locus-unavailable' },
+    };
+    const gate = vi.spyOn(mcpScope, 'readVerseMcpScopeGateAsync').mockResolvedValue(gateValue);
+    const write = vi.spyOn(connectorManager, 'setConnectorEnabled').mockResolvedValue(snapshot);
+    const audit = vi.spyOn(auditModule, 'audit').mockImplementation(() => {});
+    const options = { token: TOKEN, contentType: 'application/json', body: {
+      name: 'locus', enabled: true, revision: 'a'.repeat(40), confirm: true,
+    } };
+    const refused = await call('POST', '/api/verse/mcp/connectors', options);
+    expect(refused.status).toBe(409);
+    expect(JSON.stringify(refused.body)).not.toContain('synthetic-capability');
+    expect(write).not.toHaveBeenCalled();
+    gate.mockResolvedValue({ ...gateValue, allow: true });
+    expect(await call('POST', '/api/verse/mcp/connectors', options)).toEqual({ status: 200, body: snapshot });
+    expect(write).toHaveBeenCalledWith('locus', true, 'a'.repeat(40));
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ summary: 'Enabled a managed connector', result: 'ok' }));
   });
 });

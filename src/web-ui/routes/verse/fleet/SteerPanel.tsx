@@ -32,6 +32,7 @@ import { Card, CardNote, MicroLabel } from '../command/Surface.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { fetchRunLog, fleetQueueQuery, postFleetControl, postLeaderDirective } from './fleet-control-queries.js';
 import styles from './fleet-control.module.css';
+import { BusFeed } from './BusFeed.js';
 
 const LOG_POLL_MS = 3_000;
 const QUEUE_POLL_MS = 15_000;
@@ -103,6 +104,8 @@ export function SteerPanel({ live, actions, now }: SteerPanelProps) {
 
       <p className={styles.sectionLabel}><MicroLabel>Tell the Leader</MicroLabel></p>
       <DirectiveForm actions={actions} />
+      <p className={styles.sectionLabel}><MicroLabel>Agent bus</MicroLabel></p>
+      <BusFeed now={now} />
     </Card>
   );
 }

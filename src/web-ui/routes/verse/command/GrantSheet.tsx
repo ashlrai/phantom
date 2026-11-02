@@ -29,6 +29,8 @@ import type { AutonomySwitch } from '../../../../core/authority/types.js';
 import { ActionStatus, type SurfaceActions } from './actions.js';
 import { GrantDiff, GrantScopeEditor, postGrantDraft, type EditableGrantDraft } from './GrantScopeEditor.js';
 import { setVerseResourcesOpen, setVerseSection } from '../verse-ui-store.js';
+import { engineOfSeatId } from '../../../../core/routing/policy.js';
+import { isClaudeProvider } from '../usage/provider-windows.js';
 import styles from './command.module.css';
 import { formatDateTime } from '../../../components/format/locale-format.js';
 
@@ -154,7 +156,7 @@ export function DraftScope({ draft }: { draft: AuthorityGrantDraft }) {
             <li key={seatId}>
               <span className={styles.mono}>{seatId}</span>
               {seat.enabled ? `: keeps ${seat.reserveFloorPercent}% for you` : ': not used by autonomy'}
-              {seat.enabled && seat.maxSessionWindowPercent !== undefined ? `, never above ${seat.maxSessionWindowPercent}% of its 5-hour window` : ''}
+              {seat.enabled && !isClaudeProvider(engineOfSeatId(seatId)) && seat.maxSessionWindowPercent !== undefined ? `, never above ${seat.maxSessionWindowPercent}% of its 5-hour window` : ''}
               {` · permitted roles: ${seat.roles.join(', ')}`}
               {seat.enabled && seat.maxSessionWindowPercent === undefined ? ', no session ceiling' : ''}
             </li>

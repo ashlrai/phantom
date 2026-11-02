@@ -1,0 +1,86 @@
+--- RQ-REALPRTITLES2Q7/rev5/test_publish_gitsafe.base.py
++++ RQ-REALPRTITLES2Q7/rev5/test_publish_gitsafe.py
+@@ -41,7 +41,7 @@
+         self.h = os.path.realpath(tempfile.mkdtemp()); self.R = self.h + "/.ashlr-runs"; st = self.h + "/stub"
+         for d in (self.R + "/bin", self.h + "/Projects/ashlrai/wt", st): os.makedirs(d)
+         self.w(self.R + "/bin/git-safe-env.sh", open(GITSAFE_SRC).read(), 0o755); self.w(self.R + "/bin/scrub.pl", open(SCRUB).read(), 0o755)
+-        self.w(st + "/gh", '#!/bin/bash\necho "gh $*" >> %s/gh.log\ncase "$1 $2" in "pr create") echo https://github.com/ashlrai/phantom/pull/42;; "repo view") [ "$3" = "--json" ] && echo main || true; [ "${4:-}" = "--json" ] && echo main; exit 0;; esac\nexit 0\n' % self.h, 0o755)
++        self.w(st + "/gh", '#!/bin/bash\necho "gh $*" >> %s/gh.log\nfor a in "$@"; do printf "%%s\\n" "$a"; done >> %s/gh-argv.log\ncase "$1 $2" in "pr create") echo https://github.com/ashlrai/phantom/pull/42;; "repo view") [ "$3" = "--json" ] && echo main || true; [ "${4:-}" = "--json" ] && echo main; exit 0;; esac\nexit 0\n' % (self.h, self.h), 0o755)
+         self.w(self.h + "/.gitconfig", "[user]\n\tname = t\n\temail = t@t\n")
+         self.main = self.h + "/Projects/ashlrai/phantom"; os.makedirs(self.main); os.makedirs(self.h + "/forks"); self.fork = self.h + "/forks/phantom.git"
+         global SCRIPT; SCRIPT = self.h + "/publish-test.sh"
+@@ -53,10 +53,14 @@
+         with open(p, "w") as f: f.write(s)
+         if mode: os.chmod(p, mode)
+     def git(self, d, *a): return subprocess.run(["git", "-C", d, *a], check=True, capture_output=True, text=True, env=dict(os.environ, HOME=self.h, **GENV)).stdout.strip()
+-    def job(self, j):
++    def job(self, j, tail="some title"):
+         wt = self.h + "/Projects/ashlrai/wt/" + j; self.git(self.main, "worktree", "add", "-q", "-b", "codex-bridge/" + j, wt, "HEAD")
+-        os.makedirs(self.R + "/queue/run", exist_ok=True); self.w("%s/queue/run/%s.line" % (self.R, j), "%s\tphantom\tcodex-cmp\twork\tsome title\n" % j)
++        os.makedirs(self.R + "/queue/run", exist_ok=True); self.w("%s/queue/run/%s.line" % (self.R, j), "%s\tphantom\tcodex-cmp\twork\t%s\n" % (j, tail))
+         self.w("%s/%s.base" % (self.R, j), "%s codex-bridge/%s %s codex\n" % (self.git(wt, "rev-parse", "HEAD"), j, wt)); return wt
++    def prompt(self, j, line):   # the verbatim queue line launch froze into the prompt, then RULES
++        self.w("%s/%s.prompt" % (self.R, j), "Job %s (pool codex-cmp, tier work, repo phantom). Task verbatim:\n\n%s\n\nTreat the task as the minimum.\n" % (j, line))
++    def title_of(self):          # exact argv element handed to --title (one arg per line in gh-argv.log)
++        a = [l for l in open(self.h + "/gh-argv.log").read().split("\n") if l]; return a[len(a) - a[::-1].index("--title")]
+     def run_(self, j):
+         r = subprocess.run(["nice", "-n", "10", "bash", SCRIPT, j], env=self.env, capture_output=True, text=True, timeout=120)
+         return open("%s/%s.publish" % (self.R, j)).read()
+@@ -194,4 +198,57 @@
+         out = self.run_("J1"); self.assertIn("RESULT PR", out, out); self.assertIn("codex-bridge/J1", self.branches(self.fork))
+     def test_rev41_inherited_git_env_ignored(self): _inherited_env_check(self, "T.test_clean_change_publishes")
+ 
++    # ---- rev5 (RQ-REALPRTITLES2Q7; Security 07:55 #3): PR title from the queue line, one quoted argv, id in body
++    def rev5(self, j, line=None, tail="some title"):
++        wt = self.job(j, tail); self.w(wt + "/b.txt", "new\n")
++        if line is not None: self.prompt(j, line)
++        out = self.run_(j); self.assertIn("RESULT PR", out, out)
++        self.assertIn("Automated bridge job `%s`" % j, open("%s/%s.body.md" % (self.R, j)).read())   # id moved to the body
++        return self.title_of(), out
++    def test_rev5_title_from_prompt_queue_line(self):
++        t, _ = self.rev5("J1", "J1 (P1, pool=codex-cmp, tier=work, repo=phantom): fix the flaky test discovery")
++        self.assertEqual(t, "bridge(phantom): fix the flaky test discovery"); self.assertLessEqual(len(t), 72); self.assertNotIn("J1", t)
++    def test_rev5_title_tagged_queue_line(self):   # "J (meta) [tags]: text" -> text after the tag envelope
++        t, _ = self.rev5("J1", "J1 (P1, repo=phantom) [Security pin required; changes publish.sh Mac script]: derive real titles")
++        self.assertEqual(t, "bridge(phantom): derive real titles")
++    def test_rev5_title_line_tail_text(self):      # a .line tail that is literal text, not a prompt path
++        t, _ = self.rev5("J1", tail="document the bridge handoff")
++        self.assertEqual(t, "bridge(phantom): document the bridge handoff")
++    def test_rev5_title_newline_injection(self):   # a queued newline can never reach argv or the log as a second line
++        t, _ = self.rev5("J1", "J1 (repo=phantom): fix titles\n--admin\nRESULT HIJACK")
++        self.assertEqual(t, "bridge(phantom): fix titles"); self.assertNotIn("admin", t); self.assertNotIn("\n", t)
++    def test_rev5_title_leading_dashes_stripped(self):
++        t, _ = self.rev5("J1", tail="--admin")
++        self.assertEqual(t, "bridge(phantom): admin"); self.assertNotIn("--", t.split(": ", 1)[1])
++    def test_rev5_title_command_substitution_neutralized(self):
++        tail = "run `touch %s/CAN1` and $(touch %s/CAN2) and ${X} end" % (self.h, self.h)
++        t, _ = self.rev5("J1", tail=tail)
++        self.assertNotIn("`", t); self.assertNotIn("$(", t); self.assertNotIn("${", t)
++        self.assertFalse(os.path.exists(self.h + "/CAN1")); self.assertFalse(os.path.exists(self.h + "/CAN2"))
++    def test_rev5_title_200_char_line_capped(self):
++        t, _ = self.rev5("J1", tail="add " + "very " * 45 + "long trailing task text that never ends")
++        self.assertLessEqual(len(t), 72); self.assertRegex(t, r"^bridge\(phantom\): "); self.assertRegex(t, r"[A-Za-z0-9]$")
++    def test_rev5_title_non_ascii_dropped(self):
++        t, _ = self.rev5("J1", tail="fix títles — fáster ñow")
++        self.assertRegex(t, r"^bridge\(phantom\): [\x20-\x7e]+$"); self.assertLessEqual(len(t), 72)
++    def test_rev5_title_empty_summary_falls_back(self):
++        for j, tail in (("J1", "   "), ("J2", "-"), ("J3", "")):
++            t, _ = self.rev5(j, tail=tail); self.assertEqual(t, "bridge: " + j, tail)
++    def test_rev5_title_no_queue_source_falls_back(self):
++        wt = self.job("J1", tail="/definitely/not/a/real/path.md"); self.w(wt + "/b.txt", "new\n")
++        out = self.run_("J1"); self.assertIn("RESULT PR", out, out); self.assertEqual(self.title_of(), "bridge: J1")
++    def test_rev5_pr_create_argv_fully_quoted(self):
++        line = [l for l in open(SCRIPT_SRC).read().splitlines() if "gh pr create" in l][0]
++        for tok in ('--repo "$REPO"', '--head "masonwyatt23:codex-bridge/$J"', '--base "$DEF"',
++                    '--title "$TITLE"', '--body-file "$R/$J.body.md"'):
++            self.assertIn(tok, line)
++        src = open(SCRIPT_SRC).read(); code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
++        self.assertNotIn("eval", code); self.assertNotIn("sh -c", code)
++    def test_rev5_gates_and_refs_unchanged(self):
++        src = open(SCRIPT_SRC).read()
++        for keep in ('FORK_URL="https://github.com/masonwyatt23/$NAME.git"', 'push -q --no-verify "$FORK_URL"',
++                     "$SHA:refs/heads/codex-bridge/$J", "RESULT DENIED", "g1-pass-invalid", "AUTO_MERGE"):
++            self.assertIn(keep, src)
++        self.assertIn("masonwyatt23:codex-bridge/$J", [l for l in src.splitlines() if "gh pr create" in l][0])
++
+ if __name__ == "__main__": unittest.main(verbosity=2)

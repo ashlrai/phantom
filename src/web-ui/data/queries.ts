@@ -15,7 +15,9 @@ import type {
   DashboardSnapshot,
   DecisionEntry,
   FleetActivitySnapshot,
+  FleetLaneSnapshot,
   FleetStatus,
+  ApprovalRequest,
   Proposal,
   ProposalStatus,
   PublicDaemonObservation,
@@ -121,6 +123,16 @@ export const fleetStatusQuery: QueryDef<FleetStatus> = {
 export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
   key: 'fleet-activity',
   fetch: (signal) => apiGet<FleetActivitySnapshot>('/api/fleet-activity', signal),
+};
+
+/**
+ * RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
+ * credit left, queue depth, live jobs and merges/hour per router lane.
+ * Read-only loopback read (GET /api/fleet/lanes → getFleetLaneSnapshot()).
+ */
+export const fleetLanesQuery: QueryDef<FleetLaneSnapshot> = {
+  key: 'fleet-lanes',
+  fetch: (signal) => apiGet<FleetLaneSnapshot>('/api/fleet/lanes', signal),
 };
 
 /**

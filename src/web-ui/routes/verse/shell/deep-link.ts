@@ -79,6 +79,14 @@ export function parseDeepLink(search: string): VerseDeepLink | null {
   return sessionId === null && paneId === null ? null : { sessionId, paneId };
 }
 
+/** Resolve only once the pane registry has loaded. */
+export function resolveDeepLinkPane(id: string | null, isKnown: (id: string) => boolean): string | null {
+  if (id === null) return null;
+  if (isKnown(id)) return id;
+  console.info('[verse] ignoring unknown deep-link pane', id);
+  return null;
+}
+
 /** Does this query string carry a link at all? (The shell's cheap check before loading this module.) */
 export function hasDeepLink(search: string): boolean {
   return /[?&](?:chat|pane|terminal)=/.test(search);

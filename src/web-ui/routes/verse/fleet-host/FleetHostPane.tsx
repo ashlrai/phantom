@@ -1,0 +1,131 @@
+import { useEffect, useRef, useState } from 'react';
+import { Gauge } from '../../../components/charts/Gauge.js';
+import { StatTile } from '../../../components/charts/StatTile.js';
+import { Button } from '../../../components/primitives/index.js';
+import { useMutationHold, useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
+import { openDockPane, requestTerminal } from '../dock/dock-store.js';
+import { opsRunsQuery } from '../ops/ops-runs-queries.js';
+import type { PaneProps } from '../panes/pane-registry.js';
+import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { usageResetsQuery } from '../shell/usage-resets-query.js';
+import { DropQueueCard } from './DropQueueCard.js';
+import { MemoryGuardCard } from './MemoryGuardCard.js';
+import { hostView } from './fleet-host-model.js';
+import { plannerRows, plannerTell } from './planners-model.js';
+import { releaseRows, resetLoopLine, unreleasedResets } from './reset-loop-model.js';
+import { resetLoopQuery } from './reset-loop-query.js';
+import styles from './fleet-host.module.css';
+
+const CLAUDE_LANE_FIX = '~/.ashlr-runs/bin/fix-claude-lane.sh';
+const COPY_FEEDBACK_MS = 2_000;
+
+export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
+  const sectionVisible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  const active = visible && sectionVisible && documentVisible;
+  const read = useQuery(opsRunsQuery, { enabled: active, freshMs: 0 });
+  const refetch = useRefetch(opsRunsQuery);
+  const refresh = useRefresh(opsRunsQuery);
+  usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
+  const data = read.data;
+  const host = hostView(data ?? null, Date.now());
+  const nowMs = Date.now();
+  const planners = plannerRows(data ?? null, nowMs);
+  const tell = plannerTell(data ?? null, nowMs);
+  const [copyState, setCopyState] = useState<'copied' | 'failed' | null>(null);
+  const copyTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copyTimer.current), []);
+
+  // A terminal request can show the pane but cannot type, so the command
+  // rides the clipboard for ⌘V (the Needs-you row's flow for this fix).
+  const copyFix = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(CLAUDE_LANE_FIX);
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
+    window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopyState(null), COPY_FEEDBACK_MS);
+  };
+  const openFixTerminal = () => { void copyFix(); requestTerminal({}); };
+
+  return <div className={styles.pane} aria-label="Mac host">
+    <header className={styles.header}>
+      <p className={styles.headline}>Fleet Mac health</p>
+      <button type="button" className={styles.refresh} onClick={refresh}>Refresh</button>
+    </header>
+    {data === null ? <p className={styles.muted}>The fleet runs API has not landed in this build yet.</p>
+      : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Fleet runs are unavailable.' : 'Reading fleet runs…'}</p>
+      : <>
+        {read.status === 'error' ? <p className={styles.muted} role="status">Fleet runs could not refresh. Showing the last reading.</p> : null}
+        {data.sources.runsDir !== 'healthy' ? <p className={styles.muted}>Runs directory: {data.sources.runsDir}</p> : null}
+        {host.paused === true ? <p className={styles.banner} role="status">Fleet is paused.</p> : null}
+        {host.paused === null ? <p className={styles.muted}>Pause status unknown.</p> : null}
+        {host.load.tone === 'bad' ? <p className={styles.banner} role="status">Workers are starving for CPU; lower lane targets in the Lanes pane. <Button size="sm" onClick={() => openDockPane('fleet-lanes')}>Open Lanes</Button></p> : null}
+        <div className={styles.metrics}>
+          <div className={styles.metric} data-tone={host.load.tone}><StatTile label="CPU load" value={host.load.text} caption={host.load.caption} /></div>
+          <div className={styles.metric} data-tone={host.memory.pct === null ? 'unknown' : host.memory.tone}>
+            <Gauge title="Memory free" value={host.memory.pct === null ? null : host.memory.pct / 100} showState={false} caption={host.memory.pct === null ? 'Unknown' : host.memory.tone} size={144} />
+          </div>
+          <div className={styles.metric} data-tone={host.disk.gb === null ? 'unknown' : host.disk.tone}><StatTile label="Disk free" value={host.disk.text} caption={host.disk.gb === null ? 'Unknown' : host.disk.tone} /></div>
+          <div className={styles.metric} data-tone={host.tick.ageSeconds === null ? 'unknown' : host.tick.tone}><StatTile label="Orchestrator tick" value={host.tick.text} caption={host.tick.ageSeconds === null ? 'Unknown' : host.tick.tone} /></div>
+        </div>
+        <section className={styles.section} aria-label="Switches">
+          <h3 className={styles.title}>Switches</h3>
+          {host.switches.length ? <ul className={styles.switches}>{host.switches.map((item, i) => <li className={styles.badge} key={`${item}:${i}`}>{item}</li>)}</ul> : <p className={styles.muted}>No switches set</p>}
+        </section>
+        <section className={styles.section} aria-label="Claude lane">
+          <h3 className={styles.title}>Claude lane</h3>
+          <p className={styles.line} data-tone={host.claudeLane.down ? 'bad' : undefined}>{host.claudeLane.text}</p>
+          {host.claudeLane.down ? <>
+            <p className={styles.line}>Run <code>{CLAUDE_LANE_FIX}</code></p>
+            <div className={styles.actions}>
+              <Button size="sm" onClick={() => { void copyFix(); }}>{copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy command'}</Button>
+              <Button size="sm" onClick={openFixTerminal}>Open terminal</Button>
+            </div>
+          </> : null}
+        </section>
+        <section className={styles.section} aria-label="Planners">
+          <h3 className={styles.title}>Planners</h3>
+          {planners.length ? <ul className={styles.switches}>{planners.map((row, i) =>
+            <li className={styles.metric} data-tone={row.tone} key={`${row.label}:${i}`}>
+              {row.label}: {row.ageText} ({row.tone})
+            </li>)}</ul> : <p className={styles.muted}>No planner passes recorded</p>}
+          {tell ? <p className={styles.metric} data-tone={tell.tone} role="status">{tell.text}</p> : null}
+        </section>
+        <ResetReleasesSection visible={visible} />
+        <DropQueueCard visible={visible} />
+        <MemoryGuardCard visible={visible} />
+        <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
+      </>}
+  </div>;
+}
+
+function ResetReleasesSection({ visible }: { visible: boolean }) {
+  const sectionVisible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  const active = visible && sectionVisible && documentVisible;
+  const { hasHold } = useMutationHold();
+  const read = useQuery(resetLoopQuery, { enabled: active, freshMs: 0 });
+  const resets = useQuery(usageResetsQuery, { enabled: active, freshMs: 0 });
+  const refetch = useRefetch(resetLoopQuery);
+  const refetchResets = useRefetch(usageResetsQuery);
+  usePollWhileVisible(refetch, 30_000, { enabled: visible, refreshOnShow: false });
+  usePollWhileVisible(refetchResets, 30_000, { enabled: visible, refreshOnShow: false });
+  const now = Date.now();
+  const line = read.data ? resetLoopLine(read.data, now, hasHold) : null;
+  const rows = read.data ? releaseRows(read.data, now) : [];
+  const incidents = read.status !== 'error' && resets.status !== 'error'
+    ? unreleasedResets(resets.data ?? null, read.data ?? null, now) : [];
+  return <section className={styles.section} aria-label="Reset releases">
+    <h3 className={styles.title}>Reset releases</h3>
+    {line ? <p className={styles.metric} data-tone={line.tone}>{line.text}</p>
+      : <p className={styles.muted}>{read.data === null || read.status === 'error' ? 'Reset loop unavailable' : 'Reading reset loop…'}</p>}
+    {read.status === 'error' && read.data ? <p className={styles.muted} role="status">Reset loop could not refresh. Showing the last reading.</p> : null}
+    {read.data?.loop.lastError ? <p className={styles.line} data-tone="bad">Reset loop error: {read.data.loop.lastError}</p> : null}
+    {rows.length ? <ul>{rows.map((row, i) => <li className={styles.line} key={`${row}:${i}`}>{row}</li>)}</ul> : null}
+    {resets.data === null || resets.status === 'error' ? <p className={styles.muted}>Reset detection unavailable</p> : null}
+    {incidents.map(({ lane, sinceText }) => <p className={styles.line} data-tone="bad" role="alert" key={lane}>Reset detected on {lane} {sinceText} but the lane is still held</p>)}
+  </section>;
+}

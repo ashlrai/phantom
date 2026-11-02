@@ -172,6 +172,11 @@ export interface ModelEntry {
    * win the cheapest-first sort would silently route work onto a paid seat.
    */
   seatRouted?: true;
+  /** Available for explicit selection only, pending qualification. */
+  explicitOnly?: true;
+  /** Published API limits and tool transport; native seat limits can differ. */
+  apiContextWindow?: number;
+  toolApi?: 'responses';
   /** Exact historical lookup remains valid; not offered for automatic new work. */
   historical?: true;
   /** Published maximum context, not a claim about the connected account. */
@@ -248,6 +253,12 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     costPerMTokIn: 0.5, costPerMTokOut: 2.5,
     capabilities: ['fast', 'general', 'long-context'],
     minEffort: 1, apiModelId: 'claude-haiku-5-5', qualityRank: 1,
+  },
+  {
+    id: 'codex:gpt-6.1-terra', engine: 'codex', tier: 'mid',
+    costPerMTokIn: 1, costPerMTokOut: 5,
+    capabilities: ['fast', 'general', 'coder', 'long-context'], minEffort: 1,
+    apiModelId: 'gpt-6.1-terra', apiContextWindow: 1_050_000, toolApi: 'responses', explicitOnly: true,
   },
   // -- Claude (subscription / token-billed via API) -------------------------
   {
@@ -545,7 +556,7 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
  * Current automatic entries for a specific engine. KNOWN_MODELS also preserves historical lookups.
  */
 export function catalogFor(engine: EngineId | string): ModelEntry[] {
-  return KNOWN_MODELS.filter((m) => !m.historical && m.engine === (engine as EngineId));
+  return KNOWN_MODELS.filter((m) => !m.historical && !m.explicitOnly && m.engine === (engine as EngineId));
 }
 
 /**
@@ -584,7 +595,7 @@ export function pickModel(opts: {
 }): ModelEntry | null {
   const excluded = opts.excludeIds ?? CLAUDE5_CATALOG_IDS;
   let pool = KNOWN_MODELS.filter((m) => {
-    if (m.historical || excluded.has(m.id)) return false;
+    if (m.historical || m.explicitOnly || excluded.has(m.id)) return false;
     if (opts.engine && m.engine !== (opts.engine as EngineId)) return false;
     // V3.10: a seat-routed entry is reachable only by naming its engine.
     if (m.seatRouted && !opts.engine) return false;

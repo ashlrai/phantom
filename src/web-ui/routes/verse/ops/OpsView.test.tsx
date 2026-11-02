@@ -1,5 +1,5 @@
 /**
- * Smoke test: the Ops section mounts, its four views are reachable through
+ * Smoke test: the Ops section mounts, its six views are reachable through
  * the segmented switch, and each renders its fixture bus projection. This is
  * the whole-surface check the task asks for: one render exercising Board,
  * Fleet & router, Releases and Leaders against fixture bus data.
@@ -69,12 +69,16 @@ beforeEach(() => { evictAll(); localStorage.clear(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Ops section smoke', () => {
-  it('serves all four command-center views through the segmented switch', async () => {
+  it('serves all six command-center views through the segmented switch', async () => {
     stubAll();
     const user = userEvent.setup();
     render(<OpsView />);
 
-    // Board is the default pane.
+    expect(screen.getByRole('radio', { name: 'Live runs' })).toBeChecked();
+    expect(await screen.findByText('Live runs are not in this build yet.')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Queue' }));
+    expect(await screen.findByText('The queue API has not landed in this build yet.')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'Board' }));
     expect(await screen.findByText('Board-visible task')).toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: 'Fleet & router' }));

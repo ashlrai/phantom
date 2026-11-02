@@ -1,5 +1,5 @@
-import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import type { ResourceAccountConnection, ResourceConnectionsSnapshot } from '../../../core/resources/connection-types.js';
 import { AccountConnections } from './AccountConnections.js';
 import { resourceTime } from './CapacityBoard.js';
@@ -18,6 +18,33 @@ function snapshot(accounts = [account()], patch: Partial<ResourceConnectionsSnap
 }
 
 describe('account connections evidence', () => {
+  it('copies only allowlisted diagnostics, excluding credentials and private paths', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const row = account({ id: '/private/id', label: 'token-secret', reason: 'token-secret /private/auth',
+      planType: 'token-secret', windows: [{ id: '/private/window', usedPercent: 25, resetsAt: RESET,
+        nativeReport: { source: 'claude-usage', resetDescription: 'token-secret /private/auth' } }] });
+    Object.assign(row, { accountHint: 'token-secret', command: '/private/launcher' });
+    try {
+      render(<AccountConnections connections={snapshot([row])} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostic summary' }));
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Diagnostic summary copied.'));
+      expect(writeText).toHaveBeenCalledOnce();
+      expect(writeText.mock.calls[0]![0]).toContain('Account 1: codex');
+      expect(writeText.mock.calls[0]![0]).toContain('Sign-in: signed-in');
+      expect(writeText.mock.calls[0]![0]).not.toMatch(/token-secret|\/private\//);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('reports clipboard failures without claiming a copy succeeded', async () => {
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+    try {
+      render(<AccountConnections connections={snapshot()} historical />);
+      fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostic summary' }));
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not copy the diagnostic summary.'));
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('shows approximate Claude native usage without claiming cache freshness or ceiling headroom', () => {
     render(<AccountConnections ceilingPercent={75} connections={snapshot([account({ provider: 'claude',
       label: 'Claude', health: 'unknown', reason: 'usage-native-reported', windows: [{ id: 'seven_day_fable', usedPercent: 2,
@@ -112,7 +139,7 @@ describe('account connections evidence', () => {
     expect(screen.getByText('Sign-in required')).toBeVisible();
     expect(screen.getByText('Metadata reachable')).toBeVisible();
     expect(screen.getByText(/Sign in through this account’s native launcher/)).toBeVisible();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy diagnostic summary' })).toBeVisible();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
@@ -170,7 +197,7 @@ describe('account connections evidence', () => {
     expect(screen.getByText('Checking account metadata…')).toBeVisible();
     rerender(<AccountConnections connections={snapshot()} />);
     expect(screen.getByText(`Sampled ${resourceTime(NOW)}`)).toBeVisible();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy diagnostic summary' })).toBeVisible();
   });
 
   it.each([
@@ -246,7 +273,7 @@ describe('account connections evidence', () => {
     expect(screen.queryByText('Signed in')).not.toBeInTheDocument();
     expect(screen.queryByText('Ready')).not.toBeInTheDocument();
     expect(screen.queryByText('On-demand billing disabled')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy diagnostic summary' })).toBeVisible();
   });
 
   it('keeps Grok comparisons explicitly unrelated to Phantom execution', () => {
@@ -267,7 +294,7 @@ describe('account connections evidence', () => {
     expect(screen.getByText(/Native auth status confirms sign-in but does not report allowance/)).toBeVisible();
     expect(screen.getByText(/Check usage in this account’s native Claude session/)).toBeVisible();
     expect(screen.queryByText(/percentage points/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy diagnostic summary' })).toBeVisible();
   });
 
   it('offers a fixed stopped-monitor recovery step without echoing diagnostics', () => {

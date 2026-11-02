@@ -14,6 +14,9 @@ const sources = (count = 20) => ({
   v: 1, repositories: [{ repo: repository, vision: '', issues: Array.from({ length: count }, (_, i) => issue(i + 1)), scans: [] as ReturnType<typeof scan>[] }],
 });
 const queue = (count: number): RqJob[] => planRqBacklog(config, sources(), '').jobs.slice(0, count);
+const family = (id: string, prompt: string, status: RqJob['status'] = 'READY', title = 'Recover parked work'): RqJob => ({
+  v: 1, id, repo: repository, status, source: 'scan', sourceId: `family-${id}`, title, prompt,
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -109,6 +112,56 @@ describe('RQ backlog capacity and source discovery', () => {
     const input = sources(1);
     input.repositories.push({ ...input.repositories[0]!, repo: allowedRepos[1]! });
     expect(planRqBacklog(config, input, '').jobs).toHaveLength(2);
+  });
+});
+
+describe('RQ parked REFILL families', () => {
+  const anchored = 'Work in /Users/bridge/wt/REFILL-MR-PARK-SALVA and run test/m111.work-queue.test.ts.';
+
+  it('rejects SALVA/TEST READY rows that name no worktree path and test file', () => {
+    const rows = [...queue(5), family('REFILL-MR-PARK-SALVA', 'Salvage whatever looks useful.')];
+    const plan = planRqBacklog(config, sources(), formatRqQueue(rows));
+    expect(plan).toMatchObject({ ready: 5, parked: 1 });
+    expect(plan.jobs).toHaveLength(5);
+    const both = planRqBacklog(config, sources(), formatRqQueue([...rows, family('REFILL-MR-PARK-TEST', 'Add some coverage.')]));
+    expect(both).toMatchObject({ ready: 5, parked: 2 });
+    expect(both.jobs).toHaveLength(5);
+  });
+
+  it('counts a family row as READY once it names a worktree path and test file', () => {
+    const rows = [...queue(5), family('REFILL-MR-PARK-SALVA', anchored)];
+    expect(planRqBacklog(config, sources(), formatRqQueue(rows))).toMatchObject({ ready: 6, parked: 0, jobs: [] });
+    const split = family('REFILL-MR-PARK-TEST', 'Continue the parked attempt.',
+      'READY', 'Run test/m111.work-queue.test.ts under /Users/bridge/wt/REFILL-MR-PARK-TEST');
+    expect(planRqBacklog(config, sources(), formatRqQueue([...queue(5), split]))).toMatchObject({ ready: 6, parked: 0 });
+  });
+
+  it.each([
+    ['worktree path only', 'Work in /Users/bridge/wt/REFILL-MR-PARK-SALVA.'],
+    ['test file only', 'Run test/m111.work-queue.test.ts.'],
+    ['a relative path', 'Work in wt/REFILL-MR-PARK-SALVA and run test/m111.work-queue.test.ts.'],
+    ['a single-segment path', 'Work in /worktrees and run test/m111.work-queue.test.ts.'],
+  ])('still parks a family row naming %s', (_label, prompt) => {
+    const rows = [...queue(5), family('REFILL-MR-PARK-SALVA', prompt)];
+    expect(planRqBacklog(config, sources(), formatRqQueue(rows)).parked).toBe(1);
+  });
+
+  it('parks only the named families and only while READY', () => {
+    const rows = [
+      family('REFILL-MR-PARK-OTHER', 'No anchors here.', 'READY', 'Unrelated refill'),
+      family('REFILL-SALVA', 'No middle segment.', 'READY', 'Short family name'),
+      family('RQ-MR-PARK-SALVA', 'Not a REFILL family.', 'READY', 'Ordinary queued job'),
+      family('REFILL-MR-PARK-SALVA', 'Done work needs no anchors.', 'DONE'),
+      family('REFILL-MR-PARK-TEST', 'Running work needs no anchors.', 'RUNNING'),
+    ];
+    expect(planRqBacklog(config, sources(), formatRqQueue([...queue(5), ...rows]))).toMatchObject({ ready: 8, parked: 0 });
+  });
+
+  it('keeps parked rows as deduplicating queue history', () => {
+    const blocker = { ...family('REFILL-MR-PARK-SALVA', 'No anchors.'), source: 'issue' as const, sourceId: '1' };
+    const plan = planRqBacklog(config, sources(1), formatRqQueue([blocker]));
+    expect(plan.parked).toBe(1);
+    expect(plan.jobs.some((job) => job.sourceId === '1')).toBe(false);
   });
 });
 
@@ -251,6 +304,14 @@ describe('backlog plan CLI', () => {
     expect(run.logs.map((r) => r.event)).toEqual(['rq-queue-read', 'rq-queue-read', 'rq-plan']);
     expect(run.logs[1].changed).toHaveLength(1);
     expect(run.logs[1].beforeSha).toBe(rqDigest(formatRqQueue(jobs)));
+  });
+
+  it('prints the parked count in the rq-plan summary', async () => {
+    const f = fixture();
+    writeFileSync(f.queuePath, formatRqQueue([family('REFILL-MR-PARK-SALVA', 'Unanchored salvage work.')]));
+    const run = await capture(f.args);
+    expect(run.code).toBe(0);
+    expect(run.logs[1]).toMatchObject({ event: 'rq-plan', ready: 0, parked: 1, added: 10 });
   });
 
   it('rejects malformed queues without leaking text or producing work', async () => {

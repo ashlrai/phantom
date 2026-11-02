@@ -4,8 +4,10 @@
  * (the section glob in shell/section-modules.ts). Reached from the gear tray
  * and from ⌘K ("Open Ops").
  */
+import { MergePulse } from '../ops/MergePulse.js';
+import { PublishFunnel } from '../ops/PublishFunnel.js';
 import { OpsView } from '../ops/OpsView.js';
 
 export function OpsSection() {
-  return <OpsView />;
+  return <div><MergePulse /><PublishFunnel /><OpsView /></div>;
 }

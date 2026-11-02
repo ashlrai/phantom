@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workbench.v1/action.schema.json",
+  "title": "workbench.action.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "verb", "args", "dry_run"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["workbench.action.v1"]},
+    "verb": {"type": "string", "enum": ["lane.pause", "lane.resume", "lane.target", "queue.hold", "queue.unhold",
+      "ask", "job.retry", "reap.count", "land", "release", "steer.note", "queue.reprioritize", "job.stop"]},
+    "args": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "lane": {"type": "string", "enum": ["codex-cmp", "codex-personal", "claude", "devin", "claude-api"]},
+        "target": {"type": "integer", "minimum": 0, "maximum": 64},
+        "rq_id": {"type": "string", "pattern": "^RQ-[A-Z0-9][A-Z0-9._-]{0,79}$"},
+        "repo": {"type": "string", "pattern": "^ashlrai/[a-z0-9][a-z0-9-]{0,60}$"},
+        "pr": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"]},
+        "text": {"type": "string", "maxLength": 2000}
+      }
+    },
+    "dry_run": {"type": "boolean"},
+    "confirm": {"type": "string", "pattern": "^[a-f0-9]{32}$"}
+  }
+}

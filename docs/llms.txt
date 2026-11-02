@@ -1,0 +1,39 @@
+# Phantom
+
+> The open-source engineering agent workbench. It runs all engineering, manages resources, and coordinates local and cloud fleets through a CLI, an MCP server, and a web console.
+
+Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent --json`. The copy-paste install, JSON commands, and MCP setup are in [llms-full.txt](llms-full.txt).
+
+## Start
+
+- [Phantom](README.md): Doc map for this folder.
+- [Quickstart](QUICKSTART.md): Install Phantom, open the console, and make a first turn.
+- [Self-hosting](SELF-HOSTING.md): Install, connect MCP, upgrade, and uninstall.
+- [User guide](VERSE.md): Console surfaces and shortcuts.
+- [Architecture](ARCHITECTURE.md): TypeScript/ESM CLI and SDK plus a React web console. `phm` and `ashlr` share one launcher.
+- [Agent operations](AGENT-OPERATIONS.md): Cold-start checklist for building and operating Phantom from source.
+- [Automatic work](AUTOMATIC-OUTCOMES.md): Chat routing and fleet outcomes.
+- [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
+
+## CLI
+
+- [CLI reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all`. The checkout is the authority.
+- [CLI docs](cli.md): Regenerated from `phm --help` by `scripts/generate-cli-docs.mjs`. Do not edit by hand.
+- [CLI contracts](AGENT-CLI-CONTRACTS.md): Command-level guarantees.
+
+## MCP and agents
+
+- [Full copy-paste reference](llms-full.txt): Install, JSON commands, and MCP setup for Claude, Cursor, and Codex.
+- [Fleet MCP onramp](FLEET-MCP-ONRAMP.md): Read-only fleet MCP server. Add the stdio entry to a client config.
+- [Companions](COMPANIONS.md): Phantom Secrets, Locus, and Lexicon are installed separately. They are not bundled.
+- [Agent toolchain](AGENT-TOOLCHAIN.md): Companion MCP servers declared for agents working in this repo.
+- [Agent-native quickstart](AGENT-NATIVE-QUICKSTART.md): Use the desktop `/verse/` console as the visibility surface.
+- [Plugins](PLUGINS.md): Extend Phantom without forking.
+
+## Fleet
+
+- [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
+- [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
+- [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
+- [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
+- [Hub reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet. Compatibility identifiers stay.

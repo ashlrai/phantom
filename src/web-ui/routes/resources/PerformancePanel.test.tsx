@@ -32,6 +32,26 @@ describe('worker performance presentation', () => {
     const row = screen.getByRole('button', { name: 'codex-a' }).closest('tr')!;
     expect(within(row).getByText('0 / 1')).toBeVisible(); expect(within(row).getByText('1 unmeasured')).toBeVisible();
     expect(within(row).getAllByText('Not measured')).toHaveLength(2);
+    expect(within(row).getByText('Timing coverage: 0%')).toBeVisible();
+    expect(within(row).getByText('No timing observations for this outcome.')).toBeVisible();
+  });
+  it('shows partial coverage and cautions about small samples', () => {
+    const data = report();
+    const duration = data.workers.find((worker) => worker.workerId === 'local-a')!.durations.find((entry) => entry.status === 'completed')!;
+    duration.attempts = 2; duration.samples = 1; duration.unknownAttempts = 1;
+    render(<PerformancePanel report={data} onSelect={() => {}} />);
+    const row = screen.getByRole('button', { name: 'local-a' }).closest('tr')!;
+    expect(within(row).getByText('Timing coverage: 50%')).toBeVisible();
+    expect(within(row).getByText(/Small sample: fewer than 20/)).toBeVisible();
+  });
+  it('does not show a small-sample warning at 20 observations', () => {
+    const data = report();
+    const duration = data.workers.find((worker) => worker.workerId === 'local-a')!.durations.find((entry) => entry.status === 'completed')!;
+    duration.attempts = 20; duration.samples = 20; duration.unknownAttempts = 0;
+    render(<PerformancePanel report={data} onSelect={() => {}} />);
+    const row = screen.getByRole('button', { name: 'local-a' }).closest('tr')!;
+    expect(within(row).getByText('Timing coverage: 100%')).toBeVisible();
+    expect(within(row).queryByText(/Small sample/)).not.toBeInTheDocument();
   });
   it('keeps genuine zero duration distinct from missing and clarifies Claude scope', () => {
     expect(executionTime(0)).toBe('0 ms'); expect(executionTime(null)).toBe('Not measured');

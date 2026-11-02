@@ -58,8 +58,11 @@
  * A load that FAILED (not merely "no files yet") still throws: activity then
  * reports `sources.leader: 'error'`, never a false all-clear on broken state.
  */
-import { readFile } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
+import { join, sep } from 'node:path';
 
 import type { ApiModule } from './api-modules.js';
 import type { VerseApiContext } from './verse-api.js';
@@ -87,6 +90,13 @@ import {
   syncLeaderMemosToThread,
 } from '../vision/leader-thread.js';
 import { parseLeaderQuestionSubmission } from '../vision/leader-thread-types.js';
+import { runPlannerPass, type RunPlannerPassOpts, type PlannerRunResult } from '../fleet/planner-run.js';
+import { readPlannerCandidates } from '../fleet/planner-candidates.js';
+import { readPlannerPromptPath } from '../fleet/planner-prompt.js';
+import { composePlannerSlate, resolvePlannerPreset, PLANNER_SLATE_PRESETS, type PlannerPresetId, plannerBriefPaths, briefCandidates, defaultPlannerBriefPath } from '../fleet/planner-slate-presets.js';
+import { parsePlannerSlate, writePlannerSlate } from '../fleet/planner-slate-write.js';
+import { readSource } from '../fleet/runs-parked-queue.js';
+import type { PlannerHealth } from '../fleet/planner-failover.js';
 
 // ---------------------------------------------------------------------------
 // Needs-you (pure builder + cache)
@@ -431,9 +441,13 @@ type ApplyModule = typeof import('../vision/leader-apply.js');
 interface LeaderApiHooks {
   loadRunDeps?: (ctx: VerseApiContext) => Promise<import('../vision/leader.js').LeaderRunDeps>;
   now?: () => number;
+  /** Test seam for the planner-plan route: the runs root to read. */
+  plannerRunsRoot?: () => string;
+  plannerRun?: (opts: RunPlannerPassOpts) => Promise<PlannerRunResult>;
 }
 
 let hooks: LeaderApiHooks = {};
+let plannerRunStartedAt: string | null = null;
 
 /** Test hook: inject deps (fakes for the ledger, seats, …). Pass {} to restore. */
 export function setLeaderApiHooksForTest(next: LeaderApiHooks): void {
@@ -458,7 +472,7 @@ function hasOnlyKeys(body: Record<string, unknown>, allowed: readonly string[]):
   return null;
 }
 
-async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
+async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res: ServerResponse, allowEmpty = true): Promise<Record<string, unknown> | null> {
   if (!ctx.allowDispatch) {
     sendJson(res, 404, { error: 'not found' });
     return null;
@@ -473,7 +487,7 @@ async function readMutationBody(ctx: VerseApiContext, req: IncomingMessage, res:
   }
   let parsed: unknown;
   try {
-    parsed = raw.length === 0 ? {} : (JSON.parse(raw) as unknown);
+    parsed = raw.length === 0 && allowEmpty ? {} : (JSON.parse(raw) as unknown);
   } catch {
     sendInvalid(res, 'invalid JSON body');
     return null;
@@ -678,10 +692,226 @@ async function handleThreadRoutes(ctx: VerseApiContext, req: IncomingMessage, re
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Planner plan preview (which login the next planner pass would run on)
+// ---------------------------------------------------------------------------
+
+export interface PlannerHealthRow extends PlannerHealth {
+  /** The login this reading belongs to (the file's lastProvider); null when none is declared. */
+  provider: string | null;
+}
+export interface PlannerLimitedRow {
+  provider: string;
+  /** Why the login cannot run — 'usage-limit' today; free-form for forward readers. */
+  status: string;
+  /** Advertised reset (local ISO), null when none was read. */
+  until: string | null;
+}
+export interface PlannerPlanV1 {
+  v: 1;
+  generatedAt: string;
+  /** The candidates file this plan was read from (home collapses to ~ on the wire). */
+  path: string;
+  /** 'ok' slate read; 'missing'/'invalid' candidates file; 'unavailable' health read. */
+  source: 'ok' | 'missing' | 'invalid' | 'unavailable';
+  /** The login the next pass would run on plus its health reason, or null. */
+  choice: { provider: string; reason: string } | null;
+  /** Earliest advertised reset among limited candidates; null when none. */
+  nextResetAt: string | null;
+  limited: PlannerLimitedRow[];
+  health: PlannerHealthRow[];
+}
+
+export interface PlannerPlanDeps {
+  runsRoot?: string;
+  now?: number;
+}
+
+/**
+ * The Dispatch pane's planner preview: read the declared slate
+ * (planner-candidates.ts) and plan ONE pass over it (planner-run.ts
+ * planPlannerPass — health read + runner choice only, never a spawn).
+ * A missing or malformed slate still returns the health rows so the pane can
+ * say which is wrong. Never throws: source 'unavailable' when the plan read
+ * itself fails.
+ */
+export async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<PlannerPlanV1> {
+  const now = deps.now ?? Date.now();
+  const runsRoot = deps.runsRoot ?? join(homedir(), '.ashlr-runs');
+  const { readPlannerCandidates } = await import('../fleet/planner-candidates.js');
+  const { isProviderLimited } = await import('../fleet/planner-failover.js');
+  const { planPlannerPass } = await import('../fleet/planner-run.js');
+  const slate = await readPlannerCandidates(runsRoot);
+  const home = homedir();
+  const out: PlannerPlanV1 = {
+    v: 1,
+    generatedAt: new Date(now).toISOString(),
+    // The console prints this path on the missing-file line; home collapses
+    // to ~ for readability, like the shell does.
+    path: slate.path.startsWith(`${home}${sep}`) ? `~${slate.path.slice(home.length)}` : slate.path,
+    source: 'unavailable',
+    choice: null,
+    nextResetAt: null,
+    limited: [],
+    health: [],
+  };
+  try {
+    // planPlannerPass files the newest health under lastProvider, so that
+    // login is the only candidate a reading can prove limited — the failover
+    // contract. No tasks: this preview does not answer the frontier.
+    const { health, choice } = await planPlannerPass({
+      runsRoot,
+      candidates: slate.candidates,
+      lastProvider: slate.lastProvider ?? '',
+      now,
+    });
+    const healthByProvider: Record<string, PlannerHealth> = { [slate.lastProvider ?? '']: health };
+    const limited: PlannerLimitedRow[] = [];
+    const seen = new Set<string>();
+    for (const c of slate.candidates) {
+      if (!isProviderLimited(healthByProvider[c.provider], now) || seen.has(c.provider)) continue;
+      seen.add(c.provider);
+      limited.push({ provider: c.provider, status: health.reason ?? health.status, until: health.resetAt });
+    }
+    const chosenHealth = choice.ok ? healthByProvider[choice.provider] : undefined;
+    const resets = limited
+      .map((row) => Date.parse(row.until ?? ''))
+      .filter((ms) => Number.isFinite(ms) && ms > now);
+    out.source = slate.source;
+    out.choice = choice.ok
+      ? { provider: choice.provider, reason: chosenHealth?.reason ?? chosenHealth?.status ?? 'unread' }
+      : null;
+    out.nextResetAt = resets.length > 0 ? new Date(Math.min(...resets)).toISOString() : null;
+    out.limited = limited;
+    out.health = [{ provider: slate.lastProvider, ...health }];
+    return out;
+  } catch {
+    out.source = 'unavailable';
+    return out;
+  }
+}
+
 export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_LEADER_PATH && !path.startsWith(`${VERSE_LEADER_PATH}/`)) return false;
   const now = hooks.now ?? Date.now;
   try {
+    if (path === `${VERSE_LEADER_PATH}/orders`) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
+      else {
+        const { readOrderTrace } = await import('../fleet/order-trace.js');
+        sendJson(res, 200, await readOrderTrace({ now }));
+      }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/resources`) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
+      else {
+        const { readResourceLedger } = await import('../fleet/runs-resource-ledger.js');
+        sendJson(res, 200, await readResourceLedger({ now }));
+      }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/resources/resets`) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
+      else {
+        const { readUsageResets } = await import('../fleet/usage-reset-detect.js');
+        sendJson(res, 200, await readUsageResets({ now }));
+      }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/slate`) {
+      if (method !== 'GET' && method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const body = method === 'POST' ? await readMutationBody(ctx, req, res, false) : null;
+      if (method === 'POST' && !body) return true;
+      if ((req.url ?? '').includes('?')) { sendInvalid(res, 'this route takes no query parameters'); return true; }
+      const runsRoot = hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs');
+      const context = { home: homedir(), runsRoot };
+      // Gather metadata asynchronously; composition itself only sees an in-memory lookup.
+      const briefs = plannerBriefPaths(runsRoot);
+      const metadata = new Map<string, Stats>();
+      for (const brief of briefs) {
+        try { metadata.set(brief, await stat(brief)); } catch { /* absent or inaccessible */ }
+      }
+      const availableBriefs = briefCandidates(runsRoot, path => {
+        const info = metadata.get(path);
+        if (!info) throw new Error('unavailable');
+        return info;
+      });
+      if (body) {
+        const ids = body['presets'];
+        if (hasOnlyKeys(body, ['presets', 'promptPath']) || !Array.isArray(ids) || ids.length < 1 || ids.length > 8 ||
+            ids.some(id => typeof id !== 'string' || !PLANNER_SLATE_PRESETS.includes(id as PlannerPresetId)) || new Set(ids).size !== ids.length ||
+            (Object.hasOwn(body, 'promptPath') && !parsePlannerSlate(Buffer.from(JSON.stringify({ v: 1, candidates: [{ provider: 'validation', argv: ['validation'] }], promptPath: body['promptPath'] }))))) {
+          sendInvalid(res, 'invalid presets or promptPath'); return true;
+        }
+        const promptPath = body['promptPath'] as string | undefined ?? defaultPlannerBriefPath(runsRoot, path => metadata.get(path)?.isFile() ?? false);
+        if (promptPath === null) { sendJson(res, 409, { error: 'no-brief', checked: briefs }); return true; }
+        let slate;
+        try { slate = composePlannerSlate(ids as string[], promptPath, context); }
+        catch { sendInvalid(res, 'invalid preset paths'); return true; }
+        if ('error' in slate) { sendJson(res, 409, { error: 'preset-unavailable', preset: slate.preset }); return true; }
+        const status = writePlannerSlate(runsRoot, slate);
+        sendJson(res, status === 'refused' ? 409 : 200, { v: 1, status, candidateCount: slate.candidates.length, promptPath });
+      } else {
+        const path = join(runsRoot, 'queue', 'planner-candidates.json');
+        const input = await readSource(path, 64 * 1024, false);
+        const slate = input.state === 'healthy' ? parsePlannerSlate(Buffer.from(input.text)) : null;
+        const promptPath = slate?.promptPath ?? null;
+        let promptInfo = null;
+        try { if (promptPath) promptInfo = await stat(promptPath); } catch { /* missing prompt */ }
+        const presets = PLANNER_SLATE_PRESETS.map(id => resolvePlannerPreset(id, context));
+        sendJson(res, 200, {
+          v: 1, generatedAt: new Date(now()).toISOString(), source: input.state === 'missing' ? 'missing' : slate ? 'ok' : 'invalid', path,
+          candidates: (slate?.candidates ?? []).map(candidate => ({
+            provider: candidate.provider,
+            preset: presets.find(preset => preset.provider === candidate.provider && JSON.stringify(preset.argv) === JSON.stringify(candidate.argv))?.id ?? null,
+            argvLength: candidate.argv.length,
+          })), promptPath, promptExists: promptInfo?.isFile() ?? false,
+          promptAgeSeconds: promptInfo?.isFile() ? Math.max(0, (now() - promptInfo.mtimeMs) / 1000) : null,
+          presets: presets.map(({ id, provider, available, binary, dropDir }) => ({ id, provider, available, binary, dropDir })),
+          briefCandidates: availableBriefs,
+        });
+      }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/run`) {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const body = await readMutationBody(ctx, req, res, false);
+      if (!body) return true;
+      if (hasOnlyKeys(body, ['reason']) || (body['reason'] !== undefined
+        && (typeof body['reason'] !== 'string' || body['reason'].length > 200))) {
+        sendInvalid(res, 'body must contain only an optional reason of at most 200 characters');
+        return true;
+      }
+      if (plannerRunStartedAt !== null) {
+        sendJson(res, 409, { error: 'pass-in-flight', startedAt: plannerRunStartedAt });
+        return true;
+      }
+      const timestamp = now();
+      plannerRunStartedAt = new Date(timestamp).toISOString();
+      try {
+        const runsRoot = hooks.plannerRunsRoot?.() ?? join(homedir(), '.ashlr-runs');
+        const slate = await readPlannerCandidates(runsRoot);
+        if (slate.source !== 'ok') { sendJson(res, 409, { error: 'no-slate', path: slate.path }); return true; }
+        const promptPath = await readPlannerPromptPath(runsRoot);
+        if (promptPath === null) { sendJson(res, 409, { error: 'no-prompt-declared', path: slate.path }); return true; }
+        const result = await (hooks.plannerRun ?? runPlannerPass)({
+          runsRoot, candidates: slate.candidates, lastProvider: slate.lastProvider ?? '', promptPath, now: timestamp,
+        });
+        const { v, provider, outcome, exitCode, logPath, startedAt, finishedAt, nextResetAt, planError } = result;
+        sendJson(res, 200, { v, provider, outcome, exitCode, logPath, startedAt, finishedAt, nextResetAt, planError });
+      } finally { plannerRunStartedAt = null; }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/planner/plan`) {
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
+      else sendJson(res, 200, await buildPlannerPlan({ runsRoot: hooks.plannerRunsRoot?.(), now: now() }));
+      return true;
+    }
     if (await handleThreadRoutes(ctx, req, res, path, method)) return true;
     if (method === 'GET') {
       if ([...new URL(req.url ?? '/', 'http://localhost').searchParams.keys()].length > 0) {

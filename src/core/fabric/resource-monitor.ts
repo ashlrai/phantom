@@ -8,7 +8,7 @@
  *  - Never throws. Every sensing path is wrapped in try/catch and degrades
  *    to availability:'unknown', which resource-aware dispatch treats as no
  *    trusted capacity signal.
- *  - No network calls except the Ollama localhost health check (2s timeout).
+ *  - Local health checks use loopback only, with a 2s timeout.
  *  - Claude sensing: first trusts unexpired Claude CLI rate_limit_event JSONL
  *    captured locally, then falls back to OAuth usage, transcript sensing, and
  *    finally legacy stats-cache/fleet budget paths.
@@ -20,10 +20,10 @@
  *    clearly says "fleet 7d claude spend vs budget". ~/.claude/stats-cache.json
  *    is used ONLY as a weak fallback when its lastComputedDate is within the
  *    window AND the new ledger-based budget fields are absent.
- *  - Codex sensing delegates entirely to readCodexRateLimits() — real data.
+ *  - Codex sensing reads account-isolated personal rollout quota evidence.
  *  - NIM sensing first verifies that the executor can resolve its configured
  *    credential, then reactively reads the in-memory backoff store.
- *  - Local/Ollama sensing: GET /api/ps with 2s timeout.
+ *  - Local sensing: Ollama /api/ps and oMLX /v1/models.
  *  - Builtin: always available, no sensing needed.
  *
  * Integration point for M255 concurrent dispatcher:
@@ -39,10 +39,11 @@ import * as os from 'os';
 import * as path from 'path';
 import * as http from 'http';
 import type { AshlrConfig, EngineId } from '../types.js';
-import { readCodexRateLimits } from '../observability/codex-source.js';
+import { collectCodexSessionUsages, buildCodexResourceReport } from '../fleet/codex-session-usage.js';
 import { readDecisions } from '../fleet/decisions-ledger.js';
 import { resolveProviderKey, explainProviderKey } from '../integrations/secrets.js';
 import { resolveEngineRegistry } from '../run/engine-registry.js';
+import { pinLoopbackHost, validateLocalBaseUrl } from '../run/local-inference.js';
 import { readClaudeUsage } from './claude-usage.js';
 import { fetchClaudeUsageApi } from './usage-api.js';
 import {
@@ -108,14 +109,52 @@ export interface ResourceSnapshot {
 // Called by fleet daemon's 429 handler; read by getResourceState().
 // ---------------------------------------------------------------------------
 
-const backoffStore = new Map<EngineId, { until: number; reason: string }>();
+interface BackoffEvidence {
+  home?: string;
+  cause?: 'quota' | 'other';
+}
+const backoffStore = new Map<EngineId, {
+  until: number; reason: string; recordedAt: number; home: string | null; quotaOnly: boolean;
+}>();
+let lastCodexHome: string | null = null;
+
+/** Never resolve an alias into the CMP account, or enumerate that account. */
+function personalCodexHome(raw: unknown = process.env.CODEX_HOME_ALT ?? path.join(os.homedir(), '.codex-2')): string | null {
+  if (typeof raw !== 'string' || raw !== raw.trim() || raw.length > 4096 ||
+      !path.isAbsolute(raw) || /[\\\p{Cc}]/u.test(raw) ||
+      raw.split('/').some(part => part === '.codex' || part === '..' || part === '.')) return null;
+  const home = path.resolve(raw);
+  if (home === path.parse(home).root) return null;
+  // Reject symlinks at every component, including a sessions alias. No realpath
+  // call can inadvertently traverse a link into the forbidden account.
+  let current = path.parse(home).root;
+  for (const part of path.relative(current, path.join(home, 'sessions')).split(path.sep)) {
+    current = path.join(current, part);
+    try { if (fs.lstatSync(current).isSymbolicLink()) return null; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') break;
+      return null;
+    }
+  }
+  return home;
+}
 
 /**
  * Record a rate-limit backoff for a backend.
  * Also invalidates the snapshot cache so the next call re-senses.
  */
-export function recordBackoff(backend: EngineId, retryAfterMs: number, reason: string): void {
-  backoffStore.set(backend, { until: Date.now() + retryAfterMs, reason });
+export function recordBackoff(backend: EngineId, retryAfterMs: number, reason: string, evidence?: BackoffEvidence): void {
+  const recordedAt = Date.now();
+  backoffStore.set(backend, {
+    until: recordedAt + retryAfterMs, reason, recordedAt,
+    home: backend === 'codex'
+      ? evidence?.home !== undefined ? personalCodexHome(evidence.home) : lastCodexHome
+      : null,
+    // Ambiguous failures (including auth and operator holds) never recover from
+    // usage alone. Optional metadata allows precise attribution by new callers.
+    quotaOnly: evidence?.cause === 'quota' || (evidence?.cause === undefined &&
+      /^(?:429 rate limit|quota exhausted|usage limit reached)$/i.test(reason)),
+  });
   // Invalidate cache so the gateway picks up the backoff immediately.
   _snapshotCache = null;
 }
@@ -329,6 +368,7 @@ function resourceSnapshotCacheKey(cfg: unknown, backends: EngineId[]): string {
       try { return { backend, ...apiCredentialReadiness(backend, cfg as AshlrConfig) }; }
       catch { return { backend, credentialName: null, credentialAvailable: false }; }
     }),
+    codexHome: process.env.CODEX_HOME_ALT ?? path.join(os.homedir(), '.codex-2'),
     claude: rcfg.claude ?? null,
     overrides: rcfg.overrides ?? null,
     protectPct: rcfg.protectPct ?? null,
@@ -607,27 +647,42 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
   // -------------------------------------------------------------------------
   // M254 OAUTH USAGE API PATH (authoritative when no fresh CLI event exists).
   //
-  // Fetches five_hour + seven_day utilization from the internal Claude Code
+  // Fetches reported five_hour and/or seven_day utilization from the internal Claude Code
   // OAuth endpoint. 60-second cache; never-throws; returns null on any error
   // or when CLAUDE_CODE_OAUTH_TOKEN / CLAUDE_BRIDGE_OAUTH_TOKEN are absent.
   //
-  // When available: availability is classified using max(fiveHourPct, weeklyPct)
-  // vs protectPct thresholds. The reason string cites both windows. This is the
-  // most authoritative signal — reflects Mason's actual subscription headroom,
-  // not just the fleet's transcript files.
+  // When available: the weekly window governs whenever one is reported —
+  // usedPct, capWindow '7d', resetsAt and availability all come from it
+  // (standing order: no 5h window for Claude). The five_hour reading still
+  // appears in the reason string, marked informational. When weekly is absent
+  // the five_hour reading is the only evidence and still governs; an absent
+  // weekly reading never creates headroom. This is the most authoritative
+  // signal — reflects Mason's actual subscription headroom, not just the
+  // fleet's transcript files.
   //
   // When null: falls through to the M253 transcript method (fully intact).
   // -------------------------------------------------------------------------
   try {
     const apiUsage = await fetchClaudeUsageApi();
     if (apiUsage !== null) {
-      const combinedPct = Math.max(apiUsage.fiveHourPct, apiUsage.weeklyPct);
+      const windows = [
+        { pct: apiUsage.weeklyPct, reset: apiUsage.weeklyResetAt, label: 'weekly', capWindow: '7d' },
+        { pct: apiUsage.fiveHourPct, reset: apiUsage.fiveHourResetAt, label: '5h', capWindow: '5h' },
+      ].filter((window): window is typeof window & { pct: number; reset: number } =>
+        window.pct !== null && window.reset !== null);
+      // A reported weekly window always governs; the 5h reading is
+      // informational only. With no weekly reading the 5h window is the only
+      // evidence and still governs — absent weekly data never creates headroom.
+      const governing = windows.find((window) => window.capWindow === '7d') ?? windows[0];
+      const combinedPct = governing.pct;
       const clampedPct  = Math.max(0, Math.min(combinedPct, 200));
 
       let availability: BackendAvailability;
       let reason: string;
 
-      const sourceNote = `(5h: ${apiUsage.fiveHourPct}%, weekly: ${apiUsage.weeklyPct}%; source=oauth-usage-api)`;
+      const sourceNote = `(${windows.map(window =>
+        `${window.label}: ${window.pct}%${window === governing ? '' : ' (not governing)'}`,
+      ).join(', ')}; source=oauth-usage-api)`;
 
       if (clampedPct >= 100) {
         availability = 'exhausted';
@@ -643,9 +698,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
         reason = `claude at ${clampedPct}% — within limit ${sourceNote}`;
       }
 
-      // resetsAt: use the higher (further out) of the two reset times, so we
-      // don't prematurely claim the window has reset.
-      const resetsAt = Math.max(apiUsage.fiveHourResetAt, apiUsage.weeklyResetAt);
+      const resetsAt = governing.reset;
 
       return {
         backend: 'claude',
@@ -653,7 +706,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
         usedPct: clampedPct,
         cap: 100,
         capUnit: null,    // utilization is already a percentage — no raw cap unit
-        capWindow: '7d',  // primary display: weekly (most conservative window)
+        capWindow: governing.capWindow,
         resetsAt,
         costPerMTokenOut: 0,
         p50LatencyMs: null,
@@ -906,122 +959,61 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
 }
 
 function senseCodexState(): BackendResourceState {
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   const backoff = backoffStore.get('codex');
-
-  if (backoff && backoff.until > Date.now()) {
-    return {
-      backend: 'codex',
-      availability: 'exhausted',
-      usedPct: null,
-      cap: null,
-      capUnit: null,
-      capWindow: null,
-      resetsAt: Math.floor(backoff.until / 1000),
-      costPerMTokenOut: 0,
-      p50LatencyMs: null,
-      snapshotAt: now,
-      reason: `backoff: ${backoff.reason}`,
-      backoffUntilMs: backoff.until,
-    };
-  }
-
+  const active = backoff && backoff.until > nowMs ? backoff : null;
+  const fallback = (): BackendResourceState => ({
+    backend: 'codex', availability: active ? 'exhausted' : 'unknown',
+    usedPct: null, cap: null, capUnit: null, capWindow: null,
+    resetsAt: active ? Math.floor(active.until / 1000) : null,
+    costPerMTokenOut: 0, p50LatencyMs: null, snapshotAt: now,
+    reason: active ? `backoff: ${active.reason}` : 'personal codex headroom unknown',
+    backoffUntilMs: active?.until ?? null,
+  });
   try {
-    const limits = readCodexRateLimits();
-    if (!limits) {
-      return {
-        backend: 'codex',
-        availability: 'unknown',
-        usedPct: null,
-        cap: null,
-        capUnit: null,
-        capWindow: null,
-        resetsAt: null,
-        costPerMTokenOut: 0,
-        p50LatencyMs: null,
-        snapshotAt: now,
-        reason: 'no codex session files found',
-        backoffUntilMs: null,
-      };
+    const home = personalCodexHome();
+    lastCodexHome = home;
+    if (!home) return fallback();
+    const usages = collectCodexSessionUsages({
+      env: { CODEX_HOME: home, CODEX_HOME_ALT: home }, homeDir: os.homedir(),
+    }).map(usage => ({ ...usage, accountId: 'codex-personal', slot: 'secondary' as const }));
+    const report = buildCodexResourceReport(usages, [], nowMs).resources[0];
+    const usage = usages[0];
+    if (!report || !usage) return fallback();
+    const observedMs = Date.parse(report.observedAt ?? '');
+    const current = report.state === 'current' && observedMs <= nowMs;
+    const windows = [usage.primary, usage.secondary].filter(w => w !== null);
+    const best = windows.reduce<(typeof windows)[number] | null>(
+      (best, w) => !best || w.usedPercent > best.usedPercent ? w : best, null);
+    const denied = report.limitReached || report.spendControlReached === true ||
+      report.individualLimitPercent === 0;
+    if (active) {
+      if (!(active.quotaOnly && active.home === home && current &&
+          observedMs > active.recordedAt && best &&
+          windows.every(w => w.usedPercent < 100) && !denied)) return fallback();
+      backoffStore.delete('codex');
     }
-
-    // Use the higher of primary/secondary (most conservative)
-    let best: { usedPercent: number; windowMinutes: number; resetsAt: number } | null = null;
-    for (const w of [limits.primary, limits.secondary]) {
-      if (!w) continue;
-      if (best === null || w.usedPercent > best.usedPercent) best = w;
-    }
-
-    if (!best) {
-      return {
-        backend: 'codex',
-        availability: 'unknown',
-        usedPct: null,
-        cap: null,
-        capUnit: null,
-        capWindow: null,
-        resetsAt: null,
-        costPerMTokenOut: 0,
-        p50LatencyMs: null,
-        snapshotAt: now,
-        reason: 'codex session found but no rate-limit data',
-        backoffUntilMs: null,
-      };
-    }
-
-    const usedPct = Math.round(best.usedPercent);
+    if (!current || !best) return fallback();
+    // Keep the public percentage identical to the measured resource report.
+    const usedPct = Math.min(100, best.usedPercent);
     const mins = best.windowMinutes;
-    const capWindow = mins % (60 * 24 * 7) === 0 ? `${mins / (60 * 24 * 7)}w`
-      : mins % (60 * 24) === 0 ? `${mins / (60 * 24)}d`
-      : mins % 60 === 0 ? `${mins / 60}h`
-      : `${mins}m`;
-
-    let availability: BackendAvailability;
-    let reason: string;
-
-    if (usedPct >= 100) {
-      availability = 'exhausted';
-      reason = `codex window ${usedPct}% used (${capWindow}) — exhausted`;
-    } else if (usedPct >= 90) {
-      availability = 'throttled';
-      reason = `codex window ${usedPct}% used (${capWindow}) — near cap`;
-    } else if (usedPct >= 75) {
-      availability = 'near';
-      reason = `codex window ${usedPct}% used (${capWindow}) — nearing limit`;
-    } else {
-      availability = 'open';
-      reason = `codex window ${usedPct}% used (${capWindow}) — within limit`;
-    }
-
+    const capWindow = mins === null ? null
+      : mins % 10080 === 0 ? `${mins / 10080}w`
+      : mins % 1440 === 0 ? `${mins / 1440}d`
+      : mins % 60 === 0 ? `${mins / 60}h` : `${mins}m`;
+    const availability: BackendAvailability = denied || usedPct >= 100 ? 'exhausted'
+      : usedPct >= 90 ? 'throttled' : usedPct >= 75 ? 'near' : 'open';
     return {
-      backend: 'codex',
-      availability,
-      usedPct,
-      cap: 100, // percent-based; real hard limit not exposed
-      capUnit: 'requests',
-      capWindow,
-      resetsAt: best.resetsAt,
-      costPerMTokenOut: 0,
-      p50LatencyMs: null,
-      snapshotAt: now,
-      reason,
+      backend: 'codex', availability, usedPct, cap: 100, capUnit: 'requests',
+      capWindow, resetsAt: best.resetsAt, costPerMTokenOut: 0,
+      p50LatencyMs: null, snapshotAt: now,
+      reason: denied ? 'codex provider denial or spend control'
+        : `codex window ${usedPct}% used (${capWindow}) — ${availability}`,
       backoffUntilMs: null,
     };
   } catch {
-    return {
-      backend: 'codex',
-      availability: 'unknown',
-      usedPct: null,
-      cap: null,
-      capUnit: null,
-      capWindow: null,
-      resetsAt: null,
-      costPerMTokenOut: 0,
-      p50LatencyMs: null,
-      snapshotAt: now,
-      reason: 'codex sensing failed; subscription headroom unknown',
-      backoffUntilMs: null,
-    };
+    return fallback();
   }
 }
 
@@ -1135,19 +1127,27 @@ function senseCredentialedApiState(backend: 'nim' | 'kimi', cfg: unknown, rcfg: 
   return senseReactiveApiState(backend, resourceCfg, { costPerMTokenOut: defaultCost, label: backend });
 }
 
+const OMLX_PORT = 8123;
+const LOCAL_PROBE_TIMEOUT_MS = 2000;
+
 /** Ping Ollama /api/ps with a 2-second timeout. Returns null on timeout/error. */
 function ollamaPs(baseUrl: string): Promise<{ models: unknown[] } | null> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), 2000);
+    let req: http.ClientRequest | undefined;
+    const timer = setTimeout(() => { req?.destroy(); resolve(null); }, LOCAL_PROBE_TIMEOUT_MS);
     try {
-      const url = new URL('/api/ps', baseUrl);
-      const req = http.get(
-        { hostname: url.hostname, port: Number(url.port) || 11434, path: url.pathname, timeout: 2000 },
+      const checked = validateLocalBaseUrl(baseUrl);
+      if (!checked.ok || !checked.loopback) { clearTimeout(timer); resolve(null); return; }
+      const url = new URL('/api/ps', checked.baseUrl);
+      if (url.protocol !== 'http:') { clearTimeout(timer); resolve(null); return; }
+      req = http.get(
+        { hostname: pinLoopbackHost(url.hostname).replace(/^\[|\]$/g, ''), port: Number(url.port) || 11434, path: url.pathname, timeout: LOCAL_PROBE_TIMEOUT_MS },
         (res) => {
-          clearTimeout(timer);
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) { res.resume(); clearTimeout(timer); resolve(null); return; }
           let body = '';
           res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
           res.on('end', () => {
+            clearTimeout(timer);
             try {
               const parsed = JSON.parse(body) as unknown;
               if (typeof parsed === 'object' && parsed !== null && Array.isArray((parsed as Record<string, unknown>)['models'])) {
@@ -1163,7 +1163,12 @@ function ollamaPs(baseUrl: string): Promise<{ models: unknown[] } | null> {
         },
       );
       req.on('error', () => { clearTimeout(timer); resolve(null); });
-      req.on('timeout', () => { req.destroy(); clearTimeout(timer); resolve(null); });
+      req.on('timeout', () => {
+        if (!req) { clearTimeout(timer); resolve(null); return; }
+        req.destroy();
+        clearTimeout(timer);
+        resolve(null);
+      });
     } catch {
       clearTimeout(timer);
       resolve(null);
@@ -1174,7 +1179,7 @@ function ollamaPs(baseUrl: string): Promise<{ models: unknown[] } | null> {
 /**
  * Capacity for the llama-server serving runtime — the local FLEET runtime.
  *
- * This is deliberately NOT `senseOllamaState`. The two local runtimes have
+ * This is deliberately NOT `senseLocalState`. The two local runtimes have
  * opposite capacity models and sharing one sense function would flatten the
  * only difference that matters:
  *
@@ -1331,7 +1336,7 @@ async function senseLlamaServerState(
   }
 }
 
-async function senseOllamaState(backend: EngineId, rcfg: ResourceCfgShape): Promise<BackendResourceState> {
+export async function senseLocalState(backend: EngineId, rcfg: ResourceCfgShape, omlxPort = OMLX_PORT): Promise<BackendResourceState> {
   const now = new Date().toISOString();
   const backoff = backoffStore.get(backend);
   const maxConcurrent = rcfg.local?.maxConcurrent ?? 1;
@@ -1355,7 +1360,15 @@ async function senseOllamaState(backend: EngineId, rcfg: ResourceCfgShape): Prom
   }
 
   try {
-    const ps = await ollamaPs(baseUrl);
+    const [ps, omlx] = await Promise.all([ollamaPs(baseUrl),
+      Number.isInteger(omlxPort) && omlxPort >= 1 && omlxPort <= 65535 ? fetch(`http://127.0.0.1:${omlxPort}/v1/models`, { signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS), redirect: 'error' })
+        .then((res) => { void res.body?.cancel().catch(() => {}); return res.ok; }).catch(() => false) : Promise.resolve(false),
+    ]);
+    if (ps === null && omlx) {
+      return { backend, availability: 'open', usedPct: null, cap: maxConcurrent, capUnit: 'concurrent',
+        capWindow: null, resetsAt: null, costPerMTokenOut: 0, p50LatencyMs: null, snapshotAt: now,
+        reason: 'oMLX reachable; occupancy unknown', backoffUntilMs: null };
+    }
     if (ps === null) {
       return {
         backend,
@@ -1368,7 +1381,7 @@ async function senseOllamaState(backend: EngineId, rcfg: ResourceCfgShape): Prom
         costPerMTokenOut: 0,
         p50LatencyMs: null,
         snapshotAt: now,
-        reason: `ollama unreachable at ${baseUrl} — health check timed out`,
+        reason: 'ollama and oMLX unreachable',
         backoffUntilMs: null,
       };
     }
@@ -1464,7 +1477,7 @@ export async function getBackendResourceState(
       case 'claude':    return await senseClaudeState(rcfg);
       case 'codex':     return senseCodexState();
       case 'builtin':   return builtinState('builtin');
-      case 'local-coder': return await senseOllamaState('local-coder', rcfg);
+      case 'local-coder': return await senseLocalState('local-coder', rcfg);
       default:          return builtinState(backend);
     }
   } catch {

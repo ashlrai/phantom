@@ -49,7 +49,7 @@ describe('Settings agent workspace opt-in', () => {
     await user.keyboard(' ');
     expect(toggle).toBeChecked();
     expect(screen.getByText('Workspace feature fixture')).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)!)).toEqual({ agentWorkspace: true });
+    expect(JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)!)).toEqual({ agentWorkspace: true, oneAsk: false });
     view.unmount();
     resetFeatureFlagsForTests();
     renderSettings();
@@ -93,7 +93,7 @@ describe('Settings agent workspace opt-in', () => {
     assertRedacted();
     await user.click(screen.getByRole('switch', { name: 'Agent workspace' }));
     assertRedacted();
-    expect(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)).toBe('{"agentWorkspace":false}');
+    expect(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY)).toBe('{"agentWorkspace":false,"oneAsk":false}');
     expect(getMutationToken()).toBe(sentinels[1]);
   });
 });

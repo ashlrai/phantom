@@ -1,0 +1,4 @@
+{"event":"finish","job":"RQ-FAKE-1","lane":"codex-personal","tokens_total":12345,"ts":"2026-10-31T00:01:21+0000"}
+{"event":"finish","job":"RQ-FAKE-2","lane":"codex-personal","tokens_total":5,"ts":"2026-10-31T00:02:21Z"}
+{"event":"finish","job":"RQ-FAKE-3","lane":"codex-personal","tokens_total":999,"ts":"2026-10-30T20:01:21Z"}
+{"event":"publish","job":"RQ-FAKE-1","lane":"devin","url":"https://github.com/example/fake/pull/1","class":"pr","ts":"2026-10-31T00:03:21Z"}

@@ -188,8 +188,6 @@ export const AUTOMATION_ID_PATTERN = /^au_[a-z0-9][a-z0-9-]{1,47}$/;
 export const AUTOMATION_FIRING_ID_PATTERN = /^af_\d{8}T\d{6}_[a-z0-9]{6}$/;
 export const AUTOMATION_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const AUTOMATION_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 :._/+-]{0,49}$/;
-/** A playbook ref as src/core/playbooks writes it: `id` or `id@vN` (validate.ts canonicalises `!macro` / `id@N`). */
-export const AUTOMATION_PLAYBOOK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}(?:@v\d{1,6})?$/;
 
 // ---------------------------------------------------------------------------
 // Firings

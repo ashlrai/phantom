@@ -18,16 +18,18 @@ import { makeColors, isTty } from './ui.js';
  * list (or HELP_ENTRIES) ever falls out of sync with it again).
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
+  'graph',
   'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'steward', 'improve', 'autopilot', 'metrics', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
-  'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
-  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'sandbox', 'audit',
+  'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
+  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'node', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
+  'channels',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -52,22 +54,23 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget',
+  'worktrees', 'drive', 'budget', 'top',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  graph: ['nodes', 'edges', 'status', '--json', '--help'],
   sweep: ['report'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
-  queue: ['report', '--help'],
+  queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend'],
   run: ['show'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
@@ -78,9 +81,10 @@ const SUBCOMMANDS: Record<string, string[]> = {
   wire: ['claude', 'codex', 'cursor', 'gemini', 'all', 'status'],
   notify: ['test', 'session'],
   telemetry: ['status', 'test'],
+  node: ['bootstrap'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
-  backlog: ['refresh', 'plan'],
+  backlog: ['refresh', 'plan', 'lint'],
   inbox: ['show', 'approve', 'submit', 'reject', 'automerge'],
   daemon: [
     'start', 'stop', 'status', 'activation-preflight', 'activate',
@@ -89,12 +93,13 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   worker: ['setup', 'status'],
   fleet: [
-    'status', 'watch', 'direction', 'init', 'pause', 'resume', 'doctor',
+    'status', 'session', 'watch', 'lanes', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
-    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview',
+    'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog',
   ],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
+  ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],
   wiki: ['build', 'status', 'show', 'ask'],
   reflect: ['playbooks', 'propose'],
   health: ['propose'],
@@ -104,9 +109,10 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   'conductor-permit': ['request', 'mint', 'inspect', 'stage'],
   vision: ['show', 'review', 'preview', 'shadow', 'approve', 'reconcile', 'set'],
-  eval: ['attention', 'swe-bench'],
+  eval: ['attention', 'swe-bench', 'router'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand'],
+  channels: ['add', 'status', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
   ecosystem: ['doctor'],
   roadmap: ['run', 'resume', 'status'],
@@ -116,7 +122,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   skills: ['audit'],
   runtime: ['install', 'status', 'rollback', 'run'],
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
-  'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model'],
+  'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model', 'missing-model-guard'],
   // Mirrors the verb switch in src/cli/authority.ts (runAuthorityCli).
   authority: ['status', 'switch', 'stop', 'clear-stop', 'revoke', 'draft', 'grant', 're-approve', 'ledger', 'surface', 'protect', 'github-app', 'rotate-provenance', 'setup', 'resident', 'help'],
   // Mirror the verb switches in src/cli/leader.ts (runLeaderCli) and src/cli/mirror.ts (runMirrorCli).
@@ -129,7 +135,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
-  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'help'],
+  devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
@@ -200,24 +206,33 @@ complete -F _ashlr_completions ashlr phm
 `;
 }
 
-export async function cmdCompletions(args: string[]): Promise<number> {
-  const shell = args[0];
-  if (shell === 'zsh') {
-    process.stdout.write(zshScript());
-    return 0;
-  }
-  if (shell === 'bash') {
-    process.stdout.write(bashScript());
-    return 0;
-  }
+function printCompletionsHelp(): void {
   const c = makeColors(isTty());
   console.log('');
   console.log(c.bold('  phm completions') + c.dim(' — shell completion scripts'));
   console.log('');
+  console.log('  ' + c.bold('Usage:'));
+  console.log('');
   console.log(`    ${c.cyan('phm completions zsh')}    ${c.dim('print zsh completion (_ashlr) to stdout')}`);
   console.log(`    ${c.cyan('phm completions bash')}   ${c.dim('print bash completion to stdout')}`);
   console.log('');
-  return shell === undefined || shell === '--help' || shell === '-h' || shell === 'help' ? 0 : 2;
+}
+
+export async function cmdCompletions(args: string[]): Promise<number> {
+  const shell = args[0];
+  // `--help` / `-h` prints usage and never emits a script - even after a shell
+  // word (`completions zsh --help` used to dump the zsh script).
+  const help = args.includes('--help') || args.includes('-h') || shell === 'help' || shell === undefined;
+  if (shell === 'zsh' && !help) {
+    process.stdout.write(zshScript());
+    return 0;
+  }
+  if (shell === 'bash' && !help) {
+    process.stdout.write(bashScript());
+    return 0;
+  }
+  printCompletionsHelp();
+  return help ? 0 : 2;
 }
 
 // ---------------------------------------------------------------------------

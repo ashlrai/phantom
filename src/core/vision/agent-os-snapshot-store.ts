@@ -61,8 +61,6 @@ const MAX_LOCK_WAIT_MS = 2_000;
 const MAX_TEXT_BYTES = 512;
 const ATTEMPT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export const AGENT_OS_SNAPSHOT_GENESIS_DIGEST = GENESIS_DIGEST;
-
 type Digest = string;
 
 export interface AgentOsSnapshotPayloadV1 {

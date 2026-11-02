@@ -233,19 +233,6 @@ export const CODEX_CONTEXT_SEAT: VerseSeat = {
 
 export const CODEX_CATALOG_NOTE = "Model list is Phantom's built-in list until this seat's first turn fetches its own catalog.";
 
-/** codex-a: never ran a turn, so no catalog yet — the documented fallback list, and a note saying so. */
-export const CODEX_UNFETCHED_SEAT: VerseSeat = {
-  id: 'codex-a',
-  engine: 'codex',
-  label: 'Personal Codex',
-  accountId: 'codex-a',
-  models: [codexOption('gpt-5.5', 'GPT-5.5', 272_000, 'documented')],
-  contextWindow: codexEffectiveWindow(272_000, 95),
-  health: { state: 'ready', summary: null, windows: [], observedAt: null },
-  cliVersion: '0.136.0',
-  notes: [CODEX_CATALOG_NOTE],
-};
-
 /** grok-a: one budget, 400k of 500k; no expansive mode exists. */
 export const GROK_CONTEXT_SEAT: VerseSeat = {
   id: 'grok-a',

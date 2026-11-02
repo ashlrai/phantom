@@ -8,6 +8,8 @@ import { workingRuns } from './SteerPanel.js';
 import styles from './fleet-world.module.css';
 import { WorkspaceGraph } from './WorkspaceGraph.js';
 import { workspaceGraph } from './workspace-graph.js';
+import { Segmented } from '../../../components/primitives/Segmented.js';
+import { RunsGraph } from './RunsGraph.js';
 
 export default function FleetWorld({ read, refreshing = false, readFailed = false, agentWorkspace = false }: {
   read: OptionalRead<FleetLiveSnapshotV1> | undefined;
@@ -15,13 +17,17 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
   readFailed?: boolean;
   agentWorkspace?: boolean;
 }) {
+  const [lens, setLens] = useState<'workspaces' | 'runs'>('workspaces');
+  const lensSwitch = <Segmented aria-label="World lens" value={lens} onChange={setLens}
+    options={[{ value: 'workspaces', label: 'Workspaces' }, { value: 'runs', label: 'Runs graph' }]} />;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const filterId = useId();
   const inspectorId = useId();
   const live = read?.value;
-  if (!read) return readFailed ? <p role="status">Fleet data could not be read. Try refreshing Fleet.</p> : <p aria-busy="true">Loading the fleet world…</p>;
-  if (!live) return <p role="status">{read.reason ?? 'Fleet data is unavailable.'}</p>;
+  if (lens === 'runs') return <section aria-label="Fleet world">{lensSwitch}<RunsGraph /></section>;
+  if (!read) return <section aria-label="Fleet world">{lensSwitch}{readFailed ? <p role="status">Fleet data could not be read. Try refreshing Fleet.</p> : <p aria-busy="true">Loading the fleet world…</p>}</section>;
+  if (!live) return <section aria-label="Fleet world">{lensSwitch}<p role="status">{read.reason ?? 'Fleet data is unavailable.'}</p></section>;
 
   // Preserve server identities and repository layout between snapshots; a vanished
   // selection must not silently point to another account or task.
@@ -37,6 +43,7 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
   const stamp = Date.parse(live.generatedAt);
 
   return <section className={styles.world} aria-label="Fleet world">
+    {lensSwitch}
     <div className={styles.heading}>
       <div><h2>Your agents at work</h2><p>Recorded runs · {live.state}{refreshing ? ' · refreshing' : ''}</p></div>
       <label htmlFor={filterId}>Find a task or repository

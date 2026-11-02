@@ -10,8 +10,9 @@ const NOW = '2026-09-08T12:00:00.000Z';
 const OPEN: WorkerAccessSnapshot = { pausedWorkerIds: [], revision: 0, updatedAt: null };
 const PAUSED: WorkerAccessSnapshot = { pausedWorkerIds: ['codex-a'], revision: 1, updatedAt: NOW };
 const workers = resourceFixture().snapshot.pool.workers;
-const checkbox = (id = 'codex-a') => screen.getByRole('checkbox', { name: `Allow ${id} for fleet work` });
-const saveButton = () => screen.getByRole('button', { name: 'Save account access' });
+const accessPanel = () => within(screen.getByRole('region', { name: 'Fleet account access' }));
+const checkbox = (id = 'codex-a') => accessPanel().getByRole('checkbox', { name: `Allow ${id} for fleet work` });
+const saveButton = () => accessPanel().getByRole('button', { name: 'Save account access' });
 
 describe('fleet account access control', () => {
   it('shows shared-account pauses even when an alias checkbox has no explicit pause', () => {
@@ -20,9 +21,30 @@ describe('fleet account access control', () => {
     expect(screen.getAllByText('Whole account paused — all models sharing codex-account')).toHaveLength(2);
     expect(screen.getByText(/save its quota reservation below before releasing the whole-account pause/)).toBeVisible();
   });
-  it('omits legacy snapshots with no worker access contract', () => {
-    const { container } = render(<WorkerAccessControl workers={workers} policy={undefined} writable onSave={vi.fn()} />);
-    expect(container).toBeEmptyDOMElement();
+  it('explains unavailable access without creating permissions for legacy snapshots', () => {
+    const save = vi.fn();
+    render(<WorkerAccessControl workers={workers} policy={undefined} writable onSave={save} />);
+    expect(screen.getByRole('region', { name: 'Fleet account access' })).toHaveTextContent('Account access is unavailable in this snapshot.');
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+  });
+  it('explains an empty pool and shows existing accounts when they arrive without saving', () => {
+    const save = vi.fn();
+    const { rerender } = render(<WorkerAccessControl workers={[]} policy={OPEN} writable onSave={save} />);
+    expect(screen.getByText(/No worker accounts are configured in this pool/)).toBeVisible();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    rerender(<WorkerAccessControl workers={workers} policy={PAUSED} writable onSave={save} />);
+    expect(checkbox()).not.toBeChecked();
+    expect(saveButton()).toBeDisabled();
+    expect(save).not.toHaveBeenCalled();
+  });
+  it.each([{ historical: true }, { disabled: true }])('does not describe an unavailable empty snapshot as unconfigured %#', (props) => {
+    render(<WorkerAccessControl workers={[]} policy={OPEN} writable onSave={vi.fn()} {...props} />);
+    expect(screen.getByText(/No worker accounts were reported/)).toBeVisible();
+    expect(screen.queryByText(/No worker accounts are configured/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
   it('reflects saved personal-account pause without hiding other workers or implying task readiness', () => {
     render(<WorkerAccessControl workers={workers} policy={PAUSED} writable onSave={vi.fn()} />);
@@ -109,13 +131,26 @@ describe('account-access-only resource desk integration', () => {
     vi.stubGlobal('fetch', request);
     return { ...fixture, request };
   }
+  it('shows loading before existing worker access arrives without issuing a write', async () => {
+    const f = setup();
+    let resolve!: (response: Response) => void;
+    f.request.mockImplementation(() => new Promise<Response>((done) => { resolve = done; }));
+    render(<ResourcePoolView scope={f.scope} />);
+    expect(screen.getByRole('region', { name: 'Loading resource pool' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Fleet account access' })).not.toBeInTheDocument();
+    await act(async () => { resolve(new Response(JSON.stringify(f.snapshot))); });
+    expect(await screen.findByRole('region', { name: 'Fleet account access' })).toBeVisible();
+    expect(saveButton()).toBeDisabled();
+    expect(f.request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
   it('pauses account admission through the separate authenticated policy route without task authority', async () => {
     const f = setup(); setMutationToken('a'.repeat(64)); render(<ResourcePoolView scope={f.scope} />);
     const panel = await screen.findByRole('region', { name: 'Fleet account access' });
-    fireEvent.click(within(panel).getByRole('checkbox', { name: 'Allow codex-a for fleet work' }));
+    const access = within(panel);
+    fireEvent.click(access.getByRole('checkbox', { name: 'Allow codex-a for fleet work' }));
     expect(f.request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
-    fireEvent.click(saveButton());
-    await screen.findByText('Saved: Paused for fleet');
+    fireEvent.click(access.getByRole('button', { name: 'Save account access' }));
+    await access.findByText('Saved: Paused for fleet');
     const posts = f.request.mock.calls.filter(([, init]) => init?.method === 'POST');
     expect(posts).toHaveLength(1); expect(posts[0]![0]).toBe('/api/resources/worker-access');
     expect(JSON.parse(posts[0]![1]!.body as string)).toEqual({ pausedWorkerIds: ['codex-a'], expectedRevision: 0 });
@@ -142,9 +177,13 @@ describe('account-access-only resource desk integration', () => {
       throw new Error('Unexpected fixture request');
     });
     const { container } = render(<ResourcePoolView scope={f.scope} />);
-    await screen.findByRole('region', { name: 'Fleet account access' }); fireEvent.click(checkbox()); fireEvent.click(saveButton());
-    await screen.findByRole('button', { name: 'Use latest account access' });
-    expect(checkbox()).not.toBeChecked(); expect(checkbox('local-a')).toBeChecked(); expect(saveButton()).toBeDisabled();
+    const access = within(await screen.findByRole('region', { name: 'Fleet account access' }));
+    fireEvent.click(access.getByRole('checkbox', { name: 'Allow codex-a for fleet work' }));
+    fireEvent.click(access.getByRole('button', { name: 'Save account access' }));
+    await access.findByRole('button', { name: 'Use latest account access' });
+    expect(access.getByRole('checkbox', { name: 'Allow codex-a for fleet work' })).not.toBeChecked();
+    expect(access.getByRole('checkbox', { name: 'Allow local-a for fleet work' })).toBeChecked();
+    expect(access.getByRole('button', { name: 'Save account access' })).toBeDisabled();
     expect(f.request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
     expect(container.innerHTML).not.toContain('PRIVATE_SERVER_DETAIL'); expect(screen.getByText('Saved ceiling: 75%')).toBeVisible();
   });

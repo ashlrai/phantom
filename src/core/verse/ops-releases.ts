@@ -92,6 +92,18 @@ async function latestTag(path: string, run: OpsRunner): Promise<string | null> {
   return first ? first.slice(0, 120) : null;
 }
 
+async function commitsSinceTag(path: string, tag: string | null, run: OpsRunner): Promise<number | null> {
+  if (tag === null) return null;
+  try {
+    const raw = await run('git', ['-C', path, 'rev-list', '--count', `${tag}..HEAD`]);
+    if (raw === null || !/^\d+$/.test(raw.trim())) return null;
+    const count = Number(raw.trim());
+    return Number.isSafeInteger(count) ? count : null;
+  } catch {
+    return null;
+  }
+}
+
 interface GhRelease { tagName?: unknown; name?: unknown; publishedAt?: unknown; isDraft?: unknown; isPrerelease?: unknown }
 interface GhRun { status?: unknown; conclusion?: unknown; createdAt?: unknown; displayTitle?: unknown }
 type GhReleaseInfo = NonNullable<OpsRepoReleaseV1['gh']>['latestRelease'];
@@ -167,6 +179,7 @@ export async function probeRepoRelease(path: string, deps: OpsReleaseProbeDeps =
     path,
     version,
     latestTag: tag ? scrubSecrets(tag).slice(0, 120) : null,
+    commitsSinceTag: await commitsSinceTag(path, tag, run),
     releaseWorkflow: workflow,
     gh,
     notes: notes.map((n) => scrubSecrets(n).slice(0, 200)),
@@ -181,6 +194,7 @@ export async function probeReleases(paths: readonly string[], deps: OpsReleasePr
       path,
       version: null,
       latestTag: null,
+      commitsSinceTag: null,
       releaseWorkflow: null,
       gh: null,
       notes: ['This checkout could not be read.'],

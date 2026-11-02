@@ -1607,6 +1607,16 @@ function attentionFromCounts(
   }));
 }
 
+// These options affect presentation only; they do not limit the underlying read.
+const MAX_WORKSPACE_DIMENSION_ROWS = 100;
+const MAX_WORKSPACE_RECENT_ACTIONS = 100;
+const MAX_WORKSPACE_WINDOW_HOURS = 365 * 24;
+
+function workspacePositiveInteger(value: number | undefined, fallback: number, max: number): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return fallback;
+  return Math.min(max, Math.max(1, Math.floor(value)));
+}
+
 export function summarizeAgentWorkspace(
   events: AgentActionEvent[],
   opts?: {
@@ -1615,12 +1625,8 @@ export function summarizeAgentWorkspace(
     recentLimit?: number;
   },
 ): AgentWorkspaceStatus {
-  const limit = opts?.limitPerDimension !== undefined && opts.limitPerDimension > 0
-    ? Math.floor(opts.limitPerDimension)
-    : 8;
-  const recentLimit = opts?.recentLimit !== undefined && opts.recentLimit > 0
-    ? Math.floor(opts.recentLimit)
-    : 10;
+  const limit = workspacePositiveInteger(opts?.limitPerDimension, 8, MAX_WORKSPACE_DIMENSION_ROWS);
+  const recentLimit = workspacePositiveInteger(opts?.recentLimit, 10, MAX_WORKSPACE_RECENT_ACTIONS);
   const byAction = new Map<string, number>();
   const byOutcome = new Map<string, number>();
   const byRepo = new Map<string, number>();
@@ -1684,7 +1690,7 @@ export function summarizeAgentWorkspace(
 
   return {
     generatedAt: new Date().toISOString(),
-    windowHours: opts?.windowHours ?? 24,
+    windowHours: workspacePositiveInteger(opts?.windowHours, 24, MAX_WORKSPACE_WINDOW_HOURS),
     eventCount: semanticEvents.length,
     latestAt,
     activeMachines: [...activeMachines].sort().slice(0, 10),

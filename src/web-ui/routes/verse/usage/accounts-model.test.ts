@@ -351,7 +351,8 @@ describe('buildAccountCards — ordered by what can be used right now', () => {
       accounts: [account({ id: 'claude', provider: 'claude', label: 'Claude Max', windows: CLAUDE_WINDOWS })],
     });
     expect(cards[0]?.binding?.label).toBe('Week · Fable');
-    expect(cards[0]?.others.map((w) => w.label)).toEqual(['Session · rolling 5h', 'Week · all models']);
+    // Claude's retired session window is filtered out; the real ones stay.
+    expect(cards[0]?.others.map((w) => w.label)).toEqual(['Week · all models']);
   });
 });
 

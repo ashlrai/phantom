@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { JournalView } from './JournalView.js';
+import { JournalEntryRow } from './JournalEntryRow.js';
+import type { JournalEntry } from './journal-model.js';
 import { evictAll } from '../../data/cache.js';
 
 function renderJournal() {
@@ -58,6 +60,31 @@ describe('JournalView', () => {
     await waitFor(() => expect(screen.getByText('ship the feature')).toBeInTheDocument());
     expect(screen.getByText('Did the thing autonomously')).toBeInTheDocument();
     expect(screen.getByText('Daemon merge')).toBeInTheDocument();
+    expect(screen.getAllByLabelText('Actor: Unknown actor')).toHaveLength(3);
+  });
+
+  it.each([undefined, '', '   ', '\u202e\u0000'])('uses unknown attribution for an absent or empty actor (%j)', (actor) => {
+    const entry = { id: 'synthetic', ts: now, source: 'agent-action', title: 'Synthetic action', detail: '', statusLabel: 'success', actor } satisfies JournalEntry & { actor?: string };
+    render(<JournalEntryRow entry={entry} />);
+    expect(screen.getByLabelText('Actor: Unknown actor')).toHaveTextContent('Unknown actor');
+  });
+
+  it('renders synthetic actor names as isolated text and removes directional controls', () => {
+    const actor = '  Taylor <img src=x onerror=alert(1)>\u202e  ';
+    const entry = { id: 'synthetic', ts: now, source: 'agent-action', title: 'Synthetic action', detail: '', statusLabel: 'success', actor } satisfies JournalEntry & { actor: string };
+    const { container } = render(<JournalEntryRow entry={entry} />);
+    const label = screen.getByLabelText('Actor: Taylor <img src=x onerror=alert(1)>');
+    expect(label.tagName).toBe('BDI');
+    expect(label).toHaveTextContent('Taylor <img src=x onerror=alert(1)>');
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('bounds long synthetic actor names without splitting Unicode characters', () => {
+    const actor = '🧑'.repeat(1000);
+    const entry = { id: 'synthetic', ts: now, source: 'agent-action', title: 'Synthetic action', detail: '', statusLabel: 'success', actor } satisfies JournalEntry & { actor: string };
+    render(<JournalEntryRow entry={entry} />);
+    expect(screen.getByLabelText(`Actor: ${'🧑'.repeat(47)}…`)).toHaveTextContent(`${'🧑'.repeat(47)}…`);
+    expect(screen.queryByText(actor)).not.toBeInTheDocument();
   });
 
   it('filters entries by source via the checkbox group', async () => {

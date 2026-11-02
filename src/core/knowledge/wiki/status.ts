@@ -3,9 +3,9 @@
  *
  * Cheap by construction: one `git ls-tree` (blob ids), two small steering
  * reads, zero source reads. Each page's hash is recomputed from the inputs
- * recorded in the manifest, so "generated at <commit>, 3 pages stale" is exact
- * for every input the page was built from. (A brand-new file that WOULD become
- * an input is picked up by the next build, which re-plans.)
+ * recorded in the manifest when the listing is complete; partial listings
+ * conservatively mark every page stale. (A brand-new file that WOULD become an
+ * input is picked up by the next build, which re-plans.)
  */
 
 import path from 'node:path';
@@ -29,7 +29,7 @@ export async function statusFromManifest(manifest: WikiManifest): Promise<WikiSt
   };
   const pending = new Set(manifest.pending);
   const pages = manifest.pages.map((p) => {
-    const stale = pending.has(p.id) || inputHash(p, ctx) !== p.inputHash;
+    const stale = scan.listingIncomplete || scan.truncated || pending.has(p.id) || inputHash(p, ctx) !== p.inputHash;
     return { id: p.id, title: p.title, kind: p.kind, ...(p.parent ? { parent: p.parent } : {}), stale, model: p.model, generatedAt: p.generatedAt };
   });
   return {

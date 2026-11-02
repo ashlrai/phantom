@@ -7,9 +7,11 @@
  *   │ Next medium task → Grok · why
  *   │ ● Claude Code        Eligible                          Autonomy [on]
  *   │   Weekly  ███████▒▒▒▒▒▒▒▒░░░░░░░░░  20% used · stops at 60%
- *   │   5-hour  ███▒▒▒▒▒▒▒▒▒▒▒▒░░░░░░░░░  15% used · stops at 70%
- *   │   Kept for you ──●──── 40%     5-hour ceiling ─────●── 70%
+ *   │   Kept for you ──●──── 40%
  *   │   40% of the weekly window is left for autonomy (40% kept for you).
+ *   │ ● Codex              Eligible                          Autonomy [on]
+ *   │   5-hour  ███▒▒▒▒▒▒▒▒▒▒▒▒░░░░░░░░░  15% used · stops at 70%
+ *   │   Kept for you ──●──── 0%      5-hour ceiling ─────●── 70%
  *
  * Each bar reads left to right: what is USED (solid), what autonomy may
  * still use (tinted), and the band KEPT FOR MASON (hatched) past the ceiling

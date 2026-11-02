@@ -63,22 +63,6 @@ export function dashNormalize(absPath: string): string {
   return absPath.replace(/[/-]/g, "-");
 }
 
-/**
- * Resolve a (possibly mangled) decoded project path against known real paths
- * from the index. Returns the matching real path when the dash-normalized
- * forms agree, otherwise returns the input unchanged (best-effort decode).
- *
- * `realByNorm` maps dashNormalize(realPath) -> realPath and is built once by
- * the caller so this stays O(1) per event.
- */
-export function reconcileProjectPath(
-  decodedPath: string,
-  realByNorm: Map<string, string>,
-): string {
-  const match = realByNorm.get(dashNormalize(decodedPath));
-  return match ?? decodedPath;
-}
-
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

@@ -1,0 +1,13 @@
+{
+  "schema": "queue.v1",
+  "jobs": [
+    { "id": "RQ-FIXTURE-001", "status": "READY", "priority": "P1", "pool": "devin", "tier": "work", "repo": "phantom", "deps": [] },
+    { "id": "RQ-FIXTURE-002", "status": "READY", "priority": "P2", "pool": "devin", "tier": "work", "repo": "phantom", "deps": [] },
+    { "id": "RQ-FIXTURE-003", "status": "READY", "priority": "P1", "pool": "codex-cmp", "tier": "work", "repo": "phantom", "deps": [] },
+    { "id": "RQ-FIXTURE-004", "status": "READY", "priority": "P3", "pool": "grok-ultra", "tier": "work", "repo": "phantom", "deps": [] },
+    { "id": "RQ-FIXTURE-007", "status": "CLAIMED", "priority": "P0", "pool": "devin", "tier": "work", "repo": "phantom", "deps": [] },
+    { "id": "RQ-FIXTURE-008", "status": "PR-OPEN", "priority": "P1", "pool": "codex-cmp", "tier": "work", "repo": "phantom", "deps": [] },
+    { "id": "RQ-FIXTURE-009", "status": "CLAIMED", "priority": "P1", "pool": "local-omlx", "tier": "work", "repo": "phantom", "deps": [] },
+    { "id": "RQ-FIXTURE-010", "status": "DONE", "priority": "P1", "pool": "local-omlx", "tier": "work", "repo": "phantom", "deps": [] }
+  ]
+}

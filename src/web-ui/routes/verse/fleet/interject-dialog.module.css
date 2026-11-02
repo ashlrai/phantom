@@ -1,0 +1,7 @@
+.form { display: grid; gap: var(--space-2); font-size: var(--text-sm-size); }
+.form textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: var(--space-3); font: inherit; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.form textarea:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--shadow-focus-ring); }
+.counter { color: var(--text-secondary); text-align: right; font-size: var(--text-xs-size); }
+.error, .landed { margin: 0; overflow-wrap: anywhere; }
+.error { color: var(--status-danger-fg); }
+.actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }

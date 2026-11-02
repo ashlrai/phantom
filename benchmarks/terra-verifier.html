@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Verifier fixture</title>
+<style>body{font:20px sans-serif;margin:40px;color:#172033}section{border:2px solid #666;padding:24px;margin:20px 0}button{font:inherit;padding:8px} .error{color:#a00}</style>
+<h1>Account settings</h1>
+<section><h2>Expected result</h2><p>Email notifications: Off</p><p>Save status: Saved</p></section>
+<section><h2>Observed failure</h2><p>Email notifications: On</p><p class="error">Save status: Failed</p><button disabled>Save</button></section>
+<section><h2>Observed success</h2><p>Email notifications: Off</p><p>Save status: Saved</p><button>Save</button></section>
+</html>

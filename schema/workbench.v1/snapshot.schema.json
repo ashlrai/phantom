@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workbench.v1/snapshot.schema.json",
+  "title": "workbench.snapshot.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "exporter", "as_of", "seq", "sources", "paused", "lanes", "queue", "counts_24h", "inferred_empty"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["workbench.snapshot.v1"]},
+    "exporter": {"type": "string", "enum": ["wb-export/1"]},
+    "as_of": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$"},
+    "seq": {"type": "integer", "minimum": 1},
+    "sources": {
+      "type": "object", "additionalProperties": false,
+      "required": ["slots", "ready", "status", "jobs"],
+      "properties": {
+        "slots": {"$ref": "#/$defs/source"}, "ready": {"$ref": "#/$defs/source"},
+        "status": {"$ref": "#/$defs/source"}, "jobs": {"$ref": "#/$defs/source"}
+      }
+    },
+    "paused": {"type": ["boolean", "null"]},
+    "lanes": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/lane"}},
+    "queue": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ready_total", "by_lane", "by_tier"],
+      "properties": {
+        "ready_total": {"$ref": "#/$defs/count"},
+        "by_lane": {"type": "object", "additionalProperties": false, "properties": {
+          "codex-cmp": {"$ref": "#/$defs/count"}, "codex-personal": {"$ref": "#/$defs/count"},
+          "claude": {"$ref": "#/$defs/count"}, "devin": {"$ref": "#/$defs/count"}, "claude-api": {"$ref": "#/$defs/count"}}},
+        "by_tier": {"type": "object", "additionalProperties": false, "properties": {
+          "frontier": {"$ref": "#/$defs/count"}, "work": {"$ref": "#/$defs/count"},
+          "mid": {"$ref": "#/$defs/count"}, "fast": {"$ref": "#/$defs/count"}}}
+      }
+    },
+    "counts_24h": {
+      "type": "object", "additionalProperties": false,
+      "required": ["launched", "finished", "nonempty", "empty_measured", "empty_inferred", "precheck_skip"],
+      "properties": {
+        "launched": {"$ref": "#/$defs/count"}, "finished": {"$ref": "#/$defs/count"},
+        "nonempty": {"$ref": "#/$defs/count"}, "empty_measured": {"$ref": "#/$defs/count"},
+        "empty_inferred": {"$ref": "#/$defs/count"}, "precheck_skip": {"$ref": "#/$defs/count"}
+      }
+    },
+    "inferred_empty": {"type": "array", "maxItems": 500, "items": {
+      "type": "object", "additionalProperties": false, "required": ["job", "lane", "ts", "inferred"],
+      "properties": {
+        "job": {"$ref": "#/$defs/job"}, "lane": {"$ref": "#/$defs/laneName"},
+        "ts": {"$ref": "#/$defs/tsOrNull"}, "inferred": {"type": "boolean", "enum": [true]}
+      }}}
+  },
+  "$defs": {
+    "source": {"type": "string", "enum": ["ok", "unknown"]},
+    "count": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000},
+    "laneName": {"type": ["string", "null"], "enum": ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", null]},
+    "job": {"type": "string", "pattern": "^RQ-[A-Z0-9][A-Z0-9._-]{0,79}$"},
+    "tsOrNull": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?([+-][0-9]{2}:?[0-9]{2}|Z)?$"},
+    "lane": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lane", "state", "running", "target", "floor", "ceiling", "queue_depth", "held", "hold_kind", "hold_pattern", "held_until"],
+      "properties": {
+        "lane": {"type": "string", "enum": ["codex-cmp", "codex-personal", "claude", "devin", "claude-api"]},
+        "state": {"type": "string", "enum": ["running", "idle", "held", "paused", "unknown"]},
+        "running": {"$ref": "#/$defs/count"}, "target": {"$ref": "#/$defs/count"},
+        "floor": {"$ref": "#/$defs/count"}, "ceiling": {"$ref": "#/$defs/count"},
+        "queue_depth": {"$ref": "#/$defs/count"},
+        "held": {"type": ["boolean", "null"]},
+        "hold_kind": {"type": ["string", "null"], "enum": ["auto", "manual", null]},
+        "hold_pattern": {"type": ["string", "null"], "enum": ["codex_usage_limit", "codex_credits_exhausted", "codex_rate_limit_429",
+          "claude_usage_limit", "claude_rate_limit_error", "claude_credit_balance", "devin_acu_exhausted",
+          "legacy_credits_exhausted", "manual", "other", null]},
+        "held_until": {"$ref": "#/$defs/tsOrNull"}
+      }
+    }
+  }
+}

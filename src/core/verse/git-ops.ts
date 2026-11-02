@@ -1288,12 +1288,13 @@ export async function mergePullRequest(root: string, input: MergeInput, opts: Gi
     const porcelain = await readPorcelain(ctx, gitRoot);
     const read = await freshPr(ctx, gitRoot, String(input.number));
     if (!read) throw new GitOpError('VERSE_GIT_REFUSED', 'GitHub has no such PR for this repository.');
-    const refusal = mergeRefusal(read.pr, porcelain.branch, input.headSha);
+    // A configured required set is the merge gate; the full rollup remains
+    // observational (optional checks may be red or still running).
+    const checkRefusal = input.requiredChecks
+      ? requiredChecksRefusal(read.rollup, input.requiredChecks) : null;
+    if (checkRefusal) throw new GitOpError('VERSE_GIT_REFUSED', checkRefusal);
+    const refusal = mergeRefusal(input.requiredChecks ? { ...read.pr, checks: 'passing' } : read.pr, porcelain.branch, input.headSha);
     if (refusal) throw new GitOpError('VERSE_GIT_REFUSED', refusal);
-    if (input.requiredChecks) {
-      const checkRefusal = requiredChecksRefusal(read.rollup, input.requiredChecks);
-      if (checkRefusal) throw new GitOpError('VERSE_GIT_REFUSED', checkRefusal);
-    }
     const args = ['pr', 'merge', String(input.number), '--squash', '--match-head-commit', read.pr.headSha!];
     const res = await ctx.run('gh', args, { cwd: gitRoot });
     if (res.code !== 0) throw classifyGitFailure('Merging', res);

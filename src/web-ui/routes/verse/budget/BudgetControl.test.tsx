@@ -54,7 +54,8 @@ function view(patch: Partial<BudgetView> = {}): BudgetView {
         reasons: ['40% of the weekly window is left for autonomy (40% kept for you).',
           'The Fable-only weekly window is spent — it limits that model only, not the account.'],
       }),
-      headroom('codex-personal', { reasons: ['Autonomy is switched off for this seat.'] }),
+      headroom('codex-personal', { sessionUsedPercent: 15, weeklyUsedPercent: 31, bindingWindow: 'session',
+        reasons: ['Autonomy is switched off for this seat.'] }),
       headroom('grok', { reasons: ['No usage reading for this seat — unknown usage is not headroom, so autonomy stays off it.'] }),
       headroom('local:qwen', { autonomyHeadroomPercent: 100, eligibleForAutonomy: true, reasons: ['Local model — free, with no usage window to protect.'] }),
     ],
@@ -95,13 +96,18 @@ describe('budget-model', () => {
     expect(rows[0]!.more).toHaveLength(1);
   });
 
-  it('draws the weekly bar against the reserve and the 5-hour bar against its ceiling', () => {
-    const [claude] = buildBudgetRows(view());
+  it('draws the weekly bar against the reserve — and only Codex still draws a 5-hour bar', () => {
+    const [claude, codex] = buildBudgetRows(view());
+    // Claude's headroom still reports a session figure, but the window is
+    // gone: the weekly bar is the whole story.
     expect(claude!.bars).toEqual([
       expect.objectContaining({ kind: 'weekly', usedPercent: 20, ceilingPercent: 60, binding: true }),
-      expect.objectContaining({ kind: 'session', usedPercent: 15, ceilingPercent: 70, binding: false }),
     ]);
     expect(claude!.bars[0]!.description).toBe('Weekly window 20% used; autonomy stops at 60%, 40% kept for you.');
+    expect(codex!.bars).toEqual([
+      expect.objectContaining({ kind: 'weekly', usedPercent: 31, ceilingPercent: 60, binding: false }),
+      expect.objectContaining({ kind: 'session', usedPercent: 15, ceilingPercent: 70, binding: true }),
+    ]);
   });
 
   it('an unread window is null, not zero; a local seat has no bars', () => {
@@ -163,9 +169,12 @@ describe('BudgetControlView', () => {
     const claude = screen.getByRole('listitem', { name: 'Claude Code' });
     expect(within(claude).getByText('Eligible')).toBeInTheDocument();
     expect(within(claude).getByText('20% used · stops at 60%')).toBeInTheDocument();
-    expect(within(claude).getByText('15% used · stops at 70%')).toBeInTheDocument();
+    // Claude's 5-hour window is gone — a stale session figure draws no bar.
+    expect(within(claude).queryByText('15% used · stops at 70%')).toBeNull();
     expect(within(claude).getByRole('img', { name: 'Weekly window 20% used; autonomy stops at 60%, 40% kept for you.' })).toBeInTheDocument();
     expect(within(claude).getByText('1 more note')).toBeInTheDocument();
+    const codex = screen.getByRole('listitem', { name: 'Personal Codex' });
+    expect(within(codex).getByText('15% used · stops at 70%')).toBeInTheDocument();
   });
 
   it('a grant ceiling disables the modes above it, with the reason; lowering stays one keystroke', async () => {
@@ -245,13 +254,17 @@ describe('BudgetControlView', () => {
 
   it('dragging the 5-hour ceiling to 100 clears it (null), shown as "none"', () => {
     vi.useFakeTimers();
-    const { onSeat } = renderView();
-    const claude = screen.getByRole('listitem', { name: 'Claude Code' });
-    const ceiling = within(claude).getByRole('slider', { name: '5-hour ceiling' });
+    // The session ceiling belongs to Codex now — Claude has no 5-hour window.
+    const { onSeat } = renderView({ view: view({
+      effective: { ...view().effective, 'codex-personal': { seatId: 'codex-personal', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 } },
+    }) });
+    const codex = screen.getByRole('listitem', { name: 'Personal Codex' });
+    const ceiling = within(codex).getByRole('slider', { name: '5-hour ceiling' });
     fireEvent.change(ceiling, { target: { value: '100' } });
-    expect(within(claude).getByText('none')).toBeInTheDocument();
+    expect(within(codex).getByText('none')).toBeInTheDocument();
     act(() => { vi.advanceTimersByTime(BUDGET_COMMIT_DELAY_MS + 10); });
-    expect(onSeat).toHaveBeenCalledWith('claude', { maxSessionWindowPercent: null });
+    expect(onSeat).toHaveBeenCalledWith('codex-personal', { maxSessionWindowPercent: null });
+    expect(within(screen.getByRole('listitem', { name: 'Claude Code' })).queryByRole('slider', { name: '5-hour ceiling' })).toBeNull();
   });
 
   it('shows an error and disables every control while read-only or saving', () => {

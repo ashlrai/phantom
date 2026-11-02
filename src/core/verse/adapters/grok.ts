@@ -134,5 +134,8 @@ function buildGrokLaunch(session: VerseSession, text: string, launch: VerseSeatL
 
 export const grokAdapter: VerseAdapter = {
   buildLaunch: buildGrokLaunch,
+  // No expectedModel: grok's reported ids differ from the requested one by
+  // design (`modelUsage` keys `grok-4.6-build` for `grok-4.6`), so the
+  // model-switch check would only ever fire a false notice.
   createParser: (turnId: string) => createAnthropicStreamParser(turnId, 'grok'),
 };

@@ -32,8 +32,6 @@
 
 export type OperatorIntentKind = 'status' | 'detail' | 'approve' | 'veto' | 'answer' | 'directive' | 'task' | 'chat';
 
-export const OPERATOR_INTENT_KINDS: readonly OperatorIntentKind[] = ['status', 'detail', 'approve', 'veto', 'answer', 'directive', 'task', 'chat'];
-
 export type TaskLane = 'fleet' | 'cloud' | 'devin' | 'backlog';
 
 export interface TaskRequest {

@@ -10,6 +10,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, mkdirSync,
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
+import { defaultHostMergeDeps, readPr, readRequiredChecks, readHeadChecks } from './host-merge.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 import { runReviewerProcess, type ReviewerRunOptions } from './cross-review-process.js';
 import { producerModelFamily } from './reviewer-independence.js';
@@ -118,6 +119,44 @@ function readInputs(request: CrossReviewRequest): Inputs {
   };
 }
 
+/** Read only exact-SHA CI evidence; never log API bodies or credential errors. */
+async function observeRequiredChecks(repo: string, pr: number, headSha: string): Promise<NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>> {
+  const result = (code: NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>['code']) => ({ headSha, code });
+  try {
+    const deps = defaultHostMergeDeps();
+    const before = await readPr(repo, pr, deps);
+    if (typeof before === 'string') return result('checks-unreadable');
+    if (before.headSha !== headSha || before.state !== 'open') return result('checks-stale');
+    const required = await readRequiredChecks(repo, before.baseRef, deps);
+    if (typeof required === 'string') return result('checks-unreadable');
+    if (required.required.length === 0) return result('checks-missing');
+    const checks = await readHeadChecks(repo, headSha, deps);
+    if (typeof checks === 'string') return result('checks-unreadable');
+    for (const check of required.required) {
+      const runs = checks.runs.filter((r) => r.name === check.context && (check.appId === null || r.appId === check.appId));
+      const latest = runs.reduce<(typeof runs)[number] | undefined>((a, b) => !a || b.id > a.id ? b : a, undefined);
+      const statuses = check.appId === null ? checks.statuses.filter((s) => s.context === check.context) : [];
+      if (!latest && statuses.length === 0) return result('checks-missing');
+      if ((latest && (latest.status !== 'completed' || latest.conclusion !== 'success')) ||
+        statuses.some((s) => s.state !== 'success')) return result('checks-not-successful');
+    }
+    const after = await readPr(repo, pr, deps);
+    if (typeof after === 'string') return result('checks-unreadable');
+    if (after.headSha !== headSha || after.baseRef !== before.baseRef || after.state !== 'open') return result('checks-stale');
+    return result(null);
+  } catch {
+    return result('checks-unreadable');
+  }
+}
+
+async function decideWithChecks(input: Parameters<typeof decideCrossReview>[0], pauseFile = crossReviewPauseFile()): Promise<CrossReviewDecision> {
+  const initial = decideCrossReview(input);
+  if (initial.codes[0] !== 'checks-unreadable') return initial;
+  const checks = await observeRequiredChecks(input.request.repo, input.request.pr, input.currentHeadSha);
+  // Recheck stop states after the asynchronous GitHub reads.
+  return decideCrossReview({ ...input, checks, killSwitch: killSwitchOn(), paused: input.paused || existsSync(pauseFile) });
+}
+
 export interface CrossReviewDeps extends ReviewerRunOptions {
   now?: () => Date;
   /** Test seam; defaults to runReviewerProcess. */
@@ -185,7 +224,7 @@ export async function runCrossReview(
     }
   }
   appendLog(record);
-  const decision = decideCrossReview({
+  const decision = await decideWithChecks({
     request, policy, review: record, currentHeadSha: request.headSha, diff, scan,
     killSwitch: killSwitchOn(), paused: existsSync(crossReviewPauseFile()), now: now(),
   });
@@ -198,17 +237,17 @@ export async function runCrossReview(
  * `gh pr merge --auto --match-head-commit <sha>`: re-reads the diff at the
  * head it observes now and decides against the newest recorded review.
  */
-export function decideCrossReviewAtHead(
+export async function decideCrossReviewAtHead(
   request: CrossReviewRequest,
   policy: CrossReviewPolicy,
   currentHeadSha: string,
   options: { pauseFile?: string; now?: Date } = {},
-): CrossReviewDecision {
+): Promise<CrossReviewDecision> {
   const inputs = readInputs(request);
   const diff = inputs.diff ?? '';
   const scan = scanSensitiveChange({ diff, repo: request.repo, policy, codeowners: inputs.codeowners });
   if (inputs.diff === null) scan.codes = ['diff-unparseable'];
-  const decision = decideCrossReview({
+  const decision = await decideWithChecks({
     request,
     policy,
     review: latestCrossReview(request.repo, request.pr),
@@ -218,7 +257,7 @@ export function decideCrossReviewAtHead(
     killSwitch: killSwitchOn(),
     paused: existsSync(options.pauseFile ?? crossReviewPauseFile()),
     ...(options.now ? { now: options.now } : {}),
-  });
+  }, options.pauseFile);
   appendLog(decision);
   return decision;
 }

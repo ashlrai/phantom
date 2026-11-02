@@ -50,6 +50,7 @@ const DYNAMIC = [
   './shell/NeedsYouDrawer.js',
   './shell/ShortcutsOverlay.js',
   './shell/GearTray.js',
+  './shell/ConsoleNotifications.js',
   './shell/ReviewMenu.js',
   // The tour's store and the tour: the gate reads the one and loads the other.
   './onboarding/OnboardingGate.js',

@@ -8,9 +8,11 @@ All shapes below are defined in `src/core/types.ts` (the contract module). Impor
 them from there — never redefine.
 
 ```ts
-// src/core/types.ts — ADDED by the contract agent (existing types unchanged):
+// src/core/types/observability.ts — re-exported from src/core/types.ts:
 
 export interface GenAiSpan {
+  // Optional memory benchmark metadata (src/core/observability/memory-benchmark.ts).
+  memory?: { scope: 'job' | 'merged_pr'; peakRssBytes: number | null; sampleCount: number; pauseEvents: number };
   name: string;        // operation/task identifier — METADATA, not content
   runId: string;       // owning run/swarm id
   model: string;       // gen_ai.request.model
@@ -63,6 +65,13 @@ export function spansFromSwarm(s: SwarmRun): GenAiSpan[];
   `endTimeUnixNano` derived from startTs/endTs.
 - PRIVACY: span attributes are METADATA ONLY. NEVER include prompt/response text,
   tool args, file contents, goal text beyond an id-like `name`, or any secret.
+- Memory benchmark spans additionally carry `phantom.memory.scope`,
+  `phantom.memory.peak_rss_bytes` (omitted when unknown),
+  `phantom.memory.sample_count` and `phantom.memguard.pause_events`.
+  RSS is the sampled job process-tree peak in bytes. A merged PR peak is the
+  maximum of its associated job peaks, not their sum; a PAUSE event is a
+  transition into PAUSE, including an initial PAUSE sample. The runner supplies
+  confirmed merge identities; telemetry grants no merge authority.
 - `spansFromRun`/`spansFromSwarm` derive one span per executed task from the
   task `usage` (tokensIn/tokensOut/estCostUsd), `status`, ids, and run/swarm
   `provider`/timestamps. Pure functions; no I/O.

@@ -15,6 +15,7 @@ import { getPane, type PaneProps } from '../panes/pane-registry.js';
 import { ReasoningDockPane, SourcesDockPane } from './dock-panes.js';
 import { buildChatSources, buildReasoningTrail, injectedSources, reasoningTotals } from './reasoning-model.js';
 import './reasoning.pane.js';
+import './sources.pane.js';
 
 function turnsOf(events: VerseEvent[]) {
   return buildTurns(groupTranscriptItems(buildTranscript(events).items), createTurnCache()).turns;

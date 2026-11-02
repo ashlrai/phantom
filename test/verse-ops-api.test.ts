@@ -4,7 +4,7 @@
  * no git or gh, no network. Covers all four GETs, the leaders POST, and the
  * shared gates (dispatch flag, mutation token, strict bodies and queries).
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -17,6 +17,7 @@ import {
   VERSE_OPS_LEADERS_MESSAGES_PATH,
   VERSE_OPS_LEADERS_PATH,
   VERSE_OPS_RELEASES_PATH,
+  VERSE_OPS_SELF_UPDATE_PATH,
   type OpsBoardV1,
   type OpsFleetV1,
   type OpsLeadersV1,
@@ -253,5 +254,46 @@ describe('ops api', () => {
     const api = createOpsApi(deps());
     expect((await request(api, { path: `${VERSE_OPS_FLEET_PATH}?x=1` })).status).toBe(400);
     expect((await request(api, { path: `${VERSE_OPS_LEADERS_PATH}?team=bad team!!` })).status).toBe(400);
+  });
+});
+
+describe('ops self update routes', () => {
+  it('coalesces reads for two seconds, including concurrent reads, without dispatch', async () => {
+    let clock = NOW;
+    const repoRoot = vi.fn(() => null);
+    const api = createOpsApi(deps({ now: () => clock, selfUpdate: { repoRoot } }));
+    const responses = await Promise.all([1, 2].map(() => request(api, { path: VERSE_OPS_SELF_UPDATE_PATH, allowDispatch: false })));
+    expect(responses.map((r) => r.status)).toEqual([200, 200]);
+    expect(responses[0].wire).toMatchObject({ sourceState: 'unavailable', repoRoot: false });
+    expect(repoRoot).toHaveBeenCalledTimes(1);
+    clock += 2000;
+    await request(api, { path: VERSE_OPS_SELF_UPDATE_PATH });
+    expect(repoRoot).toHaveBeenCalledTimes(2);
+  });
+  it('returns a successful fetch result', async () => {
+    const runGit = vi.fn(async () => ({ code: 0, stdout: '' }));
+    const api = createOpsApi(deps({ selfUpdate: { repoRoot: () => '/fixture', runGit, now: () => NOW } }));
+    const result = await request(api, { path: VERSE_OPS_SELF_UPDATE_PATH, method: 'POST', body: { action: 'fetch' } });
+    expect(result.status).toBe(200);
+    expect(result.wire).toEqual({ ok: true, action: 'fetch', fetchedAt: new Date(NOW).toISOString(), reason: null });
+    expect(runGit).toHaveBeenCalledExactlyOnceWith(['fetch', '--quiet', 'origin', 'master'], '/fixture');
+  });
+  it('gates fetch, strictly validates bodies, and invalidates the read cache', async () => {
+    const repoRoot = vi.fn(() => null);
+    const api = createOpsApi(deps({ selfUpdate: { repoRoot } }));
+    const post = (over = {}) => request(api, { path: VERSE_OPS_SELF_UPDATE_PATH, method: 'POST', body: { action: 'fetch' }, ...over });
+    expect((await post({ allowDispatch: false })).status).toBe(404);
+    expect((await post({ token: 'wrong' })).status).toBe(401);
+    for (const body of [{}, { action: 'pull' }, { action: 'fetch', extra: true }, [], null]) {
+      expect((await post({ body })).status).toBe(400);
+    }
+    expect((await post({ raw: '{' })).status).toBe(400);
+    expect(repoRoot).not.toHaveBeenCalled();
+    await request(api, { path: VERSE_OPS_SELF_UPDATE_PATH });
+    const result = await post();
+    expect(result.status).toBe(200);
+    expect(result.wire).toMatchObject({ ok: false, action: 'fetch' });
+    await request(api, { path: VERSE_OPS_SELF_UPDATE_PATH });
+    expect(repoRoot).toHaveBeenCalledTimes(3);
   });
 });

@@ -20,7 +20,17 @@ export function WorkerAccessControl({ workers, policy, writable, disabled = fals
 }) {
   const descriptionId = useId();
   const [draft, setDraft] = useState<{ pausedWorkerIds: string[]; revision: number } | null>(null);
-  if (!policy) return null;
+  if (!policy || workers.length === 0) return <section className={styles.panel} aria-label="Fleet account access">
+    <div className={styles.heading}><div><h2>Fleet account access</h2>
+      <p>Keep an account for your own work without disconnecting it.</p></div></div>
+    <p className={styles.note}>{!policy
+      ? 'Account access is unavailable in this snapshot. Refresh the resource pool to check again.'
+      : historical || disabled
+        ? 'No worker accounts were reported. A fresh, valid pool snapshot is required before account access changes.'
+        : 'No worker accounts are configured in this pool. Connected worker accounts will appear here when reported by the resource pool.'}</p>
+    <p className={styles.note}>No account access changes have been made.</p>
+    {error ? <p className={styles.warning} role="alert">{error}</p> : null}
+  </section>;
   const paused = draft?.pausedWorkerIds ?? policy.pausedWorkerIds;
   const conflict = draft !== null && draft.revision !== policy.revision;
   const unsaved = draft !== null && (paused.length !== policy.pausedWorkerIds.length ||

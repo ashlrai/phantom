@@ -260,10 +260,6 @@ export function getAgentStore(): AgentStore {
   return singleton.store;
 }
 
-export function setAgentStoreForTest(store: AgentStore | null): void {
-  singleton = store ? { home: homedir(), store } : null;
-}
-
 /** An empty record with every default, for a new agent. */
 export function blankAgent(input: { id: string; title: string; at: string }): AgentRecord {
   return {

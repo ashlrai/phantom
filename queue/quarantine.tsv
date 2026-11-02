@@ -1,0 +1,16 @@
+# Quarantine ledger for flaky-test skips, verified by scripts/check-quarantine-ledger.mjs.
+# A .skip/.todo/.only marker may be added to an existing test only when a live row here
+# covers it. One row per marker; remove the row and the marker together.
+#
+# Columns (tab-separated, exactly four):
+#   test    repo-relative test file, optionally "<path> > <full test name>"
+#           (describe path joined with ' > ', as Vitest reports it)
+#   repo    owner/name the row applies to (e.g. ashlrai/phantom)
+#   lead    accountable owner (person or team handle)
+#   expiry  YYYY-MM-DD (end of that UTC day) or ISO-8601 datetime with offset;
+#           must be in the future and no more than 7 days out
+#
+# Non-quarantinable (Security R8): secret-shape, gitleaks, cargo-deny, ci-gate.
+# Rows naming them, or skips inside files matching them, fail the gate.
+#
+test	repo	lead	expiry

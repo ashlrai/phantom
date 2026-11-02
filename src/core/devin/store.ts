@@ -26,6 +26,7 @@ import {
   DEVIN_BUDGET_SCHEMA_VERSION,
   DEVIN_CONNECTION_SCHEMA_VERSION,
   DEVIN_ORG_ID_PATTERN,
+  DEVIN_PLAYBOOK_ID_PATTERN,
   isDevinOpaqueSelfId,
   isDevinSelfIdentity,
   DEVIN_SESSION_ID_PATTERN,
@@ -198,6 +199,7 @@ export function isDevinTask(value: unknown): value is DevinTaskV1 {
     && (value['supersededBy'] === undefined || isSupersededBy(value['supersededBy'], repo))
     && (value['intake'] === undefined || isIntakeMemo(value['intake']))
     && (value['playbookRef'] === undefined || isPlaybookRef(value['playbookRef']))
+    && (value['playbookId'] === undefined || (isString(value['playbookId']) && DEVIN_PLAYBOOK_ID_PATTERN.test(value['playbookId'])))
     && isNullableString(value['backlogItemId'])
     && (value['messagesSent'] === undefined || (Number.isSafeInteger(value['messagesSent']) && (value['messagesSent'] as number) >= 0))
     && (value['verseSessionId'] === undefined || (isString(value['verseSessionId']) && /^[A-Za-z0-9-]{1,80}$/.test(value['verseSessionId'])));

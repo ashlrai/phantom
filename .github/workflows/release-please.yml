@@ -1,0 +1,102 @@
+# Release PRs from conventional commits (manifest mode). release-please only
+# opens and updates the version PR; it never tags or creates GitHub releases
+# (skip-github-release). auto-tag.yml is the only place tags are created,
+# after the version PR merges and required checks are green.
+#
+# PRs opened with GITHUB_TOKEN do not trigger CI, so a second job pushes one
+# commit to the release-please branch with the ashlr-release App token: the
+# candidate-version sync (desktop, Tauri, Cargo, README carriers) when it has
+# changes, otherwise an empty refresh commit. It only acts while the branch
+# head is authored by github-actions[bot], so its own commit cannot loop.
+name: Release PR
+
+on:
+  push:
+    branches: [master]
+
+permissions: {}
+
+concurrency:
+  group: release-please-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      branch: ${{ steps.rp.outputs.pr && fromJSON(steps.rp.outputs.pr).headBranchName || '' }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+
+  sync-and-refresh:
+    needs: release-please
+    if: needs.release-please.outputs.branch != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      BRANCH: ${{ needs.release-please.outputs.branch }}
+    steps:
+      - name: Require the release-please branch head to be the bot's own commit
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$BRANCH" in release-please--*) ;; *) echo "::error::unexpected branch $BRANCH"; exit 1;; esac
+          login=$(gh api "repos/$GITHUB_REPOSITORY/commits/heads/$BRANCH" -q '.author.login // ""')
+          if [ "$login" = "github-actions[bot]" ]; then echo "act=true" >> "$GITHUB_OUTPUT"
+          else echo "Head author is '$login'; nothing to do."; echo "act=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Mint ashlr-release App token (contents write, this repo only)
+        id: app
+        if: steps.head.outputs.act == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.ASHLR_RELEASE_APP_ID }}
+          private-key: ${{ secrets.ASHLR_RELEASE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - if: steps.head.outputs.act == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BRANCH }}
+          token: ${{ steps.app.outputs.token }}
+
+      - if: steps.head.outputs.act == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+          package-manager-cache: false
+
+      - name: Sync candidate version carriers, or refresh, in one commit
+        if: steps.head.outputs.act == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./package.json").version')
+          node scripts/sync-candidate-version.mjs "$version"
+          node scripts/sync-candidate-version.mjs --check "$version"
+          git config user.name "ashlr-release[bot]"
+          git config user.email "ashlr-release[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "chore(release): refresh $version release PR so required checks run"
+          else
+            git commit -m "chore(release): sync candidate version carriers to $version"
+          fi
+          git push origin "HEAD:$BRANCH"

@@ -37,7 +37,6 @@ const PRIVATE_STORE_MAX_BYTES = 64 * 1024;
 
 const IDENTITY_REF_RE = /^eid_[0-9a-f]{32}$/;
 const LOCATOR_REF_RE = /^erl_[0-9a-f]{32}$/;
-const IDENTITY_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const ENGINE_IDS: ReadonlySet<string> = new Set([
   'builtin', 'local-coder', 'ashlrcode', 'aw', 'claude', 'codex', 'hermes',
@@ -231,10 +230,6 @@ export function isExecutionIdentityRefV1(value: unknown): value is ExecutionIden
 
 function isRuntimeLocatorRefV1(value: unknown): value is string {
   return typeof value === 'string' && LOCATOR_REF_RE.test(value);
-}
-
-export function isExecutionIdentityDigestV1(value: unknown): value is ExecutionIdentityDigestV1 {
-  return typeof value === 'string' && IDENTITY_DIGEST_RE.test(value);
 }
 
 export function digestExecutionIdentityRefV1(value: unknown): ExecutionIdentityDigestV1 | null {

@@ -29,6 +29,13 @@ function formatWhen(iso: string): string {
 
 export function JournalEntryRow({ entry }: { entry: JournalEntry }) {
   const hasDrillIn = Boolean(entry.drillIn);
+  // Older journal sources carry no attribution. Never infer a person from
+  // the source, repository or prose; only display an explicit actor string.
+  const actor = 'actor' in entry && typeof entry.actor === 'string'
+    ? entry.actor.replace(/[\p{Cc}\u202a-\u202e\u2066-\u2069]/gu, '').trim()
+    : '';
+  const actorName = Array.from(actor);
+  const actorLabel = actorName.length > 48 ? `${actorName.slice(0, 47).join('')}…` : actor;
   // <details> stays UNCONTROLLED on purpose — useScrollRestore
   // (hooks/useScrollRestore.ts) restores expanded/collapsed state by setting
   // the DOM `.open` property directly on `[data-state-key]` elements, which
@@ -54,6 +61,9 @@ export function JournalEntryRow({ entry }: { entry: JournalEntry }) {
           {formatWhen(entry.ts)}
         </span>
         <StatusBadge status={entry.statusLabel} />
+        <bdi className={styles.repo} aria-label={`Actor: ${actorLabel || 'Unknown actor'}`}>
+          {actorLabel || 'Unknown actor'}
+        </bdi>
         {entry.repo ? <span className={styles.repo}>{entry.repo}</span> : null}
         <span className={styles.title}>{entry.title}</span>
         <EpistemicBadge quality={entry.sourceQuality} />

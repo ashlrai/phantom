@@ -1,0 +1,16 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.header, .message, .notice { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.notice { color: var(--text-primary); }
+.heading { margin: 0 0 var(--space-2); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.row { display: flex; flex-wrap: wrap; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; font-size: var(--text-xs-size); }
+.row a { color: var(--accent-500); }
+.mergeSpeed { color: var(--text-secondary); }
+.headerActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.ciChip { border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+.row .ok { color: var(--status-success-fg); background: var(--status-success-bg); }
+.row .artifact { color: var(--status-warning-fg); background: var(--status-warning-bg); }
+.row .code { color: var(--status-danger-fg); background: var(--status-danger-bg); }
+.row .running { color: var(--status-info-fg); background: var(--status-info-bg); }
+
+.danger { color: var(--status-danger-fg); }

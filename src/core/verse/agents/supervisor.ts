@@ -213,7 +213,7 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
   if (!pr || (pr.state !== 'open' && pr.state !== 'draft')) return agent;
 
   // 4a. Auto-fix: failing CI goes back to the seat that wrote it, once per head.
-  if (read.detail.ci === 'failing' && agent.autoFix) {
+  if (read.detail.ci === 'failing' && !read.detail.mergeVerdict.allowed && agent.autoFix) {
     const head = pr.headSha ?? `pr${pr.number}`;
     if (agent.autoFixSentFor.includes(head)) return agent;
     if (agent.autoFixAttempts >= MAX_AUTO_FIX_ATTEMPTS) {
@@ -338,7 +338,3 @@ export function supervisorRunning(): boolean {
   return timer !== null;
 }
 
-export function stopSupervisor(): void {
-  if (timer) clearInterval(timer);
-  timer = null;
-}

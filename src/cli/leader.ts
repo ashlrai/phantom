@@ -160,8 +160,13 @@ async function defaultWakeDeps(): Promise<LeaderWakeDeps> {
       if (process.env['VITEST']) return false;
       if (!entry || !isAbsolute(entry) || !existsSync(entry)) return false;
       try {
+        mkdirSync(root, { recursive: true, mode: 0o700 });
+        writeFileSync(join(root, '.wake-result.json'), JSON.stringify({ at: new Date().toISOString(), status: 'started', code: null }), { mode: 0o600 });
+        // The child records its own outcome, including failures, after this poller exits.
         const child = spawn(process.execPath, [entry, 'leader', 'tick', '--wait'], { detached: true, stdio: 'ignore', env: process.env });
-        child.on('error', () => undefined);
+        child.on('error', () => {
+          try { writeFileSync(join(root, '.wake-result.json'), JSON.stringify({ at: new Date().toISOString(), status: 'spawn-failed', code: null }), { mode: 0o600 }); } catch { /* next health read sees started */ }
+        });
         child.unref();
         return true;
       } catch {
@@ -526,22 +531,39 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
       console.error(USAGE);
       return 2;
     }
-    const deps = await leader.loadDefaultLeaderRunDeps(loadConfig());
-    if (sub === 'run') {
-      console.log('Running the Leader (a local model can take several minutes)…');
-      const result = await leader.runLeader(deps, 'manual', { force });
-      if (!result.memo) {
-        console.log(`${result.outcome}: ${result.reason ?? ''}`);
-        return result.outcome === 'skipped-unchanged' ? 0 : 1;
+    const recordTick = async (status: 'completed' | 'failed', code: number): Promise<void> => {
+      const { leaderRoot } = await import('../core/vision/leader-memo.js');
+      mkdirSync(leaderRoot(), { recursive: true, mode: 0o700 });
+      writeFileSync(join(leaderRoot(), '.wake-result.json'), JSON.stringify({ at: new Date().toISOString(), status, code }), { mode: 0o600 });
+    };
+    try {
+      const deps = await leader.loadDefaultLeaderRunDeps(loadConfig());
+      if (sub === 'run') {
+        console.log('Running the Leader (a local model can take several minutes)…');
+        const result = await leader.runLeader(deps, 'manual', { force });
+        if (!result.memo) {
+          console.log(`${result.outcome}: ${result.reason ?? ''}`);
+          return result.outcome === 'skipped-unchanged' ? 0 : 1;
+        }
+        printMemo(result.memo);
+        return result.outcome === 'ok' ? 0 : 1;
       }
-      printMemo(result.memo);
-      return result.outcome === 'ok' ? 0 : 1;
+      const tick = await leader.leaderTick(deps, { awaitRun: wait });
+      console.log(`Applied ${tick.applied.length} due action(s); graded ${tick.graded.length} move(s).`);
+      console.log(tick.due.due ? `Run due (${tick.due.trigger}): ${tick.due.reason}${tick.started ? ' - started.' : ''}` : `No run due: ${tick.due.reason}`);
+      if (tick.run?.memo) printMemo(tick.run.memo);
+      if (tick.run && !['ok', 'skipped-unchanged'].includes(tick.run.outcome)) {
+        await recordTick('failed', 1);
+        console.error('Leader tick failed to produce a successful run. Check Leader health and model availability.');
+        return 1;
+      }
+      await recordTick('completed', 0);
+      return 0;
+    } catch {
+      if (sub === 'tick') await recordTick('failed', 1);
+      console.error('Leader run failed. Check Leader health and model availability.');
+      return 1;
     }
-    const tick = await leader.leaderTick(deps, { awaitRun: wait });
-    console.log(`Applied ${tick.applied.length} due action(s); graded ${tick.graded.length} move(s).`);
-    console.log(tick.due.due ? `Run due (${tick.due.trigger}): ${tick.due.reason}${tick.started ? ' — started.' : ''}` : `No run due: ${tick.due.reason}`);
-    if (tick.run?.memo) printMemo(tick.run.memo);
-    return 0;
   }
 
   if (sub === 'veto') {

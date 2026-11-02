@@ -137,6 +137,8 @@ describe('parseVerseEventFrame — V3.10 frames', () => {
     expect(parseVerseEventFrame(JSON.stringify({ seq: 3, at, type: 'progress', turnId: 't1', phase: 'tool', tool: 'npm test', elapsedMs: 1200 }))).not.toBeNull();
     expect(parseVerseEventFrame(JSON.stringify({ seq: 4, at, type: 'recovered', turnId: null, how: 'handoff', message: 'x' }))).not.toBeNull();
     expect(parseVerseEventFrame(JSON.stringify({ seq: 1, at, type: 'history-truncated', turnId: null, droppedBefore: 900 }))).not.toBeNull();
+    // A `model-switch` status is a well-formed transient frame (automatic model change notice).
+    expect(parseVerseEventFrame(JSON.stringify({ seq: 2, at, type: 'status', turnId: 't1', kind: 'model-switch', message: 'requested claude-opus-5-5, running claude-opus-5' }))).not.toBeNull();
   });
   it('drops frames whose numbers would turn a live label into NaN', () => {
     expect(parseVerseEventFrame(JSON.stringify({ seq: 3, at, type: 'progress', turnId: 't1', phase: 'tool', elapsedMs: 'soon' }))).toBeNull();

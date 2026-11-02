@@ -57,7 +57,13 @@ export interface VerseAdapterTurnContext {
 
 export interface VerseAdapter {
   buildLaunch(session: VerseSession, text: string, launch: VerseSeatLaunch): VerseTurnLaunch;
-  createParser(turnId: string): VerseTurnParser;
+  /**
+   * `session` is additive context for parsers that check the CLI's output
+   * against what the launch asked for (claude: the requested model, so an
+   * automatic switch surfaces as a `status` event). Older call sites may omit
+   * it; adapters that need nothing from it ignore it.
+   */
+  createParser(turnId: string, session?: VerseSession): VerseTurnParser;
   /**
    * V3.9, optional. Polled every VERSE_TELEMETRY_POLL_MS while a turn runs
    * (live meter). Typically returns `context` events.

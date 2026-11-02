@@ -95,6 +95,8 @@ import {
   verifyLocalMergeIntent,
 } from '../foundry/provenance.js';
 import {
+  approvalRequestForProposal,
+  isApprovalRequestRevision,
   canonicalProposalDiffHash,
   isAuthoritativeDurablePendingProposal,
   validatePendingAuthorityActionCounts,
@@ -1048,6 +1050,7 @@ export function createProposal(
   delete input.realizedMerge;
   delete input.realizedMergeFanoutVersion;
   delete input.localMergeIntent;
+  delete input.approvalDecision;
   // M109: stamp owner from cfg.user when not already set by the caller.
   const owner = input.owner ?? cfg?.user?.id ?? cfg?.user?.name;
 
@@ -1542,7 +1545,7 @@ export function setStatus(
   result?: string,
   reason?: string,
   ownerLock?: ProposalMutationLock,
-  transitionPatch: Partial<Pick<Proposal, 'remoteHandoff'>> = {},
+  transitionPatch: Partial<Pick<Proposal, 'remoteHandoff' | 'approvalDecision'>> = {},
   expectedCurrentStatus?: ProposalStatus,
 ): boolean {
   const ownsLock = ownsProposalMutationLock(id, ownerLock);
@@ -1693,6 +1696,48 @@ export function setStatus(
     if (!ownsLock) releaseProposalMutationLock(mutationLock);
   }
 }
+export type ApprovalDecisionResult =
+  | { ok: true; id: string; status: 'approved' | 'rejected' }
+  | { ok: false; code: 'not-found' | 'conflict' | 'unavailable' };
+
+/** Record consent for exactly one reviewed request. Never invokes apply/merge. */
+export function decideApprovalRequest(
+  id: string,
+  revision: string,
+  decision: 'approve' | 'deny',
+): ApprovalDecisionResult {
+  if (!isApprovalRequestRevision(revision) || (decision !== 'approve' && decision !== 'deny')) {
+    return { ok: false, code: 'conflict' };
+  }
+  const lock = acquireProposalMutationLock(id);
+  if (!lock) return { ok: false, code: 'unavailable' };
+  try {
+    const proposal = loadProposal(id);
+    if (!proposal) return { ok: false, code: 'not-found' };
+    const request = approvalRequestForProposal(proposal);
+    if (proposal.status !== 'pending' || proposal.approvalDecision || !request ||
+      request.revision !== revision || (decision === 'approve' && proposal.isPartial === true)) {
+      return { ok: false, code: 'conflict' };
+    }
+    const status = decision === 'approve' ? 'approved' : 'rejected';
+    const approvalDecision = { revision, decision, decidedAt: new Date().toISOString() };
+    if (!setStatus(id, status, undefined, `approval card: ${decision}`, lock, { approvalDecision }, 'pending')) {
+      return { ok: false, code: 'unavailable' };
+    }
+    audit({
+      action: `inbox:approval-${decision === 'approve' ? 'approved' : 'denied'}`,
+      repo: proposal.repo, sandboxId: proposal.sandboxId ?? null,
+      summary: `approval ${decision}: ${request.action.kind} (id=${id}, revision=${revision})`,
+      result: 'ok',
+    });
+    return { ok: true, id, status };
+  } catch {
+    return { ok: false, code: 'unavailable' };
+  } finally {
+    releaseProposalMutationLock(lock);
+  }
+}
+
 
 /**
  * Atomically persist the only evidence-backed transition that means "merged".

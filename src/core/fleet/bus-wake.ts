@@ -15,10 +15,12 @@ export interface BusWakeOptions {
   hoplogFile?: string;
   /** Bounds the observational tail, not the transport. Default 1000ms. */
   wakeTimeoutMs?: number;
+  /** Stops a new send or cancels its post-send wake; does not cancel transport. */
+  signal?: AbortSignal;
 }
 export interface BusWakeResult {
   hoplog: 'recorded' | 'failed' | 'invalid-metadata';
-  wake: 'queued' | 'failed' | 'timed-out' | 'invalid-metadata';
+  wake: 'queued' | 'failed' | 'timed-out' | 'aborted' | 'invalid-metadata';
 }
 
 /**
@@ -32,30 +34,39 @@ export function createBusWakeHook(options: BusWakeOptions):
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new Error('Bus wake timeout must be an integer from 1 to 60000 milliseconds.');
   }
-  const { enqueue, hoplogFile } = options;
+  const { enqueue, hoplogFile, signal } = options;
   if (typeof enqueue !== 'function') throw new Error('Bus wake requires an RQ-EVENTD enqueue callback.');
   return async (message, counts = {}) => {
     const ids = busMessageIds(message);
     if (!ids) return { hoplog: 'invalid-metadata', wake: 'invalid-metadata' };
     const hop = createBusHop(ids, counts);
     const hoplog = !hop ? 'invalid-metadata' : appendBusHop(hop, hoplogFile) ? 'recorded' : 'failed';
+    if (signal?.aborted) return { hoplog, wake: 'aborted' };
     // Build a fresh allowlisted event; never hand the envelope to the daemon.
     const request = Object.freeze({ kind: 'bus.send' as const, ...ids });
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<'timed-out'>(resolve => {
+    let onAbort: (() => void) | undefined;
+    const interrupted = new Promise<'timed-out' | 'aborted'>(resolve => {
+      onAbort = () => { resolve('aborted'); controller.abort(); };
+      signal?.addEventListener('abort', onAbort, { once: true });
       timer = setTimeout(() => { resolve('timed-out'); controller.abort(); }, timeoutMs);
     });
     try {
-      const accepted = Promise.resolve().then(() => enqueue(request, controller.signal))
+      const accepted = Promise.resolve().then(() => {
+        if (!controller.signal.aborted) return enqueue(request, controller.signal);
+      })
         .then(() => 'queued' as const, () => 'failed' as const);
-      return { hoplog, wake: await Promise.race([accepted, deadline]) };
-    } finally { clearTimeout(timer); }
+      return { hoplog, wake: await Promise.race([accepted, interrupted]) };
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
+    }
   };
 }
 
 export type BusSendResult =
-  | { sent: false; reason: 'invalid-metadata' | 'send-failed' }
+  | { sent: false; reason: 'invalid-metadata' | 'send-failed' | 'aborted' }
   | ({ sent: true } & BusWakeResult);
 
 /**
@@ -71,6 +82,7 @@ export async function sendWithBusWake<Message extends BusMessageIds>(
   const hook = createBusWakeHook(options);
   const ids = busMessageIds(message);
   if (!ids) return { sent: false, reason: 'invalid-metadata' };
+  if (options.signal?.aborted) return { sent: false, reason: 'aborted' };
   let counts: void | BusTokenCounts;
   try { counts = await options.send(message); }
   catch { return { sent: false, reason: 'send-failed' }; }

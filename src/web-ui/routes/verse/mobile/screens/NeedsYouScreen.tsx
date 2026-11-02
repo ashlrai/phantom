@@ -38,6 +38,8 @@ import {
 } from 'react';
 import type { NeedsYouAction, NeedsYouActionKind, NeedsYouItem, NeedsYouKind, NeedsYouSeverity } from '../../../../../core/verse/workbench-types.js';
 import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
+import { refetchQuery } from '../../../../data/cache.js';
+import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QuestionFormStore } from '../../leader/LeaderQuestionForm.js';
 const TypedQuestionForm = lazy(() => import('../../leader/LeaderQuestionForm.js'));
 
@@ -56,13 +58,21 @@ import {
 } from '../../shell/needs-you-model.js';
 import { markResolved, useResolvedIds } from '../../shell/resolved-store.js';
 import type { NeedsYouSplit } from '../../verse-ui-store.js';
+import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../../shell/section-visibility.js';
+import { FleetAttentionCards } from '../FleetAttentionCards.js';
 import { sinceText } from '../connectivity.js';
+import { homeRunsQuery } from '../home-runs-query.js';
+import { fleetAttention } from '../needs-fleet-model.js';
+import { releaseLaneHold, refreshFleetReads } from '../fleet-actions.js';
+import { heldLaneItems, needsHoldsQuery } from '../needs-holds-model.js';
+import { ciNeedsItem } from '../needs-ci-model.js';
+import { needsCiQuery } from '../needs-ci-query.js';
 import { runMobileAction } from '../mobile-actions.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { showMobileToast } from '../mobile-toast.js';
 import { BottomSheet } from '../sheet.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, Banner, EmptyState, ErrorState, ui, type Tone } from '../ui-parts.js';
+import { Badge, Banner, EmptyState, ErrorState, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './NeedsYouScreen.module.css';
 
 // ---------------------------------------------------------------------------
@@ -410,7 +420,7 @@ function NeedsCard({ item, canAct, offline, reduced, onAction, onOpen, onHide }:
         {...handlers}
       >
         <div className={styles.head}>
-          <Badge tone={SEVERITY_TONE[item.severity]}>{KIND_NAME[item.kind]}</Badge>
+          <Badge tone={SEVERITY_TONE[item.severity]}>{item.id === 'fleet:owner-hold:ci-runs' ? 'CI' : KIND_NAME[item.kind]}</Badge>
           <span className={styles.age} title={row.ageStamp}>{row.age}</span>
         </div>
         <h2 id={titleId} className={styles.title} title={row.fullTitle}>{row.title}</h2>
@@ -467,18 +477,35 @@ export function NeedsYouScreen() {
   const resolved = useResolvedIds();
   const hiddenIds = useHiddenIds();
   const reduced = usePrefersReducedMotion();
+  const sectionVisible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  const fleet = useQuery(homeRunsQuery, { enabled: sectionVisible && documentVisible });
+  const holds = useQuery(needsHoldsQuery, { enabled: sectionVisible && documentVisible });
+  const ci = useQuery(needsCiQuery, { enabled: sectionVisible && documentVisible });
+  const refetchCi = useRefetch(needsCiQuery);
+  usePollWhileVisible(refetchCi, 5 * 60_000);
+  const refetchHolds = useRefetch(needsHoldsQuery);
+  usePollWhileVisible(refetchHolds, 15_000);
+  const nowMs = Date.now();
+  const heldLanes = heldLaneItems(holds.data ?? null, nowMs);
+  const hasFleetAttention = fleetAttention(fleet.data ?? null, nowMs).length > 0;
   const [split, setSplit] = useState<NeedsYouSplit>('all');
   const [undo, setUndo] = useState<{ id: string; title: string } | null>(null);
   const [answering, setAnswering] = useState<NeedsYouItem | null>(null);
   const questionForms = useRef<QuestionFormStore>(new Map());
+  const releasing = useRef(new Set<string>());
+  const [busyLanes, setBusyLanes] = useState<ReadonlySet<string>>(new Set());
 
   const canAct = canShowActions(permissions);
   const offline = reachability === 'offline' || reachability === 'unreachable';
   const data = activity.data;
-  const all = data?.needsYou ?? [];
+  const ciItem = ciNeedsItem(ci.data, nowMs);
+  const all = [...(data?.needsYou ?? []), ...(ciItem ? [ciItem] : [])];
   const waiting = all.filter((item) => !resolved.has(item.id) && !hiddenIds.has(item.id));
   const counts = splitCounts(waiting);
   const shown = itemsForSplit(waiting, split);
+  const shownCi = ciItem && shown.some((item) => item.id === ciItem.id) ? ciItem : null;
+  const shownActivity = shown.filter((item) => item.id !== ciItem?.id);
   const hiddenHere = itemsForSplit(all.filter((item) => hiddenIds.has(item.id) && !resolved.has(item.id)), split);
   const coverage = splitCoverage(data?.sources ?? null, split);
 
@@ -522,6 +549,30 @@ export function NeedsYouScreen() {
     [openTarget],
   );
 
+  const releaseHold = (lane: string) => {
+    if (!canAct || offline || releasing.current.has(lane)) return;
+    runMobileAction({
+      title: `Release the ${lane} hold?`,
+      consequences: `The dispatcher can launch ${lane} workers again at its next tick.`,
+      confirmLabel: 'Release hold',
+      confirm: false,
+      run: async () => {
+        if (releasing.current.has(lane)) return;
+        releasing.current.add(lane);
+        setBusyLanes(new Set(releasing.current));
+        try {
+          await releaseLaneHold(lane, 'phone');
+          refreshFleetReads();
+          await refetchQuery(needsHoldsQuery.key, () => needsHoldsQuery.fetch(), true);
+        } finally {
+          releasing.current.delete(lane);
+          setBusyLanes(new Set(releasing.current));
+        }
+      },
+      success: `${lane} hold released.`,
+    });
+  };
+
   const onHide = useCallback((item: NeedsYouItem) => {
     hideOnThisPhone(item.id);
     setUndo({ id: item.id, title: needsYouRowView(item).title });
@@ -547,8 +598,10 @@ export function NeedsYouScreen() {
     } else {
       body = <ErrorState title="Couldn’t load Needs you" reason={activity.error ?? 'Your Mac did not answer.'} onRetry={() => void refreshActivity()} />;
     }
-  } else if (shown.length === 0) {
-    if (hiddenHere.length > 0) {
+  } else if (shownActivity.length === 0) {
+    if (shownCi) {
+      body = null;
+    } else if (hiddenHere.length > 0) {
       body = (
         <EmptyState
           title="Nothing else waiting"
@@ -556,6 +609,8 @@ export function NeedsYouScreen() {
           action={<Button variant="tinted" onClick={() => unhideOnThisPhone(hiddenHere.map((i) => i.id))}>Show hidden</Button>}
         />
       );
+    } else if (coverage.vouched && (hasFleetAttention || heldLanes.length > 0)) {
+      body = null;
     } else if (coverage.vouched) {
       body = (
         <EmptyState
@@ -573,7 +628,7 @@ export function NeedsYouScreen() {
   } else {
     body = (
       <ul className={styles.list} aria-label={`${SPLIT_LABEL[split]} waiting on you`}>
-        {shown.map((item) => (
+        {shownActivity.map((item) => (
           <NeedsCard key={item.id} item={item} canAct={canAct} offline={offline} reduced={reduced} onAction={onAction} onOpen={openTarget} onHide={onHide} />
         ))}
       </ul>
@@ -622,6 +677,21 @@ export function NeedsYouScreen() {
         </div>
       ) : null}
 
+      {heldLanes.length > 0 ? (
+        <Section title="Held lanes">
+          {heldLanes.map((item) => (
+            <Row key={item.lane} title={item.title} subtitle={item.subtitle} trailing={item.releasable
+              ? <Button aria-label={`Release: ${item.lane}`} disabled={!canAct || offline || busyLanes.has(item.lane)} onClick={() => releaseHold(item.lane)}>Release</Button>
+              : <span>Needs the Mac</span>} />
+          ))}
+        </Section>
+      ) : null}
+      {shownCi ? (
+        <ul className={styles.list} aria-label="CI waiting on you">
+          <NeedsCard item={shownCi} canAct={canAct} offline={offline} reduced={reduced} onAction={onAction} onOpen={openTarget} onHide={onHide} />
+        </ul>
+      ) : null}
+      <FleetAttentionCards nowMs={nowMs} />
       {body}
 
       {data && shown.length > 0 && !coverage.vouched ? <p className={styles.note}>Not everything answered: {describeSilence(coverage)}.</p> : null}

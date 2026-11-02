@@ -1,0 +1,48 @@
+import { apiGet, apiPost } from '../../../data/client.js';
+import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
+import type { QueryDef } from '../../../data/queries.js';
+import { VerseMutationLockedError } from '../verse-queries.js';
+
+interface InboxTail {
+  inbox: Array<{ at: string; source: string; text: string }>;
+  sources?: { inbox?: string };
+  generatedAt?: string;
+  lastTick?: string | null;
+  leaders?: Array<{ label: string; ageSeconds: number | null }>;
+}
+
+export const inboxTailQuery: QueryDef<InboxTail> = {
+  key: 'verse-fleet-inbox-tail',
+  async fetch(signal) {
+    const value = await apiGet<InboxTail>('/api/verse/fleet/runs', signal);
+    if (!value || !Array.isArray(value.inbox) || !value.inbox.every(row => row
+      && typeof row.at === 'string' && typeof row.source === 'string' && typeof row.text === 'string')) {
+      throw new Error('The inbox tail is unavailable.');
+    }
+    return {
+      inbox: value.inbox, sources: value.sources,
+      generatedAt: typeof value.generatedAt === 'string' ? value.generatedAt : undefined,
+      lastTick: typeof value.lastTick === 'string' || value.lastTick === null ? value.lastTick : undefined,
+      leaders: Array.isArray(value.leaders) && value.leaders.every(leader => leader
+        && typeof leader.label === 'string' && (leader.ageSeconds === null
+          || (typeof leader.ageSeconds === 'number' && Number.isFinite(leader.ageSeconds) && leader.ageSeconds >= 0)))
+        ? value.leaders : undefined,
+    };
+  },
+};
+
+async function post(text: string): Promise<{ at: string; duplicate: boolean; accepted: boolean }> {
+  const token = getMutationToken();
+  if (!token) throw new VerseMutationLockedError();
+  const result = await apiPost<{ at: string; duplicate?: unknown; accepted?: unknown }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop' }, token);
+  if (!result || typeof result.at !== 'string') throw new Error('The message could not be confirmed. Refresh and check the inbox.');
+  touchMutationHold();
+  return { at: result.at, duplicate: result.duplicate === true, accepted: result.accepted === true };
+}
+
+export async function postInterjection(text: string): Promise<{ at: string }> {
+  const { at } = await post(text);
+  return { at };
+}
+
+export const postInterjectionDetailed = post;

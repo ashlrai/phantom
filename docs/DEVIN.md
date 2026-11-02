@@ -327,6 +327,13 @@ PRs, so there is no Land or Close; the item expires after 7 days.
   playbook, carries that playbook's text ahead of the delivery contract and
   records its version on the task. A named playbook that does not exist
   refuses the launch before anything is spent.
+- **A Devin-side playbook.** Set `devin.playbookId` to a Devin-org playbook id
+  (`playbook-…`; the source for ours lives in `devin/playbooks/`) and every
+  dispatched task session is created with `playbook_id` attached. The prompt
+  then references the playbook by id instead of repeating the conventions it
+  already carries, so dispatch prompts stay short; the delivery contract's
+  mechanics still apply in full. Chat sessions never attach it, and a
+  malformed id refuses the launch before anything is spent.
 
 ### In the Resources drawer (⌘.)
 

@@ -3,8 +3,8 @@
  */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
-import { mkdtemp, open, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { constants, renameSync } from 'node:fs';
+import { mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 
 import { devinCliBindingCurrent, refreshDevinCliExecutionBinding } from '../../devin/cli-admission.js';
@@ -131,6 +131,7 @@ function runPrintMode(command: readonly string[], args: string[], request: Devin
       clearTimeout(stall); clearTimeout(hard); clearTimeout(reap);
       request.signal?.removeEventListener('abort', abort);
       child.stdout?.destroy(); child.stderr?.destroy();
+      if (request.signal?.aborted) return reject(new DevinBusAdapterError('cancelled'));
       if (reason) return reject(new DevinBusAdapterError(reason));
       if (code !== 0) return reject(new DevinBusAdapterError('failed'));
       const reply = scrubSecrets(Buffer.concat(stdout).toString('utf8'));
@@ -144,7 +145,7 @@ function runPrintMode(command: readonly string[], args: string[], request: Devin
       // TERM ladder could reap the leader before a stubborn descendant is killed.
       kill('SIGKILL');
       // Bound pipe drain without ever signaling a reaped/recycled process group.
-      reap = setTimeout(() => finish(null), 250);
+      reap = setTimeout(() => { child.stdout?.destroy(); child.stderr?.destroy(); }, 250);
     };
     const abort = (): void => stop('cancelled');
     let env: NodeJS.ProcessEnv;
@@ -154,7 +155,7 @@ function runPrintMode(command: readonly string[], args: string[], request: Devin
       check();
       assertLocusJobDispatch();
       if (request.signal?.aborted) return reject(new DevinBusAdapterError('cancelled'));
-    } catch { return reject(new DevinBusAdapterError('admission')); }
+    } catch { return reject(new DevinBusAdapterError(request.signal?.aborted ? 'cancelled' : 'admission')); }
     try {
       child = spawn(command[0]!, [...command.slice(1), ...args], {
         cwd: request.cwd, env, shell: false, windowsHide: true,
@@ -171,7 +172,8 @@ function runPrintMode(command: readonly string[], args: string[], request: Devin
     };
     child.stdout?.on('data', (chunk: Buffer) => activity(chunk, true));
     child.stderr?.on('data', (chunk: Buffer) => activity(chunk, false));
-    child.once('error', () => { reason ??= 'spawn'; finish(null); });
+    // Even a spawn error is followed by close; wait for it before releasing the slot.
+    child.once('error', () => { reason ??= 'spawn'; });
     child.once('close', finish);
     stall = setTimeout(() => stop('stalled'), stallMs);
     const hard = setTimeout(() => stop('timeout'), timeoutMs);
@@ -183,6 +185,7 @@ function runPrintMode(command: readonly string[], args: string[], request: Devin
 /** A successful return means a complete scrubbed reply was installed, never a partial turn.
  * Mailbox paths and cwd are host-owned inputs, not fields parsed from inbox content.
  * Existing outbox contents survive every failed turn. Each concurrent turn needs its own outbox.
+ * The synchronous rename is the publication commit: a later abort cannot undo a delivered reply.
  */
 export async function runDevinBusAdapter(request: DevinBusRequest, deps = defaultDeps): Promise<{ bytes: number }> {
   const stallMs = windowMs(request.stallWindowMs, DEVIN_CLI_STALL_IDLE_MS);
@@ -201,25 +204,35 @@ export async function runDevinBusAdapter(request: DevinBusRequest, deps = defaul
     outbox = join(await realpath(dirname(outboxPath)), basename(outboxPath));
     if (inbox === outbox) return fail('invalid-request');
   } catch (error) {
+    if (request.signal?.aborted) return fail('cancelled');
     if (error instanceof DevinBusAdapterError) throw error;
     return fail('invalid-request');
   }
-  const text = await readInbox(inboxPath);
+  if (request.signal?.aborted) return fail('cancelled');
+  let text: string;
+  try { text = await readInbox(inboxPath); }
+  catch (error) {
+    if (request.signal?.aborted) return fail('cancelled');
+    throw error;
+  }
+  if (request.signal?.aborted) return fail('cancelled');
   const model = resolveDevinCliFleetModel(undefined, request.model);
   let admission: Awaited<ReturnType<DevinBusAdapterDeps['authorize']>>;
   try {
     assertLocusJobDispatch();
     admission = await deps.authorize(model, request.signal);
+    if (request.signal?.aborted) return fail('cancelled');
     if (!admission.command.length || !admission.command.every(s => typeof s === 'string' && s && !s.includes('\0'))) fail('admission');
   } catch { return fail(request.signal?.aborted ? 'cancelled' : 'admission'); }
   let directory: string;
   try { directory = await mkdtemp(join(cwd, '.phantom-devin-bus-')); }
-  catch { return fail('invalid-request'); }
+  catch { return fail(request.signal?.aborted ? 'cancelled' : 'invalid-request'); }
   const temporaryOutbox = join(dirname(outbox), `.devin-reply-${randomUUID()}.tmp`);
   try {
     const promptPath = join(directory, 'prompt.txt');
     try { await writeFile(promptPath, devinBusPrompt(text), { mode: 0o600, flag: 'wx' }); }
-    catch { return fail('inbox'); }
+    catch { return fail(request.signal?.aborted ? 'cancelled' : 'inbox'); }
+    if (request.signal?.aborted) return fail('cancelled');
     const reply = await runPrintMode(admission.command, [
       '-p', '--model', model, '--permission-mode', DEVIN_CLI_PERMISSION_MODE,
       '--respect-workspace-trust', 'false', '--',
@@ -230,8 +243,10 @@ export async function runDevinBusAdapter(request: DevinBusRequest, deps = defaul
       await writeFile(temporaryOutbox, reply, { mode: 0o600, flag: 'wx' });
       if (request.signal?.aborted) return fail('cancelled');
       assertLocusJobDispatch();
-      await rename(temporaryOutbox, outbox);
+      if (request.signal?.aborted) return fail('cancelled');
+      renameSync(temporaryOutbox, outbox);
     } catch (error) {
+      if (request.signal?.aborted) return fail('cancelled');
       if (error instanceof DevinBusAdapterError) throw error;
       return fail('outbox');
     }

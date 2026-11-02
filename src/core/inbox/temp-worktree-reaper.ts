@@ -52,6 +52,8 @@ import {
   releaseOutwardMutationFence,
 } from '../sandbox/mutation-fence.js';
 import { killSwitchOn } from '../sandbox/policy.js';
+import { filterDriverOverrides, repoScopedFilterDrivers, withDaemonGitHardening } from '../sandbox/worktree.js';
+import { isKeptWorktree, measureWorktreeBytes, readKeptWorktrees } from '../worktree-retention.js';
 import {
   verifiedProcessStartIdentity,
   type ProcessStartIdentitySource,
@@ -75,11 +77,11 @@ export function ashlrTmpDir(): string {
 }
 
 /** Same hardening as merge.ts gitRun: no hooks, no fsmonitor, no shell. */
-function gitTry(cwd: string, args: string[]): string | null {
+function gitTry(cwd: string, args: string[], timeout = GIT_TIMEOUT): string | null {
   try {
     return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
       cwd,
-      timeout: GIT_TIMEOUT,
+      timeout,
       stdio: 'pipe',
       encoding: 'utf8',
     }).trim();
@@ -189,6 +191,7 @@ function newestMtimeMs(paths: string[]): number | null {
 interface PorcelainEntry {
   path: string;
   branch: string | null;
+  locked: boolean;
 }
 
 function parsePorcelain(out: string): PorcelainEntry[] {
@@ -196,10 +199,12 @@ function parsePorcelain(out: string): PorcelainEntry[] {
   let current: PorcelainEntry | null = null;
   for (const line of out.split('\n')) {
     if (line.startsWith('worktree ')) {
-      current = { path: line.slice('worktree '.length), branch: null };
+      current = { path: line.slice('worktree '.length), branch: null, locked: false };
       entries.push(current);
     } else if (current && line.startsWith('branch ')) {
       current.branch = line.slice('branch '.length);
+    } else if (current && (line === 'locked' || line.startsWith('locked '))) {
+      current.locked = true;
     } else if (line.trim() === '') {
       current = null;
     }
@@ -227,6 +232,181 @@ export interface ReapTempWorktreesOptions {
   markerlessMaxAgeMs?: number;
 }
 
+/** Refuse redirected storage roots and worktree symlinks before any deletion. */
+function safeTempWorktreePath(dir: string): boolean {
+  if (!TEMP_WORKTREE_NAME.test(basename(dir)) || !tmpRoots().has(dirname(resolve(dir)))) return false;
+  try {
+    for (const root of [dirname(ashlrTmpDir()), ashlrTmpDir()]) {
+      if (!lstatSync(root).isDirectory()) return false;
+    }
+    try {
+      return lstatSync(dir).isDirectory() && dirname(realpathSync(dir)) === realpathSync(ashlrTmpDir());
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT';
+    }
+  } catch {
+    return false;
+  }
+}
+
+function ownerReapable(dir: string, options: ReapTempWorktreesOptions): boolean {
+  const marker = markerPathFor(join(ashlrTmpDir(), basename(dir)));
+  const state = readOwnerState(marker);
+  if (state !== 'unknown') return state === 'dead';
+  const mtime = newestMtimeMs([marker, dir]);
+  return mtime !== null && (options.now ?? Date.now()) - mtime >
+    (options.markerlessMaxAgeMs ?? MARKERLESS_TEMP_WORKTREE_REAP_AGE_MS);
+}
+
+/**
+ * Terminal cleanup for an owned inbox worktree. Git removes ignored build
+ * directories as part of the checkout, and refuses dirty or locked worktrees.
+ * Call under the same repo lease / mutation fence as worktree creation.
+ */
+export function removeTempWorktree(repo: string, dir: string): boolean {
+  if (!safeTempWorktreePath(dir) || isKeptWorktree(dir, readKeptWorktrees())) return false;
+  const listed = gitTry(repo, ['worktree', 'list', '--porcelain']);
+  if (listed === null) return false;
+  const entry = parsePorcelain(listed).find((item) =>
+    resolve(item.path) === resolve(dir) || sameDirectory(item.path, dir));
+  if (!entry || entry.locked || !safeTempWorktreePath(entry.path)) return false;
+  const deadlineMs = Date.now() + GIT_TIMEOUT;
+  let configDir = entry.path;
+  try { lstatSync(configDir); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+    configDir = repo; // A vanished checkout can still have a stale registration.
+  }
+  const env = hardenedWorktreeEnv(configDir, deadlineMs);
+  if (!env || Date.now() >= deadlineMs) return false;
+  try {
+    // Removal runs a status check internally. Its filters need the same
+    // hardening as the read-only diagnostic, including child Git processes.
+    execFileSync('git', ['worktree', 'remove', entry.path], {
+      cwd: repo, env, timeout: Math.max(1, deadlineMs - Date.now()), stdio: 'pipe', encoding: 'utf8',
+    });
+  } catch { return false; }
+  releaseTempWorktreeOwner(dir);
+  return true;
+}
+
+/** Null configured programs and optional locks before inspecting an agent checkout. */
+function hardenedWorktreeEnv(dir: string, deadlineMs: number): NodeJS.ProcessEnv | null {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_INDEX_FILE;
+  const remainingMs = (): number => Math.min(GIT_TIMEOUT, Math.floor(deadlineMs - Date.now()));
+  try {
+    const configTimeout = remainingMs();
+    if (configTimeout <= 0) return null;
+    // --list exits successfully for an empty config. Read names and scopes only.
+    const listing = execFileSync('git', ['--no-optional-locks', 'config', '--list', '--show-scope', '--null', '--name-only'], {
+      cwd: dir, env: withDaemonGitHardening(env), timeout: configTimeout, stdio: 'pipe', encoding: 'utf8',
+    });
+    // A diagnostic must not execute even operator-configured global filters.
+    // Reuse the shared key parser with every observed scope treated as local.
+    const scopedKeys = listing.split('\0');
+    for (let i = 0; i + 1 < scopedKeys.length; i += 2) scopedKeys[i] = 'local';
+    const filters = filterDriverOverrides(repoScopedFilterDrivers(scopedKeys.join('\0')));
+    return withDaemonGitHardening(env, filters);
+  } catch {
+    return null;
+  }
+}
+
+/** Inspect agent-touched files without refreshing the index or running repo filters. */
+function readOnlyWorktreeStatus(dir: string, deadlineMs: number): string | null {
+  const hardenedEnv = hardenedWorktreeEnv(dir, deadlineMs);
+  if (!hardenedEnv) return null;
+  const remainingMs = (): number => Math.min(GIT_TIMEOUT, Math.floor(deadlineMs - Date.now()));
+  try {
+    const indexTimeout = remainingMs();
+    if (indexTimeout <= 0) return null;
+    const staged = execFileSync('git', ['--no-optional-locks', 'ls-files', '--stage', '-z'], {
+      cwd: dir, env: hardenedEnv, timeout: indexTimeout, stdio: 'pipe', encoding: 'utf8',
+    });
+    // Plain worktree removal refuses populated submodules. Conservatively keep
+    // every gitlink checkout without traversing or executing code in submodules.
+    if (/(?:^|\0)160000 /.test(staged)) return 'submodule checkout retained';
+    const statusTimeout = remainingMs();
+    if (statusTimeout <= 0) return null;
+    return execFileSync('git', ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], {
+      cwd: dir, env: hardenedEnv, timeout: statusTimeout, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Read-only candidates; Git still makes the final decision during removal. */
+export function reclaimableTempWorktrees(
+  repo: string,
+  options: ReapTempWorktreesOptions = {},
+  deadlineMs = Date.now() + 2_000,
+): { paths: string[]; complete: boolean } {
+  const policy = readKeptWorktrees();
+  const listed = gitTry(repo, ['worktree', 'list', '--porcelain'], Math.max(1, deadlineMs - Date.now()));
+  if (!policy.valid || listed === null) return { paths: [], complete: false };
+  const paths: string[] = [];
+  let complete = true;
+  for (const entry of parsePorcelain(listed)) {
+    if (Date.now() >= deadlineMs) return { paths, complete: false };
+    if (!safeTempWorktreePath(entry.path) || entry.locked ||
+      isKeptWorktree(entry.path, policy) || !ownerReapable(entry.path, options)) continue;
+    const status = readOnlyWorktreeStatus(entry.path, deadlineMs);
+    if (status === null) complete = false;
+    else if (status === '') paths.push(entry.path);
+  }
+  return { paths, complete };
+}
+
+export interface TempWorktreeStorage {
+  bytes: number;
+  worktrees: number;
+  complete: boolean;
+}
+
+/** Bounded, read-only estimate for clean dead-owner inbox worktrees only. */
+export function readTempWorktreeStorage(): TempWorktreeStorage {
+  const result: TempWorktreeStorage = { bytes: 0, worktrees: 0, complete: true };
+  const deadlineMs = Date.now() + 2_000;
+  const policy = readKeptWorktrees();
+  if (!policy.valid) return { ...result, complete: false };
+  const root = ashlrTmpDir();
+  try { lstatSync(root); }
+  catch (error) {
+    return { ...result, complete: (error as NodeJS.ErrnoException).code === 'ENOENT' };
+  }
+  try {
+    if (!lstatSync(root).isDirectory() || !lstatSync(dirname(root)).isDirectory()) {
+      return { ...result, complete: false };
+    }
+    const repos = new Set<string>();
+    for (const name of readdirSync(root)) {
+      if (Date.now() >= deadlineMs) return { ...result, complete: false };
+      const dir = join(root, name);
+      if (!safeTempWorktreePath(dir) || isKeptWorktree(dir, policy) || !ownerReapable(dir, {})) continue;
+      const repo = tempWorktreeOwningRepo(dir);
+      if (repo) repos.add(realpathSync(repo));
+      else result.complete = false;
+    }
+    for (const repo of repos) {
+      if (Date.now() >= deadlineMs) return { ...result, complete: false };
+      const candidates = reclaimableTempWorktrees(repo, {}, deadlineMs);
+      result.complete &&= candidates.complete;
+      for (const dir of candidates.paths) {
+        const measured = measureWorktreeBytes(dir, { deadlineMs });
+        result.bytes += measured.bytes;
+        result.worktrees++;
+        result.complete &&= measured.complete;
+      }
+    }
+  } catch { result.complete = false; }
+  return result;
+}
+
 /**
  * Reap crash-leftover ashlr temp worktrees registered in `repo`. Never throws.
  * Callers run it under the same lock (mirror lease / mutation fence) that
@@ -244,6 +424,7 @@ export function reapLeakedTempWorktrees(
     const maxAge = options.markerlessMaxAgeMs ?? MARKERLESS_TEMP_WORKTREE_REAP_AGE_MS;
     const roots = tmpRoots();
     const tmpDir = ashlrTmpDir();
+    const policy = readKeptWorktrees();
     let mutated = false;
     const registered = new Set<string>();
     for (const entry of parsePorcelain(porcelain)) {
@@ -251,22 +432,17 @@ export function reapLeakedTempWorktrees(
       if (!TEMP_WORKTREE_NAME.test(name) || !roots.has(dirname(resolve(entry.path)))) continue;
       registered.add(name);
       const markerPath = markerPathFor(join(tmpDir, name));
-      let reap: boolean;
-      const state = readOwnerState(markerPath);
-      if (state === 'dead') {
-        reap = true;
-      } else if (state === 'alive') {
-        reap = false;
-      } else {
-        const mtime = newestMtimeMs([markerPath, entry.path]);
-        reap = mtime !== null && now - mtime > maxAge;
-      }
+      const reap = safeTempWorktreePath(entry.path) && !entry.locked &&
+        !isKeptWorktree(entry.path, policy) && ownerReapable(entry.path, options);
       if (!reap) {
         result.kept.push(entry.path);
         continue;
       }
       mutated = true;
-      gitTry(repo, ['worktree', 'remove', '--force', '--force', entry.path]);
+      if (!removeTempWorktree(repo, entry.path)) {
+        result.failed.push(entry.path);
+        continue;
+      }
       let dirGone = false;
       try {
         lstatSync(entry.path);
@@ -351,6 +527,10 @@ function reapUnregisteredLeftovers(
     const markerRepo = tempWorktreeMarkerRepo(markerPath);
     if (!markerRepo || !sameDirectory(markerRepo, repo)) continue;
     const dir = join(tmpDir, name);
+    if (!safeTempWorktreePath(dir) || isKeptWorktree(dir, readKeptWorktrees())) {
+      result.kept.push(dir);
+      continue;
+    }
     const state = readOwnerState(markerPath);
     let reap = state === 'dead';
     if (state === 'unknown') {

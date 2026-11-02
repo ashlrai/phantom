@@ -3,14 +3,14 @@ import { currentQuotaReading } from '../../../core/verse/quota-freshness.js';
  * routes/verse/verse-model.ts — small pure helpers shared by the Verse
  * components (labels, grouping, health → tone). No React, no I/O.
  */
-import type { VerseEngine, VerseModelOption, VerseProject, VerseSeat, VerseSeatHealth, VerseSession } from '../../data/api-types.js';
+import type { VerseEngine, VerseModelOption, VerseProject, VerseSeat, VerseSession } from '../../data/api-types.js';
 import type { VerseContextMode, VerseWindowSource } from '../../../core/verse/types.js';
-import type { Tone } from '../../components/primitives/StatusBadge.js';
 // context-math is PURE and browser-safe by contract (its only import is
 // type-only), so a value import here does not drag node into the bundle.
 import { budgetFor, canonicalModelId, claudeAutocompactFlag, reconcileAutoCompactAt } from '../../../core/verse/context-math.js';
 import { engineTier, orderByTier, seatTier } from '../../../core/routing/tiers.js';
 import { usedPercentText } from './percent-text.js';
+import { visibleWindows } from './usage/provider-windows.js';
 import { formatMetric } from '../../components/charts/format-metric.js';
 import { formatTokens } from './verse-readouts.js';
 
@@ -228,19 +228,6 @@ export function firstRunnableModel(seat: VerseSeat): VerseModelOption | null {
   return seat.models.find((m) => !m.unavailableReason) ?? null;
 }
 
-export function healthTone(state: VerseSeatHealth['state']): Tone {
-  switch (state) {
-    case 'ready':
-      return 'success';
-    case 'degraded':
-      return 'warning';
-    case 'unavailable':
-      return 'danger';
-    default:
-      return 'unknown';
-  }
-}
-
 export function seatUnavailableReason(seat: VerseSeat): string | null {
   if (seat.health.state !== 'unavailable') return null;
   return seat.health.summary ?? 'seat unavailable';
@@ -318,7 +305,7 @@ export function seatCapacity(seat: VerseSeat, now: number = Date.now()): SeatCap
   if (reason !== null) return { cls: 'blocked', usedPercent: null, text: reason };
 
   if (!nativeQuotaCurrent(seat, now)) return { cls: 'unread', usedPercent: null, text: 'Last known usage · current usage unconfirmed' };
-  const measured = seat.health.windows.filter(
+  const measured = visibleWindows(seat.engine, seat.health.windows).filter(
     (w): w is { id: string; usedPercent: number; resetsAt: string | null } =>
       typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent),
   );

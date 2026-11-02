@@ -1,0 +1,48 @@
+/* routes/verse/mobile/screens/InboxScreen.module.css — the leaders' inbox list: one card per entry, a six-line clamp behind Show more. */
+
+.entry {
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+
+.entry + .entry {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.entryHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.entryTime {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: 0.85em;
+}
+
+.entryText {
+  margin: var(--space-2) 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.entryClamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+
+.moreToggle {
+  margin-top: var(--space-1);
+}
+
+.dropped {
+  margin: 0;
+  padding: 0 var(--space-2);
+}

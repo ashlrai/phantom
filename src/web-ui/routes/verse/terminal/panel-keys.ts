@@ -28,7 +28,9 @@ import { eventKeyName, matchKey, type KeyPlatform } from '../shell/command-keys.
  */
 export function keyPassesToPage(event: KeyboardEvent, platform: KeyPlatform): boolean {
   if (event.type !== 'keydown') return false;
-  if (!matchKey(event, ['chat', 'global'], platform)) return false;
+  const binding = matchKey(event, ['chat', 'global'], platform);
+  if (!binding) return false;
+  if (binding.id === 'fleet.interject') return true;
   const key = eventKeyName(event);
   const shellChord = event.ctrlKey && (key === '`' || key === 'tab');
   if (platform === 'mac') return event.metaKey || shellChord;

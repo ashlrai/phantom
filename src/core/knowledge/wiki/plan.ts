@@ -203,9 +203,23 @@ export function planPages(facts: RepoFacts, steering: WikiSteering): WikiPageSpe
   let out = specs;
   if (steering.include.length > 0) out = out.filter((s) => matches(s, steering.include) || s.kind === 'custom');
   if (steering.exclude.length > 0) out = out.filter((s) => !matches(s, steering.exclude));
-  const kept = new Set(out.map((s) => s.id));
+  out = out.slice(0, steering.maxPages ?? DEFAULT_MAX_PAGES);
+  const kept = new Map(out.map((s) => [s.id, s]));
   for (const s of out) if (s.parent && !kept.has(s.parent)) delete s.parent;
-  return out.slice(0, steering.maxPages ?? DEFAULT_MAX_PAGES);
+
+  // Walk in page order, removing the edge that first closes each cycle.
+  const done = new Set<string>();
+  for (const spec of out) {
+    const path = new Set<string>();
+    let current: WikiPageSpec | undefined = spec;
+    while (current && !done.has(current.id)) {
+      path.add(current.id);
+      if (current.parent && path.has(current.parent)) delete current.parent;
+      current = current.parent ? kept.get(current.parent) : undefined;
+    }
+    for (const id of path) done.add(id);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

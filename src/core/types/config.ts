@@ -1108,6 +1108,10 @@ export interface AshlrConfig {
     /** Display name shown in pulse team views. */
     name?: string;
   };
+  /** RQ-ONB-2: Connect plan picks (resource id -> tier), written by POST /api/onboard/plan-tier. */
+  onboard?: {
+    planTiers?: Record<string, string>;
+  };
   /**
    * M111: Multi-machine fleet work-queue coordination. DEFAULT ABSENT (off) -
    * single-machine behavior is unchanged when this block is missing.
@@ -1293,6 +1297,14 @@ export interface AshlrConfig {
      */
     mode?: 'normal' | 'fast' | 'lite' | 'ultra';
     /**
+     * SessionCreateRequest.playbook_id: the id of a Devin-org playbook
+     * (`playbook-…`; the source for ours lives in devin/playbooks/) attached
+     * to every dispatched task session, so the dispatch prompt references it
+     * instead of repeating its conventions. An identifier, not a secret.
+     * Chats never attach it. Empty or absent = no playbook.
+     */
+    playbookId?: string;
+    /**
      * The model a NEW Devin (CLI) chat starts on - any id, family slug or
      * alias `devin models list` prints (core/devin/models.ts resolves it).
      * Default 'swe-2-high' (SWE-2, listed Free). Each chat can still pick
@@ -1307,5 +1319,19 @@ export interface AshlrConfig {
      * A sibling of `fleet` (which is a boolean the launcher checks `=== true`).
      */
     fleetModel?: string;
+  };
+  /**
+   * RQ-OT-P1-BANDIT: contextual Thompson bandit model routing. Off unless
+   * `bandit` is exactly true; absent/false keeps routeTask byte-identical to
+   * today. When on, routeTask picks among the same availability/quota/
+   * capability/permitted-constrained candidate arms by sampling their
+   * context-conditioned posteriors in the routing arm registry
+   * (~/.ashlr/routing/arms.json, src/core/routing/arms.ts +
+   * src/core/routing/bandit.ts). Learned decisions never auto-apply; the
+   * local-only refusal backstop still runs on the result.
+   */
+  router?: {
+    /** Enable the contextual Thompson sampler in routeTask. Default false. */
+    bandit?: boolean;
   };
 }

@@ -11,6 +11,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { collectMergeEtas, type MergeEta } from '../core/merge-eta.js';
 import type {
   ActivityRollup,
   AshlrConfig,
@@ -103,7 +104,7 @@ export interface StatusJson {
     budgetLevel: string;
   } | null;
   memory: { genomeEntries: number; projects: number; embeddingsAvailable: boolean } | null;
-  github: { repo: string | null; openPrs: number; openIssues: number; ci: GithubStatus['ci'] } | null;
+  github: { repo: string | null; openPrs: number; openIssues: number; ci: GithubStatus['ci']; mergeEtas: MergeEta[] } | null;
   vercel: { latestState: string | null; url: string | null } | null;
   identity: { user: string; tier: string | null; team: string | null } | null;
   resources: Array<{ backend: string; availability: string; usedPct: number | null }> | null;
@@ -190,7 +191,8 @@ export async function gatherStatus(
     const fn = await loaders.githubStatus();
     if (!fn) return null;
     const gs = fn(cwd);
-    return gs.isRepo ? { repo: gs.repo, openPrs: gs.openPrs, openIssues: gs.openIssues, ci: gs.ci } : null;
+    return gs.isRepo ? { repo: gs.repo, openPrs: gs.openPrs, openIssues: gs.openIssues, ci: gs.ci,
+      mergeEtas: gs.repo ? collectMergeEtas(cwd, gs.repo) : [] } : null;
   });
 
   const vercel = await attempt(async () => {

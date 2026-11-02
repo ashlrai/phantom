@@ -2,9 +2,9 @@
  * routes/verse/shell/palette-model.ts — the ⌘K palette as data (unit C1;
  * SPEC-310C §1 "⌘K palette"). Pure: items in, ranked groups out.
  *
- *   Needs you › Chats (running first) › Actions › Go to › Seats & Apps › Projects
+ *   Needs you › Workers › Chats (running first) › Actions › Go to › Seats & Apps › Projects
  *
- *   `>` limits results to actions, `#` to chats (command-catalog PALETTE_PREFIXES).
+ *   `>` limits results to actions, `#` to chats, `@` to workers (command-catalog PALETTE_PREFIXES).
  *   An empty query shows what needs you (top 3) and the last 5 actions run.
  *   Tab on an item with an argument ("New chat on…") lists its candidates.
  *
@@ -13,6 +13,10 @@
  * catalog's order breaks ties — so "stop" puts "Stop running chats…" above a
  * chat that merely contains an s, t, o and p.
  */
+import { backlogItemKeywords, backlogItemTitle, type PaletteBacklogItem } from './palette-backlog.js';
+import { phoneItemTitle, phoneItemSubtitle, type PalettePhone } from './palette-phone.js';
+import { laneItemTitle, releaseItemTitle, type PaletteLane } from './palette-lanes.js';
+import { prLabel, safePrUrl } from '../fleet-job-log/worker-log-model.js';
 import type { VerseProject, VerseSeat, VerseSession } from '../../../data/api-types.js';
 import {
   ENGINE_MONOGRAM,
@@ -32,13 +36,14 @@ import {
   type WorkbenchCommand,
 } from './command-catalog.js';
 
-export type PaletteItemKind = 'needs-you' | 'chat' | 'command' | 'seat' | 'project' | 'argument';
+export type PaletteItemKind = 'pane' | 'lane' | 'worker' | 'needs-you' | 'chat' | 'command' | 'seat' | 'project' | 'argument' | 'backlog';
 
 export interface PaletteItem {
   /** Unique across the whole list (React key + active-descendant id). */
   key: string;
   kind: PaletteItemKind;
-  group: PaletteGroupId | 'recent';
+  workerState?: PaletteWorker['state'];
+  group: PaletteGroupId | 'recent' | 'lanes' | 'backlog';
   title: string;
   /** Muted second part of the row. */
   subtitle: string | null;
@@ -56,6 +61,13 @@ export interface PaletteItem {
   /** What Enter does — interpreted by the component. */
   payload:
     | { kind: 'needs-you'; itemId: string }
+    | { kind: 'pane'; paneId: string }
+    | { kind: 'worker'; job: string; url?: string; selectLog?: boolean }
+    | { kind: 'backlog'; url: string }
+    | { kind: 'copy-text'; text: string }
+    | { kind: 'open-phone'; url: string }
+    | { kind: 'lane'; lane: PaletteLane }
+    | { kind: 'lane-release'; lane: PaletteLane }
     | { kind: 'chat'; sessionId: string }
     | { kind: 'command'; commandId: string }
     | { kind: 'seat'; seatId: string; label: string }
@@ -63,8 +75,24 @@ export interface PaletteItem {
     | { kind: 'argument'; argument: { kind: CommandArgumentKind; id: string; label: string } };
 }
 
+export interface PaletteWorker {
+  job: string;
+  lane: string;
+  tier: string;
+  ageSeconds: number | null;
+  prUrl: string | null;
+  state?: 'running' | 'queued' | 'merged';
+  at?: string | null;
+}
+
 export interface PaletteInput {
+  panes?: ReadonlyArray<{ id: string; title: string; keywords?: readonly string[] }>;
+  workers?: readonly PaletteWorker[];
+  lanes?: readonly PaletteLane[];
+  backlog?: readonly PaletteBacklogItem[];
+  phone?: PalettePhone | null;
   needsYou: readonly NeedsYouItem[];
+  fleetNeedsYou?: ReadonlyArray<{ id: string; title: string; detail: string }>;
   running: readonly VerseActivityRunning[];
   sessions: readonly VerseSession[];
   seats: readonly VerseSeat[];
@@ -74,22 +102,30 @@ export interface PaletteInput {
   now?: number;
 }
 
-export const GROUP_LABEL: Readonly<Record<PaletteGroupId | 'recent', string>> = {
+export const GROUP_LABEL: Readonly<Record<PaletteGroupId | 'recent' | 'lanes' | 'backlog', string>> = {
   ...(Object.fromEntries(PALETTE_GROUPS.map((g) => [g.id, g.label])) as Record<PaletteGroupId, string>),
   recent: 'Recent',
+  lanes: 'Lanes',
+  backlog: 'Merge backlog',
 };
 
-const GROUP_ORDER: readonly (PaletteGroupId | 'recent')[] = [
+const GROUP_ORDER: readonly (PaletteGroupId | 'recent' | 'lanes' | 'backlog')[] = [
   'needs-you',
   'recent',
+  'lanes',
+  'backlog',
   ...PALETTE_GROUPS.map((g) => g.id).filter((id) => id !== 'needs-you'),
 ];
 
 /** Per-group caps with a query (the palette is for jumping, not browsing). */
-const GROUP_CAP: Readonly<Record<PaletteGroupId | 'recent', number>> = {
+const GROUP_CAP: Readonly<Record<PaletteGroupId | 'recent' | 'lanes' | 'backlog', number>> = {
   'needs-you': 5,
   recent: PALETTE_RECENT_LIMIT,
+  panes: 8,
   chats: 8,
+  workers: 8,
+  lanes: 50,
+  backlog: 21,
   actions: 8,
   'go-to': 6,
   'seats-apps': 5,
@@ -172,6 +208,14 @@ function elapsed(startedAt: string, now: number): string {
   return `running ${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+function workerAge(seconds: number | null): string {
+  if (seconds === null) return 'age unknown';
+  const minutes = Math.floor(Math.max(0, seconds) / 60);
+  if (minutes < 1) return '<1 min';
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} hr${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+}
+
 function relative(iso: string, now: number): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
@@ -188,7 +232,7 @@ function projectName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-export function commandItem(command: WorkbenchCommand, platform: KeyPlatform, group: PaletteGroupId | 'recent'): PaletteItem {
+export function commandItem(command: WorkbenchCommand, platform: KeyPlatform, group: PaletteGroupId | 'recent' | 'lanes' | 'backlog'): PaletteItem {
   const chord = command.keys[0];
   return {
     key: `${group}:cmd:${command.id}`,
@@ -228,6 +272,74 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     });
   }
 
+  for (const item of input.fleetNeedsYou ?? []) {
+    items.push({
+      key: `needs-you:${item.id}`, kind: 'needs-you', group: 'needs-you', title: item.title,
+      subtitle: item.detail, shortcut: null, monogram: null, engine: null,
+      keywords: ['ci', 'fleet', 'needs you'], argument: null, tone: 'warn',
+      payload: { kind: 'needs-you', itemId: item.id },
+    });
+  }
+
+  for (const pane of input.panes ?? []) {
+    items.push({
+      key: `pane:${pane.id}`, kind: 'pane', group: 'panes',
+      title: `Open pane: ${pane.title}`, subtitle: null, shortcut: null,
+      monogram: null, engine: null,
+      keywords: [pane.title, ...pane.id.split('-'), ...(pane.keywords ?? [])],
+      argument: null, tone: 'neutral', payload: { kind: 'pane', paneId: pane.id },
+    });
+  }
+
+  if (input.phone?.phoneUrl) {
+    const phone = input.phone;
+    items.push({
+      key: 'phone:copy-url', kind: 'command', group: 'lanes',
+      title: phoneItemTitle(phone), subtitle: phoneItemSubtitle(phone), shortcut: null,
+      monogram: null, engine: null, keywords: ['phone', 'mobile', 'remote', 'url', 'qr'],
+      argument: null, tone: phone.pending > 0 ? 'warn' : 'neutral',
+      payload: { kind: 'copy-text', text: phone.phoneUrl! },
+    });
+    items.push({
+      key: 'phone:open-url', kind: 'command', group: 'lanes',
+      title: 'Open phone URL', subtitle: phoneItemSubtitle(phone), shortcut: null,
+      monogram: null, engine: null, keywords: ['phone', 'mobile', 'remote', 'url'],
+      argument: null, tone: phone.pending > 0 ? 'warn' : 'neutral',
+      payload: { kind: 'open-phone', url: phone.phoneUrl! },
+    });
+  }
+
+  for (const lane of input.lanes ?? []) {
+    items.push({
+      key: `lane:${lane.lane}`, kind: 'lane', group: 'lanes',
+      title: laneItemTitle(lane), subtitle: null, shortcut: null,
+      monogram: null, engine: null, keywords: ['lane', 'pause', 'resume', lane.lane],
+      argument: null, tone: 'neutral', payload: { kind: 'lane', lane },
+    });
+    if (lane.held) items.push({
+      key: `lane-release:${lane.lane}`, kind: 'lane', group: 'lanes',
+      title: releaseItemTitle(lane), subtitle: null, shortcut: null,
+      monogram: null, engine: null, keywords: ['release', 'hold', 'unhold', lane.lane],
+      argument: null, tone: 'neutral', payload: { kind: 'lane-release', lane },
+    });
+  }
+
+  const backlog = input.backlog ?? [];
+  if (backlog.length > 0) {
+    items.push({
+      key: 'backlog:summary', kind: 'pane', group: 'backlog',
+      title: `Merge backlog: ${backlog.length} stuck (recut ${backlog.filter(item => item.action === 'recut').length}) · open Merges pane`,
+      subtitle: null, shortcut: null, monogram: null, engine: null,
+      keywords: ['merge', 'backlog', 'stuck'], argument: null, tone: 'neutral',
+      payload: { kind: 'pane', paneId: 'fleet-merges' },
+    });
+    for (const item of backlog) items.push({
+      key: `backlog:${item.number}`, kind: 'backlog', group: 'backlog', title: backlogItemTitle(item),
+      subtitle: null, shortcut: null, monogram: null, engine: null, keywords: backlogItemKeywords(item),
+      argument: null, tone: item.state === 'DIRTY' ? 'warn' : 'neutral', payload: { kind: 'backlog', url: item.url },
+    });
+  }
+
   const running = new Map(input.running.map((r) => [r.sessionId, r] as const));
   const sessions = [...input.sessions].sort((a, b) => {
     const ra = running.has(a.id) || a.status === 'running' ? 0 : 1;
@@ -252,6 +364,29 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       argument: null,
       tone: isRunning ? 'running' : s.status === 'error' ? 'warn' : 'neutral',
       payload: { kind: 'chat', sessionId: s.id },
+    });
+  }
+
+  const workerRank = (worker: PaletteWorker) => worker.state === 'queued' ? 1 : worker.state === 'merged' ? 2 : 0;
+  for (const worker of [...(input.workers ?? [])].sort((a, b) => workerRank(a) - workerRank(b)
+    || (workerRank(a) === 0 ? (b.ageSeconds ?? -1) - (a.ageSeconds ?? -1) : 0) || a.job.localeCompare(b.job))) {
+    const url = safePrUrl(worker.prUrl);
+    const state = worker.state ?? 'running';
+    const subtitle = !worker.state ? `${worker.lane} · ${worker.tier} · ${workerAge(worker.ageSeconds)}`
+      : state === 'running' ? `running · ${workerAge(worker.ageSeconds)} · ${worker.lane}`
+      : state === 'queued' ? `queued · ${[worker.lane, worker.tier].filter(Boolean).join('/')}`
+      : [`merged${worker.at && relative(worker.at, now) ? ` ${relative(worker.at, now)}` : ''}`, url ? prLabel(url) : ''].filter(Boolean).join(' · ');
+    const item: PaletteItem = {
+      key: `worker:${worker.job}`, kind: 'worker', workerState: worker.state, group: 'workers', title: worker.job,
+      subtitle, shortcut: null, monogram: null,
+      engine: null, keywords: [worker.lane, worker.tier, 'worker', 'log'], argument: null,
+      tone: state === 'running' ? 'running' : 'neutral',
+      payload: state === 'merged' && url ? { kind: 'worker', job: worker.job, url, selectLog: true } : { kind: 'worker', job: worker.job },
+    };
+    items.push(item);
+    if (state === 'running' && url && new URL(url).protocol === 'https:') items.push({
+      ...item, key: `worker-pr:${worker.job}`, title: `Open ${prLabel(url)} for ${worker.job}`,
+      keywords: ['pr', 'pull'], tone: 'neutral', payload: { kind: 'worker', job: worker.job, url },
     });
   }
 
@@ -326,7 +461,7 @@ export function argumentItems(kind: CommandArgumentKind, input: PaletteInput): P
 }
 
 export interface PaletteGroup {
-  id: PaletteGroupId | 'recent';
+  id: PaletteGroupId | 'recent' | 'lanes' | 'backlog';
   label: string;
   items: PaletteItem[];
 }
@@ -335,8 +470,8 @@ export interface PaletteView {
   groups: PaletteGroup[];
   /** Flattened, in display order — what ↑/↓ walks. */
   flat: PaletteItem[];
-  /** The prefix in force (`>` / `#`), if any. */
-  prefix: '>' | '#' | null;
+  /** The prefix in force (`>` / `#` / `@`), if any. */
+  prefix: '>' | '#' | '@' | null;
   /**
    * Index into `flat` of the strongest match — what a fresh query highlights,
    * so Enter runs it. Groups keep their fixed order, which means the best hit
@@ -351,16 +486,16 @@ export interface PaletteView {
 /** Items → ranked, grouped, capped view for `rawQuery`. */
 export function paletteView(items: readonly PaletteItem[], rawQuery: string, recentActions: readonly string[], platform: KeyPlatform): PaletteView {
   let query = rawQuery;
-  let prefix: '>' | '#' | null = null;
+  let prefix: '>' | '#' | '@' | null = null;
   const first = query.trimStart().charAt(0);
-  if (first === '>' || first === '#') {
+  if (first === '>' || first === '#' || first === '@') {
     prefix = first;
     query = query.trimStart().slice(1);
   }
   const only: PaletteGroupId | null = prefix ? PALETTE_PREFIXES[prefix] : null;
   const trimmed = query.trim();
 
-  const groups = new Map<PaletteGroupId | 'recent', Array<{ item: PaletteItem; score: number; order: number }>>();
+  const groups = new Map<PaletteGroupId | 'recent' | 'lanes' | 'backlog', Array<{ item: PaletteItem; score: number; order: number }>>();
   const push = (item: PaletteItem, score: number, order: number) => {
     const list = groups.get(item.group) ?? [];
     list.push({ item, score, order });
@@ -370,9 +505,14 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
   if (trimmed === '' && !prefix) {
     // Empty query: what needs you, then what you did last.
     items.filter((i) => i.group === 'needs-you').slice(0, 3).forEach((item, order) => push(item, 0, order));
-    const recent = recentActions.map((id) => findCommand(id)).filter((c): c is WorkbenchCommand => c !== null && c.group !== null);
-    const shown = recent.length > 0 ? recent : (['chat.new', 'needs-you.open', 'shortcuts.open'] as const).map((id) => findCommand(id)!);
-    shown.slice(0, PALETTE_RECENT_LIMIT).forEach((command, order) => push(commandItem(command, platform, 'recent'), 0, order));
+    const recent = recentActions.flatMap((id): PaletteItem[] => {
+      const pane = items.find((item) => item.payload.kind === 'pane' && `pane.${item.payload.paneId}` === id);
+      if (pane) return [{ ...pane, group: 'recent' }];
+      const command = findCommand(id);
+      return command?.group ? [commandItem(command, platform, 'recent')] : [];
+    });
+    const shown = recent.length > 0 ? recent : (['chat.new', 'needs-you.open', 'shortcuts.open'] as const).map((id) => commandItem(findCommand(id)!, platform, 'recent'));
+    shown.slice(0, PALETTE_RECENT_LIMIT).forEach((item, order) => push(item, 0, order));
   } else {
     items.forEach((item, order) => {
       if (only && item.group !== only) return;
@@ -384,14 +524,17 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
 
   const out: PaletteGroup[] = [];
   const flatScores: number[] = [];
-  for (const id of GROUP_ORDER) {
+  const namesPane = !prefix && trimmed !== '' && items.some((item) => item.payload.kind === 'pane'
+    && [item.title.slice('Open pane: '.length), item.payload.paneId.replace(/-/g, ' ')].some((name) => name.toLowerCase() === trimmed.toLowerCase()));
+  const groupOrder = namesPane ? ['panes' as const, ...GROUP_ORDER.filter((id) => id !== 'panes')] : GROUP_ORDER;
+  for (const id of groupOrder) {
     const list = groups.get(id);
     if (!list || list.length === 0) continue;
     // Chats: running first (SPEC-310C §1), then by match. Everything else by
     // match, with catalog / recency order breaking ties.
-    const runRank = (e: { item: PaletteItem }) => (id === 'chats' && e.item.tone === 'running' ? 0 : 1);
-    list.sort((a, b) => runRank(a) - runRank(b) || b.score - a.score || a.order - b.order);
-    const cap = prefix ? 50 : GROUP_CAP[id];
+    const runRank = (e: { item: PaletteItem }) => id === 'workers' ? (e.item.workerState === 'queued' ? 1 : e.item.workerState === 'merged' ? 2 : 0) : (id === 'chats' && e.item.tone === 'running' ? 0 : 1);
+    list.sort((a, b) => id === 'backlog' ? a.order - b.order : runRank(a) - runRank(b) || b.score - a.score || a.order - b.order);
+    const cap = (id === 'panes' && trimmed !== '') || prefix && (id !== 'workers' || list.some(e => e.item.workerState !== undefined)) ? 50 : GROUP_CAP[id];
     const shown = list.slice(0, cap);
     for (const e of shown) flatScores.push(e.score);
     out.push({ id, label: GROUP_LABEL[id], items: shown.map((e) => e.item) });

@@ -4,16 +4,25 @@
  */
 import { userInfo } from 'node:os';
 import {
-  localHumanActor, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, type TeamActor,
+  localHumanActor, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
 
-const USAGE = `Usage: phm team <view|join|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
+const USAGE = `Usage: phm team <view|join|invite|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
   view                         Members, presence, claims, handoffs and pending approvals
   join [--role admin]          Join as the local human (first human becomes owner; --as is ignored)
+  invite <human:name>          Add a local workspace member (no external message)
+  role <human:name> <admin|member>  Change a member role (owner/admin only)
+  link <owner/repo>            Link a repository (owner/admin only)
   approve|deny <approvalId>    Decide a consequential handoff (owner/admin only; identity is the local OS user/owner.json, never --as)
   claim <owner/repo> [--branch b] [--path p] [--reason r] [--ttl-min n]
   release <claimId>
-  say <text...>                Post a message to the team channel`;
+  say <text...>                Post a message to the team channel
+
+Start: view --team <id>; confirm the authoritative local log and your task with the owner.
+Team names do not sync machines. Roles do not grant repository or connector access.
+Missing access/context: ask the owner/admin with a task reference and redacted error.
+Returning: review handoff details with view --json, source links and claims before editing.
+Guide: docs/TEAM.md`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -38,11 +47,27 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         if (json) return out(s, '');
         const lines = [`Team ${team} — ${s.members.length} members, ${s.claims.length} claims, ${s.handoffs.filter((h) => h.state !== 'completed' && h.state !== 'declined').length} open handoffs`];
         for (const m of s.members) lines.push(`  ${m.online ? '●' : '○'} ${m.id} (${m.role}${m.provider ? `, ${m.provider}` : ''})${m.status ? ` — ${m.status}` : ''}`);
+        for (const repo of s.repos) lines.push(`  repo: ${repo}`);
         for (const c of s.claims) lines.push(`  ⚑ ${c.target.repo}${c.target.branch ? `@${c.target.branch}` : ''}${c.target.path ? `:${c.target.path}` : ''} by ${c.holder} until ${c.expiresAt} [${c.id}]`);
         for (const h of s.handoffs.filter((x) => x.state !== 'completed' && x.state !== 'declined')) lines.push(`  → ${h.title} (${h.state}) ${h.from} → ${h.assignee ?? h.to ?? 'anyone'} [${h.id}]`);
         const pending = s.approvals.filter((a) => a.state === 'pending');
-        for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — phm team approve ${a.id}`);
+        for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — human owner/admin: phm team approve ${a.id} --team ${team}`);
+        for (const m of s.messages.slice(-5)) lines.push(`  # ${m.channel} ${m.from} (${m.ts}): ${m.text}`);
+        lines.push('Local log only: matching team names on other machines do not sync state.');
+        lines.push(s.members.length === 0
+          ? `Next: confirm this is the intended local log with the team owner, then join from a human terminal: phm team join --team ${team}`
+          : `Next: confirm your role and task with the owner; review handoff details and context refs: phm team view --team ${team} --json`);
+        lines.push('Before editing: re-read task sources and resolve claims. Missing access/context: ask the owner/admin with the task reference and redacted error; retry the blocked check.');
         return out(s, lines.join('\n'));
+      }
+      case 'invite': case 'role': case 'link': {
+        if (rest.length !== (sub === 'role' ? 2 : 1)) throw new Error(USAGE);
+        if (sub === 'role' && rest[1] !== 'admin' && rest[1] !== 'member') throw new Error('role must be admin or member.');
+        const action = sub === 'link' ? { type: 'repo.linked' as const, repo: rest[0]! }
+          : sub === 'invite' ? { type: 'member.invited' as const, memberId: rest[0]! }
+          : { type: 'member.role-changed' as const, memberId: rest[0]!, role: rest[1] as 'admin' | 'member' };
+        const ev = updateWorkspace(team, localHumanActor(), action);
+        return out(ev, `${ev.type} [${ev.id}]`);
       }
       case 'join': { const actor = localHumanActor(); const role = flag(rest, '--role'); const ev = appendEvent(team, actor, 'member.joined', role ? { role } : {}); return out(ev, `Joined ${team} as ${actor.id}.`); }
       case 'approve': case 'deny': { const r = decideApproval(team, localHumanActor(), rest[0] ?? '', sub === 'approve' ? 'approve' : 'deny'); return out(r, `${r.approvalId}: ${r.state}`); }

@@ -1,0 +1,6 @@
+{"job":"RQ-FIXTURE-007","pool":"devin","from":"READY","to":"CLAIMED","at":"2026-10-28T01:15:00Z"}
+{"job":"RQ-FIXTURE-008","pool":"codex-cmp","from":"CLAIMED","to":"PR-OPEN","at":"2026-10-28T01:20:00Z"}
+{"job":"RQ-FIXTURE-008","pool":"codex-cmp","from":"PR-OPEN","to":"LAND","at":"2026-10-28T01:40:00Z"}
+{"job":"RQ-FIXTURE-009","event":"pr-merge","at":"2026-10-28T01:45:00Z"}
+{"job":"RQ-FIXTURE-011","pool":"grok-ultra","from":"CLAIMED","to":"FAILED","at":"2026-10-28T01:35:00Z"}
+{"job":"RQ-FIXTURE-012","pool":"codex-cmp","from":"PR-OPEN","to":"LAND","at":"2026-10-27T20:00:00Z"}

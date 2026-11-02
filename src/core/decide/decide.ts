@@ -412,7 +412,3 @@ export async function decideEach<T>(
   return out;
 }
 
-/** Test seam. */
-export function resetDecideConfigForTests(): void {
-  cachedCfg = undefined;
-}

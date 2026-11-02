@@ -4,9 +4,10 @@
  * A standing grant names each repo `server` or `local` enforcement (types.ts
  * StandingGrantRepo). `server` means GitHub's rulesets / branch protection
  * require checks on the default branch, and merge gate G7 trusts exactly those
- * required checks; `local` means GitHub protects nothing, so G7 requires every
- * check on the head green AND the ashlr-fleet App's host-verified
- * `ashlr/verify` (fleet/verify-check-run.ts), under the lower local ceilings.
+ * required checks; `local` means GitHub protects nothing, so G7 requires the
+ * ashlr-fleet App's host-verified `ashlr/verify` plus every GitHub Actions
+ * check run on the head green (fleet/verify-check-run.ts; other Apps' checks
+ * are informational), under the lower local ceilings.
  *
  * WHY THIS MODULE EXISTS: on GitHub Free, rulesets AND classic branch
  * protection are unavailable for PRIVATE repos. Verified against the live API

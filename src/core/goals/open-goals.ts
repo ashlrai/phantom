@@ -16,13 +16,7 @@
  *
  * Pure (no I/O): callers pass the result of a goal-store read.
  */
-import type { Goal, GoalStatus } from '../types.js';
-
-/**
- * Statuses that occupy focus capacity. `planning` counts: a goal with no
- * milestones yet is still open work the fleet has committed to.
- */
-export const OPEN_GOAL_STATUSES: readonly GoalStatus[] = Object.freeze(['active', 'planning'] as GoalStatus[]);
+import type { Goal } from '../types.js';
 
 export function isOpenGoal(goal: Pick<Goal, 'status'>): boolean {
   return goal.status === 'active' || goal.status === 'planning';

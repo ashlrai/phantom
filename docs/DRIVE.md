@@ -4,7 +4,9 @@
 It reaps finished workers, publishes successful jobs through the existing
 `publish.sh`, and admits READY jobs within pool floors, ceilings and a global
 ceiling. STARTING jobs consume capacity. Floors receive priority over surplus
-work; floors do not create work or override admission.
+work; floors do not create work or override admission. Job kinds bound which
+pools may serve them, and a pool can be capped at a paced daily share — see
+[Pool routing](#pool-routing).
 
 ```sh
 phm drive --once --dry-run
@@ -214,6 +216,54 @@ reconciliation against publish.sh evidence before another attempt. A driver
 crash can leave PUBLISHING, which must receive the same reconciliation. Neither
 state is selected automatically for publication. Do not infer success from a
 worker exit when its completion artifact is missing.
+
+### Claude API lane health
+
+For `claude-api`, every completed job (including FAILED and publication states)
+must retain `completedAtMs` (nonnegative epoch milliseconds), integer `exitCode`
+and boolean `emptyFinish` (true when completion produced no file changes).
+Missing or malformed completion evidence rejects the snapshot. Retain this
+history across ticks and restarts; publication must not erase it.
+
+Two code 13 exits or strictly more than 50% empty finishes in a rolling hour
+park this lane. The JSON tick log and `write-status` report carry `laneHealth`
+with the reason and `probeAtMs`. Five minutes after the latest failed/empty
+finish, one eligible queued job may probe recovery; STARTING/RUNNING jobs block
+additional probes. A zero exit with changes restores normal capacity and clears
+the failure window. Quiet time alone does not prove recovery. Other pools keep
+receiving eligible jobs; probes obey all existing admission, routing and capacity
+gates. The host bridge must retain the history and map the health report into
+its native status schema; no separate inference call is made by the supervisor.
+
+### Pool routing
+
+A job's kind is the uppercase token leading its id after an optional `RQ-`
+prefix (`RQ-GEN-…` is GEN, `RQ-REFILL-…-LAND-…` is REFILL). Kind bounds which
+pool may serve the line; the driver never re-pools a violating line — it stays
+queued (HELD at the queue.v1 seam, never planned at launch) until routing is
+corrected, because pool is spend attribution.
+
+- `codex-personal` serves only LAND, FIXUP, DRAIN and DAILYFIX lines. Every
+  other kind — including an id with no recognizable kind — is ineligible there.
+- GEN, PLAN, SELFOPT and DESK lines go only to `devin` or `codex-local`.
+- Kinds the rules do not name keep their declared pool (never
+  `codex-personal`).
+
+A pool row may carry an optional `daily` object — the pool's paced daily share
+as the bridge reports it:
+
+```json
+{ "id": "codex-personal", "floor": 0, "ceiling": 2,
+  "daily": { "share": 6, "used": 2, "startMs": 1770000000000, "endMs": 1770086400000 } }
+```
+
+`share` dispatches vest evenly across `[startMs, endMs)`; `used` is the
+bridge-verified count already spent inside it. The pool launches only while
+the vested allowance still exceeds `used`, so it can never be ahead of its
+even pace for the day. A malformed `daily` invalidates the snapshot, and an
+unstarted or stale window admits nothing — the bridge must present the fresh
+window before the share re-opens. Pools without `daily` are unpaced: their
+ceiling alone bounds them.
 
 The normalized CLI report contains `version`, `at` (ISO timestamp), `dryRun`,
 `paused`, `active`, `ready`, `planned`, `launched`, `published`,

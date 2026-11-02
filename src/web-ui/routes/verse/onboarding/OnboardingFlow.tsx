@@ -2,7 +2,7 @@
  * routes/verse/onboarding/OnboardingFlow.tsx — the first-run tour.
  *
  * A first-time operator opens Verse to five unlabelled rail icons and no
- * guidance. This is six short steps that answer the questions that actually
+ * guidance. This is seven short steps that answer the questions that actually
  * block someone on day one: which of my accounts can this thing use, is
  * there anything local, how do I turn autonomy on, what do the three stop
  * buttons really do, where do I change how it looks, and how do I start.
@@ -11,7 +11,7 @@
  *
  * 1. It never blocks the app. This is NOT a modal — no backdrop, no focus
  *    trap, no `aria-modal`. It first appears as a one-line chip
- *    ("Getting started 1/6 →") in the corner; only a click opens the card,
+ *    ("Getting started 1/7 →") in the corner; only a click opens the card,
  *    and every rail button, shortcut and section behind either stays
  *    clickable. The card's minimise button and Escape fold it back to the
  *    chip without answering it; Skip, or the chip's ×, silences it for good.
@@ -47,6 +47,8 @@ import {
   IconX,
 } from '../../../components/primitives/icons.js';
 import { useQuery } from '../../../data/hooks.js';
+import { ApiError, readFailureReason } from '../../../data/client.js';
+import { verseBootstrapQuery } from '../verse-bootstrap-query.js';
 import { SECTION_ICON } from '../verse-icons.js';
 import { SECTION_BLURBS } from '../section-blurbs.js';
 import { WORK_MODES } from '../shell/work-mode.js';
@@ -62,7 +64,13 @@ import { nextCommand } from '../autonomy/setup-checklist-model.js';
 import { AUTONOMY_SETUP_COMMAND } from '../shell/command-catalog.js';
 import { copyAutonomySetupCommand } from '../shell/copy-setup.js';
 import { executeCatalogCommand } from '../shell/run-command.js';
+import { openFleetWorkspace } from '../dock/dock-store.js';
+import { fleetPanesPresent } from '../dock/fleet-workspace-auto.js';
+import { listPanes } from '../panes/index.js';
+import { fleetSourcesQuery } from '../sections/fleet-sources-query.js';
+import { readFleetPresence } from './fleet-presence.js';
 import {
+  fleetStepPoints,
   ONBOARDING_STEPS,
   STOP_CONTROLS,
   buildLocalFinding,
@@ -158,9 +166,13 @@ function WelcomeStep() {
  * straight from A2's health report; nothing is run from the tour.
  */
 function AccountsStep() {
+  const read = useQuery(verseBootstrapQuery);
+  const unavailable = read.error instanceof ApiError && read.error.status === 404;
   return (
     <StepBody>
-      <LiveCapacityStrip
+      {read.data === undefined && read.status === 'error' ? (
+        <p role="status">{unavailable ? 'Account information is unavailable in this build.' : `Could not read accounts. ${readFailureReason(read.error)}`}</p>
+      ) : <LiveCapacityStrip
         density="compact"
         headline
         local="collapse"
@@ -176,7 +188,7 @@ function AccountsStep() {
             </p>
           ) : null
         }
-      />
+      />}
       <p className={styles.aside}>
         Check each account’s subscription windows, credits and resets in Resources. Connect and manage supported accounts in Apps &amp; Accounts, under the gear.
       </p>
@@ -318,7 +330,39 @@ function AutonomyStep() {
 }
 
 // ---------------------------------------------------------------------------
-// Step 5 — the three stops
+// Step 5 — fleet workspace
+// ---------------------------------------------------------------------------
+
+function FleetStep() {
+  const { data } = useQuery(fleetSourcesQuery);
+  const presence = readFleetPresence(data);
+  function openFleet() {
+    if (presence !== 'present') {
+      setVerseSection('settings');
+      return;
+    }
+    const panes = fleetPanesPresent(listPanes().map((pane) => pane.id));
+    if (panes.length > 0) openFleetWorkspace(panes);
+    else setVerseSection('fleet');
+  }
+
+  return (
+    <StepBody>
+      <ul className={styles.findings}>
+        {fleetStepPoints(presence).map((point) => (
+          <li key={point.label} className={styles.finding}>
+            <span className={styles.stopName}>{point.label}</span>
+            <p className={styles.findingDetail}>{point.detail}</p>
+          </li>
+        ))}
+      </ul>
+      <Button variant="subtle" onClick={openFleet}>{presence === 'present' ? 'Open fleet workspace' : 'Open Settings'}</Button>
+    </StepBody>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 6 — the three stops
 // ---------------------------------------------------------------------------
 
 function StopsStep() {
@@ -346,7 +390,7 @@ function StopsStep() {
 }
 
 // ---------------------------------------------------------------------------
-// Step 6 — appearance, then go
+// Step 7 — appearance, then go
 // ---------------------------------------------------------------------------
 
 function FinishStep() {
@@ -372,7 +416,7 @@ function FinishStep() {
 }
 
 /** In ONBOARDING_STEPS order (the model test pins the ids; the flow test walks them). */
-const STEP_COMPONENTS = [WelcomeStep, AccountsStep, LocalStep, AutonomyStep, StopsStep, FinishStep] as const;
+const STEP_COMPONENTS = [WelcomeStep, AccountsStep, LocalStep, AutonomyStep, FleetStep, StopsStep, FinishStep] as const;
 
 // ---------------------------------------------------------------------------
 // The chip and the card
@@ -389,7 +433,7 @@ export function OnboardingFlow() {
   const dismiss = useCallback(() => dismissOnboarding(), []);
   const cardRef = useRef<HTMLElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
-  // Focus follows a fold / unfold the operator asked for — never a mount:
+  // Focus follows a fold / unfold or step change the operator asked for — never a mount:
   // the chip appearing on first launch must not steal focus from the composer.
   const moveFocus = useRef(false);
 
@@ -402,12 +446,17 @@ export function OnboardingFlow() {
     collapseOnboarding();
   }, []);
 
+  const changeStep = (next: number) => {
+    moveFocus.current = true;
+    setOnboardingStep(next);
+  };
+
   useEffect(() => {
     if (!moveFocus.current) return;
     moveFocus.current = false;
     if (expanded) cardRef.current?.focus();
     else chipRef.current?.focus();
-  }, [expanded]);
+  }, [expanded, index]);
 
   // Escape folds the card back to the chip — but ONLY when the focus is
   // inside the card.
@@ -500,7 +549,7 @@ export function OnboardingFlow() {
             Skip setup
           </Button>
           {index > 0 ? (
-            <Button variant="subtle" size="sm" onClick={() => setOnboardingStep(index - 1)}>
+            <Button variant="subtle" size="sm" onClick={() => changeStep(index - 1)}>
               Back
             </Button>
           ) : null}
@@ -519,7 +568,7 @@ export function OnboardingFlow() {
               Start a first chat
             </Button>
           ) : (
-            <Button variant="primary" size="sm" onClick={() => setOnboardingStep(index + 1)}>
+            <Button variant="primary" size="sm" onClick={() => changeStep(index + 1)}>
               Next
             </Button>
           )}

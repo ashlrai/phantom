@@ -665,10 +665,13 @@ describe('OtlpHttpSink — real HTTP delivery to local capture server', () => {
   });
 });
 
-function fixture(name: string, attributes: Record<string, string | number> = {}) {
+function fixture(name: string, attributes: Record<string, string | number | boolean | Record<string, unknown>> = {}) {
   return { resourceSpans: [{ resource: { attributes: [{ key: 'private', value: { stringValue: 'PRIVATE_CONTENT' } }] },
     scopeSpans: [{ spans: [{ name, attributes: Object.entries(attributes).map(([key, value]) => ({
-      key, value: typeof value === 'number' ? { doubleValue: value } : { stringValue: value },
+      key, value: typeof value === 'object' ? value
+        : typeof value === 'number' ? { doubleValue: value }
+        : typeof value === 'boolean' ? { boolValue: value }
+        : { stringValue: value },
     })) }] }] }] };
 }
 const claude = fixture('claude_code.api_request', {
@@ -708,9 +711,13 @@ describe('native OTLP metadata', () => {
     expect(JSON.stringify(result)).not.toContain('PRIVATE_CONTENT');
   });
   it('accepts safety events without recording tool details or invented usage', () => {
-    expect(parseNativeOtelTrace(fixture('claude_code.safety_event', {
+    const result = parseNativeOtelTrace(fixture('claude_code.safety_event', {
       tool_parameters: 'PRIVATE_CONTENT', input_tokens: 50, cost_usd: 1,
-    }))).toEqual([{ source: 'claude-code', event: 'safety_event', usage: {} }]);
+    }));
+    // Legacy (pre-2.1.312) stream: a safety_event still reports a refusal.
+    expect(result).toEqual([{ source: 'claude-code', event: 'safety_event', refusal: true, usage: {} }]);
+    expect(result.filter(span => span.refusal)).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_CONTENT');
   });
   it('converts xAI billed ticks to dollars with ticks taking precedence', () => {
     expect(parseNativeOtelTrace(fixture('chat', { 'gen_ai.system': 'xai',
@@ -747,6 +754,98 @@ describe('native OTLP metadata', () => {
     expect(parseNativeOtelTrace(fixture('PRIVATE_CONTENT'))).toEqual([]);
     expect(() => parseNativeOtelTrace(null)).toThrow('Invalid OTLP');
     expect(parseNativeOtelTrace({ resourceSpans: [null, {}] })).toEqual([]);
+  });
+});
+
+describe('native OTLP metadata — CC 2.1.312 refusal stream', () => {
+  // Claude Code 2.1.312 dropped claude_code.safety_event; refusals arrive on
+  // the result stream as api_refusal events, refusal stop/finish reasons and
+  // rejected tool_decision records, keyed by the corrected effort and
+  // mcp_server.name attributes.
+  it('reports a nonzero refusal count from a 2.1.312-style stream', () => {
+    const result = parseNativeOtelTrace({ resourceSpans: [{ scopeSpans: [{ spans: [
+      { name: 'claude_code.api_request', attributes: [
+        { key: 'event.name', value: { stringValue: 'api_request' } },
+        { key: 'effort', value: { stringValue: 'high' } },
+        { key: 'mcp_server.name', value: { stringValue: 'github' } },
+        { key: 'mcp_tool.name', value: { stringValue: 'create_pull_request' } },
+        { key: 'input_tokens', value: { intValue: '1200' } },
+        { key: 'output_tokens', value: { intValue: '340' } },
+        { key: 'cost_usd', value: { doubleValue: 0.04 } },
+      ] },
+      { name: 'claude_code.api_refusal', attributes: [
+        { key: 'event.name', value: { stringValue: 'api_refusal' } },
+        { key: 'effort', value: { stringValue: 'high' } },
+        { key: 'mcp_server.name', value: { stringValue: 'github' } },
+        { key: 'server_fallback_hop', value: { stringValue: 'false' } },
+        { key: 'category', value: { stringValue: 'cyber' } },
+      ] },
+      { name: 'claude_code.tool_decision', attributes: [
+        { key: 'event.name', value: { stringValue: 'tool_decision' } },
+        { key: 'decision', value: { stringValue: 'reject' } },
+        { key: 'source', value: { stringValue: 'config' } },
+        { key: 'tool_parameters', value: { stringValue: 'PRIVATE_CONTENT' } },
+      ] },
+    ] }] }] });
+    expect(result.filter(span => span.refusal)).toHaveLength(2);
+    expect(result[0]).toEqual({ source: 'claude-code', event: 'api_request',
+      effort: 'high', mcpServerName: 'github', mcpToolName: 'create_pull_request',
+      usage: { input_tokens: 1200, output_tokens: 340 }, costUsd: 0.04 });
+    expect(result[1]).toEqual({ source: 'claude-code', event: 'api_refusal',
+      refusal: true, effort: 'high', mcpServerName: 'github',
+      serverFallbackHop: false, usage: {} });
+    expect(result[2]).toEqual({ source: 'claude-code', event: 'tool_decision',
+      refusal: true, usage: {} });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_CONTENT');
+    expect(JSON.stringify(result)).not.toContain('cyber');
+  });
+  it('derives a refusal from a result-span stop reason or finish reasons', () => {
+    expect(parseNativeOtelTrace(fixture('claude_code.llm_request', {
+      stop_reason: 'refusal', input_tokens: 10, output_tokens: { intValue: '4' },
+    }))).toEqual([{ source: 'claude-code', event: 'api_request', refusal: true,
+      usage: { input_tokens: 10, output_tokens: 4 } }]);
+    expect(parseNativeOtelTrace(fixture('claude_code.llm_request', {
+      'gen_ai.response.finish_reasons': { arrayValue: { values: [
+        { stringValue: 'refusal' }] } },
+    }))[0]?.refusal).toBe(true);
+  });
+  it('derives a refusal from the xAI result stream finish reasons', () => {
+    expect(parseNativeOtelTrace(fixture('chat', { 'gen_ai.system': 'xai',
+      'gen_ai.response.finish_reasons': { arrayValue: { values: [
+        { stringValue: 'stop' }, { stringValue: 'content_filter' }] } },
+    }))[0]?.refusal).toBe(true);
+    expect(parseNativeOtelTrace(fixture('chat', { 'gen_ai.system': 'xai',
+      'gen_ai.response.finish_reasons': { arrayValue: { values: [
+        { stringValue: 'stop' }] } },
+    }))[0]?.refusal).toBeUndefined();
+  });
+  it('marks retried fallback hops without counting them as user-visible refusals', () => {
+    const result = parseNativeOtelTrace(fixture('claude_code.api_refusal', {
+      server_fallback_hop: { boolValue: true },
+    }));
+    expect(result[0]?.refusal).toBe(true);
+    expect(result[0]?.serverFallbackHop).toBe(true);
+    expect(result.filter(span => span.refusal && span.serverFallbackHop !== true)).toHaveLength(0);
+  });
+  it('keeps accepted tool decisions and non-refusal stop reasons out of refusal metrics', () => {
+    expect(parseNativeOtelTrace(fixture('claude_code.tool_decision', {
+      decision: 'accept',
+    }))).toEqual([{ source: 'claude-code', event: 'tool_decision', usage: {} }]);
+    expect(parseNativeOtelTrace(fixture('claude_code.llm_request', {
+      stop_reason: 'end_turn',
+    }))[0]?.refusal).toBeUndefined();
+    expect(parseNativeOtelTrace(fixture('claude_code.tool.blocked_on_user', {
+      decision: 'cancelled',
+    }))[0]?.refusal).toBe(true);
+  });
+  it('only retains corrected effort values and bounded MCP name labels', () => {
+    const result = parseNativeOtelTrace(fixture('claude_code.api_request', {
+      effort: 'ludicrous', 'mcp_server.name': '  ',
+      'mcp_tool.name': { arrayValue: { values: [{ stringValue: 'x' }] } },
+    }));
+    expect(result[0]?.effort).toBeUndefined();
+    expect(result[0]?.mcpServerName).toBeUndefined();
+    expect(result[0]?.mcpToolName).toBeUndefined();
   });
 });
 

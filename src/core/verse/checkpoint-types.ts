@@ -163,17 +163,6 @@ export interface VerseCheckpointDiffResponse {
 
 export type VerseCheckpointDecision = 'accept' | 'reject';
 
-/** POST /api/verse/checkpoints/review */
-export interface VerseCheckpointReviewRequest {
-  chatId: string;
-  turnId: string;
-  rootId: string;
-  file: string;
-  /** Hunk hash from the diff response; absent = the whole file. */
-  hunk?: string;
-  decision: VerseCheckpointDecision;
-}
-
 export interface VerseCheckpointReviewResponse {
   ok: true;
   decision: VerseCheckpointDecision;
@@ -229,13 +218,6 @@ export interface VerseCheckpointPreviewResponse {
   turnId: string;
   expiresAt: string;
   roots: VerseCheckpointPlanRoot[];
-}
-
-/** POST /api/verse/checkpoints/apply */
-export interface VerseCheckpointApplyRequest {
-  previewId: string;
-  /** rootId → path → resolution, for every conflict in the preview. */
-  resolutions?: Record<string, Record<string, VerseCheckpointResolution>>;
 }
 
 export interface VerseCheckpointApplyRoot {

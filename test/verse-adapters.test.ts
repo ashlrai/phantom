@@ -24,7 +24,7 @@ vi.mock('../src/core/verse/local-harness.js', () => ({
 }));
 
 import { adapterFor, type VerseParsedEvent } from '../src/core/verse/adapters/index.js';
-import { createAnthropicStreamParser, anthropicEnvBaseUrl, runtimeContextWindow } from '../src/core/verse/adapters/claude.js';
+import { createAnthropicStreamParser, anthropicEnvBaseUrl, firstPartyClaudeModelId, runtimeContextWindow } from '../src/core/verse/adapters/claude.js';
 import { createCodexParser } from '../src/core/verse/adapters/codex.js';
 import { claudeAutoCompactAt } from '../src/core/verse/context-math.js';
 import type { VerseSeatLaunch } from '../src/core/verse/session-engine.js';
@@ -278,6 +278,10 @@ describe('claude adapter — buildLaunch', () => {
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
       ANTHROPIC_AUTH_TOKEN: 'ollama',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // A local model is never a first-party id: pin the full system prompt
+      // and forbid the refusal fallback to another model.
+      CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT: '0',
+      CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK: '1',
       // Without this the CLI assumes its 200k unknown-model default and never
       // compacts before a 64k runner truncates.
       CLAUDE_CODE_MAX_CONTEXT_TOKENS: '65536',
@@ -314,6 +318,31 @@ describe('claude adapter — buildLaunch', () => {
     expect(anthropicEnvBaseUrl('http://127.0.0.1:11434/v1')).toBe('http://127.0.0.1:11434');
     expect(anthropicEnvBaseUrl('http://127.0.0.1:11434/')).toBe('http://127.0.0.1:11434');
     expect(anthropicEnvBaseUrl('http://127.0.0.1:11434')).toBe('http://127.0.0.1:11434');
+  });
+
+  it('a non-first-party model id gets the gateway env; first-party ids get neither var', () => {
+    const a = adapterFor('claude');
+    const KEYS = ['CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT', 'CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK'] as const;
+    // A gateway model on a claude seat (e.g. the seat's account launcher
+    // points at a gateway serving other ids): both vars, and nothing else.
+    for (const model of ['qwen3-coder:30b', 'nim:meta/llama-3.1-70b-instruct', 'openrouter/anthropic/claude-4', 'gpt-6.1-sol']) {
+      const env = a.buildLaunch(session({ model }), 'hi', launch()).env;
+      expect(env, model).toEqual({
+        CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT: '0',
+        CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK: '1',
+      });
+    }
+    // First-party ids: neither var may reach the child (env stays empty).
+    for (const model of [
+      'claude-opus-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5-20251001',
+      'claude-opus-5.5', // the stored alias canonicalises to a first-party id
+      'sonnet', 'opus', 'haiku', 'sonnet-4-5', 'opusplan', 'default', 'sonnet[1m]',
+    ]) {
+      const env = a.buildLaunch(session({ model }), 'hi', launch()).env;
+      for (const key of KEYS) expect(env, `${model}:${key}`).not.toHaveProperty(key);
+    }
+    expect(firstPartyClaudeModelId('')).toBe(false);
+    expect(firstPartyClaudeModelId('claude2')).toBe(false); // not an id the CLI resolves
   });
 });
 
@@ -570,6 +599,55 @@ describe('claude adapter — parser', () => {
     expect(usageOf(events)).toEqual({
       inputTokens: 14942, outputTokens: 45, cacheReadTokens: 0, cacheCreationTokens: 0, contextTokens: 14942, contextWindow: 65536,
     });
+  });
+
+  it('an automatic model switch produces ONE status notice naming the original and new model', () => {
+    // `--model claude-opus-5.5` used to fuzzy-match to Opus 5; the CLI's init
+    // says what it actually runs. The switch line names both ids.
+    const parser = adapterFor('claude').createParser('t-sw', session({ model: 'claude-opus-5.5' }));
+    const events = feed(parser, [
+      { type: 'system', subtype: 'init', session_id: 's', model: 'claude-opus-5' },
+      { type: 'assistant', message: { id: 'm', model: 'claude-opus-5', content: [{ type: 'text', text: 'hi' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+      { type: 'result', subtype: 'success', is_error: false, session_id: 's', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const notices = events.filter((e) => e.type === 'status');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ kind: 'model-switch', turnId: 't-sw' });
+    // The switch line names the original (canonical) id and the one running.
+    expect((notices[0] as { message: string }).message)
+      .toBe('requested claude-opus-5-5, running claude-opus-5');
+  });
+
+  it('no switch notice when the CLI runs the requested model, the stored alias, or nothing', () => {
+    // init reports exactly what --model sent (the canonical id).
+    const quiet = feed(adapterFor('claude').createParser('t-ok', session({ model: 'claude-opus-5' })), CLAUDE_TURN);
+    expect(quiet.some((e) => e.type === 'status' && (e as { kind?: string }).kind === 'model-switch')).toBe(false);
+    // The stored dotted alias resolves to its intended id: canonical on both
+    // sides means this is NOT a switch.
+    const alias = feed(adapterFor('claude').createParser('t-alias', session({ model: 'claude-opus-5.5' })), [
+      { type: 'system', subtype: 'init', session_id: 's', model: 'claude-opus-5-5' },
+    ]);
+    expect(alias.filter((e) => e.type === 'status')).toHaveLength(0);
+    // No expected model (parser built without a session): never a notice.
+    const blind = feed(createAnthropicStreamParser('t-blind'), [
+      { type: 'system', subtype: 'init', session_id: 's', model: 'anything' },
+    ]);
+    expect(blind.filter((e) => e.type === 'status')).toHaveLength(0);
+  });
+
+  it('a refusal fallback to another model surfaces via result.modelUsage when init looked right', () => {
+    const events = feed(adapterFor('claude').createParser('t-fb', session({ model: 'qwen3-coder:30b' })), withModelUsage(
+      { 'qwen3-coder:30b': { inputTokens: 10, outputTokens: 5, contextWindow: 65_536 }, 'claude-haiku-4-5': { inputTokens: 2, outputTokens: 1 } },
+      [
+        { type: 'system', subtype: 'init', session_id: 's', model: 'qwen3-coder:30b' },
+        { type: 'assistant', message: { id: 'm', model: 'qwen3-coder:30b', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 12, output_tokens: 6 } } },
+        { type: 'result', subtype: 'success', is_error: false, session_id: 's', usage: { input_tokens: 12, output_tokens: 6 } },
+      ],
+    ));
+    const notices = events.filter((e) => e.type === 'status' && (e as { kind?: string }).kind === 'model-switch');
+    expect(notices).toHaveLength(1);
+    expect((notices[0] as { message: string }).message)
+      .toBe('requested qwen3-coder:30b, running claude-haiku-4-5');
   });
 
   it('emits an error for a non-success result; exit codes are left to the engine', () => {

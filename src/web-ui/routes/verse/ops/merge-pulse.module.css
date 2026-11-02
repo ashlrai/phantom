@@ -1,0 +1,20 @@
+.pulse {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-2) var(--space-3);
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg);
+  font-size: var(--text-sm-size);
+  line-height: 1.4;
+  max-height: 2.8em;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.pulse[data-state='incident'] {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+}
+
+.detail { font-weight: normal; }

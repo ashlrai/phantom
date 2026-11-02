@@ -12,7 +12,7 @@
  *  - `SourcesPanel` — presentational, over already-derived turns (the
  *    transcript's sheet passes its own, so nothing is derived twice);
  *  - the dock pane (dock-panes.tsx `SourcesDockPane`), registered for the
- *    `sources` id by reasoning.pane.tsx.
+ *    `sources` id by sources.pane.tsx.
  */
 import { useMemo, useState } from 'react';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
