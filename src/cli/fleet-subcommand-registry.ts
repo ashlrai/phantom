@@ -44,6 +44,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'daily-reds': () => import('./fleet-daily-reds.js'),
   'dead-heads': () => import('./fleet-dead-heads.js'),
   'dirty-landed': () => import('./fleet-dirty-landed.js'),
+  'disk': () => import('./fleet-disk.js'),
   'dispatch-proof': () => import('./fleet-dispatch-proof.js'),
   'dispatch-summary': () => import('./fleet-dispatch-summary.js'),
   'drip': () => import('./fleet-drip.js'),
