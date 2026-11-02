@@ -651,18 +651,31 @@ export async function runLocalBench(
   }
 
   const arms = [...new Set([args.incumbent, ...args.models])];
+  // Arm-outer ordering: a serving runtime typically keeps only the current
+  // model resident, so running each arm across every suite before switching
+  // reloads each model once instead of once per suite.
+  const scoredByArm = new Map<string, Map<BenchSuiteId, ScoredCase[]>>();
+  for (const model of arms) {
+    const perSuite = new Map<BenchSuiteId, ScoredCase[]>();
+    for (const fixture of fixtures) {
+      const scored = await scoreSuite(fetchImpl, origin, model, fixture, args.timeoutMs);
+      perSuite.set(fixture.suite, scored);
+      const transportErrors = scored.filter((c) => c.error === 'transport').length;
+      err(`[radar-local-bench] ${model} ${fixture.suite}: ${scored.filter((c) => c.correct).length}/${fixture.cases.length} correct, ${transportErrors} transport error(s)`);
+    }
+    scoredByArm.set(model, perSuite);
+  }
   const suites: SuiteReport[] = [];
   let failed = false;
   for (const fixture of fixtures) {
     let incumbentAccuracy: number | null = null;
     const results: SuiteArmResult[] = [];
     for (const model of arms) {
-      const scored = await scoreSuite(fetchImpl, origin, model, fixture, args.timeoutMs);
+      const scored = scoredByArm.get(model)!.get(fixture.suite)!;
       const arm = summarizeArm(model, fixture, scored, model === args.incumbent ? null : incumbentAccuracy);
       if (model === args.incumbent) incumbentAccuracy = arm.accuracy;
       if (arm.transportErrors > 0) failed = true;
       results.push(arm);
-      err(`[radar-local-bench] ${fixture.suite} ${model}: ${arm.correct}/${arm.cases} correct, ${arm.transportErrors} transport error(s)`);
     }
     suites.push({ suite: fixture.suite, labels: fixture.labels, cases: fixture.cases.length, results });
   }
