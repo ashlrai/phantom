@@ -2140,6 +2140,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'select': {
+        process.exitCode = await (await import('./select.js')).cmdSelect(rest);
+        break;
+      }
+
       case 'pool': {
         process.exitCode = await (await import('./pool.js')).cmdPool(rest);
         break;
