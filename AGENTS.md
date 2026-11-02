@@ -67,6 +67,10 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 Node router: `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave --json` joins this computer to the router. A job's owner scope decides which nodes see it; a lease and fencing token keep it from running twice; auth stays local and jobs carry secret names only. See [node router](docs/NODE-ROUTER.md).
 
+Lane health: `phm lanes health --json` prints calls, error rate, p50 latency and
+deployed commit per lane over 12 h, and flags runs stuck past their phase
+timeout; unmeasured figures are `null`. See [lane health](docs/LANE-HEALTH.md).
+
 Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).

@@ -22,6 +22,7 @@ import { describeStopRule } from '../autonomy/overnight-model.js';
 import { CloudLaneChip } from '../cloud/CloudLaneChip.js';
 import { Card, CardNote, MicroLabel } from '../command/Surface.js';
 import type { OptionalRead } from '../command/surface-data.js';
+import { computeLaneHealth, laneHealthLine, stuckBadge, type LaneHealthV1 } from '../../../../core/fleet/lane-health.js';
 import { fleetDarkStatus } from './dark-since.js';
 import { LaneSparkline } from './LaneSparkline.js';
 import { recordLaneSamples } from './lane-history-store.js';
@@ -75,6 +76,25 @@ function LaneChip({ lane, children }: { lane: FleetLaneState; children?: ReactNo
   );
 }
 
+/** The four health numbers per lane over the stated window, with a stuck badge. */
+function LaneHealthRows({ health }: { health: LaneHealthV1 }) {
+  return (
+    <ul className={styles.laneHealth} aria-label={`Lane health, last ${health.window.hours} hours`}>
+      {health.lanes.map((h) => {
+        const badge = stuckBadge(h);
+        return (
+          <li key={h.lane} className={styles.laneHealthRow}>
+            <span className={styles.laneName}>{LANE_LABEL[h.lane]}</span>
+            <span className={styles.laneSlots}>{laneHealthLine(h)}</span>
+            {badge ? <span className={styles.laneStuck} role="status">{badge}</span> : null}
+          </li>
+        );
+      })}
+      <li className={styles.laneHealthWindow}>Last {health.window.hours} h</li>
+    </ul>
+  );
+}
+
 export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
   const timestamp = live?.generatedAt;
   useEffect(() => {
@@ -82,6 +102,7 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
   }, [live, timestamp]);
   if (!live || live.lanes.length === 0) return null;
   const notes = laneNotes(live.lanes);
+  const health = computeLaneHealth(live);
   return (
     <div className={styles.laneStrip}>
       <ul className={styles.lanes} aria-label="Lanes: busy of slots">
@@ -92,6 +113,7 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
         ))}
         <CloudLaneChip classes={{ lane: styles.lane, name: styles.laneName, sep: styles.laneSep, slots: styles.laneSlots }} />
       </ul>
+      <LaneHealthRows health={health} />
       {notes.length > 0 ? (
         <ul className={styles.laneNotes} aria-label="Why lanes are limited">
           {notes.map((n) => (

@@ -623,6 +623,8 @@ export interface FleetLiveSnapshotV1 {
    */
   darkSince?: string | null;
   summary: FleetLiveSummary;
+  /** Short commit of the build serving this view; null/absent = unknown. */
+  commit?: string | null;
   lanes: FleetLaneState[];
   /** Live runs plus the last 12 h (Swimlane), newest first. */
   runs: FleetLiveRun[];
