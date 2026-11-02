@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { deriveUpdateNotifications as derive } from './deriveUpdateNotifications.js';
+import type { SelfUpdateLastApply } from '../../../core/verse/self-update-last.js';
 import type { UpdateServerStatus } from '../../routes/verse/sections/update-status-queries.js';
 
 const now = Date.parse('2026-10-31T12:15:00Z');
@@ -12,7 +13,7 @@ const server = (over: Partial<UpdateServerStatus> & Record<string, unknown> = {}
   processStartedAt: '2026-10-31T08:00:00Z', uptimeSeconds: 15_300, canFastForward: false, ...over,
 });
 
-const lastApply = (over: Record<string, unknown> = {}) => ({
+const lastApply = (over: Partial<SelfUpdateLastApply> = {}): SelfUpdateLastApply => ({
   outcome: 'updated', reason: null, startedAt: '2026-10-31T12:10:00Z',
   finishedAt: '2026-10-31T12:11:00Z', fromCommit: sha('a'), toCommit: sha('b'),
   restartRequired: true, restartMode: 'manual', ...over,

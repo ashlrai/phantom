@@ -20,7 +20,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('opens the selected worker log and links its PR without selecting the timeline', async () => {
   const openPane = vi.fn();
-  const props = { visible: true, host: { openPane } } as PaneProps;
+  const props = { visible: true, host: { openPane } as unknown as PaneProps['host'] } as PaneProps;
   render(<FleetOutcomesPane {...props} />);
   const rows = within(await screen.findByRole('list', { name: 'Cases' })).getAllByRole('listitem');
   const link = within(rows[0]!).getByRole('link', { name: '#1234' });

@@ -17,9 +17,9 @@ export function ReleaseGapRow() {
   const read = useQuery(opsReleasesQuery, { enabled: visible, freshMs: RELEASE_POLL_MS });
   const poll = useRefetch(opsReleasesQuery);
   usePollWhileVisible(poll, RELEASE_POLL_MS, { refreshOnShow: false });
-  const repo = read.status === 'error' ? undefined : read.data?.repos.find(
-    item => item.repo.toLowerCase() === 'ashlrai/phantom' || item.repo.toLowerCase() === 'phantom',
-  ) ?? (read.status === 'error' ? undefined : read.data?.repos.find(item => item.repo.toLowerCase().endsWith('/phantom')));
+  const repos = read.status === 'error' ? undefined : read.data?.repos;
+  const repo = repos?.find(item => item.repo.toLowerCase() === 'ashlrai/phantom' || item.repo.toLowerCase() === 'phantom')
+    ?? repos?.find(item => item.repo.toLowerCase().endsWith('/phantom'));
   const hasUnshipped = (repo?.commitsSinceTag ?? 0) > 0;
   const prRead = useQuery(releasePrQuery, { enabled: visible && hasUnshipped, freshMs: RELEASE_POLL_MS });
   const pollPr = useRefetch(releasePrQuery);

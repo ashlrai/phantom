@@ -2,7 +2,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, render, screen, within } from '@testing-library/react';
 import badgeStyles from '../../../components/primitives/StatusBadge.module.css';
 import { evictAll } from '../../../data/cache.js';
+import type { PaneProps } from '../panes/pane-registry.js';
 import { LeaderJournalPane } from './LeaderJournalPane.js';
+
+const pane = (visible: boolean) => ({ visible }) as PaneProps;
 
 beforeEach(() => { evictAll(); });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -23,7 +26,7 @@ it('shows the number of jobs written by each pass and the latest pass in the hea
       { at: '2026-01-01T12:23:00Z', id: 'fake-3', leader: 'other', lane: 'fake', tier: 'fake', title: 'Fake' },
     ], rejectedLastHour: 0,
   })));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...pane(true)} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   const passes = screen.getByRole('heading', { name: 'Passes' }).closest('section')!;
   const summaries = within(passes).getAllByText(/^2026-01-01T12:/).map((time) => time.closest('summary')!);

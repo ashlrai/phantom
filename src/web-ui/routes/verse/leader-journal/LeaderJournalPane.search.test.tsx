@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
+import type { PaneProps } from '../panes/pane-registry.js';
 import { LeaderJournalPane } from './LeaderJournalPane.js';
 import styles from './leader-journal.module.css';
+
+const pane = (visible: boolean) => ({ visible }) as PaneProps;
 
 beforeEach(() => { evictAll(); });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -16,7 +19,7 @@ it('filters, expands and highlights matching passes, then restores them when cle
       { at: '2026-01-01T12:03:00Z', sections: [{ title: 'Plan', bullets: ['Other task'] }] },
     ], ingest: [], ingested: [], rejectedLastHour: 0,
   })));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...pane(true)} />);
   const region = await screen.findByRole('region', { name: 'Passes' });
   expect(region.querySelectorAll('details')).toHaveLength(3);
   const input = screen.getByRole('searchbox', { name: 'Search journal' });

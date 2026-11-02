@@ -40,7 +40,7 @@ export function laneShort(lane: string): string {
 function normaliseLabel(lane: string): string {
   if (typeof lane !== 'string' || lane.trim().length === 0) return 'Unknown lane';
   const cleaned = lane.trim().replace(/[-_]+/g, ' ');
-  return (cleaned.charAt(0).toUpperCase() + cleaned.slice(1)).replace(/\b(\w)/g, (m, c) => c.toUpperCase());
+  return (cleaned.charAt(0).toUpperCase() + cleaned.slice(1)).replace(/\b(\w)/g, (_m, c: string) => c.toUpperCase());
 }
 
 function normaliseShort(lane: string): string {

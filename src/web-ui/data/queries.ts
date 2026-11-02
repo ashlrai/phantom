@@ -286,11 +286,13 @@ export interface InboxDecisionEvidence {
  * or via inboxListQuery's history view) still resolves here as long as its
  * on-disk record hasn't been pruned.
  */
-export function proposalDetailQuery(id: string): QueryDef<Proposal & { decisionEvidence: InboxDecisionEvidence }> {
+type ProposalDetailResponse = Proposal & { decisionEvidence: InboxDecisionEvidence; approvalRequest?: ApprovalRequest | null };
+
+export function proposalDetailQuery(id: string): QueryDef<ProposalDetailResponse> {
   return {
     key: `proposal-detail-${id}`,
     fetch: (signal) =>
-      apiGet<Proposal & { decisionEvidence: InboxDecisionEvidence }>(`/api/inbox/${encodeURIComponent(id)}`, signal),
+      apiGet<ProposalDetailResponse>(`/api/inbox/${encodeURIComponent(id)}`, signal),
   };
 }
 
