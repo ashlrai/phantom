@@ -43,6 +43,9 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createChannelReceiver, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
+import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
+import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
+import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
 
 export interface ParsedEml {
@@ -51,6 +54,7 @@ export interface ParsedEml {
   subject: string;
   body: string;
   inReplyTo: string | null;
+  authenticationResults: string | null;
 }
 
 export interface EmailDropRecordOptions {
@@ -228,6 +232,7 @@ export function parseEmlMessage(raw: string): ParsedEml | null {
     subject: headers.get('subject') ?? '',
     body: capUtf8Bytes(kept.join('\n'), BODY_CAP_BYTES).trim(),
     inReplyTo: messageIdToken(headers.get('in-reply-to')),
+    authenticationResults: headers.get('authentication-results') ?? null,
   };
 }
 
@@ -328,16 +333,51 @@ export async function recordEmailToInbox(
   raw: string,
   opts: EmailDropRecordOptions,
 ): Promise<EmailDropResult> {
-  const parsed = parseEmlMessage(raw);
-  if (!parsed) return { ok: false, reason: 'invalid' };
+  const received = parseEmlMessage(raw);
+  if (!received) return { ok: false, reason: 'invalid' };
+  if (!opts.allowedSenders.has(received.from)) return { ok: false, reason: 'sender-not-allowed' };
+  const secret = readOperatorSecret();
+  if (secret.state === 'invalid') return { ok: false, reason: 'sender-not-allowed' };
+  let parsed = received;
+  if (secret.state === 'ready' && secret.secret) {
+    if (!dkimPasses(parsed.authenticationResults, parsed.from)) return { ok: false, reason: 'sender-not-allowed' };
+    const stripped = stripPairingSecret(parsed.body, secret.secret);
+    const paired = opts.runsDir ? emailPaired(parsed.from, opts.runsDir) : false;
+    if (!stripped.presented && !paired) return { ok: false, reason: 'sender-not-allowed' };
+    if (stripped.presented && opts.runsDir) rememberEmailPair(parsed.from, opts.runsDir);
+    parsed = { ...parsed, body: stripped.body };
+    if (!parsed.body && stripped.presented) {
+      if (!opts.outboxDir || !parsed.messageId) return { ok: false, reason: 'invalid' };
+      try {
+        mkdirSync(opts.outboxDir, { recursive: true });
+        writeFileSync(join(opts.outboxDir, `paired-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+          `To: ${parsed.from}\r\nSubject: Re: Phantom\r\nIn-Reply-To: <${parsed.messageId}>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPaired.\r\n`,
+          { mode: 0o600, flag: 'wx' });
+      } catch { return { ok: false, reason: 'write-failed' }; }
+      return { ok: false, kind: 'status', reason: 'status-queued' };
+    }
+  } else if (parsed.authenticationResults && /\bdkim=/i.test(parsed.authenticationResults) && !dkimPasses(parsed.authenticationResults, parsed.from)) {
+    return { ok: false, reason: 'sender-not-allowed' };
+  }
+  if (!allowOperatorMessage(`email:${parsed.from}`, (opts.now ?? (() => new Date()))().getTime())) {
+    if (opts.outboxDir && parsed.messageId) {
+      try {
+        mkdirSync(opts.outboxDir, { recursive: true });
+        writeFileSync(join(opts.outboxDir, `slow-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+          `To: ${parsed.from}\r\nSubject: Re: Phantom\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSlow down.\r\n`,
+          { mode: 0o600, flag: 'wx' });
+      } catch { /* best-effort */ }
+    }
+    return { ok: false, reason: 'full' };
+  }
   const message = emailChannelMessage(parsed, opts.allowedSenders);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
-  // This adapter inherits authentication from the configured trusted drop
-  // transport. From is only an allowlist match; neither message headers nor
-  // body can establish authentication. Only that transport may populate the
-  // drop folder, and it must bind the authenticated sender to From.
+  // Allowlist is the first gate. When a pairing secret is configured, DKIM
+  // for the sender domain and that secret are required as well. The secret
+  // line is removed before the order is logged. Inbound text is never a command.
   try {
-    const status = isFleetStatusRequest(raw);
+    const ask = isOperatorStatusAsk(parsed.body.trim() || parsed.subject.trim());
+    const status = isFleetStatusRequest(raw) || ask;
     const claim = parsed.messageId ? statusClaimPath(opts.runsDir, parsed.messageId) : null;
     if (claim && statusWasClaimed(claim)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
     if (status) {
@@ -352,9 +392,11 @@ export async function recordEmailToInbox(
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, kind: 'status', reason: 'status-duplicate' };
         throw error;
       }
-      const body = await emailFleetStatus(opts.runsDir, opts.now ?? (() => new Date()), opts.statusReaders);
+      const body = ask
+        ? formatOperatorGlance(await readOperatorGlance({ runsDir: opts.runsDir, now: opts.now }))
+        : await emailFleetStatus(opts.runsDir, opts.now ?? (() => new Date()), opts.statusReaders);
       mkdirSync(opts.outboxDir, { recursive: true });
-      const headers = [`To: ${parsed.from}`, 'Subject: Re: Phantom fleet status',
+      const headers = [`To: ${parsed.from}`, `Subject: Re: ${ask ? 'Phantom' : 'Phantom fleet status'}`,
         `In-Reply-To: <${parsed.messageId}>`, `References: <${parsed.messageId}>`,
         'Content-Type: text/plain; charset=utf-8'];
       writeFileSync(join(opts.outboxDir, `status-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),

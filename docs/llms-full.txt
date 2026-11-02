@@ -1,0 +1,145 @@
+# Phantom
+
+> Open-source engineering agent workbench. Copy the blocks below. Do not add flags that are not on this page. `phm docs --agent --json` from the installed binary wins if it disagrees with this file. A zero exit code is not a merge, a release, or permission to spend.
+
+## Install
+
+Requires Node.js 22.15.0 or newer. `phm` and `ashlr` are the same program.
+
+```sh
+node --version
+npm install -g @ashlr/phantom
+phm --version
+```
+
+The source tree version is not proof that npm has published that version. Check [GitHub releases](https://github.com/ashlrai/phantom/releases/latest) before you pin one.
+
+## Commands that print JSON
+
+These read local state. They do not start a fleet.
+
+```sh
+phm docs --agent --json
+phm mcp list --json
+phm mcp doctor --json
+phm wire status --json
+phm authority status --json
+phm authority setup --dry-run --json
+```
+
+`phm mcp doctor` exits 1 when a required server is down. `phm authority status --json` reports the grant. Autonomy ships dormant and is macOS-only. Status does not turn it on.
+
+## Console
+
+```sh
+phm verse --no-open --json
+```
+
+Serves http://127.0.0.1:7777/verse/ on loopback. The output includes a read token and a mutation token. Do not publish them.
+
+## MCP: Claude Code
+
+File: `~/.claude.json`, key `mcpServers`.
+
+```sh
+phm wire claude --json
+```
+
+Or paste:
+
+```json
+{
+  "mcpServers": {
+    "ashlr-hub": {
+      "type": "stdio",
+      "command": "ashlr",
+      "args": ["mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+## MCP: Cursor
+
+File: `~/.cursor/mcp.json`, key `mcpServers`.
+
+```sh
+phm wire cursor --json
+```
+
+Or paste:
+
+```json
+{
+  "mcpServers": {
+    "ashlr-hub": {
+      "command": "ashlr",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+## MCP: Codex
+
+Do not hand-edit `~/.codex/config.toml`. `codex` must be on `PATH`.
+
+```sh
+phm wire codex --json
+```
+
+That runs `codex mcp add ashlr-hub -- ashlr mcp` after a backup.
+
+## Check the wiring
+
+Restart the editor, then:
+
+```sh
+phm wire status --json
+phm mcp doctor --json
+```
+
+Registration does not prove the server started.
+
+## Read-only fleet MCP
+
+Separate from `ashlr-hub`. This server does not launch work or merge.
+
+```json
+{
+  "mcpServers": {
+    "phantom-fleet": {
+      "command": "phm",
+      "args": ["mcp", "fleet"]
+    }
+  }
+}
+```
+
+Call `tools/list`, then `fleet_status` with `{}`. See [FLEET-MCP-ONRAMP.md](FLEET-MCP-ONRAMP.md).
+
+## Optional cloud handoff
+
+```sh
+phm cloud launch "<task>" --repo owner/name
+phm devin connect
+phm devin launch "<task>"
+```
+
+These do not merge by themselves. See [CLOUD.md](CLOUD.md) and [DEVIN.md](DEVIN.md).
+
+## Doc index
+
+- [llms.txt](llms.txt): short index
+- [QUICKSTART.md](QUICKSTART.md): first local session
+- [SELF-HOSTING.md](SELF-HOSTING.md): install, MCP, upgrade, uninstall
+- [VERSE.md](VERSE.md): console guide
+- [README.md](README.md): doc map
+- [AGENT-OPERATIONS.md](AGENT-OPERATIONS.md): cold start from source
+- [AGENT-TOOLCHAIN.md](AGENT-TOOLCHAIN.md): companion MCP servers for this repo
+- [ARCHITECTURE.md](ARCHITECTURE.md): module map
+- [AUTOMATIC-OUTCOMES.md](AUTOMATIC-OUTCOMES.md): chat routing and fleet outcomes
+- [AUTONOMY-SETUP.md](AUTONOMY-SETUP.md): dormant autonomy commissioning
+- [FLEET-MCP-ONRAMP.md](FLEET-MCP-ONRAMP.md): read-only fleet MCP
+- [Repository README](../README.md): agent quickstart
