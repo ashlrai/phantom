@@ -8,17 +8,26 @@ import contextlib
 import io
 import json
 import math
+import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from memory_admission import (
     Admission,
     GIB,
+    NICE_LEVEL,
     Snapshot,
+    TASKPOLICY,
+    VITEST_UNIT_WORKER_CAP,
+    clamped_unit_workers,
     classify,
     decision,
+    exec_under_utility,
     group_rss,
+    load_average,
     parse_processes,
     parse_snapshot,
 )
@@ -124,6 +133,88 @@ class ClassificationTests(unittest.TestCase):
                 self.assertIsNone(classify(executable, args))
 
 
+class UtilityQosTests(unittest.TestCase):
+    def test_utility_clamp_and_absolute_nice_on_darwin(self):
+        with (
+            patch.object(sys, 'platform', 'darwin'),
+            patch.object(os, 'getpriority', return_value=0),
+            patch.object(os, 'setpriority') as setpriority,
+            patch.object(os, 'execv') as execv,
+            patch.object(os, 'execvp') as execvp,
+        ):
+            exec_under_utility(['npm', 'test'])
+        setpriority.assert_called_once_with(os.PRIO_PROCESS, 0, NICE_LEVEL)
+        execv.assert_called_once_with(
+            TASKPOLICY, [TASKPOLICY, '-c', 'utility', 'npm', 'test'])
+        execvp.assert_not_called()
+
+    def test_nice_demotion_never_promotes_an_already_nicer_process(self):
+        with (
+            patch.object(sys, 'platform', 'darwin'),
+            patch.object(os, 'getpriority', return_value=15),
+            patch.object(os, 'setpriority') as setpriority,
+            patch.object(os, 'execv'),
+            patch.object(os, 'execvp'),
+        ):
+            exec_under_utility(['npm', 'test'])
+        setpriority.assert_not_called()
+
+    def test_missing_clamp_tool_still_runs_the_niced_workload(self):
+        with (
+            patch.object(sys, 'platform', 'darwin'),
+            patch.object(os, 'getpriority', return_value=0),
+            patch.object(os, 'setpriority'),
+            patch.object(os, 'execv', side_effect=OSError('denied')),
+            patch.object(os, 'execvp') as execvp,
+        ):
+            exec_under_utility(['cargo', 'test'])
+        execvp.assert_called_once_with('cargo', ['cargo', 'test'])
+
+    def test_non_darwin_hosts_run_the_niced_workload_directly(self):
+        with (
+            patch.object(sys, 'platform', 'linux'),
+            patch.object(os, 'getpriority', return_value=0),
+            patch.object(os, 'setpriority') as setpriority,
+            patch.object(os, 'execv') as execv,
+            patch.object(os, 'execvp') as execvp,
+        ):
+            exec_under_utility(['tsc', '--noEmit'])
+        setpriority.assert_called_once_with(os.PRIO_PROCESS, 0, NICE_LEVEL)
+        execv.assert_not_called()
+        execvp.assert_called_once_with('tsc', ['tsc', '--noEmit'])
+
+    def test_priority_failure_does_not_block_the_workload(self):
+        with (
+            patch.object(sys, 'platform', 'linux'),
+            patch.object(os, 'getpriority', side_effect=OSError('denied')),
+            patch.object(os, 'execvp') as execvp,
+        ):
+            exec_under_utility(['npm', 'test'])
+        execvp.assert_called_once_with('npm', ['npm', 'test'])
+
+    def test_vitest_unit_worker_cap_preserves_stricter_settings(self):
+        for value, expected in (
+            (None, VITEST_UNIT_WORKER_CAP),
+            ('', VITEST_UNIT_WORKER_CAP),
+            ('bogus', VITEST_UNIT_WORKER_CAP),
+            ('0', VITEST_UNIT_WORKER_CAP),
+            ('-1', VITEST_UNIT_WORKER_CAP),
+            ('1', 1),
+            ('2', VITEST_UNIT_WORKER_CAP),
+            ('4', VITEST_UNIT_WORKER_CAP),
+            ('1.5', VITEST_UNIT_WORKER_CAP),
+            (3, VITEST_UNIT_WORKER_CAP),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(clamped_unit_workers(value), expected)
+
+    def test_load_average_is_three_nonnegative_readings(self):
+        loads = load_average()
+        self.assertIsNotNone(loads)
+        self.assertEqual(len(loads), 3)
+        self.assertTrue(all(isinstance(value, float) and value >= 0 for value in loads))
+
+
 class QueueTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="memory-admission-test-")
@@ -167,6 +258,23 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(receipt["peakRssBytes"], 12345)
         self.assertEqual(receipt["returncode"], 7)
         self.assertEqual(receipt["job"], "paused")
+
+    def test_receipt_records_load_average_and_duration(self):
+        gate = self.gate("measured")
+        self.assertIsNone(gate.attempt(Snapshot(32 * GIB, 24 * GIB, 0)))
+        active = json.loads(gate.path.read_text())
+        self.assertEqual(len(active["loadavgStart"]), 3)
+        gate.finish(GIB, 0)
+        receipt = json.loads((self.root / "state" / "receipts" / gate.path.name).read_text())
+        self.assertEqual(len(receipt["loadavgEnd"]), 3)
+        self.assertIsInstance(receipt["durationSeconds"], float)
+        self.assertGreaterEqual(receipt["durationSeconds"], 0)
+
+    def test_unstarted_receipt_has_no_duration(self):
+        gate = self.gate("unstarted")
+        gate.finish(None, 75, outcome="queue-timeout")
+        receipt = json.loads((self.root / "state" / "receipts" / gate.path.name).read_text())
+        self.assertIsNone(receipt["durationSeconds"])
 
     def test_dangling_pause_sentinel_is_still_a_pause(self):
         gate = self.gate("pause-link")
