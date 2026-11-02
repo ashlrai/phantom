@@ -88,9 +88,11 @@ describe('fleet self-tick read route', () => {
     expect(existsSync(join(runsDir, SELF_TICK_LOCK))).toBe(false);
   });
 
-  it('declines non-GET methods and foreign paths without reading', async () => {
+  it('declines other methods and foreign paths without reading', async () => {
     const api = createFleetSelfTickApi({ runsDir });
-    expect(await call(api, PATH, 'POST')).toMatchObject({ handled: false, status: 404 });
+    // POST is handled since RQ-PHX-SELFTICKRUNNOW02, but this ctx carries no
+    // dispatch allowance, so the mutation gate answers 404 before any run.
+    expect(await call(api, PATH, 'POST')).toMatchObject({ handled: true, status: 404 });
     expect((await call(api, PATH, 'HEAD')).handled).toBe(false);
     expect((await call(api, '/api/verse/fleet/memory')).handled).toBe(false);
   });
