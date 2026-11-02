@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 /**
  * M180 — Elon strategic dialogue DISPATCH integration tests.
  *
@@ -102,6 +103,7 @@ function makeCfg() {
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'm180d-'));
   process.env['HOME'] = tmpHome;
+  pairedTelegram(tmpHome, 42);
   vi.clearAllMocks();
   mockSendTelegramMessage.mockResolvedValue({ ok: true });
   mockPollTelegramUpdates.mockResolvedValue({ updates: [], newOffset: 0 });
@@ -123,7 +125,7 @@ describe('M180 dispatch.ts Telegram routing integration', () => {
   it('routes free-form text to the Leader thread and sends the reply back', async () => {
     mockAppendMasonMessage.mockResolvedValue(leaderReply('Bold move. Creating goal now.'));
     mockPollTelegramUpdates.mockResolvedValue({
-      updates: [{ kind: 'text', text: 'what should we ship next?', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'what should we ship next?', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
 
@@ -145,7 +147,7 @@ describe('M180 dispatch.ts Telegram routing integration', () => {
     await runCommsCycle(makeCfg() as never);
 
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: '1', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: '1', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     const result = await runCommsCycle(makeCfg() as never);
@@ -168,7 +170,7 @@ describe('M180 dispatch.ts Telegram routing integration', () => {
         kind: 'callback',
         requestId: out!.id,
         optionIndex: 0,
-        fromChatId: '42',
+        fromChatId: '42', senderUserId: 42, privateChat: true,
         callbackQueryId: 'cq1',
       }],
       newOffset: 2,
@@ -189,7 +191,7 @@ describe('M180 dispatch.ts Telegram routing integration', () => {
   it('routes free-form text to the Leader even when no outstanding request exists', async () => {
     mockAppendMasonMessage.mockResolvedValue(leaderReply('Here is my assessment.'));
     mockPollTelegramUpdates.mockResolvedValue({
-      updates: [{ kind: 'text', text: 'Tell me the strategy', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'Tell me the strategy', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
 
@@ -208,7 +210,7 @@ describe('M180 dispatch.ts Telegram routing integration', () => {
 
     mockAppendMasonMessage.mockResolvedValue(leaderReply('On it.'));
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: '2 things: ship billing, then docs', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: '2 things: ship billing, then docs', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     const result = await runCommsCycle(makeCfg() as never);

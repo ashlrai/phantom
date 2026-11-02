@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 /**
  * 3.14 — the Telegram drain against the REAL Leader thread
  * (src/core/vision/leader-thread.ts), not a fake: a memo written to disk is
@@ -56,6 +57,7 @@ beforeEach(() => {
   });
   home = mkdtempSync(join(tmpdir(), 'ashlr-tg314-real-'));
   process.env['HOME'] = home;
+  pairedTelegram(home, 7);
   calls.length = 0;
   setTelegramTransportForTests(async (method, body) => {
     calls.push({ method, body });
@@ -120,7 +122,7 @@ describe('Telegram offline inbound recovery', () => {
       calls.push({ method, body });
       if (method === 'getUpdates') {
         polls++;
-        return { ok: true, result: [{ update_id: 80, message: { message_id: 90, chat: { id: 7 }, text: 'Thanks, keep me posted', reply_to_message: { message_id: target } } }] };
+        return { ok: true, result: [{ update_id: 80, message: { message_id: 90, chat: { id: 7, type: 'private' }, from: { id: 7, is_bot: false }, text: 'Thanks, keep me posted', reply_to_message: { message_id: target } } }] };
       }
       return { ok: true, result: { message_id: nextId++ } };
     });
@@ -142,7 +144,7 @@ describe('Telegram offline inbound recovery', () => {
       calls.push({ method, body });
       if (method === 'getUpdates') {
         polls++;
-        return { ok: true, result: [{ update_id: 100, message: { message_id: 101, chat: { id: 7 }, text: 'Noted', reply_to_message: { message_id: target } } }] };
+        return { ok: true, result: [{ update_id: 100, message: { message_id: 101, chat: { id: 7, type: 'private' }, from: { id: 7, is_bot: false }, text: 'Noted', reply_to_message: { message_id: target } } }] };
       }
       if (method === 'sendMessage' && fail) return { ok: false, error_code: 500 };
       return { ok: true, result: { message_id: nextId++ } };
@@ -157,7 +159,7 @@ describe('Telegram offline inbound recovery', () => {
   it.each(['status', 'queue', 'usage', 'approvals'])('answers /%s through the Bot API without a daemon', async command => {
     setTelegramTransportForTests(async (method, body) => {
       calls.push({ method, body });
-      if (method === 'getUpdates') return { ok: true, result: [{ update_id: 120, message: { message_id: 121, chat: { id: 7 }, text: `/${command}` } }] };
+      if (method === 'getUpdates') return { ok: true, result: [{ update_id: 120, message: { message_id: 121, chat: { id: 7, type: 'private' }, from: { id: 7, is_bot: false }, text: `/${command}` } }] };
       return { ok: true, result: { message_id: nextId++ } };
     });
     expect((await runCommsCycle(cfg, fast)).resolved).toBe(1);

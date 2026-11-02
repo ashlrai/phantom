@@ -1,3 +1,4 @@
+import { rememberEmailPair } from '../src/core/fleet/operator-glance-read.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,7 +32,7 @@ let logs: string[];
 let errors: string[];
 const sender = 'fleet-test@example.invalid';
 const eml = ['From: Fleet Test <fleet-test@example.invalid>', 'To: phantom@example.invalid',
-  'Subject: Fleet order', 'Message-ID: <order-1@example.invalid>', '', 'Please check the fleet.', ''].join('\r\n');
+  'Authentication-Results: mx.example.invalid; dkim=pass header.d=example.invalid', 'Subject: Fleet order', 'Message-ID: <order-1@example.invalid>', '', 'Please check the fleet.', ''].join('\r\n');
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'email-cycle-'));
@@ -40,6 +41,7 @@ beforeEach(() => {
   runs = join(home, '.ashlr-runs'); inbox = join(home, 'mail', 'inbox');
   outbox = join(home, 'mail', 'outbox'); processed = join(home, 'mail', 'processed');
   mkdirSync(inbox, { recursive: true });
+  rememberEmailPair(sender, runs);
   logs = []; errors = []; mock.fail = false;
   vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(args.join(' ')); });
   vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args.join(' ')); });
