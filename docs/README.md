@@ -243,6 +243,7 @@ canonical release guide for required hosted qualification and publication.
 - [Personal meter provenance](https://github.com/ashlrai/phantom/blob/master/docs/PERSONAL-METER-PROVENANCE.md)
 - [Phantom Secrets for enrolled repositories](https://github.com/ashlrai/phantom/blob/master/docs/SECRETS-FOR-ENROLLED-REPOS.md)
 - [Composer commands — the prompt box slash commands](https://github.com/ashlrai/phantom/blob/master/docs/COMPOSER-COMMANDS.md)
+- [Console layout: one screen, three widths](CONSOLE-LAYOUT.md)
 - [Phantom console V2 — build contract (formerly Ashlr Verse)](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTRACT-V2.md)
 - [Phantom console V2 — design language](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-DESIGN-V2.md)
 - [Phantom console — real account telemetry (verified on this machine, 2026-09-19)](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-TELEMETRY-V2.md)

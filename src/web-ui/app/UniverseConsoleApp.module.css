@@ -19,8 +19,7 @@
 .notice h1 { font-size: var(--text-xl-size); }
 .checking { padding: var(--space-8); }
 @media (max-width: 1000px) { .brand { flex-basis: 100%; } }
-@media (max-width: 700px) {
-  .scopeBar { flex-direction: column; align-items: stretch; gap: var(--space-3); padding: var(--space-4); }
-  .actions { justify-content: flex-end; }
-  .main { padding: var(--space-5) var(--space-4); }
-}
+/* Shared compact width class from app/console-mode.ts (data-console-layout). */
+:root[data-console-layout='compact'] .scopeBar { flex-direction: column; align-items: stretch; gap: var(--space-3); padding: var(--space-4); }
+:root[data-console-layout='compact'] .actions { justify-content: flex-end; }
+:root[data-console-layout='compact'] .main { padding: var(--space-5) var(--space-4); }
