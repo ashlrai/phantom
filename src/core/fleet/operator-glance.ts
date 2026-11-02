@@ -6,6 +6,8 @@
  * report them.
  */
 
+import type { GuardianGlanceRow } from './guardian-glance.js';
+
 export interface OperatorGlance {
   v: 1;
   at: string;
@@ -16,6 +18,8 @@ export interface OperatorGlance {
   mergesToday: number | null;
   main: 'up' | 'down' | 'unknown';
   incidents: string[];
+  /** Per-repo main-guardian chips for the desktop; absent when no status table. */
+  guardian?: GuardianGlanceRow[];
 }
 
 export interface OperatorLane {
