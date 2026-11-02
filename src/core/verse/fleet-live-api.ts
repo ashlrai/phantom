@@ -1418,6 +1418,9 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     stateReason,
     lastActivityAt,
     darkSince: fleetDarkSince(state, lastActivityAt),
+    blockedHolds: holds === null ? null : holds.map(h => ({ repo: clip(h.repo, 200), reason: clip(h.reason, 480), until: h.until })),
+    merged24h: merges === null ? null : merges.filter(m => m.landedMs >= nowMs - DAY_MS && m.landedMs <= nowMs)
+      .map(({ rec }) => ({ id: clip(rec.id, 240), repo: clip(rec.repo, 200), prNumber: rec.prNumber, landedAt: rec.landedAt })),
     summary,
     commit: safely(readRunningCommit, null),
     lanes,

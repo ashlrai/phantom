@@ -108,6 +108,7 @@ export function OpsIcon(props: IconProps) {
 
 /** Every section's glyph: the rail's, plus the tray's. */
 export const SECTION_ICON: Readonly<Record<VerseSectionId, ComponentType<IconProps>>> = {
+  live: RAIL_ICON.command!,
   command: RAIL_ICON.command!,
   fleet: RAIL_ICON.fleet!,
   growth: RAIL_ICON.growth!,

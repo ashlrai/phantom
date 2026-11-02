@@ -68,7 +68,7 @@ import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocatio
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
 import { pick } from './picker.js';
-import { classifyRepos, printStatusJson } from './status.js';
+import { classifyRepos } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
@@ -1210,24 +1210,20 @@ async function cmdStatus(args: string[]): Promise<void> {
   if (wantsHelp(args)) {
     printCoreUsage('status', 'Attention board: dirty, off-sync and stale repos; ecosystem summary.', [
       ['phm status', 'human attention board'],
-      ['phm status --json', 'machine-readable StatusJson on stdout'],
+      ['phm status --json', 'running, merged (24h), blocked and pool usage'],
     ]);
+    return;
+  }
+  if (args.includes('--json')) {
+    const { buildFleetLiveSnapshot } = await import('../core/verse/fleet-live-api.js');
+    const { readResourceView } = await import('../core/fabric/resource-view-store.js');
+    const { projectLiveStatus } = await import('../core/fleet/live-status.js');
+    const [live, resources] = await Promise.all([buildFleetLiveSnapshot(), readResourceView()]);
+    console.log(JSON.stringify(projectLiveStatus(live.snapshot, resources), null, 2));
     return;
   }
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
-
-  if (args.includes('--json')) {
-    await printStatusJson(cfg, idx, {
-      getToolsRegistry: tryGetToolsRegistry,
-      discoverMcpServers: tryDiscoverMcpServers,
-      buildRollup: tryBuildRollup,
-      githubStatus: tryGithubStatus,
-      vercelStatus: tryVercelStatus,
-      getIdentity: tryGetIdentity,
-    });
-    return;
-  }
 
   const { repos, dirty, offSync, stale } = classifyRepos(idx, cfg.staleDays);
 
