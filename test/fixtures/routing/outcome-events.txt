@@ -1,0 +1,124 @@
+# Fleet outcome log. Stamps are wall-clock labels, not secrets.
+2026-11-01 00:00:00 ASSIGN job=RQ-1 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:01:00 OUTCOME job=RQ-1 state=closed usage=0.1 breakage=0
+2026-11-01 00:02:00 ASSIGN job=RQ-3 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:03:00 OUTCOME job=RQ-3 state=closed usage=0.1 breakage=0
+2026-11-01 00:04:00 ASSIGN job=RQ-5 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:05:00 OUTCOME job=RQ-5 state=closed usage=0.1 breakage=0
+2026-11-01 00:06:00 ASSIGN job=RQ-7 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:07:00 OUTCOME job=RQ-7 state=closed usage=0.1 breakage=0
+2026-11-01 00:08:00 ASSIGN job=RQ-9 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:09:00 OUTCOME job=RQ-9 state=closed usage=0.1 breakage=0
+2026-11-01 00:10:00 ASSIGN job=RQ-11 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:11:00 OUTCOME job=RQ-11 state=closed usage=0.1 breakage=0
+2026-11-01 00:12:00 ASSIGN job=RQ-13 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:13:00 OUTCOME job=RQ-13 state=merged usage=0.1 minutes=15 breakage=0
+2026-11-01 00:14:00 ASSIGN job=RQ-15 resource=claude model=haiku type=code repo=phantom priority=normal
+2026-11-01 00:15:00 OUTCOME job=RQ-15 state=merged usage=0.1 minutes=15 breakage=0
+2026-11-01 00:16:00 ASSIGN job=RQ-17 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:17:00 OUTCOME job=RQ-17 state=merged usage=1.2 minutes=70 breakage=0
+2026-11-01 00:18:00 ASSIGN job=RQ-19 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:19:00 OUTCOME job=RQ-19 state=merged usage=1.2 minutes=70 breakage=0
+2026-11-01 00:20:00 ASSIGN job=RQ-21 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:21:00 OUTCOME job=RQ-21 state=merged usage=1.2 minutes=70 breakage=0
+2026-11-01 00:22:00 ASSIGN job=RQ-23 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:23:00 OUTCOME job=RQ-23 state=merged usage=1.2 minutes=70 breakage=0
+2026-11-01 00:24:00 ASSIGN job=RQ-25 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:25:00 OUTCOME job=RQ-25 state=merged usage=1.2 minutes=70 breakage=1
+2026-11-01 00:26:00 ASSIGN job=RQ-27 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:27:00 OUTCOME job=RQ-27 state=merged usage=1.2 minutes=70 breakage=1
+2026-11-01 00:28:00 ASSIGN job=RQ-29 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:29:00 OUTCOME job=RQ-29 state=merged usage=1.2 minutes=70 breakage=1
+2026-11-01 00:30:00 ASSIGN job=RQ-31 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:31:00 OUTCOME job=RQ-31 state=closed usage=1.2 breakage=0
+2026-11-01 00:32:00 ASSIGN job=RQ-33 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:33:00 OUTCOME job=RQ-33 state=closed usage=1.2 breakage=0
+2026-11-01 00:34:00 ASSIGN job=RQ-35 resource=codex-cmp model=gpt-5.4 type=code repo=phantom priority=normal
+2026-11-01 00:35:00 OUTCOME job=RQ-35 state=closed usage=1.2 breakage=0
+2026-11-01 00:36:00 ASSIGN job=RQ-37 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:37:00 OUTCOME job=RQ-37 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:38:00 ASSIGN job=RQ-39 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:39:00 OUTCOME job=RQ-39 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:40:00 ASSIGN job=RQ-41 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:41:00 OUTCOME job=RQ-41 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:42:00 ASSIGN job=RQ-43 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:43:00 OUTCOME job=RQ-43 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:44:00 ASSIGN job=RQ-45 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:45:00 OUTCOME job=RQ-45 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:46:00 ASSIGN job=RQ-47 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:47:00 OUTCOME job=RQ-47 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:48:00 ASSIGN job=RQ-49 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:49:00 OUTCOME job=RQ-49 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:50:00 ASSIGN job=RQ-51 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:51:00 OUTCOME job=RQ-51 state=merged usage=0.35 minutes=30 breakage=0
+2026-11-01 00:52:00 ASSIGN job=RQ-53 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:53:00 OUTCOME job=RQ-53 state=merged usage=0.35 minutes=30 breakage=0
+{"ts":"2026-11-01T00:54:00.000Z","event":"launch","job":"RQ-55","resource":"devin","model":"swe-2-max","jobType":"code","repo":"phantom","priority":"normal"}
+{"ts":"2026-11-01T00:55:00.000Z","event":"outcome","job":"RQ-55","state":"merged","usage":0.35,"breakage":0,"minutes":30}
+2026-11-01 00:56:00 ASSIGN job=RQ-57 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:57:00 OUTCOME job=RQ-57 state=closed usage=0.35 breakage=0
+2026-11-01 00:58:00 ASSIGN job=RQ-59 resource=devin model=swe-2-max type=code repo=phantom priority=normal
+2026-11-01 00:59:00 OUTCOME job=RQ-59 state=closed usage=0.35 breakage=0
+2026-11-01 01:00:00 ASSIGN job=RQ-61 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:01:00 OUTCOME job=RQ-61 state=merged usage=0.45 minutes=14 breakage=0
+2026-11-01 01:02:00 ASSIGN job=RQ-63 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:03:00 OUTCOME job=RQ-63 state=merged usage=0.45 minutes=14 breakage=0
+2026-11-01 01:04:00 ASSIGN job=RQ-65 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:05:00 OUTCOME job=RQ-65 state=merged usage=0.45 minutes=14 breakage=0
+2026-11-01 01:06:00 ASSIGN job=RQ-67 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:07:00 OUTCOME job=RQ-67 state=merged usage=0.45 minutes=14 breakage=0
+2026-11-01 01:08:00 ASSIGN job=RQ-69 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:09:00 OUTCOME job=RQ-69 state=merged usage=0.45 minutes=14 breakage=0
+2026-11-01 01:10:00 ASSIGN job=RQ-71 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:11:00 OUTCOME job=RQ-71 state=merged usage=0.45 minutes=14 breakage=0
+2026-11-01 01:12:00 ASSIGN job=RQ-73 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:13:00 OUTCOME job=RQ-73 state=merged usage=0.45 minutes=14 breakage=0
+2026-11-01 01:14:00 ASSIGN job=RQ-75 resource=claude model=opus type=code repo=phantom priority=normal
+2026-11-01 01:15:00 OUTCOME job=RQ-75 state=closed usage=0.45 breakage=0
+2026-11-01 01:16:00 ASSIGN job=RQ-77 resource=local-omlx model=local type=code repo=phantom priority=normal
+2026-11-01 01:17:00 OUTCOME job=RQ-77 state=merged usage=0.05 minutes=12 breakage=0
+2026-11-01 01:18:00 ASSIGN job=RQ-79 resource=local-omlx model=local type=code repo=phantom priority=normal
+2026-11-01 01:19:00 OUTCOME job=RQ-79 state=closed usage=0.05 breakage=0
+2026-11-01 01:20:00 ASSIGN job=RQ-81 resource=local-omlx model=local type=code repo=phantom priority=normal
+2026-11-01 01:21:00 OUTCOME job=RQ-81 state=closed usage=0.05 breakage=0
+2026-11-01 01:22:00 ASSIGN job=RQ-83 resource=local-omlx model=local type=code repo=phantom priority=normal
+2026-11-01 01:23:00 OUTCOME job=RQ-83 state=closed usage=0.05 breakage=0
+2026-11-01 01:24:00 ASSIGN job=RQ-85 resource=local-omlx model=local type=code repo=phantom priority=normal
+2026-11-01 01:25:00 OUTCOME job=RQ-85 state=closed usage=0.05 breakage=0
+2026-11-01 01:26:00 ASSIGN job=RQ-87 resource=local-omlx model=local type=code repo=phantom priority=normal
+2026-11-01 01:27:00 OUTCOME job=RQ-87 state=closed usage=0.05 breakage=0
+2026-11-01 01:28:00 ASSIGN job=RQ-89 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:29:00 OUTCOME job=RQ-89 state=merged usage=0.04 minutes=10 breakage=0
+2026-11-01 01:30:00 ASSIGN job=RQ-91 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:31:00 OUTCOME job=RQ-91 state=merged usage=0.04 minutes=10 breakage=0
+2026-11-01 01:32:00 ASSIGN job=RQ-93 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:33:00 OUTCOME job=RQ-93 state=merged usage=0.04 minutes=10 breakage=0
+2026-11-01 01:34:00 ASSIGN job=RQ-95 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:35:00 OUTCOME job=RQ-95 state=merged usage=0.04 minutes=10 breakage=0
+2026-11-01 01:36:00 ASSIGN job=RQ-97 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:37:00 OUTCOME job=RQ-97 state=merged usage=0.04 minutes=10 breakage=0
+2026-11-01 01:38:00 ASSIGN job=RQ-99 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:39:00 OUTCOME job=RQ-99 state=merged usage=0.04 minutes=10 breakage=0
+2026-11-01 01:40:00 ASSIGN job=RQ-101 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:41:00 OUTCOME job=RQ-101 state=merged usage=0.04 minutes=10 breakage=0
+2026-11-01 01:42:00 ASSIGN job=RQ-103 resource=local-omlx model=local type=bulk repo=phantom priority=normal
+2026-11-01 01:43:00 OUTCOME job=RQ-103 state=closed usage=0.04 breakage=0
+2026-11-01 01:44:00 ASSIGN job=RQ-105 resource=devin model=kimi-k3 type=review repo=phantom priority=normal
+2026-11-01 01:45:00 OUTCOME job=RQ-105 state=dirty usage=0.5 breakage=0
+2026-11-01 01:46:00 ASSIGN job=RQ-107 resource=devin model=kimi-k3 type=review repo=phantom priority=normal
+2026-11-01 01:47:00 OUTCOME job=RQ-107 state=dirty usage=0.5 breakage=0
+2026-11-01 01:48:00 ASSIGN job=RQ-109 resource=devin model=kimi-k3 type=review repo=phantom priority=normal
+2026-11-01 01:49:00 OUTCOME job=RQ-109 state=dirty usage=0.5 breakage=0
+2026-11-01 01:50:00 ASSIGN job=RQ-111 resource=devin model=kimi-k3 type=review repo=phantom priority=normal
+2026-11-01 01:51:00 OUTCOME job=RQ-111 state=dirty usage=0.5 breakage=0
+2026-11-01 01:52:00 ASSIGN job=RQ-113 resource=devin model=kimi-k3 type=review repo=phantom priority=normal
+2026-11-01 01:53:00 OUTCOME job=RQ-113 state=merged usage=0.5 minutes=20 breakage=0
+2026-11-01 01:54:00 ASSIGN job=RQ-115 resource=codex-cmp model=gpt-5.4 type=fixup repo=phantom priority=normal
+2026-11-01 01:55:00 OUTCOME job=RQ-115 state=fixup usage=0.2 breakage=0
+2026-11-01 01:56:00 ASSIGN job=RQ-117 resource=codex-cmp model=gpt-5.4 type=fixup repo=phantom priority=normal
+2026-11-01 01:57:00 OUTCOME job=RQ-117 state=fixup usage=0.2 breakage=0
+2026-11-01 01:58:00 ASSIGN job=RQ-119 resource=codex-cmp model=gpt-5.4 type=fixup repo=phantom priority=normal
+2026-11-01 01:59:00 OUTCOME job=RQ-119 state=fixup usage=0.2 breakage=0
+2026-11-01 12:00:00 LEADER cmp fixups=1
+2026-11-01 12:00:00 LAUNCH RQ-OLD phantom codex-personal work
+2026-11-01 12:01:00 OUTCOME nope
