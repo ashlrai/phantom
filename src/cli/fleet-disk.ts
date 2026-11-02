@@ -102,7 +102,7 @@ export function parseLeaderFreeGb(text: string, nowMs: number, windowHours = FLE
  * own total line and deeper descendants are dropped, so a recursive `du -sk`
  * listing is acceptable input too. Pure — no I/O.
  */
-export function parseDuSubdirs(text: string, root: string): FleetDiskDir[] {
+export function parseDuSubdirs(text: string, root: string, limit = FLEET_DISK_TOP_DIRS): FleetDiskDir[] {
   const base = root.replace(/[/\\]+$/, '');
   const byName = new Map<string, number>();
   for (const raw of text.split('\n')) {
@@ -120,7 +120,7 @@ export function parseDuSubdirs(text: string, root: string): FleetDiskDir[] {
   }
   return [...byName.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, FLEET_DISK_TOP_DIRS)
+    .slice(0, limit)
     // du -sk counts 1024-byte blocks; report decimal GB like free_gb.
     .map(([name, kb]) => ({ name, gb: round1(kb * 1024 / 1e9) }));
 }
@@ -161,7 +161,7 @@ export function buildFleetDisk(opts: {
   };
 }
 
-const defaultDu = (root: string): string => {
+export const defaultDu = (root: string): string => {
   const opts: ExecFileSyncOptionsWithStringEncoding = {
     encoding: 'utf8',
     timeout: DU_TIMEOUT_MS,
