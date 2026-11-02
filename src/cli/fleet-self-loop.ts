@@ -21,6 +21,11 @@
  * stream sink throws, admission stops safely, the signal handlers are still
  * removed, and the final summary names the failure (termination
  * 'observer-error', exit 1).
+ *
+ * --max-ticks <n> (integer 1..1000) is optional alongside --duration-ms:
+ * whichever bound occurs first stops admission. When the count bound ends
+ * the loop the summary carries termination 'max-ticks' and an optional
+ * maxTicks count. Default behavior (no --max-ticks) is unchanged.
  */
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -69,7 +74,7 @@ const toStreamLine = (record: Record<string, unknown>, heavyKey: 'report' | 'las
   return out;
 };
 
-const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--failure-backoff-max-ms <ms>] [--busy-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
+const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--max-ticks <n>] [--failure-backoff-max-ms <ms>] [--busy-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
 Repeat the self-management pass (fleet self-tick) for a bounded window:
 first pass immediately, then one pass every interval (default 60000ms,
 minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is
@@ -84,10 +89,13 @@ opts into the same doubling for consecutive busy passes (any exit code), up to
 the given max (between the interval and 24h); any other outcome resets only
 that busy streak. With both enabled the longer current delay is used. Stream
 pass records include consecutiveFailures, consecutiveBusy (when enabled) and
-nextDelayMs (when either is enabled). --json prints one final
-sanitized summary line (unchanged default shape). --stream instead prints
-sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line per
-completed pass, then exactly one {"v":1,"record":"summary",...} line.
+nextDelayMs (when either is enabled). --max-ticks <n> (integer 1..1000) is
+optional alongside --duration-ms: whichever bound occurs first stops
+admission. When the count bound ends the loop the summary carries
+termination 'max-ticks' and an optional maxTicks count. --json prints one
+final sanitized summary line (unchanged default shape). --stream instead
+prints sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line
+per completed pass, then exactly one {"v":1,"record":"summary",...} line.
 --stream and --json are mutually exclusive and rejected before any pass
 runs. Exit 0 when no pass failed, 1 when any did (or the stream sink did),
 2 on usage.`;
@@ -118,10 +126,16 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   let json = false, apply = false, stream = false;
   let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
   let failureBackoffMaxMs: number | undefined, busyBackoffMaxMs: number | undefined;
+  let maxTicks: number | undefined;
   const parseMs = (value: string | undefined): number | undefined => {
     if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) ? parsed : undefined;
+  };
+  const parsePositiveInt = (value: string | undefined): number | undefined => {
+    if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -134,6 +148,10 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
     } else if (arg === '--interval-ms' && intervalMs === undefined) {
       intervalMs = parseMs(args[++i]);
       if (intervalMs === undefined || intervalMs < SELF_LOOP_MIN_INTERVAL_MS) return invalid();
+    } else if (arg === '--max-ticks' && maxTicks === undefined) {
+      const parsed = parsePositiveInt(args[++i]);
+      if (parsed === undefined || parsed < 1 || parsed > 1000) return invalid();
+      maxTicks = parsed;
     } else if (arg === '--failure-backoff-max-ms' && failureBackoffMaxMs === undefined) {
       failureBackoffMaxMs = parseMs(args[++i]);
       if (failureBackoffMaxMs === undefined || failureBackoffMaxMs > SELF_LOOP_MAX_DURATION_MS) return invalid();
@@ -205,6 +223,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   try {
     summary = await runSelfLoop({
       durationMs,
+      maxTicks,
       intervalMs: intervalMs ?? SELF_LOOP_DEFAULT_INTERVAL_MS,
       ...(failureBackoffMaxMs === undefined ? {} : { failureBackoffMaxMs }),
       ...(busyBackoffMaxMs === undefined ? {} : { busyBackoffMaxMs }),
@@ -225,7 +244,8 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
     output(JSON.stringify(sanitizePublicJson(summary)));
   } else {
     const label = summary.termination === 'observer-error' ? 'OBSERVER-ERROR'
-      : summary.termination === 'interrupted' ? 'INTERRUPTED' : 'DONE';
+      : summary.termination === 'max-ticks' ? 'MAX-TICKS'
+        : summary.termination === 'interrupted' ? 'INTERRUPTED' : 'DONE';
     output(`fleet self-loop: ${label
     } — ticks=${summary.ticks} failed=${summary.failures} busy=${summary.busy} (${apply ? 'apply' : 'dry-run'})`);
   }
