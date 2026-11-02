@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -73,10 +73,13 @@ describe('operator glance', () => {
     expect(stripPairingSecret(order, 'not-the-order-text')).toEqual({ presented: false, body: order });
   });
 
-  it('pairs the first Telegram owner and refuses a different id', () => {
+  it('requires a code for the first Telegram owner and refuses a different id', () => {
     const runsDir = mkdtempSync(join(tmpdir(), 'pair-'));
     dirs.push(runsDir);
-    expect(acceptTelegramPair(12345, runsDir)).toBe(true);
+    expect(acceptTelegramPair(12345, runsDir)).toBe(false);
+    process.env['PHANTOM_OPERATOR_SECRET'] = 'test-pairing-code-12345';
+    expect(acceptTelegramPair(12345, runsDir, 'wrong-code')).toBe(false);
+    expect(acceptTelegramPair(12345, runsDir, 'test-pairing-code-12345')).toBe(true);
     expect(acceptTelegramPair(12345, runsDir)).toBe(true);
     expect(acceptTelegramPair(999, runsDir)).toBe(false);
     expect(readFileSync(join(runsDir, 'queue', 'telegram-pair.json'), 'utf8')).toContain('12345');
@@ -85,6 +88,7 @@ describe('operator glance', () => {
   it('requires DKIM for the sender domain and strips the pairing secret from the order', () => {
     expect(dkimPasses('mx.example.com; dkim=pass header.d=example.com', 'mason@example.com')).toBe(true);
     expect(dkimPasses('mx.example.com; dkim=pass header.d=evil.com', 'mason@example.com')).toBe(false);
+    expect(dkimPasses('dkim=pass header.d=example.com.evil', 'mason@example.com')).toBe(false);
     expect(dkimPasses('dkim=fail header.d=example.com', 'mason@example.com')).toBe(false);
     const secret = 's'.repeat(24);
     expect(stripPairingSecret(`${secret}\nhold the queue`, secret)).toEqual({ presented: true, body: 'hold the queue' });
@@ -102,6 +106,16 @@ describe('operator glance', () => {
   it('stops accepting after the rate limit', () => {
     for (let i = 0; i < 500; i += 1) expect(allowOperatorMessage('email:mason@example.com', 1_000)).toBe(true);
     expect(allowOperatorMessage('email:mason@example.com', 1_000)).toBe(false);
+  });
+
+  it('silently refuses unpaired email even when its From is allowlisted', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'unpaired-mail-'));
+    dirs.push(root);
+    const opts = { allowedSenders: new Set(['mason@example.com']), runsDir: root, outboxDir: join(root, 'out') };
+    const raw = 'From: mason@example.com\r\nMessage-ID: <refused@example.com>\r\nAuthentication-Results: mx; dkim=pass header.d=example.com\r\n\r\nstatus';
+    expect(await recordEmailToInbox(raw, opts)).toEqual({ ok: false, reason: 'sender-not-allowed' });
+    expect(() => readFileSync(join(root, 'leader', 'MASON-INBOX.md'))).toThrow();
+    expect(existsSync(join(root, 'out'))).toBe(false);
   });
 
   it('records a DKIM-paired email order and does not keep the secret', async () => {
@@ -132,6 +146,11 @@ describe('operator glance', () => {
     const inbox = readFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'), 'utf8');
     expect(inbox).toContain('hold the claude lane until morning');
     expect(inbox).not.toContain(secret);
+    for (const proof of ['', 'Authentication-Results: mx; dkim=pass header.d=example.com.evil']) {
+      const forged = raw.replace('Authentication-Results: mx.example.com; dkim=pass header.d=example.com', proof).replace(secret, '');
+      expect(await recordEmailToInbox(forged, { allowedSenders: new Set(['mason@example.com']), runsDir, outboxDir }))
+        .toEqual({ ok: false, reason: 'sender-not-allowed' });
+    }
     const refused = await recordEmailToInbox(raw.replace('dkim=pass header.d=example.com', 'dkim=fail header.d=example.com'), {
       allowedSenders: new Set(['mason@example.com']),
       runsDir,

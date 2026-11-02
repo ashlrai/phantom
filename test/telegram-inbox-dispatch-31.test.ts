@@ -16,7 +16,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -59,12 +59,14 @@ function textUpdate(text: string, messageId: number): unknown {
 }
 
 let updates: unknown[] = [];
+let replies: string[] = [];
 function fakeTransport(method: string, _body: Record<string, unknown>): Promise<unknown> {
   if (method === 'getUpdates') {
     const result = updates;
     updates = [];
     return Promise.resolve({ ok: true, result });
   }
+  if (method === 'sendMessage') replies.push('sent');
   if (method === 'sendMessage') return Promise.resolve({ ok: true, result: { message_id: 8000 } });
   return Promise.resolve({ ok: true, result: true });
 }
@@ -76,13 +78,17 @@ beforeEach(() => {
   previousHome = process.env['HOME'];
   home = mkdtempSync(join(tmpdir(), 'tg-dispatch-home-'));
   process.env['HOME'] = home;
+  mkdirSync(join(home, '.ashlr-runs', 'queue'), { recursive: true });
+  writeFileSync(join(home, '.ashlr-runs', 'queue', 'telegram-pair.json'), JSON.stringify({ v: 1, userId: CHAT }));
   updates = [];
+  replies = [];
   bridge.recordTelegramToInbox.mockClear();
   leader.converseWithLeader.mockClear();
   setTelegramTransportForTests(fakeTransport);
 });
 
 afterEach(() => {
+  delete process.env['PHANTOM_OPERATOR_SECRET'];
   setTelegramTransportForTests(null);
   if (previousHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = previousHome;
@@ -109,6 +115,28 @@ describe('handleTelegramText fall-through records to the inbox bridge', () => {
     expect(leader.converseWithLeader).toHaveBeenCalledWith(event, 'what is blocking billing?', config);
     expect(bridge.recordTelegramToInbox.mock.invocationCallOrder[0]!)
       .toBeLessThan(leader.converseWithLeader.mock.invocationCallOrder[0]!);
+  });
+
+  it('stays silent until the owner supplies a pairing code; never logs the code', async () => {
+    rmSync(join(home, '.ashlr-runs', 'queue', 'telegram-pair.json'));
+    process.env['PHANTOM_OPERATOR_SECRET'] = 'test-pairing-code-12345';
+    updates = [textUpdate('status', 510), textUpdate('/pair incorrect', 511), {
+      update_id: updateId++, callback_query: { id: 'unpaired', from: { id: CHAT, is_bot: false },
+        message: { message_id: 511, chat: { id: CHAT, type: 'private' } }, data: 'request:0' },
+    }];
+    await runCommsCycle(cfg(), fastCycle);
+    expect(replies).toEqual([]);
+    expect(bridge.recordTelegramToInbox).not.toHaveBeenCalled();
+    expect(leader.converseWithLeader).not.toHaveBeenCalled();
+    updates = [textUpdate('/pair test-pairing-code-12345', 512)];
+    await runCommsCycle(cfg(), fastCycle);
+    expect(replies).toHaveLength(1);
+    expect(bridge.recordTelegramToInbox).not.toHaveBeenCalled();
+    expect(leader.converseWithLeader).not.toHaveBeenCalled();
+    updates = [textUpdate('new order', 513)];
+    await runCommsCycle(cfg(), fastCycle);
+    expect(bridge.recordTelegramToInbox).toHaveBeenCalledTimes(1);
+    expect(bridge.recordTelegramToInbox.mock.calls[0]![1]).toBe('new order');
   });
 
   it('two conversational texts → one bridge call each', async () => {

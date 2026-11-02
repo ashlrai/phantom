@@ -342,9 +342,9 @@ export async function recordEmailToInbox(
   if (secret.state === 'ready' && secret.secret) {
     if (!dkimPasses(parsed.authenticationResults, parsed.from)) return { ok: false, reason: 'sender-not-allowed' };
     const stripped = stripPairingSecret(parsed.body, secret.secret);
-    const paired = opts.runsDir ? emailPaired(parsed.from, opts.runsDir) : false;
+    const paired = emailPaired(parsed.from, runsRoot(opts.runsDir));
     if (!stripped.presented && !paired) return { ok: false, reason: 'sender-not-allowed' };
-    if (stripped.presented && opts.runsDir) rememberEmailPair(parsed.from, opts.runsDir);
+    if (stripped.presented) rememberEmailPair(parsed.from, runsRoot(opts.runsDir));
     parsed = { ...parsed, body: stripped.body };
     if (!parsed.body && stripped.presented) {
       if (!opts.outboxDir || !parsed.messageId) return { ok: false, reason: 'invalid' };
@@ -356,7 +356,7 @@ export async function recordEmailToInbox(
       } catch { return { ok: false, reason: 'write-failed' }; }
       return { ok: false, kind: 'status', reason: 'status-queued' };
     }
-  } else if (parsed.authenticationResults && /\bdkim=/i.test(parsed.authenticationResults) && !dkimPasses(parsed.authenticationResults, parsed.from)) {
+  } else if (!emailPaired(parsed.from, runsRoot(opts.runsDir)) || !dkimPasses(parsed.authenticationResults, parsed.from)) {
     return { ok: false, reason: 'sender-not-allowed' };
   }
   if (!allowOperatorMessage(`email:${parsed.from}`, (opts.now ?? (() => new Date()))().getTime())) {
@@ -372,8 +372,8 @@ export async function recordEmailToInbox(
   }
   const message = emailChannelMessage(parsed, opts.allowedSenders);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
-  // Allowlist is the first gate. When a pairing secret is configured, DKIM
-  // for the sender domain and that secret are required as well. The secret
+  // Allowlist, exact-domain DKIM and prior pairing are mandatory. A configured
+  // secret can establish the pairing on the first authenticated mail. The secret
   // line is removed before the order is logged. Inbound text is never a command.
   try {
     const ask = isOperatorStatusAsk(parsed.body.trim() || parsed.subject.trim());

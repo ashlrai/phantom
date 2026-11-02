@@ -40,7 +40,7 @@ export function dkimPasses(authenticationResults: string | null | undefined, fro
   return authenticationResults.split(';').some((part) => {
     const item = part.toLowerCase();
     return /\bdkim=pass\b/.test(item) && !/\bdkim=fail\b/.test(item)
-      && (item.includes(`header.d=${domain}`) || item.includes(`d=${domain}`));
+      && item.split(/\s+/).some(token => token === `header.d=${domain}` || token === `d=${domain}`);
   });
 }
 

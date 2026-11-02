@@ -268,10 +268,6 @@ async function handleTelegramCallback(event: InboundEvent, cfg: AshlrConfig, res
 }
 
 async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrConfig, result: CycleResult): Promise<void> {
-  // The configured private chat is the allowlist. Pairing records that id
-  // on the first message and refuses a different one afterwards. Text is an
-  // order or a status ask, never a shell command.
-  if (typeof event.senderUserId === 'number' && !acceptTelegramPair(event.senderUserId)) return;
   if (typeof event.senderUserId === 'number' && !allowOperatorMessage(`telegram:${event.senderUserId}`, Date.now())) {
     await sendTelegramMessage('Slow down.', replyOpts(event), cfg);
     return;
@@ -374,6 +370,19 @@ async function pollTelegram(cfg: AshlrConfig, result: CycleResult): Promise<void
     const { updates } = await pollTelegramUpdates(cfg, true);
     for (const event of updates ?? []) {
       try {
+        const owner = cfg.comms?.telegram?.chatId;
+        if (event.privateChat !== true || event.fromChatId !== owner ||
+            String(event.senderUserId) !== owner) continue;
+        const pair = event.kind === 'text' ? /^\/pair\s+(\S+)\s*$/.exec(event.text ?? '') : null;
+        if (!acceptTelegramPair(event.senderUserId!, undefined, pair?.[1])) {
+          if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+          continue;
+        }
+        if (pair) {
+          await sendTelegramMessage('Paired.', replyOpts(event), cfg);
+          if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+          continue;
+        }
         if (event.kind === 'callback') await handleTelegramCallback(event, cfg, result);
         else if (event.kind === 'text' && event.text) await handleTelegramText(event, event.text, cfg, result);
         if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
