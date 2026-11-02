@@ -37,6 +37,7 @@ import { open } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { dispatchEventsCandidates } from '../fleet/dispatch-events-path.js';
 import { sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 import {
@@ -79,12 +80,21 @@ export interface RunsHistoryApiDeps {
 /** Descriptor-bound tail read of the runs-dir event log, like runs-dir-state. */
 const DISPATCH_EVENTS_TAIL = 8 * 1024 * 1024;
 async function readDispatchEventsLog(): Promise<string | null> {
-  const path = join(homedir(), '.ashlr-runs', 'dispatch-events.log');
+  for (const path of dispatchEventsCandidates(join(homedir(), '.ashlr-runs'))) {
+    const text = await readEventsTail(path);
+    if (text !== undefined) return text;
+  }
+  return null;
+}
+
+/** Tail of one candidate; undefined when it is not a readable regular file (try the next). */
+async function readEventsTail(path: string): Promise<string | null | undefined> {
   try {
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const info = await file.stat();
-      if (!info.isFile() || info.size <= 0) return null;
+      if (!info.isFile()) return undefined;
+      if (info.size <= 0) return null;
       const start = Math.max(0, info.size - DISPATCH_EVENTS_TAIL);
       const bytes = Buffer.alloc(Math.min(info.size, DISPATCH_EVENTS_TAIL));
       let offset = 0;
@@ -96,7 +106,7 @@ async function readDispatchEventsLog(): Promise<string | null> {
       const text = bytes.subarray(0, offset).toString('utf8');
       return start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text;
     } finally { await file.close(); }
-  } catch { return null; }
+  } catch { return undefined; }
 }
 
 export function createRunsHistoryApi(deps: RunsHistoryApiDeps = {}): ApiModule {

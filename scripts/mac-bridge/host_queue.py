@@ -72,8 +72,11 @@ def run(args):
     host = identifier(args.host) if hasattr(args, 'host') else None
     payload = None
     if args.action == 'enqueue':
-        with open(args.payload, 'rb') as handle:
-            payload = handle.read(MAX_PAYLOAD + 1)
+        if args.payload == '-':
+            payload = sys.stdin.buffer.read(MAX_PAYLOAD + 1)
+        else:
+            with open(args.payload, 'rb') as handle:
+                payload = handle.read(MAX_PAYLOAD + 1)
         if not payload or len(payload) > MAX_PAYLOAD:
             raise ValueError('payload must contain 1 to 65536 bytes')
     current = receipt(args.receipt) if hasattr(args, 'receipt') else None
@@ -123,6 +126,17 @@ def run(args):
             else:
                 db.execute('INSERT INTO recoveries VALUES (?, ?, ?)', (job, args.generation, now))
                 db.execute("UPDATE jobs SET state='queued', host=NULL, token=NULL, expires=NULL WHERE job=?", (job,))
+        elif args.action == 'withdraw':
+            row = db.execute('SELECT state, generation FROM jobs WHERE job=?', (job,)).fetchone()
+            if row is None:
+                result = {'ok': False, 'error': 'job not found'}
+            elif row[0] == 'queued':
+                db.execute("UPDATE jobs SET state='withdrawn' WHERE job=? AND state='queued'", (job,))
+                result.update(state='withdrawn', generation=row[1])
+            elif row[0] == 'withdrawn':
+                result.update(state='withdrawn', generation=row[1])
+            else:
+                result = {'ok': False, 'error': 'job is not queued'}
         elif args.action == 'status':
             row = db.execute('SELECT state, generation, host, expires FROM jobs WHERE job=?', (job,)).fetchone()
             if row is None:
@@ -158,7 +172,7 @@ def parser():
     sub = p.add_subparsers(dest='action', required=True)
     enqueue = sub.add_parser('enqueue')
     enqueue.add_argument('job')
-    enqueue.add_argument('payload', help='opaque local file, 1-65536 bytes')
+    enqueue.add_argument('payload', help='opaque local file, or - for stdin, 1-65536 bytes')
     claim = sub.add_parser('claim')
     claim.add_argument('--host', required=True)
     claim.add_argument('--ttl', type=positive, default=300, help='lease seconds (1-86400)')
@@ -175,6 +189,8 @@ def parser():
     recover.add_argument('--generation', type=int, required=True)
     recover.add_argument('--assert-safe', action='store_true', required=True,
                          help='assert prior execution is stopped and re-execution is safe')
+    withdraw = sub.add_parser('withdraw')
+    withdraw.add_argument('job')
     status = sub.add_parser('status')
     status.add_argument('job')
     return p

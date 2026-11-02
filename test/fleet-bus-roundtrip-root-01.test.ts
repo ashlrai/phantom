@@ -37,9 +37,9 @@ async function runRequest(argv: string[], options: BusInboxOptions = {}, deps: P
   const code = await cmdFleetBusRequest(argv, options, { ...deps, output: text => output.push(text) });
   return { code, printed: output.join(''), result: JSON.parse(output.join('')) as Record<string, any> };
 }
-function runReply(argv: string[], options: BusInboxOptions = {}, deps: Parameters<typeof cmdFleetBusReply>[2] = {}) {
+async function runReply(argv: string[], options: BusInboxOptions = {}, deps: Parameters<typeof cmdFleetBusReply>[2] = {}) {
   const output: string[] = [];
-  const code = cmdFleetBusReply(argv, options, { ...deps, output: text => output.push(text) });
+  const code = await cmdFleetBusReply(argv, options, { ...deps, output: text => output.push(text) });
   return { code, printed: output.join(''), result: JSON.parse(output.join('')) as Record<string, any> };
 }
 afterEach(() => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -49,7 +49,7 @@ it('completes a request/reply roundtrip on an explicit --root and leaves other s
   const file = requestFile(dir), body = bodyFile(dir, { answer: 'fake-answer', token: 'fake-token-value' });
   const pending = runRequest(['--file', file, '--timeout-ms', '15000', '--interval-ms', '100', '--root', rootA]);
   await waitForRow(rootA, request.id);
-  expect(runReply(['--request-id', request.id, '--reply-id', 'reply-a', '--body-file', body, '--root', rootA]))
+  expect(await runReply(['--request-id', request.id, '--reply-id', 'reply-a', '--body-file', body, '--root', rootA]))
     .toMatchObject({ code: 0, result: { outcome: 'posted' } });
   const done = await pending;
   expect(done).toMatchObject({ code: 0, result: { schema: 'fleet.bus-request.v1', outcome: 'replied', receipt: { status: 'posted', id: request.id, cursor: 1 } } });
@@ -67,13 +67,13 @@ it('cannot be satisfied by matching-looking traffic on a different root', async 
   const file = requestFile(dir), body = bodyFile(dir);
   // Root B carries the same request id and a correctly correlated reply.
   expect(appendBusInbox(request, { root: rootB }).status).toBe('posted');
-  expect(runReply(['--request-id', request.id, '--reply-id', 'reply-on-b', '--body-file', body, '--root', rootB]))
+  expect(await runReply(['--request-id', request.id, '--reply-id', 'reply-on-b', '--body-file', body, '--root', rootB]))
     .toMatchObject({ code: 0, result: { outcome: 'posted' } });
   const pending = runRequest(['--file', file, '--timeout-ms', '15000', '--interval-ms', '100', '--root', rootA]);
   await waitForRow(rootA, request.id);
   // Bounded pause long enough for several polls: B's reply stays invisible to A.
   await new Promise(resolve => setTimeout(resolve, 300));
-  expect(runReply(['--request-id', request.id, '--reply-id', 'reply-on-a', '--body-file', body, '--root', rootA]))
+  expect(await runReply(['--request-id', request.id, '--reply-id', 'reply-on-a', '--body-file', body, '--root', rootA]))
     .toMatchObject({ code: 0, result: { outcome: 'posted' } });
   const done = await pending;
   expect(done).toMatchObject({ code: 0, result: { outcome: 'replied', reply: { envelope: { id: 'reply-on-a' } } } });
@@ -89,7 +89,7 @@ it('accepts --flag=value syntax on both verbs', async () => {
   const file = requestFile(dir), body = bodyFile(dir);
   const pending = runRequest([`--file=${file}`, '--timeout-ms=15000', '--interval-ms=100', `--root=${rootA}`]);
   await waitForRow(rootA, request.id);
-  expect(runReply([`--request-id=${request.id}`, '--reply-id=reply-eq', `--body-file=${body}`, `--root=${rootA}`]))
+  expect(await runReply([`--request-id=${request.id}`, '--reply-id=reply-eq', `--body-file=${body}`, `--root=${rootA}`]))
     .toMatchObject({ code: 0, result: { outcome: 'posted' } });
   expect(await pending).toMatchObject({ code: 0, result: { outcome: 'replied', reply: { envelope: { id: 'reply-eq' } } } });
 }, 30000);
@@ -107,7 +107,7 @@ it('keeps the injected root when --root is omitted and lets the CLI root overrid
   await waitForRow(cli, request.id, { now: () => 5000 });
   expect(messages(cli, { now: () => 5000 })[0]).toMatchObject({ cursor: 1, receivedAt: 5000 });
   expect(messages(injected)).toHaveLength(1);
-  expect(runReply(['--request-id', request.id, '--reply-id', 'reply-override', '--body-file', body, '--root', cli], { root: injected, now: () => 5100 }))
+  expect(await runReply(['--request-id', request.id, '--reply-id', 'reply-override', '--body-file', body, '--root', cli], { root: injected, now: () => 5100 }))
     .toMatchObject({ code: 0, result: { outcome: 'posted' } });
   const done = await pending;
   expect(done).toMatchObject({ code: 0, result: { outcome: 'replied', reply: { envelope: { id: 'reply-override', ttl: request.ttl - 100 } } } });
@@ -128,7 +128,7 @@ it.each(invalidRootArgs)('rejects a %s root on both verbs before any file or sto
   const list = vi.fn(listBusInboxAfter), append = vi.fn(appendBusInbox);
   const req = await runRequest(['--file', file, '--timeout-ms', '1000', ...rootArgs], {}, { list, append });
   expect(req).toMatchObject({ code: 2, result: { outcome: 'invalid-input', receipt: { status: 'not-attempted' }, reply: null } });
-  const rep = runReply(['--request-id', request.id, '--reply-id', 'reply-x', '--body-file', body, ...rootArgs], {}, { list, append });
+  const rep = await runReply(['--request-id', request.id, '--reply-id', 'reply-x', '--body-file', body, ...rootArgs], {}, { list, append });
   expect(rep).toMatchObject({ code: 2, result: { outcome: 'invalid-input' } });
   expect(list).not.toHaveBeenCalled(); expect(append).not.toHaveBeenCalled();
   expect(existsSync(rootA)).toBe(false);
@@ -144,7 +144,7 @@ it('rejects duplicate and NUL roots on both verbs before any file or store acces
   for (const rootArgs of badRoots) {
     const req = await runRequest(['--file', file, '--timeout-ms', '1000', ...rootArgs], {}, { list, append });
     expect(req).toMatchObject({ code: 2, result: { outcome: 'invalid-input', receipt: { status: 'not-attempted' } } });
-    const rep = runReply(['--request-id', request.id, '--reply-id', 'reply-x', '--body-file', body, ...rootArgs], {}, { list, append });
+    const rep = await runReply(['--request-id', request.id, '--reply-id', 'reply-x', '--body-file', body, ...rootArgs], {}, { list, append });
     expect(rep).toMatchObject({ code: 2, result: { outcome: 'invalid-input' } });
   }
   expect(list).not.toHaveBeenCalled(); expect(append).not.toHaveBeenCalled();
@@ -157,6 +157,6 @@ it('documents --root and the authentication caveat in both help texts', async ()
   expect(await cmdFleetBusRequest(['--help'], {}, { output: value => { text = value; } })).toBe(0);
   expect(text).toContain('--root'); expect(text).toContain('do not authenticate');
   text = '';
-  expect(cmdFleetBusReply(['--help'], {}, { output: value => { text = value; } })).toBe(0);
+  expect(await cmdFleetBusReply(['--help'], {}, { output: value => { text = value; } })).toBe(0);
   expect(text).toContain('--root'); expect(text).toContain('do not authenticate');
 });

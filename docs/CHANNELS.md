@@ -25,7 +25,11 @@ and each channel has display labels in
 
 Private chat to the configured bot ([`telegram-inbox-bridge.ts`](src/core/comms/telegram-inbox-bridge.ts)).
 Verified as Mason when `comms.telegram.chatId` in the config matches the event's
-`senderUserId` (canonical ID: `telegram:<id>`).
+`senderUserId` (canonical ID: `telegram:<id>`). The first accepted message pairs
+that id; a later id is refused until `queue/telegram-pair.json` is removed.
+Plain language is enough: "how's the fleet?" returns the short glance, and any
+other sentence is an order in `MASON-INBOX.md`. Setup is the existing bot token
+and chat id ([operator glance](OPERATOR-GLANCE.md)).
 
 ### CLI
 
@@ -38,8 +42,16 @@ CLI operator's sender ID is in the allowlist (canonical ID: `local-operator`).
 Drop-folder delivery via [`email-drop-bridge.ts`](src/core/comms/email-drop-bridge.ts):
 an external mail path saves raw RFC 822 files (`*.eml`) into an inbox directory;
 Phantom parses, checks the allow-listed From address, writes the body, and drops a
-`.reply.eml` into the outbound folder.  Not yet available as a live service — a
-configured allow-list is required before any real mail reaches the inbox.
+`.reply.eml` into the outbound folder.  Sending those replies is opt-in on
+macOS: `phm comms email-drop … --save-config --send-replies` stores
+`sendReplies: true`, after which each `phm comms cycle` pass drains the outbox
+through Mail.app — claimed atomically, sent exactly once, never retried from a
+crashed claim.  Replies go only to the config's allow-listed `from` senders;
+`ashlr fleet email-outbox [--send] [--json]` shows what is queued, sent or
+stuck.  Mail.app cannot set `In-Reply-To`, so replies start a fresh thread.
+When `PHANTOM_OPERATOR_SECRET` (or `~/.ashlr/comms/operator-secret`) is set, mail
+also needs a DKIM pass for the sender's domain and that secret once; later mail
+from the paired address stays plain language. See [operator glance](OPERATOR-GLANCE.md).
 
 ### Desktop
 

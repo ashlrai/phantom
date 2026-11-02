@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -12,6 +12,8 @@ type Row = { id: string; status: string; exitCode: number | null };
 /** A node's terminal row as delivered to the progress hook. */
 export interface GraphArgvNodeResult { id: string; status: string; exitCode: number | null }
 export interface GraphArgvRunOptions {
+  /** Stop launching new nodes after a spawned node fails; running nodes finish. */
+  failFast?: boolean;
   /** Awaited once per node after it reaches a terminal row, strictly one
    * delivery at a time and before any dependent it unblocks is scheduled.
    * A rejection stops new launches (running children still finish and are
@@ -27,6 +29,15 @@ export interface GraphArgvRunOptions {
  * budget is spent. Charged to a separate small allowance, never to the data
  * budget, so byte accounting for child output stays exact. */
 const OUTPUT_TRUNCATION_MARKER = '\n[phm] graph child output truncated: shared diagnostic budget exhausted\n';
+/** SIGTERM to SIGKILL escalation once a node is stopped. Bounded so a child
+ * that swallows SIGTERM still dies shortly after the deadline or a cancel. */
+const TERM_TO_KILL_MS = 250;
+/** How long 'close' may lag behind process exit or a group SIGKILL before the
+ * local pipe ends are dropped and the row settles anyway. 'close' waits for
+ * both exit and stdio EOF, and a descendant that left the group (its own
+ * setsid) can hold an inherited pipe open forever — without this bound one
+ * escaped process would stall the whole run on a pipe EOF that never comes. */
+const CLOSE_SETTLE_MS = 500;
 /** Bounded diagnostic forwarding for child stdio. At most `budget` bytes reach
  * `dest` per run across every stream of every node; once the budget is spent
  * chunks are dropped while sources keep flowing, so a noisy child can never
@@ -104,7 +115,7 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
   const forward = diagnosticForwarder(process.stderr, outputBudget);
   const results = new Map<string, Row>();
   const active = new Map<string, { stop: () => void; done: Promise<void> }>();
-  let cancelled = false, halted = false;
+  let cancelled = false, halted = false, nodeFailed = false;
   const cancel = (): void => { cancelled = true; for (const child of active.values()) child.stop(); };
   process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
   // Terminal rows are delivered to the progress hook one at a time, in record
@@ -129,29 +140,81 @@ export async function graphArgvRun(file: string, apply = false, timeoutMs = 9000
           await record(id, { id, status: 'blocked', exitCode: null }); continue;
         }
         if (halted) { await record(id, { id, status: 'cancelled', exitCode: null }); continue; }
+        if (options.failFast && nodeFailed) {
+          if (dependencies.some(d => active.has(d))) continue;
+          await record(id, { id, status: 'fail-fast-skipped', exitCode: null }); continue;
+        }
         if (active.size >= concurrency || dependencies.some(d => !results.has(d))) continue;
         const switches = await readRunsSwitches();
         const refused = switches.sourceState === 'degraded' || switches.switches.some(s => s.on && ['ORCH_OFF', 'PAUSE', 'HOLD', 'QUEUE_DISABLE'].includes(s.id));
         const remaining = deadline - performance.now();
         // Cancellation must win even when delivered during the asynchronous control
         // read; the same window can also exhaust the shared deadline.
-        if (cancelled || halted || remaining <= 0 || refused) {
-          await record(id, { id, status: cancelled || halted ? 'cancelled' : remaining <= 0 ? 'deadline-exhausted' : 'refused', exitCode: null }); continue;
+        if (cancelled || halted || remaining <= 0 || (options.failFast && nodeFailed) || refused) {
+          await record(id, { id, status: cancelled || halted ? 'cancelled' : remaining <= 0 ? 'deadline-exhausted' : options.failFast && nodeFailed ? 'fail-fast-skipped' : 'refused', exitCode: null }); continue;
         }
         let stop = (): void => {};
         const done = new Promise<Row>(resolve => {
-          const child = spawn(task.argv[0]!, task.argv.slice(1), { cwd: task.cwd, shell: false, detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+          // Each node runs as its own process group on POSIX (detached): a
+          // deadline or cancel then stops the WHOLE tree, not just the direct
+          // child — cancelled work cannot keep running underneath the row.
+          // The pgid equals the child's pid, so kill(-pid) can only ever name
+          // this node's group: the runner's own group and unrelated groups
+          // are never signalled. Platforms without process groups (win32)
+          // keep the portable direct-child fallback.
+          const useGroup = process.platform !== 'win32';
+          let child: ChildProcessByStdio<null, Readable, Readable>;
+          try {
+            child = spawn(task.argv[0]!, task.argv.slice(1), { cwd: task.cwd, shell: false, detached: useGroup, stdio: ['ignore', 'pipe', 'pipe'] });
+          } catch { resolve({ id, status: 'failed', exitCode: null }); return; }
           child.stdout.on('data', (chunk: Buffer) => forward(chunk, child.stdout));
           child.stderr.on('data', (chunk: Buffer) => forward(chunk, child.stderr));
-          let timedOut = false, failed = false;
+          let timedOut = false, failed = false, settled = false;
+          let code: number | null = null;
           let escalation: ReturnType<typeof setTimeout> | undefined;
-          stop = () => { child.kill('SIGTERM'); escalation ??= setTimeout(() => child.kill('SIGKILL'), 250); };
+          let settle: ReturnType<typeof setTimeout> | undefined;
+          const signalTree = (signal: 'SIGTERM' | 'SIGKILL'): void => {
+            const pid = child.pid;
+            if (useGroup && typeof pid === 'number' && pid > 0) {
+              // ESRCH means the group is already empty — or the fresh child
+              // has not run setsid yet, in which case the direct child is
+              // still signalled to cover that narrow window.
+              try { process.kill(-pid, signal); return; } catch { /* group gone: fall back to the child */ }
+            }
+            try { child.kill(signal); } catch { /* already exited */ }
+          };
+          const finish = (): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer); clearTimeout(escalation); clearTimeout(settle);
+            const status = cancelled ? 'cancelled' : timedOut ? 'timeout' : !failed && code === 0 ? 'success' : 'failed';
+            if (status !== 'success') nodeFailed = true;
+            resolve({ id, status, exitCode: code });
+          };
+          // Last resort for 'close': drop the local pipe ends and release the
+          // process handle so nothing in the child's tree can stall the run.
+          const abandon = (): void => {
+            child.stdout.destroy(); child.stderr.destroy();
+            child.unref();
+            finish();
+          };
+          const armSettle = (): void => { if (!settle) { settle = setTimeout(abandon, CLOSE_SETTLE_MS); settle.unref(); } };
+          stop = () => {
+            signalTree('SIGTERM');
+            if (!escalation) { escalation = setTimeout(() => { signalTree('SIGKILL'); armSettle(); }, TERM_TO_KILL_MS); escalation.unref(); }
+          };
           const timer = setTimeout(() => { timedOut = true; stop(); }, remaining);
           child.on('error', () => { failed = true; });
-          child.on('close', code => {
-            clearTimeout(timer); clearTimeout(escalation);
-            resolve({ id, status: cancelled ? 'cancelled' : timedOut ? 'timeout' : !failed && code === 0 ? 'success' : 'failed', exitCode: code });
+          child.on('exit', exitCode => {
+            code = exitCode;
+            // The leader is gone but its group may not be: leftover members
+            // would keep consuming memory and hold the stdio pipes open,
+            // stalling 'close' — sweep them before the row settles. A member
+            // that escaped the group is covered by armSettle instead.
+            signalTree('SIGKILL');
+            armSettle();
           });
+          child.on('close', closeCode => { code = closeCode; finish(); });
         }).then(row => record(id, row)).then(() => { active.delete(id); });
         active.set(id, { stop, done });
       }
