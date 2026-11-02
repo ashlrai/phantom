@@ -16,6 +16,7 @@ import { bootstrap, MockEventSource, session } from '../fixtures.test-support.js
 import { useVerseUi } from '../useVerseUi.js';
 import { getVerseUiState, openVerseOverlay, resetVerseUi, setVerseSection } from '../verse-ui-store.js';
 import { CommandPalette } from './CommandPalette.js';
+import { ciFacts } from './ci-needs-you.test-support.js';
 import { resetCommandBus } from './command-bus.js';
 import { GuardHost, resetGuard } from './guarded-action.js';
 import { activity, approvalNeed, shellFetch, TOKEN, type ShellFetch } from './shell-fixtures.test-support.js';
@@ -84,6 +85,19 @@ async function openPalette() {
 }
 
 describe('CommandPalette', () => {
+  it('includes the CI facts in Needs you', async () => {
+    await import('../panes/index.js');
+    const originalFetch = net.fetch;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === '/api/verse/fleet/ci-runs?hours=24'
+        ? Promise.resolve(Response.json({ ...ciFacts, generatedAt: new Date().toISOString() }))
+        : originalFetch(input, init)));
+    mount();
+    await openPalette();
+    expect(await within(screen.getByRole('group', { name: 'Needs you' }))
+      .findByRole('option', { name: /CI ran 10 times on PRs today/ })).toBeInTheDocument();
+  });
+
   it('opens on the search box without switching surface, showing what needs you and recent actions', async () => {
     act(() => setVerseSection('fleet'));
     mount();
