@@ -279,6 +279,31 @@ function strictSpendGuardAccountingIssues(
   return issues;
 }
 
+const MAX_PERSISTED_TICK_PHASES = 40;
+const TICK_PHASE_STATUSES: ReadonlySet<string> = new Set([
+  'ok', 'degraded', 'timeout', 'skipped', 'running',
+]);
+
+/** Tolerant phase-ledger parse: unknown entries are dropped, not fatal. */
+function parseTickPhases(value: unknown): DaemonState['lastTickPhases'] {
+  if (!Array.isArray(value)) return undefined;
+  const rows: NonNullable<DaemonState['lastTickPhases']> = [];
+  for (const entry of value.slice(0, MAX_PERSISTED_TICK_PHASES)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const row = entry as Record<string, unknown>;
+    if (typeof row['name'] !== 'string' || row['name'].length === 0) continue;
+    if (typeof row['status'] !== 'string' || !TICK_PHASE_STATUSES.has(row['status'])) continue;
+    if (typeof row['durationMs'] !== 'number' || !Number.isFinite(row['durationMs'])) continue;
+    rows.push({
+      name: row['name'].slice(0, 120),
+      status: row['status'] as NonNullable<DaemonState['lastTickPhases']>[number]['status'],
+      durationMs: row['durationMs'],
+      ...(typeof row['error'] === 'string' ? { error: row['error'].slice(0, 300) } : {}),
+    });
+  }
+  return rows.length > 0 ? rows : undefined;
+}
+
 export function daemonStateIssueCodes(value: unknown): DaemonStateDiagnosticCode[] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return ['invalid-root'];
   const obj = value as Record<string, unknown>;
@@ -350,6 +375,20 @@ function parseDaemonState(
       typeof obj['startedAt'] === 'string' ? obj['startedAt'] : null,
     lastTickAt:
       typeof obj['lastTickAt'] === 'string' ? obj['lastTickAt'] : null,
+    // RQ-DAEMONTICK-UNBLOCK: optional observational fields — tolerated like
+    // lastPulseExportAt (absent on pre-existing state, no strict issue code).
+    lastTickOutcome:
+      obj['lastTickOutcome'] === 'ok' || obj['lastTickOutcome'] === 'degraded' ||
+      obj['lastTickOutcome'] === 'failed' || obj['lastTickOutcome'] === 'timeout'
+        ? obj['lastTickOutcome']
+        : undefined,
+    lastTickPhases: parseTickPhases(obj['lastTickPhases']),
+    lastTickError:
+      obj['lastTickError'] === null
+        ? null
+        : typeof obj['lastTickError'] === 'string'
+          ? obj['lastTickError'].slice(0, 500)
+          : undefined,
     todayDate:
       typeof obj['todayDate'] === 'string' ? obj['todayDate'] : null,
     todaySpentUsd:
