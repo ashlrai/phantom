@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { refetchQuery } from '../../../data/cache.js';
 import { ApiError, readFailureReason } from '../../../data/client.js';
@@ -19,6 +19,7 @@ import { restockNotice } from './queue-repo-mix.js';
 import { DropJobSheet } from './DropJobSheet.js';
 import { dropJobsQuery } from './drop-job-queries.js';
 import { waitingRows } from './drop-job-model.js';
+import { useDropJobSheetRequest } from './drop-job-sheet-store.js';
 import { fillerFirst, nextUpCaption, nextUpClasses } from './next-up-class-model.js';
 import styles from './fleet-queue.module.css';
 
@@ -29,6 +30,8 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
   const drops = useQuery(dropJobsQuery, { enabled: visible, freshMs: 0 });
   const refetchDrops = useRefetch(dropJobsQuery);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetRequest = useDropJobSheetRequest();
+  useEffect(() => { if (sheetRequest) setSheetOpen(true); }, [sheetRequest]);
   usePollWhileVisible(refetchDrops, 15_000, { enabled: visible });
   const refetch = useRefetch(opsQueueQuery);
   const refetchSnapshot = useRefetch(fleetSupplyQuery);
@@ -101,6 +104,6 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
       <ul className={styles.list}>{waitingRows(drops.data.items, Date.now()).map(row => <li className={styles.row} key={row.id}>{row.id} · {row.lane} · {row.tier} · {row.title} · {row.age}</li>)}</ul>
     </section>}
     {drops.status === 'error' && <p aria-live="polite">Waiting in drop could not refresh.</p>}
-    <DropJobSheet open={visible && sheetOpen && drops.data !== null} onClose={() => setSheetOpen(false)} />
+    <DropJobSheet open={visible && sheetOpen && drops.data !== null} onClose={() => setSheetOpen(false)} seed={sheetRequest?.seed ?? undefined} />
   </section>;
 }
