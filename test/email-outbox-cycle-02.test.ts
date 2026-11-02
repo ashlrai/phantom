@@ -1,3 +1,4 @@
+import { rememberEmailPair } from '../src/core/fleet/operator-glance-read.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -42,7 +43,7 @@ let logs: string[];
 let errors: string[];
 const sender = 'operator@example.test';
 const eml = ['From: Operator <operator@example.test>', 'To: phantom@example.test',
-  'Subject: Fleet order', 'Message-ID: <order-1@example.test>', '', 'Please check the fleet.', ''].join('\r\n');
+  'Authentication-Results: mx; dkim=pass header.d=example.test', 'Subject: Fleet order', 'Message-ID: <order-1@example.test>', '', 'Please check the fleet.', ''].join('\r\n');
 
 const sentFiles = () => existsSync(join(outbox, 'sent')) ? readdirSync(join(outbox, 'sent')) : [];
 const queuedFiles = () => existsSync(outbox) ? readdirSync(outbox).filter((n) => n.endsWith('.reply.eml')) : [];
@@ -53,6 +54,7 @@ beforeEach(() => {
   process.env.HOME = home; process.env.ASHLR_HOME = join(home, '.ashlr');
   runs = join(home, '.ashlr-runs'); inbox = join(home, 'mail', 'inbox'); outbox = join(home, 'mail', 'outbox');
   mkdirSync(inbox, { recursive: true });
+  rememberEmailPair(sender, runs);
   logs = []; errors = [];
   mock.fail = false; mock.built = 0; mock.sent.length = 0;
   vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { logs.push(args.join(' ')); });
