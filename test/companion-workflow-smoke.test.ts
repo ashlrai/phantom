@@ -109,6 +109,35 @@ async function handshake(path: string, protocolVersion = '2025-06-18') {
 }
 
 describe('companion workflow smoke', () => {
+  it.each(['legacy', 'json', 'missing', 'invalid', 'failed', 'unregistered'])(
+    'verifies persisted ecosystem registration with %s CLI output', async mode => {
+      const root = mkdtempSync(join(dir, 'ecosystem-'));
+      const home = join(root, 'home');
+      mkdirSync(home);
+      const env = smoke.smokeEnv(home);
+      const phm = join(root, 'phm.mjs');
+      const server = fakeServer(`gateway-${mode}`, { tools: ['locus__locus_whoami'] });
+      writeFileSync(phm, `
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv.includes('ecosystem')) {
+  mkdirSync(process.env.ASHLR_HOME, { recursive: true });
+  const mode = ${JSON.stringify(mode)};
+  const settings = { mcpServers: mode === 'unregistered' ? {} : { locus: { command: 'locus-mcp' } } };
+  if (mode !== 'missing') writeFileSync(join(process.env.ASHLR_HOME, 'settings.json'), mode === 'invalid' ? '{' : JSON.stringify(settings));
+  console.log(mode === 'json' ? JSON.stringify({ added: ['locus'] }) : 'Registered 1 server(s)');
+  if (mode === 'failed') process.exitCode = 1;
+} else await import(${JSON.stringify(server)});
+`);
+      const checks = await smoke.phantomGateway({ phm, locusMcp: server }, env, { root, home });
+      expect(checks[0]).toMatchObject(['phm:mcp-ecosystem', { status: ['legacy', 'json'].includes(mode) ? 'pass' : 'fail' }]);
+      if (['legacy', 'json'].includes(mode)) {
+        expect(checks).toHaveLength(3);
+        expect(checks.every((check: [string, { status: string }]) => check[1].status === 'pass')).toBe(true);
+      } else expect(checks).toHaveLength(1);
+    },
+  );
+
   it('passes a server that echoes the client protocol and lists the required tools', async () => {
     const path = fakeServer('good', { tools: ['normalize_transcript', 'serve_status', 'extra'] });
     await expect(handshake(path)).resolves.toMatchObject({ status: 'pass' });
