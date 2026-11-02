@@ -32,6 +32,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { allowOperatorMessage } from '../fleet/operator-glance.js';
+import { acceptTelegramPair } from '../fleet/operator-glance-read.js';
 import { sendIMessage } from '../integrations/imessage.js';
 import {
   sendTelegramMessage,
@@ -266,6 +268,14 @@ async function handleTelegramCallback(event: InboundEvent, cfg: AshlrConfig, res
 }
 
 async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrConfig, result: CycleResult): Promise<void> {
+  // The configured private chat is the allowlist. Pairing records that id
+  // on the first message and refuses a different one afterwards. Text is an
+  // order or a status ask, never a shell command.
+  if (typeof event.senderUserId === 'number' && !acceptTelegramPair(event.senderUserId)) return;
+  if (typeof event.senderUserId === 'number' && !allowOperatorMessage(`telegram:${event.senderUserId}`, Date.now())) {
+    await sendTelegramMessage('Slow down.', replyOpts(event), cfg);
+    return;
+  }
   // M212: pause/resume commands (comms soft-pause).
   if (/^\s*pause(\s+fleet)?\s*$/i.test(text)) {
     const { setPause } = await import('./pause.js');
