@@ -321,6 +321,7 @@
 /test/daemon-resident-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-start-temp-worktree-sweep.test.ts @masonwyatt23
 /test/daemon-state-resolution-clock.test.ts @masonwyatt23
+/test/daemon-tick-unblock.test.ts @masonwyatt23
 /test/decide-critics-315.test.ts @masonwyatt23
 /test/decide-judge-manager-315.test.ts @masonwyatt23
 /test/decide-resource-choice.test.ts @masonwyatt23
@@ -389,6 +390,9 @@
 /test/fleet-graph-context-budget-01.test.ts @masonwyatt23
 /test/fleet-graph-output-budget-nov01.test.ts @masonwyatt23
 /test/fleet-graph-resume-loop-execution.test.ts @masonwyatt23
+/test/fleet-guardian-loop-attempts-02solp2.test.ts @masonwyatt23
+/test/fleet-guardian-repeat-sleep-budget-02solr2.test.ts @masonwyatt23
+/test/fleet-guardian-resume-loop-02solq1.test.ts @masonwyatt23
 /test/fleet-guardian-verify-loop-01.test.ts @masonwyatt23
 /test/fleet-lane-truth-gate-sole2.test.ts @masonwyatt23
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
@@ -397,6 +401,10 @@
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
+/test/fleet-self-loop-busy-backoff-02soll2.test.ts @masonwyatt23
+/test/fleet-self-loop-failure-backoff-02solh2.test.ts @masonwyatt23
+/test/fleet-self-loop-sleep-budget-02solg2.test.ts @masonwyatt23
+/test/fleet-self-loop-stream-02solc1.test.ts @masonwyatt23
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
 /test/fleet-ship-gap-stage.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
