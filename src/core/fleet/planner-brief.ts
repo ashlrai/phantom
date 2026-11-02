@@ -1,3 +1,4 @@
+import { acknowledgeInboxEntries, type InboxAckSenders } from './inbox-ack.js';
 import { execFile } from 'node:child_process';
 import { lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -27,6 +28,7 @@ const UNAVAILABLE = '(unavailable from Phantom; read git log origin/master)';
 export type PlannerBriefGit = (program: string, args: string[], options: { timeout: number; maxBuffer: number; encoding: 'utf8'; shell: false }, callback: (error: Error | null, stdout: string) => void) => unknown;
 export interface PlannerBriefOptions {
   runsRoot?: string;
+  inboxAckSenders?: InboxAckSenders;
   repoRoot?: string;
   note?: string;
   now?: number;
@@ -112,6 +114,7 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
   // is never cut mid-body; fill the inbox budget newest-first, then render
   // chronologically. Anything dropped is reported, never shown partially.
   const inboxBody: string[] = [];
+  const ackEntries: string[] = [];
   const inboxState = states.get(MASON_INBOX) ?? 'missing';
   if (inboxState !== 'healthy') {
     inboxBody.push(`(unavailable: ${MASON_INBOX} ${inboxState})`);
@@ -130,16 +133,19 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     let omitted = 0;
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]!;
+      let complete = true;
       let rendered = [entry.heading, ...entry.body].join('\n');
       let bytes = Buffer.byteLength(rendered) + 1;
       if (used + bytes > INBOX_BUDGET) {
         if (bytes <= INBOX_BUDGET) { omitted++; continue; }
+        complete = false;
         rendered = `${entry.heading}\n(order body omitted: entry is ${bytes} bytes — over the ${INBOX_BUDGET_LABEL} inbox budget)`;
         bytes = Buffer.byteLength(rendered) + 1;
         if (used + bytes > INBOX_BUDGET) { omitted++; continue; }
       }
       used += bytes;
       picked.unshift(rendered);
+      if (complete) ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
     }
     if (omitted) inboxBody.push(`(${omitted} older entr${omitted === 1 ? 'y' : 'ies'} omitted — over the ${INBOX_BUDGET_LABEL} inbox budget)`);
     inboxBody.push(...picked);
@@ -193,6 +199,7 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     '## MASON INBOX (newest last)', ...inboxBody,
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
+  await acknowledgeInboxEntries(ackEntries, root, new Date(opts.now ?? Date.now()).toISOString(), opts.inboxAckSenders);
   return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
 }
 
