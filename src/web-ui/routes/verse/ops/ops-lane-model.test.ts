@@ -17,10 +17,10 @@ const credit = (over: Partial<FleetLaneCreditView> = {}): FleetLaneCreditView =>
 });
 
 const lane = (over: Partial<FleetLaneView> = {}): FleetLaneView =>
-  ({ lane: 'codex-personal', queueDepth: 3, liveJobs: 2, mergesPerHour: 1.25, credit: credit(), ...over });
+  ({ lane: 'codex-personal', queueDepth: 3, liveJobs: 2, mergesPerHour: 1.25, credit: credit(), hold: null, ...over });
 
 const snapshot = (): FleetLaneSnapshot => ({
-  schema: 'fleet.lanes.v1', generatedAt: '2026-10-31T11:59:48Z', mergeWindowMinutes: 60,
+  schema: 'fleet.lanes.v1', generatedAt: '2026-10-31T11:59:48Z', mergeWindowMinutes: 60, holdSource: 'healthy', notes: [],
   sources: {
     queue: { state: 'healthy', file: 'ready.tsv', rows: 4, dropped: 0 }, queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 3 },
     ledger: { state: 'healthy', file: 'jobs.jsonl', events: 7, dropped: 0 }, usage: { state: 'healthy', files: ['usage-readings.log'], pools: 2, dropped: 0 },

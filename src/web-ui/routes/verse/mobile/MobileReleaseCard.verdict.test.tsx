@@ -1,16 +1,17 @@
 import { cleanup, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
+import type { ReleasePr } from '../fleet/release-pr-query.js';
 import { MobileReleaseCard } from './MobileReleaseCard.js';
 import { renderMobile, stubFetch } from './mobile.test-support.js';
 
-const pr = {
+const pr: ReleasePr = {
   number: 1479, title: 'chore(master): release 3.29.16', url: 'https://github.com/example/phantom/pull/1479', version: '3.29.16',
   openedAt: '2026-10-28T12:00:00Z', updatedAt: '2026-10-31T12:00:00Z', mergeable: 'UNKNOWN',
   checks: [], failing: [], pending: 0, blocked: false, summary: '3.29.16 green, waiting for merge',
 };
 
-function release(entry: Record<string, unknown> = {}, prOverrides: Partial<typeof pr> = {}) {
+function release(entry: Record<string, unknown> = {}, prOverrides: Partial<ReleasePr> = {}) {
   return {
     v: 1, generatedAt: '2026-11-01T12:00:00Z', sourceState: 'healthy',
     repos: [{ repo: 'example/phantom', path: '/fixture/phantom', pr: { ...pr, ...prOverrides }, notes: [], ...entry }],

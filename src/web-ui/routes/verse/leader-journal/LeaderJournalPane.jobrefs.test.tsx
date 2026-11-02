@@ -3,7 +3,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
+import type { PaneProps } from '../panes/pane-registry.js';
 import { LeaderJournalPane } from './LeaderJournalPane.js';
+
+const props = { visible: true } as PaneProps;
 import styles from './leader-journal.module.css';
 
 vi.mock('../dock/dock-store.js', () => ({ openDockPane: vi.fn() }));
@@ -21,7 +24,7 @@ it('opens job logs and links pull requests in notes, passes, and ingested jobs',
     ingest: [], ingested: [{ at: '2026-10-31T12:03:00Z', id: 'RQ-PHX-INGEST31', lane: 'main', tier: 'mid', leader: 'alpha', title: 'Follow FIX-EXAMPLE31 in #2000' }],
     rejectedLastHour: null,
   })));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...props} />);
   const notes = await screen.findByRole('region', { name: 'Leader notes' });
   expect(within(notes).getByRole('button', { name: 'Open log for RQ-PHX-EXAMPLE31' })).toBeInTheDocument();
   expect(within(notes).getByRole('link', { name: '#1999' })).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/1999');
@@ -50,7 +53,7 @@ it('does not open a log for an invalid ingested job id', async () => {
     ingested: [{ at: '2026-10-31T12:03:00Z', id: '../invalid', lane: 'main', tier: 'mid', leader: 'alpha', title: '' }],
     rejectedLastHour: null,
   })));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...props} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Open log for ../invalid' }));
   expect(requestWorkerLogJob).not.toHaveBeenCalled();
   expect(openDockPane).not.toHaveBeenCalled();

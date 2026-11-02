@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { applyMention, busTargets, mentionCandidates } from './bus-targets-model.js';
 
 const runs = { lanes: [{ lane: 'lane-a' }, { lane: 'leaders' }, { lane: 'bad lane' }], workers: [
   { job: 'RQ-OLD', ageSeconds: 90 }, { job: 'RQ-NEW', ageSeconds: 1 }, { job: 'lane-a', ageSeconds: 3 },
   { job: 'RQ-NEW', ageSeconds: 2 }, { job: 'bad\n', ageSeconds: 4 }, { job: 'x'.repeat(129), ageSeconds: 5 },
-] } as FleetRuns;
+] };
 
 describe('bus targets', () => {
   it('orders and deduplicates valid addresses across groups', () => {
@@ -18,7 +17,7 @@ describe('bus targets', () => {
   it('matches case-insensitive prefixes at the caret and caps results', () => {
     expect(mentionCandidates('hello @rq-n tail', 11, runs)).toEqual({ query: 'rq-n', items: ['RQ-NEW'] });
     expect(mentionCandidates('hello@RQ', 8, runs)).toBeNull();
-    const many = { lanes: [], workers: Array.from({ length: 12 }, (_, i) => ({ job: `RQ-${i}`, ageSeconds: i })) } as FleetRuns;
+    const many = { lanes: [], workers: Array.from({ length: 12 }, (_, i) => ({ job: `RQ-${i}`, ageSeconds: i })) };
     expect(mentionCandidates('@', 1, many)?.items).toHaveLength(8);
     expect(mentionCandidates('@none', 5, runs)?.items).toEqual([]);
   });

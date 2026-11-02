@@ -1,10 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { mobileAgentBusPageQuery } from './agent-bus-page-query.js';
-import { json, stubFetch } from './mobile.test-support.js';
+import { json, stubFetch, type FetchCall } from './mobile.test-support.js';
 
 afterEach(() => { document.head.innerHTML = ''; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 it('narrows forward pages and retains the newest twenty', async () => {
-  const { calls } = stubFetch({ 'GET /api/verse/agent-bus': (_body, call) => {
+  const { calls } = stubFetch({ 'GET /api/verse/agent-bus': (_body: unknown, call: FetchCall) => {
     const after = Number(new URL(call.url, 'http://fake.test').searchParams.get('after'));
     return { v: 1, status: 'ok', nextCursor: after < 40 ? after + 20 : 40,
       messages: after < 40 ? Array.from({ length: 20 }, (_, i) => ({ cursor: after + i + 1, receivedAt: 1,

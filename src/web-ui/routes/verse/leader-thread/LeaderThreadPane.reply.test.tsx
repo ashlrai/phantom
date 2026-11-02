@@ -33,7 +33,7 @@ describe('Leader thread pane reply', () => {
     log.scrollTop = 0;
     const readsBefore = net.fetchMock.mock.calls.filter(([url, init]) => String(url).startsWith(threadPath) && init?.method === 'GET').length;
     fireEvent.change(input, { target: { value: '  <b>Hello</b>  \n' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(net.posted).toContainEqual({ url: threadPath, body: { text: '  <b>Hello</b>' } }));
     await waitFor(() => expect(input).toHaveValue(''));
     await waitFor(() => expect(net.fetchMock.mock.calls.filter(([url, init]) => String(url).startsWith(threadPath) && init?.method === 'GET').length).toBeGreaterThan(readsBefore));
@@ -44,7 +44,7 @@ describe('Leader thread pane reply', () => {
     serve(url => url === threadPath ? new Response(JSON.stringify({ error: 'The Leader is unavailable.' }), { status: 500 }) : undefined);
     const input = await setup();
     fireEvent.change(input, { target: { value: 'Keep my words' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The Leader is unavailable.');
     expect(input).toHaveValue('Keep my words');
   });
@@ -62,7 +62,7 @@ describe('Leader thread pane reply', () => {
     const net = serve();
     const input = await setup();
     fireEvent.change(input, { target: { value: 'Unlock first' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     const dialog = await screen.findByRole('dialog', { name: 'Unlock actions' });
     expect(net.posted).toHaveLength(0);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -74,7 +74,7 @@ describe('Leader thread pane reply', () => {
     const net = serve();
     const input = await setup();
     fireEvent.change(input, { target: { value: 'Unlock and send' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     const dialog = await screen.findByRole('dialog', { name: 'Unlock actions' });
     fireEvent.change(within(dialog).getByLabelText('Mutation token'), { target: { value: 'b'.repeat(64) } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unlock' }));
@@ -91,7 +91,7 @@ describe('Leader thread pane reply', () => {
       String(input) === threadPath && init?.method === 'POST' ? pending : fetchStub(input, init)));
     const input = await setup();
     fireEvent.change(input, { target: { value: 'In flight' } });
-    const button = screen.getByRole('button', { name: 'Send', exact: true });
+    const button = screen.getByRole('button', { name: 'Send' });
     fireEvent.click(button);
     expect(input).toBeDisabled();
     expect(button).toBeDisabled();

@@ -3,7 +3,7 @@
  * src/core/verse/types.ts, a MockEventSource (jsdom ships none), and a
  * fetch stub that answers the /api/verse/* surface in memory.
  */
-import { vi } from 'vitest';
+import { vi, type Mock } from 'vitest';
 import type { VerseBootstrap, VerseEvent, VerseSeat, VerseSession, VerseSessionDetail } from '../../data/api-types.js';
 import type { VerseContextMode, VerseHandoffPreview } from '../../../core/verse/types.js';
 import { budgetFor, claudeAutoCompactAt, codexAutoCompactAt, codexEffectiveWindow } from '../../../core/verse/context-math.js';
@@ -243,7 +243,7 @@ export interface VerseFetchState {
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
-export function verseFetch(initial: Partial<VerseFetchState> = {}): { fetch: ReturnType<typeof vi.fn>; state: VerseFetchState } {
+export function verseFetch(initial: Partial<VerseFetchState> = {}): { fetch: Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>; state: VerseFetchState } {
   const boot = initial.bootstrap ?? bootstrap();
   const state: VerseFetchState = {
     bootstrap: boot,
