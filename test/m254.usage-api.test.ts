@@ -15,7 +15,7 @@
  *  5. NEVER-THROWS: network error, parse error, AbortError all → null (no throw).
  *
  *  6. RESOURCE-MONITOR API-FIRST: when API returns data, uses it for availability
- *     classification (max of fiveHourPct/weeklyPct vs protectPct).
+ *     classification (weeklyPct governs when reported, else fiveHourPct, vs protectPct).
  *
  *  7. NO-REGRESSION: flag-off (resourceAware=false) byte-identical.
  *
@@ -428,9 +428,9 @@ describe('M254 resource-monitor — API-first availability classification', () =
     expect(state.usedPct).toBe(78); // max(60, 78)
   });
 
-  it('throttled when max(fiveHourPct, weeklyPct) >= protectPct(85)', async () => {
+  it('throttled when weeklyPct >= protectPct(85)', async () => {
     process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'test-token-redacted';
-    mockFetchWith(makeUsageBody({ fiveHourUtil: 0.90, weeklyUtil: 0.50 }));
+    mockFetchWith(makeUsageBody({ fiveHourUtil: 0.50, weeklyUtil: 0.90 }));
 
     const { getBackendResourceState } = await import('../src/core/fabric/resource-monitor.js');
     const state = await getBackendResourceState('claude', makeCfg());
@@ -441,9 +441,9 @@ describe('M254 resource-monitor — API-first availability classification', () =
     expect(state.reason).toMatch(/oauth-usage-api/);
   });
 
-  it('exhausted when max(fiveHourPct, weeklyPct) >= 100', async () => {
+  it('exhausted when weeklyPct >= 100', async () => {
     process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'test-token-redacted';
-    mockFetchWith(makeUsageBody({ fiveHourUtil: 1.05, weeklyUtil: 0.80 }));
+    mockFetchWith(makeUsageBody({ fiveHourUtil: 0.80, weeklyUtil: 1.05 }));
 
     const { getBackendResourceState } = await import('../src/core/fabric/resource-monitor.js');
     const state = await getBackendResourceState('claude', makeCfg());
