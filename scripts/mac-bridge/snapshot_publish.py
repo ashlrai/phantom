@@ -8,6 +8,17 @@ with the generation name and manifest digest. Readers always observe either
 the previous verified generation or the new verified one; a failed or partial
 publication leaves the old pointer untouched. One non-blocking lock prevents
 overlapping publishers. Emits metadata only, never file contents.
+
+Each cycle also runs a free-space admission check before staging and again
+immediately before create: the destination filesystem must hold a conservative
+estimate of the new generation -- every allow-listed regular source billed at
+its per-file cap -- and still leave --reserve-bytes for the running host. When
+telemetry is unavailable or space falls short the cycle is skipped with a fixed
+reason and latest.json plus every verified generation are left untouched;
+prior generations are never deleted to make room for an unverified one. A
+later cycle publishes once space returns. Admission is not a quota: a
+concurrent writer can still exhaust space mid-copy, in which case the partial
+generation is discarded and the old pointer stands.
 """
 
 import argparse
@@ -32,6 +43,10 @@ GENERATION = re.compile(r'snap-\d{8}T\d{6}Z-[0-9a-f]{8}\Z')
 STAGING = re.compile(r'snap-\d{8}T\d{6}Z-[0-9a-f]{8}\.staging-[0-9a-f]{32}\Z')
 POINTER_TMP = re.compile(r'latest\.json\.[0-9a-f]{32}\.tmp\Z')
 MIN_INTERVAL, MAX_INTERVAL, MIN_RETAIN, MAX_RETAIN = 1.0, 3600.0, 1, 64
+DEFAULT_RESERVE = 1 << 30  # 1 GiB kept free for the host after a generation
+STAGING_TMP_BYTES = 1 << 20  # pointer temp file plus directory-entry slack
+SKIP_TELEMETRY, SKIP_SPACE = 'telemetry-unavailable', 'insufficient-free-space'
+BYTE_UNITS = {'b': 1, 'k': 1 << 10, 'm': 1 << 20, 'g': 1 << 30, 't': 1 << 40}
 
 EXAMPLE = """\
 example with a fake fleet-state tree:
@@ -128,8 +143,52 @@ def adopt(dest, name):
     return {'ok': True, 'files': check['files'], 'manifestSha256': digest}
 
 
+def parse_reserve(text):
+    """Argparse type: nonnegative bytes, optional K/M/G/T binary suffix."""
+    match = re.fullmatch(r'(\d+)([kmgtb]i?b?)?', text.strip(), re.IGNORECASE)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            'expected nonnegative bytes with optional K/M/G/T suffix')
+    return int(match[1]) * BYTE_UNITS[match[2][0].lower() if match[2] else 'b']
+
+
+def available_bytes(path):
+    """Free bytes for this user on path's filesystem (f_bavail), or None."""
+    try:
+        info = os.statvfs(path)
+    except OSError:
+        return None
+    if info.f_frsize <= 0 or info.f_bavail < 0:
+        return None
+    return info.f_bavail * info.f_frsize
+
+
+def estimate_required_bytes(root):
+    """Conservative upper bound for staging one new generation.
+
+    Every allow-listed source that lstats as a regular file is billed at its
+    per-file cap rather than its current size, so bounded growth before or
+    during the copy is already paid for; anything create would skip costs only
+    a manifest entry. An unreadable path is billed at cap rather than trusted.
+    Manifest, pointer temp file and directory-entry slack are added on top.
+    """
+    required = state_snapshot.MAX_MANIFEST_BYTES + STAGING_TMP_BYTES
+    for rel in state_snapshot.ALLOW_LIST:
+        try:
+            info = (root / rel).lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            required += state_snapshot.MAX_FILE_BYTES
+            continue
+        if stat.S_ISREG(info.st_mode):
+            required += state_snapshot.MAX_FILE_BYTES
+    return required
+
+
 class Publisher:
-    def __init__(self, root, destination, interval, retain):
+    def __init__(self, root, destination, interval, retain,
+                 reserve=DEFAULT_RESERVE, probe=None):
         root = Path(root)
         if not root.is_dir() or root.is_symlink():
             raise PublishError('root is not a directory')
@@ -140,17 +199,44 @@ class Publisher:
         self.dest = dest.resolve()
         if state_snapshot.inside(self.dest, self.root):
             raise PublishError('refused: destination inside root')
+        if isinstance(reserve, bool) or not isinstance(reserve, int) \
+                or reserve < 0:
+            raise PublishError('reserve must be a nonnegative integer')
         self.interval, self.retain = interval, retain
+        self.reserve, self.probe = reserve, probe or available_bytes
         self.count, self.published, self.stop = 0, 0, False
         self.wake = threading.Event()
 
+    def admission(self):
+        """Free-space admission; None admits, a dict reports the skip reason."""
+        try:
+            available = self.probe(self.dest)
+        except Exception:
+            available = None
+        if isinstance(available, bool) or not isinstance(available, int) \
+                or available < 0:
+            available = None
+        report = {'requiredBytes': estimate_required_bytes(self.root),
+                  'reserveBytes': self.reserve}
+        if available is None:
+            return {'reason': SKIP_TELEMETRY, **report}
+        if available - report['requiredBytes'] < self.reserve:
+            return {'reason': SKIP_SPACE, 'availableBytes': available, **report}
+        return None
+
     def cycle(self):
         self.count += 1
+        denied = self.admission()
+        if denied:
+            return {'cycle': self.count, 'ok': False, **denied}
         name = 'snap-' + time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) \
                + '-' + uuid.uuid4().hex[:8]
         gen, created = self.dest / name, None
         try:
             sweep_staging(self.dest)
+            denied = self.admission()  # recheck immediately before create
+            if denied:
+                return {'cycle': self.count, 'ok': False, **denied}
             created = state_snapshot.create(self.root, gen)
             outcome = adopt(self.dest, name)
             if outcome['ok']:
@@ -198,6 +284,12 @@ def build_parser():
                        help='publish at most N cycles then exit')
     parser.add_argument('--retain', type=int, default=3,
                         help=f'prior generations kept after each publication, {MIN_RETAIN}..{MAX_RETAIN} (default 3)')
+    parser.add_argument('--reserve-bytes', type=parse_reserve,
+                        default=DEFAULT_RESERVE, metavar='N',
+                        help='free bytes that must remain on the destination filesystem '
+                             'after the estimated new generation, else the cycle is skipped '
+                             'without touching latest.json or prior generations; accepts '
+                             f'K/M/G/T suffixes such as 512M (default {DEFAULT_RESERVE} = 1 GiB)')
     return parser
 
 
@@ -213,7 +305,8 @@ def main(argv=None):
         parser.error(f'--retain must be between {MIN_RETAIN} and {MAX_RETAIN}')
     os.umask(0o077)
     try:
-        publisher = Publisher(args.root, args.destination, args.interval, args.retain)
+        publisher = Publisher(args.root, args.destination, args.interval,
+                              args.retain, args.reserve_bytes)
         lock = acquire_lock(publisher.dest)
     except (PublishError, OSError, ValueError) as exc:
         print(f'{TOOL}: {exc}', file=sys.stderr)
