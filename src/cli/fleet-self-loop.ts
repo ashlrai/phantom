@@ -10,6 +10,17 @@
  * still finishes, then the summary is printed. Without --apply every pass is
  * a dry run: nothing is released, held or spawned. Unknown or duplicate
  * options are refused before any pass runs.
+ *
+ * --stream opts into live progress: one sanitized, size-bounded NDJSON line
+ * ({v:1,record:'pass',…}) is emitted the moment each pass completes, then
+ * exactly one distinguishable final line ({v:1,record:'summary',…}) when the
+ * loop ends — a supervising agent never waits for the whole window. Memory
+ * stays constant: lines are written and dropped, nothing is accumulated.
+ * --stream and --json are mutually exclusive (--json keeps its single final
+ * summary line) and the combination is rejected before any pass runs. If the
+ * stream sink throws, admission stops safely, the signal handlers are still
+ * removed, and the final summary names the failure (termination
+ * 'observer-error', exit 1).
  */
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -22,11 +33,43 @@ import {
   SELF_LOOP_MAX_DURATION_MS,
   SELF_LOOP_MIN_INTERVAL_MS,
   type RunSelfLoopOptions,
+  type SelfLoopPassEvent,
   type SelfLoopTick,
 } from '../core/fleet/self-loop.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--runs-dir <abs>] [--apply] [--json]
+/** Hard cap on any streamed NDJSON line. Export lets tests assert the bound. */
+export const SELF_LOOP_STREAM_MAX_CHARS = 16_384;
+/** Marks a report that exceeded the line budget and was replaced by a preview. */
+const STREAM_TRUNCATION_MARK = '…[truncated]';
+
+/**
+ * Serialize one stream record as a single sanitized NDJSON line whose length
+ * never exceeds SELF_LOOP_STREAM_MAX_CHARS. The only unbounded field is the
+ * pass report (heavyKey); when the line would overflow, that field becomes a
+ * bounded string preview of its sanitized serialization plus a marker, so
+ * the line stays one valid JSON value either way.
+ */
+const toStreamLine = (record: Record<string, unknown>, heavyKey: 'report' | 'lastReport'): string => {
+  const sanitized = sanitizePublicJson(record) as Record<string, unknown>;
+  const line = JSON.stringify(sanitized);
+  if (line.length <= SELF_LOOP_STREAM_MAX_CHARS) return line;
+  const reportJson = JSON.stringify(sanitized[heavyKey] ?? null);
+  const build = (take: number) => JSON.stringify({
+    ...sanitized, [heavyKey]: reportJson.slice(0, take) + STREAM_TRUNCATION_MARK, reportTruncated: true,
+  });
+  // Re-escaping '"' and '\' can outgrow any static budget, so shrink until
+  // the serialized line fits — the intake strictly decreases, so this ends.
+  let take = reportJson.length;
+  let out = build(take);
+  while (out.length > SELF_LOOP_STREAM_MAX_CHARS && take > 0) {
+    take = Math.max(0, take - (out.length - SELF_LOOP_STREAM_MAX_CHARS));
+    out = build(take);
+  }
+  return out;
+};
+
+const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream]
 Repeat the self-management pass (fleet self-tick) for a bounded window:
 first pass immediately, then one pass every interval (default 60000ms,
 minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is
@@ -34,8 +77,13 @@ reached. The deadline only gates admission — a pass already running finishes
 normally. SIGINT/SIGTERM stop admission and interrupt the wait without
 killing a running pass; the summary prints either way. Each pass is the real
 self-tick with its own queue/self-tick.lock: a contended pass counts 'busy'
-and the loop continues, as does a failed pass. Exit 0 when no pass failed,
-1 when any did, 2 on usage.`;
+and the loop continues, as does a failed pass. --json prints one final
+sanitized summary line (unchanged default shape). --stream instead prints
+sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line per
+completed pass, then exactly one {"v":1,"record":"summary",...} line.
+--stream and --json are mutually exclusive and rejected before any pass
+runs. Exit 0 when no pass failed, 1 when any did (or the stream sink did),
+2 on usage.`;
 
 interface Dependencies {
   now?: () => number;
@@ -60,7 +108,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   const error = deps.error ?? ((text: string) => console.error(text));
   const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
-  let json = false, apply = false;
+  let json = false, apply = false, stream = false;
   let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
   const parseMs = (value: string | undefined): number | undefined => {
     if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
@@ -70,6 +118,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--stream' && !stream) stream = true;
     else if (arg === '--apply' && !apply) apply = true;
     else if (arg === '--duration-ms' && durationMs === undefined) {
       durationMs = parseMs(args[++i]);
@@ -83,6 +132,9 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       runsDir = value;
     } else return invalid();
   }
+  // Compatibility is explicit: --stream IS the machine-readable mode, so
+  // combining it with --json is a usage error, refused before any pass runs.
+  if (stream && json) return invalid();
   if (durationMs === undefined) return invalid();
   // One root for the lock and all three steps of every pass, resolved here
   // once — same fallbacks as self-tick, so nothing can drift between passes.
@@ -117,6 +169,18 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       process.removeListener('SIGTERM', handler);
     };
   });
+  // In --stream mode each completed pass is emitted as one sanitized bounded
+  // NDJSON line the moment it finishes — the real tick path included — so a
+  // supervisor sees progress while later passes are still deferred. A throw
+  // from the sink ends admission safely inside runSelfLoop ('observer-error').
+  const onPass = stream
+    ? (event: SelfLoopPassEvent): void => {
+      output(toStreamLine({
+        v: 1, record: 'pass', pass: event.pass, exitCode: event.exitCode,
+        state: event.state, report: event.report,
+      }, 'report'));
+    }
+    : undefined;
   const removeSignalListeners = onSignal(() => controller.abort());
   let summary;
   try {
@@ -126,16 +190,23 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       tick: deps.tick ?? realTick,
       now,
       signal: controller.signal,
+      ...(onPass === undefined ? {} : { onPass }),
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
     });
   } finally {
     removeSignalListeners();
   }
-  if (json) {
+  if (stream) {
+    // Flattened so the unbounded lastReport sits at the record's top level,
+    // where toStreamLine's size cap can reach it.
+    output(toStreamLine({ ...summary, v: 1, record: 'summary' }, 'lastReport'));
+  } else if (json) {
     output(JSON.stringify(sanitizePublicJson(summary)));
   } else {
-    output(`fleet self-loop: ${summary.termination === 'interrupted' ? 'INTERRUPTED' : 'DONE'
+    const label = summary.termination === 'observer-error' ? 'OBSERVER-ERROR'
+      : summary.termination === 'interrupted' ? 'INTERRUPTED' : 'DONE';
+    output(`fleet self-loop: ${label
     } — ticks=${summary.ticks} failed=${summary.failures} busy=${summary.busy} (${apply ? 'apply' : 'dry-run'})`);
   }
-  return summary.failures > 0 ? 1 : 0;
+  return summary.failures > 0 || summary.observerError !== undefined ? 1 : 0;
 }
