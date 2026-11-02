@@ -27,7 +27,7 @@ describe('backlog recut handoff', () => {
     expect(await cmdFleetBacklog(['--recut-job', '15'], d)).toBe(0);
     expect(d.gh).toHaveBeenCalledTimes(1);
     expect(d.gh.mock.calls[0]![0]).toEqual(['pr', 'list', '--repo', 'ashlrai/phantom', '--state', 'open', '--limit', '500',
-      '--json', 'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup,title']);
+      '--json', 'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup,createdAt,title']);
     expect(d.states).toHaveBeenCalledExactlyOnceWith('ashlrai/phantom');
     const prompt = output.join('\n');
     expect(prompt).toContain('ashlrai/phantom PR #15');

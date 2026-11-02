@@ -22,7 +22,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment, type StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { ChildProcess } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -51,6 +50,9 @@ import { fileURLToPath } from 'node:url';
 import { scrubSecrets } from './util/scrub.js';
 import { getLocusJobEnv, hasInheritedLocusSession, hasLocusJobEnv, withLocusJobChildEnv } from './integrations/locus-job-env.js';
 import { spawnSessionChild } from './verse/process-registry.js';
+
+/** JSON-RPC message type — aliased from serializeMessage to avoid duplicate imports across SDK paths. */
+type McpJsonRpcMessage = Parameters<typeof serializeMessage>[0];
 
 /** SDK-compatible stdio with session-owned process groups and parent-death cleanup. */
 export class SessionStdioClientTransport extends StdioClientTransport {
@@ -106,7 +108,7 @@ export class SessionStdioClientTransport extends StdioClientTransport {
     });
   }
 
-  override async send(message: JSONRPCMessage): Promise<void> {
+  override async send(message: McpJsonRpcMessage): Promise<void> {
     const stdin = this.sessionProcess?.stdin;
     if (!stdin || this.closing) throw new Error('Not connected');
     await new Promise<void>((resolve, reject) => {
