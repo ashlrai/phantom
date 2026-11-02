@@ -141,11 +141,15 @@ export async function repeatGuardianDrains(
     if (left <= nextDelayMs) { summary.termination = 'duration'; return summary; }
     // Wait in short slices so a stop file also interrupts the interval.
     for (let waited = 0; waited < nextDelayMs && !options.signal?.aborted;) {
-      const slice = Math.min(STOP_POLL_MS, nextDelayMs - waited);
+      const budget = Math.floor(options.durationMs - (now() - startedAt));
+      if (budget < 1) { summary.termination = 'duration'; return summary; }
+      const slice = Math.min(STOP_POLL_MS, nextDelayMs - waited, budget);
       await sleep(slice, options.signal);
       waited += slice;
+      if (options.signal?.aborted) { summary.termination = 'cancelled'; return summary; }
       const stopped = await stopFileExists(options.stopFile);
       if (stopped) { summary.termination = stopped; return summary; }
+      if (Math.floor(options.durationMs - (now() - startedAt)) < 1) { summary.termination = 'duration'; return summary; }
     }
   }
 }
