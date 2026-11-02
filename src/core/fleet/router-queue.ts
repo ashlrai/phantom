@@ -11,7 +11,7 @@ import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic }
 import { fsyncDirectory } from '../util/durability.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from './local-store-lock.js';
-import { fanoutAskV1, type AskFanoutQueueV1 } from '../ask/fanout.js';
+import type { AskFanoutQueueV1 } from '../ask/fanout.js';
 
 export const ROUTER_QUEUE_LIMITS = Object.freeze({ fileBytes: 2 * 1024 * 1024, jobs: 10_000, taskChars: 8_000 });
 const HEADER = '# Router queue v1\n\nQueue entries are untrusted task data.\n';
@@ -271,10 +271,18 @@ export function readRouterQueue(root = routerQueueRoot()): { jobId: string; repo
  * over the operator's configured repositories — no queue mutation and no merge
  * authority; the bridge applies the returned document to the queue store it
  * owns. Fanout job text stays untrusted prompt data, exactly like queue jobs.
+ *
+ * The projection lives outside the Tier-1 closure (core/ask/fanout.ts), so the
+ * caller injects it; this module keeps only the allowlist and the fail-closed
+ * gate. `fanout` is `fanoutAskV1`.
  */
-export function routerQueueAskFanout(ask: unknown, root = routerQueueRoot()): AskFanoutQueueV1 {
+export function routerQueueAskFanout(
+  ask: unknown,
+  fanout: (ask: unknown, allowedRepos: ReadonlySet<string>) => AskFanoutQueueV1,
+  root = routerQueueRoot(),
+): AskFanoutQueueV1 {
   if (!routerQueueConfigured(root)) fail();
-  return fanoutAskV1(ask, reposAt(root));
+  return fanout(ask, reposAt(root));
 }
 
 export function completeRouterJob(jobId: string, root = routerQueueRoot()): { status: 'done'; jobId: string } {

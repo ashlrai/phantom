@@ -97,7 +97,7 @@ describe('router-queue ask wiring', () => {
   });
 
   it('fans an ask out over configured repositories without touching queue state', () => {
-    const result = routerQueueAskFanout(ask({ tier: 'work' }));
+    const result = routerQueueAskFanout(ask({ tier: 'work' }), fanoutAskV1);
     expect(result.jobs).toHaveLength(1);
     expect(result.jobs[0]!.repo).toBe('phantom');
     expect(existsSync(join(root, 'state.json'))).toBe(false);
@@ -106,10 +106,10 @@ describe('router-queue ask wiring', () => {
   });
 
   it('fails closed when the queue is unconfigured or the ask is out of scope', () => {
-    expect(() => routerQueueAskFanout(ask({ tier: 'work', repos: ['ashlrai/not-configured'] }))).toThrow();
-    expect(() => routerQueueAskFanout(null)).toThrow();
+    expect(() => routerQueueAskFanout(ask({ tier: 'work', repos: ['ashlrai/not-configured'] }), fanoutAskV1)).toThrow();
+    expect(() => routerQueueAskFanout(null, fanoutAskV1)).toThrow();
     rmSync(join(root, 'config.json'));
-    expect(() => routerQueueAskFanout(ask())).toThrow();
+    expect(() => routerQueueAskFanout(ask(), fanoutAskV1)).toThrow();
   });
 
   it('serves the ask verb over stdin without echoing bad input', async () => {
