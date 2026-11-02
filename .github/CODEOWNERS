@@ -366,6 +366,7 @@
 /test/fleet-backlog-cli-31.test.ts @masonwyatt23
 /test/fleet-backlog-exclude-claimed.test.ts @masonwyatt23
 /test/fleet-backlog-recut-drop-nov01.test.ts @masonwyatt23
+/test/fleet-budget-view.test.ts @masonwyatt23
 /test/fleet-bus-loop-request-context-01.test.ts @masonwyatt23
 /test/fleet-bus-loop-total-budget-nov01.test.ts @masonwyatt23
 /test/fleet-bus-work-loop-cwd-flag-01.test.ts @masonwyatt23
@@ -383,18 +384,22 @@
 /test/fleet-ci-trigger-facts-01.test.ts @masonwyatt23
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
+/test/fleet-daily-reds.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23
 /test/fleet-graph-agent-live-01.test.ts @masonwyatt23
 /test/fleet-graph-context-budget-01.test.ts @masonwyatt23
 /test/fleet-graph-output-budget-nov01.test.ts @masonwyatt23
 /test/fleet-graph-resume-loop-execution.test.ts @masonwyatt23
+/test/fleet-guardian-verify-loop-01.test.ts @masonwyatt23
 /test/fleet-lane-truth-gate-sole2.test.ts @masonwyatt23
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
+/test/fleet-self-loop-02soly1.test.ts @masonwyatt23
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
+/test/fleet-ship-gap-stage.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
@@ -405,6 +410,7 @@
 /test/gateway-openai-agents-client.test.ts @masonwyatt23
 /test/gateway-target.test.ts @masonwyatt23
 /test/github-api-fleet-backlog.test.ts @masonwyatt23
+/test/gitignore-routing-eval.test.ts @masonwyatt23
 /test/goal-conductor-stale-lane.test.ts @masonwyatt23
 /test/goal-loop-roadmap-index.test.ts @masonwyatt23
 /test/goal-loop.result.test.ts @masonwyatt23
@@ -889,6 +895,7 @@
 /test/memory-evaluation.test.ts @masonwyatt23
 /test/memory-foundation-adversarial.test.ts @masonwyatt23
 /test/memory-foundation.test.ts @masonwyatt23
+/test/merge-age-routing.test.ts @masonwyatt23
 /test/merge-backlog-hot-files.test.ts @masonwyatt23
 /test/merge-backlog-read.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
@@ -896,10 +903,12 @@
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
 /test/mirror-git-bounded.test.ts @masonwyatt23
+/test/mirror-repo-deadline.test.ts @masonwyatt23
 /test/mirror-sibling-deps-314.test.ts @masonwyatt23
 /test/mirrors-310b.test.ts @masonwyatt23
 /test/model-racing-proposal-types.test.ts @masonwyatt23
 /test/native-locus-metadata-scope.test.ts @masonwyatt23
+/test/node-router.test.ts @masonwyatt23
 /test/north-star-measured-leverage.test.ts @masonwyatt23
 /test/one-ask-best-of-n-winner.test.ts @masonwyatt23
 /test/ops-release-pr-merge-api.test.ts @masonwyatt23
@@ -1023,6 +1032,7 @@
 /test/routing-calibration-properties.test.ts @masonwyatt23
 /test/routing-capacity-history.test.ts @masonwyatt23
 /test/routing-interactive-scope.test.ts @masonwyatt23
+/test/routing-outcome-learning.test.ts @masonwyatt23
 /test/routing-readiness-314.test.ts @masonwyatt23
 /test/routing-router-weights.test.ts @masonwyatt23
 /test/routing-seat-router.test.ts @masonwyatt23
@@ -1057,6 +1067,7 @@
 /test/tick-hooks-defaults-310b.test.ts @masonwyatt23
 /test/tick-hooks-live-310b.test.ts @masonwyatt23
 /test/tick-hooks-loop-310b.test.ts @masonwyatt23
+/test/tier1-closure-cut.test.ts @masonwyatt23
 /test/tmp-scratch-sweep.test.ts @masonwyatt23
 /test/top-pools.test.ts @masonwyatt23
 /test/universe-builtin-trial-custody-acceptance.test.ts @masonwyatt23

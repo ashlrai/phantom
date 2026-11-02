@@ -177,7 +177,7 @@ const EVIDENCE_HEARTBEAT_MS = 1_000;
  * verified build, kept for display; the drift test asserts it is the last entry
  * of that list. Surfacing the gate is the point: a silent "unknown" would hide it.
  */
-export const VERSE_CLAUDE_USAGE_PINNED_VERSION = '2.1.280';
+export const VERSE_CLAUDE_USAGE_PINNED_VERSION = '2.1.312';
 
 /** The probe's verbatim reason when the installed Claude Code is not the pin. */
 export const VERSE_CLAUDE_VERSION_REASON = 'usage-version-unsupported';
