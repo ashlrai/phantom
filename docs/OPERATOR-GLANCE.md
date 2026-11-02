@@ -6,7 +6,7 @@ agent that imports it.
 - Shape and short text: `src/core/fleet/operator-glance.ts` (`OperatorGlance`, `formatOperatorGlance`)
 - Files: `src/core/fleet/operator-glance-read.ts`
 - HTTP: `GET /api/verse/fleet/runs/glance`
-- Orders: `POST /api/verse/fleet/runs/inbox` with `{ "text": "..." }`, which appends `~/.ashlr-runs/leader/MASON-INBOX.md`
+- Orders: `POST /api/verse/fleet/runs/inbox` with `{ "text": "..." }`. Telegram, email, and the phone do not write `MASON-INBOX.md` themselves. They run `${HOME}/.ashlr-runs/bin/mason-inbox-append --src <telegram|email|phone> --id <verified sender>` with the order on stdin. A missing helper or a nonzero exit replies `save failed, retry`.
 
 The phone opens on that glance. Telegram and email use the same sentences.
 Ask "how's the fleet?" and the reply is a few lines. Any other sentence is an

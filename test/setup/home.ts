@@ -27,10 +27,13 @@
  *   override, is now a thrown error — the offending test fails immediately and
  *   loudly instead of the suite quietly writing through the isolation boundary.
  */
+import { EventEmitter } from 'node:events';
 import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { vi } from 'vitest';
+import { appendInboxEntry } from '../../src/core/fleet/mason-inbox.js';
+import { inboxReceiptRootForTests, setMasonInboxAppendSpawnForTests, type MasonInboxChild } from '../../src/core/fleet/mason-inbox-append.js';
 
 const workerHomeKey = 'ASHLR_VITEST_WORKER_HOME';
 const workerPidKey = 'ASHLR_VITEST_WORKER_PID';
@@ -156,6 +159,26 @@ function guardedHomedir(): string {
   }
   return raw;
 }
+
+// Stand-in for ~/.ashlr-runs/bin/mason-inbox-append. Production never writes the inbox itself.
+setMasonInboxAppendSpawnForTests((file, args) => {
+  const chunks: string[] = [];
+  const stderr = new EventEmitter();
+  const child = new EventEmitter() as MasonInboxChild & EventEmitter;
+  child.stderr = stderr;
+  child.stdin = {
+    write(chunk: string) { chunks.push(chunk); },
+    end() {
+      const srcAt = args.indexOf('--src');
+      const src = srcAt >= 0 ? args[srcAt + 1] : 'telegram';
+      const root = inboxReceiptRootForTests() ?? join(guardedHomedir(), '.ashlr-runs');
+      void appendInboxEntry(chunks.join(''), { runsDir: root, source: src === 'phone' ? 'Phantom mobile' : src })
+        .then((result) => child.emit('close', result.ok ? 0 : 1), () => child.emit('close', 1));
+    },
+  };
+  void file;
+  return child;
+});
 
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>();

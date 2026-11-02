@@ -31,6 +31,7 @@
 
 import { sendTelegramMessage, type InboundEvent, type TelegramSendOpts, type TelegramSendResult } from '../integrations/telegram.js';
 import { createChannelReceiver, type ChannelAck, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
+import { SAVE_FAILED_REPLY } from '../fleet/mason-inbox-append.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
 import { telegramFleetStatus, type TelegramFleetStatusDeps } from './telegram-fleet-status.js';
@@ -119,7 +120,9 @@ export async function recordTelegramToInbox(
       },
     });
     const result = await receive(message);
-    if (!result.ok && result.reason !== 'sender-not-allowed') {
+    if (!result.ok && result.reason === 'write-failed') {
+      await send(SAVE_FAILED_REPLY, replyTo, cfg).catch(() => undefined);
+    } else if (!result.ok && result.reason !== 'sender-not-allowed') {
       await send(`Not recorded: ${result.reason}`, replyTo, cfg).catch(() => undefined);
     }
     return result;

@@ -5,6 +5,7 @@
 import { CHANNEL_RECEIPT_LIMIT, createLocalChannelDedupeStore, type ChannelDedupeStore, type ChannelReceipt } from './channel-dedupe-store.js';
 import { createHash } from 'node:crypto';
 import { appendInboxEntry, INBOX_MAX_CHARS, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
+import { appendMasonInboxOrder, channelAppendIdentity } from './mason-inbox-append.js';
 import { publishChannelEnvelope, type ChannelPublishState } from './channel-bus-publish.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -174,9 +175,12 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
       };
       if (receipts.size >= CHANNEL_RECEIPT_LIMIT) return { ok: false, reason: 'full' };
       try {
+        const identity = channelAppendIdentity(input.channel, input.verifiedSenderId);
         const result = options.write
           ? await options.write({ ...envelope })
-          : await appendInboxEntry(body, { runsDir: options.runsDir, now: () => new Date(now), source: input.channel });
+          : identity
+            ? await appendMasonInboxOrder({ ...identity, message: body, receiptRoot: options.runsDir })
+            : await appendInboxEntry(body, { runsDir: options.runsDir, now: () => new Date(now), source: input.channel });
         if (!result.ok) return { ok: false, reason: result.reason };
       } catch { return { ok: false, reason: 'write-failed' }; }
       receipts.set(hash, { at: now, key: dedupeKey, ...(mirroringEnabled ? { mirror: { channel: envelope.channel, pending: true } } : {}) });
