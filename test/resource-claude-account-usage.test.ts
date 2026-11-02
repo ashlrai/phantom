@@ -156,14 +156,15 @@ describe('bounded version-gated report collection', () => {
   });
   it.each(CLAUDE_USAGE_VERIFIED_VERSIONS)('reads usage on every verified build (%s)', async (version) => {
     const { subprocess, authentication } = mocks();
+    const structured = version !== '2.1.257'; // 2.1.257 is the only legacy text build
     authentication.mockResolvedValue(status({ startedAt: OBSERVED }));
     subprocess.mockImplementation(async (argv, config) => {
       scratchDirs.push(config.cwd);
       return nativeResult(argv.at(-1) === '--version' ? `${version} (Claude Code)\n`
-        : version === '2.1.280' ? stream() : JSON.stringify(envelope()));
+        : structured ? stream() : JSON.stringify(envelope()));
     });
     const result = await probeClaudeAccountUsage(options());
-    expect(result).toMatchObject({ status: 'observed', reason: version === '2.1.280' ? 'usage-native-current' : 'usage-native-reported' });
+    expect(result).toMatchObject({ status: 'observed', reason: structured ? 'usage-native-current' : 'usage-native-reported' });
     expect(result.windows.map((w) => w.id)).toEqual(['five_hour', 'seven_day', 'seven_day_fable']);
   });
   it.each(['2.1.256 (Claude Code)', '2.1.258 (Claude Code)', '2.1.279 (Claude Code)', '2.1.281 (Claude Code)', '2.1.280', 'PRIVATE_VERSION'])('never sends /usage to unverified version %s', async (version) => {
