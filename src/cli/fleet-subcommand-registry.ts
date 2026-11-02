@@ -73,6 +73,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'local-gate': () => import('./fleet-local-gate.js'),
   'memory': () => import('./fleet-memory.js'),
   'meter-drop': () => import('./fleet-meter-drop.js'),
+  'mission': () => import('./fleet-mission.js'),
   'outcomes': () => import('./fleet-outcomes.js'),
   'planner': () => import('./fleet-planner.js'),
   'planner-brief': () => import('./fleet-planner-brief.js'),
