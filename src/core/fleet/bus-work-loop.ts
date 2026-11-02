@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { Writable } from 'node:stream';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubPrivateText } from '../util/scrub.js';
@@ -13,7 +14,11 @@ import { mutateBusWorkClaim } from './bus-work-claims.js';
 import { runContextReply } from './context-result-bus.js';
 import type { ContextWorkerOptions } from './context-worker-run.js';
 
-export interface BusWorkLoopOptions extends BusWaitClaimRequest, ContextWorkerOptions { maxJobs: number }
+export interface BusWorkLoopOptions extends BusWaitClaimRequest, ContextWorkerOptions {
+  maxJobs: number;
+  /** Optional whole-loop budget shared by every claim wait and child combined. */
+  totalTimeoutMs?: number;
+}
 export interface BusWorkLoopResult { status: 'invalid' | 'timeout' | 'cancelled' | 'max-jobs' | 'failed'; completed: number }
 
 export const BUS_REQUEST_SECTION_START =
@@ -77,6 +82,7 @@ export function validBusWorkLoopOptions(opts: BusWorkLoopOptions): boolean {
   } catch { validCwd = false; }
   return validCwd && (opts.signal === undefined || opts.signal instanceof AbortSignal) &&
     (opts.timeoutMs === undefined || (Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 1 && opts.timeoutMs <= 3600000)) &&
+    (opts.totalTimeoutMs === undefined || (Number.isSafeInteger(opts.totalTimeoutMs) && opts.totalTimeoutMs >= 1 && opts.totalTimeoutMs <= 3600000)) &&
     (opts.busAddress === undefined || (typeof opts.busAddress === 'string' && /^[\x21-\x7e]{1,128}$/.test(opts.busAddress))) &&
     (opts.busAfter === undefined || (Number.isSafeInteger(opts.busAfter) && opts.busAfter >= 0)) &&
     validBusWaitClaimRequest(opts) && Number.isSafeInteger(opts.maxJobs) && opts.maxJobs >= 1 && opts.maxJobs <= 16 &&
@@ -91,21 +97,36 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
   const done = (status: BusWorkLoopResult['status']): BusWorkLoopResult => ({ status, completed });
   if (!validBusWorkLoopOptions(opts)) return done('invalid');
   const controller = new AbortController();
-  const signal = opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal;
+  // One monotonic whole-loop budget, established once before the first claim;
+  // its abort joins the other cancellation sources so it bounds claim waiting
+  // and active children identically rather than resetting per iteration.
+  const budgetAt = opts.totalTimeoutMs === undefined ? undefined : performance.now() + opts.totalTimeoutMs;
+  const budget = budgetAt === undefined ? undefined : new AbortController();
+  const deadline = budget === undefined ? undefined : setTimeout(() => { budget.abort(); }, opts.totalTimeoutMs!);
+  deadline?.unref();
+  const expired = () => budgetAt !== undefined && performance.now() >= budgetAt;
+  const sources = [controller.signal];
+  if (budget !== undefined) sources.push(budget.signal);
+  if (opts.signal !== undefined) sources.push(opts.signal);
+  const signal = AbortSignal.any(sources);
+  // An expiry reports 'timeout' only when no other cancellation source fired;
+  // external cancellation keeps its existing 'cancelled'/'failed' mapping.
+  const expiredOnly = () => expired() && !controller.signal.aborted && opts.signal?.aborted !== true;
   const stop = () => controller.abort();
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   try {
     while (completed < opts.maxJobs) {
       const acquired = await waitClaimBusWork(opts, signal);
       if (acquired.status !== 'acquired' || !('receipt' in acquired)) {
-        return done(acquired.status === 'timeout' ? 'timeout' : acquired.status === 'cancelled' ? 'cancelled' : 'failed');
+        return done(acquired.status === 'timeout' ? 'timeout' :
+          acquired.status === 'cancelled' ? (expiredOnly() ? 'timeout' : 'cancelled') : 'failed');
       }
       const { receipt, token } = acquired;
       const id = receipt.envelope.id, root = opts.root;
       // Cancellation can race a successful acquisition; release without launching.
-      if (signal.aborted) {
+      if (signal.aborted || expired()) {
         mutateBusWorkClaim({ action: 'release', id, token, root });
-        return done('cancelled');
+        return done(expiredOnly() ? 'timeout' : 'cancelled');
       }
       let directory: string | undefined, lost = false, leaseUntil = acquired.leaseUntil;
       const ownership = new AbortController();
@@ -136,7 +157,7 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
           cwd: opts.cwd, timeoutMs: opts.timeoutMs, busAddress: opts.busAddress, busAfter: opts.busAfter, signal: attemptSignal },
           { stdout: sink, stderr: sink }, { root, now: () => {
             const now = Date.now();
-            return attemptSignal.aborted || now >= leaseUntil ? NaN : now;
+            return attemptSignal.aborted || expired() || now >= leaseUntil ? NaN : now;
           } });
         succeeded = result.workerExit.status === 'returned' && result.workerExit.exitCode === 0 &&
           (result.replyReceipt.status === 'posted' || result.replyReceipt.status === 'duplicate') &&
@@ -151,11 +172,14 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
       }
       if (lost || Date.now() >= leaseUntil) return done('failed');
       const settled = mutateBusWorkClaim({ action: succeeded ? 'complete' : 'release', id, token, root });
-      if (!succeeded || settled.status !== 'completed') return done('failed');
+      if (!succeeded || settled.status !== 'completed') return done(expiredOnly() ? 'timeout' : 'failed');
       completed++;
-      if (signal.aborted) return done('cancelled');
+      if (signal.aborted || expired()) return done(expiredOnly() ? 'timeout' : 'cancelled');
     }
     return done('max-jobs');
-  } catch { return done('failed'); }
-  finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }
+  } catch { return done(expiredOnly() ? 'timeout' : 'failed'); }
+  finally {
+    if (deadline !== undefined) clearTimeout(deadline);
+    process.off('SIGINT', stop); process.off('SIGTERM', stop);
+  }
 }
