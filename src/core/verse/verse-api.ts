@@ -196,7 +196,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'forum';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -250,6 +250,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Exact path only, so it cannot claim /api/verse/fleet/graph/live. Last so the
   // registry mount stays visible beside the modules already on master.
   { id: 'fleet-graph', load: async () => (await import('./fleet-graph-api.js')).handleFleetGraphApi },
+  // Fleet forum: GET /api/verse/forum. Agents post through phm forum and phantom_forum.
+  { id: 'forum', load: async () => (await import('./forum-api.js')).handleForumApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;

@@ -676,6 +676,12 @@ const loadCommsCmd = lazyCmd(
   'comms command requires src/cli/comms.ts (M137 module not yet built).',
 );
 
+const loadForumCmd = lazyCmd(
+  () => import('./forum.js'),
+  (m) => m.cmdForum as Cmd,
+  'forum command requires src/cli/forum.ts.',
+);
+
 // ─── M257 director command loader ────────────────────────────────────────────
 
 const loadDirectorCmd = lazyCmd(
@@ -2569,6 +2575,12 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'forum': {
+        const cmdForum = await loadForumCmd();
+        process.exitCode = await cmdForum(rest);
         break;
       }
 

@@ -6,6 +6,7 @@ import { CHANNEL_RECEIPT_LIMIT, createLocalChannelDedupeStore, type ChannelDedup
 import { createHash } from 'node:crypto';
 import { appendInboxEntry, INBOX_MAX_CHARS, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
 import { publishChannelEnvelope, type ChannelPublishState } from './channel-bus-publish.js';
+import { maybeIngestForum } from './forum-channel-ingest.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export type { ChannelPublishState } from './channel-bus-publish.js';
@@ -125,6 +126,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
         else await markPublished(seen, () => {});
       } catch { /* Mirroring cannot invalidate durable acceptance. */ }
     }
+    if (status === 'accepted') await maybeIngestForum(envelope);
     if (options.acknowledge) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
