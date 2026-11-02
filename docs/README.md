@@ -20,7 +20,7 @@ that every integration, provider or autonomous effect is active.
 
 ## Agents, start here
 
-Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](llms.txt). Copy-paste reference: [llms-full.txt](llms-full.txt).
+Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 
 ```sh
 npm install -g @ashlr/phantom
