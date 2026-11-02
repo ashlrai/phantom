@@ -41,7 +41,6 @@ export function visitDelta(
 
   // Gap formatting
   const gapMs = diff;
-  const totalMinutes = Math.round(gapMs / 60_000);
 
   function formatGap(ms: number): string {
     const totalMins = Math.round(ms / 60_000);
