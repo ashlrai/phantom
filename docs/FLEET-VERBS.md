@@ -31,6 +31,7 @@
 | runs-read | `src/cli/fleet-runs-read.ts` | Reads runs dir state, leader journal and parked queue | no |
 | ship-gap | `src/cli/fleet-ship-gap.ts` | Read-only ship-gap report for the seven approved repos; drift past newest version tag | no |
 | stray-slots | `src/cli/fleet-stray-slots.ts` | Read-only host evidence: one lost slot per finished job with leftover processes | no |
+| supply | `src/cli/fleet-supply.ts` | Read-only per-batch, per-hour 24 h counts of launch, skipped_empty, precheck_skip, PR-opened and MERGED outcome rows from metrics/jobs.jsonl; unread file prints unknown | no |
 | task-check | `src/cli/fleet-task-check.ts` | Read-only: says whether a job's batch had 3 or more skipped_empty or precheck_skip rows in 24 h (`likely_empty`); unreadable metrics print `known:false` | no |
 | wait-jobs | `src/cli/fleet-wait-jobs.ts` | Waits for fleet jobs by ID, monitors publication status | no |
 | workers | `src/cli/fleet-workers.ts` | Lists live workers, filterable by lane, repo and age; watch mode | no |

@@ -10,12 +10,13 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(changed, changed)).toEqual({
       lintFiles: ['scripts/new helper.mjs', 'src/committed.ts', 'src/dirty.ts'],
       webTypecheck: false,
+      fleetRegistry: false,
     });
   });
 
   it('excludes deleted files from lint while retaining deleted web paths for typecheck', () => {
     expect(selectChangedFiles(['src/gone.ts', 'src/web-ui/old screen.tsx'], [])).toEqual({
-      lintFiles: [], webTypecheck: true,
+      lintFiles: [], webTypecheck: true, fleetRegistry: false,
     });
   });
 
@@ -28,7 +29,7 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(['notes.md'], ['notes.md']).lintFiles).toEqual([]);
     const paths = ['a.js', 'b.cjs', 'c.mjs', 'd.ts', 'e.cts', 'f.mts', 'g.tsx', 'h.jsx'];
     expect(selectChangedFiles(paths, paths).lintFiles).toEqual(paths);
-    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], webTypecheck: false });
+    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], webTypecheck: false, fleetRegistry: false });
   });
 });
 

@@ -4,7 +4,7 @@ DEVIN-LEVERAGE-20261026).
 Every case builds a synthetic ~/.ashlr-runs tree in a temp HOME and invokes the
 repo copy of dispatchd.py once (one tick) as a subprocess; nothing touches the
 real ~/.ashlr-runs or the live queue. Covers: the leverage devin defaults
-(target 10, ceiling 16), the ceiling raise cap, the Masbot 21:19 failure-spike
+(target 6, ceiling 10, hard_cap 10), the ceiling raise cap, the Masbot 21:19 failure-spike
 step-down computed in dispatchd itself (-2, floor 6, once per new finish), and
 devin's place in the restock trigger loop.
 """
@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'dispatchd.py'
@@ -99,7 +100,7 @@ def pub(job):
 
 
 def devin_slot(**kw):
-    slot = {'target': 10, 'floor': 3, 'ceiling': 16, 'last_change': 0}
+    slot = {'target': 10, 'floor': 3, 'ceiling': 16, 'hard_cap': 16, 'last_change': 0}   # fixtures raise hard_cap past the 10 default
     slot.update(kw)
     return slot
 
@@ -162,7 +163,7 @@ def auth_mark(home, job):
 
 class SlotDefaultTests(unittest.TestCase):
     def test_missing_devin_slot_seeds_leverage_defaults(self):
-        # No devin entry in slots.json: the DEFAULT row seeds target 10, floor 3, ceiling 16.
+        # No devin entry in slots.json: the DEFAULT row seeds target 6, floor 3, ceiling 10, hard_cap 10.
         tmp = build(slots=held_lanes())
         self.addCleanup(tmp.cleanup)
         home = Path(tmp.name)
@@ -172,7 +173,7 @@ class SlotDefaultTests(unittest.TestCase):
         r = tick(home)
         self.assertEqual(r.returncode, 0, r.stderr)
         devin = slots_of(home)['devin']
-        self.assertEqual((devin['target'], devin['floor'], devin['ceiling']), (10, 3, 16), devin)
+        self.assertEqual((devin['target'], devin['floor'], devin['ceiling'], devin['hard_cap']), (6, 3, 10, 10), devin)
 
 
 class CeilingTests(unittest.TestCase):
@@ -447,6 +448,42 @@ class AuthBackoffTests(unittest.TestCase):
         self.assertNotIn('held', slots_of(home)['devin'])
         self.assertIn('LANE_UNHOLD devin', events(home))
         self.assertTrue(dispatched(home, 'RQ-D-OK'))
+
+
+class RunHelperTests(unittest.TestCase):
+    """RQ-TICK-BUDGET _run: a timeout kills the whole process group, grandchildren included."""
+    def _load(self):
+        import re, signal, time
+        src = SCRIPT.read_text()
+        block = re.search(r'^def _run\(.*?^    return subprocess\.CompletedProcess\(.*?\n', src, re.M | re.S).group(0)
+        logs = []
+        ns = {'os': os, 'subprocess': subprocess, 'time': time, 'signal': signal, 'log': logs.append}
+        exec(block, ns)
+        return ns['_run'], logs
+
+    def test_ok_returns_completed_process(self):
+        run, logs = self._load()
+        r = run(['/bin/sh', '-c', 'echo out; echo err >&2; exit 3'], 5)
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (3, 'out\n', 'err\n'))
+        self.assertEqual(logs, [])
+
+    def test_timeout_kills_grandchildren(self):
+        run, logs = self._load()
+        with tempfile.TemporaryDirectory() as d:
+            pidf = Path(d) / 'pid'
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run(['/bin/sh', '-c', f'sleep 60 & echo $! > {pidf}; wait'], 1)
+            pid = int(pidf.read_text())
+            gone = False
+            for _ in range(50):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    gone = True
+                    break
+                time.sleep(0.1)
+            self.assertTrue(gone, 'grandchild survived the group kill')
+        self.assertTrue(any(m.startswith('SLOW sh timeout 1s, group killed') or 'group killed' in m for m in logs), logs)
 
 
 if __name__ == '__main__':
