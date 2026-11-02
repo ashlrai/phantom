@@ -126,6 +126,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ship-gap': () => import('./fleet-ship-gap.js'),
   'skill-calibration': () => import('./fleet-skill-calibration.js'),
   'standby': () => import('./fleet-standby.js'),
+  'standby-config': () => import('./fleet-standby-config.js'),
   'stray-slots': () => import('./fleet-stray-slots.js'),
   'stuck-fixes': () => import('./fleet-stuck-fixes.js'),
   'superseded': () => import('./fleet-superseded.js'),
