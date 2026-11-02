@@ -1,6 +1,6 @@
 /** Read-only standby takeover verdict via scripts/mac-bridge/standby_readiness.py. */
 import { execFile } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -27,6 +27,70 @@ export type FleetStandbyExec =
 export interface FleetStandbyDeps {
   exec?: FleetStandbyExec;
   locateScript?: () => string | null | Promise<string | null>;
+  /** Directory holding standby.json; default ASHLR_RUNS_DIR, then ~/.ashlr-runs. */
+  runsDir?: string;
+}
+
+export function standbyRunsDir(runsDir?: string): string {
+  return runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+}
+
+export const standbyUsage = usage;
+
+/** Strict flag parse shared with standby-config; null on duplicate/unknown flag or missing value. */
+export function parseStandbyFlags(
+  args: readonly string[], booleanFlags: readonly string[] = ['--json'],
+): { flags: Set<string>; values: Map<string, string> } | null {
+  const flags = new Set<string>();
+  const values = new Map<string, string>();
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const boolean = booleanFlags.includes(arg);
+    if (seen.has(arg) || (!boolean && !VALUE_FLAGS.has(arg))) return null;
+    seen.add(arg);
+    if (boolean) { flags.add(arg); continue; }
+    const value = args[++i];
+    if (!value || value.startsWith('--')) return null;
+    values.set(arg, value);
+  }
+  return { flags, values };
+}
+
+/** The identity and --max-age rules; returns the parsed max-age (or undefined) or null if invalid. */
+export function validateStandbyValues(values: ReadonlyMap<string, string>): { maxAge?: number } | null {
+  for (const name of ['--primary', '--role', '--host'] as const) {
+    const v = values.get(name);
+    if (v !== undefined && !IDENTITY.test(v)) return null;
+  }
+  const raw = values.get('--max-age');
+  if (raw === undefined) return {};
+  if (!/^\d+$/.test(raw)) return null;
+  const maxAge = Number(raw);
+  return maxAge < 60 || maxAge > 86400 ? null : { maxAge };
+}
+
+export const STANDBY_REQUIRED = REQUIRED;
+
+/** Saved config as standby-config writes it; null when missing or invalid. */
+export function readStandbyConfig(runsDir?: string): Map<string, string> | null {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(standbyRunsDir(runsDir), 'standby.json'), 'utf8'));
+    if (!record(raw) || raw.v !== 1) return null;
+    const map = new Map<string, string>();
+    for (const [flag, key] of [['--db', 'db'], ['--snapshot-store', 'snapshotStore'],
+      ['--primary', 'primary'], ['--role', 'role'], ['--host', 'host']] as const) {
+      if (typeof raw[key] !== 'string' || raw[key] === '' || raw[key].startsWith('--')) return null;
+      map.set(flag, raw[key]);
+    }
+    if (raw.maxAgeSec !== undefined) {
+      if (typeof raw.maxAgeSec !== 'number') return null;
+      map.set('--max-age', String(raw.maxAgeSec));
+    }
+    return validateStandbyValues(map) ? map : null;
+  } catch {
+    return null;
+  }
 }
 
 /** execFile, never a shell; argv is a fixed vector so caller text never enters a command line. */
@@ -94,20 +158,17 @@ export async function cmdFleetStandby(args: string[], deps: FleetStandbyDeps = {
     console.error(`error: invalid fleet standby arguments\n${usage}`);
     return 2;
   };
-  let json = false;
-  const values = new Map<string, string>();
-  const seen = new Set<string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (seen.has(arg) || (arg !== '--json' && !VALUE_FLAGS.has(arg))) return invalid();
-    seen.add(arg);
-    if (arg === '--json') {
-      json = true;
-      continue;
+  const parsed0 = parseStandbyFlags(args);
+  if (!parsed0) return invalid();
+  const json = parsed0.flags.has('--json');
+  let values = parsed0.values;
+  // No connection flags at all: use the config saved by `fleet standby-config`.
+  if (REQUIRED.every((flag) => !values.has(flag))) {
+    const saved = readStandbyConfig(deps.runsDir);
+    if (saved) {
+      if (values.has('--max-age')) saved.set('--max-age', values.get('--max-age')!);
+      values = saved;
     }
-    const value = args[++i];
-    if (!value || value.startsWith('--')) return invalid();
-    values.set(arg, value);
   }
   for (const required of REQUIRED) {
     if (!values.has(required)) {
@@ -115,16 +176,9 @@ export async function cmdFleetStandby(args: string[], deps: FleetStandbyDeps = {
       return 2;
     }
   }
-  for (const name of ['--primary', '--role', '--host'] as const) {
-    if (!IDENTITY.test(values.get(name)!)) return invalid();
-  }
-  let maxAge: number | undefined;
-  const rawMaxAge = values.get('--max-age');
-  if (rawMaxAge !== undefined) {
-    if (!/^\d+$/.test(rawMaxAge)) return invalid();
-    maxAge = Number(rawMaxAge);
-    if (maxAge < 60 || maxAge > 86400) return invalid();
-  }
+  const checked = validateStandbyValues(values);
+  if (!checked) return invalid();
+  const maxAge = checked.maxAge;
   const script = await (deps.locateScript ?? findStandbyReadinessScript)();
   if (script === null) {
     console.error('fleet standby: needs scripts/mac-bridge/standby_readiness.py — run ashlr fleet bridge-install --apply or use a Phantom source checkout');
