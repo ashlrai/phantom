@@ -47,14 +47,40 @@ function isSummary(value: unknown): value is Record<string, unknown> {
     && count(s['intervalMs']) && (s['intervalMs'] as number) > 0
     && count(s['ticks']) && (s['ticks'] as number) > 0 && count(s['failures']) && count(s['busy'])
     && (s['failures'] as number) <= (s['ticks'] as number) && (s['busy'] as number) <= (s['ticks'] as number)
-    && ['duration', 'interrupted', 'observer-error'].includes(s['termination'] as string)
+    && ['duration', 'max-ticks', 'interrupted', 'observer-error'].includes(s['termination'] as string)
     && Object.hasOwn(s, 'lastReport');
+}
+
+function isPass(value: Record<string, unknown>): boolean {
+  return value['v'] === 1 && value['record'] === 'pass'
+    && Number.isSafeInteger(value['pass']) && (value['pass'] as number) > 0
+    && Number.isSafeInteger(value['exitCode'])
+    && (value['state'] === null || typeof value['state'] === 'string')
+    && Object.hasOwn(value, 'report')
+    && ['consecutiveFailures', 'consecutiveBusy', 'nextDelayMs'].every(key =>
+      value[key] === undefined || (Number.isSafeInteger(value[key]) && (value[key] as number) >= 0));
+}
+
+function persist(path: string, record: string, rename: typeof renameSync): void {
+  let temp: string | undefined;
+  try {
+    checkPath(path);
+    temp = join(dirname(path), `.self-loop-record-${randomBytes(16).toString('hex')}.tmp`);
+    const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try { writeFileSync(fd, record, 'utf8'); } finally { closeSync(fd); }
+    checkPath(path);
+    rename(temp, path);
+    temp = undefined;
+  } finally {
+    if (temp) { try { unlinkSync(temp); } catch { /* best effort */ } }
+  }
 }
 
 export async function cmdFleetSelfLoopRecord(args: string[], deps: Dependencies = {}): Promise<number> {
   const output = deps.output ?? ((text: string) => console.log(text));
   const receipt = (persisted: boolean, reason: string) => output(JSON.stringify({ v: 1, persisted, reason }));
   let path: string | undefined;
+  let live = false;
   const forwarded: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -64,7 +90,9 @@ export async function cmdFleetSelfLoopRecord(args: string[], deps: Dependencies 
         receipt(false, 'invalid arguments'); return 2;
       }
       path = value;
-    } else if (arg === '--json' || arg === '--stream') {
+    } else if (arg === '--live' && !live) {
+      live = true;
+    } else if (arg === '--json' || arg === '--stream' || arg === '--live') {
       receipt(false, 'invalid arguments'); return 2;
     } else forwarded.push(arg);
   }
@@ -72,6 +100,42 @@ export async function cmdFleetSelfLoopRecord(args: string[], deps: Dependencies 
   try { checkPath(path); } catch { receipt(false, 'unsafe destination'); return 1; }
   const now = deps.now ?? Date.now;
   const startedAt = new Date(now()).toISOString();
+  if (live) {
+    let failed = false, completed = false, lastPass = 0;
+    let code: number;
+    try {
+      code = await (deps.loop ?? cmdFleetSelfLoop)([...forwarded, '--stream'], {
+        ...deps.loopDeps,
+        output: (text) => {
+          // Once a write or validation fails, the loop's final observer callback
+          // must not overwrite the last successfully persisted pass.
+          if (failed) throw new Error('observer failed');
+          try {
+            if (Buffer.byteLength(text, 'utf8') > MAX_BYTES) throw new Error('oversized');
+            const value: unknown = JSON.parse(text);
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid');
+            const record = value as Record<string, unknown>;
+            const pass = isPass(record) && record['pass'] === lastPass + 1 && !completed;
+            const summary = record['record'] === 'summary' && isSummary(record)
+              && record['ticks'] === lastPass && !completed;
+            if (!pass && !summary) throw new Error('invalid');
+            const data = JSON.stringify(sanitizePublicJson({
+              v: 1, startedAt, updatedAt: new Date(now()).toISOString(),
+              status: summary ? 'completed' : 'running', latest: record,
+            })) + '\n';
+            if (Buffer.byteLength(data, 'utf8') > MAX_BYTES) throw new Error('oversized');
+            persist(path!, data, deps.rename ?? renameSync);
+            if (pass) lastPass++;
+            if (summary) completed = true;
+          } catch (error) { failed = true; throw error; }
+        },
+        error: () => {},
+      });
+    } catch { receipt(false, failed ? 'live record failed' : 'delegate failed'); return 1; }
+    if (failed || !completed) { receipt(false, 'invalid live record'); return code || 1; }
+    receipt(true, 'completed');
+    return code;
+  }
   let captured = '', calls = 0, oversized = false, code: number;
   try {
     code = await (deps.loop ?? cmdFleetSelfLoop)([...forwarded, '--json'], {
@@ -90,17 +154,7 @@ export async function cmdFleetSelfLoopRecord(args: string[], deps: Dependencies 
   if (oversized || calls !== 1 || !isSummary(summary)) { receipt(false, 'invalid summary'); return code || 1; }
   const record = JSON.stringify(sanitizePublicJson({ v: 1, startedAt, finishedAt, summary })) + '\n';
   if (Buffer.byteLength(record, 'utf8') > MAX_BYTES) { receipt(false, 'summary too large'); return code || 1; }
-  let temp: string | undefined;
-  try {
-    checkPath(path);
-    temp = join(dirname(path), `.self-loop-record-${randomBytes(16).toString('hex')}.tmp`);
-    const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try { writeFileSync(fd, record, 'utf8'); } finally { closeSync(fd); }
-    checkPath(path);
-    (deps.rename ?? renameSync)(temp, path);
-    temp = undefined;
-  } catch {
-    if (temp) { try { unlinkSync(temp); } catch { /* best effort */ } }
+  try { persist(path, record, deps.rename ?? renameSync); } catch {
     receipt(false, 'persistence failed'); return code || 1;
   }
   receipt(true, 'completed');
