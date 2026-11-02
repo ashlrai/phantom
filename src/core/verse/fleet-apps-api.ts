@@ -31,6 +31,7 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
   const locate = deps.locateScript ?? (() => findAppControlScript() ?? findInstalledAppControlScript(root));
   const exec: FleetAppExec = deps.exec ?? (async (file, argv, options) => execAsync(file, argv, options));
   let cached: { at: number; view: Promise<AppsView> } | undefined;
+  const inFlight = new Set<string>();
   async function run(script: string, action: string, app: string, timeout: number): Promise<Record<string, unknown>> {
     let stdout: string;
     try {
@@ -89,14 +90,18 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
       !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart'].includes(body.action))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
     }
+    const app = body.app as string;
+    // A busy app rejects all actions until its current action settles.
+    if (inFlight.has(app)) { sendJson(res, 409, { code: 'VERSE_APP_BUSY', error: 'app action in progress' }); return true; }
     const script = locate();
     if (!script) { sendJson(res, 503, { error: 'fleet apps unavailable' }); return true; }
+    inFlight.add(app);
     try {
       const result = await run(script, body.action as string, body.app as string, 30_000);
       if (typeof result.code !== 'string') throw new Error('unreadable result');
       sendJson(res, 202, { app: body.app, action: body.action, code: result.code, at: new Date(now()).toISOString() });
     } catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
-    finally { cached = undefined; }
+    finally { inFlight.delete(app); cached = undefined; }
     return true;
   };
 }
