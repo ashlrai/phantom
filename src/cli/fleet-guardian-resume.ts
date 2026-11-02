@@ -31,7 +31,7 @@ export async function cmdFleetGuardianResume(
     if (flag === '--json' && !json) { json = true; continue; }
     if (flag === '--stream' && !stream) { stream = true; continue; }
     if (flag === '--apply' && !apply) { apply = true; continue; }
-    if (!['--checkpoint-dir', '--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms'].includes(flag)
+    if (!['--checkpoint-dir', '--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms', '--idle-backoff-max-ms'].includes(flag)
       || values[flag] !== undefined || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       process.stderr.write('error: invalid guardian-resume arguments\n'); return 2;
     }
@@ -43,6 +43,11 @@ export async function cmdFleetGuardianResume(
     v !== undefined && /^[1-9]\d*$/.test(v) && Number(v) >= min && Number(v) <= 86_400_000;
   if ((duration !== undefined || interval !== undefined) && (!validRepeat(duration, 1) || !validRepeat(interval, 1000))) {
     process.stderr.write('error: guardian-resume requires --duration-ms 1..86400000 and --interval-ms 1000..86400000 together\n'); return 2;
+  }
+  const backoff = values['--idle-backoff-max-ms'];
+  if (backoff !== undefined && (duration === undefined || interval === undefined
+    || !validRepeat(backoff, Number(interval)) || !Number.isSafeInteger(Number(backoff)))) {
+    process.stderr.write('error: guardian-resume requires --idle-backoff-max-ms between interval-ms and 86400000 in repeat mode\n'); return 2;
   }
   const checkpointDir = values['--checkpoint-dir'];
   if (checkpointDir === undefined || !isAbsolute(checkpointDir) || checkpointDir.length > 4096
@@ -64,6 +69,7 @@ export async function cmdFleetGuardianResume(
   const forwarded = ['--source-state', latestOutput];
   if (duration === undefined) forwarded.push('--new-session');
   else forwarded.push('--duration-ms', duration, '--interval-ms', interval!);
+  if (backoff !== undefined) forwarded.push('--idle-backoff-max-ms', backoff);
   for (const flag of ['--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file'] as const) {
     const value = values[flag];
     if (value !== undefined) forwarded.push(flag, value);
