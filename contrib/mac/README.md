@@ -43,7 +43,10 @@ ceiling are reapplied, so neither the overrides nor the ramp can lift a pool
 past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
 `status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
 admission --json` reports the same verdict read-only. `queue/LOADGATE_OFF` is the
-owner's off switch.
+owner's off switch. The `codex-local` mid-tier cap is 4 while the gate is clear
+and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
+`LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
+is recorded as `local_mid_cap` in `admission.json`.
 
 Install semaphore: `install-gate.py -- npm ci` takes `flock` on `queue/install.lock`
 so at most one `npm ci` / `pnpm install` / `bun install` runs fleet-wide; others
@@ -351,3 +354,15 @@ the live queue or GitHub:
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
 ```
+
+Restock and dispatch share `launch_precheck.py`: precheck exit codes 10–13
+retire a line as `DONE-NOOP` before restock writes a prompt, claim, or
+`ready.tsv` entry. Errors and timeouts keep the existing fail-open behavior;
+dispatch checks again at launch. Preview without changing queue files:
+
+```sh
+python3 contrib/mac/restock.py --dry-run --json
+# {"dry_run": true, "queued": 0, "done_noop": ["RQ-EXAMPLE"], "skips": {"done-noop": 1}}
+```
+
+`install.sh` installs the restocker and shared module alongside dispatchd.
