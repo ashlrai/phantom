@@ -1,4 +1,4 @@
-/** Fixed quotas bound total work; failed consumers leave their unused quota behind.
+/** The shared budget counts one-job attempts, including failures and timeouts.
  * Claim ownership cannot guarantee exactly-once external effects. */
 import { randomUUID } from 'node:crypto';
 import { runBusWorkLoop, validBusWorkLoopOptions, type BusWorkLoopOptions, type BusWorkLoopResult } from './bus-work-loop.js';
@@ -6,6 +6,7 @@ import { runBusWorkLoop, validBusWorkLoopOptions, type BusWorkLoopOptions, type 
 export interface BusWorkPoolOptions extends BusWorkLoopOptions { concurrency: number }
 export interface BusWorkPoolResult {
   status: BusWorkLoopResult['status']; completed: number;
+  /** quota is the number of attempts reserved by this consumer, not a fixed allocation. */
   consumers: Array<BusWorkLoopResult & { owner: string; quota: number }>;
 }
 
@@ -19,13 +20,25 @@ export async function runBusWorkPool(opts: BusWorkPoolOptions): Promise<BusWorkP
   const suffix = randomUUID();
   const workers = Array.from({ length: count }, (_, i) => ({
     ...opts, owner: `${opts.owner.slice(0, 88)}-${suffix}-${i + 1}`,
-    maxJobs: Math.floor(opts.maxJobs / count) + (i < opts.maxJobs % count ? 1 : 0),
+    maxJobs: 1,
   }));
   // Validate every derived option before any loop can acquire a claim.
   if (!workers.every(validBusWorkLoopOptions)) return { status: 'invalid', completed: 0, consumers: [] };
-  const results = await Promise.allSettled(workers.map(worker => runBusWorkLoop(worker)));
-  const consumers = results.map((result, i) => ({ owner: workers[i]!.owner, quota: workers[i]!.maxJobs,
-    ...(result.status === 'fulfilled' ? result.value : { status: 'failed' as const, completed: 0 }) }));
+  let attempts = 0;
+  const consumers = await Promise.all(workers.map(async worker => {
+    const consumer: BusWorkLoopResult & { owner: string; quota: number } =
+      { owner: worker.owner, quota: 0, status: 'max-jobs', completed: 0 };
+    while (attempts < opts.maxJobs) {
+      // Reserve synchronously, before the loop can yield or another consumer can start.
+      attempts++; consumer.quota++;
+      let result: BusWorkLoopResult;
+      try { result = await runBusWorkLoop(worker); }
+      catch { result = { status: 'failed', completed: 0 }; }
+      consumer.completed += result.completed;
+      if (result.status !== 'max-jobs') { consumer.status = result.status; break; }
+    }
+    return consumer;
+  }));
   const status = consumers.some(c => c.status === 'failed' || c.status === 'invalid') ? 'failed'
     : consumers.some(c => c.status === 'cancelled') ? 'cancelled'
     : consumers.some(c => c.status === 'timeout') ? 'timeout' : 'max-jobs';
