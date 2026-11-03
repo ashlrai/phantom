@@ -15,6 +15,9 @@ import { readGuardianGlance } from './guardian-glance.js';
 import { readOperatorSecret, secretsMatch } from './operator-proof.js';
 import { buildOperatorGlance, type OperatorGlance } from './operator-glance.js';
 
+import { readAppsRecoveryInvocations } from './apps-recovery-invocations.js';
+import { appsRecoveryIncident } from './apps-recovery-glance.js';
+
 const MAX_BYTES = 32 * 1024;
 
 async function readFileBounded(path: string): Promise<string | null> {
@@ -76,13 +79,18 @@ function codexUsage(nowMs: number): { usedPct: number | null; resetsAt: string |
   }
 }
 
-export async function readOperatorGlance(opts: { runsDir?: string; now?: () => Date } = {}): Promise<OperatorGlance> {
+export async function readOperatorGlance(opts: { runsDir?: string; busRoot?: string; now?: () => Date } = {}): Promise<OperatorGlance> {
   const now = opts.now ?? (() => new Date());
   const at = now();
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const state = await readFleetRunsDirState({ runsDir, now: () => at.getTime() }).catch(() => null);
   const usage = codexUsage(at.getTime());
   const guardian = await readGuardianGlance(runsDir, at.getTime());
+  let recoveryIncident: string | null = null;
+  try {
+    const busRoot = opts.busRoot ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+    recoveryIncident = appsRecoveryIncident(readAppsRecoveryInvocations(busRoot), at.getTime());
+  } catch { /* unavailable recovery evidence stays quiet */ }
   const glance = buildOperatorGlance({
     now: at,
     lanes: state?.lanes ?? [],
@@ -92,6 +100,7 @@ export async function readOperatorGlance(opts: { runsDir?: string; now?: () => D
     resetsAt: usage.resetsAt,
     mainText: await newestStatus(runsDir),
     incidentText: [
+      recoveryIncident,
       await readFileBounded(join(runsDir, 'NEEDS-MASON.md')),
       await readFileBounded(join(runsDir, 'leader', 'INCIDENTS.md'))
     ].filter((text): text is string => text != null).join('\n') || null,
