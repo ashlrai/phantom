@@ -17,6 +17,7 @@ export function envelopeRows(messages: readonly AgentBusReceipt[], nowMs: number
     const at = new Date(receivedAt).toISOString();
     return { cursor, id: envelope.id, from: envelope.from, to: envelope.to, priority: envelope.priority, at,
       ageText: formatRelative(at, nowMs), kind, channel,
+      // eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
       excerpt: (text ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 200),
       expired: nowMs - receivedAt >= envelope.ttl };
   }).sort((a, b) => b.cursor - a.cursor);
