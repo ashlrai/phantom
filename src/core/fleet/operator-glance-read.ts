@@ -17,6 +17,7 @@ import { buildOperatorGlance, type OperatorGlance } from './operator-glance.js';
 
 import { readAppsRecoveryInvocations } from './apps-recovery-invocations.js';
 import { appsRecoveryIncident } from './apps-recovery-glance.js';
+import { hideResolvedNeedsMason } from './needs-mason-resolve.js';
 
 const MAX_BYTES = 32 * 1024;
 
@@ -101,7 +102,7 @@ export async function readOperatorGlance(opts: { runsDir?: string; busRoot?: str
     mainText: await newestStatus(runsDir),
     incidentText: [
       recoveryIncident,
-      await readFileBounded(join(runsDir, 'NEEDS-MASON.md')),
+      hideResolvedNeedsMason(await readFileBounded(join(runsDir, 'NEEDS-MASON.md'))),
       await readFileBounded(join(runsDir, 'leader', 'INCIDENTS.md'))
     ].filter((text): text is string => text != null).join('\n') || null,
   });

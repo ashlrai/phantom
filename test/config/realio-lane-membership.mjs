@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/docs-fleet-health.test.ts', // Executes documented health commands through the real CLI.
   'test/changelog-current-version-01.test.ts', // Runs the changelog extractor in a real child process.
   'test/docs-agent-parity.test.ts', // Runs docs build and link checks in real child processes.
   'test/fleet-bridge-install-01.test.ts', // Runs the bridge installer against private test fixtures.
