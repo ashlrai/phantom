@@ -36,6 +36,7 @@ import { normalizePaneId } from './dock-catalog.js';
 import { setFocusMode } from './focus-mode.js';
 import { deriveCiNeedsYou } from './ci-needs-you.js';
 import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './fleet-ci-runs-query.js';
+import { deriveLaneStallNeedsYou, laneStallId } from './lane-stall-needs-you.js';
 import { deriveLaneStreakNeedsYou } from './lane-streak-needs-you.js';
 import { laneStreaksQuery } from './lane-streak-query.js';
 import { deriveMainHealthNeedsYou } from './main-health-needs-you.js';
@@ -196,6 +197,10 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     () => deriveLaneStreakNeedsYou(laneStreaksRead.status === 'error' ? undefined : laneStreaksRead.data, isFleetRuns(read.data) ? read.data : null, nowMs),
     [laneStreaksRead.data, laneStreaksRead.status, read.data, nowMs],
   );
+  const laneStallItems = useMemo(
+    () => deriveLaneStallNeedsYou(isFleetRuns(read.data) ? read.data : null, nowMs),
+    [read.data, nowMs],
+  );
   const mainHealthItems = useMemo(
     () => deriveMainHealthNeedsYou(mainHealthRead.status === 'error' ? undefined : mainHealthRead.data),
     [mainHealthRead.data, mainHealthRead.status],
@@ -208,8 +213,10 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     [resetsRead.data, resetsRead.status, nowMs]);
   const phoneItems = useMemo(() => derivePhoneNeedsYou(phoneRead.status === 'error' ? undefined : phoneRead.data),
     [phoneRead.data, phoneRead.status]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
-    [result, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
+  // The stall row says more than the plain idle one for the same lane: it wins.
+  const stalled = useMemo(() => new Set(laneStallItems.map(item => item.id)), [laneStallItems]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items.filter(item => !(item.id.startsWith('lane-idle:') && stalled.has(laneStallId(item.id.slice('lane-idle:'.length))))), ...laneStallItems, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
+    [result, stalled, laneStallItems, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map<string, string | null>(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);

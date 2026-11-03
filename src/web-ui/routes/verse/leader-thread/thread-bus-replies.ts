@@ -21,6 +21,7 @@ export function busRepliesToMason(receipts: readonly AgentBusReceipt[], nowMs: n
     const text = typeof body?.text === 'string' ? body.text : JSON.stringify(envelope.body);
     return [{ key: `bus-${envelope.id}`, at: new Date(receivedAt).toISOString(), from: envelope.from,
       kind: typeof body?.kind === 'string' ? body.kind : 'message',
+      // eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
       excerpt: (text ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 120),
       ...(typeof body?.replyTo === 'string' ? { replyTo: body.replyTo } : {}),
       expired: nowMs - receivedAt >= envelope.ttl }];

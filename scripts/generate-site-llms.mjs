@@ -286,7 +286,7 @@ function generate() {
   };
 }
 
-export function buildSiteLlms({ readFileSync: readFs = readFileSync, readdirSync: readDir = readdirSync } = {}) {
+export function buildSiteLlms() {
   const data = gather();
   return {
     'llms.txt': renderLlmsTxt(data),
