@@ -152,10 +152,10 @@ async function mutateJson<T>(method: 'POST' | 'DELETE', path: string, body: unkn
 /** A route's own refusal sentence and code, including daemon `note` bodies. */
 async function readRefusal(res: Response): Promise<{ detail: string; code: string | null }> {
   try {
-    const j = (await res.json()) as { error?: unknown; note?: unknown; message?: unknown; code?: unknown };
+    const j = (await res.json()) as { error?: unknown; note?: unknown; message?: unknown; reason?: unknown; code?: unknown };
     const detail = typeof j.error === 'string' && j.error ? j.error
       : typeof j.note === 'string' && j.note ? j.note
-        : typeof j.message === 'string' ? j.message : '';
+        : typeof j.message === 'string' ? j.message : typeof j.reason === 'string' ? j.reason : '';
     return { detail, code: typeof j.code === 'string' && j.code ? j.code : null };
   } catch {
     return { detail: '', code: null };

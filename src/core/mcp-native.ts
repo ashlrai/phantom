@@ -46,6 +46,7 @@ import { computeQualityMetrics } from './fleet/quality-metrics.js';
 import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
 import { readDecisions } from './fleet/decisions-ledger.js';
 import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
+import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
@@ -224,6 +225,33 @@ const TOOLS: NativeToolImpl[] = [
       } catch (error) {
         if (error instanceof DropJobValidationError) return { written: false, reason: 'invalid', reasons: error.reasons };
         if (error instanceof DropJobExistsError) return { written: false, reason: 'exists', id: error.id };
+        throw error;
+      }
+    },
+  },
+  {
+    name: 'phantom_fleet_job_reassign',
+    description: 'Move one queued (not yet launched) fleet job, or every queued Phantom job on a lane, to another lane and optionally tier by editing the local ready queue. Refuses held or down target lanes. dryRun plans without writing.',
+    inputSchema: { type: 'object', properties: {
+      job: { type: 'string', pattern: '^[A-Za-z0-9._-]{3,80}$' },
+      fromLane: { type: 'string', pattern: '^[a-z0-9-]{1,40}$' },
+      lane: { type: 'string', pattern: '^[a-z0-9-]{1,40}$' },
+      tier: { type: 'string', enum: [...DROP_JOB_TIERS] },
+      dryRun: { type: 'boolean' },
+      reason: { type: 'string', maxLength: 200, pattern: '^[^\\u0000-\\u001f\\u007f-\\u009f]*$' },
+    }, required: ['lane'], oneOf: [{ required: ['job'] }, { required: ['fromLane'] }], additionalProperties: false },
+    safety: 'append',
+    handler: async args => {
+      const { reassignQueuedJobs, ReassignError } = await import('./fleet/runs-reassign.js');
+      try {
+        const { v, applied, lane, moved, skipped, verified } = await reassignQueuedJobs({
+          job: args.job as string | undefined, fromLane: args.fromLane as string | undefined,
+          lane: args.lane as string, tier: args.tier as string | undefined,
+          apply: args.dryRun !== true, force: false, reason: args.reason as string | undefined,
+        }, { runsDir: join(homedir(), '.ashlr-runs'), changedBy: 'mcp' });
+        return { v, applied, lane, moved, skipped, verified };
+      } catch (error) {
+        if (error instanceof ReassignError) return { moved: false, reason: error.code };
         throw error;
       }
     },
@@ -1323,6 +1351,20 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       typeof args.tier !== 'string' || !DROP_JOB_TIERS.some(tier => tier === args.tier) ||
       typeof args.body !== 'string' || [...args.body].length < 1 || [...args.body].length > 7800
       ? 'invalid drop job arguments' : null;
+  } else if (name === 'phantom_fleet_job_reassign') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const lanePattern = /^[a-z0-9-]{1,40}$/;
+    // eslint-disable-next-line no-control-regex
+    const controlCharacters = /[\u0000-\u001f\u007f-\u009f]/;
+    invalid = !object || Object.keys(args).some(key => !['job', 'fromLane', 'lane', 'tier', 'dryRun', 'reason'].includes(key)) ||
+      (('job' in args) === ('fromLane' in args)) ||
+      ('job' in args && (typeof args.job !== 'string' || !/^[A-Za-z0-9._-]{3,80}$/.test(args.job) || !STRAY_ID_PATTERN.test(args.job))) ||
+      ('fromLane' in args && (typeof args.fromLane !== 'string' || !lanePattern.test(args.fromLane))) ||
+      typeof args.lane !== 'string' || !lanePattern.test(args.lane) ||
+      ('tier' in args && (typeof args.tier !== 'string' || !DROP_JOB_TIERS.some(tier => tier === args.tier))) ||
+      ('dryRun' in args && typeof args.dryRun !== 'boolean') ||
+      ('reason' in args && (typeof args.reason !== 'string' || [...args.reason].length > 200 || controlCharacters.test(args.reason)))
+      ? 'invalid reassign arguments' : null;
   } else if (name === 'phantom_fleet_planner_run') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     // eslint-disable-next-line no-control-regex
