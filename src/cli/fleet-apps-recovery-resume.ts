@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { readRecoveryBatchRequest, validateRecoveryBatchRequest, writeRecoveryBatchRequest } from '../core/fleet/apps-recovery-batch-request.js';
 import { cmdFleetAppsRecoveryBatch } from './fleet-apps-recovery-batch.js';
 
-const usage = 'Usage: ashlr fleet apps-recovery-resume --request <path|-> [--invocation <uuid> ...] --max-age-ms <n> --duration-ms <n> [--interval-ms <n>] [--root <dir>] [--stop-file <path>] [--wait-all] [--stream] [--json]';
+const usage = 'Usage: ashlr fleet apps-recovery-resume --request <path|-> [--invocation <uuid> ...] --max-age-ms <n> --duration-ms <n> [--interval-ms <n>] [--root <dir>] [--stop-file <path>] [--wait-all] [--stream] [--bus] [--json]';
 
 const stdinLimit = 16 * 1024;
 type Deps = { waiter?: typeof cmdFleetAppsRecoveryBatch; stdin?: NodeJS.ReadableStream; stdinTimeoutMs?: number };
@@ -41,9 +41,9 @@ export async function cmdFleetAppsRecoveryResume(args: string[], deps: Deps = {}
   let requestPath = '', root: string | undefined, maxAge = 0, duration = 0, interval = 1000;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (!['--request', '--invocation', '--root', '--max-age-ms', '--duration-ms', '--interval-ms', '--stop-file', '--wait-all', '--stream', '--json'].includes(arg) || (arg !== '--invocation' && seen.has(arg))) return invalid();
+    if (!['--request', '--invocation', '--root', '--max-age-ms', '--duration-ms', '--interval-ms', '--stop-file', '--wait-all', '--stream', '--bus', '--json'].includes(arg) || (arg !== '--invocation' && seen.has(arg))) return invalid();
     seen.add(arg);
-    if (['--wait-all', '--stream', '--json'].includes(arg)) { forwarded.push(arg); continue; }
+    if (['--wait-all', '--stream', '--bus', '--json'].includes(arg)) { forwarded.push(arg); continue; }
     const value = args[++i];
     if (arg === '--request' && value === '-') { requestPath = value; continue; }
     if (!value || value.startsWith('-') || value.includes('\0')) return invalid();
