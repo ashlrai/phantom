@@ -50,21 +50,27 @@ export function renderJobCommandReply(result: JobCommandReply): string {
 export interface TelegramJobCommandDeps {
   stopJob: typeof stopJob;
   reassignQueuedJobs: typeof reassignQueuedJobs;
+  /** Audit attribution for the job; defaults to 'telegram'. */
+  changedBy?: string;
 }
 
+/** True only for text that starts with `/stop` or `/reassign`, valid or not. */
+export const isJobCommand = (text: string): boolean => /^\s*\/(?:stop|reassign)(?:@\w+)?(?:\s|$)/i.test(text);
+
 export async function runTelegramJobCommand(text: string, deps: TelegramJobCommandDeps): Promise<JobCommandReply> {
+  const by = deps.changedBy ?? 'telegram';
   const command = /^\s*\/stop(?:@\w+)?(?:\s|$)/i.test(text) ? 'stop' : 'reassign';
   try {
     if (command === 'stop') {
       const request = parseStopCommand(text);
       if (!request) return { status: 'usage', command };
-      const result = await deps.stopJob(request.id, { by: 'telegram' });
+      const result = await deps.stopJob(request.id, { by });
       if (result.outcome === 'stopped') return { status: 'stopped', id: request.id, processes: result.pids.length };
       if (result.outcome === 'not-running') return { status: 'not-running', id: request.id };
     } else {
       const request = parseReassignCommand(text);
       if (!request) return { status: 'usage', command };
-      const result = await deps.reassignQueuedJobs({ job: request.id, lane: request.lane, tier: request.tier, apply: true, force: false }, { changedBy: 'telegram' });
+      const result = await deps.reassignQueuedJobs({ job: request.id, lane: request.lane, tier: request.tier, apply: true, force: false }, { changedBy: by });
       const move = result.applied && result.moved.find(row => row.id === request.id && row.toLane === request.lane);
       // Membership validation belongs to runs-reassign. Bound only what can be displayed.
       if (move && displayToken(move.toLane) && displayToken(move.toTier)) {

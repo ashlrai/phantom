@@ -108,12 +108,12 @@ function regularFile(path: string): string | null {
 }
 
 /**
- * Installed release first (~/.ashlr-runs/mac-bridge/current), then this
+ * Installed release under the selected runs directory first, then this
  * checkout's scripts/mac-bridge; the npm package does not ship scripts/.
  */
-export async function findStandbyReadinessScript(): Promise<string | null> {
+export async function findStandbyReadinessScript(runsDir?: string): Promise<string | null> {
   const installed = regularFile(
-    join(homedir(), '.ashlr-runs', 'mac-bridge', 'current', 'standby_readiness.py'));
+    join(standbyRunsDir(runsDir), 'mac-bridge', 'current', 'standby_readiness.py'));
   if (installed) return installed;
   try {
     return regularFile(join(await findBridgeSource(), 'standby_readiness.py'));
@@ -179,7 +179,7 @@ export async function cmdFleetStandby(args: string[], deps: FleetStandbyDeps = {
   const checked = validateStandbyValues(values);
   if (!checked) return invalid();
   const maxAge = checked.maxAge;
-  const script = await (deps.locateScript ?? findStandbyReadinessScript)();
+  const script = deps.locateScript ? await deps.locateScript() : await findStandbyReadinessScript(deps.runsDir);
   if (script === null) {
     console.error('fleet standby: needs scripts/mac-bridge/standby_readiness.py — run ashlr fleet bridge-install --apply or use a Phantom source checkout');
     return 1;

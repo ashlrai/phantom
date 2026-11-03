@@ -6,14 +6,19 @@ export interface ReplayOptions {
   query?: string;
   mode?: 'replay_failed' | 'replay_failed_and_dependents';
   dryRun?: boolean;
+  /** Only replay these failed job ids. */
+  ids?: string[];
 }
+/** A failed attempt is a BLOCKED job whose latest claim finished. */
+export const isFailedJob = (job: QueueJob): boolean => job.status === 'BLOCKED' && Boolean(job.claims.at(-1)?.finishedAt);
 /** Plan against a locked snapshot when writing. Original attempts remain immutable. */
 export function planReplay(doc: QueueDocument, options: ReplayOptions): QueueJob[] {
   const mode = options.mode ?? 'replay_failed';
   if (!['replay_failed', 'replay_failed_and_dependents'].includes(mode)) throw new Error('Invalid replay mode');
   if (options.since !== undefined && (!/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(options.since) || !Number.isFinite(Date.parse(options.since)))) throw new Error('Invalid --since ISO timestamp with timezone');
   const query = options.query?.toLowerCase() ?? '';
-  const selected = new Set(doc.jobs.filter(job => job.status === 'BLOCKED' && job.claims.at(-1)?.finishedAt &&
+  const only = options.ids && new Set(options.ids);
+  const selected = new Set(doc.jobs.filter(job => isFailedJob(job) && (!only || only.has(job.id)) &&
     (!options.since || Date.parse(job.claims.at(-1)!.finishedAt!) >= Date.parse(options.since)) &&
     [job.id, job.repo, job.scope, job.acceptance, job.blockedReason ?? ''].join(' ').toLowerCase().includes(query)).map(job => job.id));
   if (mode === 'replay_failed_and_dependents') {
