@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { CROSS_CHANNEL_WINDOW_MS, decideCrossChannelMerge, normalizeForDedupe } from './cross-channel-dedupe.js';
 import { addInboxSource, appendInboxEntry, INBOX_MAX_CHARS, readRecentChannelEntries, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
 import { publishChannelEnvelope, type ChannelPublishState } from './channel-bus-publish.js';
+import { maybeIngestForum } from './forum-channel-ingest.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export type { ChannelPublishState } from './channel-bus-publish.js';
@@ -131,6 +132,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
         else await markPublished(seen, () => {});
       } catch { /* Mirroring cannot invalidate durable acceptance. */ }
     }
+    if (status === 'accepted') await maybeIngestForum(envelope);
     if (options.acknowledge) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {

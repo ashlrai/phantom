@@ -117,7 +117,7 @@ vi.mock('../src/core/comms/requests.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
+import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 import { nativeToolDefs, callNativeTool } from '../src/core/mcp-native.js';
 
 // ---------------------------------------------------------------------------
@@ -167,8 +167,8 @@ function resultJson(r: { content: { type: 'text'; text: string }[] }): unknown {
 // ---------------------------------------------------------------------------
 
 describe('M169 native tool registration', () => {
-  it('total native tool count is now 35', () => {
-    expect(nativeToolDefs()).toHaveLength(35);
+  it('total native tool count is now 49', () => {
+    expect(nativeToolDefs()).toHaveLength(49);
   });
 
   const newTools = ['ashlr_north_star', 'ashlr_self_heal', 'ashlr_racing', 'ashlr_comms'];

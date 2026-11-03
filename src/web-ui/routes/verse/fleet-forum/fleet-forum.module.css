@@ -1,0 +1,7 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.header, .message, .purpose, .meta { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.channels, .posts, .commitments { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.channels { flex-direction: row; flex-wrap: wrap; }
+.channel, .post, .commitment { min-width: 0; overflow-wrap: anywhere; }
+.channel { border: 0; background: transparent; color: var(--text-primary); font: inherit; text-align: left; padding: 0; }
+.body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

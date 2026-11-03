@@ -9,6 +9,62 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
   ],
   "native": [
     {
+      "name": "phantom_agent_bus_read",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_agent_bus_status",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_agent_bus_post",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_forum",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_drop_job",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_job_reassign",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_planner_run",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_apps_ensure",
+      "safety": "append",
+    },
+    {
+      "name": "phantom_fleet_apps_changes",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_status",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_apps_await",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_orders",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_graph",
+      "safety": "read",
+    },
+    {
+      "name": "phantom_fleet_session",
+      "safety": "read",
+    },
+    {
       "name": "phm_proactive_agents_list",
       "safety": "read",
     },
@@ -165,6 +221,426 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
 
 exports[`native MCP tool inventory > preserves the complete input schema contract for every listed tool 1`] = `
 [
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_agent_bus_read",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_agent_bus_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {},
+        "from": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\x21-\\x7e]+$",
+          "type": "string",
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\x21-\\x7e]+$",
+          "type": "string",
+        },
+        "priority": {
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3",
+          ],
+          "type": "string",
+        },
+        "to": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\x21-\\x7e]+$",
+          "type": "string",
+        },
+        "ttl": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "priority",
+        "ttl",
+        "body",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_agent_bus_post",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string",
+        },
+        "author": {
+          "type": "string",
+        },
+        "body": {
+          "type": "string",
+        },
+        "channel": {
+          "type": "string",
+        },
+        "clientId": {
+          "type": "string",
+        },
+        "id": {
+          "type": "string",
+        },
+        "kind": {
+          "type": "string",
+        },
+        "limit": {
+          "type": "number",
+        },
+        "member": {
+          "type": "string",
+        },
+        "op": {
+          "enum": [
+            "channels",
+            "read",
+            "post",
+            "reply",
+            "commitments",
+            "sweep",
+            "standup",
+            "invite",
+            "bridge",
+            "tick",
+          ],
+          "type": "string",
+        },
+        "parent": {
+          "type": "string",
+        },
+        "runsDir": {
+          "type": "string",
+        },
+        "signature": {
+          "type": "string",
+        },
+        "thread": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "op",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_forum",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "maxLength": 7800,
+          "minLength": 1,
+          "type": "string",
+        },
+        "id": {
+          "pattern": "^[A-Z0-9]{3,40}$",
+          "type": "string",
+        },
+        "lane": {
+          "enum": [
+            "claude",
+            "codex-personal",
+            "devin",
+            "codex-local",
+          ],
+          "type": "string",
+        },
+        "tier": {
+          "enum": [
+            "frontier",
+            "work",
+            "mid",
+            "fast",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+        "lane",
+        "tier",
+        "body",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_drop_job",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "job",
+          ],
+        },
+        {
+          "required": [
+            "fromLane",
+          ],
+        },
+      ],
+      "properties": {
+        "dryRun": {
+          "type": "boolean",
+        },
+        "fromLane": {
+          "pattern": "^[a-z0-9-]{1,40}$",
+          "type": "string",
+        },
+        "job": {
+          "pattern": "^[A-Za-z0-9._-]{3,80}$",
+          "type": "string",
+        },
+        "lane": {
+          "pattern": "^[a-z0-9-]{1,40}$",
+          "type": "string",
+        },
+        "reason": {
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$",
+          "type": "string",
+        },
+        "tier": {
+          "enum": [
+            "frontier",
+            "work",
+            "mid",
+            "fast",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "lane",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_job_reassign",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "maxLength": 200,
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_planner_run",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "timeoutMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "apps",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_ensure",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "durationMs": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "intervalMs": {
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "durationMs",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_changes",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "items": {
+            "enum": [
+              "Phantom",
+              "Codex",
+              "Claude",
+              "Grok Bot",
+              "ChatGPT",
+              "Cursor",
+              "Safari",
+              "Google Chrome",
+            ],
+            "type": "string",
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true,
+        },
+        "intervalMs": {
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer",
+        },
+        "target": {
+          "enum": [
+            "running",
+            "stopped",
+          ],
+          "type": "string",
+        },
+        "timeoutMs": {
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "apps",
+      ],
+      "type": "object",
+    },
+    "name": "phantom_fleet_apps_await",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "unservedOnly": {
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_orders",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_fleet_graph",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_fleet_session",
+  },
   {
     "inputSchema": {
       "additionalProperties": false,
