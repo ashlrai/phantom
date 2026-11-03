@@ -34,7 +34,7 @@ export async function run(args: string[], deps: Dependencies = {}): Promise<numb
   }
   const id = args[1];
   if (args.length !== 2 || args[0] !== '--node' || !id || id !== id.trim()
-    || id.length > 160 || id.startsWith('-') || /[\x00-\x1f\x7f-\x9f]/.test(id)) {
+    || id.length > 160 || id.startsWith('-') || Array.from(id).some(char => char.charCodeAt(0) <= 0x1f || (char.charCodeAt(0) >= 0x7f && char.charCodeAt(0) <= 0x9f))) {
     return fail('GRAPH_USAGE', 'Expected --node followed by a valid ID. Use --help for usage.', 2);
   }
   try {
