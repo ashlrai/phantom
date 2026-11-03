@@ -9,6 +9,7 @@ import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import { collectLane, normalizeReport, reportNames } from '../scripts/ci-qualification-lane.mjs';
 import { bindSource } from '../scripts/ci-source-binding.mjs';
+import { classifyLane } from '../scripts/ci-site-lane.mjs';
 
 function fixture(t) {
   const parent = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'ashlr-ci-lane-fixture-')));
@@ -141,6 +142,26 @@ test('behind PR binds to the event merge of pinned base and head', (t) => {
   const bound = bindSource({ root: f.root, candidate: prHead, eventSha: merge, eventBase: base, eventHead: prHead });
   assert.equal(bound.revision, prHead); assert.equal(bound.eventSha, merge); assert.equal(bound.eventBase, base);
   assert.equal(bound.eventTree, f.git(['rev-parse', `${merge}^{tree}`]));
+});
+
+test('blobless checkout preserves behind PR binding and full lane classification', (t) => {
+  const { f, base, prHead } = behindFixture(t);
+  const merge = syntheticMerge(f, base, prHead);
+  f.git(['update-ref', 'refs/pull/1/merge', merge]);
+  f.git(['config', 'uploadpack.allowFilter', 'true']);
+  const root = join(f.parent, 'filtered');
+  execFileSync('git', ['clone', '--quiet', '--no-checkout', '--filter=blob:none',
+    `file://${f.root}`, root], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const git = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  assert.equal(git(['config', '--get', 'remote.origin.partialclonefilter']), 'blob:none');
+  const missing = git(['rev-list', '--objects', '--all', '--missing=print']);
+  assert.match(missing, /^\?[a-f0-9]{40}$/m);
+  git(['checkout', '--quiet', '--detach', prHead]);
+  const bound = bindSource({ root, candidate: prHead, eventSha: merge, eventBase: base, eventHead: prHead });
+  assert.equal(bound.eventTree, f.git(['rev-parse', `${merge}^{tree}`]));
+  assert.equal(classifyLane({ cwd: root, base, head: prHead, eventName: 'pull_request' }), 'full');
+  assert.equal(git(['rev-parse', 'HEAD']), prHead);
 });
 
 test('behind PR without event base and head still refuses', (t) => {
