@@ -7,10 +7,30 @@ import { readAppsRecoveryHistory } from '../core/fleet/apps-recovery-history.js'
 const usage = 'Usage: ashlr fleet apps-follow --duration-ms <1..300000> [--root <dir>] [--after <cursor> | --checkpoint <path>] [--invocation-id <uuid>] [--until-summary] [--interval-ms <100..60000>] [--max-events <1..1000>] --jsonl';
 type Deps = {
   reader?: typeof readAppsRecoveryHistory;
+  emit?: (line: string) => void | Promise<void>;
   now?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
 };
+
+function stdoutLine(line: string, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const fail = (error: Error): void => { cleanup(); reject(error); };
+    const cleanup = (): void => { process.stdout.off('error', fail); signal.removeEventListener('abort', cleanup); };
+    process.stdout.once('error', fail);
+    signal.addEventListener('abort', cleanup, { once: true });
+    try {
+      process.stdout.write(line + '\n', error => {
+        if (error) reject(error); else resolve();
+        // A stream can emit its error after invoking the write callback.
+        setImmediate(cleanup);
+      });
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  });
+}
 
 export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
@@ -47,6 +67,28 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
   const reader = deps.reader ?? readAppsRecoveryHistory, now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
   const deadline = now() + duration;
+  // Use the existing invocation deadline for each pending write, including the summary.
+  const deliver = async (line: string, summary = false): Promise<boolean> => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let abort: (() => void) | undefined;
+    let settled = false;
+    try {
+      const stopped = new Promise<false>(resolve => {
+        timer = setTimeout(() => resolve(false), deps.signal?.aborted ? 0 : Math.max(0, deadline - now()));
+        if (!summary && deps.signal) {
+          abort = () => resolve(false);
+          deps.signal.addEventListener('abort', abort, { once: true });
+          if (deps.signal.aborted) abort();
+        }
+      });
+      return await Promise.race([Promise.resolve().then(() => deps.emit ? deps.emit(line) : stdoutLine(line, controller.signal)).then(() => { settled = true; return true; }, () => { settled = true; return false; }), stopped]);
+    } finally {
+      if (!settled) controller.abort();
+      if (timer !== undefined) clearTimeout(timer);
+      if (abort) deps.signal?.removeEventListener('abort', abort);
+    }
+  };
   let delivered = 0, outcome: unknown, reason: 'deadline' | 'event_limit' | 'cancelled' | 'unavailable' | 'invalid_cursor' | 'invocation_finished';
   for (;;) {
     if (deps.signal?.aborted) { reason = 'cancelled'; break; }
@@ -55,7 +97,10 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
     if (page.availability !== 'available') { reason = page.availability === 'invalid-cursor' ? 'invalid_cursor' : 'unavailable'; break; }
     let finished = false;
     for (const event of page.events) {
-      console.log(JSON.stringify({ type: 'event', event })); delivered++;
+      if (!await deliver(JSON.stringify({ type: 'event', event }))) {
+        console.error('error: unable to deliver event'); return 1;
+      }
+      delivered++;
       if (seen.has('--until-summary') && event.invocationId === invocationId && event.kind === 'apps-watch.summary.v1') {
         after = event.cursor as number; outcome = event.outcome; finished = true; break;
       }
@@ -74,6 +119,8 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
     try { await sleep(Math.min(interval, remaining), deps.signal); }
     catch (error) { if (!deps.signal?.aborted) throw error; }
   }
-  console.log(JSON.stringify({ type: 'summary', reason, delivered, nextCursor: after, ...(reason === 'invocation_finished' ? { outcome } : {}) }));
+  if (!await deliver(JSON.stringify({ type: 'summary', reason, delivered, nextCursor: after, ...(reason === 'invocation_finished' ? { outcome } : {}) }), true)) {
+    console.error('error: unable to deliver summary'); return 1;
+  }
   return reason === 'invalid_cursor' ? 2 : reason === 'unavailable' || outcome === 'failed' ? 1 : 0;
 }
