@@ -130,11 +130,6 @@ export const VERSE_CLI_PIN_SOURCE = 'src/core/resources/claude-account-usage.ts'
 // Pure derivation — free, and the default
 // ---------------------------------------------------------------------------
 
-/** Providers whose usage probe is pinned to an exact CLI build. */
-const PINNED_VERSION: Partial<Record<VerseAccountProvider, string>> = {
-  claude: VERSE_CLAUDE_USAGE_PINNED_VERSION,
-};
-
 /** One measured version reading. The only shape the probe is allowed to emit. */
 export interface VerseCliVersionReading {
   /** Recognised numeric version, or null when the output was not recognised. */
@@ -147,7 +142,9 @@ function deriveOne(
   record: VerseAccountRecord,
   reading: VerseCliVersionReading | undefined,
 ): VerseAccountCliHealth {
-  const pinnedVersion = PINNED_VERSION[record.provider] ?? null;
+  // Accounts can reach this module through the web API during initialization.
+  // Read its display constant only when deriving health, after imports settle.
+  const pinnedVersion = record.provider === 'claude' ? VERSE_CLAUDE_USAGE_PINNED_VERSION : null;
 
   // The collector's verbatim reason is the free drift signal: the usage probe
   // emits exactly this code when `--version` did not match the pin.
