@@ -869,7 +869,13 @@ export async function phantomGateway(options, env, box) {
   } else mkdirSync(project, { recursive: true });
 
   const checks = [];
-  const write = await run(options.phm, ['mcp', 'ecosystem', '--write', '--json'], { env: gwEnv, cwd: project, timeoutMs: 30_000 });
+  // Discovery scans every PATH directory and refuses distinct same-name binaries.
+  // Keep npm bootstrap wrappers and host installations out of this probe. Node is
+  // needed by the published phm launcher, but its directory may also hold companions.
+  symlinkSync(process.execPath, join(bin, 'node'));
+  const write = await run(options.phm, ['mcp', 'ecosystem', '--write', '--json'], {
+    env: { ...gwEnv, PATH: bin }, cwd: project, timeoutMs: 30_000,
+  });
   // Published Phantom versions before ecosystem JSON support ignore --json.
   // Verify the persisted registration instead of parsing human output.
   const settingsPath = join(env.ASHLR_HOME, 'settings.json');
