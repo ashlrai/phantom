@@ -39,6 +39,10 @@ import {
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
 import { loadConfig } from './config.js';
 import { loadGatewayPolicy, checkGatewayPolicy } from './mcp-gateway-policy.js';
+import {
+  endGatewaySession, isGatewaySessionAllowed, recordGatewayActivity, registerGatewaySession, rotateGatewayActivity,
+  type GatewayVerdict,
+} from './gateway-sessions.js';
 import { toolCachePath, readToolCache, writeToolCache } from './mcp-tool-cache.js';
 import { withToolEnv } from './env-bridge.js';
 import { withHeal, defaultHealPolicy } from './run/self-heal.js';
@@ -641,6 +645,13 @@ export async function startGateway(
   refuseSharedJobGateway();
   const policy = loadGatewayPolicy();
   const identity = { agent: process.env.ASHLR_MCP_AGENT, groups: (process.env.ASHLR_MCP_GROUPS ?? '').split(',').filter(Boolean) };
+  // Registration is best effort; once it succeeds, revoking the id blocks the next call.
+  let session: { id: string } | undefined;
+  try { rotateGatewayActivity(); session = registerGatewaySession(identity); } catch { /* read-only home: run without a revoke switch */ }
+  const caller = identity.agent ?? 'unknown';
+  const audit = (tool: string, verdict: GatewayVerdict, args: unknown): void => {
+    if (session) recordGatewayActivity({ session: session.id, caller, tool, verdict, args });
+  };
   let gatewayCfg: ReturnType<typeof loadConfig> | undefined;
   try { gatewayCfg = loadConfig(); } catch { /* non-fatal; retain narrow child env */ }
 
@@ -792,9 +803,20 @@ export async function startGateway(
   server.setRequestHandler(CallToolRequestSchema, unknownToolAsInvalidParams(async (request) => {
     assertUsable();
     const requested = request.params.name;
-    if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
+    if (session && !isGatewaySessionAllowed(session.id)) {
+      audit(requested, 'revoked', request.params.arguments);
+      return { isError: true, content: [{ type: 'text', text: `Session ${session.id} was revoked. Start a new gateway session.` }] };
+    }
+    if (isNativeTool(requested)) {
+      audit(requested, 'allow', request.params.arguments);
+      return callNativeTool(requested, request.params.arguments ?? {});
+    }
     const blocked = checkGatewayPolicy(policy, identity, requested);
-    if (blocked) return { isError: true, content: [{ type: 'text', text: blocked }] };
+    if (blocked) {
+      audit(requested, blocked.endsWith('approval_required') ? 'approval_required' : 'deny', request.params.arguments);
+      return { isError: true, content: [{ type: 'text', text: blocked }] };
+    }
+    audit(requested, 'allow', request.params.arguments);
     let route = routes.get(requested);
     if (route?.downstream.lazy) {
       const d = route.downstream;
@@ -887,5 +909,6 @@ export async function startGateway(
     await finished;
   } finally {
     await closeAll();
+    if (session) endGatewaySession(session.id);
   }
 }
