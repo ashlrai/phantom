@@ -96,6 +96,7 @@ describe('M30 CI workflow', () => {
     expect(classifier).toContain('run: node .github/scripts/ci-site-lane.mjs');
     expect(classifier).toContain('run: node .github/scripts/ci-source-binding.mjs');
     expect(classifier).toContain('fetch-depth: 0');
+    expect(classifier).toContain('filter: blob:none');
     expect(site).toContain('run: node .github/scripts/ci-source-binding.mjs');
     expect(site).toContain('run: node --test .github/tests/ci-site-lane.test.mjs');
     expect(site).toContain('run: npm run test:ci -- test/site-ecosystem-smoke.test.ts');
@@ -153,12 +154,13 @@ describe('M30 CI workflow', () => {
     for (const event of ['pull_request', 'merge_group']) {
       expect(execute(event, 'full', { ...ok, quick: 'success' })).not.toThrow();
       expect(execute(event, 'site', { ...ok, quick: 'success' })).not.toThrow();
-      expect(execute(event, 'docs', ok)).not.toThrow();
-      expect(execute(event, 'docs', { ...ok, quick: 'success' })).toThrow();
+      expect(execute(event, 'docs', ok)).toThrow();
+      expect(execute(event, 'docs', { ...ok, quick: 'success' })).not.toThrow();
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
         expect(execute(event, 'full', { ...ok, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...ok, 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...ok, quick: 'success', 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
         expect(execute(event, 'full', { ...ok, quick: outcome }), `quick ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...ok, quick: outcome }), `docs quick ${outcome}`).toThrow();
         expect(execute(event, 'full', { ...ok, quick: 'success', classify: outcome })).toThrow();
       }
       for (const name of ['site', 'docs', ...full]) {
@@ -248,11 +250,13 @@ describe('M30 CI workflow', () => {
         expect(oses, `${id} must stay on Linux`).toEqual(['ubuntu-latest']);
       }
     }
-    // The required gate always reports; the build step runs for every lane but docs.
+    // Classification cannot serialize or suppress the longest fast job.
+    expect(jobs.quick!.needs).toBeUndefined();
+    // The required gate and typecheck report for every PR and merge queue lane.
     for (const event of fastEvents) {
       for (const lane of lanes) {
         expect(evaluateIf(jobs['merge-gate']!.if, event, lane)).toBe(true);
-        expect(evaluateIf(jobs.quick!.if, event, lane)).toBe(lane !== 'docs');
+        expect(evaluateIf(jobs.quick!.if, event, lane)).toBe(true);
       }
     }
     // The reusable release call arrives under the caller's push event: `ci`

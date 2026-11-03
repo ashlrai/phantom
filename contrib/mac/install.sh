@@ -9,7 +9,7 @@
 # Live files are sha-pinned by Security (G1-CODE-PIN / GS_SHA): re-pin the sha256 values printed here before the next tick.
 set -u
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-FILES="dispatchd.py restock.py launch_precheck.py install-gate.py launch-gate.sh"
+FILES="dispatchd.py local_job.py restock.py launch_precheck.py install-gate.py launch-gate.sh"
 bin=${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}; dry=0; json=0
 while [ $# -gt 0 ]; do
   case $1 in
