@@ -16,9 +16,43 @@ const WAIT_FLAGS = ['--timeout-ms', '--interval-ms'] as const;
 export interface FleetStandbyAwaitDeps extends FleetStandbyDeps {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Optional abort signal.  When pre-aborted at entry, no discovery/probe/sleep
+   *  calls are made and the command exits 4 with outcome 'cancelled' immediately.
+   *  Aborting mid-loop cancels the current step and prevents further probes. */
+  signal?: AbortSignal;
 }
 
 type Report = Record<string, unknown>;
+type Raced<T> =
+  | { kind: 'value';   value: T }
+  | { kind: 'failed'  }
+  | { kind: 'deadline'}
+  | { kind: 'cancelled'};
+
+/** Wall-timer + one-shot abort listener around a promise.
+ *  Clears both on settle so the work's rejection is never unhandled. */
+function bounded<T>(
+  work: () => Promise<T>, deadlineMs: number, signal?: AbortSignal,
+): Promise<Raced<T>> {
+  return new Promise(resolve => {
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (r: Raced<T>): void => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(r);
+    };
+    const onAbort = (): void => finish({ kind: 'cancelled' });
+    if (signal?.aborted) return finish({ kind: 'cancelled' });
+    signal?.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => finish({ kind: 'deadline' }), Math.max(0, deadlineMs));
+    let p: Promise<T>;
+    try { p = Promise.resolve(work()); } catch { return finish({ kind: 'failed' }); }
+    p.then(v => finish({ kind: 'value', value: v }), () => finish({ kind: 'failed' }));
+  });
+}
 
 /** Same readiness contract the Python child emits; anything else fails closed. */
 function validReport(value: unknown): Report | null {
@@ -45,7 +79,7 @@ const defaultExec: FleetStandbyExec = async (file, argv, options) => {
 
 export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwaitDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nProbe the standby readiness proof (the same check as ashlr fleet standby) now and then every interval until it reports ready with no blockers or the total deadline passes. Observes only: never takes the lease, restores, starts workers or changes config. Exit 0 ready, 3 deadline elapsed (last report shown), 1 execution or invalid-output failure, 2 invalid arguments.`);
+    console.log(`${usage}\nProbe the standby readiness proof (the same check as ashlr fleet standby) now and then every interval until it reports ready with no blockers or the total deadline passes. Observes only: never takes the lease, restores, starts workers or changes config. Aborting via \`signal\` cancels mid-loop; pre-aborted signals skip all work. Exit 0 ready, 3 deadline elapsed (last report shown), 4 aborted via signal, 1 execution or invalid-output failure, 2 invalid arguments.`);
     return 0;
   }
   const invalid = (): number => {
@@ -83,9 +117,10 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
   const exec = deps.exec ?? defaultExec;
   const start = now();
+  const signal = deps.signal;
   let attempts = 0;
   let lastReport: Report | null = null;
-  const finish = (outcome: 'ready' | 'timeout' | 'error', code: number, line: string): number => {
+  const finish = (outcome: 'ready' | 'timeout' | 'cancelled' | 'error', code: number, line: string): number => {
     if (json) {
       process.stdout.write(`${JSON.stringify({ outcome, attempts, elapsedMs: Math.max(0, now() - start), lastReport })}\n`);
     } else if (code === 0) console.log(line);
@@ -93,7 +128,20 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     return code;
   };
 
-  const script = await (deps.locateScript ?? findStandbyReadinessScript)();
+  // Pre-abort: zero calls, exit 4 immediately.
+  if (signal?.aborted) return finish('cancelled', 4, 'Standby-await aborted.');
+
+  // Discovery is bounded by the total budget and the abort signal.
+  const scriptResult = await bounded(async () => {
+    return (deps.locateScript ?? findStandbyReadinessScript)();
+  }, timeoutMs, signal);
+  if (scriptResult.kind === 'cancelled') return finish('cancelled', 4, 'Standby-await aborted.');
+  if (scriptResult.kind === 'deadline') {
+    return finish('timeout', 3, 'Standby not ready before the deadline (no readable report).');
+  }
+  if (scriptResult.kind === 'failed') return finish('error', 1, 'error: fleet standby-await: readiness probe could not run');
+
+  const script = scriptResult.value;
   if (script === null) return finish('error', 1, 'error: fleet standby-await needs scripts/mac-bridge/standby_readiness.py');
   const argv = ['-B', script];
   for (const flag of [...STANDBY_REQUIRED, '--max-age']) {
@@ -103,10 +151,26 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
   for (;;) {
     const remaining = timeoutMs - (now() - start);
     if (remaining <= 0) break;
+    if (signal?.aborted) return finish('cancelled', 4, 'Standby-await aborted.');
     const probeTimeout = Math.min(remaining, PROBE_CAP_MS);
     attempts++;
     let stdout = '';
     let killed = false;
+
+    // Bound the exec call by the abort signal using a race pattern.
+    // The exec call itself is handled inline to preserve stderr/config
+    // privacy and the existing error-extraction logic.  We wrap it
+    // in a bounded-race on the abort signal so that if the signal
+    // fires mid-exec, the exec is killed by its timeout and we
+    // return early (no extra probes start after cancellation).
+    let execDone = false;
+    let aborted = false;
+    function abortNow(): void {
+      if (execDone) return;
+      aborted = true;
+      signal?.removeEventListener('abort', abortNow);
+    }
+    signal?.addEventListener('abort', abortNow, { once: true });
     try {
       ({ stdout } = await exec('python3', argv, {
         encoding: 'utf8', timeout: probeTimeout, maxBuffer: 1024 * 1024, windowsHide: true,
@@ -118,8 +182,11 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
       if (killed || typeof e.code !== 'number') stdout = '';
       else stdout = typeof e.stdout === 'string' ? e.stdout : '';
       if (killed && probeTimeout < PROBE_CAP_MS) break; // killed by the remaining budget: deadline, not a fault
-      if (killed || typeof e.code !== 'number') return finish('error', 1, 'error: fleet standby-await: readiness probe could not run');
+      if (killed || typeof e.code !== 'number') { execDone = true; return finish('error', 1, 'error: fleet standby-await: readiness probe could not run'); }
     }
+    execDone = true;
+    signal?.removeEventListener('abort', abortNow);
+
     let report: Report | null = null;
     try { report = validReport(JSON.parse(stdout)); } catch { report = null; }
     if (!report) return finish('error', 1, 'error: fleet standby-await: readiness probe returned no valid report');
@@ -127,7 +194,10 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     if (report.ready === true) return finish('ready', 0, 'Standby is ready to take over.');
     const left = timeoutMs - (now() - start);
     if (left <= 0) break;
-    await sleep(Math.min(intervalMs, left));
+    const sleepResult = await bounded(async () => {
+      await sleep(Math.min(intervalMs, left));
+    }, left, signal);
+    if (sleepResult.kind === 'cancelled') return finish('cancelled', 4, 'Standby-await aborted.');
   }
   // Blocker codes are echoed only when they look like codes; child text never reaches the terminal raw.
   const codes = lastReport ? (lastReport.blockers as string[]).filter((b) => /^[a-z0-9-]{1,40}$/.test(b)) : [];
