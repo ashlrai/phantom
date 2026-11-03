@@ -299,6 +299,20 @@ const TOOLS: NativeToolImpl[] = [
     }),
   },
   {
+    name: 'phantom_fleet_apps_history',
+    description: 'Read retained app recovery observations and summaries without starting a watcher.',
+    inputSchema: { type: 'object', properties: {
+      after: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0 },
+      limit: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
+      invocationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
+    }, additionalProperties: false },
+    safety: 'read',
+    handler: async args => (await import('./fleet/apps-recovery-history.js')).readAppsRecoveryHistory(
+      process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
+      (args.after as number | undefined) ?? 0, (args.limit as number | undefined) ?? 25, args.invocationId as string | undefined,
+    ),
+  },
+  {
     name: 'phantom_fleet_apps_changes',
     description: 'Observe selected local managed app state changes within a bounded deadline.',
     get inputSchema() { return { type: 'object', properties: {
@@ -1365,7 +1379,7 @@ function auditNativeCall(summary: string, result: 'ok' | 'refused' | 'error'): v
  * surface as isError text results. Every outcome is audited.
  */
 export async function callNativeTool(name: string, rawArgs: unknown): Promise<NativeToolResult> {
-  const fleetObservation = name === 'phantom_fleet_graph' || name === 'phantom_fleet_session' || name === 'phantom_fleet_apps_status' || name === 'phantom_fleet_apps_changes';
+  const fleetObservation = name === 'phantom_fleet_graph' || name === 'phantom_fleet_session' || name === 'phantom_fleet_apps_status' || name === 'phantom_fleet_apps_changes' || name === 'phantom_fleet_apps_history';
   const tool = TOOLS.find((t) => t.name === name);
   const args: Record<string, unknown> =
     rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
@@ -1373,7 +1387,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       : {};
   const argKeys = Object.keys(args).sort().join(',') || '(none)';
 
-  if (fleetObservation && name !== 'phantom_fleet_apps_changes' && (Object.keys(args).length > 0 ||
+  if (fleetObservation && name !== 'phantom_fleet_apps_changes' && name !== 'phantom_fleet_apps_history' && (Object.keys(args).length > 0 ||
     (name === 'phantom_fleet_apps_status' && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs))))) {
     auditNativeCall(`${name} — invalid observation arguments`, 'error');
     return textResult({ error: 'Fleet observation tools accept no arguments' }, true);
@@ -1395,6 +1409,13 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       auditNativeCall(`${tool.name} keys=${argKeys} — bus validation unavailable`, 'error');
       return textResult({ error: 'Bus validation unavailable' }, true);
     }
+  } else if (name === 'phantom_fleet_apps_history') {
+    invalid = rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs) ||
+      Object.keys(args).some(key => !['after', 'limit', 'invocationId'].includes(key)) ||
+      ('after' in args && (!Number.isSafeInteger(args.after) || (args.after as number) < 0)) ||
+      ('limit' in args && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100)) ||
+      ('invocationId' in args && (typeof args.invocationId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.invocationId)))
+      ? 'invalid fleet apps history arguments' : null;
   } else if (name === 'phantom_fleet_apps_changes') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const apps = args.apps;
