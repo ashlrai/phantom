@@ -9,6 +9,7 @@
  *      the planner step's decision in the same pass.
  *   2. lane-autohold  — places the bounded burning-lane holds.
  *   3. planner-tick   — the autorun decision over the post-release picture.
+ *   4. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -27,12 +28,14 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick';
-/** Fixed execution order — release first so the planner sees freed slots. */
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'landed-sweep';
+/** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
   'lane-autohold',
   'planner-tick',
+  // Last: the slowest step (gh + git reads) must never delay release or the planner.
+  'landed-sweep',
 ];
 /** Lock path relative to the runs dir, under the queue/ directory. */
 export const SELF_TICK_LOCK = 'queue/self-tick.lock';
@@ -76,7 +79,7 @@ export interface RunSelfTickOptions {
   /** Resolved absolute runs dir; the lock and every step share it. */
   runsDir: string;
   now?: () => number;
-  /** The three step seams, keyed by step name. */
+  /** The step seams, keyed by step name. */
   steps: SelfTickSteps;
   /** Lock seam; defaults to the local-store lock on queue/self-tick.lock. */
   acquireLock?: (path: string) => LocalStoreLockAcquireResult;
