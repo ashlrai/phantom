@@ -22,6 +22,16 @@ interface AppsView {
   available: boolean;
   apps: Array<{ app: string; running: boolean | null; checkedAt: string }>;
 }
+const UNAVAILABLE = { code: 'unavailable', error: 'fleet apps unavailable' } as const;
+// Known script refusals (ok:false); anything else is reported as generic unavailable.
+const REFUSALS: Record<string, string> = {
+  permission_denied: 'app control permission required',
+  quit_timeout: 'app did not quit in time',
+  not_running: 'app is not running',
+  automatic_termination_denied: 'automatic termination denied',
+  unknown_action: 'unknown app action',
+  unknown_app: 'unknown app',
+};
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -98,9 +108,15 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     inFlight.add(app);
     try {
       const result = await run(script, body.action as string, body.app as string, 30_000);
-      if (typeof result.code !== 'string') throw new Error('unreadable result');
-      sendJson(res, 202, { app: body.app, action: body.action, code: result.code, at: new Date(now()).toISOString() });
-    } catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
+      if (result.ok === true && typeof result.code === 'string') {
+        sendJson(res, 202, { app: body.app, action: body.action, code: result.code, at: new Date(now()).toISOString() });
+      } else if (result.ok === false && typeof result.code === 'string' && Object.hasOwn(REFUSALS, result.code)) {
+        const needsMason = result.code === 'permission_denied' && result.needs_mason_written === true;
+        sendJson(res, 422, { code: result.code, error: REFUSALS[result.code], ...(needsMason ? { needsMason: true } : {}) });
+      } else if (result.ok === false && result.code === 'unavailable') {
+        sendJson(res, 503, UNAVAILABLE);
+      } else throw new Error('unreadable result');
+    } catch { sendJson(res, 503, UNAVAILABLE); }
     finally { inFlight.delete(app); cached = undefined; }
     return true;
   };
