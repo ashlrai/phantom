@@ -37,13 +37,18 @@ export function recordInboxAck(ledgerPath: string, entryId: string, status: 'ack
   appendFileSync(ledgerPath, `${JSON.stringify({ entryId, status, ...(reason ? { reason } : {}) })}\n`, { mode: 0o600 });
 }
 
+/** Phone remote, fleet page and desktop all read bus messages to `mason`; the stable id makes a retry a duplicate. */
+async function postBusAck(ack: InboxAck): Promise<void> {
+  const result = appendBusInbox({ id: `inbox-ack-${hash(ack.entryId).slice(0, 32)}`, from: 'planner', to: 'mason',
+    priority: 'P2', ttl: 7 * 24 * 60 * 60 * 1000, body: { kind: 'inbox-ack', channel: ack.channel, text: ack.text } });
+  if (result.status !== 'posted' && result.status !== 'duplicate') throw new Error('bus unavailable');
+}
+
 async function defaultSenders(root: string): Promise<InboxAckSenders> {
   const senders: InboxAckSenders = {
-    desktop: async ack => {
-      const result = appendBusInbox({ id: `inbox-ack-${hash(ack.entryId).slice(0, 32)}`, from: 'planner', to: 'mason',
-        priority: 'P2', ttl: 7 * 24 * 60 * 60 * 1000, body: { kind: 'inbox-ack', channel: ack.channel, text: ack.text } });
-      if (result.status !== 'posted' && result.status !== 'duplicate') throw new Error('bus unavailable');
-    },
+    desktop: postBusAck,
+    phone: postBusAck,
+    page: postBusAck,
     telegram: async ack => { postLeaderMessage({ channel: 'telegram', kind: 'update', text: ack.text }); },
   };
   const email = await readEmailDropConfig(root);
