@@ -11,6 +11,7 @@ import { inboxChannelSlug } from './inbox-channel-slug.js';
 export interface InboxEntry {
   id?: string;
   channel?: string;
+  alsoChannels?: string[];
   at: string;
   source: string;
   priority: string | null;
@@ -103,14 +104,16 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
     if (channel && date && Number.isFinite(date.getTime())) {
       finish();
       heading = undefined;
+      const also = parseInboxAlsoTag(channel[4]!, channel[2]!);
       channelEntry = {
         at: localTimestamp(date),
         channel: channel[2]!,
         ...(channel[3] ? { id: channel[3] } : {}),
         source: `${channel[2]}${channel[3] ? ` (${channel[3]})` : ''}`.slice(0, 80),
         priority: null,
+        ...(also ? { alsoChannels: also.channels } : {}),
       };
-      body = [channel[4]!];
+      body = [also ? also.text : channel[4]!];
     } else if (line.startsWith('## ')) {
       finish();
       channelEntry = undefined;
@@ -174,6 +177,16 @@ export async function readInboxEntries(opts: { runsDir?: string; limit?: number 
   } finally {
     await handle?.close().catch(() => undefined);
   }
+}
+
+/** Read the attribution prefix, retaining valid routes even when another token is bad. */
+export function parseInboxAlsoTag(text: string, primary: string): { text: string; channels: string[] } | null {
+  if (!text.startsWith('[also:')) return null;
+  const end = text.indexOf(']');
+  if (end < 0) return null;
+  const channels = text.slice(6, end).split(',').filter(token =>
+    /^[a-z0-9._-]{1,32}$/.test(token) && token !== primary);
+  return { text: text.slice(end + 1).replace(/^ /, ''), channels };
 }
 
 const INBOX_HEADING_START = /^## /;
