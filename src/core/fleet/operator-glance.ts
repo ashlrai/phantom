@@ -145,6 +145,35 @@ function resetPhrase(iso: string | null, nowMs: number): string {
   return `, resets in ${Math.round(hours / 24)} d`;
 }
 
+/** Repo names come from status files: drop control characters and clip. */
+function repoLabel(repo: string): string {
+  let flat = '';
+  for (const char of repo) {
+    if (char.charCodeAt(0) > 31 && char.charCodeAt(0) !== 127) flat += char;
+  }
+  flat = flat.trim();
+  return flat.length > 40 ? flat.slice(0, 40) : flat;
+}
+
+function nameList(names: readonly string[]): string {
+  const shown = names.slice(0, 3).join(', ');
+  return names.length > 3 ? `${shown} +${names.length - 3} more` : shown;
+}
+
+function guardianLine(rows: readonly GuardianGlanceRow[]): string {
+  const red = rows.filter((row) => row.state === 'red');
+  if (red.length > 0) {
+    return `Main red: ${nameList(red.map((row) => {
+      const name = repoLabel(row.repo);
+      if (row.openFixes <= 0) return name;
+      return `${name} (${row.openFixes} ${row.openFixes === 1 ? 'fix' : 'fixes'})`;
+    }))}.`;
+  }
+  const stale = rows.filter((row) => row.stale || row.state === 'unknown');
+  if (stale.length > 0) return `Main green; guardian stale on ${nameList(stale.map((row) => repoLabel(row.repo)))}.`;
+  return `Main is healthy (${rows.length} ${rows.length === 1 ? 'repo' : 'repos'}).`;
+}
+
 /** The same short text Telegram, email, and the phone show. */
 export function formatOperatorGlance(glance: OperatorGlance, nowMs = Date.now()): string {
   const running = glance.running === null || glance.target === null
@@ -154,7 +183,9 @@ export function formatOperatorGlance(glance: OperatorGlance, nowMs = Date.now())
     ? 'Usage unknown.'
     : `Usage ${glance.usagePct}%${resetPhrase(glance.resetsAt, nowMs)}.`;
   const merges = glance.mergesToday === null ? 'Merges unknown.' : `Merges ${glance.mergesToday} today.`;
-  const main = glance.main === 'up' ? 'Main is healthy.' : glance.main === 'down' ? 'Main needs you.' : 'Main health unknown.';
+  const main = Array.isArray(glance.guardian) && glance.guardian.length > 0
+    ? guardianLine(glance.guardian)
+    : glance.main === 'up' ? 'Main is healthy.' : glance.main === 'down' ? 'Main needs you.' : 'Main health unknown.';
   const incidents = glance.incidents.length > 0 ? `Incidents: ${glance.incidents.join('; ')}.` : '';
   return [running, usage, merges, main, incidents].filter(Boolean).join('\n');
 }
@@ -166,7 +197,17 @@ export function isOperatorGlance(value: unknown): value is OperatorGlance {
   return row.v === 1 && typeof row.at === 'string' && num(row.running) && num(row.target)
     && num(row.usagePct) && (row.resetsAt === null || typeof row.resetsAt === 'string')
     && num(row.mergesToday) && (row.main === 'up' || row.main === 'down' || row.main === 'unknown')
-    && Array.isArray(row.incidents) && row.incidents.every((item) => typeof item === 'string');
+    && Array.isArray(row.incidents) && row.incidents.every((item) => typeof item === 'string')
+    && (row.guardian === undefined || (Array.isArray(row.guardian) && row.guardian.every(isGuardianRow)));
+}
+
+function isGuardianRow(value: unknown): value is GuardianGlanceRow {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as GuardianGlanceRow;
+  return typeof row.repo === 'string' && (row.state === 'green' || row.state === 'red' || row.state === 'unknown')
+    && (row.ageMinutes === null || (typeof row.ageMinutes === 'number' && Number.isFinite(row.ageMinutes)))
+    && typeof row.openFixes === 'number' && Number.isSafeInteger(row.openFixes) && row.openFixes >= 0
+    && typeof row.stale === 'boolean';
 }
 
 /**
