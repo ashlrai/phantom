@@ -9,7 +9,7 @@ import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const execFileAsync = promisify(execFile);
-const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--max-recoveries <1..1000>] [--bus] [--json | --jsonl]';
+const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--attempt-timeout-ms <1..300000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--max-recoveries <1..1000>] [--bus] [--json | --jsonl]';
 export interface FleetAppsWatchDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
@@ -20,13 +20,13 @@ export interface FleetAppsWatchDeps {
 
 export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nFinite supervision delegates launch and refusal decisions to apps-ensure. The recovery cap is checked between cycles and cannot preempt an in-flight group.`);
+    console.log(`${usage}\nFinite supervision delegates launch and refusal decisions to apps-ensure. An attempt timeout records a failed observation and retries after the child settles. The recovery cap is checked between cycles and cannot preempt an in-flight group.`);
     return 0;
   }
   const invalid = (): number => { console.error(`error: invalid fleet apps-watch arguments\n${usage}`); return 2; };
   const apps: string[] = [];
   let duration = 0, interval = 1000, root: string | undefined, stopFile: string | undefined;
-  let maxRecoveries: number | undefined;
+  let maxRecoveries: number | undefined, attemptTimeout: number | undefined;
   let maxConsecutiveFailures = 1, json = false, jsonl = false, bus = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -36,7 +36,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       if (!apps.includes(arg)) apps.push(arg);
       continue;
     }
-    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--max-consecutive-failures', '--max-recoveries', '--json', '--jsonl', '--bus'].includes(arg) || seen.has(arg)) return invalid();
+    if (!['--duration-ms', '--interval-ms', '--attempt-timeout-ms', '--root', '--stop-file', '--max-consecutive-failures', '--max-recoveries', '--json', '--jsonl', '--bus'].includes(arg) || seen.has(arg)) return invalid();
     seen.add(arg);
     if (arg === '--bus') { bus = true; continue; }
     if (arg === '--json') { json = true; continue; }
@@ -58,6 +58,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     if (!/^[0-9]{1,9}$/.test(value)) return invalid();
     const n = Number(value);
     if (arg === '--duration-ms') { if (n < 1 || n > 300000) return invalid(); duration = n; }
+    else if (arg === '--attempt-timeout-ms') { if (n < 1 || n > 300000) return invalid(); attemptTimeout = n; }
     else { if (n < 100 || n > 60000) return invalid(); interval = n; }
   }
   if (!apps.length || !duration || (json && jsonl)) return invalid();
@@ -87,26 +88,28 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     s.addEventListener('abort', done, { once: true });
   }));
   let fileStopped = false, fileError = false;
-  const bounded = async <T>(ms: number, operation: (s: AbortSignal) => Promise<T>): Promise<{ stopped: boolean; value?: T }> => {
+  const bounded = async <T>(ms: number, operation: (s: AbortSignal) => Promise<T>, attempt = false): Promise<{ stopped: boolean; cause?: 'attempt' | 'duration' | 'cancelled' | 'file'; value?: T; settled?: Promise<void> }> => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let poll: ReturnType<typeof setTimeout> | undefined;
     let finished = false;
-    let stop!: () => void;
-    const stopped = new Promise<{ stopped: boolean }>(resolve => { stop = () => { controller.abort(); resolve({ stopped: true }); }; });
-    signal?.addEventListener('abort', stop, { once: true });
+    let stop!: (cause: 'attempt' | 'duration' | 'cancelled' | 'file') => void;
+    let settled: Promise<void> | undefined;
+    const stopped = new Promise<{ stopped: boolean; cause: 'attempt' | 'duration' | 'cancelled' | 'file'; settled?: Promise<void> }>(resolve => { stop = cause => { controller.abort(); resolve({ stopped: true, cause, settled }); }; });
+    const cancel = (): void => stop('cancelled');
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
       if (signal?.aborted || remaining() <= 0) return { stopped: true };
-      timer = setTimeout(stop, ms);
+      timer = setTimeout(() => stop(attempt && remaining() > 0 ? 'attempt' : 'duration'), ms);
       const checkFile = async (): Promise<boolean> => {
         if (!stopFile) return false;
         try {
           await stat(stopFile);
-          if (!finished) { fileStopped = true; stop(); }
+          if (!finished) { fileStopped = true; stop('file'); }
           return true;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-            if (!finished) { fileError = true; stop(); }
+            if (!finished) { fileError = true; stop('file'); }
             return true;
           }
           return false;
@@ -119,11 +122,15 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
           poll = setTimeout(() => { void watch(); }, 100);
         };
         if (stopFile) poll = setTimeout(() => { void watch(); }, 100);
-        try { return { stopped: false, value: await operation(controller.signal) }; }
+        try {
+          const pending = operation(controller.signal);
+          settled = pending.then(() => {}, () => {});
+          return { stopped: false, value: await pending };
+        }
         catch { return { stopped: false }; }
       };
       return await Promise.race([start(), stopped]);
-    } finally { finished = true; clearTimeout(timer); clearTimeout(poll); signal?.removeEventListener('abort', stop); }
+    } finally { finished = true; clearTimeout(timer); clearTimeout(poll); signal?.removeEventListener('abort', cancel); }
   };
   let published = 0, publicationFailures = 0;
   let publisher: ((event: AppsWatchEvent) => boolean) | undefined;
@@ -142,14 +149,17 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   let outcome: 'completed' | 'failed' | 'cancelled' = 'completed';
   let recoveryLimitReached = false;
   while (!signal?.aborted && remaining() > 0) {
-    const budget = Math.ceil(remaining());
+    const budget = Math.min(attemptTimeout ?? Infinity, Math.ceil(remaining()));
     lastDiagnostics = null;
+    lastObservedState = null;
     const result = await bounded(budget, s => {
-      lastObservedState = null;
       return runChild!(['fleet', 'apps-ensure', ...apps, '--json', ...(root === undefined ? [] : ['--root', root]), '--timeout-ms', String(budget)], { timeoutMs: budget, signal: s });
-    });
+    }, attemptTimeout !== undefined);
     if (signal?.aborted) break;
-    if (result.stopped || !result.value || remaining() <= 0) { outcome = 'failed'; break; }
+    if (result.cause === 'attempt') {
+      result.value = { code: null, stdout: JSON.stringify({ ok: false, apps: apps.map(app => ({ app, observedRunning: null, outcome: 'timeout', reason: 'deadline' })) }) };
+    }
+    if ((result.stopped && result.cause !== 'attempt') || !result.value || remaining() <= 0) { outcome = 'failed'; break; }
     cycles++;
     let report: { ok?: unknown; apps?: unknown } | null = null;
     try { report = JSON.parse(result.value.stdout) as { ok?: unknown; apps?: unknown } | null; } catch { /* Untrusted child output. */ }
@@ -182,8 +192,13 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
         outcome = 'failed';
       }
       if (maxRecoveries !== undefined && recoveries >= maxRecoveries) { recoveryLimitReached = true; outcome = 'failed'; break; }
+      if (outcome === 'failed') break;
+      if (result.cause === 'attempt' && result.settled) {
+        const waiting = await bounded(remaining(), async () => result.settled);
+        if (waiting.stopped || remaining() <= 0) { outcome = 'failed'; break; }
+      }
       const left = remaining();
-      if (outcome === 'failed' || left <= 0) break;
+      if (left <= 0) break;
       const pause = await bounded(left, s => sleep(Math.min(interval, left), s));
       if (pause.stopped) break;
       continue;
