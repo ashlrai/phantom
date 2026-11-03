@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -22,13 +23,16 @@ describe('inbox dispatch event timestamps', () => {
   ])('writes UTC for %s while keeping the inbox in Eastern time', async (_label, instant, eastern) => {
     const text = 'Shared context\nSecond line\n\nFinal line';
     const source = 'desktop';
-    const entry = `\n## ${eastern} ET (Mason, ${source}) PRIORITY P0\n${text}\n`;
+    const iso = new Date(instant).toISOString();
+    const id = `desk-${createHash('sha256').update(iso + text).digest('hex').slice(0, 16)}`;
+    const [firstLine, ...restLines] = text.split('\n');
+    const entry = `\n${[`${iso} [src:desktop id:${id}] ${firstLine}`, ...restLines].join('\n')}\n`;
     expect(await appendInboxEntry(text, { runsDir, source, now: () => new Date(instant) })).toEqual({
       ok: true, at: eastern, bytes: Buffer.byteLength(entry),
     });
     expect(await readFile(join(runsDir, 'leader', 'MASON-INBOX.md'), 'utf8')).toBe(entry);
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'healthy', entries: [
-      { at: eastern, source, priority: 'P0', text },
+      { at: eastern, source: `desktop (${id})`, priority: null, text },
     ] });
 
     const log = await readFile(join(runsDir, 'dispatch-events.log'), 'utf8');

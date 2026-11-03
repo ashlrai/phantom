@@ -220,6 +220,17 @@ describe('fleetDarkSince — the one "Fleet dark since" instant', () => {
 });
 
 describe('GET /api/verse/fleet/live — states', () => {
+  it('reports rolling 24h landings including those outside the 12h run list', async () => {
+    rows = [25, 24, 18, -1].map(hours => {
+      const rec = landing(`merge-${hours}`, 'merge', { landedAt: iso(hours * 60 * MIN) });
+      return row('merge:landed', rec, rec.landedAt);
+    });
+    const { snapshot } = await buildFleetLiveSnapshot();
+    expect(snapshot.merged24h?.map(record => record.id)).toEqual(['merge-24', 'merge-18']);
+    holdsReadable = false;
+    expect((await buildFleetLiveSnapshot()).snapshot.blockedHolds).toBeNull();
+  });
+
   it('is DARK with its own sentence when no standing grant is in force', async () => {
     const res = await get();
     expect(res.status).toBe(200);
