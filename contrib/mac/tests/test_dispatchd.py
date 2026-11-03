@@ -37,6 +37,10 @@ def build(slots=None, lanes_status=None, finishes=(), publishes=(), ready=(), qu
     stub = home / 'stubbin' / 'ps'   # sandboxed runs cannot exec ps; empty output marks nothing alive
     stub.write_text('#!/bin/bash\nexit 0\n')
     stub.chmod(0o755)
+    for command in ('memory_pressure', 'sysctl', 'lsof'):
+        stub = home / 'stubbin' / command
+        stub.write_text('#!/bin/bash\nexit 0\n')
+        stub.chmod(0o755)
     set_daemon_tick(home, 'now')   # RQ-LOADGATE-1: a healthy host by default: fresh daemon tick, load and ncpu pinned in tick()
     (r / 'LOADGATE_TEST').write_text('')
     rows = [json.dumps(m) for m in list(finishes) + list(publishes)]
@@ -75,7 +79,7 @@ def set_daemon_tick(home, value):
 def tick(home, env_extra=None):
     env = {'HOME': str(home),
            'PATH': str(Path(home) / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin'),
-           'LANG': 'C', 'LOADGATE_LOADAVG': '1.0', 'LOADGATE_NCPU': '18'}
+           'LANG': 'C', 'LOADGATE_LOADAVG': '1.0', 'LOADGATE_NCPU': '18', 'LOADGATE_PRESSURE': '1', 'LOADGATE_SWAP_GB': '0'}
     if env_extra:
         env.update(env_extra)
     return subprocess.run([sys.executable, '-B', str(SCRIPT)], env=env,
