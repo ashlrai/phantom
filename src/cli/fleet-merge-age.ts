@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { mergeAge, type MergeAgeInput } from '../core/fleet/merge-age.js';
 
 const usage = 'Usage: phm fleet merge-age --input <snapshot.json> [--json]\nRead-only queue age report. Snapshot: {prs:[{number,mergeable,reviewDecision}],queue:[{number,enteredAt,requiredChecks:[{name,status}]}]}. Checks describe the merge group; omitted data is unknown. No merge or queue changes.';
-function valid(value: unknown): value is MergeAgeInput {
+export function validMergeAgeInput(value: unknown): value is MergeAgeInput {
   if (!value || typeof value !== 'object') return false;
   const { prs, queue } = value as MergeAgeInput;
   const number = (n: unknown) => Number.isSafeInteger(n) && Number(n) > 0;
@@ -25,7 +25,7 @@ export async function cmdFleetMergeAge(args: string[]): Promise<number> {
   if (!path) { console.error(usage); return 2; }
   try {
     const input: unknown = JSON.parse(await readFile(path, 'utf8'));
-    if (!valid(input)) throw new Error('Invalid snapshot');
+    if (!validMergeAgeInput(input)) throw new Error('Invalid snapshot');
     console.log(JSON.stringify(mergeAge(input), null, json ? undefined : 2));
     return 0;
   } catch { console.error('error: unable to read valid merge-age snapshot; use --help for its shape'); return 1; }
