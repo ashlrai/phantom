@@ -66,11 +66,7 @@ const defaultExec: FleetAppExec = async (file, argv, options) =>
   execFileAsync(file, argv, options);
 
 export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDeps = {}): Promise<number> {
-  const clock = deps.now ?? (() => Date.now());
   const root = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  const exec = deps.exec ?? defaultExec;
-  const maxConcurrent = typeof deps.maxConcurrent === 'number' && deps.maxConcurrent > 0 ? deps.maxConcurrent : MAX_PROBES;
-  const totalDeadline = typeof deps.totalDeadline === 'number' && deps.totalDeadline > 0 ? deps.totalDeadline : TOTAL_MS;
 
   // Handle --help early.
   if (args.length > 0 && ['--help', '-h'].includes(args[0])) {
@@ -112,6 +108,19 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
     }
   }
 
+  const view = await readFleetAppsStatus({ ...deps, runsDir: parsedRoot });
+  formatAppsStatusResult(view, json);
+  return !view.available || view.degraded ? 1 : 0;
+}
+
+/** Acquire the same bounded inventory without writing to stdout. */
+export async function readFleetAppsStatus(deps: FleetAppsStatusDeps = {}): Promise<FleetAppsStatusView> {
+  const clock = deps.now ?? (() => Date.now());
+  const parsedRoot = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const exec = deps.exec ?? defaultExec;
+  const maxConcurrent = typeof deps.maxConcurrent === 'number' && deps.maxConcurrent > 0 ? deps.maxConcurrent : MAX_PROBES;
+  const totalDeadline = typeof deps.totalDeadline === 'number' && deps.totalDeadline > 0 ? deps.totalDeadline : TOTAL_MS;
+
   const wallDeadline = performance.now() + totalDeadline;
   const deadline = clock() + totalDeadline;
   const script = deps.locateScript ? deps.locateScript() :
@@ -126,8 +135,7 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
       available: false,
       apps: FLEET_APPS.map(app => ({ app, running: null, checkedAt: generatedAt })),
     };
-    formatAppsStatusResult(view, json);
-    return 1;
+    return view;
   }
 
   // Build rows: all apps present, defaulting to unknown.
@@ -189,6 +197,5 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
     apps,
   };
 
-  formatAppsStatusResult(view, json);
-  return hasUnknown ? 1 : 0;
+  return view;
 }
