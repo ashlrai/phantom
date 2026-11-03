@@ -1,0 +1,12 @@
+{"event":"launch","job":"a","ts":"2026-11-01T00:00:00Z","lane":"work","repo":"phantom"}
+{"event":"outcome","job":"a","ts":"2026-11-03T10:00:00Z","state":"MERGED","ttm_s":100}
+{"event":"outcome","job":"a","ts":"2026-11-03T09:00:00Z","state":"OPEN"}
+{"event":"launch","job":"b","ts":"2026-11-03T09:00:00Z","lane":"work","repo":"phantom"}
+{"event":"outcome","job":"b","ts":"2026-11-03T10:00:00Z","state":"MERGED","ttm_s":300}
+{"event":"outcome","job":"old","ts":"2026-11-01T00:00:00Z","state":"OPEN"}
+{"event":"outcome","job":"closed","ts":"2026-11-03T10:00:00Z","state":"CLOSED"}
+{"event":"outcome","job":"closed","ts":"2026-11-03T09:00:00Z","state":"OPEN"}
+{"event":"outcome","job":"edge","ts":"2026-11-03T11:30:00Z","state":"OPEN"}
+{"event":"outcome","job":"expired","ts":"2026-11-01T00:00:00Z","state":"MERGED","ttm_s":999}
+{"event":"outcome","job":"unknown","repo":"locus","ts":"2026-11-03T11:00:00Z","state":"MERGED","ttm_s":0}
+invalid
