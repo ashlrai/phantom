@@ -16,20 +16,25 @@ import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter 
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
 import { mirrorLeaderPostToInbox } from '../fleet/bus-leader-inbox.js';
 import { CHANNEL_ACK_TIMEOUT_MS } from '../fleet/channel-envelope.js';
-import { listNeedsMason, resolveNeedsMason } from '../fleet/needs-mason-resolve.js';
+import { listNeedsMason, type NeedsMasonResolveResult } from '../fleet/needs-mason-resolve.js';
+import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
 const PATH = '/api/verse/agent-bus';
 const NEEDS_MASON = `${PATH}/needs-mason`;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
+type NeedsMasonApiResult = NeedsMasonResolveResult & { inbox?: 'appended' | 'skipped' | 'failed' };
 export interface AgentBusApiDeps {
   append?: typeof appendBusInbox;
   list?: typeof listBusInboxAfter;
   inspect?: typeof inspectBusInbox;
   mirrorToInbox?: typeof mirrorLeaderPostToInbox;
   startMirror?: () => void;
-  needsMason?: { list: typeof listNeedsMason; resolve: typeof resolveNeedsMason };
+  needsMason?: {
+    list: typeof listNeedsMason;
+    resolve: (input: unknown) => NeedsMasonApiResult | Promise<NeedsMasonApiResult>;
+  };
 }
 
 /** Dependencies permit isolated store tests; the public handler uses the default store. */
@@ -63,8 +68,8 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }
         let input: unknown;
         try { input = JSON.parse(raw); } catch { sendJson(res, 400, { v: 1, status: 'invalid', error: 'Invalid JSON.' }); return true; }
-        const result = (deps.needsMason?.resolve ?? resolveNeedsMason)(input);
-        if (result.ok) sendJson(res, 200, { v: 1, status: 'resolved', itemId: result.itemId, cursor: result.cursor });
+        const result = await (deps.needsMason?.resolve ?? resolveNeedsMasonWithInbox)(input);
+        if (result.ok) sendJson(res, 200, { v: 1, status: 'resolved', itemId: result.itemId, cursor: result.cursor, inbox: result.inbox ?? 'skipped' });
         else sendJson(res, result.code === 'unknown' ? 404 : result.code === 'already-resolved' ? 409
           : result.code === 'unavailable' ? 503 : 400, { v: 1, status: result.code, error: result.error });
       } else if (method === 'GET' && path === `${PATH}/status`) {
