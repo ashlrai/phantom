@@ -28,10 +28,10 @@ describe('Mason inbox', () => {
     const first = channelEntry('desktop', 'desk', 'Héllo\nline two');
     const second = channelEntry('telegram', 'telegram', 'Next');
     expect(await appendInboxEntry('  Héllo\r\nline two  ', { runsDir, now: () => when })).toEqual({
-      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(first),
+      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(first), id: /id:([^\]]+)/.exec(first)![1],
     });
     expect(await appendInboxEntry('Next', { runsDir, source: 'Telegram', now: () => when })).toEqual({
-      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(second),
+      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(second), id: /id:([^\]]+)/.exec(second)![1],
     });
     expect(await readFile(inboxPath(), 'utf8')).toBe(first + second);
     expect(await readFile(join(runsDir, 'dispatch-events.log'), 'utf8')).toBe(
@@ -39,8 +39,8 @@ describe('Mason inbox', () => {
       '2026-01-02 05:04:05 INBOX new entry from Telegram\n',
     );
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'healthy', entries: [
-      { at: '2026-01-02 00:04', source: second.match(/src:(telegram) id:(\S+)\]/)!.slice(1).join(' (') + ')', priority: null, text: 'Next' },
-      { at: '2026-01-02 00:04', source: first.match(/src:(desktop) id:(\S+)\]/)!.slice(1).join(' (') + ')', priority: null, text: 'Héllo\nline two' },
+      { channel: 'telegram', id: /id:([^\]]+)/.exec(second)![1], at: '2026-01-02 00:04', source: second.match(/src:(telegram) id:(\S+)\]/)!.slice(1).join(' (') + ')', priority: null, text: 'Next' },
+      { channel: 'desktop', id: /id:([^\]]+)/.exec(first)![1], at: '2026-01-02 00:04', source: first.match(/src:(desktop) id:(\S+)\]/)!.slice(1).join(' (') + ')', priority: null, text: 'Héllo\nline two' },
     ] });
   });
 
@@ -110,6 +110,7 @@ describe('Mason inbox', () => {
     await mkdir(join(runsDir, 'dispatch-events.log'));
     expect(await appendInboxEntry('hello', { runsDir, now: () => when })).toEqual({
       ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(channelEntry('desktop', 'desk', 'hello')),
+      id: /id:([^\]]+)/.exec(channelEntry('desktop', 'desk', 'hello'))![1],
     });
     expect(await readFile(inboxPath(), 'utf8')).toBe(channelEntry('desktop', 'desk', 'hello'));
   });
