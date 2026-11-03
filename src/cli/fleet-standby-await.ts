@@ -113,7 +113,7 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
   };
   let discovery;
   try {
-    discovery = await bounded(deps.locateScript ?? findStandbyReadinessScript, timeoutMs);
+    discovery = await bounded(() => deps.locateScript ? deps.locateScript() : findStandbyReadinessScript(deps.runsDir), timeoutMs);
   } catch {
     if (now() - start >= timeoutMs) return timeout();
     return finish('error', 1, 'error: fleet standby-await: readiness script discovery failed');
