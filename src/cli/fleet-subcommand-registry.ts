@@ -88,6 +88,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'heartbeat': () => import('./fleet-heartbeat.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
   'job-class-share': () => import('./fleet-job-class-share.js'),
+  'job-latency': () => import('./fleet-job-latency.js'),
   'job-one': () => import('./fleet-job-one.js'),
   'job-read': () => import('./fleet-job-read.js'),
   'landed-close': () => import('./fleet-landed-close.js'),

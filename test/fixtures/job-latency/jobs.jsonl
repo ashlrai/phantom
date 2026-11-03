@@ -1,0 +1,11 @@
+{"job":"one","event":"queued","ts":"2026-01-01T00:00:00Z"}
+{"job":"one","event":"launch","ts":"2026-01-01T00:00:10Z"}
+{"job":"one","event":"checkout_complete","ts":"2026-01-01T00:00:30Z"}
+{"job":"one","event":"finish","ts":"2026-01-01T00:01:00Z"}
+{"job":"one","event":"ci_start","ts":"2026-01-01T00:01:05Z"}
+{"job":"one","event":"ci_complete","ts":"2026-01-01T00:01:45Z"}
+{"job":"one","event":"outcome","state":"MERGED","ts":"2026-01-01T00:02:35Z"}
+{"job":"two","event":"launch","ts":"2026-01-01T00:00:00Z"}
+{"job":"two","event":"launch","ts":"2026-01-01T00:00:01Z"}
+{"job":"two","event":"checkout_complete","ts":"2026-01-01T00:00:05Z"}
+invalid
