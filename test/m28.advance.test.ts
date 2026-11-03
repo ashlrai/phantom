@@ -43,7 +43,8 @@ vi.mock('../src/core/sandbox/policy.js', () => ({
   assertMayMutate: (...args: unknown[]) => mockAssertMayMutate(...args),
 }));
 
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/core/goals/store.js')>(),
   loadGoal: (...args: unknown[]) => mockLoadGoal(...args),
   updateMilestoneStatus: (...args: unknown[]) => mockUpdateMilestoneStatus(...args),
   claimGoalMilestoneIfCurrent: (...args: unknown[]) => mockClaimGoalMilestoneIfCurrent(...args),
