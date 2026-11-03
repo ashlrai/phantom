@@ -20,7 +20,9 @@ export type AppsEnsureChildRunner =
   (args: readonly string[], options: { timeoutMs: number; signal: AbortSignal }) => Promise<AppsEnsureChildRun>;
 export interface FleetAppsEnsureDeps { runChild?: AppsEnsureChildRunner; now?: () => number; monotonicNow?: () => number; signal?: AbortSignal }
 
-interface AppResult { app: string; attempted: boolean; outcome: string; launched: boolean; observedRunning: boolean; reason?: 'deadline' | 'cancelled' }
+export interface AppResult { app: string; attempted: boolean; outcome: string; launched: boolean; observedRunning: boolean; reason?: 'deadline' | 'cancelled' }
+export interface FleetAppsEnsureReport { ok: boolean; endedBy: 'complete' | 'deadline' | 'cancelled'; timeoutMs: number; apps: AppResult[] }
+export interface FleetAppsEnsureOptions { apps: string[]; root?: string; timeoutMs: number; intervalMs?: number }
 interface ParsedArgs { apps: string[]; root?: string; timeoutMs: number; intervalMs?: number; json: boolean }
 
 /** Every argument is validated before any child runs; returns the rejection reason, or the parsed batch. */
@@ -54,7 +56,7 @@ function parseArgs(args: string[]): ParsedArgs | string {
 function parseReport(stdout: string, app: string): { outcome: string; running: boolean; launched: boolean } | null {
   try {
     const v = JSON.parse(stdout) as Record<string, unknown> | null;
-    if (v === null || typeof v !== 'object' || v.app !== app || typeof v.outcome !== 'string') return null;
+    if (v === null || typeof v !== 'object' || v.app !== app || typeof v.outcome !== 'string' || !['running', 'launched', 'unavailable', 'launch-failed', 'timeout', 'cancelled'].includes(v.outcome)) return null;
     return { outcome: v.outcome, running: v.running === true, launched: v.launched === true };
   } catch {
     return null;
@@ -96,13 +98,30 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
   }
   const parsed = parseArgs(args);
   if (typeof parsed === 'string') { console.error(`error: invalid fleet apps-ensure arguments: ${parsed}\n${usage}`); return 2; }
+  let report: FleetAppsEnsureReport;
+  try { report = await ensureFleetApps(parsed, deps); }
+  catch { console.error('fleet apps-ensure: cannot resolve the ashlr CLI entry; run it from the ashlr bin'); return 1; }
+  const { ok, endedBy, timeoutMs, apps: rows } = report;
+  if (parsed.json) process.stdout.write(`${JSON.stringify({ ok, endedBy, timeoutMs, apps: rows })}\n`);
+  else {
+    for (const row of rows) {
+      const text = row.attempted ? `${row.app}: ${row.outcome}` : `${row.app}: not attempted (${row.reason})`;
+      if (row.observedRunning) console.log(text);
+      else console.error(text);
+    }
+  }
+  return ok ? 0 : 1;
+}
+
+/** Recover the explicit group sequentially under one shared wall budget, without writing output. */
+export async function ensureFleetApps(options: FleetAppsEnsureOptions, deps: FleetAppsEnsureDeps = {}): Promise<FleetAppsEnsureReport> {
   let runChild = deps.runChild;
   if (runChild === undefined) {
     const prefix = selfCliPrefix();
-    if (prefix === null) { console.error('fleet apps-ensure: cannot resolve the ashlr CLI entry; run it from the ashlr bin'); return 1; }
+    if (prefix === null) throw new Error('cannot resolve CLI entry');
     runChild = execCli(prefix);
   }
-  const { apps, root, timeoutMs, intervalMs, json } = parsed;
+  const { apps, root, timeoutMs, intervalMs } = options;
   const now = deps.now ?? Date.now;
   const signal = deps.signal;
   const deadline = now() + timeoutMs;
@@ -169,13 +188,5 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
     ?? { app, attempted: false, outcome: 'unattempted', launched: false, observedRunning: false, reason: endedBy === 'cancelled' ? 'cancelled' : 'deadline' });
   const ok = rows.every(row => row.observedRunning);
 
-  if (json) process.stdout.write(`${JSON.stringify({ ok, endedBy, timeoutMs, apps: rows })}\n`);
-  else {
-    for (const row of rows) {
-      const text = row.attempted ? `${row.app}: ${row.outcome}` : `${row.app}: not attempted (${row.reason})`;
-      if (row.observedRunning) console.log(text);
-      else console.error(text);
-    }
-  }
-  return ok ? 0 : 1;
+  return { ok, endedBy, timeoutMs, apps: rows };
 }
