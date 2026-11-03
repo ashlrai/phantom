@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,6 +9,11 @@ import {
 
 let runsDir: string;
 const when = new Date('2026-01-02T05:04:05Z');
+const channelEntry = (channel: string, prefix: string, text: string): string => {
+  const iso = when.toISOString();
+  const [first, ...rest] = text.split('\n');
+  return `\n${[`${iso} [src:${channel} id:${prefix}-${createHash('sha256').update(iso + text).digest('hex').slice(0, 16)}] ${first}`, ...rest].join('\n')}\n`;
+};
 const inboxPath = (): string => join(runsDir, 'leader', 'MASON-INBOX.md');
 
 beforeEach(async () => {
@@ -19,8 +25,8 @@ afterEach(async () => {
 
 describe('Mason inbox', () => {
   it('appends exact UTF-8 entries and dispatch events in order', async () => {
-    const first = '\n## 2026-01-02 00:04 ET (Mason, Phantom desktop) PRIORITY P0\nHéllo\nline two\n';
-    const second = '\n## 2026-01-02 00:04 ET (Mason, Telegram) PRIORITY P0\nNext\n';
+    const first = channelEntry('desktop', 'desk', 'Héllo\nline two');
+    const second = channelEntry('telegram', 'telegram', 'Next');
     expect(await appendInboxEntry('  Héllo\r\nline two  ', { runsDir, now: () => when })).toEqual({
       ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(first),
     });
@@ -29,12 +35,12 @@ describe('Mason inbox', () => {
     });
     expect(await readFile(inboxPath(), 'utf8')).toBe(first + second);
     expect(await readFile(join(runsDir, 'dispatch-events.log'), 'utf8')).toBe(
-      '2026-01-02 00:04:05 INBOX new entry from Phantom desktop\n' +
-      '2026-01-02 00:04:05 INBOX new entry from Telegram\n',
+      '2026-01-02 05:04:05 INBOX new entry from Phantom desktop\n' +
+      '2026-01-02 05:04:05 INBOX new entry from Telegram\n',
     );
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'healthy', entries: [
-      { at: '2026-01-02 00:04', source: 'Telegram', priority: 'P0', text: 'Next' },
-      { at: '2026-01-02 00:04', source: 'Phantom desktop', priority: 'P0', text: 'Héllo\nline two' },
+      { at: '2026-01-02 00:04', source: second.match(/src:(telegram) id:(\S+)\]/)!.slice(1).join(' (') + ')', priority: null, text: 'Next' },
+      { at: '2026-01-02 00:04', source: first.match(/src:(desktop) id:(\S+)\]/)!.slice(1).join(' (') + ')', priority: null, text: 'Héllo\nline two' },
     ] });
   });
 
@@ -58,9 +64,9 @@ describe('Mason inbox', () => {
       expect((await appendInboxEntry('safe', { runsDir, source, now: () => when })).ok).toBe(true);
     }
     const file = await readFile(inboxPath(), 'utf8');
-    expect(file.match(/Mason, Phantom desktop/g)).toHaveLength(3);
+    expect(file.match(/\[src:desktop id:desk-[0-9a-f]{16}\] safe/g)).toHaveLength(3);
     expect(await readFile(join(runsDir, 'dispatch-events.log'), 'utf8')).toBe(
-      '2026-01-02 00:04:05 INBOX new entry from Phantom desktop\n'.repeat(3),
+      '2026-01-02 05:04:05 INBOX new entry from Phantom desktop\n'.repeat(3),
     );
   });
 
@@ -103,8 +109,8 @@ describe('Mason inbox', () => {
   it('reports success if the event log cannot be appended after the inbox write', async () => {
     await mkdir(join(runsDir, 'dispatch-events.log'));
     expect(await appendInboxEntry('hello', { runsDir, now: () => when })).toEqual({
-      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(formatInboxEntry('hello', 'Phantom desktop', when)),
+      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(channelEntry('desktop', 'desk', 'hello')),
     });
-    expect(await readFile(inboxPath(), 'utf8')).toBe(formatInboxEntry('hello', 'Phantom desktop', when));
+    expect(await readFile(inboxPath(), 'utf8')).toBe(channelEntry('desktop', 'desk', 'hello'));
   });
 });
