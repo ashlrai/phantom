@@ -524,7 +524,8 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         st_ = _run(["git", "-C", wt, "diff", "--shortstat", b[0]], 30).stdout
         nf = len([x for x in _run(["git", "-C", wt, "status", "--porcelain", "-uall"], 30).stdout.splitlines() if not x.endswith("BRIDGE_NOTES.md")])
         ins = re.search(r"(\d+) insertion", st_); dele = re.search(r"(\d+) deletion", st_)
-        metric({"event": "finish", "job": j, "lane": pool, "wall_s": int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None,
+        if not os.path.exists(RUN + "/" + j + ".timeout"):
+            metric({"event": "finish", "job": j, "lane": pool, "wall_s": int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None,
                 "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
                 "diff_files": nf, "diff_lines": (int(ins.group(1)) if ins else 0) + (int(dele.group(1)) if dele else 0), "empty": nf == 0,
                 "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
@@ -828,14 +829,16 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             os.replace("%s/%s.publish" % (R, j), "%s/%s.publish.prev-%d" % (R, j, NOW))
         if j in keep:
             keep.discard(j); open(Q + "/keep.txt", "w").write("\n".join(sorted(keep)) + "\n")
-        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc"):
+        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
         metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
-        subprocess.Popen(["/bin/bash", R + "/bin/launch.sh", j, repo, lane, tier], stdin=open(pf),
+        launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane == "codex-local"
+                      else ["/bin/bash", R + "/bin/launch.sh"])
+        subprocess.Popen(launch_cmd + [j, repo, lane, tier], stdin=open(pf),
                          stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
                          env=env, start_new_session=True, cwd=H)
         jsave(Q + "/claim-cursor.json", {"lane": lane})
