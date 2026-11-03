@@ -527,7 +527,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         if not os.path.exists(RUN + "/" + j + ".timeout"):
             metric({"event": "finish", "job": j, "lane": pool, "wall_s": int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None,
                 "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
-                "diff_files": nf, "diff_lines": (int(ins.group(1)) if ins else 0) + (int(dele.group(1)) if dele else 0), "empty": nf == 0,
+                "diff_files": nf, "diff_lines": (int(ins.group(1)) if ins else 0) + (int(dele.group(1)) if dele else 0), "empty": nf == 0 and not st_.strip(),
                 "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
     except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
     subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
@@ -625,7 +625,7 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import precheck as shared_precheck
+from launch_precheck import precheck as shared_precheck, attempt_identity, empty_reason, read_attempts
 
 def precheck(j, repo, pf):
     return shared_precheck(j, repo, rd(pf), H, R, _run)
@@ -776,6 +776,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                     # A blocked head must not consume this lane's turn.
                     if len(launched) > before: break
     seen = set(); pc_n = 0; local_ok = None
+    empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
         try:
@@ -819,11 +820,21 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if os.path.isdir(wt) and not (j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY")))):
             rest.append(line); seen.add(j); continue   # finished worktree awaiting reap: never double up
         seen.add(j)
+        if repo not in base_identities:
+            base_identities[repo] = attempt_identity(repo, "", H, _run)
+        identity = dict(base_identities[repo])
+        if identity:
+            import hashlib
+            identity['prompt_hash'] = hashlib.sha256(rd(pf).encode()).hexdigest()
+        reason = empty_reason(j, identity, empty_attempts, NOW)
+        if reason:
+            metric(dict(identity, event="skipped_empty", job=j, lane=lane, reason=reason))
+            ev("SKIPPED_EMPTY %s %s" % (j, reason)); continue
         if pc_n < PC_MAX and not over_budget():   # empty-run precheck (contrib/precheck.sh): no model call, fail open
             pc_n += 1; pc = precheck(j, repo, pf)
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
-                metric({"event": "precheck_skip", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
+                metric({"event": "skipped_empty", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
                 ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1])); continue
         if os.path.exists("%s/%s.publish" % (R, j)):   # relaunch on a kept worktree: archive old result
             os.replace("%s/%s.publish" % (R, j), "%s/%s.publish.prev-%d" % (R, j, NOW))
@@ -834,7 +845,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             except FileNotFoundError: pass
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
-        metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane == "codex-local"
                       else ["/bin/bash", R + "/bin/launch.sh"])

@@ -548,5 +548,30 @@ class QueueWaitTests(unittest.TestCase):
         self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
 
 
+class EmptyGateIntegrationTests(unittest.TestCase):
+    fixture = QueueWaitTests.fixture
+    metrics = QueueWaitTests.metrics
+    def test_same_base_empty_is_dropped_without_model_launch(self):
+        home, env = self.fixture(['codex-cmp'])
+        repo = home / 'Projects/ashlrai/phantom'
+        for args in (['init'], ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                                'commit', '--allow-empty', '-m', 'base'],
+                     ['update-ref', 'refs/remotes/origin/main', 'HEAD'],
+                     ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']):
+            subprocess.run(['git', '-C', str(repo)] + args, check=True, capture_output=True)
+        job = 'RQ-UPKEEP-REL-TEST'
+        queue_job(home, job, 'codex-cmp')
+        sha = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        ledger.write_text(json.dumps(dict(event='claim', job=job, repo='phantom', base_sha=sha)) + '\n' +
+                          json.dumps(dict(event='finish', job=job, empty=True, exit_code=0)) + '\n')
+        result = tick(home, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(ready_lines(home), [])
+        rows = self.metrics(home)
+        self.assertEqual(sum(r['event'] == 'skipped_empty' for r in rows), 1)
+        self.assertFalse(any(r['event'] == 'launch' for r in rows))
+
+
 if __name__ == '__main__':
     unittest.main()
