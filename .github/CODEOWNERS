@@ -399,6 +399,8 @@
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
+/test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
 /test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
@@ -915,6 +917,7 @@
 /test/merge-age-routing.test.ts @masonwyatt23
 /test/merge-backlog-hot-files.test.ts @masonwyatt23
 /test/merge-backlog-read.test.ts @masonwyatt23
+/test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
@@ -931,6 +934,8 @@
 /test/ops-release-pr-merge-api.test.ts @masonwyatt23
 /test/ops-release-pr-merge.test.ts @masonwyatt23
 /test/orchestrator-bash-standing-310b.test.ts @masonwyatt23
+/test/order-merge-notice-02.test.ts @masonwyatt23
+/test/order-merge-notice-email-05.test.ts @masonwyatt23
 /test/outcome-core.test.ts @masonwyatt23
 /test/outcome-daemon-loop.test.ts @masonwyatt23
 /test/outcome-dispatch.test.ts @masonwyatt23
