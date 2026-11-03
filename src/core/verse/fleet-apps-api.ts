@@ -53,8 +53,14 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
   const root = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const locate = deps.locateScript ?? (() => findAppControlScript() ?? findInstalledAppControlScript(root));
   const exec: FleetAppExec = deps.exec ?? (async (file, argv, options) => execAsync(file, argv, options));
-  let cached: { at: number; view: Promise<AppsView> } | undefined;
+  // Settled inventory lives 30 s from its completion; pending inventory is shared whatever its age.
+  let settled: { at: number; view: AppsView } | undefined;
+  let pending: Promise<AppsView> | undefined;
+  // Bumped when an accepted action begins and when it settles. An inventory started under an older epoch
+  // may still answer its waiting callers, but it never populates the settled cache.
+  let epoch = 0;
   const inFlight = new Set<string>();
+  const invalidate = (): void => { epoch += 1; settled = undefined; pending = undefined; };
   async function run(script: string, action: string, app: string, timeout: number): Promise<Record<string, unknown>> {
     let stdout: string;
     try {
@@ -71,26 +77,51 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     if (!record(parsed)) throw new Error('app control unavailable');
     return parsed;
   }
-  async function snapshot(): Promise<AppsView> {
+  /**
+   * Probes two rows at a time under one wall budget. A row keeps its reading only when no action was accepted
+   * since this inventory started and none is in flight when the probe settles; otherwise it stays unknown,
+   * so no row mixes a pre-action and a post-action observation.
+   */
+  async function snapshot(started: number): Promise<AppsView> {
     const generatedAt = new Date(now()).toISOString();
     const script = locate();
     if (!script) return { v: 1, generatedAt, available: false, apps: [] };
     const apps: AppsView['apps'] = FLEET_APPS.map(app => ({ app, running: null, checkedAt: generatedAt }));
     const deadline = Date.now() + 20_000;
+    const quiet = (): boolean => epoch === started && inFlight.size === 0;
     let next = 0;
     async function worker() {
-      while (next < apps.length) {
+      while (next < apps.length && quiet()) {
         const row = apps[next++]!;
         const remaining = deadline - Date.now();
         if (remaining <= 0) return;
         // Wall-clock bound against the shared deadline: a probe that never settles leaves the row unknown
         // (running:null) and frees this worker; control() swallows failures and late rejections.
-        row.running = reading(await control(script!, 'status', row.app, remaining));
+        const running = reading(await control(script!, 'status', row.app, remaining));
+        if (!quiet()) return;
+        row.running = running;
         row.checkedAt = new Date(now()).toISOString();
       }
     }
     await Promise.all([worker(), worker()]);
     return { v: 1, generatedAt, available: true, apps };
+  }
+  /**
+   * Shares one pending inventory among concurrent GETs. Only an inventory that completes in the epoch it started
+   * in, with no action in flight, becomes the settled cache, with its TTL counted from completion.
+   */
+  function observe(): Promise<AppsView> {
+    if (!pending) {
+      const started = epoch;
+      const work: Promise<AppsView> = snapshot(started)
+        .then(view => {
+          if (started === epoch && inFlight.size === 0) settled = { at: now(), view };
+          return view;
+        })
+        .finally(() => { if (pending === work) pending = undefined; });
+      pending = work;
+    }
+    return pending;
   }
   /** Resolves undefined when the work fails or the budget runs out; an injected exec may ignore its own timeout option. */
   const control = (script: string, action: 'status' | 'launch', app: string, budgetMs: number): Promise<Report | undefined> =>
@@ -145,8 +176,10 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
   }
   return async (ctx, req, res, path, method) => {
     if (path === PATH && method === 'GET') {
-      if (!cached || now() - cached.at >= 30_000) cached = { at: now(), view: snapshot() };
-      try { sendJson(res, 200, await cached.view); }
+      try {
+        const view = settled && now() - settled.at < 30_000 ? settled.view : await observe();
+        sendJson(res, 200, view);
+      }
       catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
       return true;
     }
@@ -174,6 +207,7 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     const script = locate();
     if (!script) { sendJson(res, 503, { error: 'fleet apps unavailable' }); return true; }
     inFlight.add(app);
+    invalidate();
     try {
       if (body.action === 'ensure') {
         const answer = await ensure(script, app, typeof wait === 'number' ? wait : undefined);
@@ -209,7 +243,7 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         sendJson(res, 503, UNAVAILABLE);
       } else throw new Error('unreadable result');
     } catch { sendJson(res, 503, UNAVAILABLE); }
-    finally { inFlight.delete(app); cached = undefined; }
+    finally { inFlight.delete(app); invalidate(); }
     return true;
   };
 }
