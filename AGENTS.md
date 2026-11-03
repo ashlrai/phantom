@@ -101,3 +101,9 @@ jobs. Records use `job` (or `job_id`/`jobId`), `event` and `ts` (or
 ambiguous repeated boundaries are reported as unmeasured, not estimated;
 phase totals need not cover the whole wall time. Existing ledgers may not yet
 contain all boundaries.
+
+Merge queue drift protection: the Quick typecheck job runs the CODEOWNERS and
+Tier-1 import closure checks on every PR and merge queue candidate, including
+docs-only changes. A new Tier-1 test needs its generated CODEOWNERS entry in the
+same PR; changed Tier-1 imports need a reviewed closure snapshot update. Drift
+fails the existing Merge Gate even when the full authority shards do not run.
