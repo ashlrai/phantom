@@ -4,6 +4,9 @@ import { Tag } from '../../../components/primitives/Tag.js';
 import { runQuery } from '../../../data/cache.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefresh } from '../../../data/hooks.js';
+import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
+import { narrowOrderTrace } from '../fleet-inbox/order-trace-model.js';
+import { interjectOutcome } from './interject-outcome-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
 import { ackState, ackText, loadDraft, newestLeaderPassMs, parseInboxAt, saveDraft, sourceChip } from './interject-ack-model.js';
@@ -26,6 +29,8 @@ export function InterjectBox() {
   const read = useQuery(inboxTailQuery);
   usePollWhileVisible(() => { void runQuery(inboxTailQuery.key, () => inboxTailQuery.fetch()); }, 15_000);
   const refresh = useRefresh(inboxTailQuery);
+  const orders = useQuery(ordersTraceQuery, { enabled: (read.data?.inbox.length ?? 0) > 0, freshMs: 10_000 });
+  const trace = orders.error ? null : narrowOrderTrace(orders.data);
   const [draft, setDraft] = useState(() => {
     try { return loadDraft(window.sessionStorage); } catch { return ''; }
   });
@@ -141,6 +146,12 @@ export function InterjectBox() {
         <p>{entry.text}</p>
       </details>
       <div className={styles.ack}><span className={styles.dot} data-state={ackState(entryTime(entry.at), newestPass)} aria-hidden="true" />{ackText(ackState(entryTime(entry.at), newestPass))}</div>
+      {(() => {
+        const outcome = interjectOutcome(entry.at, ackState(entryTime(entry.at), newestPass) === 'seen', trace);
+        return <div className={styles.ack} data-outcome={outcome.stage}>
+          {outcome.href ? <a href={outcome.href} target="_blank" rel="noopener noreferrer">{outcome.text}</a> : outcome.text}
+        </div>;
+      })()}
     </li>)}</ol> : <p>{read.status === 'error' ? 'The inbox tail is unavailable.' : read.data ? 'Nothing in the inbox yet.' : 'Reading the inbox…'}</p>}
   </section>;
 }
