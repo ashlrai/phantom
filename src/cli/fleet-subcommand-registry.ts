@@ -85,6 +85,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'handoff-reply': () => import('./fleet-handoff-reply.js'),
   'handoff-run': () => import('./fleet-handoff-run.js'),
   'handoff-send': () => import('./fleet-handoff-send.js'),
+  'health-age': () => import('./fleet-health-age.js'),
   'heartbeat': () => import('./fleet-heartbeat.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
   'job-class-share': () => import('./fleet-job-class-share.js'),
