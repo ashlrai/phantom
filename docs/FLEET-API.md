@@ -171,3 +171,19 @@ checks remain in place; this command only reads the supplied file.
 Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed
 API or CLI that agents can use (code-first, agent-native).
+
+## PR creation and queue delays
+
+Run `phm fleet queue-age --events events.json --json` to rank PR delays from
+creation to queue entry, queue entry to merge, and creation to merge. Omit
+`--json` for plain words. Supply a JSON array of `QueueAgeEvent` records:
+`{"pr":"ashlrai/phantom#42","event":"created","ts":"2026-01-01T00:00:00Z"}`.
+Events are `created`, `queue_entered`, and `merged`; use repository-qualified
+PR identities. The typed `queueAge(events)` API returns the same report.
+This only reads the file. Exact duplicates are deduplicated; missing, reversed,
+or repeated distinct boundaries (including re-entry) remain unmeasured.
+The longest measured delays come first; ongoing waits are not estimated.
+
+Acceptance: as simple and intuitive as possible, fewer steps, plain words,
+one obvious path, and every human surface backed by a typed API or CLI
+that agents can use (code-first, agent-native).
