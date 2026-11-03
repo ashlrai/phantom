@@ -19,11 +19,13 @@ import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox
 import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } from './order-trace-model.js';
 import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
+import { sourceChip } from '../fleet/interject-ack-model.js';
 import { annotateAck, seenCounts } from './inbox-ack-model.js';
 import { canResend, resendPrefill } from './inbox-resend.js';
 import { takeRequestedInboxChannel, useRequestedInboxChannel } from './inbox-source-request.js';
 import { plannerAckLabel } from './planner-ack-model.js';
 import { usePlannerAcks } from './planner-ack-query.js';
+import tagStyles from '../../../components/primitives/Tag.module.css';
 import styles from './fleet-inbox.module.css';
 
 const notFound = (error: unknown) => error instanceof ApiError && error.status === 404;
@@ -63,7 +65,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const entries = channel === null ? inbox.entries : inbox.entries.filter(entry => channelKey(entry.source) === channel);
   const annotated = annotateAck(filterEntries(entries, { source, text }), snapshot.data, Date.now());
   const groups = groupByDay(annotated, today);
-  const { waiting, overdue } = seenCounts(annotated);
+  const { waiting, overdue } = seenCounts(annotated.filter(entry => entry.plannerAck !== 'acked' && entry.plannerAck !== 'skipped'));
   usePollWhileVisible(() => setClockTick(tick => tick + 1), 10_000, { enabled: visible && waiting > 0 });
   const matching = posted && posted.until > Date.now() && visible && sectionVisible && documentVisible
     ? annotated.filter(entry => matchesPosted(entry, posted.text)) : [];
@@ -103,7 +105,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     {groups.map(group => <section key={group.day} aria-label={group.label}>
       <h3 className={styles.day}>{group.label}{group.day !== '—' && ' · ET'}</h3>
       {group.entries.map((entry, i) => { const jobs = jobsForEntry(trace, entry.at); const draft = trace && jobs.length === 0 ? orderJobDraft(entry, Date.now()) : null; return <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
-        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]} data-overdue={entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{plannerAckLabel(entry, plannerAcks) ?? entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
+        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><span className={`${tagStyles.tag} ${tagStyles.md} ${styles[entry.ack]}`} data-ack={entry.plannerAck === 'acked' || entry.plannerAck === 'skipped' ? entry.plannerAck : entry.ack} data-overdue={!['acked', 'skipped'].includes(entry.plannerAck ?? '') && entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{entry.plannerAck === 'acked' ? `Acknowledged on ${sourceChip(entry.channel ?? entry.source)}` : entry.plannerAck === 'skipped' ? 'Planner saw it · no reply route' : plannerAckLabel(entry, plannerAcks) ?? entry.ackLabel}</span>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
         <p className={styles.text}>{entry.text}</p>
         {jobs.length > 0 && <div className={styles.jobs}>
           <span>{orderJobsLine(jobs)}</span>

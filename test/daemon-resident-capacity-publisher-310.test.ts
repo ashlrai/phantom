@@ -71,7 +71,8 @@ describe('resident capacity publisher lifetime', () => {
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/core/daemon/loop.ts'), 'utf8');
     const body = src.slice(src.indexOf('async function runDaemonInEnrollmentScope('));
     const start = body.indexOf('await startResidentCapacityPublisher(activationCfg, residentPublisherRun)');
-    const firstTick = body.indexOf('await tick(');
+    const firstTick = body.indexOf('await runResidentBoundedTick(');
+    expect(body.slice(firstTick)).toContain('() => tick(');
     const stop = body.indexOf('await stopResidentCapacityPublisher()');
     const drain = body.indexOf('await cancelDaemonPostTickChildren(');
     expect(start).toBeGreaterThan(0);

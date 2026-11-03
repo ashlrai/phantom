@@ -28,13 +28,15 @@ down by 2, never below the floor 6, and at most once per new completion
 (`step_seen` in `slots.json`). A held devin lane never adjusts. The devin lane
 sits in dispatchd's restock trigger loop beside the codex lanes.
 
-Load-aware admission (RQ-LOADGATE-1). Each tick dispatchd probes the host and stops
-claiming (lines stay in `ready.tsv`) while either hard gate is tripped: 1-min
-loadavg above `min(2 x ncpu, 36)` or more than 800 processes. More than 40 live
-job worktrees (`*.base` with an existing directory) and an `ashlr daemon status
---json` `lastTickAt` older than 15 minutes (or a missing or unreadable status) are
-non-tripping warnings: they are listed in `admission.json` `warnings` and logged
-once per change as `LOADGATE warn`, and never stop claims. The +2/120s ramp pauses while the gate is tripped. Running jobs are
+Starvation admission (RQ-LOADGATE-RETUNE). Claims stop on macOS
+`kern.memorystatus_vm_pressure_level >= 4`, swap growth greater than 2 GiB
+within the last 300 seconds, or free disk below `DISK_HARD_STOP_GB` (30 GB).
+Swap samples persist across ticks in `admission.json`; startup needs a prior
+sample and expired samples do not trip. Missing pressure or swap probes warn.
+Load above 3 x ncpu halves the four new claims per tick to two, without tripping.
+Process count above 2500 only warns. Worktree count above 40 only warns and
+counts existing directories whose job is in the live `alive` set. Stale daemon
+status also only warns. The ramp pauses only on a hard trip. Running jobs are
 also capped fleet-wide at `min(sum of unheld lane targets, ncpu, hard_cap)`. Every
 pool has a `hard_cap` in `slots.json` and so does the file itself (top-level
 `hard_cap`, default 18); the stored floor, ceiling and target are clamped to it
@@ -47,6 +49,19 @@ owner's off switch. The `codex-local` mid-tier cap is 4 while the gate is clear
 and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
 is recorded as `local_mid_cap` in `admission.json`.
+
+Threshold environment overrides: `GATE_PRESSURE_MIN=4`, `GATE_SWAP_GROWTH_GB=2`,
+`GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=3`, `GATE_PROCS_MAX=2500`,
+`GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
+and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
+`dispatchd.admission.v2` records all signals, thresholds, warnings, claim limit,
+swap samples and the `admit`, `halve_claims` or `stop` decision. Signal fixtures
+`LOADGATE_LOADAVG`, `LOADGATE_NCPU`, `LOADGATE_PRESSURE`, `LOADGATE_SWAP_GB`
+require `$HOME/.ashlr-runs/LOADGATE_TEST`; disk fixtures separately require
+`DISKGUARD_TEST` and `DISKGUARD_FREE_GB`.
+
+Security (606e84d2) must pin the merged dispatcher SHA before Masbot installs.
+Use the sanctioned fork `publish.sh` workflow with auto-merge when publishing.
 
 Install semaphore: `install-gate.py -- npm ci` takes `flock` on `queue/install.lock`
 so at most one `npm ci` / `pnpm install` / `bun install` runs fleet-wide; others
