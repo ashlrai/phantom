@@ -20,7 +20,7 @@
  * other missing reading is reported as NOT answered — silence never earns
  * an all-clear.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { ApiError, apiGet, apiPost } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
@@ -61,6 +61,7 @@ import {
 } from './fleet-needs-you.js';
 import { fleetRunsNeedsYouQuery } from './fleet-needs-you-query.js';
 import { tellLeadersPrefill } from './needs-you-tell.js';
+import { needsMasonResolvedText } from './needs-mason-resolve-text.js';
 import { usePollWhileVisible } from './section-visibility.js';
 import styles from './NeedsYouDrawer.module.css';
 
@@ -156,20 +157,34 @@ function NeedsMasonRows() {
   const [replies, setReplies] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  useEffect(() => {
+  const [confirmation, setConfirmation] = useState<{ text: string; prefill?: string } | null>(null);
+  const readAbort = useRef<AbortController | null>(null);
+  function readItems() {
+    readAbort.current?.abort();
     const abort = new AbortController();
+    readAbort.current = abort;
     apiGet<{ items?: NeedsMasonRow[] }>('/api/verse/agent-bus/needs-mason', abort.signal)
-      .then(read => setItems(Array.isArray(read.items) ? read.items.filter(row => typeof row?.id === 'string' && typeof row.text === 'string') : []))
-      .catch(() => { /* a hub without the route shows nothing */ });
-    return () => abort.abort();
+      .then(read => {
+        if (!abort.signal.aborted) setItems(Array.isArray(read.items) ? read.items.filter(row => typeof row?.id === 'string' && typeof row.text === 'string') : []);
+      })
+      .catch(() => { /* keep the last list when a read fails */ });
+  }
+  useEffect(() => {
+    readItems();
+    return () => readAbort.current?.abort();
   }, []);
+  usePollWhileVisible(readItems, FLEET_NEEDS_YOU_POLL_MS);
   async function resolve(id: string) {
     if (!hasHold || !token || busy) { setError('Unlock to resolve.'); return; }
     setBusy(id);
     setError('');
+    setConfirmation(null);
     try {
       const reply = (replies[id] ?? '').trim();
-      await apiPost('/api/verse/agent-bus/needs-mason/resolve', reply ? { itemId: id, reply } : { itemId: id }, token);
+      const response = await apiPost<unknown>('/api/verse/agent-bus/needs-mason/resolve', reply ? { itemId: id, reply } : { itemId: id }, token);
+      readAbort.current?.abort();
+      const text = needsMasonResolvedText(items.find(row => row.id === id)?.text ?? '', response);
+      setConfirmation({ text, ...(response !== null && typeof response === 'object' && 'inbox' in response && response.inbox === 'failed' ? { prefill: `Re needs-you ${id}: ${reply}` } : {}) });
       touch();
       setItems(previous => previous.filter(row => row.id !== id));
     } catch (reason) {
@@ -177,11 +192,13 @@ function NeedsMasonRows() {
       else setError(reason instanceof ApiError ? reason.detail ?? reason.message : 'The resolve failed.');
     } finally { setBusy(''); }
   }
-  if (items.length === 0) return null;
+  if (items.length === 0 && !confirmation) return null;
   return (
     <section aria-label="Needs Mason">
       <div className={styles.batch}><p className={styles.rowKind}>Needs Mason</p></div>
       {error && <p role="status">{error}</p>}
+      {confirmation && <p role="status">{confirmation.text} {confirmation.prefill &&
+        <Button size="sm" variant="ghost" onClick={() => openInterjectDialog({ prefill: confirmation.prefill })}>Tell the leaders</Button>}</p>}
       {items.map(row => (
         <div key={row.id} className={styles.row}>
           <span className={styles.rule} aria-hidden="true" />

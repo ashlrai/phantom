@@ -1,4 +1,4 @@
-import type { listNeedsMason, resolveNeedsMason } from '../fleet/needs-mason-resolve.js';
+import type { listNeedsMason, NeedsMasonOptions, NeedsMasonResolveResult } from '../fleet/needs-mason-resolve.js';
 
 const ITEM_ID = /^nm-[0-9a-f]{12}$/;
 const LIST_MAX = 10;
@@ -17,7 +17,7 @@ export type NeedsRefusalCode = 'unknown' | 'already-resolved' | 'reply-too-long'
 export type NeedsCommandReply =
   | { status: 'usage' }
   | { status: 'list'; items: { id: string; text: string }[] }
-  | { status: 'resolved'; itemId: string }
+  | { status: 'resolved'; itemId: string; inbox?: 'appended' | 'skipped' | 'failed' }
   | { status: 'refused'; code: NeedsRefusalCode }
   | { status: 'failed'; command: 'needs' | 'resolve' };
 
@@ -40,7 +40,10 @@ export function renderNeedsCommandReply(reply: NeedsCommandReply): string {
       if (reply.items.length > LIST_MAX) lines.push(`+${reply.items.length - LIST_MAX} more`);
       return lines.join('\n');
     }
-    case 'resolved': return `Resolved ${reply.itemId}.`;
+    case 'resolved':
+      if (reply.inbox === 'appended') return `Resolved ${reply.itemId}. Reply sent to the planners.`;
+      if (reply.inbox === 'failed') return `Resolved ${reply.itemId}. Reply did not reach the planner inbox; send it again as a normal message.`;
+      return `Resolved ${reply.itemId}.`;
     case 'refused': return `Resolve refused: ${REFUSALS[reply.code]}.`;
     case 'failed': return reply.command === 'needs' ? 'Needs list unavailable.' : 'Resolve failed: needs-you file unavailable.';
   }
@@ -48,7 +51,9 @@ export function renderNeedsCommandReply(reply: NeedsCommandReply): string {
 
 export interface TelegramNeedsCommandDeps {
   list: typeof listNeedsMason;
-  resolve: typeof resolveNeedsMason;
+  resolve: (request: unknown, options: NeedsMasonOptions) =>
+    (NeedsMasonResolveResult & { inbox?: 'appended' | 'skipped' | 'failed' }) |
+    Promise<NeedsMasonResolveResult & { inbox?: 'appended' | 'skipped' | 'failed' }>;
 }
 
 export async function runTelegramNeedsCommand(text: string, deps: TelegramNeedsCommandDeps): Promise<NeedsCommandReply> {
@@ -57,8 +62,8 @@ export async function runTelegramNeedsCommand(text: string, deps: TelegramNeedsC
     if (command === 'needs') return { status: 'list', items: deps.list() };
     const request = parseResolveCommand(text);
     if (!request) return { status: 'usage' };
-    const result = deps.resolve(request, { source: 'telegram' });
-    if (result.ok) return { status: 'resolved', itemId: result.itemId };
+    const result = await deps.resolve(request, { source: 'telegram' });
+    if (result.ok) return { status: 'resolved', itemId: result.itemId, ...(result.inbox ? { inbox: result.inbox } : {}) };
     if (result.code !== 'unavailable') return { status: 'refused', code: result.code };
   } catch {
     // Fall through: the reply never carries the error text.
