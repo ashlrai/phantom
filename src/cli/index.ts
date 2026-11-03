@@ -2004,6 +2004,11 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'context': {
+        const { cmdCompanyContext } = await import('./company-context.js');
+        cmdCompanyContext(rest);
+        break;
+      }
       case 'router-calibration': {
         const { cmdRouterCalibration } = await import('./router-calibration.js');
         process.exitCode = await cmdRouterCalibration(rest);
