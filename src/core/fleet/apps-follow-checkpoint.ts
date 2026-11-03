@@ -11,7 +11,7 @@ export function normalizeRoot(path: string): string {
   // Pure string normalization: handles both absolute and relative paths,
   // resolves '..' segments deterministically without filesystem access.
   const isAbsolute = path.startsWith('/');
-  let parts = path.split('/').filter(p => p !== '' && p !== '.');
+  const parts = path.split('/').filter(p => p !== '' && p !== '.');
   const resolved: string[] = [];
   for (const part of parts) {
     if (part === '..') { if (resolved.length > 0 || !isAbsolute) resolved.pop(); }

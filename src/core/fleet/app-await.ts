@@ -28,7 +28,6 @@ type Raced<T> = { kind: 'value'; value: T } | { kind: 'failed' } | { kind: 'dead
 function race<T>(work: () => Promise<T>, ms: number, signal?: AbortSignal): Promise<Raced<T>> {
   return new Promise(resolve => {
     let done = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (r: Raced<T>): void => {
       if (done) return;
       done = true;
@@ -37,9 +36,9 @@ function race<T>(work: () => Promise<T>, ms: number, signal?: AbortSignal): Prom
       resolve(r);
     };
     const onAbort = (): void => finish({ kind: 'aborted' });
+    const timer = setTimeout(() => finish({ kind: 'deadline' }), Math.max(0, ms));
     if (signal?.aborted) return finish({ kind: 'aborted' });
     signal?.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(() => finish({ kind: 'deadline' }), Math.max(0, ms));
     let p: Promise<T>;
     try { p = Promise.resolve(work()); } catch { return finish({ kind: 'failed' }); }
     // Both handlers swallow, so a late rejection after settle is never unhandled.
