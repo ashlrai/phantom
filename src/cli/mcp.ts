@@ -952,6 +952,7 @@ function printHelp(): void {
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
     ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop, fleet_bus_hops, fleet_host_runs, fleet_bus_inbox; no companion probes).'],
     ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records; unread P0/P1 bus notices for the node join best-effort).'],
+    ['docs',                            'Read-only docs MCP on stdio (search, list_pages, get_page over the shipped Markdown docs; no network).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
     ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
@@ -1020,7 +1021,7 @@ export async function cmdMcp(args: string[]): Promise<number> {
   // used to start the stdio gateway, `mcp list --help` scanned the registry,
   // and `mcp ecosystem --write --help` would have merged servers into
   // ~/.ashlr/settings.json.
-  if (sub !== 'fleet' && sub !== 'context' && (args.slice(1).includes('--help') || args.slice(1).includes('-h'))) {
+  if (sub !== 'fleet' && sub !== 'context' && sub !== 'docs' && (args.slice(1).includes('--help') || args.slice(1).includes('-h'))) {
     printHelp();
     return 0;
   }
@@ -1059,6 +1060,25 @@ export async function cmdMcp(args: string[]): Promise<number> {
       return 0;
     } catch {
       process.stderr.write('[phm mcp context] server unavailable\n');
+      return 1;
+    }
+  }
+
+  if (sub === 'docs') {
+    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
+      console.log('Usage: phm mcp docs\nRead-only stdio MCP over the Markdown docs: search {query, limit?: 1..50}, list_pages {prefix?}, get_page {slug}.');
+      return 0;
+    }
+    if (args.length !== 1) {
+      process.stderr.write('Usage: phm mcp docs\n');
+      return 2;
+    }
+    try {
+      const { startDocsServer } = await import('../mcp/docs-server.js');
+      await startDocsServer();
+      return 0;
+    } catch {
+      process.stderr.write('[phm mcp docs] server unavailable\n');
       return 1;
     }
   }
