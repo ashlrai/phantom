@@ -95,6 +95,15 @@ describe('readAdmission and phm pool admission', () => {
     daemonLastTickAt: async () => new Date(NOW - 60_000).toISOString(), ...over,
   });
 
+  it('reads the v2 dispatcher decision and preserves every signal', async () => {
+    const snapshot = { schema: 'dispatchd.admission.v2', admit: true, decision: 'halve_claims',
+      load1: 64, ncpu: 18, load_max: 54, procs: 962, memory_pressure: 1, claim_limit: 2,
+      warnings: ['loadavg 64.0 > 54.0'], ts: '2026-11-02 19:00:00' };
+    await writeFile(join(queue, 'admission.json'), JSON.stringify(snapshot));
+    const report = await readAdmission(probes({ countProcesses: async () => { throw new Error('must not probe'); } }));
+    expect(report).toMatchObject({ admit: true, load: { load1: 64, max: 54 }, snapshot });
+  });
+
   it('reports load, ncpu, cap, running and an admit verdict from the runs dir', async () => {
     const r = await readAdmission(probes());
     expect(r).toMatchObject({ admit: true, cap: 6, running: 4, ncpu: 18, procs: 120, load: { load1: 2, max: 36 } });
