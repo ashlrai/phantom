@@ -118,6 +118,7 @@ function renderLlmsTxt(data) {
   }
   lines.push(`- [Repository README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview`);
   lines.push(`- [Documentation index](https://github.com/ashlrai/phantom/blob/master/docs/README.md): canonical guides by task`);
+  lines.push(`- [All docs as Markdown](https://verse.ashlr.ai/docs/llms-full.txt): every docs page in one file; each page is also at https://verse.ashlr.ai/docs/<page>.md`);
   lines.push(`- [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide`);
 
   lines.push('');

@@ -84,6 +84,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'job-class-share': () => import('./fleet-job-class-share.js'),
   'job-one': () => import('./fleet-job-one.js'),
   'job-read': () => import('./fleet-job-read.js'),
+  'landed-close': () => import('./fleet-landed-close.js'),
   'lane-autohold': () => import('./fleet-lane-autohold.js'),
   'lane-hold': () => import('./fleet-lane-hold.js'),
   'lane-merges': () => import('./fleet-lane-merges.js'),

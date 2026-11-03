@@ -35,6 +35,10 @@ export interface BriefFacts {
   shipped: BriefItem[];
   /** PRs opened in the window (count only — the shipped line leads with merges). */
   prsOpened: number;
+  /** GitHub could not be read: the merge count is unknown, which is not the same as zero. */
+  mergeCountUnavailable?: boolean;
+  /** Fleet-wide running/queued from the runs dir; null/absent = unknown. */
+  fleet?: { running: number | null; queued: number | null } | null;
   running: BriefItem[];
   blockers: string[];
   next: string[];
@@ -167,6 +171,7 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
   const shipped: BriefItem[] = events
     .filter((e) => e.kind === 'merge' || (e.kind === 'cloud' && / merged\b/.test(e.text)))
     .map((e) => ({ text: e.text, ...(e.url ? { url: e.url } : {}) }));
+  const mergeCountUnavailable = digest?.mergeCountUnavailable ?? true;
   const prsOpened = events.filter((e) => e.kind === 'pr-opened').length;
 
   const running: BriefItem[] = [];
@@ -208,6 +213,8 @@ export async function gatherBriefFacts(sinceMs: number, nowMs: number, overrides
     sinceMs,
     shipped,
     prsOpened,
+    mergeCountUnavailable,
+    fleet: digest?.fleet ?? null,
     running,
     blockers,
     next,
@@ -244,9 +251,18 @@ export function composeBrief(kind: BriefKind, facts: BriefFacts, opts: { narrati
   const tz = opts.timeZone ?? 'America/New_York';
   const lines = [header(kind, facts.nowMs, tz)];
   const opened = facts.prsOpened > 0 ? ` · ${facts.prsOpened} PR${facts.prsOpened === 1 ? '' : 's'} opened` : '';
-  lines.push(facts.shipped.length > 0
-    ? `Shipped: ${facts.shipped.length} — ${items(facts.shipped)}${opened}`
-    : `Shipped: nothing merged${kind === 'morning' ? ' overnight' : kind === 'evening' ? ' today' : ' since the last brief'}${opened}.`);
+  const unavailable = facts.mergeCountUnavailable === true;
+  if (facts.shipped.length > 0) {
+    lines.push(`Shipped: ${facts.shipped.length}${unavailable ? ' (GitHub unreachable, count may be low)' : ''} — ${items(facts.shipped)}${opened}`);
+  } else if (unavailable) {
+    lines.push(`Shipped: merge count unavailable${opened}.`);
+  } else {
+    lines.push(`Shipped: nothing merged${kind === 'morning' ? ' overnight' : kind === 'evening' ? ' today' : ' since the last brief'}${opened}.`);
+  }
+  const fleet = facts.fleet;
+  if (fleet && (fleet.running !== null || fleet.queued !== null)) {
+    lines.push(`Fleet: ${fleet.running ?? '?'} running, ${fleet.queued ?? '?'} queued`);
+  }
   if (facts.running.length > 0) lines.push(`Running: ${facts.running.length} — ${items(facts.running)}`);
   lines.push(facts.blockers.length > 0 ? `Blockers: ${facts.blockers.slice(0, 3).join('; ')}` : 'Blockers: none.');
   if (facts.next.length > 0) lines.push(`Next: ${facts.next.slice(0, 3).join(' · ')}`);
