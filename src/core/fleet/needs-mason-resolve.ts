@@ -23,7 +23,11 @@ const MARKER = /^[-*]\s+\[[xX]\]\s+resolved\s+(nm-[0-9a-f]{12})\b/;
 const ID = /^nm-[0-9a-f]{12}$/;
 
 export interface NeedsMasonItem { id: string; text: string }
-export interface NeedsMasonOptions { runsDir?: string; bus?: BusInboxOptions; now?: () => number }
+export interface NeedsMasonOptions {
+  runsDir?: string; bus?: BusInboxOptions; now?: () => number;
+  /** Which surface resolved the item; recorded in the envelope body. Defaults to 'desktop'. */
+  source?: 'desktop' | 'telegram' | 'cli' | 'phone';
+}
 export type NeedsMasonResolveResult =
   | { ok: true; itemId: string; cursor: number; duplicate: boolean }
   | { ok: false; code: 'invalid' | 'reply-too-long' | 'unknown' | 'already-resolved' | 'unavailable'; error: string };
@@ -115,7 +119,7 @@ export function resolveNeedsMason(input: unknown, options: NeedsMasonOptions = {
   const posted = appendBusInbox({
     id: `needs-mason-resolved-${id}`, from: 'mason', to: 'leaders', priority: 'P1', ttl: 7 * 24 * 60 * 60 * 1000,
     body: {
-      kind: NEEDS_MASON_RESOLVED_KIND, itemId: id, source: 'desktop', item: item.text,
+      kind: NEEDS_MASON_RESOLVED_KIND, itemId: id, source: options.source ?? 'desktop', item: item.text,
       ...(note ? { reply: note } : {}), resolvedAt: new Date(now()).toISOString(),
     },
   }, { ...options.bus, now: options.bus?.now ?? now });
