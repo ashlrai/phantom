@@ -98,6 +98,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'handoff-send': () => import('./fleet-handoff-send.js'),
   'health-age': () => import('./fleet-health-age.js'),
   'heartbeat': () => import('./fleet-heartbeat.js'),
+  'idle-lanes': () => import('./fleet-idle-lanes.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
   'job-class-share': () => import('./fleet-job-class-share.js'),
   'job-latency': () => import('./fleet-job-latency.js'),
