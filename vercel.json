@@ -1,9 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "outputDirectory": "site",
-  "buildCommand": "echo 'Static Verse site: source files are ready'",
-  "ignoreCommand": "git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- site vercel.json || exit 1",
+  "buildCommand": "node scripts/generate-docs-llms.mjs --out site",
+  "ignoreCommand": "git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- site docs scripts/generate-docs-llms.mjs scripts/lib/docs-pages.mjs vercel.json || exit 1",
   "installCommand": "",
   "framework": null,
-  "cleanUrls": true
+  "cleanUrls": true,
+  "headers": [
+    {
+      "source": "/docs/(.*)\\.md",
+      "headers": [{ "key": "Content-Type", "value": "text/markdown; charset=utf-8" }]
+    }
+  ]
 }

@@ -52,7 +52,7 @@ describe('docs/llms.txt', () => {
     expect(links.length).toBeGreaterThan(0, 'llms.txt should contain at least one link');
 
     for (const relPath of links) {
-      const fullDocPath = join('docs', relPath);
+      const fullDocPath = join('docs', relPath.split('#')[0]!);
       expect(
         existingDocs.has(fullDocPath),
         `Link target "${fullDocPath}" does not exist on origin/master`,

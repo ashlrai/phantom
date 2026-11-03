@@ -40,6 +40,14 @@ const REFUSALS: Record<string, string> = {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+type Report = Record<string, unknown>;
+/** Hard bound on one pending child call, so a hung dependency cannot outlive the budget. */
+function bounded(work: Promise<Report | undefined>, ms: number): Promise<Report | undefined> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(undefined), Math.max(0, ms));
+    work.then(resolve, () => resolve(undefined)).finally(() => clearTimeout(timer));
+  });
+}
 export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
   const root = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
@@ -85,6 +93,57 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     await Promise.all([worker(), worker()]);
     return { v: 1, generatedAt, available: true, apps };
   }
+  /** Resolves undefined when the work fails or the budget runs out; an injected exec may ignore its own timeout option. */
+  const control = (script: string, action: 'status' | 'launch', app: string, budgetMs: number): Promise<Report | undefined> =>
+    bounded(run(script, action, app, Math.max(1, Math.ceil(budgetMs))).catch(() => undefined), budgetMs);
+  /** Only a valid ok:true boolean is a reading; anything else is unknown. */
+  const reading = (report: Report | undefined): boolean | null =>
+    report?.ok === true && typeof report.running === 'boolean' ? report.running : null;
+  /**
+   * Idempotent "ensure running" on one app within one 30 s budget. One status probe; launch is requested
+   * at most once and only after an ok:true running:false reading; then running is confirmed with the remaining budget.
+   *
+   * Response body (never child stdout/stderr or paths; `code`/`error` only from the REFUSALS allowlist):
+   *   200 {app, action:"ensure", outcome:"already_running"|"launched", launchRequested, running:true, at}
+   *   422 {app, action:"ensure", outcome:"unavailable", launchRequested, running, at, code, error[, needsMason:true]}
+   *       a known refusal from the status or launch report
+   *   503 {app, action:"ensure", outcome:"unavailable", launchRequested, running, at, code:"unavailable", error}
+   *       unknown or malformed status, a launch that was not accepted, or a child failure
+   *   504 {app, action:"ensure", outcome:"timeout", launchRequested, running, at, code:"VERSE_ENSURE_TIMEOUT", error}
+   *       budget spent without observing running; running is the last valid observation (true|false|null)
+   */
+  async function ensure(script: string, app: string, wait: number | undefined): Promise<{ http: number; body: Record<string, unknown> }> {
+    const deadline = Date.now() + ACTION_BUDGET_MS;
+    const left = (): number => deadline - Date.now();
+    const at = new Date(now()).toISOString();
+    const respond = (outcome: 'already_running' | 'launched' | 'unavailable' | 'timeout', running: boolean | null, launchRequested: boolean, failed?: Report) => {
+      const base = { app, action: 'ensure', outcome, launchRequested, running, at };
+      if (outcome === 'already_running' || outcome === 'launched') return { http: 200, body: base };
+      if (outcome === 'timeout') return { http: 504, body: { ...base, code: 'VERSE_ENSURE_TIMEOUT', error: 'running not confirmed in time' } };
+      const refusal = failed?.ok === false && typeof failed.code === 'string' && Object.hasOwn(REFUSALS, failed.code) ? failed.code : undefined;
+      if (refusal) {
+        const needsMason = refusal === 'permission_denied' && failed?.needs_mason_written === true;
+        return { http: 422, body: { ...base, code: refusal, error: REFUSALS[refusal], ...(needsMason ? { needsMason: true } : {}) } };
+      }
+      return { http: 503, body: { ...base, ...UNAVAILABLE } };
+    };
+    const first = await control(script, 'status', app, left());
+    const initial = reading(first);
+    if (initial === true) return respond('already_running', true, false);
+    if (initial === null) return respond('unavailable', null, false, first);
+    // Definitively stopped: the single launch. Never retried, whatever its report.
+    const launch = await control(script, 'launch', app, left());
+    if (launch === undefined && left() <= 0) return respond('timeout', false, true);
+    if (launch?.ok !== true || typeof launch.code !== 'string') return respond('unavailable', false, true, launch);
+    // Observe only: sequential status probes, capped by waitRunningMs when given.
+    const seen = await awaitAppState({
+      target: 'running',
+      timeoutMs: Math.max(0, Math.min(wait ?? Infinity, left())),
+      intervalMs: CONFIRM_INTERVAL_MS,
+      probe: async budget => reading(await control(script, 'status', app, budget)),
+    });
+    return seen.outcome === 'reached' ? respond('launched', true, true) : respond('timeout', seen.running, true);
+  }
   return async (ctx, req, res, path, method) => {
     if (path === PATH && method === 'GET') {
       if (!cached || now() - cached.at >= 30_000) cached = { at: now(), view: snapshot() };
@@ -102,7 +161,7 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     let body: unknown;
     try { body = JSON.parse(await readBody(req)); } catch { body = null; }
     if (!record(body) || Object.keys(body).some(k => k !== 'app' && k !== 'action' && k !== 'waitRunningMs') ||
-      !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart'].includes(body.action))) {
+      !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart', 'ensure'].includes(body.action))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
     }
     // Validated before anything runs; focus never has a running state to wait for.
@@ -117,6 +176,11 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     if (!script) { sendJson(res, 503, { error: 'fleet apps unavailable' }); return true; }
     inFlight.add(app);
     try {
+      if (body.action === 'ensure') {
+        const answer = await ensure(script, app, typeof wait === 'number' ? wait : undefined);
+        sendJson(res, answer.http, answer.body);
+        return true;
+      }
       const deadline = Date.now() + ACTION_BUDGET_MS;
       const result = await run(script, body.action as string, app, ACTION_BUDGET_MS);
       if (result.ok === true && typeof result.code === 'string') {
