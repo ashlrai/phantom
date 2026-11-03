@@ -33,16 +33,15 @@ export function createFleetStandbyApi(deps: FleetStandbyApiDeps = {}): ApiModule
     try {
       const script = await (deps.locateScript ?? findStandbyReadinessScript)();
       if (!script) return unavailable;
-      const argv = ['-I', script, '--db', config.db as string, '--snapshot-store', config.snapshotStore as string,
+      const argv = ['-B', script, '--db', config.db as string, '--snapshot-store', config.snapshotStore as string,
         '--primary', config.primary, '--role', config.role, '--host', config.host];
       if (config.maxAgeSec !== undefined) argv.push('--max-age', String(config.maxAgeSec));
-      argv.push('--json');
       const { stdout } = await exec('python3', argv, { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
       const report: unknown = JSON.parse(stdout);
       if (!record(report) || typeof report.ready !== 'boolean' || !Array.isArray(report.blockers) ||
         !report.blockers.every(identity) || !nullableIdentity(report.leaseHolder) ||
         !(report.snapshotAgeSec === null || (typeof report.snapshotAgeSec === 'number' && Number.isFinite(report.snapshotAgeSec) && report.snapshotAgeSec >= 0))) return unavailable;
-      return { ...base, configured: true, available: true, ready: report.ready,
+      return { ...base, configured: true, available: report.ready, ready: report.ready,
         blocker: report.blockers[0] ?? null, leaseHolder: report.leaseHolder, snapshotAgeSec: report.snapshotAgeSec };
     } catch { return unavailable; } // Never echo stderr or config paths.
   }
