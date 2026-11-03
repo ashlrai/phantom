@@ -146,6 +146,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'precheck-waste': () => import('./fleet-precheck-waste.js'),
   'queue-age': () => import('./fleet-queue-age.js'),
   'queue-latency': () => import('./fleet-queue-latency.js'),
+  'queue-lint': () => import('./fleet-queue-lint.js'),
   'ready-supply': () => import('./fleet-ready-supply.js'),
   'real-supply': () => import('./fleet-real-supply.js'),
   'reassign': () => import('./fleet-reassign.js'),
