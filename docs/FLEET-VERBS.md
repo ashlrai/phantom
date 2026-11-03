@@ -25,6 +25,7 @@
 | lane-truth | `src/cli/fleet-lane-truth.ts` | Offline advisory only; never changes a hold or grants dispatch authority | no |
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
 | memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
+| mission | `src/cli/fleet-mission.ts` | Read-only briefing of the Mac fleet. `ashlr fleet mission --json` prints `fleet.mission.v1`, the same document as `GET /api/verse/fleet/runs/mission`: health, merges this hour, what needs a look, and the detail behind them. Missing files stay unknown | no |
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |
 | real-supply | `src/cli/fleet-real-supply.ts` | Read-only live supply for the planner: Dependabot alerts, red scheduled suites and open issues across the seven repos, plus local registry↔docs drift signals | no |
 | red-merges | `src/cli/fleet-red-merges.ts` | Read-only per-hour rollup of merges landed on red vs green checks per lane, from metrics/jobs.jsonl outcome rows joined to launches by job id; unread ledger prints unknown | no |

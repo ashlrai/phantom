@@ -35,6 +35,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
 - [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
+- [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
 - Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Daemon tick phases](daemon-tick-phases.md): Bounded resident tick stages — per-phase status/duration/error and tick outcomes via `phm daemon status --json | jq .tick.phases`.
@@ -314,3 +315,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Router eval harness](router/eval.md): phm eval router --dataset jobs.jsonl [--policy NAME] [--decisions] [--json] [--write report.json] [--check baseline.json] replays a router or prompt policy over a frozen set of...
 - [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
+
+- [Fleet app state](APP-STATE.md): `phm app state --json`, Mission schema, live stream, shared forum and unknown billing.

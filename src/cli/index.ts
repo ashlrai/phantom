@@ -684,6 +684,11 @@ const loadChannelsCmd = lazyCmd(
   (m) => m.cmdChannels as Cmd,
   'channels command requires src/cli/channels.ts (RQ-CHANNELS-18 module not yet built).',
 );
+const loadForumCmd = lazyCmd(
+  () => import('./forum.js'),
+  (m) => m.cmdForum as Cmd,
+  'forum command requires src/cli/forum.ts.',
+);
 
 // ─── M257 director command loader ────────────────────────────────────────────
 
@@ -2607,6 +2612,20 @@ async function main(): Promise<void> {
       case 'channels': {
         const cmdChannels = await loadChannelsCmd();
         process.exitCode = await cmdChannels(rest);
+        break;
+      }
+
+      case 'app': {
+        if (rest.length === 1 && wantsHelp(rest)) { console.log('Usage: phm app state [--json]'); break; }
+        if (rest[0] !== 'state') { console.error('Usage: phm app state [--json]'); process.exitCode = 2; break; }
+        const { cmdFleetMission } = await import('./fleet-mission.js');
+        process.exitCode = await cmdFleetMission(rest.slice(1));
+        break;
+      }
+
+      case 'forum': {
+        const cmdForum = await loadForumCmd();
+        process.exitCode = await cmdForum(rest);
         break;
       }
 

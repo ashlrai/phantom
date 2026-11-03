@@ -187,9 +187,9 @@ async function boot(opts: Partial<WebServerOptions> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('the real mount table', () => {
-  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin, jev, runs-history, release-pr, fleet-holds, fleet-graph-live, fleet-ci-runs, fleet-usage-audit, fleet-memory, fleet-self-tick, fleet-graph and fleet-main-red-age — in that order', () => {
+  it('mounts the complete current API inventory in dispatch order', () => {
     setMountedApiModulesForTest(null);
-    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr', 'fleet-holds', 'fleet-graph-live', 'fleet-ci-runs', 'fleet-usage-audit', 'fleet-memory', 'fleet-self-tick', 'fleet-graph', 'fleet-main-red-age']);
+    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr', 'fleet-holds', 'fleet-graph-live', 'fleet-ci-runs', 'fleet-usage-audit', 'fleet-memory', 'fleet-inbox-acks', 'fleet-apps', 'fleet-standby', 'fleet-self-tick', 'fleet-graph', 'fleet-main-red-age', 'fleet-merge-pace', 'fleet-landed-closes', 'forum']);
   });
 
   it('every entry resolves to a handler function (the owning units exported what the contract names)', async () => {
@@ -236,6 +236,7 @@ describe('the real mount table', () => {
       'fleet-memory': '/api/verse/fleet/memory',
       'fleet-self-tick': '/api/verse/fleet/self-tick',
       'fleet-main-red-age': '/api/verse/fleet/main-red-age',
+      forum: '/api/verse/forum',
     };
     for (const [owner, p] of Object.entries(representative) as Array<[MountedApiModuleId, string]>) {
       for (const { id, handler } of handlers) {

@@ -68,7 +68,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Do not read or print real credentials, environment dumps, or secret values. Use Phantom Secrets references and Locus for scoped account access; see [the toolchain guide](docs/AGENT-TOOLCHAIN.md).
 - Report the exact commands run, failures and remaining limitations. Keep documentation commands aligned with [package.json](package.json); the [AGENTS.md audit](docs/AGENTS-MD-AUDIT.md) records public-source gaps across the seven repos.
 
-Node router: `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave --json` joins this computer to the router. A job's owner scope decides which nodes see it; a lease and fencing token keep it from running twice; auth stays local and jobs carry secret names only. See [node router](docs/NODE-ROUTER.md).
+Node router: `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave --json` joins this computer to the router. A job's owner scope decides which nodes see it; a lease and fencing token keep it from running twice; auth stays local and jobs carry secret names only. See [Add a computer in 60 seconds](docs/add-a-computer.md) and the [node router](docs/NODE-ROUTER.md).
 
 Lane health: `phm lanes health --json` prints calls, error rate, p50 latency and
 deployed commit per lane over 12 h, and flags runs stuck past their phase
@@ -107,3 +107,9 @@ Tier-1 import closure checks on every PR and merge queue candidate, including
 docs-only changes. A new Tier-1 test needs its generated CODEOWNERS entry in the
 same PR; changed Tier-1 imports need a reviewed closure snapshot update. Drift
 fails the existing Merge Gate even when the full authority shards do not run.
+## Article 2: app source of truth
+
+Use `phm app state --json` for the same `fleet.mission.v1` reading displayed
+in Fleet Mission. See [the app state guide](docs/APP-STATE.md). Extend the
+existing Mission API and Verse stream; agent communication uses `phm forum`
+and `phantom_forum`. Unknown usage, queue positions and costs stay unknown.
