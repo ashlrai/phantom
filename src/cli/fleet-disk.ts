@@ -112,9 +112,9 @@ export function parseDuSubdirs(text: string, root: string, limit = FLEET_DISK_TO
     if (!m) continue;
     const kb = Number(m[1]);
     const path = m[2]!.trim().replace(/[/\\]+$/, '');
-    // eslint-disable-next-line no-control-regex -- directory names must not carry control bytes into the report.
     if (!Number.isSafeInteger(kb) || !path.startsWith(`${base}/`)) continue;
     const name = path.slice(base.length + 1);
+    // eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
     if (!name || name === '.' || name === '..' || name.includes('/') || /[\x00-\x1f\x7f]/.test(name)) continue;
     byName.set(name, Math.max(kb, byName.get(name) ?? 0));
   }
