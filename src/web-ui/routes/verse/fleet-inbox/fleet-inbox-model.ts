@@ -1,4 +1,8 @@
-export interface InboxEntry { at: string; source: string; priority: string; text: string }
+export interface InboxPlannerFields { id?: string; channel?: string; ack?: 'acked' | 'skipped' | 'pending' }
+export interface InboxEntry {
+  at: string; source: string; priority: string; text: string;
+  id?: string; channel?: string; plannerAck?: InboxPlannerFields['ack'];
+}
 const record = (v: unknown): Record<string, unknown> | null =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const label = (v: unknown) => typeof v === 'string' && v.trim() ? v : '—';
@@ -13,7 +17,11 @@ export function readInboxEntries(dedicated: unknown, snapshot: unknown) {
     const row = record(value);
     if (!row || typeof row.text !== 'string') return [];
     return [{ at: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(label(row.at)) ? row.at as string : '—',
-      source: label(row.source), priority: label(row.priority), text: row.text }];
+      source: label(row.source), priority: label(row.priority), text: row.text,
+      ...(typeof row.id === 'string' ? { id: row.id } : {}),
+      ...(typeof row.channel === 'string' ? { channel: row.channel } : {}),
+      ...(typeof row.ack === 'string' && ['acked', 'skipped', 'pending'].includes(row.ack)
+        ? { plannerAck: row.ack as InboxPlannerFields['ack'] } : {}) }];
   });
   return { entries, sourceState: label(origin === 'route' ? route!.sourceState
     : record(fleet?.sources)?.inbox), origin } as const;
