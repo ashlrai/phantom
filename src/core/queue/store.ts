@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { planReplay, type ReplayOptions } from './replay.js';
 import { exportMarkdown } from './markdown.js';
+import { exportStacksyncCompletion } from './stacksync.js';
 import { validateQueue, type QueueDocument, type QueueJob } from './schema.js';
 
 const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -91,7 +92,7 @@ export class QueueStore {
     });
   }
   async finish(id: string, owner: string, options: { prUrl?: string; reason?: string } = {}): Promise<QueueJob> {
-    return this.mutate(doc => {
+    const result = await this.mutate(doc => {
       const job = this.find(doc, id);
       const claim = job.claims.at(-1);
       if (!['CLAIMED', 'PR-OPEN'].includes(job.status) || !claim || claim.owner !== owner || claim.finishedAt) throw new Error('An active claim owned by --owner is required');
@@ -101,6 +102,8 @@ export class QueueStore {
       if (job.status !== 'PR-OPEN') claim.finishedAt = new Date().toISOString();
       return job;
     });
+    await exportStacksyncCompletion(result);
+    return result;
   }
   async replay(options: ReplayOptions): Promise<QueueJob[]> {
     if (options.dryRun) return planReplay(await this.read(), options);
