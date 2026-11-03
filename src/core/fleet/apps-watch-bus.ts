@@ -3,14 +3,15 @@ import { randomUUID } from 'node:crypto';
 import { appendBusInbox } from './bus-inbox.js';
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
 
+export type AppsWatchDiagnostic = { app: string; outcome: 'running' | 'launched' | 'unavailable' | 'launch-failed' | 'timeout' | 'cancelled' | 'unattempted' | 'unknown'; attempted?: boolean; launched?: boolean; reason?: 'deadline' | 'cancelled' };
 export type AppsWatchState = { app: string; observedRunning: boolean | null }[] | null;
 export type AppsWatchEvent = {
   kind: 'apps-watch.observation.v1'; cycle: number; healthy: boolean; recoveries: number;
-  consecutiveFailures: number; totalFailedCycles: number; observedState: AppsWatchState;
+  consecutiveFailures: number; totalFailedCycles: number; observedState: AppsWatchState; diagnostics?: AppsWatchDiagnostic[];
 } | {
   kind: 'apps-watch.summary.v1'; apps: string[]; outcome: 'completed' | 'failed' | 'cancelled';
   cycles: number; recoveries: number; consecutiveFailures: number; totalFailedCycles: number;
-  lastObservedState: AppsWatchState;
+  lastObservedState: AppsWatchState; lastDiagnostics?: AppsWatchDiagnostic[] | null;
 };
 
 export function createAppsWatchPublisher(root: string, append = appendBusInbox): (event: AppsWatchEvent) => boolean {
@@ -26,7 +27,8 @@ export function createAppsWatchPublisher(root: string, append = appendBusInbox):
       if (!validateBusEnvelope(envelope).ok) return false;
       const state = event.kind === 'apps-watch.observation.v1'
         ? JSON.stringify([event.healthy, event.observedState === null ? null :
-          event.observedState.map(row => JSON.stringify([row.app, row.observedRunning])).sort()])
+          event.observedState.map(row => JSON.stringify([row.app, row.observedRunning])).sort(),
+          event.diagnostics?.map(row => JSON.stringify([row.app, row.outcome, row.attempted, row.launched, row.reason])).sort()])
         : undefined;
       if (event.kind === 'apps-watch.observation.v1' && event.recoveries === 0 && state === prior) return true;
       const result = append(envelope, { root });
