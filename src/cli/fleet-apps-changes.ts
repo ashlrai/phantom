@@ -67,8 +67,9 @@ export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChanges
     else { if (n < 100 || n > 60000) return invalid(); interval = n; }
   }
   if (!duration) return invalid();
+  const selectedAppNames = [...requestedApps].map(i => FLEET_APPS[i]!);
   let result: Awaited<ReturnType<typeof observeFleetAppsChanges>>;
-  try { result = await observeFleetAppsChanges({ durationMs: duration, intervalMs: interval, root, apps: [...requestedApps].map(i => FLEET_APPS[i]!) }, deps, event => {
+  try { result = await observeFleetAppsChanges({ durationMs: duration, intervalMs: interval, root, apps: selectedAppNames }, deps, event => {
     if (jsonl) process.stdout.write(`${JSON.stringify(event)}\n`);
     else if (event.type === 'summary') console.log(`Summary: ${event.outcome}, ${event.samples} samples, ${event.transitions} transitions`);
     else console.log(`${event.time} ${event.type} ${event.app}: ${event.state}`);
@@ -129,7 +130,16 @@ export async function observeFleetAppsChanges(
   let previous: State[] | undefined, samples = 0, transitions = 0, valid = false;
   while (!deps.signal?.aborted && remaining() > 0) {
     const budget = Math.max(1, Math.ceil(remaining()));
-    const result = await bounded(budget, signal => runChild!(['fleet', 'apps-status', ...(root === undefined ? [] : ['--root', root]), '--json'], { timeoutMs: budget, signal }));
+    const baseArgv: string[] = ['fleet', 'apps-status', '--json'];
+    if (root !== undefined) baseArgv.push('--root', root);
+    if (selected.size < FLEET_APPS.length) {
+      const appIndices = options.apps?.length
+        ? [...new Set(options.apps.map(app => (FLEET_APPS as readonly string[]).indexOf(app)))]
+            .sort((x, y) => x - y)
+        : [];
+      baseArgv.push(...appIndices.flatMap(idx => ['--app', FLEET_APPS[idx]!]));
+    }
+    const result = await bounded(budget, signal => runChild!(baseArgv, { timeoutMs: budget, signal }));
     if (deps.signal?.aborted) break;
     const parsed = result ? inventory(result.code, result.stdout, selected) : { states: FLEET_APPS.map((): State => 'unknown'), valid: false };
     valid ||= parsed.valid;

@@ -9,7 +9,7 @@ import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec 
 const execFileAsync = promisify(execFile);
 
 const USAGE =
-  'Usage: ashlr fleet apps-status [--root <dir>] [--json]\n' +
+  'Usage: ashlr fleet apps-status [--root <dir>] [--json] [--app <name>]...\n' +
   'Status inventory of eight managed GUI apps (Phantom, Codex, Claude, Grok Bot, ChatGPT, Cursor, Safari, Google Chrome) via scripts/mac-bridge/app_control.py. Runs from a Phantom source checkout or from the copy that `ashlr fleet bridge-install --apply` puts under <root>/mac-bridge/current. Exits 0 ok, 1 failure or missing script.';
 
 const MAX_PROBES = 2;
@@ -74,8 +74,10 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
     return 0;
   }
 
-  // Parse flags: --root <dir> --json, reject unknown/duplicates/positionals.
+  // Parse flags: --root <dir> --json [--app <name>]...
+  // Reject unknown/duplicates/positionals before locating the script.
   const seen = new Set<string>();
+  const selected = new Set<string>();
   let json = false;
   let parsedRoot = root;
   for (let i = 0; i < args.length; i++) {
@@ -86,13 +88,24 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
         console.error(`error: duplicate option: ${token}\n${USAGE}`);
         return 2;
       }
-      if (!['--json', '--root'].includes(token)) {
+      if (!['--json', '--root', '--app'].includes(token)) {
         console.error(`error: unknown option: ${token}\n${USAGE}`);
         return 2;
       }
       seen.add(token);
       if (token === '--json') {
         json = true;
+      } else if (token === '--app') {
+        const value = args[++i];
+        if (value === undefined || value.startsWith('-')) {
+          console.error(`error: --app needs an app name\n${USAGE}`);
+          return 2;
+        }
+        if ((FLEET_APPS as readonly string[]).indexOf(value) < 0) {
+          console.error(`error: unknown app: ${value}\n${USAGE}`);
+          return 2;
+        }
+        selected.add(value);
       } else {
         const value = args[++i];
         if (value === undefined || value.startsWith('-')) {
@@ -109,7 +122,9 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
   }
 
   const view = await readFleetAppsStatus({ ...deps, runsDir: parsedRoot });
-  formatAppsStatusResult(view, json);
+  const filteredApps = selected.size > 0 ? view.apps.filter(row => selected.has(row.app)) : view.apps;
+  const filteredView: FleetAppsStatusView = { ...view, apps: filteredApps };
+  formatAppsStatusResult(filteredView, json);
   return !view.available || view.degraded ? 1 : 0;
 }
 

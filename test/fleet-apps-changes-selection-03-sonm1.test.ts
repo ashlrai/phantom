@@ -34,16 +34,20 @@ describe('fleet apps-changes selection', () => {
       ['baseline', a, 'stopped'], ['transition', a, 'running'], ['summary', undefined, undefined],
     ]);
     expect(result.events.at(-1)).toMatchObject({ outcome: 'complete', transitions: 1 });
-    expect(deps.runChild).toHaveBeenCalledWith(['fleet', 'apps-status', '--json'], expect.anything());
+    expect(deps.runChild).toHaveBeenCalledWith(['fleet', 'apps-status', '--json', '--app', a], expect.anything());
   });
   it('orders two selected apps canonically regardless of flag order', async () => {
-    const result = await capture([...args, '--app', b, '--app', a], sequence([snapshot([row(a, true), row(b, false)])]));
+    const deps = sequence([snapshot([row(a, true), row(b, false)])]);
+    const result = await capture([...args, '--app', b, '--app', a], deps);
     expect(result.events.filter(e => e.type === 'baseline').map(e => e.app)).toEqual([a, b]);
+    expect(deps.runChild).toHaveBeenCalledWith(['fleet', 'apps-status', '--json', '--app', a, '--app', b], expect.anything());
   });
   it('keeps all-app behavior without selection', async () => {
-    const result = await capture(args, sequence([snapshot([row(a, true)])]));
+    const deps = sequence([snapshot([row(a, true)])]);
+    const result = await capture(args, deps);
     expect(result.events.filter(e => e.type === 'baseline').map(e => e.app)).toEqual([...FLEET_APPS]);
     expect(result.events.at(-1)).toMatchObject({ outcome: 'complete' });
+    expect(deps.runChild).toHaveBeenCalledWith(['fleet', 'apps-status', '--json'], expect.anything());
   });
   it('does not accept unrelated valid rows for missing, malformed or duplicate selected rows', async () => {
     for (const selectedRows of [[], [row(a, true, null)], [row(a, true), row(a, false)]]) {
