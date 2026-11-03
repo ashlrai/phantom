@@ -48,6 +48,7 @@ import { useViewport } from '../shell/viewport.js';
 import { executeCatalogCommand } from '../shell/run-command.js';
 import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, WhySeatCard } from '../fleet/FleetCards.js';
 import { MainHealthRows } from '../fleet/MainHealthRows.js';
+import { MergePaceCard } from './MergePaceCard.js';
 import { RepoTable } from '../fleet/RepoTable.js';
 import { FleetScheduling } from '../resources/SchedulingEvidence.js';
 import { ExecutionFeedback } from '../fleet/ExecutionFeedback.js';
@@ -151,6 +152,8 @@ export function FleetSection() {
           {/* Per-repo main state from the guardian's state.json — one row each,
               unknown never green. Owns its own read + poll. */}
           <MainHealthRows />
+          {/* Merges per hour + median time to merge per repo, last 6 h. */}
+          <MergePaceCard />
         </>
       }
     >

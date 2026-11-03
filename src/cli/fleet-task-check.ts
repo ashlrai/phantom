@@ -1,14 +1,11 @@
 /** Read-only: warns when a job's batch keeps finishing empty. Never changes dispatch or merge authority. */
-import { readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { readJobsMetrics, type JobsMetricsReader } from '../core/fleet/jobs-metrics.js';
 
 const usage = 'Usage: ashlr fleet task-check <job-id> [--json]';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const THRESHOLD = 3;
-const MAX_BYTES = 32 * 1024 * 1024;
 
-export type TaskCheckReader = () => Promise<string | null>;
+export type TaskCheckReader = JobsMetricsReader;
 
 export interface TaskCheckReport {
   schema: 'fleet.task-check.v1';
@@ -21,19 +18,10 @@ export interface TaskCheckReport {
   precheck_skip: number;
   window_hours: 24;
 }
+export const readTaskCheckJobs = readJobsMetrics;
 
 /** The job id with its trailing number removed: RQ-PHX-FOO03 -> RQ-PHX-FOO. */
 export const taskBatch = (job: string): string => job.replace(/\d+$/, '') || job;
-
-/** Default reader: null when the file is missing, unreadable, not a file or too large. */
-export const readTaskCheckJobs: TaskCheckReader = async () => {
-  const path = join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl');
-  try {
-    const info = await stat(path);
-    if (!info.isFile() || info.size > MAX_BYTES) return null;
-    return await readFile(path, 'utf8');
-  } catch { return null; }
-};
 
 export async function taskCheck(job: string, read: TaskCheckReader, now = Date.now()): Promise<TaskCheckReport> {
   const batch = taskBatch(job);

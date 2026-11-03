@@ -196,7 +196,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age' | 'fleet-merge-pace';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -261,6 +261,9 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Main guardian per-repo red-age: GET /api/verse/fleet/main-red-age
   // (core/verse/fleet-main-red-age-api.ts); read-only.
   { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
+  // Merge pace: GET /api/verse/fleet/merge-pace (core/verse/fleet-merge-pace-api.ts);
+  // the `ashlr fleet merge-pace --json` shape, read-only.
+  { id: 'fleet-merge-pace', load: async () => (await import('./fleet-merge-pace-api.js')).handleFleetMergePaceApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
