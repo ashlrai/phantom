@@ -11,7 +11,7 @@ import os, re, json, time, fcntl, subprocess, glob
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 NOW = time.time(); TS = time.strftime("%F %T")
-MAX_LAUNCH_PER_TICK = 4; MAX_REAPS = 6; GRACE = 120; RAISE_GAP = 120
+MAX_LAUNCH_PER_TICK = 8; MAX_REAPS = 12; GRACE = 120; RAISE_GAP = 120
 LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"]   # tie-break order: cmp first
 # hard_cap (RQ-LOADGATE-1): per-pool absolute bound, seeded to the ceiling so nothing changes until an operator lowers it in
 # slots.json. Neither the floor, the autopilot overrides, the +2 ramp nor a stored target may exceed it. GLOBAL_HARD_CAP is the
@@ -125,9 +125,11 @@ AB_RX = {"codex": [("codex_usage_limit", re.compile(r"(?im)" + _CX + r"you" + _Q
                    ("codex_rate_limit_429", re.compile(r"(?im)" + _CX + r"(?:unexpected status |stream error: )?429\b.{0,200}\brate_limit.*$"))],
          "anthropic": [("claude_usage_limit", re.compile(r"(?im)^Claude AI usage limit reached(?:\|\d{10})?\s*$")),
                        ("claude_rate_limit_error", re.compile(r"(?im)^API Error: 429\b.{0,200}\"type\":\s*\"rate_limit_error\".*$")),
-                       ("claude_credit_balance", re.compile(r"(?im)^(?:API Error: \d{3} .{0,200})?Credit balance is too low\b.*$"))],
+                       ("claude_credit_balance", re.compile(r"(?im)^(?:API Error: \d{3} .{0,200})?Credit balance is too low\b.*$")),
+                       ("claude_oauth_expired", re.compile(r"(?im)^Failed to authenticate: OAuth session expired and could not be refreshed\s*$"))],
          "devin": [("devin_acu_exhausted", re.compile(r"(?im)^(?:ERROR|Error): (?:ACU (?:limit|quota) (?:reached|exceeded)|ACUs? (?:are |have been )?(?:exhausted|depleted)|out of ACUs)\b.*$")),
-                   ("devin_usage_limit", re.compile(r"(?im)^weekly usage quota has been exhausted\s*$"))]}
+                   ("devin_usage_limit", re.compile(r"(?im)^weekly usage quota has been exhausted\s*$")),
+                   ("devin_weekly_quota", re.compile(r"(?im)^Error: Agent error: Your weekly usage quota has been exhausted\s*$"))]}
 AB_PROV = {"codex-cmp": "codex", "codex-personal": "codex", "claude": "anthropic", "claude-api": "anthropic", "devin": "devin"}
 _MON = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
 def _et():
@@ -169,7 +171,7 @@ def ab_epoch(s_):
     import datetime as dt
     try: return dt.datetime.fromisoformat(str(s_)).timestamp()
     except Exception: return None
-GITSAFE = R + "/bin/git-safe-env.sh"; GITSAFE_SHA = "7ecf153b007bf8254bb31ac51be9c1d4774178540d5cb1e93b1afc925453b544"   # RQ-GIT-SAFE rev4.1, dispatchd rev6.1
+GITSAFE = R + "/bin/git-safe-env.sh"; GITSAFE_SHA = "234fb12a57a51fdfed81da8702a0b452c183f2726582608b81b7e811a65ce1a2"   # RQ-GIT-SAFE rev4.1, dispatchd rev6.1
 def ab_contained(w):   # REAPER-10 K2 containment of the .base worktree path, before any git call
     try:
         if not w.startswith("/") or any(c in (".", "..") for c in w.split("/")): return False
@@ -272,8 +274,9 @@ AB_AUTH_RX = {
     "codex": [("codex_auth_failure", re.compile(r"(?im)" + _CX + r"[^\n]*(?:" + _A_TOK + r")[^\n]*$"))],
     "devin": [("devin_auth_failure", re.compile(r"(?im)^(?:\[[0-9T:.\-]+Z?\]\s*)?(?:ERROR|Error): [^\n]*(?:" + _A_TOK + r")[^\n]*$"))],
     "anthropic": [("claude_auth_401", re.compile(r"(?im)^API Error: 401\b[^\n]*$")),
+                  ("claude_not_logged_in", re.compile(r"(?im)^Not logged in(?: [\u00b7-] [^\n]*)?\s*$")),   # the CLI's own line, not any line containing the words
                   ("claude_auth_error", re.compile(r"(?im)^[^\n]*(?:authentication_error|invalid (?:x-)?api[-_ ]?key|"
-                                                  r"oauth token (?:has )?expired|not logged in|please (?:re-?)?log ?in)[^\n]*$"))],
+                                                  r"oauth token (?:has )?expired|please (?:re-?)?log ?in)[^\n]*$"))],
 }
 def ab_auth_scan(lane, alive_):
     s_ = slots[lane]; pats = AB_AUTH_RX.get(AB_PROV.get(lane, ""))
@@ -376,7 +379,7 @@ disk_hard_stop = disk_free_gb < DISK_HARD_STOP_GB
 # ---- RQ-DISKGUARD-DRIP (b): phantom publish drip. While ashlrai/phantom has >= 150 open PRs, publish (reap) only
 # LAND, FIXUP, CONSOLIDATE and CLOSE-* jobs there; others stay finished and local. Count cached 10 min in
 # $R/phantom-open-prs ("<epoch> <n>"), fetched with the same gh CLI as _ph_check; unavailable -> filter on.
-PH_DRIP_KINDS = ("LAND", "FIXUP", "CONSOLIDATE", "CLOSE-[A-Z0-9-]+"); PH_DRIP_MAX = 150; _ph_open = []
+PH_DRIP_KINDS = ("LAND", "FIXUP", "CONSOLIDATE", "CLOSE-[A-Z0-9-]+"); PH_DRIP_MAX = 400; _ph_open = []
 def _ph_open_prs():
     if _ph_open: return _ph_open[0]
     cp = R + "/phantom-open-prs"; n = None
