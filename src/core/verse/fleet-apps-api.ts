@@ -181,7 +181,12 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         return true;
       }
       const deadline = Date.now() + ACTION_BUDGET_MS;
-      const result = await run(script, body.action as string, app, ACTION_BUDGET_MS);
+      const result = await bounded(run(script, body.action as string, app, ACTION_BUDGET_MS), ACTION_BUDGET_MS);
+      if (Date.now() >= deadline) {
+        sendJson(res, 504, { code: 'VERSE_ACTION_TIMEOUT', error: 'app action not accepted in time' });
+        return true;
+      }
+      if (!result) throw new Error('app control unavailable');
       if (result.ok === true && typeof result.code === 'string') {
         const accepted = { app, action: body.action, code: result.code };
         let confirmation: { target: 'running'; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
@@ -191,14 +196,10 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
             target: 'running',
             timeoutMs: Math.min(wait, Math.max(0, deadline - Date.now())),
             intervalMs: CONFIRM_INTERVAL_MS,
-            probe: async budget => {
-              try {
-                const status = await run(script, 'status', app, Math.max(1, Math.ceil(budget)));
-                return status.ok === true && typeof status.running === 'boolean' ? status.running : null;
-              } catch { return null; }
-            },
+            probe: async budget => reading(await control(script, 'status', app, Math.min(budget, Math.max(0, deadline - Date.now())))),
           });
-          confirmation = { target: 'running', outcome: seen.outcome, attempts: seen.attempts, running: seen.running, confirmed: seen.outcome === 'reached' && seen.running === true };
+          const confirmed = Date.now() < deadline && seen.outcome === 'reached' && seen.running === true;
+          confirmation = { target: 'running', outcome: seen.outcome === 'reached' && !confirmed ? 'timeout' : seen.outcome, attempts: seen.attempts, running: seen.running, confirmed };
         }
         sendJson(res, 202, { ...accepted, at: new Date(now()).toISOString(), ...(confirmation ? { confirmation } : {}) });
       } else if (result.ok === false && typeof result.code === 'string' && Object.hasOwn(REFUSALS, result.code)) {
