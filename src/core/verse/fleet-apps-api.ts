@@ -3,12 +3,17 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { awaitAppState } from '../fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
 export const FLEET_APPS = ['Phantom', 'Codex', 'Claude', 'Grok Bot', 'ChatGPT', 'Cursor', 'Safari', 'Google Chrome'] as const;
 const PATH = '/api/verse/fleet/apps';
+// One finite budget covers the action and any running confirmation; waitRunningMs only caps the confirmation part.
+const ACTION_BUDGET_MS = 30_000;
+const MAX_WAIT_RUNNING_MS = 30_000;
+const CONFIRM_INTERVAL_MS = 200;
 const execAsync = promisify(execFile);
 export interface FleetAppsApiDeps {
   exec?: FleetAppExec;
@@ -96,8 +101,13 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     }
     let body: unknown;
     try { body = JSON.parse(await readBody(req)); } catch { body = null; }
-    if (!record(body) || Object.keys(body).some(k => k !== 'app' && k !== 'action') ||
+    if (!record(body) || Object.keys(body).some(k => k !== 'app' && k !== 'action' && k !== 'waitRunningMs') ||
       !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart'].includes(body.action))) {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
+    }
+    // Validated before anything runs; focus never has a running state to wait for.
+    const wait = body.waitRunningMs;
+    if (wait !== undefined && (body.action === 'focus' || typeof wait !== 'number' || !Number.isInteger(wait) || wait < 1 || wait > MAX_WAIT_RUNNING_MS)) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
     }
     const app = body.app as string;
@@ -107,9 +117,27 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     if (!script) { sendJson(res, 503, { error: 'fleet apps unavailable' }); return true; }
     inFlight.add(app);
     try {
-      const result = await run(script, body.action as string, body.app as string, 30_000);
+      const deadline = Date.now() + ACTION_BUDGET_MS;
+      const result = await run(script, body.action as string, app, ACTION_BUDGET_MS);
       if (result.ok === true && typeof result.code === 'string') {
-        sendJson(res, 202, { app: body.app, action: body.action, code: result.code, at: new Date(now()).toISOString() });
+        const accepted = { app, action: body.action, code: result.code };
+        let confirmation: { target: 'running'; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
+        if (typeof wait === 'number') {
+          // Observe only: sequential status probes, never a second launch or retry of the action.
+          const seen = await awaitAppState({
+            target: 'running',
+            timeoutMs: Math.min(wait, Math.max(0, deadline - Date.now())),
+            intervalMs: CONFIRM_INTERVAL_MS,
+            probe: async budget => {
+              try {
+                const status = await run(script, 'status', app, Math.max(1, Math.ceil(budget)));
+                return status.ok === true && typeof status.running === 'boolean' ? status.running : null;
+              } catch { return null; }
+            },
+          });
+          confirmation = { target: 'running', outcome: seen.outcome, attempts: seen.attempts, running: seen.running, confirmed: seen.outcome === 'reached' && seen.running === true };
+        }
+        sendJson(res, 202, { ...accepted, at: new Date(now()).toISOString(), ...(confirmation ? { confirmation } : {}) });
       } else if (result.ok === false && typeof result.code === 'string' && Object.hasOwn(REFUSALS, result.code)) {
         const needsMason = result.code === 'permission_denied' && result.needs_mason_written === true;
         sendJson(res, 422, { code: result.code, error: REFUSALS[result.code], ...(needsMason ? { needsMason: true } : {}) });
