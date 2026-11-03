@@ -11,6 +11,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'apps-history': () => import('./fleet-apps-history.js'),
   'apps-recovery-batch': () => import('./fleet-apps-recovery-batch.js'),
   'apps-recovery-check': () => import('./fleet-apps-recovery-check.js'),
+  'apps-recovery-resume': () => import('./fleet-apps-recovery-resume.js'),
   'apps-recovery-state': () => import('./fleet-apps-recovery-state.js'),
   'apps-recovery-wait': () => import('./fleet-apps-recovery-wait.js'),
   'apps-status': () => import('./fleet-apps-status.js'),
