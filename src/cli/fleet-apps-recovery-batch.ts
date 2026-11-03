@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readAppsRecoveryInvocations } from '../core/fleet/apps-recovery-invocations.js';
 import { appsRecoveryVerdict } from '../core/fleet/apps-recovery-verdict.js';
 
-const usage = 'Usage: ashlr fleet apps-recovery-batch --invocation <v4 uuid> [--invocation <v4 uuid> ...up to 20] --max-age-ms <positive integer> --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--json]';
+const usage = 'Usage: ashlr fleet apps-recovery-batch --invocation <v4 uuid> [--invocation <v4 uuid> ...up to 20] --max-age-ms <positive integer> --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--json] [--stream]';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_INVOCATIONS = 20;
 const STOP_CHECK_MS = 250;
@@ -28,13 +28,15 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
   let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   let stopFile: string | undefined;
   let maxAge = 0, duration = 0, interval = 1000;
+  let stream = false;
   const ids: string[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (!['--root', '--json', '--invocation', '--max-age-ms', '--duration-ms', '--interval-ms', '--stop-file'].includes(arg)) return invalid();
+    if (!['--root', '--json', '--invocation', '--max-age-ms', '--duration-ms', '--interval-ms', '--stop-file', '--stream'].includes(arg)) return invalid();
     if (arg !== '--invocation' && seen.has(arg)) return invalid();
     seen.add(arg);
+    if (arg === '--stream') { stream = true; continue; }
     if (arg === '--json') continue;
     const value = args[++i];
     if (!value || value.startsWith('-')) return invalid();
@@ -73,6 +75,8 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
   const start = now(), deadline = start + duration;
   let verdicts: ReturnType<typeof appsRecoveryVerdict>[] | null = null;
   let outcome: Outcome = 'timeout';
+  // Stream mode keeps only the last change key and a counter, never a history.
+  let lastKey: string | null = null, progressSeq = 0;
   try {
     for (;;) {
       if (controller.signal.aborted) { outcome = 'cancelled'; break; }
@@ -86,6 +90,15 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
         if (controller.signal.aborted) { outcome = 'cancelled'; break; }
         if (stopped()) { outcome = 'stopped'; break; }
         if (projection.availability !== 'available') { outcome = 'unavailable'; break; }
+        if (stream) {
+          const key = JSON.stringify(verdicts.map(v => [v.verdict, v.latestCursor, v.terminalOutcome, v.truncated,
+            v.ageMs === null ? 'unknown' : v.ageMs > maxAge ? 'stale' : 'fresh']));
+          if (key !== lastKey) {
+            lastKey = key;
+            emit(JSON.stringify({ type: 'progress', v: 1, evidence: 'retained', liveProbe: false, invocationIds: ids,
+              seq: ++progressSeq, elapsedMs: Math.max(0, now() - start), verdicts }));
+          }
+        }
         if (verdicts.some(v => v.verdict === 'terminal')) { outcome = 'terminal'; break; }
         if (now() >= deadline) break;
         if (verdicts.every(v => v.verdict === 'healthy')) { outcome = 'healthy'; break; }
@@ -102,7 +115,7 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
       }
       if (outcome === 'stopped' || outcome === 'unavailable') break;
     }
-    emit(JSON.stringify({ v: 1, evidence: 'retained', liveProbe: false, invocationIds: ids, outcome,
+    emit(JSON.stringify({ ...(stream ? { type: 'summary' } : {}), v: 1, evidence: 'retained', liveProbe: false, invocationIds: ids, outcome,
       elapsedMs: Math.max(0, now() - start), verdicts,
       ...(outcome === 'unavailable' ? { message: 'Recovery evidence unavailable' } : {}) }));
     return outcome === 'healthy' ? 0 : 1;
