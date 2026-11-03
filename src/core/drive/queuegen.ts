@@ -23,11 +23,15 @@
  * skipping anywhere; hold list read from its canonical file and held PRs are
  * never touched; only the seven repos and fleet-authored PRs; any gh error
  * aborts the cycle with no retry (a local git or log-tail failure skips only
- * that PR); at most `cycleCap` new lines per cycle.
+ * that PR); at most `cycleCap` new lines per cycle; `tier` must be one of
+ * the queue tiers (queue-tier.ts) — any other value throws before any read
+ * or write, and each line builder re-checks it so no unknown tier is written.
  *
  * All I/O is injected through QueuegenIo so the cycle is unit-testable; the
  * host adapter (scripts/queuegen.mjs) stays thin.
  */
+
+import { assertQueueTier } from './queue-tier.js';
 
 export const QUEUEGEN_CYCLE_CAP = 20;
 export const QUEUEGEN_PR_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -206,19 +210,21 @@ export function rebaseId(repo: string, pr: QueuegenPr): string {
 }
 
 export function fixupLine(repo: string, pr: QueuegenPr, check: QueuegenCheck, file: string, err: string, pinned: boolean, stamp: string, opts: Required<Pick<QueuegenOptions, 'fixupPriority' | 'pool' | 'tier'>>): string {
+  const tier = assertQueueTier(opts.tier);
   const short = shortName(repo);
   const text = `FIXUP ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="${quoted(check.name, 120)}" acceptance="${quoted(acceptanceCommand(file), 200)}" err="${quoted(err, 180)}": fix the failing required check in the named file and push to the head branch. https://github.com/${repo}/pull/${pr.number}`;
   // The pin leads the truncated body so the 560-char cap can never cut it.
-  return `- READY ${fixupId(repo, pr)} (${opts.fixupPriority}, pool=${opts.pool}, tier=${opts.tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
+  return `- READY ${fixupId(repo, pr)} (${opts.fixupPriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
 }
 
 export function rebaseLine(repo: string, pr: QueuegenPr, conflicts: readonly string[], pinned: boolean, stamp: string, opts: Required<Pick<QueuegenOptions, 'rebasePriority' | 'pool' | 'tier'>>): string {
+  const tier = assertQueueTier(opts.tier);
   const short = shortName(repo);
   const shown = conflicts.slice(0, 8);
   const suffix = conflicts.length > shown.length ? ` +${conflicts.length - shown.length} more` : '';
   const file = shown[0] ?? '';
   const text = `REBASE ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="merge-tree" acceptance="git merge-tree --write-tree ${noWs(pr.baseSha, 40)} ${noWs(pr.headSha, 40)}" conflicts="${quoted(shown.join(', '), 400)}${suffix}": resolve every listed conflict against the base and push to the head branch. https://github.com/${repo}/pull/${pr.number}`;
-  return `- READY ${rebaseId(repo, pr)} (${opts.rebasePriority}, pool=${opts.pool}, tier=${opts.tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
+  return `- READY ${rebaseId(repo, pr)} (${opts.rebasePriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
 }
 
 function emptyState(): QueuegenState {
@@ -262,6 +268,12 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
     pool: options.pool ?? 'any',
     tier: options.tier ?? 'work',
   };
+  try {
+    assertQueueTier(emit.tier);
+  } catch (error) {
+    io.log('QUEUEGEN_TIER_INVALID');
+    throw error;
+  }
   const now = io.now();
   const stamp = hhmm(now);
   const summary: QueuegenSummary = { emitted: 0, deduped: 0, skipped: 0, capped: false };
