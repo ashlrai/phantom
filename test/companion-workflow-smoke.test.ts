@@ -4,7 +4,7 @@
  * companion binaries. RQ-INT-3 additionally calls the reviewed real Lexicon
  * package through Phantom's CLI gateway (public npm access on a cold run).
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -109,6 +109,46 @@ async function handshake(path: string, protocolVersion = '2025-06-18') {
 }
 
 describe('companion workflow smoke', () => {
+  it('isolates real ecosystem discovery from competing PATH launchers', async () => {
+    const root = mkdtempSync(join(dir, 'ecosystem-path-'));
+    const home = join(root, 'home');
+    const wrappers = join(root, 'npm-bin');
+    mkdirSync(home);
+    mkdirSync(wrappers);
+    const native: Record<string, string> = {};
+    for (const probe of ['locus-mcp', 'mdopener-mcp']) {
+      const file = join(root, probe);
+      // Discovery reads headers only. Gateway protocol behavior is covered by
+      // the fake server below, so these inert native fixtures are never run.
+      writeFileSync(file, Buffer.from('cffaedfe00000000', 'hex'));
+      chmodSync(file, 0o700);
+      native[probe] = file;
+      const wrapper = join(wrappers, probe);
+      writeFileSync(wrapper, '#!/usr/bin/env node\nthrow new Error("must not execute wrapper");\n');
+      chmodSync(wrapper, 0o700);
+    }
+    const env = smoke.smokeEnv(home, [wrappers]);
+    const server = fakeServer('isolated-gateway', { tools: ['locus__locus_whoami', 'ashlr-md__open_file'] });
+    const phm = join(root, 'phm.mjs');
+    writeFileSync(phm, `
+import { execFileSync } from 'node:child_process';
+if (process.argv.includes('ecosystem')) {
+  process.stdout.write(execFileSync(${JSON.stringify(process.execPath)}, [
+    '--import', ${JSON.stringify(import.meta.resolve('tsx'))},
+    ${JSON.stringify(join(process.cwd(), 'src/cli/index.ts'))}, ...process.argv.slice(2)
+  ], { env: process.env }));
+} else await import(${JSON.stringify(server)});
+`);
+    const checks = await smoke.phantomGateway({
+      phm, locusMcp: native['locus-mcp'], mdopenerMcp: native['mdopener-mcp'],
+    }, env, { root, home });
+    expect(checks).toHaveLength(3);
+    expect(checks.every((check: [string, { status: string }]) => check[1].status === 'pass')).toBe(true);
+    const settings = JSON.parse(readFileSync(join(env.ASHLR_HOME, 'settings.json'), 'utf8'));
+    expect(settings.mcpServers.locus.command).toBe(realpathSync(native['locus-mcp']!));
+    expect(settings.mcpServers['ashlr-md'].command).toBe(realpathSync(native['mdopener-mcp']!));
+  });
+
   it.each(['legacy', 'json', 'missing', 'invalid', 'failed', 'unregistered'])(
     'verifies persisted ecosystem registration with %s CLI output', async mode => {
       const root = mkdtempSync(join(dir, 'ecosystem-'));
