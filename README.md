@@ -40,7 +40,7 @@ phm verse --no-open --json
 
 The page is [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). Paste the read token once. The page asks for the mutation token the first time you change something. Do not paste either token into a PR, issue, or chat log.
 
-Adding a node? Follow [Add a computer in 60 seconds](docs/add-a-computer.md).
+Adding a node? Follow [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md).
 
 New here? [phm.dev/connect](https://phm.dev/connect) is the guided onboarding path. The [first-run guide](docs/QUICKSTART.md#open-verse) covers the same ground in this repository.
 
