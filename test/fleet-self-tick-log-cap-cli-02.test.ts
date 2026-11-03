@@ -31,6 +31,7 @@ const steps: SelfTickSteps = {
   'lane-autohold': stub('lane-autohold'),
   'planner-tick': stub('planner-tick'),
   'inbox-acks': stub('inbox-acks'),
+  'order-notices': stub('order-notices'),
   'landed-sweep': stub('landed-sweep'),
 };
 
