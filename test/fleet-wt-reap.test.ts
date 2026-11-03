@@ -39,7 +39,7 @@ describe('fleet wt-reap', () => {
     const d = { readers: { listDirs: async () => { throw Error('private'); }, readJobs: async () => { throw Error('private'); } }, output: { log: (s: string) => logs.push(s), error: (s: string) => logs.push(s) } };
     expect(await cmdFleetWtReap(['--json'], d)).toBe(1);
     expect(JSON.parse(logs[0]!).sources).toEqual({ worktrees: false, jobs: false });
-    for (const args of [['--apply'], ['--json', '--json']]) expect(await cmdFleetWtReap(args, d)).toBe(2);
+    for (const args of [['--unknown'], ['--json', '--json']]) expect(await cmdFleetWtReap(args, d)).toBe(2);
     expect(await cmdFleetWtReap(['--help'], d)).toBe(0);
     expect(logs.join('\n')).not.toContain('private');
   });

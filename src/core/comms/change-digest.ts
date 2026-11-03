@@ -58,9 +58,15 @@ export interface DigestFacts {
   /** null = capacity snapshot unavailable (seat changes are then not judged). */
   seats: DigestSeat[] | null;
   autonomy: { on: boolean; mode: string | null };
+  /** GitHub could not be read, so the merge count is unknown (never "nothing merged"). */
+  mergeCountUnavailable: boolean;
+  /** Fleet running/queued from the runs dir; null = unknown. */
+  fleet: { running: number | null; queued: number | null } | null;
 }
 
 export interface DigestSources {
+  /** Fleet-wide merges (gh unioned with the ledger) since `sinceMs`. Default: fleet-truth. */
+  fleetTruth?: (sinceMs: number) => Promise<import('../fleet/fleet-truth.js').FleetTruth>;
   /** Ledger entries since `sinceIso` for the given kinds (oldest first). */
   ledger?: (sinceIso: string) => Promise<Array<{ kind: string; at: string; repo: string | null; data: unknown }>>;
   /** Proposals with status 'applied' (inbox). */
@@ -112,6 +118,10 @@ async function resolveSources(overrides: DigestSources): Promise<Required<Digest
     capacity: () => null,
     memos: () => [],
     autonomy: () => ({ on: false, mode: null }),
+    fleetTruth: async (sinceMs) => {
+      const { getFleetTruth } = await import('../fleet/fleet-truth.js');
+      return getFleetTruth(sinceMs);
+    },
   };
   const safe = async (fn: () => Promise<void>): Promise<void> => {
     try {
@@ -178,8 +188,9 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
   const events: DigestEvent[] = [];
   const seen = new Set<string>();
   const push = (e: DigestEvent): void => {
-    if (seen.has(e.key)) return;
-    seen.add(e.key);
+    const id = e.key.toLowerCase();
+    if (seen.has(id)) return;
+    seen.add(id);
     events.push(e);
   };
 
@@ -255,6 +266,29 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
     });
   }
 
+  // Fleet merges from GitHub (dispatchd publish + auto-merge never touch the ledger).
+  // Same key shape as the ledger/inbox merges above, so a PR seen twice counts once.
+  let mergeCountUnavailable = false;
+  let fleet: DigestFacts['fleet'] = null;
+  try {
+    const truth = await src.fleetTruth(sinceMs);
+    mergeCountUnavailable = truth.mergeCountState === 'unavailable';
+    fleet = { running: truth.running, queued: truth.queued };
+    for (const m of truth.merged) {
+      if (m.number <= 0) continue;
+      push({
+        key: `pr:${m.repo}#${m.number}:merged`,
+        kind: 'merge',
+        at: new Date(m.mergedAtMs).toISOString(),
+        text: `${m.repo}#${m.number}${m.title ? `: ${clip(m.title, 80)}` : ''}`,
+        url: m.url,
+        work: true,
+      });
+    }
+  } catch {
+    mergeCountUnavailable = true;
+  }
+
   // Cloud tasks that reached a terminal state.
   const terminal = new Set(['merged', 'closed', 'failed', 'expired']);
   for (const task of call(() => src.cloudTasks(), [])) {
@@ -319,7 +353,7 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
   }
 
   const autonomy = call(() => src.autonomy(), { on: false, mode: null });
-  return { events, seats, autonomy };
+  return { events, seats, autonomy, mergeCountUnavailable, fleet };
 }
 
 // ---------------------------------------------------------------------------
@@ -460,7 +494,9 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
     next.idleNoticeFor = lastActivityAt;
     next.lastSentAt = nowIso;
     const span = prev ? fmtDuration(idleFor) : '24h+';
-    const text = facts.autonomy.on
+    const text = facts.mergeCountUnavailable
+      ? `Fleet quiet ${span}: merge count unavailable (GitHub unreachable), no other activity recorded, check \`phm doctor\`.`
+      : facts.autonomy.on
       ? `Fleet idle ${span}: nothing merged, opened or finished with autonomy on (${facts.autonomy.mode ?? 'standing grant'}) — check \`phm doctor\`.`
       : `Fleet idle ${span}: autonomy is off — next step: \`phm authority setup\`.`;
     return { text, reason: 'idle', next };
