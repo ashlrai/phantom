@@ -19,6 +19,6 @@ export async function cmdFleetNeeds(args: string[], deps: { list?: typeof listNe
   catch { process.stderr.write('error: fleet needs unavailable\n'); return 1; }
   if (json) console.log(JSON.stringify({ v: 1, count: items.length, items }));
   else if (!items.length) console.log('Nothing needs Mason.');
-  else console.log(scrubSecrets([...items.map(item => `${item.id}  ${item.text}`), `${items.length} item(s) need Mason.`].join('\n')));
+  else console.log(scrubSecrets([...items.map(item => `${item.id}  ${item.text}`), `${items.length} item(s) need Mason.`, 'Resolve: ashlr fleet needs-resolve <id> --reply "..."'].join('\n')));
   return 0;
 }
