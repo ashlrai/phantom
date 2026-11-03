@@ -1,3 +1,4 @@
+import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
@@ -162,7 +163,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   });
   const runs = deps.readRunsDir ?? (async () => (await import('../fleet/runs-dir-state.js' as string)).readFleetRunsDirState());
   const workers = deps.listWorkers ?? (async () => (await import('../fleet/runs-live-workers.js' as string)).listLiveWorkers());
-  const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit }));
+  const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit, runsDir: deps.runsDir ?? defaultRunsDir() }));
   const append = deps.appendInbox ?? (async (text: string, source: string) => (await import('../fleet/mason-inbox.js' as string)).appendInboxEntry(text, { source, runsDir: deps.runsDir ?? defaultRunsDir() }));
   // One receiver per API instance: its normalization/dedupe contract is shared
   // by every POST below for the process lifetime. `source` stays presentation
@@ -171,7 +172,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // pendingSources the one belonging to the request inside receive(). Each
   // request removes its ticket exactly once (consumed by write, or spliced in
   // the finally of the POST handler) before the next receive can start.
-  const pendingSources: { source: string }[] = [];
+  const pendingSources: { source: string; id?: string }[] = [];
   const receive = createChannelReceiver({
     allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID, VERSE_INBOX_MOBILE_OPERATOR_ID]),
     now: () => new Date(now()),
@@ -182,8 +183,32 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     // two such instances must not dedupe across each other. The shipped
     // handleFleetRunsApi below passes the resolved default runsDir.
     receiptStore: deps.receiptStore ?? (deps.runsDir === undefined ? undefined : createLocalChannelDedupeStore(deps.runsDir)),
-    write: async (envelope) => (await append(envelope.body, pendingSources[0]?.source ?? DEFAULT_INBOX_SOURCE)) as InboxAppendResult,
+    write: async (envelope) => {
+      const ticket = pendingSources[0];
+      const result = await append(envelope.body, ticket?.source ?? DEFAULT_INBOX_SOURCE) as InboxAppendResult;
+      if (result.ok && ticket && typeof result.id === 'string') ticket.id = result.id;
+      return result;
+    },
   });
+  // Optional metadata uses the same string guards as the existing projection.
+  function withAck(entry: unknown, states: ReturnType<typeof readInboxAckStates>): { id?: string; channel?: string; ack?: InboxAckState } {
+    if (!record(entry)) return {};
+    const channel = entry.channel === undefined ? {} : { channel: project(entry.channel, 'string') as string };
+    if (entry.id === undefined) return channel;
+    const id = project(entry.id, 'string') as string;
+    const ack: InboxAckState = states.get(id)?.status ?? 'pending';
+    return { ...channel, id, ack };
+  }
+  function projectInboxWithAcks(raw: unknown, query: Parameters<typeof projectInboxRead>[1]) {
+    const result = projectInboxRead(raw, query);
+    if (!result || !record(raw) || !Array.isArray(raw.entries)) return result;
+    const states = readInboxAckStates(deps.runsDir ?? defaultRunsDir());
+    const entries = raw.entries.flatMap(item => {
+      const safe = projectInboxRead({ ...raw, entries: [item] }, query)?.entries[0];
+      return safe ? [{ ...safe, ...withAck(item, states) }] : [];
+    });
+    return { ...result, entries: entries.slice(0, query.limit).reverse() };
+  }
   async function build(): Promise<FleetRunsV1> {
     const result: FleetRunsV1 = {
       v: 1, generatedAt: new Date(now()).toISOString(), sources: { runsDir: 'degraded', workers: 'degraded', inbox: 'degraded', codex: 'degraded', merges: 'degraded' },
@@ -214,7 +239,11 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
         if (key === 'runsDir') result.claimed = claimed as FleetRunsV1['claimed'];
         if (key === 'runsDir') result.drop = drop as FleetRunsV1['drop'];
-        if (key === 'inbox') result.inbox = value as FleetRunsV1['inbox'];
+        if (key === 'inbox') {
+          const entries = record(raw) ? raw.entries : raw;
+          const states = readInboxAckStates(deps.runsDir ?? defaultRunsDir());
+          result.inbox = (value as FleetRunsV1['inbox']).map((entry, i) => ({ ...entry, ...withAck((entries as unknown[])[i], states) }));
+        }
         if (key === 'codex') result.codexPersonal = value as FleetRunsV1['codexPersonal'];
         if (key === 'merges') result.mergesLastHour = value as FleetRunsV1['mergesLastHour'];
         result.sources[key] = record(raw) && ['missing', 'degraded'].includes(String(raw.sourceState)) ? raw.sourceState as 'missing' | 'degraded' : 'healthy';
@@ -290,7 +319,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       catch { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid query string' }); return true; }
       if ('error' in query) { sendJson(res, 400, { code: 'VERSE_INVALID', error: query.error }); return true; }
       // Filter within the bounded tail before applying the requested result limit.
-      try { sendJson(res, 200, projectInboxRead(await inbox(VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX), query)); }
+      try { sendJson(res, 200, projectInboxWithAcks(await inbox(VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX), query)); }
       catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
       return true;
     }
@@ -332,7 +361,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       (body.source !== undefined && (typeof body.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(body.source)))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid inbox body' }); return true;
     }
-    const ticket = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
+    const ticket: { source: string; id?: string } = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
     pendingSources.push(ticket);
     try {
       // x-ashlr-channel is trusted only because this route sits on loopback
@@ -354,6 +383,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         if (result.ack.status === 'accepted') { generation++; cached = undefined; }
         sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
           ok: true, at: result.envelope.receivedAt,
+          ...(ticket.id === undefined ? {} : { id: project(ticket.id, 'string') }),
           accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
           // The receiver's key is a bare 64-hex SHA-256 — a secret shape the
           // response sanitizer would redact — so the wire carries a labeled

@@ -3,15 +3,13 @@ import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs'
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acknowledgeInboxEntries, inboxAckEntry, type InboxAckSenders } from '../core/fleet/inbox-ack.js';
+import { INBOX_CHANNEL_LINE, INBOX_HEADING } from '../core/fleet/inbox-channel-line.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 
 const usage = 'Usage: ashlr fleet inbox-acks [--runs-dir <path>] [--limit <1-200>] [--flush] [--json]';
 const INBOX_BUDGET = 256 * 1024;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 200;
-// Copied from src/core/fleet/planner-brief.ts so entries split exactly as the brief splits them.
-const INBOX_CHANNEL_LINE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})\s+\[src:[a-z0-9._-]{1,32}(?:\s+id:[A-Za-z0-9._:-]{1,64})?\]\s+\S/;
-const INBOX_HEADING = /^## \d{4}-\d{2}-\d{2} \d{2}:\d{2} ET \(/;
 
 export interface FleetInboxAcksDeps {
   /** Injected senders for tests; production uses the senders in inbox-ack.ts. */
