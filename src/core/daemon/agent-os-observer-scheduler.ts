@@ -558,7 +558,8 @@ export function scheduleAgentOsObserverV1(
   } catch {
     return inert('spawn-failed', attemptId, tickDigest, source.sourceState, sourceStopReasons);
   }
-  const scheduleTimeout = options.deps?.setTimeout ?? setTimeout;
+  const scheduleTimeout: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout> =
+    options.deps?.setTimeout ?? setTimeout;
   const clearScheduledTimeout = options.deps?.clearTimeout ?? clearTimeout;
   let settle!: (value: AgentOsObserverChildResultV1) => void;
   let settled = false;
