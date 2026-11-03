@@ -387,10 +387,17 @@ the live queue or GitHub:
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
 ```
 
-Restock and dispatch share `launch_precheck.py`: precheck exit codes 10–13
-retire a line as `DONE-NOOP` before restock writes a prompt, claim, or
+Restock and dispatch share `launch_precheck.py`. Restock treats precheck exit
+codes 10 through 13 as `DONE-NOOP` before writing a prompt, claim, or
 `ready.tsv` entry. Errors and timeouts keep the existing fail-open behavior;
-dispatch checks again at launch. Preview without changing queue files:
+dispatch checks again at launch. In dispatch, legacy code 13 means acceptance
+unproven, not completion. The job remains in `ready.tsv` with per-job retry
+state in `queue/precheck-parked.json`: delays double from one minute to a
+one-hour cap. Waiting jobs consume no precheck budget; due jobs wait if the
+budget is exhausted. One `precheck_parked` metric replaces repeated code 13
+skip events for unchanged inputs. A prompt or routing change resets the delay;
+a successful retry clears it. Other runnable jobs continue through the queue.
+Host installation still requires Security review and re-pinning. Preview without changing queue files:
 
 ```sh
 python3 contrib/mac/restock.py --dry-run --json
