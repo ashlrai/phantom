@@ -1,9 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readFollowCheckpoint, writeFollowCheckpoint } from '../core/fleet/apps-follow-checkpoint.js';
 import { readAppsRecoveryHistory } from '../core/fleet/apps-recovery-history.js';
 
-const usage = 'Usage: ashlr fleet apps-follow --duration-ms <1..300000> [--root <dir>] [--after <cursor>] [--invocation-id <uuid>] [--until-summary] [--interval-ms <100..60000>] [--max-events <1..1000>] --jsonl';
+const usage = 'Usage: ashlr fleet apps-follow --duration-ms <1..300000> [--root <dir>] [--after <cursor> | --checkpoint <path>] [--invocation-id <uuid>] [--until-summary] [--interval-ms <100..60000>] [--max-events <1..1000>] --jsonl';
 type Deps = {
   reader?: typeof readAppsRecoveryHistory;
   now?: () => number;
@@ -15,16 +16,17 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   const invalid = (): number => { console.error(`error: invalid fleet apps-follow arguments\n${usage}`); return 2; };
   let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  let after = 0, duration = 0, interval = 1000, maxEvents = 1000, invocationId: string | undefined;
+  let after = 0, duration = 0, interval = 1000, maxEvents = 1000, invocationId: string | undefined, checkpoint: string | undefined;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (!['--root', '--after', '--duration-ms', '--interval-ms', '--max-events', '--invocation-id', '--until-summary', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
+    if (!['--root', '--after', '--checkpoint', '--duration-ms', '--interval-ms', '--max-events', '--invocation-id', '--until-summary', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
     seen.add(arg);
     if (arg === '--jsonl' || arg === '--until-summary') continue;
     const value = args[++i];
     if (!value || value.startsWith('-')) return invalid();
     if (arg === '--root') root = value;
+    else if (arg === '--checkpoint') checkpoint = value;
     else if (arg === '--invocation-id') {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) return invalid();
       invocationId = value;
@@ -37,7 +39,11 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
       else { if (n < 1 || n > 1000) return invalid(); maxEvents = n; }
     }
   }
-  if (!duration || !seen.has('--jsonl') || (seen.has('--until-summary') && !invocationId)) return invalid();
+  if (!duration || !seen.has('--jsonl') || (seen.has('--until-summary') && !invocationId) || (checkpoint && seen.has('--after'))) return invalid();
+  if (checkpoint) {
+    try { after = readFollowCheckpoint(checkpoint, invocationId); }
+    catch { console.error('error: unable to read or validate checkpoint'); return 2; }
+  }
   const reader = deps.reader ?? readAppsRecoveryHistory, now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
   const deadline = now() + duration;
@@ -54,8 +60,12 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
         after = event.cursor as number; outcome = event.outcome; finished = true; break;
       }
     }
+    if (!finished) after = page.nextCursor;
+    if (checkpoint) {
+      try { writeFollowCheckpoint(checkpoint, after, invocationId); }
+      catch { console.error('error: unable to write checkpoint'); return 1; }
+    }
     if (finished) { reason = 'invocation_finished'; break; }
-    after = page.nextCursor;
     if (delivered >= maxEvents) { reason = 'event_limit'; break; }
     if (page.hasMore) continue;
     if (deps.signal?.aborted) { reason = 'cancelled'; break; }
