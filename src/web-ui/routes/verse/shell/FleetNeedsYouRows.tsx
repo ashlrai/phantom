@@ -22,7 +22,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
-import { ApiError } from '../../../data/client.js';
+import { ApiError, apiGet, apiPost } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import { safeHref } from '../cloud/cloud-model.js';
 import { openDockPane } from '../dock/dock-store.js';
@@ -145,6 +145,57 @@ function ResetReleaseButton({ lane, onReleased }: { lane: string; onReleased: (l
   </>;
 }
 
+interface NeedsMasonRow { id: string; text: string }
+
+/** NEEDS-MASON.md lines: Resolve (with an optional one-line reply) puts needs_mason.resolved on the bus. Text only, never HTML. */
+function NeedsMasonRows() {
+  const { hasHold, token, touch } = useMutationHold();
+  const [items, setItems] = useState<NeedsMasonRow[]>([]);
+  const [replies, setReplies] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const abort = new AbortController();
+    apiGet<{ items?: NeedsMasonRow[] }>('/api/verse/agent-bus/needs-mason', abort.signal)
+      .then(read => setItems(Array.isArray(read.items) ? read.items.filter(row => typeof row?.id === 'string' && typeof row.text === 'string') : []))
+      .catch(() => { /* a hub without the route shows nothing */ });
+    return () => abort.abort();
+  }, []);
+  async function resolve(id: string) {
+    if (!hasHold || !token || busy) { setError('Unlock to resolve.'); return; }
+    setBusy(id);
+    setError('');
+    try {
+      const reply = (replies[id] ?? '').trim();
+      await apiPost('/api/verse/agent-bus/needs-mason/resolve', reply ? { itemId: id, reply } : { itemId: id }, token);
+      touch();
+      setItems(previous => previous.filter(row => row.id !== id));
+    } catch (reason) {
+      if (reason instanceof ApiError && (reason.status === 404 || reason.status === 409)) setItems(previous => previous.filter(row => row.id !== id));
+      else setError(reason instanceof ApiError ? reason.detail ?? reason.message : 'The resolve failed.');
+    } finally { setBusy(''); }
+  }
+  if (items.length === 0) return null;
+  return (
+    <section aria-label="Needs Mason">
+      <div className={styles.batch}><p className={styles.rowKind}>Needs Mason</p></div>
+      {error && <p role="status">{error}</p>}
+      {items.map(row => (
+        <div key={row.id} className={styles.row}>
+          <span className={styles.rule} aria-hidden="true" />
+          <span className={styles.rowMain}>
+            <span className={styles.rowTitle}>{row.text}</span>
+            <input type="text" maxLength={500} aria-label={`Reply for ${row.text}`} placeholder="Optional one-line reply"
+              value={replies[row.id] ?? ''} onChange={event => setReplies(previous => ({ ...previous, [row.id]: event.target.value }))} />
+          </span>
+          <Button size="sm" disabled={!hasHold || busy !== ''} title={!hasHold ? 'Unlock to resolve' : undefined}
+            aria-label={`Resolve ${row.text}`} onClick={() => void resolve(row.id)}>{busy === row.id ? 'Resolving…' : 'Resolve'}</Button>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   /** The drawer's current split; the group renders only on All and Fleet. */
   split: NeedsYouSplit;
@@ -225,10 +276,11 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     onResult({ ...combined, silent });
   }, [onResult, combined, silent]);
 
-  if ((split !== 'all' && split !== 'fleet') || (combined.items.length === 0 && !confirmation)) return null;
+  if (split !== 'all' && split !== 'fleet') return null;
+  if (combined.items.length === 0 && !confirmation) return <NeedsMasonRows />;
 
   return (
-    <section aria-label="Fleet on this Mac">
+    <><section aria-label="Fleet on this Mac">
       <div className={styles.batch}>
         <p className={styles.rowKind}>Fleet on this Mac</p>
       </div>
@@ -345,5 +397,6 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
         );
       })}
     </section>
+    <NeedsMasonRows /></>
   );
 }
