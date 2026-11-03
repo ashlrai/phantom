@@ -54,7 +54,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget', 'capacity', 'top',
+  'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -132,6 +132,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
+  sessions: ['list', 'revoke', 'help'],
   cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],

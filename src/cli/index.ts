@@ -2110,6 +2110,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'sessions': {
+        const { cmdSessions } = await import('./sessions.js');
+        process.exitCode = await cmdSessions(rest);
+        break;
+      }
+
       case 'run': {
         // --no-memory is passed through to cmdRun as-is; run.ts parses it
         // into RunOptions.noMemory for the orchestrator's genome injection gate.
