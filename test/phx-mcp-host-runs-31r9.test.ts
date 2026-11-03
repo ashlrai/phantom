@@ -83,8 +83,7 @@ describe('standalone fleet host runs MCP', () => {
     });
   });
 
-  it.each([{ limit: 1 }, { path: 'elsewhere' }, { command: 'start' }, { extra: null }])
-  ('rejects unknown arguments before reading: %j', async args => {
+  it.each([{ limit: 1 }, { path: 'elsewhere' }, { command: 'start' }, { extra: null }])('rejects unknown arguments before reading: %j', async args => {
     const hostRuns = vi.fn(async () => ({}));
     const client = await connect(hostRuns);
     await expect(client.callTool({ name: 'fleet_host_runs', arguments: args })).rejects.toMatchObject({ code: -32602 });
