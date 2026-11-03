@@ -90,6 +90,16 @@ function declaredTestTitles(file: string): string[] {
 }
 
 describe('M30 CI workflow', () => {
+  it('keeps backend suites inside the release and Mac coverage inventory', () => {
+    const config = readFileSync(resolve(repoRoot, 'vitest.config.ts'), 'utf8');
+    expect(config).toContain("include: ['test/**/*.test.ts']");
+    for (const file of ['email-drop-bridge', 'order-trace', 'leader-api.orders', 'fleet-holds-api', 'fleet-graph-api', 'fleet-red-fix', 'red-pr-fix-job']) {
+      const wrapper = readFileSync(resolve(repoRoot, `test/${file}.test.ts`), 'utf8');
+      expect(wrapper).toContain("import '../src/");
+      expect(wrapper).toContain(`/${file}.test.js';`);
+    }
+  });
+
   it('routes only exact ecosystem PR edits to a read-only site check', () => {
     const classifier = workflowJob('classify');
     const site = workflowJob('site');
