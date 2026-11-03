@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readFollowCheckpoint, writeFollowCheckpoint } from '../core/fleet/apps-follow-checkpoint.js';
+import { readFollowCheckpoint, writeFollowCheckpointWithRoot, normalizeRoot } from '../core/fleet/apps-follow-checkpoint.js';
 import { readAppsRecoveryHistory } from '../core/fleet/apps-recovery-history.js';
 
 const usage = 'Usage: ashlr fleet apps-follow --duration-ms <1..300000> [--root <dir>] [--after <cursor> | --checkpoint <path>] [--invocation-id <uuid>] [--until-summary] [--interval-ms <100..60000>] [--max-events <1..1000>] --jsonl';
@@ -36,16 +36,16 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   const invalid = (): number => { console.error(`error: invalid fleet apps-follow arguments\n${usage}`); return 2; };
   let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  let after = 0, duration = 0, interval = 1000, maxEvents = 1000, invocationId: string | undefined, checkpoint: string | undefined;
+  let explicitRoot = false, after = 0, duration = 0, interval = 1000, maxEvents = 1000, invocationId: string | undefined, checkpoint: string | undefined;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (!['--root', '--after', '--checkpoint', '--duration-ms', '--interval-ms', '--max-events', '--invocation-id', '--until-summary', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
     seen.add(arg);
     if (arg === '--jsonl' || arg === '--until-summary') continue;
-    const value = args[++i];
+    const value = args[++i]!;
     if (!value || value.startsWith('-')) return invalid();
-    if (arg === '--root') root = value;
+    if (arg === '--root') { root = value; explicitRoot = true; }
     else if (arg === '--checkpoint') checkpoint = value;
     else if (arg === '--invocation-id') {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) return invalid();
@@ -61,8 +61,22 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
   }
   if (!duration || !seen.has('--jsonl') || (seen.has('--until-summary') && !invocationId) || (checkpoint && seen.has('--after'))) return invalid();
   if (checkpoint) {
-    try { after = readFollowCheckpoint(checkpoint, invocationId); }
-    catch { console.error('error: unable to read or validate checkpoint'); return 2; }
+    const normalized = normalizeRoot(root);
+    if (explicitRoot) {
+      try { after = readFollowCheckpoint(checkpoint, invocationId, normalized); }
+      catch (err) {
+        const msg = (err as Error).message;
+        if (msg === 'root does not match checkpoint' || msg === 'checkpoint requires migration to root-scoped format') {
+          console.error(`error: ${msg}`);
+        } else {
+          console.error('error: unable to read or validate checkpoint');
+        }
+        return 2;
+      }
+    } else {
+      try { after = readFollowCheckpoint(checkpoint, invocationId); }
+      catch { console.error('error: unable to read or validate checkpoint'); return 2; }
+    }
   }
   const reader = deps.reader ?? readAppsRecoveryHistory, now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
@@ -93,7 +107,8 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
   for (;;) {
     if (deps.signal?.aborted) { reason = 'cancelled'; break; }
     if (now() >= deadline) { reason = 'deadline'; break; }
-    const page = reader(root, after, Math.min(100, maxEvents - delivered), invocationId);
+    const normalized = normalizeRoot(root);
+    const page = reader(normalized, after, Math.min(100, maxEvents - delivered), invocationId);
     if (page.availability !== 'available') { reason = page.availability === 'invalid-cursor' ? 'invalid_cursor' : 'unavailable'; break; }
     let finished = false;
     for (const event of page.events) {
@@ -107,8 +122,10 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
     }
     if (!finished) after = page.nextCursor;
     if (checkpoint) {
-      try { writeFollowCheckpoint(checkpoint, after, invocationId); }
-      catch { console.error('error: unable to write checkpoint'); return 1; }
+      try {
+        const normalized = normalizeRoot(root);
+        writeFollowCheckpointWithRoot(checkpoint, after, invocationId, normalized);
+      } catch { console.error('error: unable to write checkpoint'); }
     }
     if (finished) { reason = 'invocation_finished'; break; }
     if (delivered >= maxEvents) { reason = 'event_limit'; break; }
