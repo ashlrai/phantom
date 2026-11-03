@@ -149,3 +149,33 @@ See [Cloud](CLOUD.md) and [Devin](DEVIN.md).
 - [llms-full.txt](llms-full.txt): the same install and MCP blocks in one text file
 - [Self-hosting](SELF-HOSTING.md): upgrade and uninstall
 - [Quickstart](QUICKSTART.md): first local session for a person
+
+## Gateway tool policies
+
+Set `ASHLR_MCP_POLICY` to a host-owned YAML file before starting `phm mcp`.
+Set `ASHLR_MCP_AGENT` and comma-separated `ASHLR_MCP_GROUPS` in the trusted
+launcher, never from tool arguments. Restart the gateway after changing policy.
+
+```yaml
+ask_before_every_change: false
+read_tools: [locus__status]
+policies:
+  - name: developer-tools
+    agents: [codex]
+    groups: [engineering]
+    tools:
+      locus__status: allow
+      locus__delete: deny
+      locus__update: approval_required
+```
+
+Tool keys are exact `<server>__<tool>` names. Empty agent and group lists match
+all callers; otherwise either selector can match. Matching verdicts resolve as
+`allow > approval_required > deny`. Unmatched calls and an unset policy file
+retain existing behavior. Invalid or unreadable configured files fail startup.
+The fleet switch overrides an allow for every tool absent from `read_tools`:
+unclassified tools conservatively count as writes. Keep this file and launcher
+identity under administrator control. Denied and approval-required calls return
+an MCP tool error naming the policy before downstream activation or execution.
+Approval-required calls remain blocked; request arguments cannot approve them.
+Native hub tools retain their existing authorization path.
