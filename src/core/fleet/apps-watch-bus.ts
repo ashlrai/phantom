@@ -15,6 +15,7 @@ export type AppsWatchEvent = {
 
 export function createAppsWatchPublisher(root: string, append = appendBusInbox): (event: AppsWatchEvent) => boolean {
   const invocationId = randomUUID();
+  let prior: string | undefined;
   return event => {
     try {
       const envelope: BusEnvelope = {
@@ -23,8 +24,15 @@ export function createAppsWatchPublisher(root: string, append = appendBusInbox):
         body: { ...event, invocationId },
       };
       if (!validateBusEnvelope(envelope).ok) return false;
+      const state = event.kind === 'apps-watch.observation.v1'
+        ? JSON.stringify([event.healthy, event.observedState === null ? null :
+          event.observedState.map(row => JSON.stringify([row.app, row.observedRunning])).sort()])
+        : undefined;
+      if (event.kind === 'apps-watch.observation.v1' && event.recoveries === 0 && state === prior) return true;
       const result = append(envelope, { root });
-      return result.status === 'posted' || result.status === 'duplicate';
+      const success = result.status === 'posted' || result.status === 'duplicate';
+      if (success && state !== undefined) prior = state;
+      return success;
     } catch { return false; }
   };
 }

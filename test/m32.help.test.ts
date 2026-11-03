@@ -28,6 +28,12 @@ function output(): string {
 }
 
 describe('HELP_ENTRIES — the command table', () => {
+  it('documents failed-job grouping and explicit retries in command help', async () => {
+    expect(await cmdHelp(['issues'])).toBe(0);
+    expect(output()).toContain('issues [--retry] [--dir <queue-directory>] [--json]');
+    expect(output()).toContain('--retry queues one READY retry per failed job without duplicates');
+  });
+
   it.each([
     'universe campaign <init|status|run|resume|pause|stop>',
     'universe campaign check ',

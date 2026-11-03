@@ -94,6 +94,19 @@ warning, and an unbalanced `(` is treated as literal text with a warning.
 JSON import validates the same schema. Import requires an empty queue; it never
 replaces live state. Use a separate directory to inspect a later snapshot.
 
+### Tier values
+
+A router-queue line's `tier=` must be one of `frontier`, `work`, `mid` or
+`fast`. dispatchd skips any other value without an error, so the job never
+runs. `queuegen` refuses to write a line with another tier, and
+`router-lint` reports such an admission line as `invalid` with reason
+`unknown-tier`. The refusal names the allowed values and, where one is near,
+the closest match: `standard` means `work`, `medium` means `mid`, `low` means
+`fast` and `high` means `frontier`. Nothing is accepted by alias; write the
+tier name itself. The vocabulary lives in
+[`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
+`TIERS` in `contrib/mac/dispatchd.py`.
+
 `exportMarkdown` round-trips unchanged imports byte-for-byte. State changes
 update the status while retaining original text and append a comment with claim,
 PR and block metadata. JSON export is the complete backup and restore format.
