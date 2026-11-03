@@ -3,6 +3,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
+import { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
 import { awaitAppState } from '../fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -20,6 +22,7 @@ export interface FleetAppsApiDeps {
   locateScript?: () => string | null;
   now?: () => number;
   runsDir?: string;
+  readRecoveryInvocations?: typeof readAppsRecoveryInvocations;
 }
 interface AppsView {
   v: 1;
@@ -192,6 +195,25 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         sendJson(res, 200, view);
       }
       catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
+      return true;
+    }
+    if (path === `${PATH}/recovery/check`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const invocation = params.get('invocation') ?? '';
+      const age = params.get('maxAgeMs') ?? '';
+      const maxAgeMs = /^\d+$/.test(age) ? Number(age) : 0;
+      if ([...params.keys()].some(key => key !== 'invocation' && key !== 'maxAgeMs') ||
+        params.getAll('invocation').length !== 1 || params.getAll('maxAgeMs').length !== 1 ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invocation) ||
+        !Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid recovery check' }); return true;
+      }
+      try {
+        const projection = (deps.readRecoveryInvocations ?? readAppsRecoveryInvocations)(root);
+        if (!projection || projection.availability !== 'available') throw new Error('unavailable');
+        sendJson(res, 200, appsRecoveryVerdict(projection, invocation, maxAgeMs, now()));
+      } catch { sendJson(res, 503, { error: 'recovery evidence unavailable' }); }
       return true;
     }
     if (path !== `${PATH}/action`) return false;
