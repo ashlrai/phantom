@@ -22,10 +22,13 @@ import { matchesPosted } from './inbox-post-model.js';
 import { annotateAck, seenCounts } from './inbox-ack-model.js';
 import { canResend, resendPrefill } from './inbox-resend.js';
 import { takeRequestedInboxChannel, useRequestedInboxChannel } from './inbox-source-request.js';
+import { plannerAckLabel } from './planner-ack-model.js';
+import { usePlannerAcks } from './planner-ack-query.js';
 import styles from './fleet-inbox.module.css';
 
 const notFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 export function FleetInboxPane({ visible, host }: PaneProps) {
+  const plannerAcks = usePlannerAcks(visible);
   const route = useQuery(fleetInboxQuery);
   const routeInbox = readInboxEntries(route.data, undefined);
   const fallback = routeInbox.origin === 'none' && (route.status === 'error' || route.status === 'success');
@@ -100,7 +103,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     {groups.map(group => <section key={group.day} aria-label={group.label}>
       <h3 className={styles.day}>{group.label}{group.day !== '—' && ' · ET'}</h3>
       {group.entries.map((entry, i) => { const jobs = jobsForEntry(trace, entry.at); const draft = trace && jobs.length === 0 ? orderJobDraft(entry, Date.now()) : null; return <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
-        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]} data-overdue={entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
+        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]} data-overdue={entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{plannerAckLabel(entry, plannerAcks) ?? entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
         <p className={styles.text}>{entry.text}</p>
         {jobs.length > 0 && <div className={styles.jobs}>
           <span>{orderJobsLine(jobs)}</span>

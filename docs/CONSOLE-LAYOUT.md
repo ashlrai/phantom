@@ -39,3 +39,13 @@ For the desktop mission briefing over the same fleet state, see the Fleet
 screen's mission pane and `phm fleet mission --json` (bc-124196c5). The
 phone-class Verse app at `/verse/m/` is a separate surface with its own
 pointer-and-size rule; it is not part of these width classes.
+
+Home opens the live fleet view on a fresh desktop console. It refreshes every
+15 seconds while visible and lists running work, recorded merges over the last
+24 hours, blocked work and holds, and percentage used per resource pool with
+recorded reset times. Home is also available from the tray; saved navigation
+continues to reopen the last selected view. `phm status --json` returns the same
+four-list projection without requiring a repository index. Missing readings
+remain `null` in JSON and unknown in Home. Spent means subscription quota used,
+not a monetary cost estimate. Resource collection and lane diagnostics remain
+owned by their existing APIs.
