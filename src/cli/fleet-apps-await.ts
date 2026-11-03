@@ -10,7 +10,7 @@ import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec 
 const execAsync = promisify(execFile);
 const usage = 'Usage: ashlr fleet apps-await --apps <names> --timeout-ms <1-300000> [--target running|stopped] [--interval-ms <100-60000>] [--root <dir>] [--json]';
 export interface FleetAppsAwaitDeps {
-  exec?: FleetAppExec;
+  exec?: (file: string, argv: readonly string[], options: Parameters<FleetAppExec>[2] & { signal: AbortSignal }) => ReturnType<FleetAppExec>;
   locateScript?: () => string | null;
   locateInstalledScript?: (root: string) => string | null;
   /** Monotonic milliseconds; the real monotonic clock also bounds injected dependencies. */
@@ -59,11 +59,15 @@ export async function cmdFleetAppsAwait(args: string[], deps: FleetAppsAwaitDeps
     script = (deps.locateScript ?? findAppControlScript)() ?? (deps.locateInstalledScript ?? findInstalledAppControlScript)(root);
   } catch { return emit('unavailable'); }
   if (!script) return emit('unavailable');
-  const exec: FleetAppExec = deps.exec ?? (async (file, argv, options) => execAsync(file, argv, options));
+  const exec: NonNullable<FleetAppsAwaitDeps['exec']> = deps.exec ?? (async (file, argv, options) => execAsync(file, argv, options));
   const resolvedTarget = target ?? 'running';
   let stopped = false;
   let observed = false;
-  const active = (): boolean => !stopped && !deps.signal?.aborted && elapsed() < timeoutMs;
+  const probes = new AbortController();
+  const onAbort = (): void => probes.abort();
+  if (deps.signal?.aborted) onAbort();
+  else deps.signal?.addEventListener('abort', onAbort, { once: true });
+  const active = (): boolean => !stopped && !probes.signal.aborted && elapsed() < timeoutMs;
   try {
     const result = await awaitAppState({
       target: resolvedTarget,
@@ -78,7 +82,7 @@ export async function cmdFleetAppsAwait(args: string[], deps: FleetAppsAwaitDeps
             let running: boolean | null = null;
             try {
               const { stdout } = await exec('python3', ['-I', script, 'status', row.app, '--output-dir', root], {
-                encoding: 'utf8', timeout: Math.max(1, Math.ceil(timeoutMs - elapsed())), maxBuffer: 1024 * 1024, windowsHide: true,
+                encoding: 'utf8', timeout: Math.max(1, Math.ceil(timeoutMs - elapsed())), maxBuffer: 1024 * 1024, windowsHide: true, signal: probes.signal,
               });
               const report: unknown = JSON.parse(stdout);
               if (report !== null && typeof report === 'object' && !Array.isArray(report)) {
@@ -107,5 +111,9 @@ export async function cmdFleetAppsAwait(args: string[], deps: FleetAppsAwaitDeps
     stopped = true;
     return emit(result.outcome === 'reached' && !deps.signal?.aborted && elapsed() < timeoutMs ? 'ready' :
       result.outcome === 'cancelled' || !observed ? 'unavailable' : 'timeout');
-  } finally { stopped = true; }
+  } finally {
+    stopped = true;
+    probes.abort();
+    deps.signal?.removeEventListener('abort', onAbort);
+  }
 }
