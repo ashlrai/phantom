@@ -122,6 +122,7 @@ const recording = () => {
     'reset-release': stub('reset-release'),
     'lane-autohold': stub('lane-autohold'),
     'planner-tick': stub('planner-tick'),
+    'inbox-acks': stub('inbox-acks'),
     'landed-sweep': stub('landed-sweep'),
   };
   return { order, argvs, stub, steps };
@@ -150,7 +151,7 @@ describe('fleet self-tick', () => {
     const rec = recording();
     const { code, report } = await run(['--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep']);
     expect(report).toMatchObject({ v: 1, at: NOW_ISO, mode: 'dry-run', state: 'ran' });
     expect(report!.steps.map((s) => s.step)).toEqual(rec.order);
     expect(report!.steps.every((s) => s.state === 'ok' && s.exitCode === 0
@@ -167,7 +168,7 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'reset-release': throwing },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep']);
     expect(report!.steps[0]).toMatchObject({ step: 'reset-release', state: 'failed', exitCode: 1, report: null });
     expect(report!.steps.slice(1).every((s) => s.state === 'ok')).toBe(true);
   });
@@ -178,7 +179,7 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'lane-autohold': rec.stub('lane-autohold', 1, 'not json') },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep']);
     expect(report!.steps[1]).toMatchObject({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
   });
 
