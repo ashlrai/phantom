@@ -5,7 +5,10 @@ import { listNeedsMason, resolveNeedsMason, type NeedsMasonOptions, type NeedsMa
 
 export type NeedsMasonRelayResult = NeedsMasonResolveResult & { inbox: 'appended' | 'skipped' | 'failed' };
 
-/** Relay desktop answers to the planner after the durable resolution succeeds. */
+// Labels chosen so inboxChannelSlug yields src:desktop/telegram/cli/phone.
+const INBOX_SOURCE = { desktop: 'Phantom desktop', telegram: 'Telegram', cli: 'CLI', phone: 'Phantom phone' } as const;
+
+/** Relay answers to the planner after the durable resolution succeeds. */
 export async function resolveNeedsMasonWithInbox(
   input: unknown,
   options: NeedsMasonOptions & { appendInbox?: typeof appendInboxEntry } = {},
@@ -21,7 +24,7 @@ export async function resolveNeedsMasonWithInbox(
   try {
     const appended = await (options.appendInbox ?? appendInboxEntry)(
       `Re needs-you ${result.itemId} ("${(item?.text ?? '').slice(0, 160)}"): ${reply}`,
-      { runsDir, source: 'Phantom desktop', ...(options.now ? { now: () => new Date(options.now!()) } : {}) },
+      { runsDir, source: INBOX_SOURCE[options.source ?? 'desktop'], ...(options.now ? { now: () => new Date(options.now!()) } : {}) },
     );
     return { ...result, inbox: appended.ok ? 'appended' : 'failed' };
   } catch {
