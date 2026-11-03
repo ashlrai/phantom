@@ -5,6 +5,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'app-ensure': () => import('./fleet-app-ensure.js'),
   'apps-status': () => import('./fleet-apps-status.js'),
   'backlog': () => import('./fleet-backlog.js'),
+  'behind-sweep': () => import('./fleet-behind-sweep.js'),
   'bet-audit': () => import('./fleet-bet-audit.js'),
   'bet-trace': () => import('./fleet-bet-trace.js'),
   'brains': () => import('./fleet-brains.js'),
