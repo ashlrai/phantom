@@ -46,6 +46,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Check fleet health, starting with doctor | [Fleet health](fleet-health.md) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
