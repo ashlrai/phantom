@@ -26,7 +26,7 @@ export interface NeedsMasonItem { id: string; text: string }
 export interface NeedsMasonOptions {
   runsDir?: string; bus?: BusInboxOptions; now?: () => number;
   /** Which surface resolved the item; recorded in the envelope body. Defaults to 'desktop'. */
-  source?: 'desktop' | 'telegram' | 'cli' | 'phone';
+  source?: 'desktop' | 'telegram' | 'cli' | 'phone' | 'email';
 }
 export type NeedsMasonResolveResult =
   | { ok: true; itemId: string; cursor: number; duplicate: boolean }
