@@ -114,6 +114,8 @@ function briefSources(over: Partial<BriefSources> = {}): BriefSources {
       cloudTasks: () => [],
       capacity: () => null,
       memos: () => [],
+      // GitHub answered with nothing extra: the ledger rows above are the whole story.
+      fleetTruth: async (since) => ({ windowStartMs: since, windowEndMs: since, merged: [], mergeCountState: 'ok', truncated: false, running: null, queued: null }),
     },
     leader: () => ({
       health: { status: 'healthy', summary: 'ok' },

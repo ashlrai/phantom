@@ -38,6 +38,7 @@ import {
 
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
 import { loadConfig } from './config.js';
+import { loadGatewayPolicy, checkGatewayPolicy } from './mcp-gateway-policy.js';
 import { toolCachePath, readToolCache, writeToolCache } from './mcp-tool-cache.js';
 import { withToolEnv } from './env-bridge.js';
 import { withHeal, defaultHealPolicy } from './run/self-heal.js';
@@ -638,6 +639,8 @@ export async function startGateway(
     throw new Error('Nested MCP gateway refused: inherited gateway marker would recurse');
   }
   refuseSharedJobGateway();
+  const policy = loadGatewayPolicy();
+  const identity = { agent: process.env.ASHLR_MCP_AGENT, groups: (process.env.ASHLR_MCP_GROUPS ?? '').split(',').filter(Boolean) };
   let gatewayCfg: ReturnType<typeof loadConfig> | undefined;
   try { gatewayCfg = loadConfig(); } catch { /* non-fatal; retain narrow child env */ }
 
@@ -790,6 +793,8 @@ export async function startGateway(
     assertUsable();
     const requested = request.params.name;
     if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
+    const blocked = checkGatewayPolicy(policy, identity, requested);
+    if (blocked) return { isError: true, content: [{ type: 'text', text: blocked }] };
     let route = routes.get(requested);
     if (route?.downstream.lazy) {
       const d = route.downstream;

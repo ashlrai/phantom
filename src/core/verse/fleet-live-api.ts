@@ -116,6 +116,7 @@ import { isMirrorPath } from '../fleet/mirrors.js';
 import { pendingFolders } from './folder-io.js';
 import { audit } from '../sandbox/audit.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { startOfDayInZone } from '../fleet/fleet-truth.js';
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -182,6 +183,11 @@ export interface FleetLiveDeps {
   dispatchStarts(sinceMs: number): Promise<Map<string, number> | null>;
   /** GET /live/outside-prs reader. Default: fleet/outside-prs.ts `listOutsidePrs()`. */
   outsidePrs?(): Promise<unknown>;
+  /**
+   * Merged PRs since `sinceMs` across the fleet (GitHub unioned with the ledger).
+   * Default: fleet/fleet-truth.ts, the same source the Telegram brief and pulse read.
+   */
+  fleetTruth?(sinceMs: number, nowMs: number): Promise<import('../fleet/fleet-truth.js').FleetTruth>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,12 +1301,28 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     }
     return median(samples);
   };
+  // dispatchd fleet merges never write the authority ledger, so the ledger count alone
+  // under-reports. GitHub-backed truth wins; when GitHub is unreachable fall back to the
+  // ledger count, and with nothing recorded say unknown (null), never "0 merged".
+  const etTodayMs = startOfDayInZone(nowMs);
+  const ledgerToday = merges ? merges.filter((m) => m.landedMs >= etTodayMs).length : null;
+  let mergedToday: number | null = ledgerToday;
+  try {
+    const truth = await (d.fleetTruth
+      ? d.fleetTruth(etTodayMs, nowMs)
+      : import('../fleet/fleet-truth.js').then((m) => m.getFleetTruthToday({ nowMs })));
+    mergedToday = truth.mergeCountState === 'ok'
+      ? Math.max(truth.merged.length, ledgerToday ?? 0)
+      : ledgerToday !== null && ledgerToday > 0 ? ledgerToday : null;
+  } catch {
+    mergedToday = ledgerToday !== null && ledgerToday > 0 ? ledgerToday : null;
+  }
   const summary: FleetLiveSummary = {
     building,
     queued: queuedTasks,
     parked: parkedTasks === null ? null : parkedTasks + heldCount,
     waitingVerify: tick?.waitingVerify ?? null,
-    mergedToday: merges ? merges.filter((m) => m.landedMs >= todayMs).length : null,
+    mergedToday,
     revertsToday: reverts ? reverts.filter((m) => m.landedMs >= todayMs).length : null,
     merged7d: merges ? merges.filter((m) => m.landedMs >= since7d).length : null,
     postMergeGreenPct7d: greenPctOf(null, since7d),
