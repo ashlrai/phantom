@@ -16,30 +16,35 @@ import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter 
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
 import { mirrorLeaderPostToInbox } from '../fleet/bus-leader-inbox.js';
 import { CHANNEL_ACK_TIMEOUT_MS } from '../fleet/channel-envelope.js';
+import { listNeedsMason, resolveNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
 const PATH = '/api/verse/agent-bus';
+const NEEDS_MASON = `${PATH}/needs-mason`;
+const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 export interface AgentBusApiDeps {
   append?: typeof appendBusInbox;
   list?: typeof listBusInboxAfter;
   inspect?: typeof inspectBusInbox;
   mirrorToInbox?: typeof mirrorLeaderPostToInbox;
   startMirror?: () => void;
+  needsMason?: { list: typeof listNeedsMason; resolve: typeof resolveNeedsMason };
 }
 
 /** Dependencies permit isolated store tests; the public handler uses the default store. */
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
   let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
-    if (path !== PATH && path !== `${PATH}/status`) return false;
-    if (method !== 'GET' && !(method === 'POST' && path === PATH)) {
+    if (path !== PATH && path !== `${PATH}/status` && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE) return false;
+    if (method !== (path === NEEDS_MASON_RESOLVE ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
       sendJson(res, 404, { error: 'not found' }); return true;
     }
     if (method === 'GET' && (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now())) {
       sendJson(res, 401, { error: 'A current read session is required.' }); return true;
     }
     if (method === 'POST') {
+      // Same gate as the interject POST: dispatch enabled + mutation token/origin checks.
       if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
       if (!passesMutationGate(req, res, ctx.token)) return true;
     }
@@ -51,7 +56,18 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
     try {
-      if (method === 'GET' && path === `${PATH}/status`) {
+      if (path === NEEDS_MASON) {
+        sendJson(res, 200, { v: 1, items: (deps.needsMason?.list ?? listNeedsMason)() });
+      } else if (path === NEEDS_MASON_RESOLVE) {
+        let raw: string;
+        try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }
+        let input: unknown;
+        try { input = JSON.parse(raw); } catch { sendJson(res, 400, { v: 1, status: 'invalid', error: 'Invalid JSON.' }); return true; }
+        const result = (deps.needsMason?.resolve ?? resolveNeedsMason)(input);
+        if (result.ok) sendJson(res, 200, { v: 1, status: 'resolved', itemId: result.itemId, cursor: result.cursor });
+        else sendJson(res, result.code === 'unknown' ? 404 : result.code === 'already-resolved' ? 409
+          : result.code === 'unavailable' ? 503 : 400, { v: 1, status: result.code, error: result.error });
+      } else if (method === 'GET' && path === `${PATH}/status`) {
         if (ctx.allowDispatch && !mirrorStarted) {
           mirrorStarted = true;
           try { (deps.startMirror ?? startBusMirrorLoop)(); }
