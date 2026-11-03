@@ -73,7 +73,7 @@ function eml(over: { from?: string; id?: string | null; subject?: string; body?:
 
 const inboxPath = () => join(runsDir, 'leader', 'MASON-INBOX.md');
 const inboxText = () => readFileSync(inboxPath(), 'utf8');
-const inboxHeadings = () => (existsSync(inboxPath()) ? inboxText().match(/^## /gm) ?? [] : []);
+const inboxReceipts = () => (existsSync(inboxPath()) ? inboxText().match(/^\d{4}-\d{2}-\d{2}T[^\n]+ \[src:email id:email-[a-f0-9]{16}\]/gm) ?? [] : []);
 const replyFiles = () => readdirSync(outboxDir).filter((name) => name.endsWith('.reply.eml')).sort();
 const drop = (name: string, raw: string) => writeFileSync(join(inboxDir, name), raw, 'utf8');
 const runOpts = () => ({ inboxDir, outboxDir, processedDir, allowedSenders: ALLOWED, runsDir, now });
@@ -125,8 +125,8 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     expect(result.ok && result.envelope.verifiedSenderId).toBe(`email:${MASON}`);
 
     const inbox = inboxText();
-    expect(inbox.match(/^## /gm)).toHaveLength(1);
-    expect(inbox).toContain('(Mason, email)');
+    expect(inboxReceipts()).toHaveLength(1);
+    expect(inbox).toContain('[src:email id:email-');
     expect(inbox).toContain('Fleet note');
     expect(inbox).toContain('focus the fleet on billing');
 
@@ -146,7 +146,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 1, duplicate: 0, refused: 0, failed: 0 });
     drop('a.eml', eml());
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 0, duplicate: 1, refused: 0, failed: 0 });
-    expect(inboxHeadings()).toHaveLength(1);
+    expect(inboxReceipts()).toHaveLength(1);
     expect(readdirSync(processedDir).sort()).toEqual(['a.eml', 'a.eml.1']);
     expect(replyFiles()).toHaveLength(1);
     const reply = readFileSync(join(outboxDir, replyFiles()[0]!), 'utf8');
@@ -157,7 +157,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     drop('b.eml', eml({ from: 'Stranger <stranger@example.net>', id: '<stranger-1@x>' }));
     drop('c.eml', eml({ id: '<ok-1@x>' }));
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 1, duplicate: 0, refused: 1, failed: 0 });
-    expect(inboxHeadings()).toHaveLength(1);
+    expect(inboxReceipts()).toHaveLength(1);
     expect(inboxText()).not.toContain('stranger');
     expect(replyFiles()).toHaveLength(1);
     expect(readdirSync(processedDir).sort()).toEqual(['b.eml', 'c.eml']);
@@ -210,7 +210,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     drop('1-bad.eml', 'this is not an email at all\r\n\r\nno from header');
     drop('2-good.eml', eml({ id: '<good-1@x>' }));
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 1, duplicate: 0, refused: 0, failed: 1 });
-    expect(inboxHeadings()).toHaveLength(1);
+    expect(inboxReceipts()).toHaveLength(1);
     expect(readdirSync(processedDir).sort()).toEqual(['1-bad.eml', '2-good.eml']);
   });
 
