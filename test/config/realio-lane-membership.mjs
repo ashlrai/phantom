@@ -43,6 +43,14 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/changelog-current-version-01.test.ts', // Runs the changelog extractor in a real child process.
+  'test/docs-agent-parity.test.ts', // Runs docs build and link checks in real child processes.
+  'test/fleet-bridge-install-01.test.ts', // Runs the bridge installer against private test fixtures.
+  'test/fleet-guardian-exclusive-02-solx1.test.ts', // Runs real guardian subprocesses to exercise exclusive ownership.
+  'test/fleet-guardian-manifest-set-02solf1.test.ts', // Runs guardian commands against private manifest fixtures.
+  'test/fleet-guardian-manifest.test.ts', // Runs guardian manifest commands in real child processes.
+  'test/fleet-standby-verb-02.test.ts', // Runs the standby CLI in real child processes.
+  'test/gitignore-routing-eval.test.ts', // Runs git check-ignore against repository paths.
   'test/fleet-diff-scan.test.ts', // Creates real git worktrees and reads staged/unstaged diffs.
   'test/lane-quota-text.test.ts', // runs the dispatcher against temporary lane fixtures in Python
   'test/agent-bus-reply-file.test.ts', // execFileSync runs the bus-reply-file example as a real child
