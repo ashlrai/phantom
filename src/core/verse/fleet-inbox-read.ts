@@ -24,7 +24,7 @@ export function parseInboxReadQuery(search: string | URLSearchParams): InboxRead
 
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 // Reject paths in every exposed field, including paths following punctuation.
-const privatePath = /(?:^|[\s"'`(=:\[])\/(?!\/)[^\s]*|(?:^|[^A-Za-z])[A-Za-z]:[\\/]|\\\\[^\s\\]+\\|~[\\/]/;
+const privatePath = /(?:^|[\s"'`(=:[])\/(?!\/)[^\s]*|(?:^|[^A-Za-z])[A-Za-z]:[\\/]|\\\\[^\s\\]+\\|~[\\/]/;
 function safeString(value: unknown): string | null {
   if (typeof value !== 'string' || privatePath.test(value)) return null;
   const clean = scrubSecrets(value);
