@@ -117,11 +117,14 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   };
   let cycles = 0, recoveries = 0;
   let consecutiveFailures = 0, totalFailedCycles = 0;
-  let lastObservedState: { app: string; observedRunning: boolean }[] | null = null;
+  let lastObservedState: { app: string; observedRunning: boolean | null }[] | null = null;
   let outcome: 'completed' | 'failed' | 'cancelled' = 'completed';
   while (!signal?.aborted && remaining() > 0) {
     const budget = Math.ceil(remaining());
-    const result = await bounded(budget, s => runChild!(['fleet', 'apps-ensure', ...apps, '--json', ...(root === undefined ? [] : ['--root', root]), '--timeout-ms', String(budget)], { timeoutMs: budget, signal: s }));
+    const result = await bounded(budget, s => {
+      lastObservedState = null;
+      return runChild!(['fleet', 'apps-ensure', ...apps, '--json', ...(root === undefined ? [] : ['--root', root]), '--timeout-ms', String(budget)], { timeoutMs: budget, signal: s });
+    });
     if (signal?.aborted) break;
     if (result.stopped || !result.value || remaining() <= 0) { outcome = 'failed'; break; }
     cycles++;
@@ -129,7 +132,10 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     try { report = JSON.parse(result.value.stdout) as { ok?: unknown; apps?: unknown } | null; } catch { /* Untrusted child output. */ }
     const rows = report && Array.isArray(report.apps) ? report.apps as Record<string, unknown>[] : [];
     const valid = rows.length === apps.length && rows.every(row => row && typeof row === 'object' && typeof row.app === 'string' && apps.includes(row.app)) && new Set(rows.map(row => row.app)).size === apps.length;
-    if (valid) lastObservedState = apps.map(app => ({ app, observedRunning: rows.find(row => row.app === app)!.observedRunning === true }));
+    if (valid) lastObservedState = apps.map(app => {
+      const observed = rows.find(row => row.app === app)!.observedRunning;
+      return { app, observedRunning: typeof observed === 'boolean' ? observed : null };
+    });
     const healthy = result.value.code === 0 && report?.ok === true && valid && rows.every(row => row.observedRunning === true);
     const recovered = healthy ? rows.filter(row => row.launched === true).length : 0;
     recoveries += recovered;
