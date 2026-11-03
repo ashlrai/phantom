@@ -47,6 +47,9 @@ import { getLatestAgentBusPage, subscribeAgentBusPage } from '../../routes/verse
 import { deriveBusReplyNotifications } from './deriveBusReplyNotifications.js';
 import { plannerPlanQuery } from '../../routes/verse/fleet-dispatch/planner-plan-queries.js';
 import { derivePlannerNotifications } from './derivePlannerNotifications.js';
+import { ordersTraceQuery } from '../../routes/verse/fleet-inbox/fleet-inbox-queries.js';
+import { narrowOrderTrace } from '../../routes/verse/fleet-inbox/order-trace-model.js';
+import { deriveOrderMergedNotifications } from './deriveOrderMergedNotifications.js';
 
 /** Match the Updates and Releases surfaces; never poll faster. */
 const NOTIFY_POLL_MS = 60_000;
@@ -66,6 +69,7 @@ export function useNotificationEngine(): void {
   const nativeUpdates = useDesktopUpdates();
   const phonePending = useQuery(phonePendingQuery);
   const plannerPlan = useQuery(plannerPlanQuery);
+  const orderTrace = useQuery(ordersTraceQuery);
   const busPage = useSyncExternalStore(subscribeAgentBusPage, getLatestAgentBusPage, () => null);
   usePollWhileVisible(() => {
     void refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch()).then(() =>
@@ -76,6 +80,7 @@ export function useNotificationEngine(): void {
   usePollWhileVisible(useRefetch(fleetLedgerQuery), NOTIFY_POLL_MS);
   usePollWhileVisible(useRefetch(phonePendingQuery), 30_000);
   usePollWhileVisible(useRefetch(plannerPlanQuery), NOTIFY_POLL_MS);
+  usePollWhileVisible(useRefetch(ordersTraceQuery), NOTIFY_POLL_MS);
 
   const controlData = control.data;
   const fleetData = fleet.data;
@@ -88,6 +93,7 @@ export function useNotificationEngine(): void {
   const ledgerData = ledger.data;
   const phonePendingData = phonePending.data;
   const plannerPlanData = plannerPlan.data;
+  const orderTraceData = orderTrace.data;
 
   useEffect(() => {
     const now = Date.now();
@@ -124,7 +130,8 @@ export function useNotificationEngine(): void {
         derivePhonePendingNotifications({ approvals: phonePendingData, nowMs: now }),
         deriveBusReplyNotifications(busPage, now),
         derivePlannerNotifications(plannerPlanData, now),
+        deriveOrderMergedNotifications(narrowOrderTrace(orderTraceData), now),
       ),
     );
-  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates, phonePendingData, busPage, plannerPlanData]);
+  }, [controlData, fleetData, runsData, inboxData, fleetRunsData, laneTargetsData, updateData, releasePrData, ledgerData, nativeUpdates, phonePendingData, busPage, plannerPlanData, orderTraceData]);
 }
