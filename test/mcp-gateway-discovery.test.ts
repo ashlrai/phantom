@@ -625,3 +625,21 @@ it('marks a one-off probe unhealthy on incomplete pagination without returning i
     .toMatchObject({ ok: false, tools: [], toolCount: 0, error: 'later page unavailable' });
   expect(state.peers.get('alpha')!.close).toHaveBeenCalledTimes(1);
 });
+
+it.each(['allow', 'deny', 'approval_required'])('enforces YAML verdict %s before proxying', async verdict => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'gateway-policy-'));
+  try {
+    const file = join(dir, 'policy.yaml');
+    writeFileSync(file, `policies:\n  - name: test-policy\n    tools:\n      alpha__initial: ${verdict}\n`);
+    vi.stubEnv('ASHLR_MCP_POLICY', file);
+    const g = await gateway(['alpha']);
+    const result = await g.call('alpha__initial');
+    expect(state.peers.get('alpha')!.callTool).toHaveBeenCalledTimes(verdict === 'allow' ? 1 : 0);
+    expect(result).toEqual(verdict === 'allow' ? { content: [] } : {
+      isError: true, content: [{ type: 'text', text: `Policy test-policy: ${verdict}` }],
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
