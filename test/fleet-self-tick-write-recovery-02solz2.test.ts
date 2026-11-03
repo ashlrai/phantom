@@ -33,6 +33,7 @@ const recordingSteps = (order: SelfTickStepName[], failing: SelfTickStepName[] =
     'reset-release': step('reset-release'),
     'lane-autohold': step('lane-autohold'),
     'planner-tick': step('planner-tick'),
+    'landed-sweep': step('landed-sweep'),
   };
 };
 
@@ -50,10 +51,10 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.map((s) => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['planner-tick', 'ok'],
+      ['reset-release', 'ok'], ['lane-autohold', 'failed'], ['planner-tick', 'ok'], ['landed-sweep', 'ok'],
     ]);
     expect(first.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
@@ -65,7 +66,7 @@ describe('self-tick survives a failed last-report write', () => {
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
     expect(second.exitCode).toBe(0);
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']);
     expect(existsSync(LOCK())).toBe(false);
   });
 
@@ -77,7 +78,7 @@ describe('self-tick survives a failed last-report write', () => {
       writeLast: throwingWrite(writes),
     });
 
-    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']);
     expect(writes).toHaveLength(1);
     expect(first.report.steps.every((s) => s.state === 'ok')).toBe(true);
     expect(first.exitCode).toBe(0);
@@ -89,7 +90,7 @@ describe('self-tick survives a failed last-report write', () => {
     });
     expect(second.lock).toBe('acquired');
     expect(second.report.state).toBe('ran');
-    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(orderAgain).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']);
     expect(second.exitCode).toBe(1);
     expect(existsSync(LOCK())).toBe(false);
   });
