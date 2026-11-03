@@ -145,3 +145,13 @@ all dependencies DONE. Each new run records `replayOf` (the original run ID)
 and `replayedAt`; original runs remain unchanged. Concurrent or repeated requests
 reuse active READY, CLAIMED or PR-OPEN replays. Completed replays allow a later
 explicit replay. Queue snapshots persist lineage across process restarts.
+
+## Group failed jobs by error
+
+`ashlr issues` (also `phm issues`) reads the queue and groups failed jobs (BLOCKED
+with a finished claim) by their error text. Ids, timestamps and long numbers are
+ignored, so one problem counts once. Each group shows a count and a few sample
+job ids. It never writes unless you add `--retry`, which queues one READY retry per
+failed job using the same lineage as `queue replay` (repeats do not duplicate).
+Add `--json` for `{ v, failed, groups: [{ error, count, samples, jobs }] }`, or
+`{ v, retried: [{ id, retry }] }` with `--retry`. Use `--dir` to pick a queue directory.

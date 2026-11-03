@@ -1,10 +1,9 @@
 /** Read-only standby projection; private config and child diagnostics stay local. */
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { findStandbyReadinessScript, type FleetStandbyDeps, type FleetStandbyExec } from '../../cli/fleet-standby.js';
+import { findStandbyReadinessScript, standbyRunsDir, type FleetStandbyDeps, type FleetStandbyExec } from '../../cli/fleet-standby.js';
 import { sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
@@ -18,7 +17,7 @@ const identity = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z
 const nullableIdentity = (v: unknown) => v === null || identity(v);
 export function createFleetStandbyApi(deps: FleetStandbyApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
-  const root = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const root = standbyRunsDir(deps.runsDir);
   const exec: FleetStandbyExec = deps.exec ?? (async (file, argv, options) => execAsync(file, argv, options));
   let cached: { at: number; view: Promise<object> } | undefined;
   // One wall budget covers config read, discovery and the child; exec gets only what remains.
@@ -45,7 +44,7 @@ export function createFleetStandbyApi(deps: FleetStandbyApiDeps = {}): ApiModule
         }
         known = { ...base, configured: true, available: false };
         // Discovery resolving after expiry must not start a child.
-        const script = await (deps.locateScript ?? findStandbyReadinessScript)();
+        const script = deps.locateScript ? await deps.locateScript() : await findStandbyReadinessScript(root);
         if (!script || expired) return known;
         // -B like the CLI: -I would drop the script directory from sys.path and break its sibling imports.
         const argv = ['-B', script, '--db', config.db as string, '--snapshot-store', config.snapshotStore as string,

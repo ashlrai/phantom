@@ -845,7 +845,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
         const ack = await postFleetInterjection(fleet.text);
         setDraft((current) => draftAfterSend(ack.outcome, current, text));
         const landing = fleetSendLanding(ack);
-        const wake = decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
+        const wake = ack.reply === undefined && decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
         const wakingText = `${landing.text} · planner waking`;
         setFleetStatus({ ...landing, text: wake ? wakingText : landing.text, error: false });
         if (wake) {
