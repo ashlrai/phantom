@@ -48,6 +48,7 @@ import { readDecisions } from './fleet/decisions-ledger.js';
 import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
+import { FLEET_APPS } from './verse/fleet-apps-api.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
 // M169: best-effort imports for new elite-state tools
@@ -284,6 +285,18 @@ const TOOLS: NativeToolImpl[] = [
         plannerRunStartedAt = null;
       }
     },
+  },
+  {
+    name: 'phantom_fleet_apps_ensure',
+    description: 'Ensure an explicit group of local managed apps is running under one shared deadline.',
+    get inputSchema() { return { type: 'object', properties: {
+      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
+      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
+    }, required: ['apps'], additionalProperties: false }; },
+    safety: 'append',
+    handler: async args => (await import('../cli/fleet-apps-ensure.js')).ensureFleetApps({
+      apps: args.apps as string[], timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
+    }),
   },
   {
     name: 'phantom_fleet_apps_status',
@@ -1351,6 +1364,14 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       auditNativeCall(`${tool.name} keys=${argKeys} — bus validation unavailable`, 'error');
       return textResult({ error: 'Bus validation unavailable' }, true);
     }
+  } else if (name === 'phantom_fleet_apps_ensure') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const apps = args.apps;
+    invalid = !object || Object.keys(args).some(key => key !== 'apps' && key !== 'timeoutMs') ||
+      !Array.isArray(apps) || apps.length < 1 || apps.length > 8 || new Set(apps).size !== apps.length ||
+      apps.some(app => typeof app !== 'string' || !FLEET_APPS.some(allowed => allowed === app)) ||
+      ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000))
+      ? 'invalid fleet apps ensure arguments' : null;
   } else if (name === 'phantom_fleet_drop_job') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => !['id', 'lane', 'tier', 'body'].includes(key)) ||
@@ -1417,7 +1438,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || name === 'phantom_fleet_apps_ensure') return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1450,6 +1471,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     }
     return textResult(payload);
   } catch (err) {
+    if (name === 'phantom_fleet_apps_ensure') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — recovery unavailable`, 'error');
+      return textResult({ error: 'Fleet recovery unavailable' }, true);
+    }
     if (fleetObservation) {
       auditNativeCall(`${tool.name} keys=${argKeys} — observation unavailable`, 'error');
       return textResult({ error: 'Fleet observation unavailable' }, true);
