@@ -1,0 +1,130 @@
+/** Read-only, bounded observation of fleet app inventory changes. */
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
+import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
+
+const exec = promisify(execFile);
+const usage = 'Usage: ashlr fleet apps-changes --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--jsonl]';
+type State = 'running' | 'stopped' | 'unknown';
+export interface FleetAppsChangesDeps {
+  runChild?: AppsEnsureChildRunner;
+  now?: () => number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  signal?: AbortSignal;
+}
+
+function inventory(code: number | null, stdout: string): { states: State[]; valid: boolean } {
+  const states: State[] = FLEET_APPS.map(() => 'unknown');
+  try {
+    const data: unknown = JSON.parse(stdout);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return { states, valid: false };
+    const view = data as Record<string, unknown>;
+    if ((code !== 0 && code !== 1) || view.v !== 1 || view.available !== true ||
+        typeof view.generatedAt !== 'string' || !Number.isFinite(Date.parse(view.generatedAt)) || !Array.isArray(view.apps) ||
+        (view.degraded !== undefined && typeof view.degraded !== 'boolean')) return { states, valid: false };
+    // Exit 1 is the status command's documented degraded-inventory result.
+    if (code === 1 && view.degraded !== true) return { states, valid: false };
+    const counts = FLEET_APPS.map(() => 0);
+    for (const item of view.apps as unknown[]) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+      const row = item as Record<string, unknown>;
+      const i = (FLEET_APPS as readonly unknown[]).indexOf(row.app);
+      if (i < 0) continue;
+      counts[i]!++;
+      if (counts[i] !== 1 || typeof row.checkedAt !== 'string' || !Number.isFinite(Date.parse(row.checkedAt)) ||
+          (row.running !== null && typeof row.running !== 'boolean')) states[i] = 'unknown';
+      else states[i] = row.running === true ? 'running' : row.running === false ? 'stopped' : 'unknown';
+    }
+    return { states, valid: counts.some((count, i) => count === 1 && states[i] !== 'unknown') ||
+      counts.some((count, i) => count === 1 && states[i] === 'unknown' && (view.apps as unknown[]).some(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+        const row = item as Record<string, unknown>;
+        return row.app === FLEET_APPS[i] && row.running === null && typeof row.checkedAt === 'string' && Number.isFinite(Date.parse(row.checkedAt));
+      })) };
+  } catch { return { states, valid: false }; }
+}
+
+export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChangesDeps = {}): Promise<number> {
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
+  const invalid = (): number => { console.error(`error: invalid fleet apps-changes arguments\n${usage}`); return 2; };
+  let duration = 0, interval = 1000, root: string | undefined, jsonl = false;
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]!;
+    if (!['--duration-ms', '--interval-ms', '--root', '--jsonl'].includes(flag) || seen.has(flag)) return invalid();
+    seen.add(flag);
+    if (flag === '--jsonl') { jsonl = true; continue; }
+    const value = args[++i];
+    if (!value || value.startsWith('-')) return invalid();
+    if (flag === '--root') { root = value; continue; }
+    if (!/^[0-9]{1,9}$/.test(value)) return invalid();
+    const n = Number(value);
+    if (flag === '--duration-ms') { if (n < 1 || n > 300000) return invalid(); duration = n; }
+    else { if (n < 100 || n > 60000) return invalid(); interval = n; }
+  }
+  if (!duration) return invalid();
+  let runChild = deps.runChild;
+  if (!runChild && !deps.signal?.aborted) {
+    const prefix = selfCliPrefix();
+    if (prefix === null) { console.error('fleet apps-changes: cannot resolve the ashlr CLI entry'); return 1; }
+    runChild = async (argv, options) => {
+      try {
+        const { stdout } = await exec(process.execPath, [...prefix, ...argv], { encoding: 'utf8', timeout: options.timeoutMs, signal: options.signal, maxBuffer: 1024 * 1024, windowsHide: true });
+        return { code: 0, stdout };
+      } catch (error) {
+        const e = error as { code?: unknown; stdout?: unknown };
+        return { code: typeof e.code === 'number' ? e.code : null, stdout: typeof e.stdout === 'string' ? e.stdout : '' };
+      }
+    };
+  }
+  const now = deps.now ?? (() => performance.now());
+  const start = now(), wallStart = performance.now();
+  const remaining = (): number => Math.max(0, duration - Math.max(0, now() - start, performance.now() - wallStart));
+  const sleep = deps.sleep ?? ((ms: number, signal: AbortSignal) => new Promise<void>(resolve => {
+    const done = (): void => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  }));
+  const bounded = async <T>(ms: number, operation: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stop!: () => void;
+    const limit = new Promise<undefined>(resolve => { stop = () => { controller.abort(); resolve(undefined); }; });
+    deps.signal?.addEventListener('abort', stop, { once: true });
+    try {
+      if (deps.signal?.aborted || remaining() <= 0) return undefined;
+      timer = setTimeout(stop, Math.max(1, ms));
+      const work = Promise.resolve().then(() => operation(controller.signal)).catch(() => undefined);
+      return await Promise.race([work, limit]);
+    } finally { clearTimeout(timer); deps.signal?.removeEventListener('abort', stop); }
+  };
+  const emit = (event: Record<string, unknown>): void => {
+    if (jsonl) process.stdout.write(`${JSON.stringify(event)}\n`);
+    else if (event.type === 'summary') console.log(`Summary: ${event.outcome}, ${event.samples} samples, ${event.transitions} transitions`);
+    else console.log(`${event.time} ${event.type} ${event.app}: ${event.state}`);
+  };
+  let previous: State[] | undefined, samples = 0, transitions = 0, valid = false;
+  while (!deps.signal?.aborted && remaining() > 0) {
+    const budget = Math.max(1, Math.ceil(remaining()));
+    const result = await bounded(budget, signal => runChild!(['fleet', 'apps-status', ...(root === undefined ? [] : ['--root', root]), '--json'], { timeoutMs: budget, signal }));
+    if (deps.signal?.aborted) break;
+    const parsed = result ? inventory(result.code, result.stdout) : { states: FLEET_APPS.map((): State => 'unknown'), valid: false };
+    valid ||= parsed.valid;
+    samples++;
+    const time = new Date().toISOString();
+    parsed.states.forEach((state, i) => {
+      if (!previous || previous[i] !== state) {
+        const type = previous ? 'transition' : 'baseline';
+        if (previous) transitions++;
+        emit({ type, app: FLEET_APPS[i], state, time });
+      }
+    });
+    previous = parsed.states;
+    if (remaining() <= 0) break;
+    await bounded(Math.min(interval, remaining()), signal => sleep(Math.min(interval, remaining()), signal));
+  }
+  const outcome = deps.signal?.aborted ? 'cancelled' : valid ? 'complete' : 'unavailable';
+  emit({ type: 'summary', outcome, samples, transitions });
+  return outcome === 'complete' ? 0 : 1;
+}
