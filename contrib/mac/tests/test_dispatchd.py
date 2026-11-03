@@ -490,5 +490,63 @@ class RunHelperTests(unittest.TestCase):
         self.assertTrue(any(m.startswith('SLOW sh timeout 1s, group killed') or 'group killed' in m for m in logs), logs)
 
 
+class QueueWaitTests(unittest.TestCase):
+    def fixture(self, lanes):
+        slots = held_lanes()
+        for lane in lanes:
+            slots[lane] = lane_slot(target=10)
+        tmp = build(slots=slots)
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        return home, launch_stubs(home)
+
+    def metrics(self, home):
+        return [json.loads(line) for line in
+                (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
+
+    def test_enqueue_once_while_paused_then_claim_with_measurable_wait(self):
+        from datetime import datetime
+        home, env = self.fixture(['codex-cmp'])
+        queue_job(home, 'RQ-WAIT', 'codex-cmp')
+        pause = home / '.ashlr-runs/PAUSE'
+        pause.write_text("fixture pause")
+        for _ in range(2):
+            r = tick(home, env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        rows = self.metrics(home)
+        self.assertEqual([r['event'] for r in rows], ['enqueue'])
+        self.assertEqual({k: rows[0][k] for k in ('job', 'repo', 'lane', 'tier')},
+                         dict(job='RQ-WAIT', repo='phantom', lane='codex-cmp', tier='work'))
+        pause.unlink()
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = self.metrics(home)
+        self.assertEqual([r['event'] for r in rows], ['enqueue', 'claim', 'launch'])
+        wait = (datetime.fromisoformat(rows[1]['ts']) - datetime.fromisoformat(rows[0]['ts'])).total_seconds()
+        self.assertGreaterEqual(wait, 0)
+        self.assertLess(wait, 300)
+        for key in ('job', 'repo', 'lane', 'tier'):
+            self.assertEqual(rows[0][key], rows[1][key])
+
+    def test_claim_limit_rotates_across_ticks_and_skips_blocked_head(self):
+        lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
+        home, env = self.fixture(lanes)
+        # Soft load limits claims to two. All four lanes remain backlogged.
+        env['LOADGATE_LOADAVG'] = '60'
+        queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
+        (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
+        for n in range(3):
+            for lane in lanes:
+                queue_job(home, 'RQ-%s-%d' % (lane, n), lane)
+        claimed = []
+        for _ in range(2):
+            r = tick(home, env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
+        self.assertEqual([r['lane'] for r in claimed], lanes)
+        self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])
+        self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
+
+
 if __name__ == '__main__':
     unittest.main()

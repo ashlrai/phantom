@@ -90,3 +90,14 @@ Read the dispatcher starvation signals and admission decision (read-only):
 ```sh
 phm pool admission --json
 ```
+
+Job latency: `phm fleet job-latency --jobs jobs.jsonl --json` ranks measured
+queue wait, checkout, model, CI and merge time and supplies a proposed fix line
+for each measured phase. It is read-only; fix lines are proposals, not queued
+jobs. Records use `job` (or `job_id`/`jobId`), `event` and `ts` (or
+`timestamp`/`at`). Boundaries are `queued`, `launch`, `checkout_complete`,
+`finish`, `ci_start`, `ci_complete`, and `merged` (also an `outcome` with
+`MERGED`). IDs must identify individual attempts. Missing, reversed or
+ambiguous repeated boundaries are reported as unmeasured, not estimated;
+phase totals need not cover the whole wall time. Existing ledgers may not yet
+contain all boundaries.

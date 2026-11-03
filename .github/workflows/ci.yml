@@ -64,10 +64,10 @@ jobs:
 
   quick:
     # The only per-PR build step: install plus the core TypeScript no-emit check.
-    # Docs-only PRs skip it. Full suites run in the daily run.
+    # Start alongside classification so the longest fast job has no serial wait.
+    # This also checks docs-only PRs. Full suites run in the daily run.
     name: Quick typecheck
-    needs: classify
-    if: needs.classify.outputs.lane != 'docs' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -98,6 +98,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Keep ancestry for behind PR validation without downloading historical blobs.
+          filter: blob:none
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -973,7 +975,7 @@ jobs:
 
   merge-gate:
     # One stable required check. PR and merge_group: Secret-shape scan, Classify
-    # and (unless docs-only) Quick typecheck must pass, and every full lane must
+    # and Quick typecheck must pass, and every full lane must
     # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
     # selected full lanes. Exact dependency keys; anything skipped, cancelled or
     # missing that should have run is a failure.
@@ -1005,8 +1007,8 @@ jobs:
           const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
           const lanes = ['site', 'docs', ...full];
           const selected = lane === 'full' ? full : [lane];
-          // PR and merge queue: only the quick check, and none for docs-only.
-          const chosen = fast ? (lane === 'docs' ? [] : ['quick']) : selected;
+          // PR and merge queue: the independent quick check runs for every lane.
+          const chosen = fast ? ['quick'] : selected;
           const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
