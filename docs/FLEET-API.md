@@ -158,3 +158,16 @@ CLI has related, independently shaped views and controls: `phm fleet status`,
 `phm inbox reject`, and `phm inbox automerge`. That proposal inbox is distinct
 from the runs leader inbox above. See the [fleet CLI](../src/cli/fleet.ts) and
 [inbox CLI](../src/cli/inbox.ts) for flags and authority gates.
+
+## Merge queue age from a snapshot
+
+Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and
+blocking reasons, oldest first. Add `--json` for agents. The typed
+`MergeQueueAgeInput` and `mergeQueueAge(input, now)` API use the same report.
+The snapshot contains `prs` and `queue`; `--help` lists their fields.
+Merged and closed PRs are excluded. Missing evidence stays unknown. Required
+checks remain in place; this command only reads the supplied file.
+
+Acceptance: keep the interface as simple and intuitive as possible, with fewer
+steps, plain words, one obvious path, and every human surface backed by a typed
+API or CLI that agents can use (code-first, agent-native).

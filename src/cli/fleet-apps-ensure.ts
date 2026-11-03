@@ -18,7 +18,7 @@ export interface AppsEnsureChildRun { code: number | null; stdout: string }
 /** Injected in tests so no real process or Mac app is touched. */
 export type AppsEnsureChildRunner =
   (args: readonly string[], options: { timeoutMs: number; signal: AbortSignal }) => Promise<AppsEnsureChildRun>;
-export interface FleetAppsEnsureDeps { runChild?: AppsEnsureChildRunner; now?: () => number; signal?: AbortSignal }
+export interface FleetAppsEnsureDeps { runChild?: AppsEnsureChildRunner; now?: () => number; monotonicNow?: () => number; signal?: AbortSignal }
 
 interface AppResult { app: string; attempted: boolean; outcome: string; launched: boolean; observedRunning: boolean; reason?: 'deadline' | 'cancelled' }
 interface ParsedArgs { apps: string[]; root?: string; timeoutMs: number; intervalMs?: number; json: boolean }
@@ -106,10 +106,13 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
   const now = deps.now ?? Date.now;
   const signal = deps.signal;
   const deadline = now() + timeoutMs;
+  const monotonicNow = deps.monotonicNow ?? (() => performance.now());
+  const wallDeadline = monotonicNow() + timeoutMs;
+  const remaining = (): number => Math.min(Math.floor(deadline - now()), Math.ceil(wallDeadline - monotonicNow()));
   const forwarded = [...(root === undefined ? [] : ['--root', root]), ...(intervalMs === undefined ? [] : ['--interval-ms', String(intervalMs)])];
 
   /** One app-ensure child; the remaining budget bounds both its own timeout and a hard wall timer. */
-  const attempt = async (app: string, budgetMs: number): Promise<AppResult> => {
+  const attempt = async (app: string): Promise<AppResult> => {
     const controller = new AbortController();
     let settleAbort!: () => void;
     const cancelled = new Promise<void>(resolve => { settleAbort = resolve; });
@@ -120,6 +123,11 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
       abort();
       signal.removeEventListener('abort', abort);
       return { app, attempted: false, outcome: 'unattempted', launched: false, observedRunning: false, reason: 'cancelled' };
+    }
+    const budgetMs = remaining();
+    if (budgetMs <= 0) {
+      signal?.removeEventListener('abort', abort);
+      return { app, attempted: false, outcome: 'unattempted', launched: false, observedRunning: false, reason: 'deadline' };
     }
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -151,10 +159,12 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
   // Sequential on purpose: one heavy child at a time, budget checked before each one.
   const results: AppResult[] = [];
   for (const app of apps) {
-    if (signal?.aborted || Math.floor(deadline - now()) <= 0) break;
-    results.push(await attempt(app, Math.floor(deadline - now())));
+    if (signal?.aborted || remaining() <= 0) break;
+    const result = await attempt(app);
+    results.push(result);
+    if (!result.attempted) break;
   }
-  const endedBy = signal?.aborted ? 'cancelled' : results.length === apps.length ? 'complete' : 'deadline';
+  const endedBy = signal?.aborted ? 'cancelled' : results.length === apps.length && results.every(result => result.attempted) ? 'complete' : 'deadline';
   const rows: AppResult[] = apps.map((app, i) => results[i]
     ?? { app, attempted: false, outcome: 'unattempted', launched: false, observedRunning: false, reason: endedBy === 'cancelled' ? 'cancelled' : 'deadline' });
   const ok = rows.every(row => row.observedRunning);
