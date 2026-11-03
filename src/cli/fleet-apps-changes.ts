@@ -6,7 +6,7 @@ import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.j
 
 const exec = promisify(execFile);
 const usage = 'Usage: ashlr fleet apps-changes --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--app <name>]... [--jsonl]';
-type State = 'running' | 'stopped' | 'unknown';
+export type State = 'running' | 'stopped' | 'unknown';
 export interface FleetAppsChangesDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
@@ -67,11 +67,29 @@ export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChanges
     else { if (n < 100 || n > 60000) return invalid(); interval = n; }
   }
   if (!duration) return invalid();
-  const selected = requestedApps.size ? requestedApps : new Set(FLEET_APPS.map((_, i) => i));
+  let result: Awaited<ReturnType<typeof observeFleetAppsChanges>>;
+  try { result = await observeFleetAppsChanges({ durationMs: duration, intervalMs: interval, root, apps: [...requestedApps].map(i => FLEET_APPS[i]!) }, deps, event => {
+    if (jsonl) process.stdout.write(`${JSON.stringify(event)}\n`);
+    else if (event.type === 'summary') console.log(`Summary: ${event.outcome}, ${event.samples} samples, ${event.transitions} transitions`);
+    else console.log(`${event.time} ${event.type} ${event.app}: ${event.state}`);
+  }); } catch { console.error('fleet apps-changes: cannot resolve the ashlr CLI entry'); return 1; }
+  return result.outcome === 'complete' ? 0 : 1;
+}
+
+type ChangeEvent = { type: 'baseline' | 'transition'; app: string; state: State; time: string };
+type SummaryEvent = { type: 'summary'; outcome: 'complete' | 'cancelled' | 'unavailable'; samples: number; transitions: number };
+export async function observeFleetAppsChanges(
+  options: { durationMs: number; intervalMs?: number; root?: string; apps?: readonly string[]; maxEvents?: number },
+  deps: FleetAppsChangesDeps = {}, onEvent?: (event: ChangeEvent | SummaryEvent) => void,
+): Promise<{ v: 1; outcome: SummaryEvent['outcome']; samples: number; transitions: number; events: ChangeEvent[]; truncated: boolean }> {
+  const { durationMs: duration, intervalMs: interval = 1000, root } = options;
+  const selected = options.apps?.length ? new Set(options.apps.map(app => (FLEET_APPS as readonly string[]).indexOf(app))) : new Set(FLEET_APPS.map((_, i) => i));
+  const events: ChangeEvent[] = [];
+  let truncated = false;
   let runChild = deps.runChild;
   if (!runChild && !deps.signal?.aborted) {
     const prefix = selfCliPrefix();
-    if (prefix === null) { console.error('fleet apps-changes: cannot resolve the ashlr CLI entry'); return 1; }
+    if (prefix === null) throw new Error('Cannot resolve CLI entry');
     runChild = async (argv, options) => {
       try {
         const { stdout } = await exec(process.execPath, [...prefix, ...argv], { encoding: 'utf8', timeout: options.timeoutMs, signal: options.signal, maxBuffer: 1024 * 1024, windowsHide: true });
@@ -103,10 +121,10 @@ export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChanges
       return await Promise.race([work, limit]);
     } finally { clearTimeout(timer); deps.signal?.removeEventListener('abort', stop); }
   };
-  const emit = (event: Record<string, unknown>): void => {
-    if (jsonl) process.stdout.write(`${JSON.stringify(event)}\n`);
-    else if (event.type === 'summary') console.log(`Summary: ${event.outcome}, ${event.samples} samples, ${event.transitions} transitions`);
-    else console.log(`${event.time} ${event.type} ${event.app}: ${event.state}`);
+  const emit = (event: ChangeEvent): void => {
+    if (events.length < (options.maxEvents ?? Infinity)) events.push(event);
+    else truncated = true;
+    onEvent?.(event);
   };
   let previous: State[] | undefined, samples = 0, transitions = 0, valid = false;
   while (!deps.signal?.aborted && remaining() > 0) {
@@ -130,6 +148,6 @@ export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChanges
     await bounded(Math.min(interval, remaining()), signal => sleep(Math.min(interval, remaining()), signal));
   }
   const outcome = deps.signal?.aborted ? 'cancelled' : valid ? 'complete' : 'unavailable';
-  emit({ type: 'summary', outcome, samples, transitions });
-  return outcome === 'complete' ? 0 : 1;
+  onEvent?.({ type: 'summary', outcome, samples, transitions });
+  return { v: 1, outcome, samples, transitions, events, truncated };
 }
