@@ -46,6 +46,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'context-watch': () => import('./fleet-context-watch.js'),
   'daily-reds': () => import('./fleet-daily-reds.js'),
   'dead-heads': () => import('./fleet-dead-heads.js'),
+  'diff-scan': () => import('./fleet-diff-scan.js'),
   'dirty-landed': () => import('./fleet-dirty-landed.js'),
   'disk': () => import('./fleet-disk.js'),
   'dispatch-proof': () => import('./fleet-dispatch-proof.js'),
