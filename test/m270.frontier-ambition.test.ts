@@ -47,7 +47,8 @@ vi.mock('../src/core/sandbox/policy.js', () => ({
   setKill: vi.fn(),
 }));
 
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/core/goals/store.js')>(),
   loadGoal: vi.fn(),
   updateMilestoneStatus: vi.fn(),
   resumeMilestone: vi.fn(),
