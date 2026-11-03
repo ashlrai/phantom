@@ -60,6 +60,7 @@ const recordingSteps = () => {
     'reset-release': stub('reset-release'),
     'lane-autohold': stub('lane-autohold'),
     'planner-tick': stub('planner-tick'),
+    'landed-sweep': stub('landed-sweep'),
   } };
 };
 
@@ -274,9 +275,9 @@ describe('fleet self-loop', () => {
       { steps: rec.steps, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
     expect(rec.order).toEqual([
-      'reset-release', 'lane-autohold', 'planner-tick',
-      'reset-release', 'lane-autohold', 'planner-tick',
-      'reset-release', 'lane-autohold', 'planner-tick',
+      'reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep',
     ]);
     for (const argv of rec.argvs) {
       expect(argv).toEqual(expect.arrayContaining(['--json', '--apply', '--runs-dir', runsDir]));
@@ -286,7 +287,7 @@ describe('fleet self-loop', () => {
     expect(outLines.length).toBe(1);
     expect(summary).toMatchObject({ ticks: 3, failures: 0, busy: 0, termination: 'duration' });
     expect(summary!.lastReport).toMatchObject({ mode: 'apply', state: 'ran' });
-    expect(summary!.lastReport!['steps']).toHaveLength(3);
+    expect(summary!.lastReport!['steps']).toHaveLength(4);
   });
 
   it('dry-run is the default: no --apply is forwarded and nothing is applied', async () => {

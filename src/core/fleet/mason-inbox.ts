@@ -52,9 +52,15 @@ export function formatInboxEntry(text: string, source: string, when: Date): stri
   return `\n## ${at} ET (Mason, ${safeSource(source)}) PRIORITY P0\n${normaliseText(text)}\n`;
 }
 
+/** Prevent continuation text from opening another inbox entry. */
+export function escapeInboxContinuation(line: string): string {
+  return /^## /.test(line) || /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))\s+\[src:([a-z0-9._-]{1,32})(?:\s+id:([A-Za-z0-9._:-]{1,64}))?\]\s+(.+)$/.test(line)
+    ? ` ${line}` : line;
+}
+
 /**
  * Channel-line form: the first line carries the time, channel and a stable id
- * (so inbox-ack can reply on that channel); later lines follow unchanged and
+ * (so inbox-ack can reply on that channel); later lines escape entry delimiters and
  * reach the planner as one raw entry.
  */
 function formatChannelEntry(text: string, source: string, when: Date): { entry: string; id: string } {
@@ -62,7 +68,7 @@ function formatChannelEntry(text: string, source: string, when: Date): { entry: 
   const channel = inboxChannelSlug(source);
   const id = `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update(iso + text).digest('hex').slice(0, 16)}`;
   const [first = '', ...rest] = text.split('\n');
-  return { entry: `\n${[`${iso} [src:${channel} id:${id}] ${first}`, ...rest].join('\n')}\n`, id };
+  return { entry: `\n${[`${iso} [src:${channel} id:${id}] ${first}`, ...rest.map(escapeInboxContinuation)].join('\n')}\n`, id };
 }
 
 export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
