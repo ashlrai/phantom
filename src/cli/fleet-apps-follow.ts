@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readAppsRecoveryHistory } from '../core/fleet/apps-recovery-history.js';
 
-const usage = 'Usage: ashlr fleet apps-follow --duration-ms <1..300000> [--root <dir>] [--after <cursor>] [--invocation-id <uuid>] [--interval-ms <100..60000>] [--max-events <1..1000>] --jsonl';
+const usage = 'Usage: ashlr fleet apps-follow --duration-ms <1..300000> [--root <dir>] [--after <cursor>] [--invocation-id <uuid>] [--until-summary] [--interval-ms <100..60000>] [--max-events <1..1000>] --jsonl';
 type Deps = {
   reader?: typeof readAppsRecoveryHistory;
   now?: () => number;
@@ -19,9 +19,9 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (!['--root', '--after', '--duration-ms', '--interval-ms', '--max-events', '--invocation-id', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
+    if (!['--root', '--after', '--duration-ms', '--interval-ms', '--max-events', '--invocation-id', '--until-summary', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
     seen.add(arg);
-    if (arg === '--jsonl') continue;
+    if (arg === '--jsonl' || arg === '--until-summary') continue;
     const value = args[++i];
     if (!value || value.startsWith('-')) return invalid();
     if (arg === '--root') root = value;
@@ -37,17 +37,24 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
       else { if (n < 1 || n > 1000) return invalid(); maxEvents = n; }
     }
   }
-  if (!duration || !seen.has('--jsonl')) return invalid();
+  if (!duration || !seen.has('--jsonl') || (seen.has('--until-summary') && !invocationId)) return invalid();
   const reader = deps.reader ?? readAppsRecoveryHistory, now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
   const deadline = now() + duration;
-  let delivered = 0, reason: 'deadline' | 'event_limit' | 'cancelled' | 'unavailable' | 'invalid_cursor';
+  let delivered = 0, outcome: unknown, reason: 'deadline' | 'event_limit' | 'cancelled' | 'unavailable' | 'invalid_cursor' | 'invocation_finished';
   for (;;) {
     if (deps.signal?.aborted) { reason = 'cancelled'; break; }
     if (now() >= deadline) { reason = 'deadline'; break; }
     const page = reader(root, after, Math.min(100, maxEvents - delivered), invocationId);
     if (page.availability !== 'available') { reason = page.availability === 'invalid-cursor' ? 'invalid_cursor' : 'unavailable'; break; }
-    for (const event of page.events) { console.log(JSON.stringify({ type: 'event', event })); delivered++; }
+    let finished = false;
+    for (const event of page.events) {
+      console.log(JSON.stringify({ type: 'event', event })); delivered++;
+      if (seen.has('--until-summary') && event.invocationId === invocationId && event.kind === 'apps-watch.summary.v1') {
+        after = event.cursor as number; outcome = event.outcome; finished = true; break;
+      }
+    }
+    if (finished) { reason = 'invocation_finished'; break; }
     after = page.nextCursor;
     if (delivered >= maxEvents) { reason = 'event_limit'; break; }
     if (page.hasMore) continue;
@@ -57,6 +64,6 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
     try { await sleep(Math.min(interval, remaining), deps.signal); }
     catch (error) { if (!deps.signal?.aborted) throw error; }
   }
-  console.log(JSON.stringify({ type: 'summary', reason, delivered, nextCursor: after }));
-  return reason === 'invalid_cursor' ? 2 : reason === 'unavailable' ? 1 : 0;
+  console.log(JSON.stringify({ type: 'summary', reason, delivered, nextCursor: after, ...(reason === 'invocation_finished' ? { outcome } : {}) }));
+  return reason === 'invalid_cursor' ? 2 : reason === 'unavailable' || outcome === 'failed' ? 1 : 0;
 }
