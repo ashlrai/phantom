@@ -5,7 +5,7 @@ import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const exec = promisify(execFile);
-const usage = 'Usage: ashlr fleet apps-changes --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--jsonl]';
+const usage = 'Usage: ashlr fleet apps-changes --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--app <name>]... [--jsonl]';
 type State = 'running' | 'stopped' | 'unknown';
 export interface FleetAppsChangesDeps {
   runChild?: AppsEnsureChildRunner;
@@ -14,7 +14,7 @@ export interface FleetAppsChangesDeps {
   signal?: AbortSignal;
 }
 
-function inventory(code: number | null, stdout: string): { states: State[]; valid: boolean } {
+function inventory(code: number | null, stdout: string, selected: ReadonlySet<number>): { states: State[]; valid: boolean } {
   const states: State[] = FLEET_APPS.map(() => 'unknown');
   try {
     const data: unknown = JSON.parse(stdout);
@@ -26,22 +26,18 @@ function inventory(code: number | null, stdout: string): { states: State[]; vali
     // Exit 1 is the status command's documented degraded-inventory result.
     if (code === 1 && view.degraded !== true) return { states, valid: false };
     const counts = FLEET_APPS.map(() => 0);
+    const validRows = FLEET_APPS.map(() => false);
     for (const item of view.apps as unknown[]) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
       const row = item as Record<string, unknown>;
       const i = (FLEET_APPS as readonly unknown[]).indexOf(row.app);
       if (i < 0) continue;
       counts[i]!++;
-      if (counts[i] !== 1 || typeof row.checkedAt !== 'string' || !Number.isFinite(Date.parse(row.checkedAt)) ||
-          (row.running !== null && typeof row.running !== 'boolean')) states[i] = 'unknown';
-      else states[i] = row.running === true ? 'running' : row.running === false ? 'stopped' : 'unknown';
+      validRows[i] = counts[i] === 1 && typeof row.checkedAt === 'string' && Number.isFinite(Date.parse(row.checkedAt)) &&
+        (row.running === null || typeof row.running === 'boolean');
+      states[i] = validRows[i] ? row.running === true ? 'running' : row.running === false ? 'stopped' : 'unknown' : 'unknown';
     }
-    return { states, valid: counts.some((count, i) => count === 1 && states[i] !== 'unknown') ||
-      counts.some((count, i) => count === 1 && states[i] === 'unknown' && (view.apps as unknown[]).some(item => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
-        const row = item as Record<string, unknown>;
-        return row.app === FLEET_APPS[i] && row.running === null && typeof row.checkedAt === 'string' && Number.isFinite(Date.parse(row.checkedAt));
-      })) };
+    return { states, valid: validRows.some((valid, i) => valid && selected.has(i)) };
   } catch { return { states, valid: false }; }
 }
 
@@ -50,20 +46,28 @@ export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChanges
   const invalid = (): number => { console.error(`error: invalid fleet apps-changes arguments\n${usage}`); return 2; };
   let duration = 0, interval = 1000, root: string | undefined, jsonl = false;
   const seen = new Set<string>();
+  const requestedApps = new Set<number>();
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
-    if (!['--duration-ms', '--interval-ms', '--root', '--jsonl'].includes(flag) || seen.has(flag)) return invalid();
+    if (!['--duration-ms', '--interval-ms', '--root', '--jsonl', '--app'].includes(flag) || (flag !== '--app' && seen.has(flag))) return invalid();
     seen.add(flag);
     if (flag === '--jsonl') { jsonl = true; continue; }
     const value = args[++i];
     if (!value || value.startsWith('-')) return invalid();
     if (flag === '--root') { root = value; continue; }
+    if (flag === '--app') {
+      const index = (FLEET_APPS as readonly string[]).indexOf(value);
+      if (index < 0) return invalid();
+      requestedApps.add(index);
+      continue;
+    }
     if (!/^[0-9]{1,9}$/.test(value)) return invalid();
     const n = Number(value);
     if (flag === '--duration-ms') { if (n < 1 || n > 300000) return invalid(); duration = n; }
     else { if (n < 100 || n > 60000) return invalid(); interval = n; }
   }
   if (!duration) return invalid();
+  const selected = requestedApps.size ? requestedApps : new Set(FLEET_APPS.map((_, i) => i));
   let runChild = deps.runChild;
   if (!runChild && !deps.signal?.aborted) {
     const prefix = selfCliPrefix();
@@ -109,11 +113,12 @@ export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChanges
     const budget = Math.max(1, Math.ceil(remaining()));
     const result = await bounded(budget, signal => runChild!(['fleet', 'apps-status', ...(root === undefined ? [] : ['--root', root]), '--json'], { timeoutMs: budget, signal }));
     if (deps.signal?.aborted) break;
-    const parsed = result ? inventory(result.code, result.stdout) : { states: FLEET_APPS.map((): State => 'unknown'), valid: false };
+    const parsed = result ? inventory(result.code, result.stdout, selected) : { states: FLEET_APPS.map((): State => 'unknown'), valid: false };
     valid ||= parsed.valid;
     samples++;
     const time = new Date().toISOString();
     parsed.states.forEach((state, i) => {
+      if (!selected.has(i)) return;
       if (!previous || previous[i] !== state) {
         const type = previous ? 'transition' : 'baseline';
         if (previous) transitions++;
