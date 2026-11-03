@@ -55,6 +55,11 @@ let tmpHome: string;
 let tmpRepo: string;
 
 const mockRunSwarm = vi.fn();
+const mockResourceSnapshot = vi.fn();
+vi.mock('../src/core/fabric/resource-monitor.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/core/fabric/resource-monitor.js')>(),
+  getResourceSnapshot: (...args: unknown[]) => mockResourceSnapshot(...args),
+}));
 
 vi.mock('../src/core/swarm/runner.js', () => ({
   runSwarm: (...args: unknown[]) => mockRunSwarm(...args),
@@ -178,6 +183,7 @@ beforeEach(() => {
     'utf8',
   );
   mockRunSwarm.mockReset();
+  mockResourceSnapshot.mockReset();
   activationCapabilityThrows = false;
   backlogFixture = [];
   resetAbandonedDaemonTickForTests();
@@ -388,6 +394,25 @@ describe('RQ-DAEMONTICK-UNBLOCK: resident tick persistence', () => {
     expect(hooksPhase!.error).toContain('collector-start-failed');
     expect(loadDaemonState().lastTickAt).toBeTruthy();
   });
+
+  it('a hung selection capacity read times out, records the tick and allows the next tick', async () => {
+    enroll(tmpRepo);
+    backlogFixture = [{
+      id: 'selection-hang', repo: tmpRepo, source: 'todo', title: 'Selection fixture',
+      detail: '// TODO', value: 4, effort: 2, score: 2, tags: ['todo'], ts: new Date().toISOString(),
+    }];
+    mockResourceSnapshot.mockImplementation(never);
+    const result = await tick(makeCfg({
+      foundry: { autonomyControlLoop: false, fabric: { concurrentDispatch: true } } as AshlrConfig['foundry'],
+    }), { dryRun: false });
+    expect(result.reason).toBe('selection-capacity-unavailable');
+    expect(result.phases).toContainEqual(expect.objectContaining({ name: 'selection capacity', status: 'timeout' }));
+    expect(loadDaemonState().lastTickAt).toBeTruthy();
+    expect(mockRunSwarm).not.toHaveBeenCalled();
+    backlogFixture = [];
+    expect(await tick(makeCfg(), { dryRun: true })).toBeTruthy();
+    expect(abandonedDaemonTickRunning()).toBe(false);
+  }, 60_000);
 
   it('a dispatched run that never resolves is detached; the tick still completes', async () => {
     enroll(tmpRepo);

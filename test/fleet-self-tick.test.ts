@@ -122,9 +122,15 @@ const recording = () => {
     'reset-release': stub('reset-release'),
     'lane-autohold': stub('lane-autohold'),
     'planner-tick': stub('planner-tick'),
+    'inbox-acks': stub('inbox-acks'),
+    'landed-sweep': stub('landed-sweep'),
   };
   return { order, argvs, stub, steps };
 };
+
+/** Keeps tests on the real steps off GitHub: landed-sweep would run gh. */
+const fakeSweep: SelfTickStep = async () => ({ exitCode: 0, output: JSON.stringify({ v: 1, closed: 0, planned: 0 }) });
+const quietSweep = { steps: { 'landed-sweep': fakeSweep } };
 
 describe('fleet self-tick', () => {
   it('resolves through the fleet convention and owns its --help', async () => {
@@ -145,7 +151,7 @@ describe('fleet self-tick', () => {
     const rec = recording();
     const { code, report } = await run(['--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep']);
     expect(report).toMatchObject({ v: 1, at: NOW_ISO, mode: 'dry-run', state: 'ran' });
     expect(report!.steps.map((s) => s.step)).toEqual(rec.order);
     expect(report!.steps.every((s) => s.state === 'ok' && s.exitCode === 0
@@ -162,7 +168,7 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'reset-release': throwing },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep']);
     expect(report!.steps[0]).toMatchObject({ step: 'reset-release', state: 'failed', exitCode: 1, report: null });
     expect(report!.steps.slice(1).every((s) => s.state === 'ok')).toBe(true);
   });
@@ -173,13 +179,13 @@ describe('fleet self-tick', () => {
       steps: { ...rec.steps, 'lane-autohold': rec.stub('lane-autohold', 1, 'not json') },
     });
     expect(code).toBe(1);
-    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick']);
+    expect(rec.order).toEqual(['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep']);
     expect(report!.steps[1]).toMatchObject({ step: 'lane-autohold', state: 'failed', exitCode: 1, report: null });
   });
 
   it('dry-run writes no change to slots.json; planner still logs PLANNER_TICK', async () => {
     const before = await readFile(SLOTS(), 'utf8');
-    const { code, report } = await run(['--json', '--runs-dir', runsDir]);
+    const { code, report } = await run(['--json', '--runs-dir', runsDir], quietSweep);
     expect(code).toBe(0);
     expect(report!.mode).toBe('dry-run');
     expect(await readFile(SLOTS(), 'utf8')).toBe(before);
@@ -194,7 +200,7 @@ describe('fleet self-tick', () => {
     const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir], { steps: rec.steps });
     expect(code).toBe(0);
     expect(report!.mode).toBe('apply');
-    for (const name of ['reset-release', 'lane-autohold', 'planner-tick']) {
+    for (const name of ['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep']) {
       expect(rec.argvs[name]).toContain('--apply');
       expect(rec.argvs[name]).toContain('--json');
       expect(rec.argvs[name]).toEqual(expect.arrayContaining(['--runs-dir', runsDir]));
@@ -202,7 +208,7 @@ describe('fleet self-tick', () => {
   });
 
   it('--apply releases the reset autobackoff hold and leaves the manual hold held', async () => {
-    const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir]);
+    const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir], quietSweep);
     expect(code).toBe(0);
     const release = report!.steps[0]!.report as { mode: string; released: { lane: string }[]; errors: unknown[] };
     expect(release.mode).toBe('apply');
@@ -235,7 +241,7 @@ describe('fleet self-tick', () => {
       children.push(child);
       return child as unknown as SpawnedPlannerProcess;
     };
-    const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir], { spawn });
+    const { code, report } = await run(['--apply', '--json', '--runs-dir', runsDir], { spawn, ...quietSweep });
     expect(code).toBe(0);
     expect(calls).toEqual(['fake-planner --plan']);
     expect(children[0]!.stdinText).toBe(PROMPT);

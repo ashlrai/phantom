@@ -35,6 +35,8 @@ const steps = (codes: Partial<Record<string, number>> = {}): SelfTickSteps => {
     'reset-release': run('reset-release'),
     'lane-autohold': run('lane-autohold'),
     'planner-tick': run('planner-tick'),
+    'inbox-acks': run('inbox-acks'),
+    'landed-sweep': run('landed-sweep'),
   };
 };
 

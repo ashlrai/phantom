@@ -60,6 +60,8 @@ const recordingSteps = () => {
     'reset-release': stub('reset-release'),
     'lane-autohold': stub('lane-autohold'),
     'planner-tick': stub('planner-tick'),
+    'inbox-acks': stub('inbox-acks'),
+    'landed-sweep': stub('landed-sweep'),
   } };
 };
 
@@ -274,19 +276,20 @@ describe('fleet self-loop', () => {
       { steps: rec.steps, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
     expect(rec.order).toEqual([
-      'reset-release', 'lane-autohold', 'planner-tick',
-      'reset-release', 'lane-autohold', 'planner-tick',
-      'reset-release', 'lane-autohold', 'planner-tick',
+      'reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep',
     ]);
-    for (const argv of rec.argvs) {
-      expect(argv).toEqual(expect.arrayContaining(['--json', '--apply', '--runs-dir', runsDir]));
+    for (const [index, argv] of rec.argvs.entries()) {
+      const flag = rec.order[index] === 'inbox-acks' ? '--flush' : '--apply';
+      expect(argv).toEqual(expect.arrayContaining(['--json', flag, '--runs-dir', runsDir]));
     }
     // Nested tick stdout never leaks: exactly one JSON line, whose lastReport
     // carries the parsed pass report for the final of the three passes.
     expect(outLines.length).toBe(1);
     expect(summary).toMatchObject({ ticks: 3, failures: 0, busy: 0, termination: 'duration' });
     expect(summary!.lastReport).toMatchObject({ mode: 'apply', state: 'ran' });
-    expect(summary!.lastReport!['steps']).toHaveLength(3);
+    expect(summary!.lastReport!['steps']).toHaveLength(5);
   });
 
   it('dry-run is the default: no --apply is forwarded and nothing is applied', async () => {

@@ -14,6 +14,8 @@ const MAX_LIMIT = 200;
 export interface FleetInboxAcksDeps {
   /** Injected senders for tests; production uses the senders in inbox-ack.ts. */
   senders?: InboxAckSenders;
+  output?: (text: string) => void;
+  error?: (text: string) => void;
   /** Overrides --runs-dir / ASHLR_RUNS_DIR / ~/.ashlr-runs. */
   runsDir?: string;
   now?: () => Date;
@@ -85,8 +87,10 @@ function report(raws: readonly string[], runsDir: string): { rows: Row[]; malfor
 }
 
 export async function cmdFleetInboxAcks(args: string[], deps: FleetInboxAcksDeps = {}): Promise<number> {
+  const output = deps.output ?? console.log;
+  const error = deps.error ?? console.error;
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nList the ack state (acked, skipped, pending, no-channel) of the newest MASON-INBOX entries. --flush sends pending acks now through the planner brief's senders. Exit 2 on invalid arguments.`);
+    output(`${usage}\nList the ack state (acked, skipped, pending, no-channel) of the newest MASON-INBOX entries. --flush sends pending acks now through the planner brief's senders. Exit 2 on invalid arguments.`);
     return 0;
   }
   let runsFlag: string | undefined;
@@ -125,7 +129,7 @@ export async function cmdFleetInboxAcks(args: string[], deps: FleetInboxAcksDeps
   const count = (s: State): number => rows.filter(r => r.state === s).length;
   const totals = { acked: count('acked'), skipped: count('skipped'), pending: count('pending'), noChannel: count('no-channel') };
   if (json) {
-    console.log(JSON.stringify({
+    output(JSON.stringify({
       v: 1, generatedAt: now().toISOString(),
       entries: rows.map(r => ({ entryId: r.entryId, channel: r.channel, state: r.state, ...(r.reason ? { reason: r.reason } : {}) })),
       totals, malformedLedgerRows: malformed,
@@ -135,14 +139,14 @@ export async function cmdFleetInboxAcks(args: string[], deps: FleetInboxAcksDeps
   for (const r of rows) {
     const preview = scrubSecrets(r.text).replace(/\s+/g, ' ').trim().slice(0, 60);
     const state = r.state === 'skipped' && r.reason ? `skipped (${r.reason})` : r.state;
-    console.log(`${state}  ${r.channel ?? '-'}  ${r.entryId.slice(0, 12)}  ${preview}`);
+    output(`${state}  ${r.channel ?? '-'}  ${r.entryId.slice(0, 12)}  ${preview}`);
   }
-  console.log(`Totals: ${totals.acked} acked, ${totals.skipped} skipped, ${totals.pending} pending, ${totals.noChannel} no-channel`
+  output(`Totals: ${totals.acked} acked, ${totals.skipped} skipped, ${totals.pending} pending, ${totals.noChannel} no-channel`
     + (malformed ? `; ${malformed} malformed ledger row${malformed === 1 ? '' : 's'} ignored` : ''));
   return 0;
 
   function invalid(): number {
-    console.error(`error: invalid arguments. ${usage}`);
+    error(`error: invalid arguments. ${usage}`);
     return 2;
   }
 }

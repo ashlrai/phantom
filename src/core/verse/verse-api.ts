@@ -261,6 +261,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Main guardian per-repo red-age: GET /api/verse/fleet/main-red-age
   // (core/verse/fleet-main-red-age-api.ts); read-only.
   { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
+  { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
+  { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
