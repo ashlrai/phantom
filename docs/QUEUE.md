@@ -130,3 +130,18 @@ The host dispatchd README was not accessible in the implementation workspace.
 status prefix and line shape observed in the live queue; the suite imports it
 with zero unparsed lines and round-trips it byte-for-byte. Verifying the real
 snapshot end to end remains a required cutover step, not a claimed validation.
+
+## Replay failed attempts
+
+`ashlr queue replay --failed --since 2026-11-02T00:00:00Z --query repair --dry-run --json`
+lists proposed READY runs without writing. Remove `--dry-run` to persist them.
+Failed means BLOCKED with a finished claim; `--since` filters that completion
+instant inclusively and `--query` matches job ID, repo, scope, acceptance or reason
+(case insensitive). Omit either filter to include all failed attempts.
+`--mode replay_failed` is the default. `--mode replay_failed_and_dependents`
+includes transitive dependents in dependency order and maps their dependencies
+to replay runs. Active original dependents must finish before replay. Claims still require
+all dependencies DONE. Each new run records `replayOf` (the original run ID)
+and `replayedAt`; original runs remain unchanged. Concurrent or repeated requests
+reuse active READY, CLAIMED or PR-OPEN replays. Completed replays allow a later
+explicit replay. Queue snapshots persist lineage across process restarts.

@@ -6,7 +6,7 @@
 
 Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.
 
-Package: `@ashlr/phantom` v3.30.0.
+Package: `@ashlr/phantom` v3.29.16.
 Node.js floor: >=22.15.0.
 
 ## Install

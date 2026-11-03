@@ -247,6 +247,25 @@ Agents that change this repo follow [AGENTS.md](https://github.com/ashlrai/phant
 
 For agents working in this checkout, `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr`. These companion servers are separate from Phantom's aggregation gateway (`phm mcp`). Registration and discovery do not establish authorization or live readiness. See the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
 
+## Optional Stacksync export
+
+Stacksync is off by default. Set `PHANTOM_STACKSYNC=on` and
+`PHANTOM_STACKSYNC_FILE=/absolute/path/fleet.jsonl` to append plain JSON lines
+after `phm queue done` or `phm queue block` persists a finished claim. The parent
+directory must exist. New files use mode 0600. No network calls or credentials
+are involved; an external Stacksync consumer can ingest this local file.
+
+Each row contains `jobId`, `status`, `durationMs` (claim to completion), and
+`mergedPr`. A DONE job includes its previously recorded PR URL; merge that PR
+before marking the job DONE. This is an operator completion signal, not an
+independent GitHub merge check. Without a recorded PR, `mergedPr` is null.
+PR-OPEN jobs do not export until their claim finishes.
+
+Set `PHANTOM_STACKSYNC=off` to disable all adapter I/O immediately. Missing
+configuration and file errors leave queue completion unchanged. Export is best
+effort with no retries or historical backfill; an unavailable consumer has no
+effect on Phantom. Rows exclude task content, owner, and credentials.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -20,41 +20,22 @@
  * scratch refs live in a temporary bare repository — the host repository and
  * GitHub state are never written.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
 import { defaultGitRunner } from '../core/verse/git-ops.js';
+import {
+  classifyDirtyLanded, inspectDirtyLanded, unknownDirtyLanded, withScratchRepo, type DirtyLandedClass, type DirtyLandedPr, type DirtyRow,
+} from '../core/fleet/dirty-landed-inspect.js';
+
+export { classifyDirtyLanded, type DirtyLandedClass, type DirtyLandedPr };
 
 const REPO = 'ashlrai/phantom';
 const REMOTE = 'https://github.com/ashlrai/phantom.git';
 const USAGE = 'Usage: ashlr fleet dirty-landed [--json] [--limit N]';
 const GH_LIST_FIELDS = 'number,title,mergeable,mergeStateStatus,headRefOid,baseRefName';
-const SHA = /^[0-9a-f]{40}$/;
 const MAX_TITLE = 200;
 const GIT_TIMEOUT_MS = 60_000;
 const GIT_MAX_BYTES = 16 * 1024 * 1024;
-
-/** The one obvious next step for a dirty PR. */
-export type DirtyLandedClass = 'landed' | 'partly-landed' | 'needs-recut' | 'unknown';
-
-export interface DirtyLandedPr {
-  number: number;
-  title: string;
-  /** Pinned head from the `gh pr list` read; '' when the row did not carry one. */
-  head: string;
-  /** The PR's base branch (`master` for every fleet PR); '' when unreadable. */
-  base: string;
-  class: DirtyLandedClass;
-  /** Paths the PR changes relative to its merge-base. */
-  changedPaths: string[];
-  /** Changed paths whose head content already matches the base tip. */
-  landedPaths: string[];
-  /** Changed paths whose head content still differs from the base tip. */
-  remainingPaths: string[];
-  /** Fixed machine token explaining an `unknown` class — never stderr text. */
-  reason?: string;
-}
 
 export interface DirtyLandedReport {
   schema: 'fleet.dirty-landed.v1';
@@ -78,76 +59,9 @@ export interface FleetDirtyLandedDeps {
   now?: () => Date;
 }
 
-interface DirtyRow {
-  number: number;
-  title: string;
-  mergeable: string;
-  mergeStateStatus: string;
-  headSha: string;
-  baseRef: string;
-}
-
 /** A row counts as conflicting the way classifyFleetPrGh reads conflict. */
 function isConflicting(row: DirtyRow): boolean {
   return row.mergeable === 'CONFLICTING' || row.mergeStateStatus === 'DIRTY';
-}
-
-/** PURE: the class of one dirty PR from its changed paths vs the base tip. */
-export function classifyDirtyLanded(changedPaths: readonly string[], stillDiffering: ReadonlySet<string>): DirtyLandedClass {
-  const remaining = changedPaths.filter(path => stillDiffering.has(path));
-  if (remaining.length === 0) return 'landed';
-  return remaining.length === changedPaths.length ? 'needs-recut' : 'partly-landed';
-}
-
-async function git(dir: string, args: string[], maxStdoutBytes = GIT_MAX_BYTES) {
-  return defaultGitRunner('git', args, { cwd: dir, timeoutMs: GIT_TIMEOUT_MS, maxStdoutBytes });
-}
-
-/** NUL-delimited `git diff --name-only`; null when the diff cannot be read. */
-async function diffPaths(dir: string, a: string, b: string): Promise<string[] | null> {
-  const diff = await git(dir, ['diff', '--name-only', '-z', a, b]);
-  if (diff.code !== 0 || diff.timedOut || diff.truncated) return null;
-  return diff.stdout.split('\0').filter(path => path.length > 0);
-}
-
-function unknown(row: DirtyRow, reason: string): DirtyLandedPr {
-  return {
-    number: row.number, title: row.title, head: row.headSha, base: row.baseRef,
-    class: 'unknown', changedPaths: [], landedPaths: [], remainingPaths: [], reason,
-  };
-}
-
-/**
- * Fetch this PR's base and head into the scratch repo, verify the head is the
- * one the list read pinned, and diff. Every failure lands in `unknown` with a
- * fixed reason; a moved head is never classified.
- */
-async function inspect(dir: string, row: DirtyRow, remote: string): Promise<DirtyLandedPr> {
-  if (!SHA.test(row.headSha)) return unknown(row, 'row-unreadable');
-  const baseRef = `refs/heads/${row.baseRef}`;
-  if (!row.baseRef || (await git(dir, ['check-ref-format', baseRef])).code !== 0) {
-    return unknown(row, 'row-unreadable');
-  }
-  const fetch = await git(dir, ['-c', 'core.hooksPath=/dev/null', 'fetch', '--no-tags', '--no-write-fetch-head',
-    remote, `+${baseRef}:refs/dirty/base`, `+refs/pull/${row.number}/head:refs/dirty/head`]);
-  if (fetch.code !== 0 || fetch.timedOut || fetch.truncated) return unknown(row, 'fetch-failed');
-  const head = (await git(dir, ['rev-parse', 'refs/dirty/head'])).stdout.trim();
-  const base = (await git(dir, ['rev-parse', 'refs/dirty/base'])).stdout.trim();
-  if (head !== row.headSha || !SHA.test(base)) return unknown(row, 'head-moved');
-  const mergeBase = (await git(dir, ['merge-base', base, head])).stdout.trim();
-  if (!SHA.test(mergeBase)) return unknown(row, 'no-merge-base');
-  const changedPaths = await diffPaths(dir, mergeBase, head);
-  if (changedPaths === null) return unknown(row, 'diff-failed');
-  const differing = await diffPaths(dir, base, head);
-  if (differing === null) return unknown(row, 'diff-failed');
-  const stillDiffering = new Set(differing);
-  return {
-    number: row.number, title: row.title, head: row.headSha, base: row.baseRef,
-    class: classifyDirtyLanded(changedPaths, stillDiffering),
-    changedPaths,
-    landedPaths: changedPaths.filter(path => !stillDiffering.has(path)),
-    remainingPaths: changedPaths.filter(path => stillDiffering.has(path)),
-  };
 }
 
 function parseRow(raw: unknown): DirtyRow | null {
@@ -215,17 +129,18 @@ export async function cmdFleetDirtyLanded(args: string[], deps: FleetDirtyLanded
 
   const prs: DirtyLandedPr[] = [];
   if (dirty.length > 0) {
-    let dir: string;
-    try { dir = await mkdtemp(join(tmpdir(), 'fleet-dirty-landed-')); }
-    catch { console.error('fleet dirty-landed: could not create temporary object store'); return 1; }
     try {
-      const init = await git(dir, ['init', '--bare', '--quiet']);
-      if (init.code !== 0) { console.error('fleet dirty-landed: could not initialize temporary object store'); return 1; }
-      for (const row of dirty) {
-        try { prs.push(await inspect(dir, row, deps.remote ?? REMOTE)); }
-        catch { prs.push(unknown(row, 'inspection-failed')); }
-      }
-    } finally { await rm(dir, { recursive: true, force: true }); }
+      await withScratchRepo(async dir => {
+        for (const row of dirty) {
+          try { prs.push(await inspectDirtyLanded(dir, row, deps.remote ?? REMOTE)); }
+          catch { prs.push(unknownDirtyLanded(row, 'inspection-failed')); }
+        }
+      });
+    } catch (error) {
+      const init = error instanceof Error && error.message === 'scratch-init-failed';
+      console.error(`fleet dirty-landed: could not ${init ? 'initialize' : 'create'} temporary object store`);
+      return 1;
+    }
   }
 
   const counts: Record<DirtyLandedClass, number> = { landed: 0, 'partly-landed': 0, 'needs-recut': 0, unknown: 0 };
