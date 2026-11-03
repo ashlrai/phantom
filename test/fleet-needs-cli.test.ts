@@ -16,7 +16,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 it('prints each item and the count', async () => {
   expect(await cmdFleetNeeds([], { list: () => items })).toBe(0);
-  expect(out).toEqual(['nm-123456789abc  Review fake plan\nnm-abcdef123456  Choose fake color\n2 item(s) need Mason.']);
+  expect(out).toEqual(['nm-123456789abc  Review fake plan\nnm-abcdef123456  Choose fake color\n2 item(s) need Mason.\nResolve: ashlr fleet needs-resolve <id> --reply "..."']);
 });
 
 it('reports an empty list', async () => {
