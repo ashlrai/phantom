@@ -625,7 +625,10 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import precheck as shared_precheck
+from launch_precheck import precheck as shared_precheck, park_key, parked, park
+PARK_PATH = Q + "/precheck-parked.json"
+park_state = jload(PARK_PATH, {})
+if not isinstance(park_state, dict): park_state = {}
 
 def precheck(j, repo, pf):
     return shared_precheck(j, repo, rd(pf), H, R, _run)
@@ -819,8 +822,25 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if os.path.isdir(wt) and not (j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY")))):
             rest.append(line); seen.add(j); continue   # finished worktree awaiting reap: never double up
         seen.add(j)
+        key = park_key(line, rd(pf))
+        if parked(park_state, j, key, NOW):
+            rest.append(line); continue
+        # A due parked job must be checked even when optional prechecks ran out.
+        # Defer it instead of accidentally launching unverified work.
+        if j in park_state and (pc_n >= PC_MAX or over_budget()):
+            rest.append(line); continue
         if pc_n < PC_MAX and not over_budget():   # empty-run precheck (contrib/precheck.sh): no model call, fail open
             pc_n += 1; pc = precheck(j, repo, pf)
+            if pc and pc[0] == 13:
+                first = park(park_state, j, key, NOW)
+                jsave(PARK_PATH, park_state)
+                if first:
+                    metric({"event": "precheck_parked", "job": j, "repo": repo,
+                            "lane": lane, "code": 13, "retry_at": park_state[j]["retry_at"]})
+                    ev("PARKED %s [precheck code=13 acceptance unproven]" % j)
+                rest.append(line); continue
+            if j in park_state:
+                park_state.pop(j); jsave(PARK_PATH, park_state)
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
                 metric({"event": "precheck_skip", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
