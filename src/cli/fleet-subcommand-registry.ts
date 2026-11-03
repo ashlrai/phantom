@@ -99,6 +99,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'lane-truth': () => import('./fleet-lane-truth.js'),
   'launch-proof': () => import('./fleet-launch-proof.js'),
   'leader-health': () => import('./fleet-leader-health.js'),
+  'leader-score': () => import('./fleet-leader-score.js'),
   'load-why': () => import('./fleet-load-why.js'),
   'local-gate': () => import('./fleet-local-gate.js'),
   'login-health': () => import('./fleet-login-health.js'),
