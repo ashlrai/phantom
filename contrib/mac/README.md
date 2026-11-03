@@ -387,3 +387,21 @@ The streak lives in `queue/noop-streak.json`; a pass that really queues the job
 clears it, `--dry-run` never writes it, and an unreadable file suppresses nothing.
 
 `install.sh` installs the restocker and shared module alongside dispatchd.
+
+### Local job wall cap
+
+`local_job.py` supervises dispatcher-launched `codex-local` jobs with a fixed
+2400 second wall cap covering preparation and agent execution. At the deadline
+it kills the launcher process group, records exit 124 and a `finish` row with
+`reason: timeout`, `wall_s` and `wall_cap_s`. The dispatcher avoids recording a
+second finish when it later reaps that job. Other lanes retain their launcher.
+The existing Security review and dispatcher pin procedure applies before host
+installation. Do not install these files into the live directory from an agent.
+
+This supervisor does not change the host-owned `launch.sh`, sandbox profiles,
+worktrees, dependencies or model server configuration. Detached child sessions
+cannot be killed by a process-group deadline. Readiness and warm reuse still
+require the host launcher's source and its sandbox review: emit readiness only
+after worktree preparation and an observed first model token, with the model
+endpoint restricted to loopback. A health GET alone is not readiness evidence.
+No production launch-to-ready or post-merge waste result is available locally.
