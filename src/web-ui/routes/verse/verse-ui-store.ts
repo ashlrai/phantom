@@ -18,7 +18,7 @@
  * again once v3 exists.
  *
  * LAUNCH RULE. Return to the saved surface on every launch; a fresh install
- * starts in Chat. Opening a new day must not take someone out of their chat.
+ * starts in Home. Opening a new day must not take someone out of their chat.
  *
  * NOT PERSISTED, on purpose: the overlays, `command` (a one-shot hand-off to
  * the chat), history, the keep-alive list and `activeSessionId` — all
@@ -92,6 +92,7 @@ export const VERSE_SECTIONS: readonly VerseSectionEntry[] = [
   { id: 'playbooks', label: 'Playbooks', module: 'PlaybooksSection', placement: 'tray' },
   { id: 'automations', label: 'Automations', module: 'AutomationsSection', placement: 'tray' },
   { id: 'ops', label: 'Ops', module: 'OpsSection', placement: 'tray' },
+  { id: 'live', label: 'Home', module: 'LiveStatusSection', placement: 'tray' },
 ];
 
 export const RAIL_SECTIONS: readonly VerseSectionEntry[] = VERSE_SECTIONS.filter((s) => s.placement === 'rail');
@@ -177,7 +178,7 @@ export const VERSE_UI_STORAGE_KEY = V3_KEY;
 export const VERSE_UI_STORAGE_KEY_V2 = V2_KEY;
 
 const DEFAULTS: VerseUiState = {
-  section: 'chat',
+  section: 'live',
   railExpanded: false,
   sidebarWidth: VERSE_SIDEBAR.def,
   sidebarCollapsed: false,
@@ -185,11 +186,11 @@ const DEFAULTS: VerseUiState = {
   resourcesWidth: VERSE_RESOURCES.def,
   recentActions: [],
   recentChats: [],
-  mounted: ['chat'],
+  mounted: ['live'],
   overlay: null,
   needsYouSplit: 'all',
   needsYouFocus: null,
-  history: { entries: [{ section: 'chat', sessionId: null }], index: 0 },
+  history: { entries: [{ section: 'live', sessionId: null }], index: 0 },
   activeSessionId: null,
   command: null,
   announceChatMoved: false,

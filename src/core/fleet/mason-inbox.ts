@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { appendFile, mkdir, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { inboxChannelSlug } from './inbox-channel-slug.js';
 
 export interface InboxEntry {
   at: string;
@@ -48,6 +50,19 @@ export function formatInboxEntry(text: string, source: string, when: Date): stri
   return `\n## ${at} ET (Mason, ${safeSource(source)}) PRIORITY P0\n${normaliseText(text)}\n`;
 }
 
+/**
+ * Channel-line form: the first line carries the time, channel and a stable id
+ * (so inbox-ack can reply on that channel); later lines follow unchanged and
+ * reach the planner as one raw entry.
+ */
+function formatChannelEntry(text: string, source: string, when: Date): { entry: string; id: string } {
+  const iso = when.toISOString();
+  const channel = inboxChannelSlug(source);
+  const id = `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update(iso + text).digest('hex').slice(0, 16)}`;
+  const [first = '', ...rest] = text.split('\n');
+  return { entry: `\n${[`${iso} [src:${channel} id:${id}] ${first}`, ...rest].join('\n')}\n`, id };
+}
+
 export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
   if (!Number.isFinite(limit) || limit <= 0) return [];
   const entries: InboxEntry[] = [];
@@ -72,7 +87,7 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
     });
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
-    const channel = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2}))\s+\[src:([a-z0-9._-]{1,32})(?:\s+id:([A-Za-z0-9._:-]{1,64}))?\]\s+(.+)$/.exec(line);
+    const channel = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))\s+\[src:([a-z0-9._-]{1,32})(?:\s+id:([A-Za-z0-9._:-]{1,64}))?\]\s+(.+)$/.exec(line);
     const date = channel ? new Date(channel[1]!) : undefined;
     if (channel && date && Number.isFinite(date.getTime())) {
       finish();
@@ -108,7 +123,7 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const now = (opts.now ?? (() => new Date()))();
     const at = localTimestamp(now);
     const eventTimestamp = now.toISOString().slice(0, 19).replace('T', ' ');
-    const entry = formatInboxEntry(clean, source, now);
+    const { entry } = formatChannelEntry(clean, source, now);
     await mkdir(join(runsDir, 'leader'), { recursive: true });
     await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
     // The inbox owns acceptance; the dispatch event is only observational.
