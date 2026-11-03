@@ -21,6 +21,9 @@
  *     (bounded: newest 300 files, 8000 bytes each);
  *   - caps — at most 2 writes per tick and 6 per rolling hour counted from
  *     the ledger; the overflow is skipped 'capped', outcome 'capped';
+ *   - landed — `ashlr fleet dirty-landed`'s read says every path the PR changes
+ *     already matches master, so a recut would change nothing (not counted
+ *     against the caps; any other class or a failed read proceeds);
  *   - the head SHA — the merge-state record proves the tracked head (a moved
  *     head would classify 'pending', not 'conflicted'), and a bounded
  *     `gh pr view --json headRefOid` covers untracked PRs; no sha, no write.
@@ -53,6 +56,7 @@ import { basename, dirname, join } from 'node:path';
 import type { CloudGh } from '../cloud/pr-actions.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { renderBacklogRecutJob } from './backlog-recut-job.js';
+import { inspectDirtyLanded, withScratchRepo, type DirtyLandedClass } from './dirty-landed-inspect.js';
 import { collectPrConflicts } from './dirty-union-collect.js';
 import { classifyDiff3 } from './dirty-union-preview.js';
 import {
@@ -124,6 +128,11 @@ export interface RecutLoopDeps {
    * isolated inspection; a degraded read is `false`, never a skip.
    */
   readUnionSafe?: (pr: { number: number; headSha: string }) => Promise<boolean>;
+  /**
+   * Dirty-landed class of this head. Defaults to `inspectDirtyLanded` in a
+   * scratch repo. Only 'landed' skips; anything else, or a throw, proceeds.
+   */
+  readLanded?: (pr: { number: number; headSha: string; title: string }) => Promise<DirtyLandedClass>;
   now?: () => number;
   /** Publish one job file (name + rendered body). Defaults to the drop-folder publish below. */
   writeJob?: (file: string, body: string) => Promise<void>;
@@ -137,7 +146,7 @@ export interface RecutLoopWritten {
 
 export interface RecutLoopSkipped {
   pr: number;
-  /** superseded | recent | in-flight | capped | no-head | no-id | exists | write-failed */
+  /** superseded | recent | in-flight | capped | no-head | landed | no-id | exists | write-failed */
   reason: string;
 }
 
@@ -225,6 +234,12 @@ function defaultReadHeadSha(repo: string, states: ReadonlyMap<number, FleetMerge
  * disposable object store. The head SHA is re-observed first — a moved head
  * is never classified.
  */
+function defaultReadLanded(repo: string): NonNullable<RecutLoopDeps['readLanded']> {
+  const remote = `https://github.com/${repo}.git`;
+  return ({ number, headSha, title }) => withScratchRepo(async dir =>
+    (await inspectDirtyLanded(dir, { number, title, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', headSha, baseRef: 'master' }, remote)).class);
+}
+
 function defaultReadUnionSafe(repo: string): (pr: { number: number; headSha: string }) => Promise<boolean> {
   const remote = `https://github.com/${repo}.git`;
   return async ({ number, headSha }) => {
@@ -544,6 +559,7 @@ export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickR
     states = new Map(); // a degraded store just means every sha comes from the gh view
   }
   const readHeadSha = deps.readHeadSha ?? defaultReadHeadSha(backlog.repo, states);
+  const readLanded = deps.readLanded ?? defaultReadLanded(backlog.repo);
   const readUnionSafe = deps.readUnionSafe ?? defaultReadUnionSafe(backlog.repo);
 
   let allowance = Math.min(TICK_WRITE_CAP, Math.max(0, HOUR_WRITE_CAP - hourCount));
@@ -557,6 +573,8 @@ export async function recutLoopTick(deps: RecutLoopDeps): Promise<RecutLoopTickR
     if (allowance <= 0) { skip('capped'); capped = true; continue; }
     const headSha = await readHeadSha(pr);
     if (headSha === null) { skip('no-head'); continue; }
+    // Fail open: a degraded landed read must never block a real recut.
+    if (await readLanded({ number: pr, headSha, title: item.title }).catch(() => null) === 'landed') { skip('landed'); continue; }
     const id = await nextFreeId(runsDir, dropDir, pr);
     if (id === null) { skip('no-id'); continue; }
     const file = join(dropDir, `${DROP_JOB_FILE_PREFIX}${id}.md`);

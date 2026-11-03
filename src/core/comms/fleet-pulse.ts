@@ -81,7 +81,7 @@ export function buildFleetPulseMessage(snap: VisibilitySnapshot, timeZone?: stri
 
   const activity = snap.fleetActivity;
   // These are recorded dispatch/outcome counts, not a claim about live agents or deliveries.
-  lines.push(`Recorded work (24h): ${telegramMetric(activity.totalDispatches)} dispatches · ${telegramMetric(activity.mergedToday)} merged · ${telegramMetric(activity.rejectedToday)} rejected · ${telegramMetric(activity.proposalsPending)} ${activity.proposalsPending === 1 ? 'proposal' : 'proposals'} pending`);
+  lines.push(`Recorded work (24h): ${telegramMetric(activity.totalDispatches)} dispatches · ${activity.mergeCountUnavailable ? 'merge count unavailable' : `${telegramMetric(activity.mergedToday)} merged`} · ${telegramMetric(activity.rejectedToday)} rejected · ${telegramMetric(activity.proposalsPending)} ${activity.proposalsPending === 1 ? 'proposal' : 'proposals'} pending`);
   for (const resource of snap.resourceGrid) {
     const pct = telegramPercent(resource.usedPct);
     const usage = pct === 'unknown' ? 'usage unknown' : `${pct} used`;

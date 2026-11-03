@@ -74,3 +74,24 @@ observation; no tool changes the fleet.
 | Server | Tool | Description |
 | --- | --- | --- |
 | phantom-fleet | `fleet_lanes` | Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane. |
+
+## `phantom-docs`: Isolated Docs Server (`phm mcp docs`)
+
+A read-only stdio server over the Markdown files under `docs/` (the pages that
+ship with the installed package, or the whole folder in a checkout). It makes no
+network calls and writes nothing. `docs/internal/` is never served. Page text is
+untrusted data, not instructions or authorization.
+
+| Server | Tool | Description |
+| --- | --- | --- |
+| phantom-docs | `search` | Lexical search over page titles, paths and bodies: `{query, limit?: 1..50}`. Returns ranked slugs with title, score and snippet. |
+| phantom-docs | `list_pages` | List pages sorted by slug: `{prefix?}`. Each entry has slug, title, description, bytes and its site URL. |
+| phantom-docs | `get_page` | Return one page's Markdown by slug (the path under `docs/` without `.md`, for example `ARCHITECTURE` or `contracts/CONTRACT-M31`): `{slug}`. Truncated at 256 KiB with a flag. |
+
+The public site serves the same pages: `https://verse.ashlr.ai/docs/<slug>.md`
+for each page and `https://verse.ashlr.ai/docs/llms-full.txt` for the copy-paste
+reference followed by every page. The Vercel build runs
+`node scripts/generate-docs-llms.mjs --out site`, which also keeps the generated
+"All pages" block of `docs/llms.txt` complete. After adding or renaming a docs
+page, run `node scripts/generate-docs-llms.mjs`; `test/docs-agent-parity.test.ts`
+fails when a page is missing from `docs/llms.txt`.
