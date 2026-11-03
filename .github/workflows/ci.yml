@@ -63,7 +63,7 @@ jobs:
           perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
 
   quick:
-    # The only per-PR build step: install plus the core TypeScript no-emit check.
+    # Per-PR and merge-queue typecheck plus authority drift checks.
     # Start alongside classification so the longest fast job has no serial wait.
     # This also checks docs-only PRs. Full suites run in the daily run.
     name: Quick typecheck
@@ -85,6 +85,12 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Core no-emit type check
         run: npx tsc --noEmit -p tsconfig.json
+      # Full authority shards are deferred; drift must still fail the required gate.
+      - name: Check authority drift (hermetic)
+        run: >-
+          HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
+          test/authority-codeowners-310b.test.ts
+          test/authority-tier1-closure-310b.test.ts
 
   classify:
     name: Classify PR site lane
