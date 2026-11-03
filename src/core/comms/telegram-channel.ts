@@ -56,6 +56,8 @@ import { placeLaneHold } from '../fleet/runs-lane-hold-place.js';
 import { LaneTargetError, setLaneTarget } from '../fleet/runs-lane-targets.js';
 import { parseReleaseCommand, renderReleaseReply, type ReleaseReply } from './telegram-release-command.js';
 import { runTelegramJobCommand, renderJobCommandReply } from './telegram-job-command.js';
+import { runTelegramNeedsCommand, renderNeedsCommandReply } from './telegram-needs-command.js';
+import { listNeedsMason, resolveNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { stopJob } from '../fleet/job-stop.js';
 import { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { parseHoldCommand, renderHoldReply, type HoldReply } from './telegram-hold-command.js';
@@ -1045,6 +1047,17 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
         event.privateChat === true && event.senderUserId === id) {
       const result = await runTelegramJobCommand(text, { stopJob, reassignQueuedJobs });
       const sent = await replyTo(event, renderJobCommandReply(result), cfg);
+      if (!sent.ok) throw new Error('Telegram acknowledgement failed');
+    }
+    return true;
+  }
+  if (cmd === 'needs' || cmd === 'resolve') {
+    const chatId = cfg.comms?.telegram?.chatId;
+    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
+    if (Number.isSafeInteger(id) && event.fromChatId === chatId &&
+        event.privateChat === true && event.senderUserId === id) {
+      const result = await runTelegramNeedsCommand(text, { list: listNeedsMason, resolve: resolveNeedsMason });
+      const sent = await replyTo(event, renderNeedsCommandReply(result), cfg);
       if (!sent.ok) throw new Error('Telegram acknowledgement failed');
     }
     return true;

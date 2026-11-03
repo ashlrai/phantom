@@ -2,6 +2,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfigReadOnly } from '../config.js';
+import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { createTelegramFleetNotifier } from '../comms/telegram-fleet-notify.js';
 import { parseRemoteAccessConfig } from './remote-access.js';
 import { createRemoteDeviceStore } from './remote-device-store.js';
@@ -81,6 +82,7 @@ export async function startRemoteRuntime(configPath: string, hub: { port: number
     const watcher = createRemotePushWatcher({
       read: (since) => readLocal(`/api/verse/activity${since ? `?since=${encodeURIComponent(since)}` : ''}`),
       readFleet: () => readLocal('/api/verse/fleet/runs'),
+      readNeedsMason: async () => listNeedsMason(),
       send: (kind, detail) => Promise.allSettled([
         Promise.resolve().then(() => push.send(kind, detail)),
         Promise.resolve().then(() => telegram(kind, detail)),
