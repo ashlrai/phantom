@@ -17,16 +17,17 @@ function steps(calls: string[], over: Partial<SelfTickSteps> = {}): SelfTickStep
     'reset-release': ok('reset-release', {}),
     'lane-autohold': ok('lane-autohold', {}),
     'planner-tick': ok('planner-tick', {}),
+    'inbox-acks': ok('inbox-acks', {}),
     'landed-sweep': ok('landed-sweep', { v: 1, closed: 1, planned: 2 }),
     ...over,
   };
 }
 
 describe('self-tick landed-sweep step', () => {
-  it('runs four steps in order with landed-sweep last', async () => {
+  it('runs five steps in order with landed-sweep last', async () => {
     const calls: string[] = [];
     const { report, exitCode } = await runSelfTick({ runsDir: tmp(), steps: steps(calls), now: () => 0 });
-    const order = ['reset-release', 'lane-autohold', 'planner-tick', 'landed-sweep'];
+    const order = ['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'landed-sweep'];
     expect([...SELF_TICK_STEP_ORDER]).toEqual(order);
     expect(calls).toEqual(order);
     expect(report.steps.map(s => [s.step, s.state])).toEqual(order.map(n => [n, 'ok']));
@@ -40,7 +41,7 @@ describe('self-tick landed-sweep step', () => {
       steps: steps(calls, { 'landed-sweep': async () => { throw new Error('boom'); } }),
     });
     expect(report.steps.map(s => [s.step, s.state])).toEqual([
-      ['reset-release', 'ok'], ['lane-autohold', 'ok'], ['planner-tick', 'ok'], ['landed-sweep', 'failed'],
+      ['reset-release', 'ok'], ['lane-autohold', 'ok'], ['planner-tick', 'ok'], ['inbox-acks', 'ok'], ['landed-sweep', 'failed'],
     ]);
     expect(exitCode).toBe(1);
   });
