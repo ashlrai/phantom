@@ -109,6 +109,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'merge-latency': () => import('./fleet-merge-latency.js'),
   'merge-pace': () => import('./fleet-merge-pace.js'),
   'meter-drop': () => import('./fleet-meter-drop.js'),
+  'mission': () => import('./fleet-mission.js'),
   'outcomes': () => import('./fleet-outcomes.js'),
   'planner': () => import('./fleet-planner.js'),
   'planner-brief': () => import('./fleet-planner-brief.js'),
