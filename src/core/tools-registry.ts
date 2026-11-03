@@ -18,6 +18,53 @@ import { homedir } from 'node:os';
 import { join, win32 } from 'node:path';
 import type { ToolInfo, ToolsRegistry } from './types.js';
 
+/** Optional remote capabilities use caller-owned authenticated MCP sessions. */
+export const STACKSYNC_CAPABILITY = {
+  id: 'stacksync',
+  endpoint: 'https://mcp.stacksync.com/mcp',
+  workspaceId: 5411,
+  tools: ['workflows_run', 'workflows_runs', 'genies_ask', 'syncs_list', 'syncs_issues'],
+  readOnlyTools: ['workflows_runs', 'syncs_list', 'syncs_issues'],
+} as const;
+
+export interface OptionalMcpSession {
+  endpoint: string;
+  workspaceId: number;
+  callTool(request: { name: string; arguments: Record<string, unknown> }): Promise<unknown>;
+}
+
+/**
+ * Registration never opens a connection or reads authentication material.
+ * The host supplies an authenticated, workspace-scoped session, or omits it.
+ * Read-only mode conservatively excludes both execution and genie prompts.
+ */
+export function getOptionalToolRegistry(
+  sessions: Readonly<Record<string, OptionalMcpSession | undefined>> = {},
+  options: { allowWrites?: boolean } = {},
+) {
+  const capability = STACKSYNC_CAPABILITY;
+  const session = sessions[capability.id];
+  const available = session?.endpoint === capability.endpoint &&
+    session.workspaceId === capability.workspaceId;
+  const allowed: readonly string[] = options.allowWrites === true
+    ? capability.tools : capability.readOnlyTools;
+  return [{
+    ...capability,
+    status: available ? 'ready' as const : 'skipped' as const,
+    reason: available ? null : 'No matching authenticated Stacksync session',
+    allowedTools: available ? [...allowed] : [],
+    async callTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+      if (!available || !session) throw new Error('Stacksync session unavailable');
+      if (!allowed.includes(name)) throw new Error('Stacksync tool not allowed');
+      // Never let a request override the session workspace.
+      if (args.workspace_id !== undefined && args.workspace_id !== capability.workspaceId) {
+        throw new Error('Stacksync workspace mismatch');
+      }
+      return session.callTool({ name, arguments: { ...args, workspace_id: capability.workspaceId } });
+    },
+  }];
+}
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
