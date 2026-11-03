@@ -9,7 +9,7 @@ import { narrowOrderTrace } from '../fleet-inbox/order-trace-model.js';
 import { interjectOutcome } from './interject-outcome-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
-import { ackState, ackText, loadDraft, newestLeaderPassMs, parseInboxAt, saveDraft, sourceChip } from './interject-ack-model.js';
+import { ackState, ackText, loadDraft, loadPendingAck, newestLeaderPassMs, parseInboxAt, saveDraft, savePendingAck, sourceChip } from './interject-ack-model.js';
 import { loadHistory, pushHistory, recall } from './interject-history.js';
 import styles from './InterjectBox.module.css';
 
@@ -50,19 +50,37 @@ export function InterjectBox() {
     const timer = setTimeout(() => setSent(null), 5_000);
     return () => clearTimeout(timer);
   }, [sent]);
-  const [ackWait, setAckWait] = useState<{ id: string; state: keyof typeof ACK_TEXT } | null>(null);
+  // A wait persisted by an earlier window (reload, restart, crash) resumes where it stopped.
+  const sentAt = useRef<number | null>(null);
+  const resumed = useRef(false);
+  const [ackWait, setAckWait] = useState<{ id: string; state: keyof typeof ACK_TEXT } | null>(() => {
+    try {
+      const pending = loadPendingAck(window.localStorage, Date.now(), ACK_GIVE_UP_MS);
+      if (!pending) return null;
+      sentAt.current = pending.sentAtMs;
+      resumed.current = true;
+      return { id: pending.id, state: 'waiting' };
+    } catch { return null; }
+  });
   const waitingId = ackWait?.state === 'waiting' ? ackWait.id : null;
   useEffect(() => {
     if (waitingId === null) return;
     const controller = new AbortController();
-    const finish = (state: keyof typeof ACK_TEXT) => setAckWait({ id: waitingId, state });
-    const interval = setInterval(() => {
+    const finish = (state: keyof typeof ACK_TEXT) => {
+      try { savePendingAck(window.localStorage, null); } catch { /* Storage can be unavailable. */ }
+      setAckWait({ id: waitingId, state });
+    };
+    const check = () => {
       readInboxAck(waitingId, controller.signal).then(state => {
         if (controller.signal.aborted) return;
         if (state === 'acked' || state === 'skipped') finish(state);
       }, () => { /* A failed poll keeps waiting. */ });
-    }, ACK_POLL_MS);
-    const giveUp = setTimeout(() => finish('expired'), ACK_GIVE_UP_MS);
+    };
+    // An ack that landed while the app was closed shows at once.
+    if (resumed.current) { resumed.current = false; check(); }
+    const interval = setInterval(check, ACK_POLL_MS);
+    const remaining = sentAt.current === null ? ACK_GIVE_UP_MS : ACK_GIVE_UP_MS - (Date.now() - sentAt.current);
+    const giveUp = setTimeout(() => finish('expired'), Math.max(0, remaining));
     return () => { controller.abort(); clearInterval(interval); clearTimeout(giveUp); };
   }, [waitingId]);
   const missing = unavailable || absent(read.error);
@@ -75,13 +93,18 @@ export function InterjectBox() {
     setMessage('');
     setSent(null);
     setAckWait(null);
+    try { savePendingAck(window.localStorage, null); } catch { /* Storage can be unavailable. */ }
     try {
       const result = await postInterjection(draft.trim());
       try { pushHistory(window.localStorage, draft.trim()); } catch { /* Storage can be unavailable. */ }
       cursor.current = null;
       updateDraft('');
       setSent(result.at);
-      if (result.id) setAckWait({ id: result.id, state: 'waiting' });
+      if (result.id) {
+        sentAt.current = Date.now();
+        try { savePendingAck(window.localStorage, { id: result.id, sentAtMs: sentAt.current }); } catch { /* Storage can be unavailable. */ }
+        setAckWait({ id: result.id, state: 'waiting' });
+      }
       refresh();
     } catch (error) {
       if (absent(error)) setUnavailable(true);

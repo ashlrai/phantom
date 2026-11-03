@@ -35,6 +35,7 @@ export interface GuardianSummary { passes: number; pass: number; fail: number; u
 const required = ['repo', 'cohortId', 'proposalId', 'baseBranch', 'baseHead', 'candidateHead', 'mergeCommit'] as const;
 const optional = ['runId', 'trajectoryId', 'workItemId'] as const;
 const sha = /^[a-f0-9]{40}$/;
+// eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
 const safeText = /^[^\x00-\x1f\x7f]{1,256}$/;
 const reasons = new Set(['verified', 'code-failure', 'verification-infrastructure', 'verification-timeout', 'invalid-input', 'source-unavailable', 'binding-mismatch', 'worktree-create-failed', 'manifest-unavailable', 'isolation-lost', 'cleanup-failed', 'record-rejected']);
 const categories = new Set(['code', 'infra', 'timeout', 'cancelled']);
@@ -47,6 +48,7 @@ function validateInput(value: unknown): DetachedPostMergeRunnerInput {
   for (const k of [...required, ...optional]) {
     const v = obj[k];
     if (v === undefined && (optional as readonly string[]).includes(k)) continue;
+    // eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
     if (typeof v !== 'string' || !(k === 'repo' ? v.length <= 4096 && isAbsolute(v) && !/[\x00-\x1f\x7f]/.test(v) : safeText.test(v))) throw new Error(`invalid manifest ${k}`);
   }
   if (![obj.baseHead, obj.candidateHead, obj.mergeCommit].every(v => typeof v === 'string' && sha.test(v))) throw new Error('invalid manifest SHA');
