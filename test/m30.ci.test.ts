@@ -277,6 +277,23 @@ describe('M30 CI workflow', () => {
     }
   });
 
+  it('runs both authority drift checks in the required fast job without regeneration or failure suppression', () => {
+    const workflow = parse(ciYml);
+    const quick = workflow.jobs.quick;
+    expect(quick.name).toBe('Quick typecheck');
+    expect(quick['continue-on-error']).toBeUndefined();
+    const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
+    expect(drift).toBeDefined();
+    expect(drift.if).toBeUndefined();
+    expect(drift['continue-on-error']).toBeUndefined();
+    expect(drift.env).toBeUndefined();
+    expect(drift.run).toBe(
+      'HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false ' +
+      'test/authority-codeowners-310b.test.ts test/authority-tier1-closure-310b.test.ts',
+    );
+    expect(quick.steps[0].with.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
+  });
+
   it('checks out the exact candidate and binds its tree to the original event before gates', () => {
     for (const id of ['site', 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       const job = workflowJob(id);
@@ -978,6 +995,9 @@ describe('M30 CI workflow', () => {
     // file mentions; existing native portability declarations remain unchanged.
     expect([...declaredFiles].sort()).toEqual([
       ...expectedFiles,
+      // The fast PR/merge-queue drift step also names both suites explicitly.
+      'test/authority-codeowners-310b.test.ts',
+      'test/authority-tier1-closure-310b.test.ts',
       'test/authority-codeowners-310b.test.ts',
       'test/m515.release-publish-authority-split.test.ts',
       'test/documentation-navigation.test.ts',
@@ -1008,6 +1028,9 @@ describe('M30 CI workflow', () => {
       (file, index) => declaredFiles.indexOf(file) !== index,
     );
     expect([...duplicateFiles].sort()).toEqual([
+      // The fast job adds another ownership and closure invocation.
+      'test/authority-codeowners-310b.test.ts',
+      'test/authority-tier1-closure-310b.test.ts',
       // The source preflight and shared ownership gate both run this whole module.
       'test/authority-codeowners-310b.test.ts',
       ...Array<string>(4).fill('test/m342.dispatch-production-ledger.test.ts'),
