@@ -72,7 +72,7 @@ describe('stop-file: aborts hung child', () => {
 
 describe('stop-file: prevents further children', () => {
   it('during interval sleep prevents another child', async () => {
-    let clock = 0;
+    const clock = 0;
     let finishSleep!: () => void;
     const runner = vi.fn<AppsEnsureChildRunner>().mockResolvedValue(success());
     const sleep = vi.fn(() => new Promise<void>(resolve => { finishSleep = resolve; }));
