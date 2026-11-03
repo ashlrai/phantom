@@ -17,6 +17,9 @@ import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLA
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
+import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
+
+export const VERSE_FLEET_RUNS_REASSIGN_PATH = '/api/verse/fleet/runs/reassign';
 
 // passesMutationGate authenticates a single local operator (the x-ashlr-token
 // holder); there is no per-request user identity. The shared channel receiver's
@@ -64,6 +67,7 @@ export interface FleetRunsApiDeps {
   receiptStore?: ChannelDedupeStore;
   /** One-job stop behind POST .../runs/stop. Injected so tests never signal a real process. */
   stopJob?: (id: string, opts: StopJobOptions) => Promise<JobStopResult>;
+  reassign?: typeof reassignQueuedJobs;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention. */
@@ -310,6 +314,40 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       catch {
         sendJson(res, 200, { v: 1, generatedAt: new Date(now()).toISOString(), source: 'unavailable', pairs: [], openDirty: 0 } satisfies SupersededReadV1);
       }
+      return true;
+    }
+    if (path === VERSE_FLEET_RUNS_REASSIGN_PATH) {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      const lanePattern = /^[a-z0-9-]{1,40}$/;
+      if (!record(body) || Object.keys(body).some(k => !['job', 'fromLane', 'lane', 'tier'].includes(k)) ||
+        (('job' in body) === ('fromLane' in body)) ||
+        ('job' in body && (typeof body.job !== 'string' || !STRAY_ID_PATTERN.test(body.job))) ||
+        ('fromLane' in body && (typeof body.fromLane !== 'string' || !lanePattern.test(body.fromLane))) ||
+        typeof body.lane !== 'string' || !lanePattern.test(body.lane) ||
+        ('tier' in body && (typeof body.tier !== 'string' || !/^[a-z]{1,20}$/.test(body.tier)))) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid reassign body' }); return true;
+      }
+      try {
+        const mod = await import('../fleet/runs-reassign.js');
+        try {
+          const report = await (deps.reassign ?? mod.reassignQueuedJobs)({
+            ...(typeof body.job === 'string' ? { job: body.job } : { fromLane: body.fromLane as string }),
+            lane: body.lane, ...(typeof body.tier === 'string' ? { tier: body.tier } : {}),
+            apply: true, force: false, reason: 'desktop',
+          }, { runsDir: deps.runsDir ?? defaultRunsDir(), changedBy: req.headers['x-ashlr-channel'] === 'mobile' ? 'mobile' : 'desktop' });
+          if (report.moved.length > 0) { generation++; cached = undefined; }
+          sendJson(res, 200, { v: 1, applied: report.applied, lane: report.lane,
+            moved: report.moved.map(({ id, fromLane, toLane, fromTier, toTier }) => ({ id, fromLane, toLane, fromTier, toTier })),
+            skipped: report.skipped.map(({ id, reason }) => ({ id, reason })), verified: report.verified });
+        } catch (error) {
+          if (error instanceof mod.ReassignError) sendJson(res, error.status, { code: 'REASSIGN_REFUSED', reason: error.code });
+          else sendJson(res, 503, { code: 'REASSIGN_UNAVAILABLE' });
+        }
+      } catch { sendJson(res, 503, { code: 'REASSIGN_UNAVAILABLE' }); }
       return true;
     }
     if (path === VERSE_FLEET_RUNS_STOP_PATH) {
