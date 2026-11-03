@@ -24,6 +24,7 @@ export interface AdmissionInput {
   slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null; disabled?: boolean;
 }
 export interface AdmissionReport {
+  snapshot?: Record<string, unknown>;
   admit: boolean; reason: string | null; reasons: string[]; disabled: boolean;
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
@@ -99,6 +100,21 @@ async function exists(path: string): Promise<boolean> {
 export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<AdmissionReport> {
   const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const queue = join(root, 'queue');
+  // v2 is the dispatcher verdict, including starvation probes and its rolling swap window.
+  // Keep the legacy probe path for hosts that have not installed the pinned dispatcher yet.
+  try {
+    const a = JSON.parse(await text(join(queue, 'admission.json')) ?? '{}') as Record<string, unknown>;
+    if (a.schema === 'dispatchd.admission.v2' && typeof a.admit === 'boolean') return {
+      admit: a.admit, reason: typeof a.reason === 'string' ? a.reason : null,
+      reasons: Array.isArray(a.reasons) ? a.reasons as string[] : [], disabled: a.disabled === true,
+      load: { load1: Number(a.load1), max: Number(a.load_max) }, ncpu: Number(a.ncpu),
+      procs: Number(a.procs), worktrees: Number(a.worktrees),
+      daemon: { tickAgeSeconds: typeof a.daemon_tick_age_s === 'number' ? a.daemon_tick_age_s : null,
+        maxAgeSeconds: Number(a.tick_max_s), error: null },
+      cap: Number(a.cap), hardCap: Number(a.hard_cap), running: Number(a.running),
+      installLock: { holder: a.install_lock_holder as InstallLockHolder | null }, snapshot: a,
+    };
+  } catch { /* Older hosts use the legacy probes below. */ }
   const now = (opts.now ?? Date.now)();
   const alive = opts.pidAlive ?? defaultAlive;
 
