@@ -107,6 +107,16 @@ describe('graph upgrade audit', () => {
       .toMatchObject({ exit: 1, result: { error: { code: 'GRAPH_READ_FAILED' } } });
   });
 
+  it('rejects every C0, DEL and C1 control character before loading the graph', async () => {
+    const load = vi.fn(async () => graph);
+    for (let code = 0; code <= 0x9f; code++) {
+      if (code > 0x1f && code < 0x7f) continue;
+      expect(await audit(['--node', `task:a${String.fromCharCode(code)}b`], load))
+        .toMatchObject({ exit: 2, result: { error: { code: 'GRAPH_USAGE' } } });
+    }
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it.each([[], ['--node'], ['--node', ''], ['--node', '--help'], ['--node', ' x'],
     ['--node', 'x\ny'], ['--node', 'x'.repeat(161)], ['--node', 'x', '--node', 'y']])(
     'rejects invalid arguments before reading: %j', async (...args) => {
