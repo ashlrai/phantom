@@ -181,7 +181,28 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         return true;
       }
       const deadline = Date.now() + ACTION_BUDGET_MS;
-      const result = await run(script, body.action as string, app, ACTION_BUDGET_MS);
+      // Bounded: never holds the caller past the budget even when the executor ignores its timeout
+      // or never settles.  `undefined` means the action timed out — the client receives 504, never
+      // a 202.  A normal success is processed below; rejections fall through to the catch block.
+      const raw = await bounded(
+        run(script, body.action as string, app, ACTION_BUDGET_MS),
+        Math.max(0, ACTION_BUDGET_MS),
+      );
+      const result = raw as Record<string, unknown> | undefined;
+      if (result === undefined) {
+        // Action hit its budget (executor hung or never settled).  Respond immediately; do not
+        // return 202 for a timeout, clear inFlight / cache, and let a later action for this app
+        // be admitted.
+        sendJson(res, 504, {
+          app,
+          action: body.action,
+          outcome: 'timeout',
+          code: 'VERSE_ACTION_TIMEOUT',
+          error: 'action did not complete within budget',
+          at: new Date(now()).toISOString(),
+        });
+        return true;
+      }
       if (result.ok === true && typeof result.code === 'string') {
         const accepted = { app, action: body.action, code: result.code };
         let confirmation: { target: 'running'; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
@@ -192,10 +213,10 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
             timeoutMs: Math.min(wait, Math.max(0, deadline - Date.now())),
             intervalMs: CONFIRM_INTERVAL_MS,
             probe: async budget => {
-              try {
-                const status = await run(script, 'status', app, Math.max(1, Math.ceil(budget)));
-                return status.ok === true && typeof status.running === 'boolean' ? status.running : null;
-              } catch { return null; }
+              // Bounded status probe: a never-settling status check cannot hold us past the
+              // overall budget, even when injected or broken.
+              const status = await control(script, 'status', app, Math.max(1, Math.ceil(budget)));
+              return status?.ok === true && typeof status.running === 'boolean' ? status.running : null;
             },
           });
           confirmation = { target: 'running', outcome: seen.outcome, attempts: seen.attempts, running: seen.running, confirmed: seen.outcome === 'reached' && seen.running === true };
