@@ -320,6 +320,37 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('../cli/fleet-apps-status.js')).readFleetAppsStatus(),
   },
   {
+    name: 'phantom_fleet_apps_follow',
+    description: 'Follow retained app recovery events within a bounded deadline; resume using the returned cursor.',
+    inputSchema: { type: 'object', properties: {
+      durationMs: { type: 'integer', minimum: 1, maximum: 30000 },
+      after: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      invocationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
+      untilSummary: { type: 'boolean' },
+      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
+      maxEvents: { type: 'integer', minimum: 1, maximum: 100 },
+    }, required: ['durationMs'], additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const flags = ['--root', join(homedir(), '.ashlr-runs'), '--duration-ms', String(args.durationMs), '--max-events', String(args.maxEvents ?? 100), '--jsonl'];
+      for (const [key, flag] of [['after', '--after'], ['invocationId', '--invocation-id'], ['intervalMs', '--interval-ms']] as const) {
+        if (args[key] !== undefined) flags.push(flag, String(args[key]));
+      }
+      if (args.untilSummary) flags.push('--until-summary');
+      const events: unknown[] = [];
+      let summary: unknown = null;
+      const exitCode = await (await import('../cli/fleet-apps-follow.js')).cmdFleetAppsFollow(flags, {
+        emit: line => {
+          const record = JSON.parse(line) as { type: string; event?: unknown };
+          if (record.type === 'event') events.push(record.event);
+          else if (record.type === 'summary') summary = record;
+          else throw new Error('Invalid follow record');
+        },
+      });
+      return { events, summary, exitCode, ...(exitCode !== 0 || !summary ? { error: 'Fleet app follow failed' } : {}) };
+    },
+  },
+  {
     name: 'phantom_fleet_apps_await',
     description: 'Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart.',
     get inputSchema() { return { type: 'object', properties: {
@@ -1412,6 +1443,15 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       apps.some(app => typeof app !== 'string' || !FLEET_APPS.some(allowed => allowed === app)) ||
       ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000))
       ? 'invalid fleet apps ensure arguments' : null;
+  } else if (name === 'phantom_fleet_apps_follow') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const bounded = (value: unknown, min: number, max: number): boolean => Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
+    invalid = !object || Object.keys(args).some(key => !['durationMs', 'after', 'invocationId', 'untilSummary', 'intervalMs', 'maxEvents'].includes(key)) ||
+      !bounded(args.durationMs, 1, 30000) || ('after' in args && !bounded(args.after, 0, Number.MAX_SAFE_INTEGER)) ||
+      ('intervalMs' in args && !bounded(args.intervalMs, 100, 60000)) || ('maxEvents' in args && !bounded(args.maxEvents, 1, 100)) ||
+      ('invocationId' in args && (typeof args.invocationId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.invocationId))) ||
+      ('untilSummary' in args && typeof args.untilSummary !== 'boolean') || (args.untilSummary === true && !args.invocationId)
+      ? 'invalid fleet apps follow arguments' : null;
   } else if (name === 'phantom_fleet_apps_await') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const apps = args.apps;
@@ -1488,7 +1528,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || name === 'phantom_fleet_apps_ensure' || name === 'phantom_fleet_apps_await') return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || name === 'phantom_fleet_apps_ensure' || name === 'phantom_fleet_apps_await' || name === 'phantom_fleet_apps_follow') return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1497,6 +1537,14 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
 
   try {
     const payload = await tool.handler(args, cfg);
+    if (name === 'phantom_fleet_apps_follow') {
+      const failed = isRefusalPayload(payload);
+      auditNativeCall(`${tool.name} keys=${argKeys} — ${failed ? 'error' : 'ok'}`, failed ? 'error' : 'ok');
+      const text = JSON.stringify(payload, (key, value: unknown) =>
+        /^(env|environment)$/i.test(key) ? undefined : typeof value === 'string' ? scrubSecrets(value) : value);
+      if (text.length > MAX_OUTPUT_CHARS) return textResult({ error: 'Fleet app follow exceeds output limit' }, true);
+      return { content: [{ type: 'text', text }], ...(failed ? { isError: true } : {}) };
+    }
     // Handlers refuse with a `{ error }` payload (not enrolled, bad kind, ...).
     // That is a failed call: flag it so clients do not read it as success.
     if (isRefusalPayload(payload)) {
@@ -1524,6 +1572,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     if (name === 'phantom_fleet_apps_ensure') {
       auditNativeCall(`${tool.name} keys=${argKeys} — recovery unavailable`, 'error');
       return textResult({ error: 'Fleet recovery unavailable' }, true);
+    }
+    if (name === 'phantom_fleet_apps_follow') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — follow unavailable`, 'error');
+      return textResult({ error: 'Fleet app follow unavailable' }, true);
     }
     if (name === 'phantom_fleet_apps_await') {
       auditNativeCall(`${tool.name} keys=${argKeys} — await unavailable`, 'error');
