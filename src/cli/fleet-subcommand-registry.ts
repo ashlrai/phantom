@@ -114,6 +114,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'main-red-age': () => import('./fleet-main-red-age.js'),
   'main-repair-time': () => import('./fleet-main-repair-time.js'),
   'memory': () => import('./fleet-memory.js'),
+  'merge-age': () => import('./fleet-merge-age.js'),
   'merge-latency': () => import('./fleet-merge-latency.js'),
   'merge-pace': () => import('./fleet-merge-pace.js'),
   'meter-drop': () => import('./fleet-meter-drop.js'),
