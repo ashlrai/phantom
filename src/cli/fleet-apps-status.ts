@@ -68,7 +68,6 @@ const defaultExec: FleetAppExec = async (file, argv, options) =>
 export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDeps = {}): Promise<number> {
   const clock = deps.now ?? (() => Date.now());
   const root = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  const locate = deps.locateScript ?? (() => findAppControlScript() ?? findInstalledAppControlScript(root));
   const exec = deps.exec ?? defaultExec;
   const maxConcurrent = typeof deps.maxConcurrent === 'number' && deps.maxConcurrent > 0 ? deps.maxConcurrent : MAX_PROBES;
   const totalDeadline = typeof deps.totalDeadline === 'number' && deps.totalDeadline > 0 ? deps.totalDeadline : TOTAL_MS;
@@ -113,7 +112,10 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
     }
   }
 
-  const script = locate();
+  const wallDeadline = performance.now() + totalDeadline;
+  const deadline = clock() + totalDeadline;
+  const script = deps.locateScript ? deps.locateScript() :
+    findAppControlScript() ?? findInstalledAppControlScript(parsedRoot);
   const generatedAt = new Date(clock()).toISOString();
 
   // Missing script: clear unavailable result, nonzero exit.
@@ -134,22 +136,31 @@ export async function cmdFleetAppsStatus(args: string[], deps: FleetAppsStatusDe
     running: null,
     checkedAt: generatedAt,
   }));
-  const deadline = clock() + totalDeadline;
-
   // Concurrent worker: pulls tasks from a shared index, respects deadline.
   let next = 0;
+  let expired = false;
   async function worker(): Promise<void> {
     while (next < apps.length) {
+      const remaining = Math.min(deadline - clock(), wallDeadline - performance.now());
+      if (expired || remaining <= 0) return;
       const row = apps[next++]!;
-      const remaining = deadline - clock();
-      if (remaining <= 0) return;
       const probeTimeout = Math.max(remaining, 1);
       try {
-        const { stdout } = await exec('python3', ['-I', script!, 'status', row.app, '--output-dir', parsedRoot], {
-          encoding: 'utf8', timeout: probeTimeout, maxBuffer: 1024 * 1024, windowsHide: true,
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<null>(resolve => {
+          timer = setTimeout(() => { expired = true; resolve(null); }, remaining);
         });
-        const parsed: unknown = JSON.parse(stdout);
-        if (record(parsed) && typeof parsed.running === 'boolean') {
+        let result: Awaited<ReturnType<FleetAppExec>> | null;
+        try {
+          result = await Promise.race([exec('python3', ['-I', script!, 'status', row.app, '--output-dir', parsedRoot], {
+            encoding: 'utf8', timeout: probeTimeout, maxBuffer: 1024 * 1024, windowsHide: true,
+          }), timeout]);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (result === null) return;
+        const parsed: unknown = JSON.parse(result.stdout);
+        if (record(parsed) && parsed.ok === true && typeof parsed.running === 'boolean') {
           row.running = parsed.running;
         }
         // Malformed or missing running stays null (unknown).
