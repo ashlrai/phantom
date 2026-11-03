@@ -11,12 +11,20 @@ import os, re, json, time, fcntl, subprocess, glob
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 NOW = time.time(); TS = time.strftime("%F %T")
-MAX_LAUNCH_PER_TICK = 4; MAX_REAPS = 6; GRACE = 120; RAISE_GAP = 120
-LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"]   # tie-break order: cmp first
+MAX_LAUNCH_PER_TICK = 8; MAX_REAPS = 12; GRACE = 120; RAISE_GAP = 120
+LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local", "omlx"]   # tie-break order: cmp first
 # hard_cap (RQ-LOADGATE-1): per-pool absolute bound, seeded to the ceiling so nothing changes until an operator lowers it in
 # slots.json. Neither the floor, the autopilot overrides, the +2 ramp nor a stored target may exceed it. GLOBAL_HARD_CAP is the
 # top-level slots.json "hard_cap" bound on the whole fleet (seeded to the 18-core Mac this was sized for).
-DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
+def omlx_memory_cap():
+    # Reserve half of unified memory; budget 16 GiB per worker. Unknown fails closed.
+    try:
+        memory = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], timeout=2))
+        return max(0, min(6, memory // (32 * 1024**3)))
+    except Exception: return 0
+OMLX_CAP = omlx_memory_cap()
+DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_cap": OMLX_CAP},
+           "codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
            "codex-personal": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
            "claude": {"target": 0, "floor": 0, "ceiling": 8, "hard_cap": 8},
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
@@ -36,6 +44,19 @@ GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 4); GATE_SWAP_GROWTH_GB = ga
 GATE_SWAP_WINDOW_S = gate_limit("GATE_SWAP_WINDOW_S", 300); GATE_TICK_MAX_S = gate_limit("GATE_TICK_MAX_S", 900)
 GATE_STATUS_TIMEOUT = gate_limit("GATE_STATUS_TIMEOUT", 30)
 LOCAL_HEALTH = "http://127.0.0.1:8123/v1/models"   # loopback only, no auth header, 2 s timeout, checked at most once per tick
+OMLX_HEALTH = os.environ.get("OMLX_URL", "http://127.0.0.1:8000/v1").rstrip("/") + "/models"
+def loopback_health(url):
+    import urllib.request
+    from urllib.parse import urlsplit
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs): return None
+    try:
+        u = urlsplit(url)
+        if u.scheme != "http" or u.hostname != "127.0.0.1" or u.username or u.password or u.fragment or u.query: return False
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        with op.open(urllib.request.Request(url, method="GET"), timeout=2) as response: return response.status == 200
+    except Exception: return False
+OMLX_OK = loopback_health(OMLX_HEALTH)   # once per tick, also projected when idle/held
 TIERS = {"frontier", "work", "mid", "fast"}
 # DEVIN-LEVERAGE-20261026 step-down (Masbot 21:19 Oct 26): more than 3 non-PR outcomes (abort or
 # empty) in the last 10 devin completions steps the target down 2, never below 6; the approved
@@ -111,6 +132,7 @@ def _cap(v, d):   # a hard_cap is a non-negative int; anything else (missing, bo
 slots["hard_cap"] = _cap(slots.get("hard_cap"), GLOBAL_HARD_CAP)
 def clamp_lane(lane):   # hard_cap wins over floor, ceiling and target, whoever last wrote them (overrides reload included)
     s_ = slots[lane]; hc = s_["hard_cap"] = _cap(s_.get("hard_cap"), DEFAULT[lane]["hard_cap"])
+    if lane == "omlx": hc = s_["hard_cap"] = min(hc, OMLX_CAP)
     s_["ceiling"] = min(s_["ceiling"], hc); s_["floor"] = min(s_["floor"], s_["ceiling"]); s_["target"] = min(s_["target"], hc)
 for _l in LANES: clamp_lane(_l)
 # ---- usage backoff (RQ-USAGE-BACKOFF-11 rev2): auto-hold a pool on a provider CLI usage/quota error line.
@@ -373,10 +395,10 @@ disk_reuse_only = disk_free_gb < DISK_REUSE_ONLY_GB
 try: DISK_HARD_STOP_GB = float(os.environ.get("DISK_HARD_STOP_GB", "30"))
 except ValueError: DISK_HARD_STOP_GB = 30.0
 disk_hard_stop = disk_free_gb < DISK_HARD_STOP_GB
-# ---- RQ-DISKGUARD-DRIP (b): phantom publish drip. While ashlrai/phantom has >= 150 open PRs, publish (reap) only
-# LAND, FIXUP, CONSOLIDATE and CLOSE-* jobs there; others stay finished and local. Count cached 10 min in
+# ---- RQ-DISKGUARD-DRIP (b): phantom publish drip. While ashlrai/phantom has >= 400 open PRs, publish (reap) only
+# LAND, FIXUP, CONSOLIDATE, CLOSE-* and PHX jobs there; others stay finished and local. Count cached 10 min in
 # $R/phantom-open-prs ("<epoch> <n>"), fetched with the same gh CLI as _ph_check; unavailable -> filter on.
-PH_DRIP_KINDS = ("LAND", "FIXUP", "CONSOLIDATE", "CLOSE-[A-Z0-9-]+"); PH_DRIP_MAX = 150; _ph_open = []
+PH_DRIP_KINDS = ("LAND", "FIXUP", "CONSOLIDATE", "CLOSE-[A-Z0-9-]+", "PHX"); PH_DRIP_MAX = 400; _ph_open = []
 def _ph_open_prs():
     if _ph_open: return _ph_open[0]
     cp = R + "/phantom-open-prs"; n = None
@@ -809,6 +831,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
+        if lane == "omlx" and not OMLX_OK: rest.append(line); seen.add(j); continue
         if lane == "codex-local":
             if tier == "mid" and local_mid >= LOCAL_MID_CAP: rest.append(line); seen.add(j); continue
             if local_ok is None:
@@ -836,7 +859,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
         metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
-        launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane == "codex-local"
+        launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane in ("codex-local", "omlx")
                       else ["/bin/bash", R + "/bin/launch.sh"])
         subprocess.Popen(launch_cmd + [j, repo, lane, tier], stdin=open(pf),
                          stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
@@ -858,9 +881,9 @@ lk.close()
 jsave(Q + "/slots.json", slots)
 
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
-for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
+for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local", "omlx"):
     sl = slots[lane]
-    if sl.get("held") or lane in hold: continue
+    if sl.get("held") or lane in hold or (lane == "omlx" and sl["target"] == 0): continue
     qn = sum(1 for l in rest if l.split("\t")[2:3] == [lane])
     if qn < 3 * max(sl["target"] - running[lane], 4) and os.path.exists(Q + "/router-queue.md") and not os.path.exists(Q + "/RESTOCK_OFF"):
         subprocess.Popen(["/bin/bash", R + "/bin/restock.sh"], stdin=subprocess.DEVNULL, stdout=open(Q + "/restock.log", "a"),
@@ -883,7 +906,7 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
       "autopilot": AP,
       "lanes": {l: {"running": running[l], "target": slots[l]["target"], "floor": slots[l]["floor"],
                     "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
-                    "queued": qdepth[l]} for l in LANES},
+                    "queued": qdepth[l], **({"healthy": OMLX_OK} if l == "omlx" else {})} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
       "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 
 export interface FleetRunsLane {
-  lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
+  healthy?: boolean; lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
   queued: number; held: boolean; heldReason: string|null; tokensLastHour: number|null;
   merged24h: number|null; mergeRate24h: number|null;
 }
@@ -23,7 +23,7 @@ export interface FleetRunsDirState {
   drop: { pending: Array<{ lane: string; file: string }>; done: number };
 }
 export interface ReadFleetRunsDirOptions { runsDir?: string; now?: () => number }
-const LANES = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']);
+const LANES = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local', 'omlx']);
 const ID = /^[A-Za-z0-9._-]{1,80}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const MAX = 8 * 1024 * 1024;
@@ -124,7 +124,7 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
   await Promise.all([
     guarded('status', async () => {
       const s = object(JSON.parse(await read(join(root, 'queue/status.json'))));
-      if (!timestamp(s.last_tick) || typeof s.paused !== 'boolean' || number(s.mem_free_pct) === null || Number(s.mem_free_pct) > 100 || !s.lanes || Array.isArray(s.lanes) || typeof s.lanes !== 'object') throw new Error('invalid status');
+      if (!timestamp(s.last_tick) || (s.paused !== null && typeof s.paused !== 'boolean') || (s.mem_free_pct !== null && number(s.mem_free_pct) === null) || Number(s.mem_free_pct) > 100 || !s.lanes || Array.isArray(s.lanes) || typeof s.lanes !== 'object') throw new Error('invalid status');
       state.lastTick = s.last_tick; state.paused = s.paused; state.memFreePct = number(s.mem_free_pct);
       state.diskFreeGb = number(object(object(s.autopilot).disk).free_gb);
       for (const [lane, raw] of Object.entries(object(s.lanes))) {
@@ -134,6 +134,7 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
         }
         const rollup = object(object(object(s.rollup_24h).by_lane)[lane]);
         state.lanes.push({ lane, running: l.running as number, target: l.target as number, queued: l.queued as number,
+          ...(typeof l.healthy === 'boolean' ? { healthy: l.healthy } : {}),
           floor: number(l.floor), ceiling: number(l.ceiling), held: l.held,
           heldReason: typeof l.held_reason === 'string' ? clean(l.held_reason, 200) : null,
           tokensLastHour: null, merged24h: number(rollup.merged), mergeRate24h: number(rollup.merge_rate) });

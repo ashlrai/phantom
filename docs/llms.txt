@@ -314,3 +314,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Router eval harness](router/eval.md): phm eval router --dataset jobs.jsonl [--policy NAME] [--decisions] [--json] [--write report.json] [--check baseline.json] replays a router or prompt policy over a frozen set of...
 - [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
+
+- [oMLX dispatcher lane](../contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.

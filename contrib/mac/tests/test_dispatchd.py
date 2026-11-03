@@ -529,9 +529,10 @@ class QueueWaitTests(unittest.TestCase):
             self.assertEqual(rows[0][key], rows[1][key])
 
     def test_claim_limit_rotates_across_ticks_and_skips_blocked_head(self):
-        lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin']
+        lanes = ['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api']
         home, env = self.fixture(lanes)
-        # Soft load limits claims to two. All four lanes remain backlogged.
+        # Soft load limits claims to four. Five lanes remain backlogged.
+        (home / '.ashlr-runs/bin/claude-api.py').write_text('print(\'{"target": 10}\')\n')
         env['LOADGATE_LOADAVG'] = '60'
         queue_job(home, 'RQ-BLOCKED', 'codex-cmp')
         (home / 'Projects/ashlrai/wt/RQ-BLOCKED').mkdir()
@@ -543,7 +544,7 @@ class QueueWaitTests(unittest.TestCase):
             r = tick(home, env)
             self.assertEqual(r.returncode, 0, r.stderr)
             claimed = [r for r in self.metrics(home) if r['event'] == 'claim']
-        self.assertEqual([r['lane'] for r in claimed], lanes)
+        self.assertEqual([r['lane'] for r in claimed], lanes + lanes[:3])
         self.assertNotIn('RQ-BLOCKED', [r['job'] for r in claimed])
         self.assertIn('RQ-BLOCKED', [line.split('\t')[0] for line in ready_lines(home)])
 

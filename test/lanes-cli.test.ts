@@ -21,3 +21,26 @@ it('prints lanes.health.v1 JSON and plain text, rejects other verbs', async () =
   expect(await cmdLanes(['health', '--x'])).toBe(2);
   expect(err).toHaveBeenCalled();
 });
+
+it('lists the dispatchd omlx lane with measured endpoint health', async () => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = await mkdtemp(join(tmpdir(), 'omlx-lanes-'));
+  vi.stubEnv('HOME', root);
+  try {
+    await mkdir(join(root, '.ashlr-runs/queue'), { recursive: true });
+    await writeFile(join(root, '.ashlr-runs/queue/status.json'), JSON.stringify({
+      last_tick: '2026-11-03T12:00:00Z', paused: null, mem_free_pct: null,
+      lanes: { omlx: { running: 0, target: 2, queued: 0, held: false, healthy: true } },
+    }));
+    const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdLanes(['--json'])).toBe(0);
+    expect(JSON.parse(out.mock.calls[0]![0])).toMatchObject({
+      schema: 'lanes.dispatchd.v1', lanes: [{ lane: 'omlx', healthy: true, target: 2 }],
+    });
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  }
+});

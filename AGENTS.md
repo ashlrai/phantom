@@ -101,3 +101,5 @@ jobs. Records use `job` (or `job_id`/`jobId`), `event` and `ts` (or
 ambiguous repeated boundaries are reported as unmeasured, not estimated;
 phase totals need not cover the whole wall time. Existing ledgers may not yet
 contain all boundaries.
+
+- [oMLX dispatcher lane](contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.

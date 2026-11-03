@@ -422,3 +422,14 @@ require the host launcher's source and its sandbox review: emit readiness only
 after worktree preparation and an observed first model token, with the model
 endpoint restricted to loopback. A health GET alone is not readiness evidence.
 No production launch-to-ready or post-merge waste result is available locally.
+
+## oMLX dispatcher lane
+
+`omlx` is a first-class local pool. `phm lanes --json` reads its dispatcher
+health; `OMLX_URL` defaults to `http://127.0.0.1:8000/v1`. Only literal
+`127.0.0.1` HTTP endpoints are accepted; proxies and redirects are refused.
+Run oMLX with `--host 127.0.0.1`. Slots reserve half of host memory at 16 GiB
+per worker, capped at six; unknown memory disables admission. Stored slot
+settings cannot exceed this memory cap. Claims use the bounded local supervisor
+and completions use the shared reaper. Security must review the combined RETUNE
+and omlx dispatcher pin before installation; never edit the live dispatcher.

@@ -65,12 +65,12 @@ class GateTests(unittest.TestCase):
         self.assertNotIn('LOADGATE', events(home))
 
     def test_loadavg_soft_limit_halves_claims(self):
-        home = self._case({'LOADGATE_NCPU': '18', 'LOADGATE_LOADAVG': '64'}, n=4,
+        home = self._case({'LOADGATE_NCPU': '18', 'LOADGATE_LOADAVG': '64'}, n=8,
                           prep=lambda h: stub_ps(h, 962))
-        self.assertEqual(len(launched(home)), 2)
+        self.assertEqual(len(launched(home)), 4)
         self.assertTrue(admission(home)['admit'])
         self.assertEqual(admission(home)['decision'], 'halve_claims')
-        self.assertEqual(len(ready_left(home)), 2)
+        self.assertEqual(len(ready_left(home)), 4)
 
     def test_loadavg_at_three_times_ncpu_admits_full_batch(self):
         home = self._case({'LOADGATE_LOADAVG': '54'}, n=4)
@@ -273,7 +273,7 @@ class HardCapTests(unittest.TestCase):
         self.assertEqual(tick(home).returncode, 0)
         s = slots_of(home)
         self.assertEqual({k: v['hard_cap'] for k, v in s.items() if isinstance(v, dict)},
-                         {'codex-cmp': 32, 'codex-personal': 32, 'claude': 8, 'devin': 10, 'claude-api': 8, 'codex-local': 6})
+                         {'codex-cmp': 32, 'codex-personal': 32, 'claude': 8, 'devin': 10, 'claude-api': 8, 'codex-local': 6, 'omlx': 0})
 
     def test_hard_cap_clamps_stored_target_ceiling_and_floor(self):
         home = self._devin({'target': 14, 'floor': 12, 'ceiling': 16, 'hard_cap': 8})

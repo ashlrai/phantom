@@ -8,9 +8,9 @@ H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + 
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
-CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
+CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local", "omlx"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
 CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 when no credit pool is open)
-GENERAL = [l for l in CODEX if l != "codex-local"]  # rev1.1: local models are not a general fallback; only pool=codex-local goes there
+GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
 # RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
 # checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlar-landing live there too but
 # are not fleet: a directory existing is never enough to make a line selectable, and restock never creates for them.
@@ -52,7 +52,7 @@ for l in CODEX:
     s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 10)
     if l == "devin" and isinstance(t, int): t = min(t, DEVIN_C)   # leverage ceiling 16 caps restock need
     if slots.get(l, {}).get("held") or l in hold: need[l] = 0; continue
-    if l == "claude-api" and not slots.get(l, {}).get("target"): need[l] = 0; continue   # paced to 0: no credit pool open
+    if l in ("claude-api", "omlx") and not slots.get(l, {}).get("target"): need[l] = 0; continue   # disabled local pool or no credit pool open
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
     need[l] = max(want - s.get("queued", 0), 0)
@@ -148,7 +148,7 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     if any(j == x[0] for l2 in CODEX for x in picks[l2]): skip(j, "dup-line"); continue
     tier = tm.group(1) if tm and tm.group(1) in ("frontier", "work", "mid", "fast") else "work"
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
-    lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
+    lane = pool if len(picks[pool]) < need[pool] or pool in ("codex-local", "omlx") else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
     seen_pr |= prp
