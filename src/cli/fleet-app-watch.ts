@@ -5,7 +5,7 @@ import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const execFileAsync = promisify(execFile);
-const usage = 'Usage: ashlr fleet app-watch <app> --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--json]';
+const usage = 'Usage: ashlr fleet app-watch <app> --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--json | --jsonl]';
 export interface FleetAppWatchDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
@@ -21,13 +21,14 @@ export async function cmdFleetAppWatch(args: string[], deps: FleetAppWatchDeps =
   const invalid = (): number => { console.error(`error: invalid fleet app-watch arguments\n${usage}`); return 2; };
   const [app, ...flags] = args;
   if (!app || !(FLEET_APPS as readonly string[]).includes(app)) return invalid();
-  let duration = 0, interval = 1000, root: string | undefined, json = false;
+  let duration = 0, interval = 1000, root: string | undefined, json = false, jsonl = false;
   const seen = new Set<string>();
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i]!;
-    if (!['--duration-ms', '--interval-ms', '--root', '--json'].includes(flag) || seen.has(flag)) return invalid();
+    if (!['--duration-ms', '--interval-ms', '--root', '--json', '--jsonl'].includes(flag) || seen.has(flag)) return invalid();
     seen.add(flag);
     if (flag === '--json') { json = true; continue; }
+    if (flag === '--jsonl') { jsonl = true; continue; }
     const value = flags[++i];
     if (!value || value.startsWith('-')) return invalid();
     if (flag === '--root') { root = value; continue; }
@@ -36,7 +37,7 @@ export async function cmdFleetAppWatch(args: string[], deps: FleetAppWatchDeps =
     if (flag === '--duration-ms') { if (n < 1 || n > 300000) return invalid(); duration = n; }
     else { if (n < 100 || n > 60000) return invalid(); interval = n; }
   }
-  if (!duration) return invalid();
+  if (!duration || (json && jsonl)) return invalid();
   let runChild = deps.runChild;
   if (!runChild) {
     const prefix = selfCliPrefix();
@@ -88,10 +89,12 @@ export async function cmdFleetAppWatch(args: string[], deps: FleetAppWatchDeps =
     try { report = JSON.parse(result.value?.stdout ?? '') as { app?: unknown; outcome?: unknown; running?: unknown } | null; } catch { /* untrusted child output */ }
     if (result.value?.code !== 0 || !report || report.app !== app || report.running !== true || !['running', 'launched'].includes(String(report.outcome))) {
       outcome = 'failed';
+      if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', app, check: checks, outcome: 'failed', running: null, recovered: false })}\n`);
       break;
     }
     lastObservedState = 'running';
     if (report.outcome === 'launched') recoveries++;
+    if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', app, check: checks, outcome: 'success', running: true, recovered: report.outcome === 'launched' })}\n`);
     const left = deadline - now();
     if (left <= 0) break;
     const pause = await bounded(left, s => sleep(Math.min(interval, left), s));
@@ -100,7 +103,8 @@ export async function cmdFleetAppWatch(args: string[], deps: FleetAppWatchDeps =
   }
   if (signal?.aborted) outcome = 'cancelled';
   const report = { app, outcome, checks, recoveries, lastObservedState, elapsedMs: Math.max(0, Math.min(duration, Math.floor(now() - start))) };
-  if (json) process.stdout.write(`${JSON.stringify(report)}\n`);
+  if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...report })}\n`);
+  else if (json) process.stdout.write(`${JSON.stringify(report)}\n`);
   else console.log(`${app}: ${outcome}; checks=${checks}, recoveries=${recoveries}, last observed=${lastObservedState ?? 'unknown'}, elapsed=${report.elapsedMs}ms`);
   return outcome === 'completed' ? 0 : 1;
 }
