@@ -54,13 +54,13 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
   const locate = deps.locateScript ?? (() => findAppControlScript() ?? findInstalledAppControlScript(root));
   const exec: FleetAppExec = deps.exec ?? (async (file, argv, options) => execAsync(file, argv, options));
   // Settled inventory lives 30 s from its completion; pending inventory is shared whatever its age.
-  let settled: { at: number; view: AppsView } | undefined;
-  let pending: Promise<AppsView> | undefined;
+  const settled = new Map<string, { at: number; view: AppsView }>();
+  const pending = new Map<string, Promise<AppsView>>();
   // Bumped when an accepted action begins and when it settles. An inventory started under an older epoch
   // may still answer its waiting callers, but it never populates the settled cache.
   let epoch = 0;
   const inFlight = new Set<string>();
-  const invalidate = (): void => { epoch += 1; settled = undefined; pending = undefined; };
+  const invalidate = (): void => { epoch += 1; settled.clear(); pending.clear(); };
   async function run(script: string, action: string, app: string, timeout: number): Promise<Record<string, unknown>> {
     let stdout: string;
     try {
@@ -82,11 +82,11 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
    * since this inventory started and none is in flight when the probe settles; otherwise it stays unknown,
    * so no row mixes a pre-action and a post-action observation.
    */
-  async function snapshot(started: number): Promise<AppsView> {
+  async function snapshot(started: number, selection: readonly string[]): Promise<AppsView> {
     const generatedAt = new Date(now()).toISOString();
     const script = locate();
     if (!script) return { v: 1, generatedAt, available: false, apps: [] };
-    const apps: AppsView['apps'] = FLEET_APPS.map(app => ({ app, running: null, checkedAt: generatedAt }));
+    const apps: AppsView['apps'] = selection.map(app => ({ app, running: null, checkedAt: generatedAt }));
     const deadline = Date.now() + 20_000;
     const quiet = (): boolean => epoch === started && inFlight.size === 0;
     let next = 0;
@@ -110,18 +110,22 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
    * Shares one pending inventory among concurrent GETs. Only an inventory that completes in the epoch it started
    * in, with no action in flight, becomes the settled cache, with its TTL counted from completion.
    */
-  function observe(): Promise<AppsView> {
-    if (!pending) {
-      const started = epoch;
-      const work: Promise<AppsView> = snapshot(started)
-        .then(view => {
-          if (started === epoch && inFlight.size === 0) settled = { at: now(), view };
-          return view;
-        })
-        .finally(() => { if (pending === work) pending = undefined; });
-      pending = work;
-    }
-    return pending;
+  function observe(key: string, selection: readonly string[]): Promise<AppsView> {
+    const existing = pending.get(key);
+    if (existing) return existing;
+    const started = epoch;
+    const work = snapshot(started, selection)
+      .then(view => {
+        if (started === epoch && inFlight.size === 0) {
+          settled.delete(key);
+          settled.set(key, { at: now(), view });
+          if (settled.size > 16) settled.delete(settled.keys().next().value!);
+        }
+        return view;
+      })
+      .finally(() => { if (pending.get(key) === work) pending.delete(key); });
+    pending.set(key, work);
+    return work;
   }
   /** Resolves undefined when the work fails or the budget runs out; an injected exec may ignore its own timeout option. */
   const control = (script: string, action: 'status' | 'launch', app: string, budgetMs: number): Promise<Report | undefined> =>
@@ -177,7 +181,14 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
     if (path === PATH && method === 'GET') {
       try {
-        const view = settled && now() - settled.at < 30_000 ? settled.view : await observe();
+        const requested = new URL(req.url ?? '/', 'http://localhost').searchParams.getAll('app');
+        if (requested.some(name => !FLEET_APPS.some(app => app === name))) {
+          sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app selection' }); return true;
+        }
+        const selection = requested.length ? FLEET_APPS.filter(app => requested.includes(app)) : FLEET_APPS;
+        const key = selection.join('\0');
+        const cached = settled.get(key);
+        const view = cached && now() - cached.at < 30_000 ? cached.view : await observe(key, selection);
         sendJson(res, 200, view);
       }
       catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
