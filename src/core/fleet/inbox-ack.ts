@@ -81,23 +81,35 @@ export async function acknowledgeInboxEntries(raw: readonly string[], root: stri
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       const seen = new Set<string>();
       for (const line of ledger.split('\n').filter(Boolean)) {
-        const row = JSON.parse(line) as { entryId: string; status: string };
-        if (row.status === 'acked' || row.status === 'skipped') seen.add(row.entryId);
+        try {
+          const row: unknown = JSON.parse(line);
+          if (!row || typeof row !== 'object' || !('entryId' in row) || typeof row.entryId !== 'string'
+            || !('status' in row) || typeof row.status !== 'string') continue;
+          if (row.status === 'acked' || row.status === 'skipped') seen.add(row.entryId);
+        } catch { /* A malformed row must not block acknowledgements after a restart. */ }
       }
+      let needsNewline = ledger.length > 0 && !ledger.endsWith('\n');
+      const record = (entryId: string, status: 'acked' | 'skipped' = 'acked', reason?: string): void => {
+        if (needsNewline) {
+          appendFileSync(ledgerPath, '\n', { mode: 0o600 });
+          needsNewline = false;
+        }
+        recordInboxAck(ledgerPath, entryId, status, reason);
+      };
       const entries = raw.map(text => inboxAckEntry(text, briefAt));
       const senders = injected ?? await defaultSenders(root);
       for (const entry of entries) {
         if (!entry.channel && !seen.has(entry.entryId)) {
-          recordInboxAck(ledgerPath, entry.entryId, 'skipped', 'legacy entry has no channel');
+          record(entry.entryId, 'skipped', 'legacy entry has no channel');
           seen.add(entry.entryId);
         }
       }
       for (const ack of planInboxAcks(entries, seen)) {
         const send = senders[ack.channel];
-        if (!send) { recordInboxAck(ledgerPath, ack.entryId, 'skipped', 'channel has no sender'); continue; }
+        if (!send) { record(ack.entryId, 'skipped', 'channel has no sender'); continue; }
         try { await send(ack); }
         catch { continue; }
-        recordInboxAck(ledgerPath, ack.entryId);
+        record(ack.entryId);
       }
     } finally { releaseLocalStoreLock(acquired.lock); }
   } catch { /* Ledger failure must not prevent the planner from receiving orders. */ }
