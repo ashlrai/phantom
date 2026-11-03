@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createDaemonCapacityPublisher,
+  CHECK_EVERY_MS,
   daemonCapacityPublisherRefusal,
   defaultDaemonCapacityPublisherDeps,
   ensureDaemonCapacityPublisher,
@@ -79,6 +80,20 @@ function harness(): Harness {
 const foreign = (h: Harness, ageMs: number): CapacitySnapshot => ({ v: 1, publishedAt: new Date(h.clock.now - ageMs).toISOString(), seats: [] });
 
 describe('daemon capacity publisher (c8)', () => {
+  it.each(['failure', 'lease'] as const)('idles repeated cycles after %s until the retry deadline', async (condition) => {
+    const h = harness();
+    h.refreshingReads = 0;
+    if (condition === 'lease') h.mode = 'read-only';
+    else h.deps.publish = async () => { throw new Error('unavailable'); };
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    await pub.cycle();
+    for (let i = 0; i < 100; i++) await pub.cycle();
+    expect(h.started).toBe(1);
+    expect(h.closed).toBe(1);
+    h.clock.now += CHECK_EVERY_MS;
+    await pub.cycle();
+    expect(h.started).toBe(2);
+  });
   it('COLD with no Verse: samples under an OWNED lease, waits for the first sample, publishes, then releases the lease', async () => {
     const h = harness();
     const pub = createDaemonCapacityPublisher(cfg, h.deps);

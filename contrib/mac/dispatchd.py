@@ -23,9 +23,18 @@ DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 3
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 GLOBAL_HARD_CAP = 18
-# RQ-LOADGATE-1 admission gate limits: loadavg and procs trip (stop claims, pause the ramp); worktree count and daemon
-# tick age only add admission.json "warnings" (Masbot 06:15 ET Nov 2).
-GATE_LOAD_MAX = 36.0; GATE_PROCS_MAX = 800; GATE_WORKTREES_MAX = 40; GATE_TICK_MAX_S = 15 * 60; GATE_STATUS_TIMEOUT = 30
+# Starvation thresholds; load, process count and live worktree count only warn.
+def gate_limit(name, default):
+    import math
+    try:
+        value = float(os.environ.get(name, default))
+        return value if math.isfinite(value) and value > 0 else default
+    except ValueError: return default
+GATE_LOAD_PER_CPU = gate_limit("GATE_LOAD_PER_CPU", 3.0)
+GATE_PROCS_MAX = gate_limit("GATE_PROCS_MAX", 2500); GATE_WORKTREES_MAX = gate_limit("GATE_WORKTREES_MAX", 40)
+GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 4); GATE_SWAP_GROWTH_GB = gate_limit("GATE_SWAP_GROWTH_GB", 2)
+GATE_SWAP_WINDOW_S = gate_limit("GATE_SWAP_WINDOW_S", 300); GATE_TICK_MAX_S = gate_limit("GATE_TICK_MAX_S", 900)
+GATE_STATUS_TIMEOUT = gate_limit("GATE_STATUS_TIMEOUT", 30)
 LOCAL_HEALTH = "http://127.0.0.1:8123/v1/models"   # loopback only, no auth header, 2 s timeout, checked at most once per tick
 TIERS = {"frontier", "work", "mid", "fast"}
 # DEVIN-LEVERAGE-20261026 step-down (Masbot 21:19 Oct 26): more than 3 non-PR outcomes (abort or
@@ -524,10 +533,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
                      stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
     log("REAP %s (%s)" % (j, pool))
 
-# ---- admission gate (RQ-LOADGATE-1). Read-only host probes; no claims while the Mac is starved, and the ramp pauses with them.
-# Trips on: 1-min loadavg > min(2 x ncpu, 36), more than 800 processes, more than 40 live job worktrees, or the ashlr daemon's
-# lastTickAt older than 15 min (missing or unreadable status also trips: a daemon that cannot be seen is not a daemon that ticks).
-# queue/LOADGATE_OFF is the owner's off switch. LOADGATE_LOADAVG / LOADGATE_NCPU are honored only while $R/LOADGATE_TEST exists.
+# ---- admission gate. Fixture signal overrides require the LOADGATE_TEST marker.
 def _daemon_tick_age():   # -> (seconds since lastTickAt | None, why)
     import datetime as dt
     try:
@@ -549,13 +555,39 @@ def admission_gate():
     try: ncpu = int(os.environ["LOADGATE_NCPU"]) if test and os.environ.get("LOADGATE_NCPU") else (os.cpu_count() or 1)
     except ValueError: ncpu = os.cpu_count() or 1
     try: load1 = float(os.environ["LOADGATE_LOADAVG"]) if test and os.environ.get("LOADGATE_LOADAVG") else os.getloadavg()[0]
-    except (ValueError, OSError): load1 = float("inf")   # unreadable load: fail closed
+    except (ValueError, OSError): load1 = float("inf")   # unreadable load: reduce claims
     procs = sum(1 for l in ps.splitlines() if l.strip())
-    wts = sum(1 for bp in glob.glob(R + "/*.base") if (lambda b: bool(b) and os.path.isdir(b[2]))(base(os.path.basename(bp)[:-5])))
+    wts = sum(1 for bp in glob.glob(R + "/*.base") if os.path.basename(bp)[:-5] in alive and (lambda b: bool(b) and os.path.isdir(b[2]))(base(os.path.basename(bp)[:-5])))
     age, why = _daemon_tick_age()
-    load_max = min(2.0 * ncpu, GATE_LOAD_MAX)
-    if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f" % (load1, load_max))
-    if procs > GATE_PROCS_MAX: g["reasons"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
+    pressure = None
+    try:
+        pressure = int(os.environ["LOADGATE_PRESSURE"]) if test and "LOADGATE_PRESSURE" in os.environ else int(
+            _run(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], 5).stdout.strip())
+    except (ValueError, OSError, subprocess.SubprocessError): pass
+    swap_gb = swap
+    if test and "LOADGATE_SWAP_GB" in os.environ:
+        try: swap_gb = float(os.environ["LOADGATE_SWAP_GB"])
+        except ValueError: swap_gb = None
+    samples = jload(Q + "/admission.json", {}).get("swap_samples", [])
+    if not isinstance(samples, list): samples = []
+    samples = [v for v in samples if isinstance(v, list) and len(v) == 2 and
+               all(isinstance(x, (int, float)) for x in v) and NOW - GATE_SWAP_WINDOW_S <= v[0] <= NOW]
+    growth = max(0, swap_gb - min(v[1] for v in samples)) if samples and swap_gb is not None else 0
+    if swap_gb is not None: samples.append([NOW, swap_gb])
+    load_max = GATE_LOAD_PER_CPU * ncpu
+    soft_load = load1 > load_max and not g["disabled"]
+    if load1 > load_max: g["warnings"].append("loadavg %.1f > %.1f" % (load1, load_max))
+    if procs > GATE_PROCS_MAX: g["warnings"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
+    if pressure is None: g["warnings"].append("memory_pressure_unavailable")
+    elif pressure >= GATE_PRESSURE_MIN: g["reasons"].append("memory_pressure %d >= %g" % (pressure, GATE_PRESSURE_MIN))
+    if swap_gb is None: g["warnings"].append("swap_unavailable")
+    if growth > GATE_SWAP_GROWTH_GB: g["reasons"].append("swap_growth %gGB > %gGB" % (growth, GATE_SWAP_GROWTH_GB))
+    if disk_hard_stop: g["reasons"].append("disk_free %gGB < %gGB" % (disk_free_gb, DISK_HARD_STOP_GB))
+    g.update(memory_pressure=pressure, pressure_min=GATE_PRESSURE_MIN, swap_gb=swap_gb, swap_growth_gb=growth,
+             swap_growth_max_gb=GATE_SWAP_GROWTH_GB, swap_window_s=GATE_SWAP_WINDOW_S, swap_samples=samples,
+             disk_free_gb=disk_free_gb, disk_hard_stop_gb=DISK_HARD_STOP_GB, soft_load=soft_load,
+             claim_limit=max(1, MAX_LAUNCH_PER_TICK // 2) if soft_load else MAX_LAUNCH_PER_TICK,
+             procs_max=GATE_PROCS_MAX, worktrees_max=GATE_WORKTREES_MAX, tick_max_s=GATE_TICK_MAX_S)
     if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
     elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds" % (age, GATE_TICK_MAX_S))
@@ -752,7 +784,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             mk = RUN + "/" + j + ".diskguard"
             if not os.path.exists(mk): open(mk, "w").close(); ev("DISKGUARD defer %s %dG" % (j, disk_free_gb))
             rest.append(line); seen.add(j); continue
-        if (len(launched) >= MAX_LAUNCH_PER_TICK or s.get("held") or lane in hold
+        if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
             rest.append(line); seen.add(j); continue
         if lane == "codex-local":
@@ -885,9 +917,11 @@ if not os.path.exists(stamp) or NOW - os.path.getmtime(stamp) > 600:
                      stderr=subprocess.STDOUT, start_new_session=True)
 _at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(running.values()) >= GCAP else None
 _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
-adm = {"schema": "dispatchd.admission.v1", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,
+adm = {"schema": "dispatchd.admission.v2", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,
        "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
        "daemon_tick_age_s": GATE["daemon_tick_age_s"], "local_mid_cap": LOCAL_MID_CAP, "cap": GCAP, "running": sum(running.values()), "hard_cap": slots["hard_cap"], "install_lock_holder": _install_holder()}
+adm.update({k: v for k, v in GATE.items() if k != "tripped"})
+adm["decision"] = "stop" if _block else ("halve_claims" if GATE["soft_load"] else "admit")
 jsave(Q + "/admission.json", adm); st["admission"] = adm
 jsave(Q + "/status.json", st)
 log("tick run=%s q=%d launched=%d reap=%d pause=%s wall=%.0fs" % (json.dumps(running), len(rest), len(launched), nreap, bool(pause), time.time() - NOW))

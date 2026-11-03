@@ -84,3 +84,9 @@ Copy-paste: `phm capacity publish --json`. Run on each node with its own local a
 usage metadata only, never credentials. Resident daemons publish at startup and
 on a timer outside ticks. Follow failure recovery instructions; see
 [capacity publication](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity).
+
+Read the dispatcher starvation signals and admission decision (read-only):
+
+```sh
+phm pool admission --json
+```

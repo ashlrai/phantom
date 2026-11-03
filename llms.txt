@@ -4,3 +4,9 @@
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
 - [Team invite, join and remove](docs/TEAM.md#invite-join-and-remove-a-teammate): `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims.
 - [Learned skills](docs/SKILLS.md): `phm skills list --json`; reusable skills written after verified PR merges, scrubbed and size-capped, counts real or `unknown`.
+
+Read the dispatcher starvation signals and admission decision (read-only):
+
+```sh
+phm pool admission --json
+```
