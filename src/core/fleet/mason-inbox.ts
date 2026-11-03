@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { appendFile, mkdir, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { INBOX_CHANNEL_LINE } from './inbox-channel-line.js';
+import type { RecentInboxEntry } from './cross-channel-dedupe.js';
 import { inboxChannelSlug } from './inbox-channel-slug.js';
 
 export interface InboxEntry {
@@ -171,4 +174,64 @@ export async function readInboxEntries(opts: { runsDir?: string; limit?: number 
   } finally {
     await handle?.close().catch(() => undefined);
   }
+}
+
+const INBOX_HEADING_START = /^## /;
+const ALSO_TAG = /^\[also:([a-z0-9._,-]{1,200})\] ?/;
+const CHANNEL_LINE_WITH_ID = /^(\d{4}-\d{2}-\d{2}T\S+)\s+\[src:([a-z0-9._-]{1,32}) id:([A-Za-z0-9._:-]{1,64})\] (.*)$/;
+
+/**
+ * Cross-channel dedupe: a duplicate from another surface is attributed on the
+ * existing entry's first line as `[src:phone id:X] [also:telegram] text`. The
+ * `[src:…]` tag keeps its single-channel shape (the planner brief and ack parsers
+ * match it), and the entry id (a hash of the original time and text) is unchanged.
+ * Sync read-modify-write so no await separates the read from the write.
+ */
+export function addInboxSource(entryId: string, channel: string, opts: { runsDir?: string } = {}): boolean {
+  if (!/^[a-z0-9._-]{1,32}$/.test(channel) || !/^[A-Za-z0-9._:-]{1,64}$/.test(entryId)) return false;
+  try {
+    const file = join(opts.runsDir ?? join(homedir(), '.ashlr-runs'), 'leader', 'MASON-INBOX.md');
+    const lines = readFileSync(file, 'utf8').split('\n');
+    const at = lines.findIndex((line) => CHANNEL_LINE_WITH_ID.exec(line)?.[3] === entryId);
+    if (at < 0) return false;
+    const [, iso, src, , rest] = CHANNEL_LINE_WITH_ID.exec(lines[at]!)!;
+    const also = ALSO_TAG.exec(rest!);
+    const known = [src!, ...(also?.[1]?.split(',') ?? [])];
+    if (known.includes(channel)) return true;
+    lines[at] = `${iso} [src:${src} id:${entryId}] [also:${[...known.slice(1), channel].join(',')}] ${also ? rest!.slice(also[0].length) : rest}`;
+    writeFileSync(file, lines.join('\n'), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Channel-line entries from the last `sinceMs` before `nowMs`, with all attributed sources. senderId is left for the caller to prove. */
+export function readRecentChannelEntries(runsDir: string, nowMs: number, sinceMs: number): RecentInboxEntry[] {
+  let markdown: string;
+  try {
+    const buffer = readFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'));
+    markdown = buffer.subarray(Math.max(0, buffer.length - MAX_READ_BYTES)).toString('utf8').replace(/\r\n/g, '\n');
+  } catch {
+    return [];
+  }
+  const out: RecentInboxEntry[] = [];
+  let current: { entry: RecentInboxEntry; body: string[] } | undefined;
+  const flush = (): void => { if (current) out.push({ ...current.entry, text: current.body.join('\n').trim() }); current = undefined; };
+  for (const line of markdown.split('\n')) {
+    const m = CHANNEL_LINE_WITH_ID.exec(line);
+    if (m) {
+      flush();
+      const receivedAt = Date.parse(m[1]!);
+      if (!Number.isFinite(receivedAt) || nowMs - receivedAt >= sinceMs) continue;
+      const also = ALSO_TAG.exec(m[4]!);
+      current = {
+        entry: { id: m[3]!, text: '', receivedAt, channels: [m[2]!, ...(also?.[1]?.split(',') ?? [])] },
+        body: [also ? m[4]!.slice(also[0].length) : m[4]!],
+      };
+    } else if (INBOX_HEADING_START.test(line) || INBOX_CHANNEL_LINE.test(line)) flush();
+    else current?.body.push(line);
+  }
+  flush();
+  return out;
 }
