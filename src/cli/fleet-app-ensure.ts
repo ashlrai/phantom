@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { awaitAppState } from '../core/fleet/app-await.js';
 import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
-import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from './fleet-app.js';
+import { findAppControlScript, findInstalledAppControlScript, type FleetAppExecOptions } from './fleet-app.js';
 
 const execFileAsync = promisify(execFile);
 const usage = 'Usage: ashlr fleet app-ensure <app> [--root <dir>] [--timeout-ms <n>] [--interval-ms <n>] [--json]';
@@ -13,8 +13,12 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 300_000;
 const DEFAULT_INTERVAL_MS = 1_000;
 
+/** A FleetAppExec whose options also carry the child's AbortSignal, so a stopped run can reclaim its child. */
+export type FleetAppEnsureExec =
+  (file: string, argv: readonly string[], options: FleetAppExecOptions & { signal: AbortSignal }) => Promise<{ stdout: string; stderr: string }>;
+
 export interface FleetAppEnsureDeps {
-  exec?: FleetAppExec;
+  exec?: FleetAppEnsureExec;
   locateScript?: (root: string) => string | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -22,8 +26,9 @@ export interface FleetAppEnsureDeps {
 }
 
 type Outcome = 'running' | 'launched' | 'unavailable' | 'launch-failed' | 'timeout' | 'cancelled';
+type Stop = 'cancelled' | 'timeout';
 
-const runChild: FleetAppExec = async (file, argv, options) => {
+const runChild: FleetAppEnsureExec = async (file, argv, options) => {
   const { stdout, stderr } = await execFileAsync(file, argv, options);
   return { stdout, stderr };
 };
@@ -83,30 +88,62 @@ export async function cmdFleetAppEnsure(args: string[], deps: FleetAppEnsureDeps
   const now = deps.now ?? Date.now;
   const signal = deps.signal;
   const deadline = now() + timeoutMs;
+
+  // Every child of this run listens to `scope`, so a supervisor cancel, the deadline or the end of the run aborts the live child.
+  const scope = new AbortController();
+  let stopped: Stop | null = null;
+  const stop = (reason: Stop): void => {
+    stopped ??= reason;
+    scope.abort();
+  };
+  const onCancel = (): void => stop('cancelled');
+  signal?.addEventListener('abort', onCancel, { once: true });
+  // Registration race: an abort that landed before the listener existed, or an already-aborted signal, never fires it.
+  if (signal?.aborted) stop('cancelled');
+  const deadlineTimer = setTimeout(() => stop('timeout'), timeoutMs);
+  // The confirmation wait wakes on abort too, so a stopped run leaves no sleep timer behind.
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => {
+    const wake = (): void => {
+      clearTimeout(timer);
+      scope.signal.removeEventListener('abort', wake);
+      resolve();
+    };
+    const timer = setTimeout(wake, ms);
+    scope.signal.addEventListener('abort', wake, { once: true });
+  }));
+
   let attempts = 0;
   let running: boolean | null = null;
   let launched = false;
 
-  /** One app_control.py action bounded by the remaining budget; a valid ok:true report or null (stdout from a failing exit never counts). */
+  /** One app_control.py action, bounded by the remaining budget and aborted with the run: a valid ok:true report or null (stdout from a failing exit never counts). */
   const control = async (action: 'status' | 'launch', budgetMs: number): Promise<Record<string, unknown> | null> => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let onAbort: (() => void) | undefined;
+    // Never spawn after a stop; a zero timeout would mean "no limit" to execFile.
+    if (scope.signal.aborted || budgetMs <= 0) return null;
+    const child = new AbortController();
+    let onStop: (() => void) | undefined;
     try {
-      // Wall timer and abort listener so a never-settling exec cannot outlive the deadline.
-      const bound = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('deadline')), Math.max(0, budgetMs));
-        onAbort = () => reject(new Error('aborted'));
-        signal?.addEventListener('abort', onAbort, { once: true });
+      // The run's stop (cancel or the one deadline timer) rejects this wait, so a child that ignores its signal still cannot outlive the run.
+      const stopping = new Promise<never>((_, reject) => {
+        onStop = () => {
+          reject(new Error('stopped'));
+          child.abort();
+        };
+        scope.signal.addEventListener('abort', onStop, { once: true });
       });
-      const { stdout } = await Promise.race([exec('python3', ['-I', script, action, app, '--output-dir', selectedRoot], {
-        encoding: 'utf8', timeout: budgetMs, maxBuffer: 1024 * 1024, windowsHide: true,
-      }), bound]);
+      // Registration race: a stop that landed before the listener above would never fire it.
+      if (scope.signal.aborted) return null;
+      const work = (async () => exec('python3', ['-I', script, action, app, '--output-dir', selectedRoot], {
+        encoding: 'utf8', timeout: budgetMs, maxBuffer: 1024 * 1024, windowsHide: true, signal: child.signal,
+      }))();
+      // A child that rejects after the run stopped is consumed here; the outcome was already decided.
+      work.catch(() => {});
+      const { stdout } = await Promise.race([work, stopping]);
       const parsed: unknown = JSON.parse(stdout);
       return parsed !== null && typeof parsed === 'object' && (parsed as { ok?: unknown }).ok === true
         ? parsed as Record<string, unknown> : null;
     } catch { return null; } finally {
-      if (timer) clearTimeout(timer);
-      if (onAbort) signal?.removeEventListener('abort', onAbort);
+      if (onStop) scope.signal.removeEventListener('abort', onStop);
     }
   };
   const status = async (budgetMs: number): Promise<boolean | null> => {
@@ -115,11 +152,11 @@ export async function cmdFleetAppEnsure(args: string[], deps: FleetAppEnsureDeps
   };
 
   const decide = async (): Promise<Outcome> => {
-    if (signal?.aborted) return 'cancelled';
+    if (stopped) return stopped;
     if (deadline - now() <= 0) return 'unavailable';
     attempts++;
     const first = await status(deadline - now());
-    if (signal?.aborted) return 'cancelled';
+    if (stopped) return stopped;
     if (first === null) return deadline - now() <= 0 ? 'timeout' : 'unavailable';
     running = first;
     if (first) return 'running';
@@ -127,19 +164,26 @@ export async function cmdFleetAppEnsure(args: string[], deps: FleetAppEnsureDeps
     if (left <= 0) return 'timeout';
     launched = true; // one attempt only; never retried even if its report is unusable
     const report = await control('launch', left);
-    if (signal?.aborted) return 'cancelled';
+    if (stopped) return stopped;
     if (report === null) return deadline - now() <= 0 ? 'timeout' : 'launch-failed';
     const awaited = await awaitAppState({
-      target: 'running', timeoutMs: Math.max(0, deadline - now()), intervalMs, now: deps.now, sleep: deps.sleep, signal,
+      target: 'running', timeoutMs: Math.max(0, deadline - now()), intervalMs, now: deps.now, sleep, signal: scope.signal,
       probe: status,
     });
     attempts += awaited.attempts;
     running = awaited.running ?? running;
     if (awaited.outcome === 'reached') return 'launched';
-    return awaited.outcome === 'cancelled' ? 'cancelled' : 'timeout';
+    return stopped ?? 'timeout';
   };
 
-  const outcome = await decide();
+  let outcome: Outcome;
+  try {
+    outcome = await decide();
+  } finally {
+    clearTimeout(deadlineTimer);
+    signal?.removeEventListener('abort', onCancel);
+    scope.abort(); // reclaims any child still running, whichever path ended the run
+  }
   const ok = outcome === 'running' || outcome === 'launched';
   if (json) process.stdout.write(`${JSON.stringify({ app, outcome, launched, attempts, running })}\n`);
   else if (ok) console.log(`${app}: ${MESSAGES[outcome]}`);
