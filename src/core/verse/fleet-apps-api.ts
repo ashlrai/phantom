@@ -85,7 +85,7 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         if (remaining <= 0) return;
         try {
           const result = await run(script!, 'status', row.app, remaining);
-          row.running = typeof result.running === 'boolean' ? result.running : null;
+          row.running = result.ok === true && typeof result.running === 'boolean' ? result.running : null;
         } catch { /* Unreadable status stays unknown; never echo stderr. */ }
         row.checkedAt = new Date(now()).toISOString();
       }

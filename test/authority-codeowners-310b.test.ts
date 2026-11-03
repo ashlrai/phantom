@@ -128,7 +128,10 @@ describe('.github/CODEOWNERS', () => {
     for (const path of ['test/merge-gates-310b.test.ts', 'test/authority-rollout-310b.test.ts', 'test/host-merge-310b.test.ts', 'test/authority-review-fixes-310.test.ts']) {
       expect(regexes.some((re) => re.test(path)), path).toBe(true);
     }
-  });
+    // CPU-bound scan of every test/ file (~3k files, ~40 MB of fixtures) plus the
+    // G1 classifier; it runs ~3-6s, so the 5s default flaked under parallel workers.
+    // The assertions are unchanged — only the budget for this one whole-tree case.
+  }, 30_000);
 
   it('the glob matcher is not vacuous', () => {
     const matches = (path: string) => regexes.some((re) => re.test(path));
