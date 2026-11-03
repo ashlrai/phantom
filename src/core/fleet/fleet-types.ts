@@ -622,6 +622,10 @@ export interface FleetLiveSnapshotV1 {
    * Absent from a pre-3.10.1 server.
    */
   darkSince?: string | null;
+  /** Active repository holds; null means the hold store is unreadable. */
+  blockedHolds?: { repo: string; reason: string; until: string | null }[] | null;
+  /** Recorded landings in the rolling 24h window; null means unreadable ledger. */
+  merged24h?: { id: string; repo: string; prNumber: number; landedAt: string }[] | null;
   summary: FleetLiveSummary;
   /** Short commit of the build serving this view; null/absent = unknown. */
   commit?: string | null;
