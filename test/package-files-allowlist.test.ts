@@ -97,6 +97,27 @@ describe('package files allowlist', () => {
       .not.toThrow();
   });
 
+  it.each(['docs/SIGNALS.md', 'scripts/lib/docs-pages.mjs', 'scripts/lib/docs-pages.d.mts'])(
+    'admits the shipped documentation member: %s',
+    (entry) => {
+      const candidate = {
+        ...packageJson,
+        files: ['bin', 'dist', 'scripts/run-verify-command.mjs', entry],
+      };
+      expect(() => assertRuntimeReleaseRootPackagePortability(candidate, [], inventory))
+        .not.toThrow();
+    },
+  );
+
+  it.each(['scripts/lib', 'scripts/lib/*', 'scripts/lib/unreviewed.mjs'])(
+    'rejects broader documentation helper declarations: %s',
+    (entry) => {
+      const candidate = { ...packageJson, files: [...packageJson['files'] as string[], entry] };
+      expect(() => assertRuntimeReleaseRootPackagePortability(candidate, [], inventory))
+        .toThrow('release package files declaration is not portable');
+    },
+  );
+
   it.each([
     'node_modules\\example\\index.js',
     'docs\\FLEET-API.md',

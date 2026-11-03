@@ -9,7 +9,7 @@ import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const execFileAsync = promisify(execFile);
-const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--bus] [--json | --jsonl]';
+const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--max-recoveries <1..1000>] [--bus] [--json | --jsonl]';
 export interface FleetAppsWatchDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
@@ -20,12 +20,13 @@ export interface FleetAppsWatchDeps {
 
 export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nFinite supervision delegates launch and refusal decisions to apps-ensure.`);
+    console.log(`${usage}\nFinite supervision delegates launch and refusal decisions to apps-ensure. The recovery cap is checked between cycles and cannot preempt an in-flight group.`);
     return 0;
   }
   const invalid = (): number => { console.error(`error: invalid fleet apps-watch arguments\n${usage}`); return 2; };
   const apps: string[] = [];
   let duration = 0, interval = 1000, root: string | undefined, stopFile: string | undefined;
+  let maxRecoveries: number | undefined;
   let maxConsecutiveFailures = 1, json = false, jsonl = false, bus = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
@@ -35,7 +36,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       if (!apps.includes(arg)) apps.push(arg);
       continue;
     }
-    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--max-consecutive-failures', '--json', '--jsonl', '--bus'].includes(arg) || seen.has(arg)) return invalid();
+    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--max-consecutive-failures', '--max-recoveries', '--json', '--jsonl', '--bus'].includes(arg) || seen.has(arg)) return invalid();
     seen.add(arg);
     if (arg === '--bus') { bus = true; continue; }
     if (arg === '--json') { json = true; continue; }
@@ -44,6 +45,11 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     if (!value || value.startsWith('-')) return invalid();
     if (arg === '--root') { root = value; continue; }
     if (arg === '--stop-file') { stopFile = resolve(value); continue; }
+    if (arg === '--max-recoveries') {
+      if (!/^[0-9]{1,4}$/.test(value) || Number(value) < 1 || Number(value) > 1000) return invalid();
+      maxRecoveries = Number(value);
+      continue;
+    }
     if (arg === '--max-consecutive-failures') {
       if (!/^[1-9]$|^[1]0$/.test(value)) return invalid();
       maxConsecutiveFailures = Number(value);
@@ -133,6 +139,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   let consecutiveFailures = 0, totalFailedCycles = 0;
   let lastObservedState: { app: string; observedRunning: boolean | null }[] | null = null;
   let outcome: 'completed' | 'failed' | 'cancelled' = 'completed';
+  let recoveryLimitReached = false;
   while (!signal?.aborted && remaining() > 0) {
     const budget = Math.ceil(remaining());
     const result = await bounded(budget, s => {
@@ -151,7 +158,9 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       return { app, observedRunning: typeof observed === 'boolean' ? observed : null };
     });
     const healthy = result.value.code === 0 && report?.ok === true && valid && rows.every(row => row.observedRunning === true);
-    const recovered = healthy ? rows.filter(row => row.launched === true).length : 0;
+    const recovered = rows.filter(row => row && typeof row === 'object' && typeof row.app === 'string'
+      && apps.includes(row.app) && typeof row.observedRunning === 'boolean' && row.launched === true
+      && rows.filter(other => other && typeof other === 'object' && other.app === row.app).length === 1).length;
     recoveries += recovered;
     if (!healthy) {
       consecutiveFailures++;
@@ -161,6 +170,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       if (consecutiveFailures >= maxConsecutiveFailures) {
         outcome = 'failed';
       }
+      if (maxRecoveries !== undefined && recoveries >= maxRecoveries) { recoveryLimitReached = true; outcome = 'failed'; break; }
       const left = remaining();
       if (outcome === 'failed' || left <= 0) break;
       const pause = await bounded(left, s => sleep(Math.min(interval, left), s));
@@ -170,6 +180,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     consecutiveFailures = 0;
     publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null });
     if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null })}\n`);
+    if (maxRecoveries !== undefined && recoveries >= maxRecoveries) { recoveryLimitReached = true; outcome = 'failed'; break; }
     const left = remaining();
     if (left <= 0) break;
     const pause = await bounded(left, s => sleep(Math.min(interval, left), s));
@@ -179,9 +190,9 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   else if (signal?.aborted || fileStopped) outcome = 'cancelled';
   const details = { apps, outcome, cycles, recoveries, consecutiveFailures, totalFailedCycles, lastObservedState };
   publish({ kind: 'apps-watch.summary.v1', ...details });
-  const summary = { ...details, ...(bus ? { bus: { published, failed: publicationFailures } } : {}) };
+  const summary = { ...details, ...(recoveryLimitReached && outcome === 'failed' && !fileError ? { reason: 'recovery_limit' } : {}), ...(bus ? { bus: { published, failed: publicationFailures } } : {}) };
   if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...summary })}\n`);
   else if (json) process.stdout.write(`${JSON.stringify(summary)}\n`);
-  else console.log(`${apps.join(', ')}: ${outcome}; cycles=${cycles}, recoveries=${recoveries}${bus ? `; bus published=${published}, failed=${publicationFailures}` : ''}`);
+  else console.log(`${apps.join(', ')}: ${outcome}; cycles=${cycles}, recoveries=${recoveries}${recoveryLimitReached && outcome === 'failed' && !fileError ? '; recovery limit reached' : ''}${bus ? `; bus published=${published}, failed=${publicationFailures}` : ''}`);
   return outcome === 'completed' ? 0 : 1;
 }
