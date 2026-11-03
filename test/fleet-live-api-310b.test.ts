@@ -69,6 +69,8 @@ let journal: FleetJournalRecord[];
 let tick: FleetTickStateV1 | null;
 let watchViews: PostMergeWatchView[] = [];
 let dispatchStartMap: Map<string, number> | null;
+let ghMerges = 0;
+let ghDown = false;
 let dispatchStartCalls: number[];
 let seq = 0;
 
@@ -149,6 +151,11 @@ function deps(): Partial<FleetLiveDeps> {
       dispatchStartCalls.push(sinceMs);
       return dispatchStartMap;
     },
+    // GitHub answered with no merges beyond the ledger's: tests below set `ghMerges` to add some.
+    fleetTruth: async (since, now) => ({
+      windowStartMs: since, windowEndMs: now, mergeCountState: ghDown ? 'unavailable' : 'ok', truncated: false, running: null, queued: null,
+      merged: Array.from({ length: ghMerges }, (_, i) => ({ repo: 'ashlrai/x', number: 9000 + i, title: 't', url: 'u', mergedAtMs: now - 1000, source: 'gh' as const })),
+    }),
   };
 }
 
@@ -187,6 +194,8 @@ beforeEach(() => {
   watchViews = [];
   dispatchStartMap = new Map();
   dispatchStartCalls = [];
+  ghMerges = 0;
+  ghDown = false;
   setFleetLiveDepsForTest(deps());
 });
 
@@ -231,6 +240,16 @@ describe('GET /api/verse/fleet/live — states', () => {
     expect((await buildFleetLiveSnapshot()).snapshot.blockedHolds).toBeNull();
   });
 
+  it('counts GitHub fleet merges in mergedToday even when the ledger recorded none', async () => {
+    ghMerges = 52;
+    expect((await get()).body.summary.mergedToday).toBe(52);
+  });
+
+  it('reports mergedToday as unknown (not 0) when GitHub is unreachable and the ledger is empty', async () => {
+    ghDown = true;
+    expect((await get()).body.summary.mergedToday).toBeNull();
+  });
+
   it('is DARK with its own sentence when no standing grant is in force', async () => {
     const res = await get();
     expect(res.status).toBe(200);
@@ -256,6 +275,7 @@ describe('GET /api/verse/fleet/live — states', () => {
 
   it('reports unknown sources as null, never zero', async () => {
     ledgerReadable = false;
+    ghDown = true; // GitHub is the other source of mergedToday; both unknown means null
     const res = await get();
     expect(res.body.summary.mergedToday).toBeNull();
     expect(res.body.summary.merged7d).toBeNull();
