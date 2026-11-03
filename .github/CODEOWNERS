@@ -394,16 +394,25 @@
 /test/fleet-guardian-loop-attempts-02solp2.test.ts @masonwyatt23
 /test/fleet-guardian-repeat-sleep-budget-02solr2.test.ts @masonwyatt23
 /test/fleet-guardian-resume-loop-02solq1.test.ts @masonwyatt23
+/test/fleet-guardian-stream-input-budget-02solz3.test.ts @masonwyatt23
 /test/fleet-guardian-verify-loop-01.test.ts @masonwyatt23
 /test/fleet-lane-truth-gate-sole2.test.ts @masonwyatt23
 /test/fleet-learning-loop-sweeps.test.ts @masonwyatt23
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
+/test/fleet-merge-pace-core-02.test.ts @masonwyatt23
+/test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
+/test/fleet-self-loop-await-live-02some2.test.ts @masonwyatt23
+/test/fleet-self-loop-await-record-02somd2.test.ts @masonwyatt23
 /test/fleet-self-loop-busy-backoff-02soll2.test.ts @masonwyatt23
 /test/fleet-self-loop-failure-backoff-02solh2.test.ts @masonwyatt23
+/test/fleet-self-loop-max-ticks-02soly2.test.ts @masonwyatt23
+/test/fleet-self-loop-preabort-02somd1.test.ts @masonwyatt23
+/test/fleet-self-loop-record-02soma2.test.ts @masonwyatt23
+/test/fleet-self-loop-record-live-02somc2.test.ts @masonwyatt23
 /test/fleet-self-loop-sleep-budget-02solg2.test.ts @masonwyatt23
 /test/fleet-self-loop-stream-02solc1.test.ts @masonwyatt23
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
@@ -894,6 +903,7 @@
 /test/mcp-firm-resources.test.ts @masonwyatt23
 /test/mcp-fleet-observations.test.ts @masonwyatt23
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
+/test/mcp-gateway-policy.test.ts @masonwyatt23
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
 /test/mcp-native-fleet-drop-job.test.ts @masonwyatt23
 /test/memory-benchmark.test.ts @masonwyatt23
@@ -966,6 +976,7 @@
 /test/quarantine-ledger.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
+/test/recut-loop-landed-03.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
 /test/refix-loop.test.ts @masonwyatt23
@@ -1044,6 +1055,7 @@
 /test/routing-readiness-314.test.ts @masonwyatt23
 /test/routing-router-weights.test.ts @masonwyatt23
 /test/routing-seat-router.test.ts @masonwyatt23
+/test/routing-selector.test.ts @masonwyatt23
 /test/routing-subscription-failclosed.test.ts @masonwyatt23
 /test/run-api-unavailable.test.ts @masonwyatt23
 /test/runtime-probe-event-loop.test.ts @masonwyatt23
@@ -1128,6 +1140,7 @@
 /test/verse-mcp-control-api.test.ts @masonwyatt23
 /test/verse-mcp-grants-types.test.ts @masonwyatt23
 /test/verse-mcp-scope.test.ts @masonwyatt23
+/test/verse-merge-pace-api-02.test.ts @masonwyatt23
 /test/verse-multimodel-auto-316.test.ts @masonwyatt23
 /test/verse-reliability.test.ts @masonwyatt23
 /test/verse-resources-ready-314.test.ts @masonwyatt23

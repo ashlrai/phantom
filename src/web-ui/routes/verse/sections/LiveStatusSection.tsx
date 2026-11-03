@@ -5,21 +5,23 @@ import type { QueryDef } from '../../../data/queries.js';
 import type { FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js';
 import type { ResourceView } from '../../../../core/fabric/resource-view.js';
 import type { MergePaceReport } from '../../../../core/fleet/merge-pace.js';
+import type { LandedClosesReport } from '../../../../core/fleet/landed-closes-read.js';
 import { projectLiveStatus } from '../../../../core/fleet/live-status.js';
 
-type LiveHome = ReturnType<typeof projectLiveStatus> & { mergePace?: MergePaceReport | null };
+type LiveHome = ReturnType<typeof projectLiveStatus> & { mergePace?: MergePaceReport | null; landedCloses?: LandedClosesReport | null };
 const mergeMinutes = (s: number | null) => s === null ? 'unknown' : s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
 
 const query: QueryDef<LiveHome> = {
   key: 'verse-live-home',
   fetch: async signal => {
-    const [live, resources, mergePace] = await Promise.all([
+    const [live, resources, mergePace, landedCloses] = await Promise.all([
       apiGet<FleetLiveSnapshotV1>('/api/verse/fleet/live', signal),
       apiGet<ResourceView>('/api/resource', signal),
       // A merge-pace failure is unknown, never a blank view.
       apiGet<MergePaceReport>('/api/verse/fleet/merge-pace', signal).catch(() => null),
+      apiGet<LandedClosesReport>('/api/verse/fleet/landed-closes', signal).catch(() => null),
     ]);
-    return { ...projectLiveStatus(live, resources), mergePace };
+    return { ...projectLiveStatus(live, resources), mergePace, landedCloses };
   },
 };
 export function LiveStatusSection() {
@@ -42,6 +44,11 @@ export function LiveStatusSection() {
       {data.merged === null ? <p>Unknown</p> : <ul>{data.merged.map(row => <li key={row.id}>{row.repo} #{row.prNumber} · {new Date(row.landedAt).toLocaleString()}</li>)}{!data.merged.length && <li>None</li>}</ul>}
       <h2>Merge pace (6h)</h2>
       {data.mergePace === undefined ? null : !data.mergePace?.known || !data.mergePace.rows ? <p>Unknown</p> : <ul>{data.mergePace.rows.map(row => <li key={row.repo}>{row.repo}: {row.merges} merges · {row.merges_per_hour.toFixed(1)}/h · median {mergeMinutes(row.median_ttm_s)}</li>)}</ul>}
+      <h2>Stale PRs cleared (24h)</h2>
+      {data.landedCloses === undefined ? null : !data.landedCloses?.known || !data.landedCloses.rows ? <p>Unknown</p> : <>
+        <p>{data.landedCloses.closed} closed · {data.landedCloses.skipped} skipped · {data.landedCloses.failed} failed</p>
+        <ul>{data.landedCloses.rows.map(row => <li key={`${row.pr}-${row.at}`} style={row.outcome === 'failed' ? { color: '#b3261e' } : undefined}>#{row.pr} · {row.outcome} · {new Date(row.at).toLocaleString()}{row.outcome !== 'closed' && row.reason ? ` · ${row.reason}` : ''}</li>)}</ul>
+      </>}
       <h2>Blocked</h2>
       {data.blocked === null ? <p>Unknown</p> : <ul>{data.blocked.map((row, index) => <li key={index}>{row.repo}: {row.reason} · Until {row.until ?? 'cleared'}</li>)}{!data.blocked.length && <li>None recorded</li>}</ul>}
       <h2>Spent</h2>

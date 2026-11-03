@@ -21,6 +21,7 @@ const live = { generatedAt: '2026-11-02T00:00:00Z' };
 const wire = (pace: () => Promise<unknown>) => get.mockImplementation(async (path: string) => {
   if (path === '/api/verse/fleet/live') return live;
   if (path === '/api/resource') return {};
+  if (path === '/api/verse/fleet/landed-closes') return { v: 1, known: true, closed: 0, skipped: 0, failed: 0, rows: [] };
   return pace();
 });
 vi.mock('../../../../core/fleet/live-status.js', () => ({
