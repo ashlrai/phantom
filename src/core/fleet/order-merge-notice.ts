@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { readEmailDropConfig } from '../comms/email-drop-config.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { postLeaderMessage } from '../vision/leader-thread.js';
@@ -55,7 +57,31 @@ const postBusNotice = async (notice: OrderMergeNotice): Promise<void> => {
     ttl: 7 * 24 * 60 * 60 * 1000, body: { kind: 'order-merged', channel: notice.channel, text: notice.text } });
   if (result.status !== 'posted' && result.status !== 'duplicate') throw new Error('bus unavailable');
 };
+
+/**
+ * Queues the notice as a `*.reply.eml` in the email-drop outbox; delivery (and
+ * its recipient allowlist) stays with `ashlr fleet email-outbox --send`.
+ * Throws unless the saved config names exactly one allowed sender, so the
+ * notice is counted failed and retried instead of being marked skipped.
+ */
+export function createEmailNoticeSender(runsDir: string = join(homedir(), '.ashlr-runs')): (notice: OrderMergeNotice) => Promise<void> {
+  return async notice => {
+    const { config } = await readEmailDropConfig(runsDir);
+    if (!config || config.from.length !== 1) throw new Error('email-drop config needs exactly one allowed sender');
+    const outbox = config.outboxDir ?? join(config.inboxDir, '..', 'outbox');
+    ensurePrivateDirectory(outbox);
+    const name = `order-merged-${createHash('sha256').update(notice.key).digest('hex').slice(0, 32)}.reply.eml`;
+    const tmp = join(outbox, `.${name}.${process.pid}.tmp`);
+    const text = notice.text.replace(/[\r\n]+/g, ' ');
+    try {
+      writeFileSync(tmp, `To: ${config.from[0]}\r\nSubject: Phantom: merged for your order\r\n\r\n${text}\r\n`, { mode: 0o600 });
+      renameSync(tmp, join(outbox, name));
+    } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  };
+}
+
 const defaultSenders: OrderMergeNoticeSenders = {
+  email: createEmailNoticeSender(),
   desktop: postBusNotice, phone: postBusNotice, page: postBusNotice,
   telegram: async notice => { postLeaderMessage({ channel: 'telegram', kind: 'update', text: notice.text }); },
 };
