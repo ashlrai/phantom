@@ -2,8 +2,7 @@
 
 Same harness as test_dispatchd.py: each case builds a synthetic ~/.ashlr-runs in a temp HOME and runs one tick of the repo
 copy as a subprocess. Load and ncpu are pinned through LOADGATE_LOADAVG / LOADGATE_NCPU (honored only while the
-LOADGATE_TEST marker exists), `ps` and `ashlr daemon status --json` are stubs. Covers each gate (loadavg, process count,
-process count; worktree count and daemon tick age only warn), the global running cap, the hard_cap clamps, the ramp pause, and the autopilot overrides reload.
+LOADGATE_TEST marker exists), `ps` and `ashlr daemon status --json` are stubs. Covers each hard gate (memory pressure, swap growth and disk; load, processes, worktrees and tick age warn), the global running cap, the hard_cap clamps, the ramp pause, and the autopilot overrides reload.
 """
 import json
 import os
@@ -48,8 +47,8 @@ def stub_ps(home, lines):
 
 
 class GateTests(unittest.TestCase):
-    def _case(self, env=None, n=1, prep=None):
-        tmp, home = ready_fixture(n)
+    def _case(self, env=None, n=1, prep=None, **kwargs):
+        tmp, home = ready_fixture(n, **kwargs)
         self.addCleanup(tmp.cleanup)
         if prep:
             prep(home)
@@ -65,32 +64,39 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(a['reason'])
         self.assertNotIn('LOADGATE', events(home))
 
-    def test_loadavg_over_twice_ncpu_blocks_claims(self):
-        home = self._case({'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': '8.5'})
-        self.assertEqual(launched(home), [])
-        self.assertEqual(len(ready_left(home)), 1, 'a gated job must stay queued, not be dropped')
-        a = admission(home)
-        self.assertFalse(a['admit'])
-        self.assertIn('loadavg 8.5 > 8.0', a['reason'])
-        self.assertIn('LOADGATE tripped: loadavg 8.5 > 8.0', events(home))
+    def test_loadavg_soft_limit_halves_claims(self):
+        home = self._case({'LOADGATE_NCPU': '18', 'LOADGATE_LOADAVG': '64'}, n=4,
+                          prep=lambda h: stub_ps(h, 962))
+        self.assertEqual(len(launched(home)), 2)
+        self.assertTrue(admission(home)['admit'])
+        self.assertEqual(admission(home)['decision'], 'halve_claims')
+        self.assertEqual(len(ready_left(home)), 2)
 
-    def test_loadavg_at_twice_ncpu_still_admits(self):
-        home = self._case({'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': '8.0'})
-        self.assertEqual(launched(home), ['RQ-GATE-0'])
+    def test_loadavg_at_three_times_ncpu_admits_full_batch(self):
+        home = self._case({'LOADGATE_LOADAVG': '54'}, n=4)
+        self.assertEqual(len(launched(home)), 4)
 
-    def test_loadavg_over_36_blocks_even_on_a_big_machine(self):
-        home = self._case({'LOADGATE_NCPU': '64', 'LOADGATE_LOADAVG': '36.5'})
-        self.assertEqual(launched(home), [])
-        self.assertIn('loadavg 36.5 > 36.0', admission(home)['reason'])
-        home = self._case({'LOADGATE_NCPU': '64', 'LOADGATE_LOADAVG': '35.9'})
-        self.assertEqual(launched(home), ['RQ-GATE-0'])
+    def test_pressure_critical_blocks_and_warning_admits(self):
+        for pressure, expected in [('4', 0), ('8', 0), ('2', 1), ('1', 1)]:
+            home = self._case({'LOADGATE_PRESSURE': pressure})
+            self.assertEqual(len(launched(home)), expected)
+            self.assertEqual(admission(home)['admit'], bool(expected))
 
-    def test_more_than_800_processes_blocks(self):
-        home = self._case(prep=lambda h: stub_ps(h, 801))
-        self.assertEqual(launched(home), [])
-        self.assertIn('procs 801 > 800', admission(home)['reason'])
-        home = self._case(prep=lambda h: stub_ps(h, 800))
-        self.assertEqual(launched(home), ['RQ-GATE-0'])
+    def test_swap_growth_window_and_boundary(self):
+        import time
+        def prep(home, age):
+            (home / '.ashlr-runs' / 'queue' / 'admission.json').write_text(
+                json.dumps({'swap_samples': [[time.time() - age, 1]]}))
+        for used, age, expected in [('3.1', 299, 0), ('3', 299, 1), ('9', 301, 1)]:
+            home = self._case({'LOADGATE_SWAP_GB': used}, prep=lambda h: prep(h, age))
+            self.assertEqual(len(launched(home)), expected)
+            self.assertEqual(admission(home)['admit'], bool(expected))
+
+    def test_more_than_2500_processes_warns(self):
+        for count in (2500, 2501):
+            home = self._case(prep=lambda h: stub_ps(h, count))
+            self.assertEqual(len(launched(home)), 1)
+            self.assertEqual(any('procs' in w for w in admission(home)['warnings']), count > 2500)
 
     def test_more_than_40_live_worktrees_warns_but_admits(self):
         def prep(home, count=41):
@@ -98,7 +104,10 @@ class GateTests(unittest.TestCase):
                 j = f'RQ-LIVE-{i:02d}'
                 (home / 'Projects' / 'ashlrai' / 'wt' / j).mkdir()
                 (home / '.ashlr-runs' / f'{j}.base').write_text(f'deadbeef x {home}/Projects/ashlrai/wt/{j} claude\n')
-        home = self._case(prep=prep)
+            (home / 'stubbin' / 'ps').write_text('#!/bin/bash\n' + ''.join(f'echo \"{1000+i} launch.sh RQ-LIVE-{i:02d} fixture\"\n' for i in range(count)))
+        capacity = {'slot': devin_slot(target=64, ceiling=64, hard_cap=64, last_change=int(1e15)),
+                    'top': {'hard_cap': 64}}
+        home = self._case({'LOADGATE_NCPU': '64'}, prep=prep, **capacity)
         self.assertEqual(launched(home), ['RQ-GATE-0'])
         self.assertEqual(admission(home)['worktrees'], 41)
         self.assertIn('worktrees 41 > 40', admission(home)['warnings'])
@@ -106,9 +115,23 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(admission(home)['reason'])
         self.assertIn('LOADGATE warn (non-tripping): worktrees 41 > 40', events(home))
         # 40 worktrees is the limit, not over it; they sit on the held claude lane so only the gate decides.
-        home = self._case(prep=lambda h: prep(h, 40))
+        home = self._case({'LOADGATE_NCPU': '64'}, prep=lambda h: prep(h, 40), **capacity)
         self.assertEqual(admission(home)['worktrees'], 40)
         self.assertEqual(admission(home)['warnings'], [])
+
+    def test_dead_worktrees_do_not_count(self):
+        def prep(home):
+            w = home / 'Projects' / 'ashlrai' / 'wt' / 'RQ-DEAD'
+            w.mkdir()
+            (home / '.ashlr-runs' / 'RQ-DEAD.base').write_text(f'deadbeef x {w} claude\n')
+        home = self._case(prep=prep)
+        self.assertEqual(admission(home)['worktrees'], 0)
+
+    def test_threshold_overrides(self):
+        home = self._case({'GATE_PRESSURE_MIN': '8', 'LOADGATE_PRESSURE': '4',
+                           'GATE_LOAD_PER_CPU': '4', 'LOADGATE_LOADAVG': '64'})
+        self.assertTrue(admission(home)['admit'])
+        self.assertFalse(admission(home)['soft_load'])
 
     def test_stale_daemon_tick_warns_but_admits(self):
         home = self._case(prep=lambda h: set_daemon_tick(h, '2020-01-01T00:00:00Z'))
@@ -124,9 +147,9 @@ class GateTests(unittest.TestCase):
             self.assertIsNone(admission(home)['reason'], value)
 
     def test_warnings_do_not_mask_a_tripping_gate(self):
-        home = self._case({'LOADGATE_LOADAVG': '50'}, prep=lambda h: set_daemon_tick(h, '2020-01-01T00:00:00Z'))
+        home = self._case({'LOADGATE_PRESSURE': '4'}, prep=lambda h: set_daemon_tick(h, '2020-01-01T00:00:00Z'))
         self.assertEqual(launched(home), [])
-        self.assertIn('loadavg', admission(home)['reason'])
+        self.assertIn('memory_pressure', admission(home)['reason'])
         self.assertNotIn('daemon_tick_stale', admission(home)['reason'])
         self.assertRegex(admission(home)['warnings'][0], r'daemon_tick_stale')
 
@@ -135,7 +158,15 @@ class GateTests(unittest.TestCase):
             (home / '.ashlr-runs' / 'DISKGUARD_TEST').write_text('')
         home = self._case({'DISKGUARD_FREE_GB': '20'}, prep=prep)
         self.assertEqual(launched(home), [])
+        self.assertFalse(admission(home)['admit'])
+        self.assertIn('disk_free', admission(home)['reason'])
         self.assertIn('DISKGUARD hard_stop 20G < 30G, no launches', events(home))
+
+    def test_disk_at_hard_stop_threshold_does_not_trip(self):
+        home = self._case({'DISKGUARD_FREE_GB': '30'}, prep=lambda h:
+                          (h / '.ashlr-runs' / 'DISKGUARD_TEST').write_text(''))
+        self.assertTrue(admission(home)['admit'])
+        self.assertIsNone(admission(home)['gate_reason'])
 
     def test_fresh_daemon_tick_just_inside_window_admits(self):
         import datetime as dt
@@ -144,7 +175,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(launched(home), ['RQ-GATE-0'])
 
     def test_owner_off_switch_disables_the_gate(self):
-        home = self._case({'LOADGATE_LOADAVG': '500'}, prep=lambda h: (h / '.ashlr-runs' / 'queue' / 'LOADGATE_OFF').write_text(''))
+        home = self._case({'LOADGATE_PRESSURE': '4'}, prep=lambda h: (h / '.ashlr-runs' / 'queue' / 'LOADGATE_OFF').write_text(''))
         self.assertEqual(launched(home), ['RQ-GATE-0'])
         self.assertTrue(admission(home)['disabled'])
 
@@ -159,7 +190,7 @@ class GateTests(unittest.TestCase):
         tmp, home = ready_fixture()
         self.addCleanup(tmp.cleanup)
         for _ in range(2):
-            tick(home, {'LOADGATE_LOADAVG': '90'})
+            tick(home, {'LOADGATE_PRESSURE': '4'})
         self.assertEqual(events(home).count('LOADGATE tripped'), 1)
         tick(home)
         self.assertIn('LOADGATE clear', events(home))
@@ -236,7 +267,10 @@ class HardCapTests(unittest.TestCase):
         return home
 
     def test_hard_cap_seeded_per_pool(self):
-        home = self._devin({})
+        tmp = build()  # No explicit hard_cap from devin_slot: exercise production defaults.
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        self.assertEqual(tick(home).returncode, 0)
         s = slots_of(home)
         self.assertEqual({k: v['hard_cap'] for k, v in s.items() if isinstance(v, dict)},
                          {'codex-cmp': 32, 'codex-personal': 32, 'claude': 8, 'devin': 10, 'claude-api': 8, 'codex-local': 6})
@@ -268,12 +302,12 @@ class HardCapTests(unittest.TestCase):
         self.assertEqual(slots_of(home)['devin']['target'], 7)
 
     def test_ramp_pauses_while_gate_tripped(self):
-        home = self._devin({'target': 6, 'floor': 3, 'ceiling': 16, 'hard_cap': 16}, running=6, env={'LOADGATE_LOADAVG': '90'})
+        home = self._devin({'target': 6, 'floor': 3, 'ceiling': 16, 'hard_cap': 16}, running=6, env={'LOADGATE_PRESSURE': '4'})
         self.assertEqual(slots_of(home)['devin']['target'], 6)
         self.assertNotIn('SLOTS devin 6->', events(home))
 
     def test_ramp_resumes_when_gate_clears(self):
-        home = self._devin({'target': 6, 'floor': 3, 'ceiling': 16, 'hard_cap': 16}, running=6, env={'LOADGATE_LOADAVG': '90'})
+        home = self._devin({'target': 6, 'floor': 3, 'ceiling': 16, 'hard_cap': 16}, running=6, env={'LOADGATE_PRESSURE': '4'})
         tick(home)
         self.assertEqual(slots_of(home)['devin']['target'], 8)
 
@@ -311,7 +345,7 @@ class AdmissionSnapshotTests(unittest.TestCase):
     def test_local_mid_cap_load_bands_and_override(self):
         tmp, home = ready_fixture(0)
         self.addCleanup(tmp.cleanup)
-        for load, expected in [('3.9', 4), ('4', 2), ('8', 2), ('8.1', 1)]:
+        for load, expected in [('3.9', 4), ('4', 2), ('8', 2), ('8.1', 2)]:
             with self.subTest(load=load):
                 r = tick(home, {'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': load})
                 self.assertEqual(r.returncode, 0, r.stderr)
@@ -322,7 +356,7 @@ class AdmissionSnapshotTests(unittest.TestCase):
         self.assertEqual(admission(home)['local_mid_cap'], 4)
 
     def test_local_mid_cap_limits_launches(self):
-        for load, expected in [('1', 4), ('4', 2), ('9', 0)]:
+        for load, expected in [('1', 4), ('4', 2), ('9', 2)]:
             with self.subTest(load=load):
                 slots = held_lanes()
                 slots['codex-local'] = {'target': 6, 'floor': 0, 'ceiling': 6, 'hard_cap': 6, 'last_change': int(1e15)}
@@ -365,8 +399,8 @@ class AdmissionSnapshotTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         tick(home, {'LOADGATE_LOADAVG': '3.5', 'LOADGATE_NCPU': '10'})
         a = admission(home)
-        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 20.0, 0, 0))
-        self.assertEqual(a['schema'], 'dispatchd.admission.v1')
+        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 30.0, 0, 0))
+        self.assertEqual(a['schema'], 'dispatchd.admission.v2')
         self.assertEqual(json.loads((home / '.ashlr-runs' / 'queue' / 'status.json').read_text())['admission']['cap'], a['cap'])
 
 

@@ -5,12 +5,20 @@ import { runQuery } from '../../../data/cache.js';
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefresh } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { inboxTailQuery, postInterjection } from './interject-queries.js';
+import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
 import { ackState, ackText, loadDraft, newestLeaderPassMs, parseInboxAt, saveDraft, sourceChip } from './interject-ack-model.js';
 import { loadHistory, pushHistory, recall } from './interject-history.js';
 import styles from './InterjectBox.module.css';
 
 const UNAVAILABLE = 'The inbox API is not in this build yet.';
+const ACK_POLL_MS = 15_000;
+const ACK_GIVE_UP_MS = 20 * 60_000;
+const ACK_TEXT = {
+  waiting: 'Sent · waiting for the planner',
+  acked: 'Planner acknowledged',
+  skipped: 'Planner saw it · no reply route',
+  expired: 'Not acknowledged yet · check the Inbox pane',
+} as const;
 const absent = (error: unknown) => error instanceof ApiError && (error.status === 404 || error.status === 503);
 
 export function InterjectBox() {
@@ -37,6 +45,21 @@ export function InterjectBox() {
     const timer = setTimeout(() => setSent(null), 5_000);
     return () => clearTimeout(timer);
   }, [sent]);
+  const [ackWait, setAckWait] = useState<{ id: string; state: keyof typeof ACK_TEXT } | null>(null);
+  const waitingId = ackWait?.state === 'waiting' ? ackWait.id : null;
+  useEffect(() => {
+    if (waitingId === null) return;
+    const controller = new AbortController();
+    const finish = (state: keyof typeof ACK_TEXT) => setAckWait({ id: waitingId, state });
+    const interval = setInterval(() => {
+      readInboxAck(waitingId, controller.signal).then(state => {
+        if (controller.signal.aborted) return;
+        if (state === 'acked' || state === 'skipped') finish(state);
+      }, () => { /* A failed poll keeps waiting. */ });
+    }, ACK_POLL_MS);
+    const giveUp = setTimeout(() => finish('expired'), ACK_GIVE_UP_MS);
+    return () => { controller.abort(); clearInterval(interval); clearTimeout(giveUp); };
+  }, [waitingId]);
   const missing = unavailable || absent(read.error);
   const canSend = !missing && !sending && draft.trim().length > 0 && draft.length <= 6_000;
 
@@ -46,12 +69,14 @@ export function InterjectBox() {
     setSending(true);
     setMessage('');
     setSent(null);
+    setAckWait(null);
     try {
       const result = await postInterjection(draft.trim());
       try { pushHistory(window.localStorage, draft.trim()); } catch { /* Storage can be unavailable. */ }
       cursor.current = null;
       updateDraft('');
       setSent(result.at);
+      if (result.id) setAckWait({ id: result.id, state: 'waiting' });
       refresh();
     } catch (error) {
       if (absent(error)) setUnavailable(true);
@@ -107,6 +132,7 @@ export function InterjectBox() {
       </div>
     </form>
     <p role="status" aria-live="polite">{missing ? UNAVAILABLE : message || (sent ? `Sent · ${new Date(sent).toLocaleTimeString()}` : '')}</p>
+    {ackWait && !missing && !message ? <p role="status" aria-live="polite">{ACK_TEXT[ackWait.state]}</p> : null}
     <h3>Recent inbox entries</h3>
     {entries.length ? <ol className={styles.tail}>{entries.map((entry, index) => <li key={`${entry.at}-${index}`}>
       <div className={styles.meta}>{entry.at} · <Tag size="sm">{sourceChip(entry.source)}</Tag></div>

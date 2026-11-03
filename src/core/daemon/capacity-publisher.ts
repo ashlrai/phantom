@@ -127,6 +127,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
   let timer: ReturnType<typeof setInterval> | null = null;
   let stopped = false;
   let historyError: string | null = null;
+  let retryAt = 0;
 
   const set = (state: PublisherState, reason: string): PublisherStatus => {
     status = { state, reason, lastPublishedAt: status.lastPublishedAt };
@@ -261,10 +262,16 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
 
   function cycle(): Promise<PublisherStatus> {
     if (inFlight) return inFlight;
+    if (stopped || deps.nowMs() < retryAt) return Promise.resolve(status);
     const previous = status.state;
     inFlight = runCycle()
       .catch(() => set('failed', 'the capacity publisher failed; check local account configuration and retry phm capacity publish'))
       .then((result) => {
+        // Status readers may request another cycle immediately after failure.
+        // Keep unavailable leases and failed probes idle between timer checks.
+        retryAt = ['failed', 'sample-timeout', 'lease-held-elsewhere'].includes(result.state)
+          ? deps.nowMs() + CHECK_EVERY_MS
+          : 0;
         // Log transitions only (a steady dormant/fresh state is not news).
         if (result.state !== previous && result.state !== 'fresh' && result.state !== 'dormant') {
           try { deps.log(`daemon capacity publisher: ${result.reason}`); } catch { /* logging must not reject a cycle */ }

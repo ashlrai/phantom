@@ -6,6 +6,8 @@ import { scrubSecrets } from '../util/scrub.js';
 import { inboxChannelSlug } from './inbox-channel-slug.js';
 
 export interface InboxEntry {
+  id?: string;
+  channel?: string;
   at: string;
   source: string;
   priority: string | null;
@@ -19,7 +21,7 @@ export interface InboxAppendOptions {
 }
 
 export type InboxAppendResult =
-  | { ok: true; at: string; bytes: number }
+  | { ok: true; at: string; bytes: number; id: string }
   | { ok: false; reason: 'empty' | 'too-long' | 'secret-shaped' | 'write-failed' };
 
 export const INBOX_MAX_CHARS = 6000;
@@ -94,6 +96,8 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
       heading = undefined;
       channelEntry = {
         at: localTimestamp(date),
+        channel: channel[2]!,
+        ...(channel[3] ? { id: channel[3] } : {}),
         source: `${channel[2]}${channel[3] ? ` (${channel[3]})` : ''}`.slice(0, 80),
         priority: null,
       };
@@ -123,12 +127,12 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const now = (opts.now ?? (() => new Date()))();
     const at = localTimestamp(now);
     const eventTimestamp = now.toISOString().slice(0, 19).replace('T', ' ');
-    const { entry } = formatChannelEntry(clean, source, now);
+    const { entry, id } = formatChannelEntry(clean, source, now);
     await mkdir(join(runsDir, 'leader'), { recursive: true });
     await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
     // The inbox owns acceptance; the dispatch event is only observational.
     await appendFile(join(runsDir, 'dispatch-events.log'), `${eventTimestamp} INBOX new entry from ${source}\n`, { encoding: 'utf8', flag: 'a' }).catch(() => undefined);
-    return { ok: true, at, bytes: Buffer.byteLength(entry, 'utf8') };
+    return { ok: true, at, id, bytes: Buffer.byteLength(entry, 'utf8') };
   } catch {
     return { ok: false, reason: 'write-failed' };
   }

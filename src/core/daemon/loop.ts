@@ -5595,9 +5595,17 @@ export async function tick(
   let selectionResourceSnapshot: Awaited<ReturnType<typeof getResourceSnapshot>> | null = null;
   let availableSlotsForSelection: number | null = null;
   if (!opts.dryRun && routingCfg.foundry?.fabric?.concurrentDispatch === true) {
-    selectionResourceSnapshot = await getResourceSnapshot(routingCfg).catch(() => null);
+    const selectionPhase = await runPhase(
+      'selection capacity', TICK_PHASE_CAPACITY_MS, () => getResourceSnapshot(routingCfg),
+    );
+    if (selectionPhase.status !== 'ok' || !selectionPhase.value) {
+      return recordTick({
+        ts: now, itemsConsidered: 0, proposalsCreated: 0, spentUsd: 0,
+        reason: 'selection-capacity-unavailable',
+      });
+    }
+    selectionResourceSnapshot = selectionPhase.value;
     if (
-      selectionResourceSnapshot &&
       productionVelocity.enabled &&
       productionVelocity.fillQueueToSlots
     ) {
