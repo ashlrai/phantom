@@ -30,6 +30,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'conductor-permit', 'signals',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'channels',
+  'context',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and

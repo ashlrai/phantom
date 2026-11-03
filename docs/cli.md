@@ -23,7 +23,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (recall, learn, genome, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (enroll, …)
-    observability   Observability - cost, telemetry, audit (router-calibration, queue, pulse, …)
+    observability   Observability - cost, telemetry, audit (router-calibration, queue, signals, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -82,6 +82,7 @@ Every command, grouped by topic.
     models start                                                          Best-effort start a locally-installed Ollama (never downloads).
     local-runtime <status|start|stop|restart|reshape|logs|resolve-model>  Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.
     local-runtime install|uninstall                                       Add or remove the opt-in launch agent that keeps llama-server up across logout/crashes; install is refused while the kill switch is engaged.
+    context read | write [--json]                                         Read current company context or save a sourced note.
     eval [--limit N]                                                      Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).
     eval attention [--window 1d|7d|30d]                                   Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.
     skills list [--status <s>] [--limit N] [--json]                       List skills learned from merged PRs (newest revision each; counts are real or "unknown").
@@ -118,6 +119,7 @@ Every command, grouped by topic.
     enroll remove <repo>                                                                                                                                          Remove a repo from the enrollment registry.
     enroll kill on|off                                                                                                                                            Toggle the global autonomous kill switch.
     backlog                                                                                                                                                       Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).
+    select [--json] [--dry-run] [--top <n>]                                                                                                                       Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
@@ -236,6 +238,7 @@ Every command, grouped by topic.
   Observability - cost, telemetry, audit
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]             Compare recorded router predictions with outcomes and usage.
     queue report --events <file> [--json]                                               Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
+    signals [--json]                                                                    Read real repository adoption signals.
     pulse [--window 1d|7d|30d]                                                          Local observability dashboard: tokens, cost, sessions, commits.
     pulse --json                                                                        Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
     pulse --project <name>                                                              Restrict pulse rollup to a single project.
@@ -243,6 +246,7 @@ Every command, grouped by topic.
     pulse-test                                                                          Fleet→pulse connectivity + auth probe (read-only).
     resource [--json] [--directory <fleet-directory>]                                   Refresh the shared resource.v1 view in fleet.json from recorded inputs.
     resources [--json] [--watch]                                                        Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
+    capacity publish [--json]                                                           Refresh local subscription usage metadata once with this node’s local authentication.
     budget <show|add> [--json]                                                          Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
     usage                                                                               Frontier usage table: per-engine calls/tokens/cost + window state.
     queue stats [--json] [--window <seconds>]                                           Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
@@ -250,6 +254,7 @@ Every command, grouped by topic.
     telemetry test                                                                      Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]  Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                 Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
+    lanes health [--json]                                                               Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
 
   Integrations - MCP, GitHub, Vercel, editors
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
