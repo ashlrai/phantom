@@ -101,3 +101,10 @@ jobs. Records use `job` (or `job_id`/`jobId`), `event` and `ts` (or
 ambiguous repeated boundaries are reported as unmeasured, not estimated;
 phase totals need not cover the whole wall time. Existing ledgers may not yet
 contain all boundaries.
+
+## App drive
+
+`phm drive <devin|claude|codex|phantom> <start|status|send-prompt|read-result> --json`
+uses enrolled CLI/API seats through authenticated numeric loopback. See
+[App drive](docs/APP-DRIVE.md) for examples and DESK integration limits.
+Security 606e84d2 must pin new loopback-client changes before merge.

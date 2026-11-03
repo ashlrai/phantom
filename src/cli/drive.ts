@@ -4,7 +4,11 @@ import { isAbsolute, join } from 'node:path';
 import { driveLoop, type DriveDependencies } from '../core/drive/supervisor.js';
 import { checkDrivePublisher, ScriptDriveBridge } from '../core/drive/script-bridge.js';
 
-const HELP = `Usage: phm drive [--once] [--dry-run] [--tick <seconds>]
+const HELP = `Apps: phm drive <devin|claude|codex|phantom> <start|status|send-prompt|read-result> --json
+      [--prompt <text>] [--handle <session>] [--seat <id>] [--project <path>]
+See docs/APP-DRIVE.md for authenticated loopback setup.
+
+Usage: phm drive [--once] [--dry-run] [--tick <seconds>]
                  [--bridge <absolute-path>] [--publisher <absolute-path/publish.sh>]
                  [--pause-file <absolute-path>]
 
@@ -53,6 +57,7 @@ export async function driveControlPresent(path: string): Promise<boolean> {
 }
 
 export async function cmdDrive(args: string[], dependencies?: DriveDependencies): Promise<number> {
+  if (['devin', 'claude', 'codex', 'phantom'].includes(args[0] ?? '')) return (await import('./drive-app.js')).cmdDriveApp(args);
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(HELP); return 0; }
   let options: DriveOptions;
   try { options = parseDriveOptions(args); }
