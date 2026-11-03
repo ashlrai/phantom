@@ -4,3 +4,4 @@
 - [Standing lane freshness](docs/FLEET-LANE-FRESHNESS.md): `phm fleet lane-slots --json`, observations during mirror prep, per-repo timeout and unknown capacity.
 - [Team invite, join and remove](docs/TEAM.md#invite-join-and-remove-a-teammate): `phm team invite <gh-user>`, `phm team join <invite>`, `phm team remove <gh-user> --json`; membership only, no credentials, each node keeps its own local auth, removal drains claims.
 - [Learned skills](docs/SKILLS.md): `phm skills list --json`; reusable skills written after verified PR merges, scrubbed and size-capped, counts real or `unknown`.
+- [Vendor-neutral agent bus](bus/README.md): `phm bus send --to <agent> "<markdown>"`, `phm bus read --for <label> --since 2h --unacked`, `phm bus ack <id>`; bus.message.v1 JSONL under `~/.ashlr-runs/bus`, shared by Claude, Codex, Devin, Grok, local and human senders, plus the `phantom_bus` MCP tool.

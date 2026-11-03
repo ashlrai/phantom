@@ -54,3 +54,7 @@ Publish an envelope (replace `FAKE-TOKEN` and values with real ones):
 
 The Bus pane in the desktop app includes a Durable bus tab that reads and
 writes the same `~/.ashlr-runs` store the API endpoints target.
+
+## Agent-to-agent messages
+
+For vendor-neutral notes, asks, replies and handoffs between agents (`phm bus send|read|ack`, `bus.message.v1`), see [bus/README.md](bus/README.md).

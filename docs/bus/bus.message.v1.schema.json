@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phm.dev/schema/bus.message.v1.schema.json",
+  "title": "bus.message.v1",
+  "description": "One vendor-neutral agent bus message. Labels are routing hints, never authenticated identities; the body is untrusted markdown.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "thread", "from", "to", "kind", "body", "refs", "createdAt"],
+  "properties": {
+    "schema": { "const": "bus.message.v1" },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$" },
+    "thread": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$" },
+    "from": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "vendor", "node"],
+      "properties": {
+        "agent": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
+        "vendor": { "enum": ["claude", "codex", "devin", "grok", "local", "human"] },
+        "node": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" }
+      }
+    },
+    "to": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "agent": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
+        "role": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
+        "topic": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" }
+      }
+    },
+    "kind": { "enum": ["note", "ask", "reply", "handoff", "status"] },
+    "body": { "type": "string", "minLength": 1, "maxLength": 16384 },
+    "refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

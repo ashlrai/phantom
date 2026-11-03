@@ -777,6 +777,13 @@ const loadDevinCmd = lazyCmd(
   'devin command requires a current build of src/cli/devin.ts (3.15 Devin lane).',
 );
 
+// ─── vendor-neutral agent bus (bus.message.v1) ──────────────────────
+const loadBusCmd = lazyCmd(
+  () => import('./bus.js'),
+  (m) => m.runBusCli as Cmd,
+  'bus command requires a current build of src/cli/bus.ts.',
+);
+
 const loadOpenaiAgentsCmd = lazyCmd(
   () => import('./openai-agents.js'),
   (m) => m.runOpenaiAgentsCli as Cmd,
@@ -2703,6 +2710,13 @@ async function main(): Promise<void> {
         // nothing merges from here.
         const cmdDevin = await loadDevinCmd();
         process.exitCode = await cmdDevin(rest);
+        break;
+      }
+
+      case 'bus': {
+        // Vendor-neutral agent bus: send / read / ack bus.message.v1 (src/cli/bus.ts).
+        const cmdBus = await loadBusCmd();
+        process.exitCode = await cmdBus(rest);
         break;
       }
 

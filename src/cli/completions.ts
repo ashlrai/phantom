@@ -41,6 +41,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'cloud',
   // 3.15 Devin lane.
   'devin',
+  'bus',
   'openai-agents',
   'benchmark', 'queue', 'select', 'pool',
   // 3.15 automations.
@@ -133,6 +134,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
   cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
+  // Mirror the verb switch in src/cli/bus.ts (runBusCli).
+  bus: ['send', 'read', 'ack', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
