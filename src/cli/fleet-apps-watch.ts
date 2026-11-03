@@ -7,7 +7,7 @@ import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const execFileAsync = promisify(execFile);
-const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--json | --jsonl]';
+const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--json | --jsonl]';
 export interface FleetAppsWatchDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
@@ -22,7 +22,8 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   }
   const invalid = (): number => { console.error(`error: invalid fleet apps-watch arguments\n${usage}`); return 2; };
   const apps: string[] = [];
-  let duration = 0, interval = 1000, root: string | undefined, stopFile: string | undefined, json = false, jsonl = false;
+  let duration = 0, interval = 1000, root: string | undefined, stopFile: string | undefined;
+  let maxConsecutiveFailures = 1, json = false, jsonl = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -31,7 +32,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       if (!apps.includes(arg)) apps.push(arg);
       continue;
     }
-    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--json', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
+    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--max-consecutive-failures', '--json', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
     seen.add(arg);
     if (arg === '--json') { json = true; continue; }
     if (arg === '--jsonl') { jsonl = true; continue; }
@@ -39,6 +40,11 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     if (!value || value.startsWith('-')) return invalid();
     if (arg === '--root') { root = value; continue; }
     if (arg === '--stop-file') { stopFile = resolve(value); continue; }
+    if (arg === '--max-consecutive-failures') {
+      if (!/^[1-9]$|^[1]0$/.test(value)) return invalid();
+      maxConsecutiveFailures = Number(value);
+      continue;
+    }
     if (!/^[0-9]{1,9}$/.test(value)) return invalid();
     const n = Number(value);
     if (arg === '--duration-ms') { if (n < 1 || n > 300000) return invalid(); duration = n; }
@@ -110,6 +116,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     } finally { finished = true; clearTimeout(timer); clearTimeout(poll); signal?.removeEventListener('abort', stop); }
   };
   let cycles = 0, recoveries = 0;
+  let consecutiveFailures = 0, totalFailedCycles = 0;
   let lastObservedState: { app: string; observedRunning: boolean }[] | null = null;
   let outcome: 'completed' | 'failed' | 'cancelled' = 'completed';
   while (!signal?.aborted && remaining() > 0) {
@@ -126,8 +133,21 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     const healthy = result.value.code === 0 && report?.ok === true && valid && rows.every(row => row.observedRunning === true);
     const recovered = healthy ? rows.filter(row => row.launched === true).length : 0;
     recoveries += recovered;
-    if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, observedState: valid ? lastObservedState : null })}\n`);
-    if (!healthy) { outcome = 'failed'; break; }
+    if (!healthy) {
+      consecutiveFailures++;
+      totalFailedCycles++;
+      if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null })}\n`);
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        outcome = 'failed';
+      }
+      const left = remaining();
+      if (outcome === 'failed' || left <= 0) break;
+      const pause = await bounded(left, s => sleep(Math.min(interval, left), s));
+      if (pause.stopped) break;
+      continue;
+    }
+    consecutiveFailures = 0;
+    if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null })}\n`);
     const left = remaining();
     if (left <= 0) break;
     const pause = await bounded(left, s => sleep(Math.min(interval, left), s));
@@ -135,7 +155,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   }
   if (fileError) outcome = 'failed';
   else if (signal?.aborted || fileStopped) outcome = 'cancelled';
-  const summary = { apps, outcome, cycles, recoveries, lastObservedState };
+  const summary = { apps, outcome, cycles, recoveries, consecutiveFailures, totalFailedCycles, lastObservedState };
   if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...summary })}\n`);
   else if (json) process.stdout.write(`${JSON.stringify(summary)}\n`);
   else console.log(`${apps.join(', ')}: ${outcome}; cycles=${cycles}, recoveries=${recoveries}`);
