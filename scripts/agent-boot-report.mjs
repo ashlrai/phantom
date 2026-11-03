@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+/* global AbortController */
 import { spawn } from 'node:child_process';
+import { setTimeout, clearTimeout } from 'node:timers';
 
 const HELP = `Usage: node scripts/agent-boot-report.mjs [--phm-bin <executable>] [--timeout-ms <100..60000>]
        node scripts/agent-boot-report.mjs --help
