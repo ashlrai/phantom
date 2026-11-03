@@ -111,8 +111,16 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
   /** One app-ensure child; the remaining budget bounds both its own timeout and a hard wall timer. */
   const attempt = async (app: string, budgetMs: number): Promise<AppResult> => {
     const controller = new AbortController();
-    const abort = (): void => controller.abort();
+    let settleAbort!: () => void;
+    const cancelled = new Promise<void>(resolve => { settleAbort = resolve; });
+    const abort = (): void => { controller.abort(); settleAbort(); };
     signal?.addEventListener('abort', abort, { once: true });
+    // Abort may have happened between the batch check and listener registration.
+    if (signal?.aborted) {
+      abort();
+      signal.removeEventListener('abort', abort);
+      return { app, attempted: false, outcome: 'unattempted', launched: false, observedRunning: false, reason: 'cancelled' };
+    }
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     // A child that ignores its own timeout still cannot outlive the batch budget.
@@ -127,7 +135,9 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
       timeoutMs: budgetMs, signal: controller.signal,
     }).catch((): AppsEnsureChildRun => ({ code: null, stdout: '' }));
     try {
-      const { code, stdout } = await Promise.race([child, bound]);
+      const result = await Promise.race([child, bound, cancelled]);
+      if (signal?.aborted) return { app, attempted: true, outcome: 'cancelled', launched: false, observedRunning: false, reason: 'cancelled' };
+      const { code, stdout } = result!;
       const reported = parseReport(stdout, app);
       const outcome = reported?.outcome ?? (signal?.aborted ? 'cancelled' : timedOut ? 'timeout' : 'unavailable');
       const observedRunning = code === 0 && reported !== null && reported.running && RUNNING_OUTCOMES.has(reported.outcome);
@@ -144,7 +154,7 @@ export async function cmdFleetAppsEnsure(args: string[], deps: FleetAppsEnsureDe
     if (signal?.aborted || Math.floor(deadline - now()) <= 0) break;
     results.push(await attempt(app, Math.floor(deadline - now())));
   }
-  const endedBy = results.length === apps.length ? 'complete' : signal?.aborted ? 'cancelled' : 'deadline';
+  const endedBy = signal?.aborted ? 'cancelled' : results.length === apps.length ? 'complete' : 'deadline';
   const rows: AppResult[] = apps.map((app, i) => results[i]
     ?? { app, attempted: false, outcome: 'unattempted', launched: false, observedRunning: false, reason: endedBy === 'cancelled' ? 'cancelled' : 'deadline' });
   const ok = rows.every(row => row.observedRunning);
