@@ -26,7 +26,7 @@ it.each([
   expect(events()).toMatchObject([
     { healthy: true, observedState: [{ app: 'Phantom', observedRunning: true }, { app: 'Cursor', observedRunning: true }] },
     { healthy: false, observedState: null },
-    { outcome: 'failed', cycles: 2, lastObservedState: null },
+    { outcome: 'failed', cycles: 2, lastObservedState: [{ app: 'Phantom', observedRunning: true }, { app: 'Cursor', observedRunning: true }] },
   ]);
   expect(runner).toHaveBeenCalledTimes(2);
 });
@@ -53,6 +53,6 @@ it.each(['rejection', 'timeout'] as const)('clears the prior sample on child %s'
   const runner = vi.fn<AppsEnsureChildRunner>().mockResolvedValueOnce(healthy).mockImplementationOnce(() =>
     failure === 'rejection' ? Promise.reject(new Error('failed')) : new Promise(() => {}));
   expect(await cmdFleetAppsWatch(['Phantom', 'Cursor', '--duration-ms', '150', '--interval-ms', '100', '--json'], deps(runner))).toBe(1);
-  expect(events()[0]).toMatchObject({ outcome: 'failed', cycles: 1, lastObservedState: null });
+  expect(events()[0]).toMatchObject({ outcome: 'failed', cycles: 1, lastObservedState: [{ app: 'Phantom', observedRunning: true }, { app: 'Cursor', observedRunning: true }] });
   expect(runner).toHaveBeenCalledTimes(2);
 });

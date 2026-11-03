@@ -49,6 +49,7 @@ import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationEr
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './verse/fleet-apps-api.js';
+import { watchFleetApps, type FleetAppsWatchOptions, type FleetAppsWatchResult } from '../cli/fleet-apps-watch.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
 // M169: best-effort imports for new elite-state tools
@@ -335,6 +336,32 @@ const TOOLS: NativeToolImpl[] = [
       timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
       intervalMs: (args.intervalMs as number | undefined) ?? 1000,
     }),
+  },
+  {
+    name: 'phantom_fleet_apps_watch',
+    description: 'Supervise an explicit group of local managed apps through sequential batches under a shared deadline.',
+    get inputSchema() { return { type: 'object', properties: {
+      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
+      durationMs: { type: 'integer', minimum: 1, maximum: 10000 },
+      intervalMs: { type: 'integer', minimum: 100, maximum: 10000 },
+      maxConsecutiveFailures: { type: 'integer', minimum: 1, maximum: 10 },
+    }, required: ['apps', 'durationMs'], additionalProperties: false }; },
+    safety: 'append',
+    handler: async args => {
+      const opts: FleetAppsWatchOptions = {
+        apps: args.apps as string[],
+        durationMs: args.durationMs as number,
+        intervalMs: (args.intervalMs as number | undefined) ?? 1000,
+        maxConsecutiveFailures: (args.maxConsecutiveFailures as number | undefined) ?? 1,
+      };
+      // MCP tool delegates to the watch helper. The helper manages its own child
+      // runner internally (which resolves the CLI entry) and supervision loop.
+      // No stdout rendering is done here — the result is structured.
+      return await watchFleetApps(opts, {
+        now: (args.now as (() => number)) | undefined,
+        signal: (args.signal as AbortSignal) | undefined,
+      });
+    },
   },
   {
     name: 'phantom_fleet_orders',
@@ -1422,6 +1449,16 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000)) ||
       ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
       ? 'invalid fleet apps await arguments' : null;
+  } else if (name === 'phantom_fleet_apps_watch') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const apps = args.apps;
+    invalid = !object || Object.keys(args).some(key => !['apps', 'durationMs', 'intervalMs', 'maxConsecutiveFailures'].includes(key)) ||
+      !Array.isArray(apps) || apps.length < 1 || apps.length > 8 || new Set(apps).size !== apps.length ||
+      apps.some(app => typeof app !== 'string' || !FLEET_APPS.some(allowed => allowed === app)) ||
+      !Number.isInteger(args.durationMs) || (args.durationMs as number) < 1 || (args.durationMs as number) > 10000 ||
+      ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 10000)) ||
+      ('maxConsecutiveFailures' in args && (!Number.isInteger(args.maxConsecutiveFailures) || (args.maxConsecutiveFailures as number) < 1 || (args.maxConsecutiveFailures as number) > 10))
+      ? 'invalid fleet apps watch arguments' : null;
   } else if (name === 'phantom_fleet_drop_job') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => !['id', 'lane', 'tier', 'body'].includes(key)) ||
@@ -1488,7 +1525,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || name === 'phantom_fleet_apps_ensure' || name === 'phantom_fleet_apps_await') return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || name === 'phantom_fleet_apps_ensure' || name === 'phantom_fleet_apps_await' || name === 'phantom_fleet_apps_watch') return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1528,6 +1565,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     if (name === 'phantom_fleet_apps_await') {
       auditNativeCall(`${tool.name} keys=${argKeys} — await unavailable`, 'error');
       return textResult({ error: 'Fleet app await unavailable' }, true);
+    }
+    if (name === 'phantom_fleet_apps_watch') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — watch unavailable`, 'error');
+      return textResult({ error: 'Fleet recovery unavailable' }, true);
     }
     if (fleetObservation) {
       auditNativeCall(`${tool.name} keys=${argKeys} — observation unavailable`, 'error');
