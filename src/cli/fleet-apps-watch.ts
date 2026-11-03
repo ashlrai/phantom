@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { createAppsWatchPublisher, type AppsWatchEvent } from '../core/fleet/apps-watch-bus.js';
+import { createAppsWatchPublisher, type AppsWatchEvent, type AppsWatchDiagnostic } from '../core/fleet/apps-watch-bus.js';
 import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
@@ -138,10 +138,12 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   let cycles = 0, recoveries = 0;
   let consecutiveFailures = 0, totalFailedCycles = 0;
   let lastObservedState: { app: string; observedRunning: boolean | null }[] | null = null;
+  let lastDiagnostics: AppsWatchDiagnostic[] | null = null;
   let outcome: 'completed' | 'failed' | 'cancelled' = 'completed';
   let recoveryLimitReached = false;
   while (!signal?.aborted && remaining() > 0) {
     const budget = Math.ceil(remaining());
+    lastDiagnostics = null;
     const result = await bounded(budget, s => {
       lastObservedState = null;
       return runChild!(['fleet', 'apps-ensure', ...apps, '--json', ...(root === undefined ? [] : ['--root', root]), '--timeout-ms', String(budget)], { timeoutMs: budget, signal: s });
@@ -157,6 +159,15 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       const observed = rows.find(row => row.app === app)!.observedRunning;
       return { app, observedRunning: typeof observed === 'boolean' ? observed : null };
     });
+    const outcomes = ['running', 'launched', 'unavailable', 'launch-failed', 'timeout', 'cancelled', 'unattempted'] as const;
+    lastDiagnostics = apps.map(app => {
+      const row = valid ? rows.find(item => item.app === app) : undefined;
+      const outcome = outcomes.find(value => value === row?.outcome) ?? 'unknown';
+      return { app, outcome,
+        ...(typeof row?.attempted === 'boolean' ? { attempted: row.attempted } : {}),
+        ...(typeof row?.launched === 'boolean' ? { launched: row.launched } : {}),
+        ...(row?.reason === 'deadline' || row?.reason === 'cancelled' ? { reason: row.reason } : {}) };
+    });
     const healthy = result.value.code === 0 && report?.ok === true && valid && rows.every(row => row.observedRunning === true);
     const recovered = rows.filter(row => row && typeof row === 'object' && typeof row.app === 'string'
       && apps.includes(row.app) && typeof row.observedRunning === 'boolean' && row.launched === true
@@ -165,8 +176,8 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     if (!healthy) {
       consecutiveFailures++;
       totalFailedCycles++;
-      publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null });
-      if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null })}\n`);
+      publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
+      if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics })}\n`);
       if (consecutiveFailures >= maxConsecutiveFailures) {
         outcome = 'failed';
       }
@@ -178,8 +189,8 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       continue;
     }
     consecutiveFailures = 0;
-    publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null });
-    if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null })}\n`);
+    publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics });
+    if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null, diagnostics: lastDiagnostics })}\n`);
     if (maxRecoveries !== undefined && recoveries >= maxRecoveries) { recoveryLimitReached = true; outcome = 'failed'; break; }
     const left = remaining();
     if (left <= 0) break;
@@ -188,7 +199,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   }
   if (fileError) outcome = 'failed';
   else if (signal?.aborted || fileStopped) outcome = 'cancelled';
-  const details = { apps, outcome, cycles, recoveries, consecutiveFailures, totalFailedCycles, lastObservedState };
+  const details = { apps, outcome, cycles, recoveries, consecutiveFailures, totalFailedCycles, lastObservedState, lastDiagnostics };
   publish({ kind: 'apps-watch.summary.v1', ...details });
   const summary = { ...details, ...(recoveryLimitReached && outcome === 'failed' && !fileError ? { reason: 'recovery_limit' } : {}), ...(bus ? { bus: { published, failed: publicationFailures } } : {}) };
   if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...summary })}\n`);
