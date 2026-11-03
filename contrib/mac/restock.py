@@ -3,7 +3,7 @@
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7 rev.
 import os, re, sys, json, time, fcntl, subprocess
-from launch_precheck import precheck
+from launch_precheck import precheck, attempt_identity, empty_reason, read_attempts
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
@@ -154,12 +154,21 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     seen_pr |= prp
     if fkey: seen_file.add(fkey)
 out = []; done = []; ts = int(time.time())
+empty_attempts = read_attempts(R)
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
         p = (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n{j} ({attrs}): {text}\n\n"
              "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
              "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
              "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/.\n")
+        reason = empty_reason(j, attempt_identity(repo, p, H), empty_attempts, ts)
+        if reason:
+            skip(j, reason)
+            if not DRY:
+                with open(R + '/metrics/jobs.jsonl', 'a') as stream:
+                    stream.write(json.dumps(dict(event='skipped_empty', job=j, repo=repo,
+                                                 lane=l, reason=reason, ts=time.strftime('%Y-%m-%dT%H:%M:%S%z'))) + '\n')
+            continue
         pc = precheck(j, repo, p, H, R)
         if pc:
             done.append((i, j, pc)); skip(j, "done-noop")

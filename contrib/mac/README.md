@@ -422,3 +422,28 @@ require the host launcher's source and its sandbox review: emit readiness only
 after worktree preparation and an observed first model token, with the model
 endpoint restricted to loopback. A health GET alone is not readiness evidence.
 No production launch-to-ready or post-merge waste result is available locally.
+
+### Empty launch suppression
+
+`dispatchd.py` records `repo`, `base_sha`, and `prompt_hash` on each claim.
+The base is the local `refs/remotes/origin/HEAD` commit; this check does not
+fetch. Successful empty finishes suppress the same prompt and base for 24
+hours. `RQ-UPKEEP-*` jobs whose latest finish on that base was successfully
+empty are also excluded during restocking, until the base changes. Failed or
+unknown exits remain eligible, so authentication failures do not become cached
+no-ops. Missing refs, malformed metrics, and Git errors allow launch.
+
+Suppressed work records `event=skipped_empty`, with a reason, instead of a
+model launch or finish. Existing shell precheck skips use that event too.
+Committed changes count as work even when the worktree is clean. Claim metadata
+starts with this version; older finishes without a matching claim identity do
+not suppress work. Install through the dispatcher installation and Security
+pin process above; do not copy this code into the live dispatcher directly.
+
+Measure real progress from a 48-hour ledger window: count only `finish` rows
+with `empty=true`, sum their numeric `wall_s` divided by 60, and independently
+count `outcome` rows with `state=MERGED`. Do not count `skipped_empty` as an
+empty finish or a merge. The synthetic replay regression demonstrates this
+accounting, not a prediction of fleet savings. Recheck the live window after
+installation; the target is fewer than 100 empty finishes and 120 empty
+minutes, while preserving MERGED throughput.
