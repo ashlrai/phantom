@@ -7,6 +7,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'apps-await': () => import('./fleet-apps-await.js'),
   'apps-changes': () => import('./fleet-apps-changes.js'),
   'apps-ensure': () => import('./fleet-apps-ensure.js'),
+  'apps-events': () => import('./fleet-apps-events.js'),
   'apps-status': () => import('./fleet-apps-status.js'),
   'apps-watch': () => import('./fleet-apps-watch.js'),
   'backlog': () => import('./fleet-backlog.js'),
