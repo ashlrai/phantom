@@ -52,7 +52,9 @@ export async function cmdFleetAppWatch(args: string[], deps: FleetAppWatchDeps =
     };
   }
   const now = deps.now ?? (() => performance.now());
-  const start = now(), deadline = start + duration;
+  const start = now(), wallStart = performance.now();
+  const elapsed = (): number => Math.max(0, now() - start, performance.now() - wallStart);
+  const remaining = (): number => Math.max(0, duration - elapsed());
   let checks = 0, recoveries = 0;
   let lastObservedState: 'running' | null = null;
   let outcome: 'completed' | 'failed' | 'cancelled' = 'completed';
@@ -79,12 +81,16 @@ export async function cmdFleetAppWatch(args: string[], deps: FleetAppWatchDeps =
     }
   };
 
-  while (!signal?.aborted && deadline - now() > 0) {
-    const remaining = Math.floor(deadline - now());
-    if (remaining < 1) break;
+  while (!signal?.aborted && remaining() > 0) {
+    const budget = Math.ceil(remaining());
     checks++;
-    const result = await bounded(remaining, s => runChild!(['fleet', 'app-ensure', app, '--timeout-ms', String(remaining), ...(root === undefined ? [] : ['--root', root]), '--json'], { timeoutMs: remaining, signal: s }));
-    if (signal?.aborted || result.stopped || deadline - now() <= 0) break;
+    const result = await bounded(budget, s => runChild!(['fleet', 'app-ensure', app, '--timeout-ms', String(budget), ...(root === undefined ? [] : ['--root', root]), '--json'], { timeoutMs: budget, signal: s }));
+    if (signal?.aborted) break;
+    if (result.stopped) {
+      outcome = 'failed';
+      if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', app, check: checks, outcome: 'failed', running: null, recovered: false })}\n`);
+      break;
+    }
     let report: { app?: unknown; outcome?: unknown; running?: unknown } | null = null;
     try { report = JSON.parse(result.value?.stdout ?? '') as { app?: unknown; outcome?: unknown; running?: unknown } | null; } catch { /* untrusted child output */ }
     if (result.value?.code !== 0 || !report || report.app !== app || report.running !== true || !['running', 'launched'].includes(String(report.outcome))) {
@@ -95,14 +101,14 @@ export async function cmdFleetAppWatch(args: string[], deps: FleetAppWatchDeps =
     lastObservedState = 'running';
     if (report.outcome === 'launched') recoveries++;
     if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', app, check: checks, outcome: 'success', running: true, recovered: report.outcome === 'launched' })}\n`);
-    const left = deadline - now();
+    const left = remaining();
     if (left <= 0) break;
     const pause = await bounded(left, s => sleep(Math.min(interval, left), s));
     if (pause.stopped) break;
-    if (signal?.aborted || deadline - now() <= 0) break;
+    if (signal?.aborted || remaining() <= 0) break;
   }
   if (signal?.aborted) outcome = 'cancelled';
-  const report = { app, outcome, checks, recoveries, lastObservedState, elapsedMs: Math.max(0, Math.min(duration, Math.floor(now() - start))) };
+  const report = { app, outcome, checks, recoveries, lastObservedState, elapsedMs: Math.max(0, Math.min(duration, Math.floor(elapsed()))) };
   if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...report })}\n`);
   else if (json) process.stdout.write(`${JSON.stringify(report)}\n`);
   else console.log(`${app}: ${outcome}; checks=${checks}, recoveries=${recoveries}, last observed=${lastObservedState ?? 'unknown'}, elapsed=${report.elapsedMs}ms`);
