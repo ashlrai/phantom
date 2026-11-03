@@ -497,6 +497,7 @@ function rootPackageIsPortable(
     'bin',
     'dist',
     'docs/README.md',
+    'docs/SIGNALS.md',
     'docs/FLEET-API.md',
     'docs/PHANTOM-BRAND.md',
     'docs/COMPANIONS.md',
@@ -544,6 +545,8 @@ function rootPackageIsPortable(
     'docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md',
     'schema',
     'scripts/run-verify-command.mjs',
+    'scripts/lib/docs-pages.mjs',
+    'scripts/lib/docs-pages.d.mts',
     'scripts/scorecard-history-worker.mjs',
     'scripts/local-app-transaction.mjs',
     // Fixed host imports for builtin custody; never admit the scripts directory
