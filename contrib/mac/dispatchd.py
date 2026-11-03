@@ -257,11 +257,11 @@ def ab_scan(lane, alive_):
 # lines hold on one match because the provider names the reset; a dead credential names none, so the bar
 # is higher: at least AB_AUTH_MIN distinct failed or EMPTY finishes on the lane whose log tails carry a
 # provider auth-error line inside the 30-minute window. One transient or forged line never holds; a run
-# that produced work never counts (codex-cmp: any work; others: clean work only — ab_run's own rule).
+# that produced work never counts (codex-cmp: any work; others: clean work only; ab_run's own rule).
 # Per-job verdicts persist in <job>.authfail.seen ("<verdict> <pattern>"), so the streak accumulates
 # across ticks while git re-evaluation stays once per job. The hold is autobackoff-attributed and
 # bounded by AB_DEF like every software hold: it never touches credential storage, and ab_unhold's
-# expiry is the recovery probe — a rotated credential resumes on the next launch, a still-dead one
+# expiry is the recovery probe; a rotated credential resumes on the next launch, a still-dead one
 # re-arms after two more failures. Eligible work on healthy lanes keeps dispatching the whole time.
 AB_AUTH_MIN = 2
 _A_TOK = (r"401\b|unauthorized|authentication(?:_error| failed)?|invalid_grant|refresh token|"
@@ -648,6 +648,19 @@ lk = qlock("dispatchd-read")
 if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
 _raw = rd(Q + "/ready.tsv").splitlines(); lk.close()   # snapshot taken; writers may append from here on
 lines = [l for l in _raw if l.strip() and not l.startswith("#")] + requeue
+# Record first observation even while admission is paused or a lane is held.
+# Per-job receipts survive ticks and queue rewrites without rescanning the metrics log.
+for l in lines:
+    f = l.split("\t")
+    if len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES or f[3] not in TIERS: continue
+    receipt = RUN + "/" + f[0] + ".enqueued"
+    try:
+        with open(receipt, "x") as out: out.write(str(time.time()))
+    except FileExistsError: continue
+    try: metric({"event": "enqueue", "job": f[0], "repo": f[1], "lane": f[2], "tier": f[3]})
+    except Exception:
+        os.remove(receipt)
+        raise
 qdepth = {l: 0 for l in LANES}
 for l in lines:
     f = l.split("\t")
@@ -739,7 +752,11 @@ _pw = jload(Q + "/admission.json", {}).get("warnings") or []
 if GATE["warnings"] and _pw != GATE["warnings"]: ev("LOADGATE warn (non-tripping): " + "; ".join(GATE["warnings"]))
 if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_free_gb, DISK_HARD_STOP_GB))
 if not pause and not disk_hard_stop and not GATE["tripped"]:
-    # interleave lanes so neither starves: take candidates round-robin, cmp first
+    # Continue round-robin across ticks too: the claim cap can be smaller than
+    # the number of eligible lanes. A fixed starting lane starves the tail.
+    cursor = jload(Q + "/claim-cursor.json", {}).get("lane")
+    start = (LANES.index(cursor) + 1) % len(LANES) if cursor in LANES else 0
+    lane_order = LANES[start:] + LANES[:start]
     cand = {l: [] for l in LANES}
     for l in lines:
         f = l.split("\t")
@@ -749,10 +766,14 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if not ok:
             rest.append(l); bad += 1; continue
         cand[f[2]].append(f)
-    order = []
-    while any(cand.values()):
-        for ln in LANES:
-            if cand[ln]: order.append(cand[ln].pop(0))
+    def candidates():
+        while any(cand.values()):
+            for ln in lane_order:
+                while cand[ln]:
+                    before = len(launched)
+                    yield cand[ln].pop(0)
+                    # A blocked head must not consume this lane's turn.
+                    if len(launched) > before: break
     seen = set(); pc_n = 0; local_ok = None
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -770,7 +791,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if j in retired_ids: return "listed in queue/RETIRED"
         if re.search(r"^- RETIRED (?:\S+ )*?%s[ \[(]" % re.escape(j), rq, re.M): return "RETIRED in router-queue.md"
         return None
-    for f in order:
+    for f in candidates():
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         s = slots[lane]; res = result(j)
         if j in seen: continue  # duplicate line
@@ -812,10 +833,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             except FileNotFoundError: pass
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
+        metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         subprocess.Popen(["/bin/bash", R + "/bin/launch.sh", j, repo, lane, tier], stdin=open(pf),
                          stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
                          env=env, start_new_session=True, cwd=H)
+        jsave(Q + "/claim-cursor.json", {"lane": lane})
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
         mj = jload(R + "/models.json", {}); model = mj.get(fam + "." + tier) or mj.get(fam)
         metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap})

@@ -83,6 +83,23 @@ a tick: extra reaps and new empty-run prechecks. Disk guard: below
 `DISK_HARD_STOP_GB` (30) nothing launches (`DISKGUARD hard_stop` event) while reaps
 still run to free space.
 
+## Queue wait and claim fairness
+
+The dispatcher writes `enqueue` on first observation of a ready job, including
+while admission is paused or its lane is held. `queue/run/<job>.enqueued`
+receipts prevent duplicate enqueue events across ticks. `claim` is written after
+precheck and admission succeed, immediately before spawning the launcher. Both
+records carry `job`, `repo`, `lane`, `tier` and the event timestamp `ts`.
+Pair enqueue and claim by job to measure observed queue wait; prompt creation
+and launch are separate phases. Observation starts at the dispatcher snapshot,
+so time between a writer appending and the next snapshot is not measured.
+Requeues of the same job retain their original enqueue observation.
+
+`queue/claim-cursor.json` remembers the last successfully spawned lane. The next
+tick starts round-robin after that lane, so backlogged early lanes cannot consume
+every tick's claim limit indefinitely. Held lanes and blocked jobs are still
+skipped, and all admission, disk, local health and capacity checks still apply.
+
 ## Installing the dispatcher
 
 `install.sh` diffs `dispatchd.py`, `install-gate.py` and `launch-gate.sh` against
@@ -166,7 +183,7 @@ gh pr create --repo "$REPO" --head "masonwyatt23:$BR" --base "$DEF" --title "$ti
 ```
 
 `$R/$J.job-line` is the router queue line the publisher already reads;
-`$R/$J.diff` is optional — write `git diff "$BASE" "$TREE"` there before the
+`$R/$J.diff` is optional; write `git diff "$BASE" "$TREE"` there before the
 title call to let a loopback-only local model summarize the diff instead
 (`PR_TITLE_MODEL`/`PR_TITLE_MODEL_URL` configure the endpoint; the model answer
 is sanitized to one printable line and any error falls back to the router-line
