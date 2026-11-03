@@ -4,7 +4,7 @@ import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.j
 
 const now = new Date(2026, 10, 2, 12).getTime();
 const row = (hour: number, event: string) => `2026-11-02 ${String(hour).padStart(2, '0')}:00:00 ${event}`;
-const options = (...rows: string[]) => ({ now, readEvents: async () => rows.join('\n') });
+const options = (...rows: string[]) => ({ now, readLatestOutput: async () => null, readEvents: async () => rows.join('\n') });
 afterEach(() => vi.restoreAllMocks());
 
 describe('fleet leader-health', () => {
@@ -13,7 +13,7 @@ describe('fleet leader-health', () => {
       row(9, 'OPUS-LEADER rc=1'), row(9, 'LEADER bets=2'), row(10, 'OTHER rc=0'),
       row(10, 'OPUS-LEADER rc=2'), row(11, 'LEADER bets=0'), row(11, 'OPUS-LEADER rc=-1')));
     expect(report).toEqual({ schema: 'fleet.leader-health.v1', source: 'read',
-      consecutiveFailures: 3, hoursSinceLastSuccess: 4, lastBetAt: new Date(2026, 10, 2, 9).toISOString() });
+      cause: null, consecutiveFailures: 3, hoursSinceLastSuccess: 4, lastBetAt: new Date(2026, 10, 2, 9).toISOString() });
   });
   it('resets failures on success and reports the latest positive bet', async () => {
     const report = await readFleetLeaderHealth(options(row(8, 'OPUS-LEADER rc=1'),
@@ -23,7 +23,7 @@ describe('fleet leader-health', () => {
     expect(report.lastBetAt).toBe(new Date(2026, 10, 2, 11).toISOString());
   });
   it.each([null, ''])('leaves absent evidence unknown (%s)', async text => {
-    expect(await readFleetLeaderHealth({ now, readEvents: async () => text })).toMatchObject({
+    expect(await readFleetLeaderHealth({ now, readLatestOutput: async () => null, readEvents: async () => text })).toMatchObject({
       consecutiveFailures: null, hoursSinceLastSuccess: null, lastBetAt: null });
   });
   it('catches unreadable files without exposing their errors and uses the canonical path', async () => {
@@ -40,7 +40,7 @@ describe('fleet leader-health', () => {
   it.each([0, 1, 2, 3, 4])('returns the health exit for %i failures and emits typed JSON', async failures => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetLeaderHealth(['--json'], options(row(7, 'OPUS-LEADER rc=0'),
-      ...Array.from({ length: failures }, () => row(8, 'OPUS-LEADER rc=1'))))).toBe(failures >= 3 ? 1 : 0);
+      ...Array.from({ length: failures }, () => row(8, 'OPUS-LEADER rc=1'))))).toBe(failures >= 2 ? 1 : 0);
     expect(JSON.parse(log.mock.calls[0]![0] as string).consecutiveFailures).toBe(failures);
   });
   it('prints unknown in plain words and handles help and bad arguments without reading', async () => {
