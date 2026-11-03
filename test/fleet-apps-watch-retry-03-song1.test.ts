@@ -126,7 +126,7 @@ it('default still stops at first failure (maxConsecutiveFailures=1)', async () =
 
 it('pending child cancellation during retry sleep prevents another launch', async () => {
   const file = join(dir, 'stop');
-  let clock = 0;
+  const clock = 0;
   let enterSleep: (() => void) | undefined;
   const runner = vi.fn<AppsEnsureChildRunner>(async () => failed);
   const watch = cmdFleetAppsWatch(['Phantom', '--duration-ms', '600', '--interval-ms', '200', '--max-consecutive-failures', '3', '--stop-file', file, '--jsonl'], {
@@ -151,7 +151,7 @@ it('pending child cancellation during retry sleep prevents another launch', asyn
 
 it('stop-file during retry sleep prevents another launch', async () => {
   const file = join(dir, 'stop');
-  let clock = 0;
+  const clock = 0;
   let enterSleep: (() => void) | undefined;
   const runner = vi.fn<AppsEnsureChildRunner>(async () => failed);
   const watch = cmdFleetAppsWatch(['Phantom', '--duration-ms', '600', '--interval-ms', '200', '--max-consecutive-failures', '3', '--stop-file', file, '--jsonl'], {
