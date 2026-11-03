@@ -494,9 +494,13 @@ function basenameTokens(path: string): string[] {
   return base.split(/[._-]+/).filter((token) => token.length > 0);
 }
 
-function containsTokenRun(tokens: readonly string[], stem: string): boolean {
-  const run = stem.toLowerCase().split(/[._-]+/).filter((t) => t.length > 0);
-  if (run.length === 0 || run.length > tokens.length) return false;
+/** Each Tier-1 stem split into its token run once (matchProtectedPath runs per path, the stems never change). */
+const TIER1_TEST_STEM_RUNS: readonly (readonly string[])[] = TIER1_TEST_STEMS
+  .map((stem) => stem.toLowerCase().split(/[._-]+/).filter((t) => t.length > 0))
+  .filter((run) => run.length > 0);
+
+function containsTokenRun(tokens: readonly string[], run: readonly string[]): boolean {
+  if (run.length > tokens.length) return false;
   for (let start = 0; start + run.length <= tokens.length; start++) {
     if (run.every((token, offset) => tokens[start + offset] === token)) return true;
   }
@@ -516,7 +520,7 @@ export function isTier1TestPath(path: string, importsTier1 = false): boolean {
   if (importsTier1) return true;
   if (isSafetyTestFile(normalized)) return true;
   const tokens = basenameTokens(lower);
-  return TIER1_TEST_STEMS.some((stem) => containsTokenRun(tokens, stem));
+  return TIER1_TEST_STEM_RUNS.some((run) => containsTokenRun(tokens, run));
 }
 
 // ---------------------------------------------------------------------------
