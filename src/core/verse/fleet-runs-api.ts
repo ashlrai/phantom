@@ -18,6 +18,7 @@ import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
 import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
+import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
 
 export const VERSE_FLEET_RUNS_REASSIGN_PATH = '/api/verse/fleet/runs/reassign';
 
@@ -397,6 +398,18 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         // Only an accepted persistence invalidates the cached composite; a
         // duplicate appended nothing, and a refusal changed nothing.
         if (result.ack.status === 'accepted') { generation++; cached = undefined; }
+        // The text is already receipted above, so the order trail exists even
+        // if the command fails. The reply is fixed text from the shared renderer.
+        let command: { status: string; reply: string } | undefined;
+        if (isJobCommand(body.text)) {
+          const outcome = await runTelegramJobCommand(body.text.trim(), {
+            stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, opts ?? {}),
+            reassignQueuedJobs: deps.reassign ?? (async (...args) => (await import('../fleet/runs-reassign.js')).reassignQueuedJobs(...args)),
+            changedBy: 'desktop',
+          });
+          if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
+          command = { status: outcome.status, reply: renderJobCommandReply(outcome) };
+        }
         sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
           ok: true, at: result.envelope.receivedAt,
           ...(ticket.id === undefined ? {} : { id: project(ticket.id, 'string') }),
@@ -405,6 +418,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
           // response sanitizer would redact — so the wire carries a labeled
           // 96-bit prefix of the same stable key.
           dedupeKey: `sha256:${result.ack.dedupeKey.slice(0, 24)}`,
+          ...(command === undefined ? {} : { command }),
         });
       } else if (result.reason === 'dedupe-store-unavailable') {
         // Fail closed: the receipt store could not be read, so the inbox entry
