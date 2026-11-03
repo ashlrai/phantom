@@ -45,6 +45,7 @@
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
  *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
+ *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
  *   gh pr create               Create a PR (explicit + confirm-gated mutation).
  *   vercel <ls|logs>           Read Vercel deployments / latest logs (read-only via vercel CLI).
@@ -2110,6 +2111,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'sessions': {
+        const { cmdSessions } = await import('./sessions.js');
+        process.exitCode = await cmdSessions(rest);
+        break;
+      }
+
       case 'run': {
         // --no-memory is passed through to cmdRun as-is; run.ts parses it
         // into RunOptions.noMemory for the orchestrator's genome injection gate.
@@ -2134,6 +2141,11 @@ async function main(): Promise<void> {
 
       case 'queue': {
         process.exitCode = await (await import('./queue.js')).cmdQueue(rest);
+        break;
+      }
+
+      case 'issues': {
+        process.exitCode = await (await import('./issues.js')).cmdIssues(rest);
         break;
       }
 

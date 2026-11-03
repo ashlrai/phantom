@@ -179,3 +179,19 @@ identity under administrator control. Denied and approval-required calls return
 an MCP tool error naming the policy before downstream activation or execution.
 Approval-required calls remain blocked; request arguments cannot approve them.
 Native hub tools retain their existing authorization path.
+
+## Gateway sessions
+
+Each `phm mcp` gateway gets a session id (`gs_` plus 12 hex digits).
+
+```bash
+phm sessions list --json
+phm sessions revoke <id> --json
+```
+
+Revoking blocks that session's next tool call, native tools included; start a
+new gateway to continue. Every call adds one row (`ts`, `session`, `caller`,
+`tool`, `verdict`: `allow`, `deny`, `approval_required` or `revoked`) to
+`~/.ashlr/gateway/activity.jsonl`. Arguments are never stored, only their
+names marked `[redacted]`. Rows older than 14 days are removed when a gateway
+starts. A session record that goes missing counts as revoked.
