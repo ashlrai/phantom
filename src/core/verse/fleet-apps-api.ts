@@ -179,6 +179,26 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     return seen.outcome === 'reached' ? respond('launched', true, true) : respond('timeout', seen.running, true);
   }
   return async (ctx, req, res, path, method) => {
+    if (path === `${PATH}/history`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      try {
+        const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+        const keys = ['after', 'limit', 'invocationId'];
+        const decimal = (value: string): boolean => /^\d+$/.test(value) && Number.isSafeInteger(Number(value));
+        const after = params.get('after') ?? '0', limit = params.get('limit') ?? '100';
+        const id = params.get('invocationId');
+        if ([...params.keys()].some(key => !keys.includes(key) || params.getAll(key).length !== 1) ||
+          !decimal(after) || !decimal(limit) || Number(limit) < 1 || Number(limit) > 100 ||
+          (id !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+          sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid history query' }); return true;
+        }
+        const { readAppsRecoveryHistory } = await import('../fleet/apps-recovery-history.js');
+        const page = readAppsRecoveryHistory(root, Number(after), Number(limit), id ?? undefined);
+        if (page.availability === 'unavailable') sendJson(res, 503, { error: 'fleet apps history unavailable' });
+        else sendJson(res, page.availability === 'invalid-cursor' ? 400 : 200, page);
+      } catch { sendJson(res, 503, { error: 'fleet apps history unavailable' }); }
+      return true;
+    }
     if (path === PATH && method === 'GET') {
       try {
         const requested = new URL(req.url ?? '/', 'http://localhost').searchParams.getAll('app');
