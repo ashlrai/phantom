@@ -3,6 +3,7 @@ import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { planReplay, type ReplayOptions } from './replay.js';
 import { exportMarkdown } from './markdown.js';
 import { validateQueue, type QueueDocument, type QueueJob } from './schema.js';
 
@@ -99,6 +100,14 @@ export class QueueStore {
       if (options.prUrl) job.prUrl = options.prUrl;
       if (job.status !== 'PR-OPEN') claim.finishedAt = new Date().toISOString();
       return job;
+    });
+  }
+  async replay(options: ReplayOptions): Promise<QueueJob[]> {
+    if (options.dryRun) return planReplay(await this.read(), options);
+    return this.mutate(doc => {
+      const jobs = planReplay(doc, options);
+      doc.jobs.push(...jobs);
+      return jobs;
     });
   }
   async mirror(): Promise<string> {
