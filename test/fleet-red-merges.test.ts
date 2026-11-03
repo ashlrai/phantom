@@ -119,7 +119,7 @@ describe('cmdFleetRedMerges', () => {
     expect(await cmdFleetRedMerges([], deps(null))).toBe(0);
     const lines = output.mock.calls.slice(1).map(call => String(call[0]));
     expect(lines).toHaveLength(24);
-    for (const line of lines) expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z  unknown$/);
+    for (const line of lines) expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z {2}unknown$/);
   });
 
   it('still prints unknown when the reader fails, and exits 1', async () => {
