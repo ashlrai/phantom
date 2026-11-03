@@ -161,6 +161,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'union-apply': () => import('./fleet-union-apply.js'),
   'union-preview': () => import('./fleet-union-preview.js'),
   'verdict': () => import('./fleet-verdict.js'),
+  'vision-lint': () => import('./fleet-vision-lint.js'),
   'wait-jobs': () => import('./fleet-wait-jobs.js'),
   'waste': () => import('./fleet-waste.js'),
   'window-plan': () => import('./fleet-window-plan.js'),
