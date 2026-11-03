@@ -54,7 +54,7 @@ describe('fleet self-loop-await', () => {
     const { dir, file } = setup();
     try {
       const bad = [record({ finishedAt: '2025-01-01T00:00:00.000Z' }), record({}, { ticks: -1 }), record({}, { termination: 'x' }),
-        record({}, { elapsedMs: 1e400 }), record({ startedAt: 'yesterday' }), '{', '[]'];
+        record({}, { elapsedMs: Number.POSITIVE_INFINITY }), record({ startedAt: 'yesterday' }), '{', '[]'];
       for (const text of bad) {
         writeFileSync(file, text);
         expect((await run(argv(file))).json).toMatchObject({ ok: false, reason: 'malformed record' });

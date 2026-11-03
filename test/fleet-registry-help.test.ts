@@ -13,11 +13,11 @@ function hasOneLineHelp(source: string): { found: boolean; text: string } {
     // const usage = '...'  (single/double quote, single line)
     /(?:const|readonly)\s+(?:usage|USAGE)\s*=\s*['"]([^'"]+)/,
     // const usage = `...`  (template literal, single line)
-    /(?:const|readonly)\s+(?:usage|USAGE)\s*=\s*`([^\`]+)/,
+    /(?:const|readonly)\s+(?:usage|USAGE)\s*=\s*`([^`]+)/,
     // export const FLEET_*_USAGE = '...'  (exported, multi-line string)
     /export\s+const\s+\w*USAGE\s*=\s*(["'])((?:.|\n)*?)(?<!\\)\1/,
     // export const FLEET_*_USAGE = \`...\`  (exported template literal)
-    /export\s+const\s+\w*USAGE\s*=\s*\`([^\`]+)/,
+    /export\s+const\s+\w*USAGE\s*=\s*`([^`]+)/,
   ];
 
   for (const pattern of patterns) {
