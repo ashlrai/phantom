@@ -48,6 +48,7 @@
     "schema",
     "CHANGELOG.md",
     "docs/README.md",
+    "docs/SIGNALS.md",
     "docs/FLEET-API.md",
     "docs/PHANTOM-BRAND.md",
     "docs/COMPANIONS.md",

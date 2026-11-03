@@ -24,7 +24,7 @@ const REPO = 'ashlrai/phantom';
 const SCHEMA = 'fleet.dirty-landed.v1';
 const USAGE = 'Usage: ashlr fleet landed-close [--from <file>|-] [--apply] [--limit N] [--json]';
 const DEFAULT_LIMIT = 10;
-const MAX_LIMIT = 50;
+export const MAX_LIMIT = 50;
 const BRIDGE_TITLE = /^bridge: RQ-PHX-/;
 const SHA = /^[0-9a-f]{40}$/;
 const COMMENT = 'Closed by ashlr fleet landed-close: every changed path already matches master at the time of the check.';
@@ -38,6 +38,8 @@ export interface FleetLandedCloseDeps {
   /** Stdin reader; defaults to process.stdin. */
   stdin?: () => Promise<string>;
   now?: () => number;
+  /** Stdout seam for the --json report; defaults to console.log. */
+  output?: (text: string) => void;
 }
 
 interface LandedRow { number: number; title: string; head: string; paths: number }
@@ -168,7 +170,7 @@ export async function cmdFleetLandedClose(args: string[], deps: FleetLandedClose
   const count = (outcome: Outcome): number => attempts.filter(a => a.outcome === outcome).length;
   const failed = count('failed');
   if (parsed.json) {
-    console.log(JSON.stringify({
+    (deps.output ?? console.log)(JSON.stringify({
       repo: REPO, apply: parsed.apply, limit: parsed.limit,
       planned: rows.length, attempted: attempts.length,
       closed: count('closed'), skipped: count('skipped'), failed,

@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the three
+ * a host timer or an agent with no desktop app open. It calls the four
  * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → planner-tick, each with --json (plus --apply and --runs-dir when given),
+ * → planner-tick → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { cmdFleetResetRelease } from './fleet-reset-release.js';
 import { cmdFleetLaneAutohold } from './fleet-lane-autohold.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
+import { cmdFleetLandedSweep } from './fleet-landed-sweep.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
@@ -20,7 +21,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
 One locked pass of Phantom's self-management: reset-release first (a lane it
 frees counts as a free slot for the planner step), then lane-autohold, then
-planner-tick. Without --apply nothing is released, held or spawned — the
+planner-tick, then landed-sweep (closes DIRTY PRs whose work already landed;
+last because it is the slowest). Without --apply nothing is released, held or spawned — the
 planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
 a held queue/self-tick.lock reports 'busy' and exits 0. A step that fails or
@@ -62,6 +64,10 @@ function summary(step: string, report: unknown): string {
     const held = decisions.filter((d) => (d as Record<string, unknown>)['result'] === 'held').length;
     return `held=${held} decisions=${decisions.length}`;
   }
+  if (step === 'landed-sweep') {
+    const n = (value: unknown): number => typeof value === 'number' ? value : 0;
+    return `closed=${n(row['closed'])} planned=${n(row['planned'])}`;
+  }
   const reason = row['reason'] ?? row['outcome'];
   return typeof reason === 'string' ? reason : '';
 }
@@ -86,7 +92,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all three steps: the verbs' own fallbacks
+  // One root for the lock and all four steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -126,6 +132,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     'reset-release': bind(cmdFleetResetRelease, { now }),
     'lane-autohold': bind(cmdFleetLaneAutohold, { now: () => new Date(now()) }),
     'planner-tick': bind(cmdFleetPlannerTick, { now, spawn: deps.spawn }),
+    'landed-sweep': bind(cmdFleetLandedSweep, { now }),
   };
   const { report, exitCode, lock } = await runSelfTick({
     apply, runsDir: root, now,
