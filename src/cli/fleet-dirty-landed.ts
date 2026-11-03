@@ -57,6 +57,8 @@ export interface FleetDirtyLandedDeps {
   /** Remote the scratch repo fetches base/pull refs from (tests inject a local repo). */
   remote?: string;
   now?: () => Date;
+  /** Stdout seam for the --json report; defaults to console.log. */
+  output?: (text: string) => void;
 }
 
 /** A row counts as conflicting the way classifyFleetPrGh reads conflict. */
@@ -151,7 +153,7 @@ export async function cmdFleetDirtyLanded(args: string[], deps: FleetDirtyLanded
     open: rows.length, dirty: dirty.length, complete: rows.length < limit, counts, prs,
   };
   if (json) {
-    console.log(JSON.stringify(report));
+    (deps.output ?? console.log)(JSON.stringify(report));
   } else {
     console.log(`dirty-landed (${REPO}): ${dirty.length} conflicting open PR(s) — ` +
       `${counts.landed} landed, ${counts['partly-landed']} partly-landed, ` +
