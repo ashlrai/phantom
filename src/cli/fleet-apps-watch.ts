@@ -2,17 +2,20 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { createAppsWatchPublisher, type AppsWatchEvent } from '../core/fleet/apps-watch-bus.js';
 import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const execFileAsync = promisify(execFile);
-const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--json | --jsonl]';
+const usage = 'Usage: ashlr fleet apps-watch <app>... --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--max-consecutive-failures <1..10>] [--bus] [--json | --jsonl]';
 export interface FleetAppsWatchDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
+  createBusPublisher?: typeof createAppsWatchPublisher;
 }
 
 export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps = {}): Promise<number> {
@@ -23,7 +26,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   const invalid = (): number => { console.error(`error: invalid fleet apps-watch arguments\n${usage}`); return 2; };
   const apps: string[] = [];
   let duration = 0, interval = 1000, root: string | undefined, stopFile: string | undefined;
-  let maxConsecutiveFailures = 1, json = false, jsonl = false;
+  let maxConsecutiveFailures = 1, json = false, jsonl = false, bus = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -32,8 +35,9 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       if (!apps.includes(arg)) apps.push(arg);
       continue;
     }
-    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--max-consecutive-failures', '--json', '--jsonl'].includes(arg) || seen.has(arg)) return invalid();
+    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--max-consecutive-failures', '--json', '--jsonl', '--bus'].includes(arg) || seen.has(arg)) return invalid();
     seen.add(arg);
+    if (arg === '--bus') { bus = true; continue; }
     if (arg === '--json') { json = true; continue; }
     if (arg === '--jsonl') { jsonl = true; continue; }
     const value = args[++i];
@@ -115,6 +119,16 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       return await Promise.race([start(), stopped]);
     } finally { finished = true; clearTimeout(timer); clearTimeout(poll); signal?.removeEventListener('abort', stop); }
   };
+  let published = 0, publicationFailures = 0;
+  let publisher: ((event: AppsWatchEvent) => boolean) | undefined;
+  if (bus) {
+    try { publisher = (deps.createBusPublisher ?? createAppsWatchPublisher)(root ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs')); }
+    catch { publisher = () => false; }
+  }
+  const publish = (event: AppsWatchEvent): void => {
+    if (!publisher) return;
+    try { if (publisher(event)) published++; else publicationFailures++; } catch { publicationFailures++; }
+  };
   let cycles = 0, recoveries = 0;
   let consecutiveFailures = 0, totalFailedCycles = 0;
   let lastObservedState: { app: string; observedRunning: boolean | null }[] | null = null;
@@ -142,6 +156,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
     if (!healthy) {
       consecutiveFailures++;
       totalFailedCycles++;
+      publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null });
       if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null })}\n`);
       if (consecutiveFailures >= maxConsecutiveFailures) {
         outcome = 'failed';
@@ -153,6 +168,7 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
       continue;
     }
     consecutiveFailures = 0;
+    publish({ kind: 'apps-watch.observation.v1', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null });
     if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'observation', cycle: cycles, healthy, recoveries: recovered, consecutiveFailures, totalFailedCycles, observedState: valid ? lastObservedState : null })}\n`);
     const left = remaining();
     if (left <= 0) break;
@@ -161,9 +177,11 @@ export async function cmdFleetAppsWatch(args: string[], deps: FleetAppsWatchDeps
   }
   if (fileError) outcome = 'failed';
   else if (signal?.aborted || fileStopped) outcome = 'cancelled';
-  const summary = { apps, outcome, cycles, recoveries, consecutiveFailures, totalFailedCycles, lastObservedState };
+  const details = { apps, outcome, cycles, recoveries, consecutiveFailures, totalFailedCycles, lastObservedState };
+  publish({ kind: 'apps-watch.summary.v1', ...details });
+  const summary = { ...details, ...(bus ? { bus: { published, failed: publicationFailures } } : {}) };
   if (jsonl) process.stdout.write(`${JSON.stringify({ type: 'summary', ...summary })}\n`);
   else if (json) process.stdout.write(`${JSON.stringify(summary)}\n`);
-  else console.log(`${apps.join(', ')}: ${outcome}; cycles=${cycles}, recoveries=${recoveries}`);
+  else console.log(`${apps.join(', ')}: ${outcome}; cycles=${cycles}, recoveries=${recoveries}${bus ? `; bus published=${published}, failed=${publicationFailures}` : ''}`);
   return outcome === 'completed' ? 0 : 1;
 }
