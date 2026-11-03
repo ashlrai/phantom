@@ -83,10 +83,9 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
         const row = apps[next++]!;
         const remaining = deadline - Date.now();
         if (remaining <= 0) return;
-        try {
-          const result = await run(script!, 'status', row.app, remaining);
-          row.running = result.ok === true && typeof result.running === 'boolean' ? result.running : null;
-        } catch { /* Unreadable status stays unknown; never echo stderr. */ }
+        // Wall-clock bound against the shared deadline: a probe that never settles leaves the row unknown
+        // (running:null) and frees this worker; control() swallows failures and late rejections.
+        row.running = reading(await control(script!, 'status', row.app, remaining));
         row.checkedAt = new Date(now()).toISOString();
       }
     }
