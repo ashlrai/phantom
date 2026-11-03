@@ -42,7 +42,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // 3.15 Devin lane.
   'devin',
   'openai-agents',
-  'benchmark', 'queue', 'select', 'pool',
+  'benchmark', 'queue', 'issues', 'select', 'pool',
   // 3.15 automations.
   'automations',
   // 3.15 Jev decision layer.
