@@ -364,6 +364,7 @@
 /test/fixtures/queue/router-queue-live.md @masonwyatt23
 /test/fixtures/queue/router-queue.md @masonwyatt23
 /test/fixtures/top-pools/capacity.ts @masonwyatt23
+/test/fleet-apps-ensure-wall-budget-03.test.ts @masonwyatt23
 /test/fleet-backlog-cli-31.test.ts @masonwyatt23
 /test/fleet-backlog-exclude-claimed.test.ts @masonwyatt23
 /test/fleet-backlog-recut-drop-nov01.test.ts @masonwyatt23
@@ -404,6 +405,7 @@
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
 /test/fleet-merge-pace.test.ts @masonwyatt23
+/test/fleet-merge-queue-age.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
@@ -907,6 +909,7 @@
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-policy.test.ts @masonwyatt23
 /test/mcp-gateway-recovery-probe.test.ts @masonwyatt23
+/test/mcp-native-fleet-apps-changes-03-sonn1.test.ts @masonwyatt23
 /test/mcp-native-fleet-drop-job.test.ts @masonwyatt23
 /test/memory-benchmark.test.ts @masonwyatt23
 /test/memory-embeddings.test.ts @masonwyatt23
