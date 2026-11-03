@@ -20,6 +20,19 @@ export interface FleetStandbyAwaitDeps extends FleetStandbyDeps {
 
 type Report = Record<string, unknown>;
 
+/** Bound even dependencies that ignore their own timeout; consume late rejections. */
+async function bounded<T>(operation: () => T | Promise<T>, ms: number): Promise<{ expired: true } | { expired: false; value: T }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation).then((value) => ({ expired: false as const, value })),
+      new Promise<{ expired: true }>((resolve) => { timer = setTimeout(() => resolve({ expired: true }), ms); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** Same readiness contract the Python child emits; anything else fails closed. */
 function validReport(value: unknown): Report | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -93,7 +106,20 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     return code;
   };
 
-  const script = await (deps.locateScript ?? findStandbyReadinessScript)();
+  const timeout = (): number => {
+    const codes = lastReport ? (lastReport.blockers as string[]).filter((b) => /^[a-z0-9-]{1,40}$/.test(b)) : [];
+    const blockers = codes.length > 0 ? codes.join(', ') : 'no readable report';
+    return finish('timeout', 3, `Standby not ready before the deadline (${blockers}).`);
+  };
+  let discovery;
+  try {
+    discovery = await bounded(deps.locateScript ?? findStandbyReadinessScript, timeoutMs);
+  } catch {
+    if (now() - start >= timeoutMs) return timeout();
+    return finish('error', 1, 'error: fleet standby-await: readiness script discovery failed');
+  }
+  if (discovery.expired || now() - start >= timeoutMs) return timeout();
+  const script = discovery.value;
   if (script === null) return finish('error', 1, 'error: fleet standby-await needs scripts/mac-bridge/standby_readiness.py');
   const argv = ['-B', script];
   for (const flag of [...STANDBY_REQUIRED, '--max-age']) {
@@ -108,10 +134,17 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     let stdout = '';
     let killed = false;
     try {
-      ({ stdout } = await exec('python3', argv, {
+      const result = await bounded(() => exec('python3', argv, {
         encoding: 'utf8', timeout: probeTimeout, maxBuffer: 1024 * 1024, windowsHide: true,
-      }));
+      }), probeTimeout);
+      if (result.expired) {
+        if (probeTimeout === remaining || now() - start >= timeoutMs) return timeout();
+        return finish('error', 1, 'error: fleet standby-await: readiness probe could not run');
+      }
+      stdout = result.value.stdout;
+      if (now() - start >= timeoutMs) return timeout();
     } catch (err) {
+      if (now() - start >= timeoutMs) return timeout();
       const e = err as { code?: unknown; stdout?: unknown; killed?: unknown; signal?: unknown };
       killed = e.killed === true || typeof e.signal === 'string';
       // A readable report on a non-zero exit is still a report; no stderr is ever read.
@@ -127,10 +160,8 @@ export async function cmdFleetStandbyAwait(args: string[], deps: FleetStandbyAwa
     if (report.ready === true) return finish('ready', 0, 'Standby is ready to take over.');
     const left = timeoutMs - (now() - start);
     if (left <= 0) break;
-    await sleep(Math.min(intervalMs, left));
+    const pause = await bounded(() => sleep(Math.min(intervalMs, left)), left);
+    if (pause.expired) return timeout();
   }
-  // Blocker codes are echoed only when they look like codes; child text never reaches the terminal raw.
-  const codes = lastReport ? (lastReport.blockers as string[]).filter((b) => /^[a-z0-9-]{1,40}$/.test(b)) : [];
-  const blockers = codes.length > 0 ? codes.join(', ') : 'no readable report';
-  return finish('timeout', 3, `Standby not ready before the deadline (${blockers}).`);
+  return timeout();
 }
