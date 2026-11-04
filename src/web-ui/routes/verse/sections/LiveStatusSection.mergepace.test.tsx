@@ -22,6 +22,7 @@ const wire = (pace: () => Promise<unknown>) => get.mockImplementation(async (pat
   if (path === '/api/verse/fleet/live') return live;
   if (path === '/api/resource') return {};
   if (path === '/api/verse/fleet/landed-closes') return { v: 1, known: true, closed: 0, skipped: 0, failed: 0, rows: [] };
+  if (path === '/api/verse/fleet/slow-prs') return { known: true, repos: [] };
   return pace();
 });
 vi.mock('../../../../core/fleet/live-status.js', () => ({

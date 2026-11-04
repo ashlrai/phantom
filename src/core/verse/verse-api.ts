@@ -39,6 +39,7 @@
  *   /api/verse/cloud/tasks/<id>/timeline → cloud/timeline-api.ts (CloudTimelineResponse)
  *   /api/verse/cloud*         → cloud/cloud-api.ts     (cloud lane)
  *   /api/verse/devin*         → devin/devin-api.ts     (Devin lane, 3.15)
+ *   /api/verse/fleet/slow-prs → slow-prs-api.ts        (read-only slow-PR report)
  *  They are consulted only after every V1 route above has declined, every
  *  non-GET to them passes the V1 dispatch + mutation gate first, and a module
  *  that fails to load turns an otherwise-unmatched path into a 503
@@ -264,6 +265,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
+  { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
