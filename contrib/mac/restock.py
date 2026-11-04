@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 # restock.py — Mac-side deterministic restocker for the router queue (no LLM, no network of its own).
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
-# `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7 rev.
+# `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
+# + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
 import os, re, sys, json, time, fcntl, subprocess
 from launch_precheck import precheck
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
@@ -72,12 +73,23 @@ for i, l in enumerate(lines):
         for rr, n in re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", l): held_pr.add((rr, n))
     if m2: recs.append((i, m2.group(1), m2.group(2), m2.group(3), l))
 claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
-inq = {x.split("\t")[0] for x in rd(Q + "/ready.tsv").splitlines() if x}
+ready_raw = [x for x in rd(Q + "/ready.tsv").splitlines() if x.strip() and not x.strip().startswith("#")]
+# RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP[.lane] may lead the row (fleet parked status-first) or sit in the lane column.
+PARK_DEP = re.compile(r"^PARKED-(?:DEP|DEPENDENCY)(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$", re.I)
+GATE = re.compile(r"(?i)DEPENDENCY\s+GATE[:\s]+([^\n]+)")
+JID_TOK = re.compile(r"\b([A-Za-z0-9][A-Za-z0-9._-]{0,79})\b")
+PIN_MERGE = "no merge without Security pin"
+def ready_job_id(line):
+    f = line.split("\t")
+    if not f: return None
+    if PARK_DEP.match(f[0]): return f[1] if len(f) > 1 else None
+    return f[0]
+inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
 merged = set()
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
     except Exception: continue
-    if d.get("event") == "outcome" and d.get("state") == "MERGED": merged.add(d.get("job"))
+    if d.get("event") == "outcome" and d.get("state") == "MERGED" and d.get("job"): merged.add(d.get("job"))
 try: ps = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True).stdout
 except Exception: ps = ""   # sandboxed callers may refuse ps; the worktree-dir check in busy() still applies
 def landed(dep): return dep in merged or status.get(dep, "") in ("DONE", "MERGED", "LANDED")
@@ -86,10 +98,43 @@ def busy(j):
     if os.path.isdir(H + "/Projects/ashlrai/wt/" + j) or ("/wt/" + j + " ") in ps or ("/wt/" + j + "\n") in ps: return "alive/worktree"
     if "RESULT PR" in rd("%s/%s.publish" % (R, j)): return "published"
     return None
+def gate_ids(text):
+    m = GATE.search(text or "")
+    if not m: return []
+    out, seen = [], set()
+    for tok in JID_TOK.findall(m.group(1)):
+        if tok.upper() in ("DEPENDENCY", "GATE", "AND", "OR", "NONE", "N/A") or tok in seen: continue
+        seen.add(tok); out.append(tok)
+    return out
+def parse_parked_dep(line):
+    """Return (job, repo, lane, tier, prompt, ready_line) for a PARKED-DEP/DEPENDENCY row, else None."""
+    f = line.split("\t")
+    if len(f) < 5: return None
+    m0 = PARK_DEP.match(f[0])
+    if m0:   # status-first: PARKED-DEP.lane \t job \t lane \t tier \t repo \t prompt
+        lane = m0.group(1) or (f[2] if len(f) > 2 else None)
+        if len(f) < 6 or not lane: return None
+        return f[1], f[4], lane, f[3], f[5], line
+    m2 = PARK_DEP.match(f[2])   # dispatcher 5-col: job \t repo \t PARKED-DEP.lane \t tier \t prompt
+    if m2:
+        lane = m2.group(1)
+        if not lane: return None
+        return f[0], f[1], lane, f[3], f[4], line
+    return None
 def prio(a): m = re.search(r"\bP(\d)\b", a); return int(m.group(1)) if m else 3
 noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
-skips = {}; picks = {l: [] for l in CODEX}
+skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []   # after-unlanded -> PARKED-DEP rows this pass
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
+# RQ-QUEUE-AUTOUNPARK-1: each tick, unpark PARKED-DEP rows whose DEPENDENCY GATE ids are all MERGED in jobs.jsonl.
+# Unpark rewrites the ready.tsv row only — the prompt body (including "no merge without Security pin") is untouched.
+unparks = []   # (job, deps, ready_line, launch_line)
+for line in ready_raw:
+    parsed = parse_parked_dep(line)
+    if not parsed: continue
+    j, repo, lane, tier, pf, _raw = parsed
+    ids = gate_ids(rd(pf))
+    if not ids or any(d not in merged for d in ids): continue
+    unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
 # bold census before the restock (RQ-QUEUEGEN-BOLD-30): the READY stock's share of bet=bold decides prefer_bold
 ready_n = len(recs); ready_bold = sum(1 for r in recs if ISBOLD.search(r[2]))
 bold_frac = ready_bold / ready_n if ready_n else 0.0   # empty READY stock reads as starved, not satisfied
@@ -137,7 +182,14 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
                 if d is None or d == j: deps.append(None); continue
             deps.append(d)
     if None in deps: skip(j, "bad-dep"); continue
-    if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps): skip(j, "after-unlanded"); continue
+    tier = tm.group(1) if tm and tm.group(1) in ("frontier", "work", "mid", "fast") else "work"
+    # RQ-QUEUE-AUTOUNPARK-1: unmet after= deps park as PARKED-DEP (status-first) with a DEPENDENCY GATE prompt
+    # instead of silently skipping; restock unparks them once jobs.jsonl shows every id MERGED.
+    if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
+        if j in inq or any(x[0] == j for x in dep_parks): skip(j, "after-unlanded"); continue
+        lane = pool if pool in CODEX else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
+        dep_parks.append((j, rm.group(1), lane, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue
     if noop_parked(noops, j, time.time()): skip(j, "noop-streak"); continue
@@ -146,7 +198,6 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     if prp & seen_pr: skip(j, "dup-pr"); continue
     if fkey and fkey in seen_file: skip(j, "dup-file"); continue
     if any(j == x[0] for l2 in CODEX for x in picks[l2]): skip(j, "dup-line"); continue
-    tier = tm.group(1) if tm and tm.group(1) in ("frontier", "work", "mid", "fast") else "work"
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
     lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
@@ -154,29 +205,45 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     seen_pr |= prp
     if fkey: seen_file.add(fkey)
 out = []; done = []; ts = int(time.time())
+def prompt_body(j, repo, l, tier, attrs, text, gate=None):
+    gate_line = ("DEPENDENCY GATE: %s\n\n" % ", ".join(gate)) if gate else ""
+    pin_line = ("\n%s\n" % PIN_MERGE) if PIN_MERGE in (attrs + " " + text) else ""
+    return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
+            f"{gate_line}{j} ({attrs}): {text}\n\n"
+            "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
+            "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
+            "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
+            f"{pin_line}")
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
-        p = (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n{j} ({attrs}): {text}\n\n"
-             "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
-             "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
-             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/.\n")
+        p = prompt_body(j, repo, l, tier, attrs, text)
         pc = precheck(j, repo, p, H, R)
         if pc:
             done.append((i, j, pc)); skip(j, "done-noop")
             continue
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
+dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
+for j, repo, l, tier, attrs, text, i, deps in dep_parks:
+    pf = f"{Q}/prompts/{j}.md"
+    dep_out.append((j, repo, l, tier, pf, prompt_body(j, repo, l, tier, attrs, text, gate=deps), i, deps))
 pk_n = sum(len(picks[l]) for l in CODEX); pk_b = sum(1 for l in CODEX for x in picks[l] if ISBOLD.search(x[4]))
 if "--json" not in sys.argv:
  print("need", json.dumps(need), "picked", {l: len(picks[l]) for l in CODEX},
       "bold ready=%d/%d(%.2f) picked=%d/%d(%.2f)%s" % (ready_bold, ready_n, bold_frac, pk_b, pk_n, pk_b / pk_n if pk_n else 0.0, " prefer=bold" if prefer_bold else ""),
-      "skips", json.dumps(skips))
+      "skips", json.dumps(skips),
+      "unpark", len(unparks), "parked_dep", len(dep_out))
 for i, j in ([] if "--json" in sys.argv else seclist): print(("DRY " if DRY else "") + "HOLD-SECURITY\t" + j)
 for j, repo, l, tier, pf, p, i in ([] if "--json" in sys.argv else out): print(("DRY " if DRY else "") + "\t".join([j, repo, l, tier]))
+for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY " if DRY else "") + "UNPARK\t%s\tdeps=%s" % (j, ",".join(ids)))
+for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
-    print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips}))
-if DRY or (not out and not seclist and not done): sys.exit(0)
+    print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
+                      "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
+                      "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
+if DRY or (not out and not seclist and not done and not unparks and not dep_out): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
+for j, repo, l, tier, pf, p, i, deps in dep_out: open(pf, "w").write(p)
 # RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
 # timeouts; on timeout exit before claiming anything so the next pass retries the same lines.
 def ev(msg):
@@ -193,16 +260,33 @@ def ready_lock(who="restock"):
             time.sleep(0.05)
     if time.monotonic() - t0 > 1: ev("READY_LOCK_WAIT %s %.1fs" % (who, time.monotonic() - t0))
     return lk
-with ready_lock() as lk:
-    with open(Q + "/ready.tsv", "a") as f:
-        for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
-with open(Q + "/claimed.tsv", "a") as f:
-    for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, l, tier, HM, str(ts)]) + "\n")
+if out or unparks or dep_out:
+    with ready_lock() as lk:
+        # Locked snapshot: apply UNPARK rewrites, then append new READY and PARKED-DEP rows.
+        snap = rd(Q + "/ready.tsv").splitlines()
+        repl = {old: new for _j, _ids, old, new in unparks}
+        with open(Q + "/ready.tsv.tmp", "w") as f:
+            for x in snap:
+                x = repl.get(x, x)
+                if x.strip(): f.write(x + "\n")
+            for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
+            for j, repo, l, tier, pf, p, i, deps in dep_out:
+                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
+        os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")
+if out:
+    with open(Q + "/claimed.tsv", "a") as f:
+        for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, l, tier, HM, str(ts)]) + "\n")
 for j, repo, l, tier, pf, p, i in out:   # mark local copy so the next restock never re-picks
     lines[i] = re.sub(r"^- READY ", "- CLAIMED %s dispatchd %s " % (HM, l), lines[i], count=1)
+for j, repo, l, tier, pf, p, i, deps in dep_out:
+    lines[i] = re.sub(r"^- READY ", "- CLAIMED %s restock-parked-dep %s " % (HM, l), lines[i], count=1)
 for i, j, pc in done:
     lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
     ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
+for j, ids, _old, _new in unparks:
+    ev("UNPARK %s deps=%s" % (j, ",".join(ids)))
+for j, repo, l, tier, pf, p, i, deps in dep_out:
+    ev("PARKED-DEP %s deps=%s" % (j, ",".join(deps)))
 if not DRY:   # NOOP streaks: +1 per retirement, cleared when the job really queues, expired entries dropped
     for _, j, _pc in done: e = noops.get(j) or {"n": 0}; noops[j] = {"n": e["n"] + 1, "at": ts}
     for j, *_r in out: noops.pop(j, None)
@@ -216,4 +300,4 @@ for i, j in seclist:   # park security-pinned lines; the tag stays on the line a
 # through; same-index lines keep this pass's CLAIMED/HOLD-SECURITY marks.
 lines += rd(Q + "/router-queue.md").splitlines()[len(lines):]
 open(Q + "/router-queue.md.tmp", "w").write("\n".join(lines) + "\n"); os.replace(Q + "/router-queue.md.tmp", Q + "/router-queue.md")
-with open(EV, "a") as f: f.write("%s RESTOCK queued %d (%s) bold=%.2f sec=%d\n" % (TS, len(out), ", ".join("%s=%d" % (l, len(picks[l])) for l in CODEX), bold_frac, len(seclist)))
+with open(EV, "a") as f: f.write("%s RESTOCK queued %d (%s) bold=%.2f sec=%d unpark=%d parked_dep=%d\n" % (TS, len(out), ", ".join("%s=%d" % (l, len(picks[l])) for l in CODEX), bold_frac, len(seclist), len(unparks), len(dep_out)))
