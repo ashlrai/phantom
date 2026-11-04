@@ -231,7 +231,8 @@ vault, pin, lexicon or Stack project is read or changed. It checks:
   `stack env diff` and the `stack_env_diff` MCP tool name exactly the two
   missing ones. No output may contain the stored value.
 - Phantom as the agent's single MCP endpoint: `phm mcp ecosystem --write`
-  registers the given Secrets, Locus and Ashlr MD servers, then Phantom's gateway
+  registers the given Secrets and Locus servers. The harness explicitly configures
+  Ashlr MD because published Phantom 3.29.15 does not discover it. Phantom's gateway
   (`phm mcp`) completes both handshakes, lists
   `phantom-secrets__phantom_list_secrets`, `locus__locus_whoami` and
   `ashlr-md__open_file` for the servers given, and routes
