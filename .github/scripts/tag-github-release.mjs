@@ -4,11 +4,11 @@
 // exact candidate commit and only ever with the ashlr-release App token.
 // Idempotent: an existing tag is immutable and must be the candidate commit or
 // one of its ancestors (a later master commit carrying the same version), in
-// which case the release is cut at the tag's commit. An existing release is
-// left untouched. The release starts as a DRAFT so releases/latest
-// keeps resolving to the last fully stocked feed; the sanctioned local
-// publisher (scripts/publish-desktop-release.mjs) attaches the signed
-// artifacts and flips it public.
+// which case the release is cut at the tag's commit. An existing release —
+// draft or published — is reused, never duplicated. The release starts as a
+// DRAFT so releases/latest keeps resolving to the last fully stocked feed; the
+// sanctioned local publisher (scripts/publish-desktop-release.mjs) attaches
+// the signed artifacts and flips it public.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
@@ -17,6 +17,30 @@ import { fileURLToPath } from 'node:url';
 const SHA = /^[0-9a-f]{40}$/;
 const TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
+
+/** HTTP status from a gh-style error (stderr text or a .status test double). */
+const httpStatus = (error) =>
+  Number(/HTTP\s+(\d{3})/.exec(String(error?.stderr ?? ''))?.[1] ?? error?.status ?? NaN);
+
+/** GET releases/tags/{tag} only returns PUBLISHED releases — drafts answer 404
+ * there, which let every leg of the train mint a fresh draft per run. The list
+ * endpoint does include drafts for tokens with push access, so dedup scans it.
+ * With several matches (the duplicate-draft state this repaired) the canonical
+ * row is the published one when present, else the lowest id, so every caller
+ * converges on the same release. */
+export async function releaseForTag(read, base, tag) {
+  let found = null;
+  for (let page = 1; page <= 10; page++) {
+    const rows = await read(`${base}/releases?per_page=100&page=${page}`);
+    assert.ok(Array.isArray(rows), 'release listing did not return an array');
+    for (const row of rows) {
+      if (object(row)?.tag_name !== tag) continue;
+      if (found === null || (found.draft === row.draft ? row.id < found.id : found.draft)) found = row;
+    }
+    if (rows.length < 100) return found;
+  }
+  return found;
+}
 
 /** Every GitHub write goes through this one shape so tests can record it. */
 export async function createTagAndDraftRelease({ repo, version, sha, read, write }) {
@@ -40,7 +64,7 @@ export async function createTagAndDraftRelease({ repo, version, sha, read, write
       target = ref.object.sha;
     }
   }
-  const existing = await read(`${base}/releases/tags/${tag}`);
+  const existing = await releaseForTag(read, base, tag);
   if (existing !== null) return { tag, sha: target, release: 'exists', releaseId: existing.id };
   const latest = await read(`${base}/releases/latest`);
   const fields = {
@@ -48,7 +72,17 @@ export async function createTagAndDraftRelease({ repo, version, sha, read, write
     draft: true, prerelease: false, generate_notes: true,
   };
   if (object(latest) && TAG.test(latest.tag_name ?? '')) fields.notes_start_tag = latest.tag_name;
-  const created = await write('POST', `${base}/releases`, fields);
+  let created;
+  try {
+    created = await write('POST', `${base}/releases`, fields);
+  } catch (error) {
+    // A parallel leg that passed the same empty lookup may have won the create
+    // race — or our own release may have landed while the response was lost.
+    // Adopt the release that exists now instead of minting a second one.
+    const raced = await releaseForTag(read, base, tag);
+    if (raced === null) throw error;
+    return { tag, sha: target, release: 'exists', releaseId: raced.id };
+  }
   assert.equal(object(created)?.draft, true, 'release did not land as a draft');
   return { tag, sha: target, release: 'draft-created', releaseId: created.id };
 }
@@ -62,8 +96,7 @@ function ghApi(args) {
 async function readOrNull(endpoint) {
   try { return ghApi([endpoint]); }
   catch (error) {
-    const status = Number(/HTTP\s+(\d{3})/.exec(error.stderr?.toString() ?? '')?.[1] ?? error.status);
-    if (status === 404) return null;
+    if (httpStatus(error) === 404) return null;
     throw error;
   }
 }
