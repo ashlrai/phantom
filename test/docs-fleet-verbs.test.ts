@@ -38,6 +38,7 @@ const VERBS = [
   'runs-read',
   'ship-gap',
   'stray-slots',
+  'trim',
   'wait-jobs',
   'workers',
 ];
