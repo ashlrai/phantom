@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createRemoteAccessVerifier } from '../src/core/web/remote-access.js';
 import { createRemoteDeviceStore, type RemoteDevice } from '../src/core/web/remote-device-store.js';
+import { handleVerseApi, type VerseApiContext } from '../src/core/verse/verse-api.js';
 import { startRemoteReadGateway } from '../src/core/web/remote-gateway.js';
 import { createRemotePairing } from '../src/core/web/remote-pairing.js';
 
@@ -22,6 +23,7 @@ const dirs: string[] = [];
 afterEach(async () => {
   for (const server of active) { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
   active.clear();
+  Reflect.deleteProperty(globalThis, Symbol.for('ashlr.build-identity.v1'));
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   dirs.length = 0;
 });
@@ -33,7 +35,7 @@ function device(): RemoteDevice {
     deviceType: 'multiDevice', backedUp: true, createdAt: 1, lastUsedAt: null, revokedAt: null };
 }
 
-async function fixture(opts: { writes?: boolean } = {}) {
+async function fixture(opts: { writes?: boolean; mobileAssets?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ashlr-remote-http-'));
   dirs.push(root);
   const devices = createRemoteDeviceStore(root);
@@ -41,6 +43,8 @@ async function fixture(opts: { writes?: boolean } = {}) {
   const received: { path: string; headers: Record<string, unknown> }[] = [];
   const control = {
     rejectNextSse: false,
+    assetBody: 'desktop-build-one',
+    assetStatus: 200,
     /** When set, the activity handler embeds this string in its JSON reply. */
     leakJson: null as string | null,
     /** When set, the SSE handler writes exactly these chunks instead of a tick. */
@@ -50,6 +54,15 @@ async function fixture(opts: { writes?: boolean } = {}) {
   };
   const hub = createServer((req, res) => {
     received.push({ path: req.url ?? '', headers: { ...req.headers } });
+    if (req.url === '/api/verse/version') {
+      void handleVerseApi({} as VerseApiContext, req, res, req.url, req.method ?? 'GET'); return;
+    }
+    if (req.url === '/verse/m/' || req.url === '/next/assets/app-abcdefgh.js') {
+      const html = req.url === '/verse/m/';
+      res.writeHead(control.assetStatus, { 'Content-Type': html ? 'text/html; charset=utf-8' : 'application/javascript' });
+      res.end(html ? `<html><head></head><body>${control.assetBody}</body></html>` : control.assetBody); return;
+    }
+
     if (req.url === '/api/session' && req.method === 'POST' && req.headers['x-ashlr-token'] === TOKEN) {
       res.writeHead(204, { 'Set-Cookie': `ashlr_read_session=${'z'.repeat(80)}; Path=/api/; HttpOnly` }); res.end(); return;
     }
@@ -91,7 +104,7 @@ async function fixture(opts: { writes?: boolean } = {}) {
     .setExpirationTime(expiry).sign(privateKey);
   const jwt = await sign(Math.floor(Date.now() / 1000) + 600);
   const gateway = await startRemoteReadGateway({
-    access: CONFIG, devices, verifier,
+    access: CONFIG, devices, verifier, mobileAssetsEnabled: opts.mobileAssets,
     hub: opts.writes ? { port: hubPort, readToken: TOKEN, mutationToken: MTOKEN } : { port: hubPort, readToken: TOKEN },
     pairing: opts.writes ? createRemotePairing(CONFIG, devices) : undefined,
   });
@@ -128,10 +141,53 @@ async function fixture(opts: { writes?: boolean } = {}) {
       outgoing.end(payload);
     });
   }
-  return { gateway, devices, received, headers, get, post, sign, session, control };
+  return { gateway, devices, received, headers, get, post, sign, session, control, hubPort };
 }
 
 describe('dormant remote read gateway HTTP boundary', () => {
+  it('returns the running desktop version verbatim through the authenticated remote', async () => {
+    const build = { schemaVersion: 1, packageVersion: '3.29.17', revision: 'd'.repeat(40), dirty: false, provenance: 'git' };
+    Reflect.set(globalThis, Symbol.for('ashlr.build-identity.v1'), JSON.stringify(build));
+    const f = await fixture();
+    const desktop = await fetch(`http://127.0.0.1:${f.hubPort}/api/verse/version`);
+    const remote = await f.get('/api/verse/version');
+    expect(desktop.status).toBe(200);
+    expect(remote.status).toBe(200);
+    const identity = await desktop.json();
+    expect(identity).toEqual(build);
+    expect(await remote.json()).toEqual(identity);
+  });
+
+  it('serves the current desktop shell and hashed assets, never a separate installed build', async () => {
+    const f = await fixture({ mobileAssets: true });
+    for (const build of ['desktop-build-one', 'desktop-build-two']) {
+      f.control.assetBody = build;
+      const shell = await f.get('/verse/m/');
+      expect(shell.status).toBe(200);
+      expect(await shell.text()).toBe(`<html><head><meta name="ashlr-remote-gateway" content="v1"></head><body>${build}</body></html>`);
+      const asset = await f.get('/next/assets/app-abcdefgh.js');
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toBe(build);
+    }
+    f.control.assetStatus = 302;
+    expect((await f.get('/verse/m/')).status).toBe(503);
+    const count = f.received.length;
+    expect((await f.get('/next/assets/../private')).status).toBe(404);
+    expect(f.received).toHaveLength(count);
+  });
+
+  it('never forwards fleet, inbox, usage or version reads without both authentication layers', async () => {
+    const f = await fixture();
+    for (const path of ['/api/verse/fleet/runs', '/api/verse/fleet/runs/inbox', '/api/verse/leader/resources', '/api/verse/version']) {
+      for (const headers of [{ 'cf-access-jwt-assertion': '' }, { cookie: '' }]) {
+        const response = await f.get(path, headers);
+        expect([401, 403]).toContain(response.status);
+        expect(await response.text()).not.toContain('packageVersion');
+      }
+    }
+    expect(f.received).toEqual([]);
+  });
+
   it('keeps raw Hub credentials off the browser and allows only reviewed reads', async () => {
     const f = await fixture();
     try {
