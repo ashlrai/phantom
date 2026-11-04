@@ -1,16 +1,18 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Six one-shot verbs run
+ * agent or a host timer with no desktop app open. Eight one-shot stages run
  * together, including same-channel inbox acknowledgements and merged-order notices.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
  *
  *   1. reset-release  — first, so a lane it frees counts as a free slot for
  *      the planner step's decision in the same pass.
  *   2. lane-autohold  — places the bounded burning-lane holds.
- *   3. planner-tick   — the autorun decision over the post-release picture.
- *   4. inbox-acks     — send pending same-channel acknowledgements.
- *   5. order-notices  — tell Mason when a merged job served one of his orders.
- *   6. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *   3. stray-stop    — recover slots left behind by finished jobs.
+ *   4. meter-incident — deduped flat-meter notices.
+ *   5. planner-tick   — the autorun decision over the post-release picture.
+ *   6. inbox-acks     — send pending same-channel acknowledgements.
+ *   7. order-notices  — tell Mason when a merged job served one of his orders.
+ *   8. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -29,11 +31,13 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep';
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep' | 'stray-stop' | 'meter-incident';
 /** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
   'lane-autohold',
+  'stray-stop',
+  'meter-incident',
   'planner-tick',
   'inbox-acks',
   'order-notices',
@@ -50,7 +54,8 @@ export interface SelfTickStepRun {
 }
 /** A step seam gets the shared argv (--json, maybe --apply, --runs-dir). */
 export type SelfTickStep = (args: string[]) => Promise<SelfTickStepRun>;
-export type SelfTickSteps = Record<SelfTickStepName, SelfTickStep>;
+export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'stray-stop' | 'meter-incident'>, SelfTickStep>
+  & Partial<Record<'stray-stop' | 'meter-incident', SelfTickStep>>;
 
 export interface SelfTickStepResult {
   step: SelfTickStepName;
@@ -120,7 +125,12 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   try {
     for (const step of SELF_TICK_STEP_ORDER) {
       try {
-        const { exitCode, output } = await options.steps[step](argv);
+        const run = options.steps[step];
+        if (!run) {
+          report.steps.push({ step, state: 'ok', exitCode: 0, report: { reason: 'step-not-configured' } });
+          continue;
+        }
+        const { exitCode, output } = await run(argv);
         report.steps.push({
           step,
           state: exitCode === 0 ? 'ok' : 'failed',
