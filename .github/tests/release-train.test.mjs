@@ -37,7 +37,7 @@ function transpile(dir) {
 
 /** In-memory GitHub: refs, releases and assets behind the exact API surface the scripts use. */
 function remote() {
-  const refs = new Map(), releases = new Map(), assets = new Map();
+  const refs = new Map(), ancestry = new Set(), releases = new Map(), assets = new Map();
   let nextId = 100; const calls = [];
   const notFound = () => { const e = new Error('HTTP 404'); e.status = 404; return e; };
   const latestRelease = () => [...releases.values()].filter(r => !r.draft).sort((a, b) => b.id - a.id)[0] ?? null;
@@ -46,6 +46,7 @@ function remote() {
     const path = endpoint.split('?')[0], seg = path.split('/');
     calls.push(['read', endpoint]);
     if (path === `repos/${REPO}`) return repository;
+    if (seg[3] === 'compare') return {status: ancestry.has(seg[4]) ? 'ahead' : 'diverged'};
     if (seg[3] === 'git' && seg[4] === 'ref') { const ref = refs.get(seg.slice(5).join('/')); if (!ref) throw notFound(); return ref; }
     if (seg[3] === 'git' && seg[4] === 'tags') { const tag = refs.get(`tags/${seg[5]}`); if (!tag) throw notFound(); return tag; }
     if (seg[3] === 'releases' && seg[4] === 'tags') { const r = [...releases.values()].find(x => x.tag_name === seg[5]); if (!r) throw notFound(); return publicJson(r); }
@@ -93,7 +94,7 @@ function remote() {
     assert.ok(asset, `feed asset ${match[4]} absent`);
     return asset.data;
   };
-  return {refs, releases, assets, calls, read, write, upload, downloadRead, latestRelease};
+  return {refs, ancestry, releases, assets, calls, read, write, upload, downloadRead, latestRelease};
 }
 
 function fixtureKeys() {
@@ -259,6 +260,19 @@ test('tag+draft script is idempotent and refuses tag drift', async () => {
   assert.equal(second.release, 'exists');
   assert.equal(remoteRepo.calls.some(c => c[0] === 'write'), false, 'rerun rewrote the remote');
   await assert.rejects(createTagAndDraftRelease({repo: REPO, version: '3.29.17', sha: 'b'.repeat(40), read, write}), /different commit/);
+});
+
+test('tag+draft script heals a missing release for a tag cut at an ancestor commit', async () => {
+  const remoteRepo = remote(); const tagged = 'a'.repeat(40), head = 'b'.repeat(40);
+  const read = async ep => { try { return remoteRepo.read(ep); } catch (e) { if (e.status === 404) return null; throw e; } };
+  const write = (m, ep, fields) => remoteRepo.write(m, ep, fields);
+  remoteRepo.refs.set('tags/v3.29.17', {ref: 'refs/tags/v3.29.17', object: {type: 'commit', sha: tagged}});
+  remoteRepo.ancestry.add(`${tagged}...${head}`);
+  const leg = await createTagAndDraftRelease({repo: REPO, version: '3.29.17', sha: head, read, write});
+  assert.equal(leg.release, 'draft-created');
+  assert.equal(leg.sha, tagged);
+  assert.equal([...remoteRepo.releases.values()][0].target_commitish, tagged);
+  assert.equal(remoteRepo.calls.some(c => c[0] === 'write' && c[2].endsWith('/git/refs')), false, 'tag was moved');
 });
 
 test('workflows carry the merged-PR -> tag -> release wiring with no widened permissions', () => {
