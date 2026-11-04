@@ -139,6 +139,13 @@ and says why each lane is waiting: held, at target, blocked by the global cap, o
 It does not probe the host or launch work. It exits 1 when any lane is blocked by
 the global cap with 5 or more jobs queued. Other waits are `ashlr fleet lane-idle`.
 
+`ashlr fleet lane-share [--json]` reads the same file and prints each lane's share
+of the fleet: one line per lane with running of target and queued, marked `starved`
+(10 or more queued and none running) or `full` (running equals target), then one
+line with fleet running against the admission cap. It exits 1 when a lane is
+starved while the admission reason starts with `at_cap` — queued work parked
+because the whole fleet is full, the case `ashlr fleet trim` suggests a slot move for.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename
