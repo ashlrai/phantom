@@ -131,6 +131,11 @@ tick age, the global running cap, running jobs, the `queue/install.lock` holder 
 `admit` true or false with the reason. It claims and launches nothing. The gate
 logic itself lives in `contrib/mac/dispatchd.py`; see `contrib/mac/README.md`.
 
+`ashlr fleet admission [--json]` reads that stored verdict from `queue/status.json`
+and says why each lane is waiting: held, at target, blocked by the global cap, or ok.
+It does not probe the host or launch work. It exits 1 when any lane is blocked by
+the global cap with 5 or more jobs queued. Other waits are `ashlr fleet lane-idle`.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename

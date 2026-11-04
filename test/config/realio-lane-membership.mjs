@@ -51,6 +51,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-guardian-manifest-set-02solf1.test.ts', // Runs guardian commands against private manifest fixtures.
   'test/fleet-guardian-manifest.test.ts', // Runs guardian manifest commands in real child processes.
   'test/fleet-standby-verb-02.test.ts', // Runs the standby CLI in real child processes.
+  'test/standby-takeover-e2e.test.ts', // Drives the real lease/snapshot/relay/readiness Python scripts in real child processes.
   'test/gitignore-routing-eval.test.ts', // Runs git check-ignore against repository paths.
   'test/fleet-diff-scan.test.ts', // Creates real git worktrees and reads staged/unstaged diffs.
   'test/lane-quota-text.test.ts', // runs the dispatcher against temporary lane fixtures in Python
