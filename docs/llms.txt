@@ -34,6 +34,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 - Parked dependency gates: `phm fleet parked --json` lists `PARKED-DEP` rows and `unmetDeps` (gate ids not yet `MERGED` in `jobs.jsonl`). Restock auto-unparks when every gate id is merged; unpark does not merge. See [Mac queue scripts](../contrib/mac/README.md).
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
+- [Fleet brief-send](BRIEF-SEND.md): Morning (7:30 ET) and overnight (22:30 ET) fleet briefs with a needs-you list of at most 5 items; `phm fleet brief-send --json` dry-runs, `--apply` sends.
 - [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
 - [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
@@ -319,4 +320,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 <!-- docs-index:end -->
 - [Route hysteresis](ROUTE-HYSTERESIS.md): 60-minute pool residency, immutable launched jobs, two moves per six hours, ROUTE_HOLD and phm route explain --json.
 
+- [Durable memory](MEMORY.md): `phm memory add|list|search|forget --json`; preferences, doctrine and facts as markdown under `~/.phantom/memory/`, secret-shaped text refused.
+
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+- [Chief-of-staff intake](COS.md): Durable channel jobs, JSON command contracts and approved result delivery.
