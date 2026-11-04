@@ -41,7 +41,15 @@ const scratch: string[] = [];
 const HASH = 'a'.repeat(64);
 const INITIAL_RECORDS = 'b'.repeat(64);
 const FINAL_RECORDS = 'c'.repeat(64);
-beforeEach(() => { for (const hook of Object.values(hooks)) hook.mockReset(); hooks.runtime.mockReturnValue({ status: 'valid' }); });
+beforeEach(() => {
+  for (const hook of Object.values(hooks)) hook.mockReset();
+  hooks.runtime.mockReturnValue({ status: 'valid' });
+  // Ledger fsync latency is not campaign time in these synthetic dispatches.
+  // Keep real wakeup timers and private IO; deadline cases control their clocks.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-09T12:00:00.000Z'));
+  vi.spyOn(performance, 'now').mockReturnValue(100);
+});
 afterEach(() => {
   vi.useRealTimers(); vi.restoreAllMocks();
   const writable = (path: string): void => {
@@ -356,6 +364,8 @@ describe('Portfolio controller private-ledger fault acceptance', () => {
   });
 
   it('stops at the original deadline while contended without an intent', async () => {
+    vi.useRealTimers();
+    vi.mocked(performance.now).mockRestore();
     const f = fixture(); f.definition.maxDurationMs = 50;
     hooks.acquire.mockReturnValue({ state: 'contended', lock: null });
     const result = await runUniversePortfolioController(f.definition, f.options);
