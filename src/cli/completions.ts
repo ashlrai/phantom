@@ -29,7 +29,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
   'conductor-permit', 'signals',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
-  'channels', 'connectors', 'route',
+  'channels', 'connectors', 'memory', 'route',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -116,6 +116,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   eval: ['attention', 'swe-bench', 'router'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand'],
+  memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
   connectors: ['add', 'list', 'remove', 'show', 'import', '--json', '--help'],
   channels: ['add', 'status', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
