@@ -108,6 +108,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'job-latency': () => import('./fleet-job-latency.js'),
   'job-one': () => import('./fleet-job-one.js'),
   'job-read': () => import('./fleet-job-read.js'),
+  'kept-worktrees': () => import('./fleet-kept-worktrees.js'),
   'landed-close': () => import('./fleet-landed-close.js'),
   'landed-sweep': () => import('./fleet-landed-sweep.js'),
   'lane-autohold': () => import('./fleet-lane-autohold.js'),
