@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { Fragment, useId, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { EmptyState } from '../../../components/primitives/EmptyState.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
@@ -18,6 +18,10 @@ import { JobDetailSheet } from './JobDetailSheet.js';
 import { ageStateText, workerAgeState } from './worker-age-state.js';
 import { openInterjectDialog } from './interject-dialog-store.js';
 import { workerTellPrefill } from './workers-tell.js';
+import { guidanceListQuery } from './session-guidance-queries.js';
+import { ackLabel, guidanceForJob } from './session-guidance-model.js';
+import { strategyForLane } from '../../../../core/fleet/session-guidance.js';
+import { SessionGuidanceBox } from './SessionGuidanceBox.js';
 import styles from './workers-card.module.css';
 
 let missingWorkers: ApiError | undefined;
@@ -42,7 +46,12 @@ export function WorkersCard() {
   const read = useQuery(cardQuery);
   const refresh = useRefresh(cardQuery);
   const [selected, setSelected] = useState<{ job: string; repo: string | null } | null>(null);
-  usePollWhileVisible(() => { void runQuery(cardQuery.key, () => cardQuery.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
+  const [guiding, setGuiding] = useState<string | null>(null);
+  const guidance = useQuery(guidanceListQuery);
+  usePollWhileVisible(() => {
+    void runQuery(cardQuery.key, () => cardQuery.fetch());
+    void runQuery(guidanceListQuery.key, () => guidanceListQuery.fetch());
+  }, 5_000, { enabled: !notInBuild(read.error) });
   const data = read.data;
   const healthy = data?.sources.workers === 'healthy' && !read.error;
   const now = Date.now();
@@ -63,18 +72,26 @@ export function WorkersCard() {
     {tell ? <p role="status" className={tell.tone === 'bad' ? styles.rowStuck : styles.rowLong}>{tell.text}</p> : null}
     {read.status === 'loading' ? <SkeletonLine /> : !healthy ? <EmptyState compact title="Worker list unavailable" body={notInBuild(read.error) ? 'The worker API is not in this build yet.' : undefined} />
       : !data.workers.length ? <p data-tone={emptyReason(data).tone}>{emptyReason(data).text}</p>
-      : <div className={styles.scroll}><table><thead><tr>{['Job', 'Repo', 'Lane', 'Tier', 'Age', 'PR'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
+      : <div className={styles.scroll}><table><thead><tr>{['Job', 'Repo', 'Lane', 'Tier', 'Age', 'PR', 'Guide'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
         <tbody>{sortWorkers(data.workers).map(worker => {
           const url = publishFor(worker.job, data.publishesLastHour);
           const state = workerAgeState(worker.lane, worker.ageSeconds);
-          return <tr key={worker.job} className={state === 'stuck' ? styles.rowStuck : state === 'long' ? styles.rowLong : undefined}><td><button className={styles.job} onClick={() => setSelected({ job: worker.job, repo: worker.repo })} aria-label={`Job ${worker.job}`}>{worker.job}</button></td>
+          const summary = guidanceForJob(guidance.data?.sessions ?? [], worker.job);
+          const ack = ackLabel(summary?.latest ?? null);
+          return <Fragment key={worker.job}><tr className={state === 'stuck' ? styles.rowStuck : state === 'long' ? styles.rowLong : undefined}><td><button className={styles.job} onClick={() => setSelected({ job: worker.job, repo: worker.repo })} aria-label={`Job ${worker.job}`}>{worker.job}</button></td>
             <td>{worker.repo}</td><td><Tag title={worker.lane}>{laneShort(worker.lane)}</Tag></td><td aria-label={`Tier ${worker.tier}`}>{worker.tier}</td>
             <td data-age-state={state} aria-label={worker.ageSeconds === null ? 'Age unknown' : `Age ${Math.floor(worker.ageSeconds)} seconds`}>{worker.ageSeconds === null ? '—' : ageText(worker.ageSeconds)}{state !== 'normal' ? <> <Tag title={ageStateText(state, worker.lane) ?? undefined}>{state === 'long' ? 'long' : 'stuck?'}</Tag></> : null}</td>
             <td>{url ? <a href={url} target="_blank" rel="noreferrer" aria-label={`PR for job ${worker.job}`}>PR</a> : '—'}
               {state === 'stuck' ? <Button size="sm" variant="ghost" aria-label={`Tell the leaders about ${worker.job}`} onClick={event => {
                 event.stopPropagation();
                 openInterjectDialog({ prefill: workerTellPrefill(worker) });
-              }}>Tell the leaders</Button> : null}</td></tr>;
+              }}>Tell the leaders</Button> : null}</td>
+            <td className={styles.guideCell}>
+              <Button size="sm" variant="ghost" aria-expanded={guiding === worker.job} aria-label={`Guide ${worker.job}`} onClick={() => setGuiding(guiding === worker.job ? null : worker.job)}>Guide</Button>
+              <span className={styles.guideMeta}><Tag title={strategyForLane(worker.lane).mechanism}>{strategyForLane(worker.lane).label}</Tag>{ack ? <span className={styles.ack} data-ack={summary?.latest?.state ?? 'queued'}>{ack}</span> : null}</span>
+            </td></tr>
+            {guiding === worker.job ? <tr className={styles.guideRow}><td colSpan={7}><SessionGuidanceBox job={worker.job} lane={worker.lane} summary={summary} /></td></tr> : null}
+          </Fragment>;
         })}</tbody></table></div>}
     {selected ? <JobDetailSheet key={selected.job} job={selected.job} repo={selected.repo} onClose={() => setSelected(null)} /> : null}
   </section>;

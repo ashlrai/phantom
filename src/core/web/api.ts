@@ -1958,6 +1958,79 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/guidance ────────────────────────────────────────────
+    // RQ-PHX-SESSIONINTERJECT: aggregate ack state for every session with a
+    // guidance file (queued, delivered at turn N, or requeued). READ-ONLY
+    // bounded fs reads; same no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/guidance' && method === 'GET') {
+      const { listSessionGuidance } = await import('../fleet/session-guidance-io.js');
+      sendJson(res, 200, await listSessionGuidance());
+      return true;
+    }
+
+    // ── /api/fleet/sessions/<job>/guidance ─────────────────────────────────
+    // RQ-PHX-SESSIONINTERJECT: per-session operator guidance. POST appends one
+    // scrubbed, 4 KiB-capped message to ~/.ashlr-runs/queue/guidance/<job>.jsonl
+    // for dispatchd/launch.sh to deliver (stream inject, resume, or requeue
+    // per the lane strategy table in fleet/session-guidance.ts). Same auth as
+    // the interject box: 404 without --allow-dispatch, then the token + JSON
+    // gate. GET reads the file back through the ack fold.
+    if (path.startsWith('/api/fleet/sessions/') && path.endsWith('/guidance')) {
+      const { guidanceJobFromPath } = await import('../fleet/session-guidance.js');
+      const job = guidanceJobFromPath(path);
+      if (job === null) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      if (method === 'GET') {
+        const { readSessionGuidance } = await import('../fleet/session-guidance-io.js');
+        sendJson(res, 200, await readSessionGuidance(job));
+        return true;
+      }
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (method !== 'POST') {
+        res.setHeader('Allow', 'GET, POST');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) {
+        return true;
+      }
+      let guidanceBody: unknown;
+      try {
+        guidanceBody = JSON.parse(await readBody(req));
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return true;
+      }
+      const guidance = guidanceBody as Record<string, unknown> | null;
+      if (guidance === null || typeof guidance !== 'object' || Array.isArray(guidance)
+        || Object.keys(guidance).some((key) => key !== 'text' && key !== 'source')
+        || typeof guidance.text !== 'string'
+        || (guidance.source !== undefined
+          && (typeof guidance.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(guidance.source)))) {
+        sendJson(res, 400, { error: 'invalid guidance body' });
+        return true;
+      }
+      const { appendSessionGuidance } = await import('../fleet/session-guidance-io.js');
+      const result = await appendSessionGuidance(job, guidance.text, {
+        ...(typeof guidance.source === 'string' ? { source: guidance.source } : {}),
+      });
+      if (!result.ok) {
+        if (result.code === 'empty' || result.code === 'invalid-job') {
+          sendJson(res, 400, { error: result.code === 'empty' ? 'guidance text is empty' : 'valid job id required' });
+        } else {
+          sendJson(res, 503, { code: 'GUIDANCE_UNAVAILABLE', error: 'the guidance file could not be written' });
+        }
+        return true;
+      }
+      sendJson(res, 201, { v: 1, ...result });
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
