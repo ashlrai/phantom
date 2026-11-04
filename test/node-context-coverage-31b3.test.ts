@@ -37,7 +37,9 @@ describe('node context coverage', () => {
 
   it('reports truncated when included entries all have truncated:true', () => {
     const i = input({ outputs: [{ jobId: 'job-1', text: 'x'.repeat(200) }] });
-    const pack = buildNodeContextPack({ ...i, byteBudget: 80 });
+    /* 80 bytes fits job-1's first output whole; 70 forces the truncated envelope. */
+    const pack = buildNodeContextPack({ ...i, byteBudget: 70 });
+    expect(pack).toContain('"truncated":true');
     const result = summarizeNodeContextCoverage(i, pack);
     expect(result.upstream.find(u => u.jobId === 'job-1')).toEqual({ jobId: 'job-1', state: 'truncated' });
   });
@@ -68,7 +70,7 @@ describe('node context coverage', () => {
   });
 
   it('ignores malformed JSONL lines', () => {
-    const malformed = 'not json\n{"jobId":"job-1","kind":"output","text":"data","truncated":false}\n{bad\n';
+    const malformed = 'not json\n{"jobId":"job-1","kind":"output","text":"data","truncated":true}\n{bad\n';
     const result = summarizeNodeContextCoverage(input(), malformed);
     expect(result.upstream.find(u => u.jobId === 'job-1')).toEqual({ jobId: 'job-1', state: 'truncated' });
   });
@@ -111,6 +113,8 @@ describe('node context coverage', () => {
   it('handles empty pack gracefully', () => {
     const result = summarizeNodeContextCoverage(input(), '');
     expect(result.upstream).toHaveLength(4);
-    expect(result.upstream.find(u => u.jobId === 'job-1')).toEqual({ jobId: 'job-1', state: 'missing-output' });
+    /* job-1 has nonblank output but nothing was packed, the same situation the small-budget test pins as omitted. */
+    expect(result.upstream.find(u => u.jobId === 'job-1')).toEqual({ jobId: 'job-1', state: 'omitted' });
+    expect(result.upstream.find(u => u.jobId === 'job-2')).toEqual({ jobId: 'job-2', state: 'missing-output' });
   });
 });
