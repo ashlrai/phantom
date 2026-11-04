@@ -3,10 +3,18 @@ import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { precheckJob, type JobPrecheckGit, type PrecheckFact } from '../core/fleet/job-precheck.js';
+import {
+  JOB_PRECHECK_BATCH_MAX,
+  precheckJobBatch,
+  type JobPrecheckBatchCounts,
+  type JobPrecheckReport,
+} from '../core/fleet/job-precheck-batch.js';
+import { validJobId } from '../core/fleet/job-path-history.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const execFileAsync = promisify(execFile);
-const usage = 'Usage: ashlr fleet job-precheck <file.md> [--ref origin/master] [--json]';
+const usage = 'Usage: ashlr fleet job-precheck <file.md> [--ref origin/master] [--job-id RQ-ID] [--json]\n' +
+  '       ashlr fleet job-precheck --batch <file.md>... [--ref origin/master] [--json]';
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 
 export interface JobPrecheckCliDeps {
@@ -55,26 +63,78 @@ export function gitJobProbe(ref: string, cwd?: string): JobPrecheckGit {
 
 function factLine(fact: PrecheckFact): string {
   const state = fact.onMaster ? 'on-master' : 'missing';
-  if (!fact.lastCommit) return `${fact.path} ${state}`;
-  return `${fact.path} ${state} ${fact.lastCommit.sha} ${fact.lastCommit.subject.replace(/[\r\n]+/g, ' ')}`;
+  const evidence = fact.jobIdMatch === undefined ? '' : ` job-id-match=${fact.jobIdMatch === null ? 'unknown' : fact.jobIdMatch}`;
+  if (!fact.lastCommit) return `${fact.path} ${state}${evidence}`;
+  return `${fact.path} ${state} ${fact.lastCommit.sha} ${fact.lastCommit.subject.replace(/[\r\n]+/g, ' ')}${evidence}`;
+}
+
+/** One report per input in input order, then a batch count line. Never deletes, launches or queues. */
+async function runPrecheckBatch(
+  files: readonly string[],
+  ref: string,
+  json: boolean,
+  deps: JobPrecheckCliDeps,
+  log: (line: string) => void,
+): Promise<number> {
+  const result = await precheckJobBatch(files, {
+    readFile: deps.readFile ?? ((path: string) => readFile(path, 'utf8')),
+    git: deps.git ?? gitJobProbe(ref, deps.cwd),
+  });
+  const results = result.entries.map((entry) =>
+    entry.report ? { file: entry.file, ...entry.report } : { file: entry.file, error: entry.error });
+  const safe = sanitizePublicJson({ schema: 'fleet.job-precheck-batch.v1', results, counts: result.counts }) as {
+    results: Array<{ file: string; error?: string } & Partial<JobPrecheckReport>>;
+    counts: JobPrecheckBatchCounts;
+  };
+  if (json) log(JSON.stringify(safe));
+  else {
+    for (const entry of safe.results) {
+      log(`== ${entry.file}`);
+      if (entry.error !== undefined) log(`error: ${entry.error}`);
+      else {
+        for (const fact of entry.facts ?? []) log(factLine(fact));
+        log(`verdict: ${entry.verdict}`);
+      }
+    }
+    const counts = safe.counts;
+    log(`batch: fresh=${counts.fresh} partly-on-master=${counts['partly-on-master']} ` +
+      `likely-done=${counts['likely-done']} errors=${counts.errors}`);
+  }
+  if (safe.counts.errors > 0) return 2;
+  return safe.counts['likely-done'] > 0 ? 3 : 0;
 }
 
 export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDeps = {}): Promise<number> {
   const log = deps.log ?? ((line: string) => console.log(line));
   const error = deps.error ?? ((line: string) => console.error(line));
   if (args.includes('--help') || args.includes('-h')) {
-    log(`${usage}\nNames src, test, docs, schema and scripts files in the draft, skipping Do not edit and Never touch lines. Exit 3 when every non-test src file is already on the ref and its last commit subject contains bridge(RQ-...). Exit 0 when the draft is fresh or only partly on the ref.`);
+    log(`${usage}\nNames src, test, docs, schema and scripts files in the draft, skipping Do not edit and Never touch lines. Exit 3 when every non-test src file is already on the ref and its last commit subject contains bridge(RQ-...). Exit 0 when the draft is fresh or only partly on the ref. Exit 2 on a read or git failure.\n` +
+      `--job-id requires an exact parsed identity in each non-test source path’s last commit. Unknown or unmatched evidence does not rule out earlier commits; a match does not establish semantic correctness. Cannot combine with --batch.\n` +
+      `--batch takes 1-${JOB_PRECHECK_BATCH_MAX} draft paths and reports each in input order over a shared fact cache, so a path several drafts name is probed once. A draft that cannot be read or whose git probe fails is reported as an error for that draft and the batch continues; errors are never called fresh. After the per-draft reports a count line tallies fresh, partly-on-master, likely-done and errors. Batch exits 2 when any draft errored, else 3 when any draft is likely-done, else 0. Read-only: never deletes files, launches jobs or writes queue state.`);
     return 0;
   }
   let ref = 'origin/master';
   let json = false;
-  let file: string | undefined;
+  let batch = false;
+  const files: string[] = [];
   let sawRef = false;
+  let jobId: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json') {
       if (json) { error(usage); return 2; }
       json = true;
+      continue;
+    }
+    if (arg === '--batch') {
+      if (batch) { error(usage); return 2; }
+      batch = true;
+      continue;
+    }
+    if (arg === '--job-id') {
+      const value = args[++i];
+      if (jobId !== undefined || !value || !validJobId(value)) { error(usage); return 2; }
+      jobId = value;
       continue;
     }
     if (arg === '--ref') {
@@ -84,9 +144,15 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
       ref = value;
       continue;
     }
-    if (arg.startsWith('-') || file) { error(usage); return 2; }
-    file = arg;
+    if (arg.startsWith('-') || arg.trim() === '' || (!batch && files.length > 0)) { error(usage); return 2; }
+    files.push(arg);
   }
+  if (batch) {
+    if (jobId !== undefined) { error(usage); return 2; }
+    if (files.length === 0 || files.length > JOB_PRECHECK_BATCH_MAX) { error(usage); return 2; }
+    return runPrecheckBatch(files, ref, json, deps, log);
+  }
+  const file = files[0];
   if (!file) { error(usage); return 2; }
   let markdown: string;
   try {
@@ -96,10 +162,11 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     return 2;
   }
   try {
-    const report = await precheckJob(markdown, deps.git ?? gitJobProbe(ref, deps.cwd));
+    const report = await precheckJob(markdown, deps.git ?? gitJobProbe(ref, deps.cwd), { jobId });
     const safe = sanitizePublicJson(report) as typeof report;
     if (json) log(JSON.stringify(sanitizePublicJson({ schema: 'fleet.job-precheck.v1', ...safe })));
     else {
+      if (safe.jobId !== undefined) log(`job-id: ${safe.jobId} (last-commit evidence only; a match does not establish correctness)`);
       for (const fact of safe.facts) log(factLine(fact));
       log(`verdict: ${safe.verdict}`);
     }

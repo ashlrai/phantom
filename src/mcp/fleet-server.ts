@@ -15,7 +15,16 @@ import {
   MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs,
 } from './fleet-reset-history.js';
 
+import { parseFleetResetGroupAwaitArgs, readFleetResetGroupAwait, type FleetResetGroupAwaitArgs } from './fleet-reset-group-await.js';
+import { RESET_GROUP_AWAIT_MAX_LANES } from '../core/fleet/reset-group-await.js';
+import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
 import { MAX_FLEET_RESET_AWAIT_MS, parseFleetResetAwaitArgs, readFleetResetAwait, type FleetResetAwaitArgs } from './fleet-reset-await.js';
+import { MAX_FLEET_RESET_RELEASE_AWAIT_MS, parseFleetResetReleaseAwaitArgs, readFleetResetReleaseAwait,
+  type FleetResetReleaseAwaitArgs } from './fleet-reset-release-await.js';
+import { MAX_FLEET_RESET_FOLLOW_MS, parseFleetResetFollowArgs, readFleetResetFollow,
+  type FleetResetFollowArgs } from './fleet-reset-follow.js';
+import { MAX_FLEET_JOB_HISTORY, parseFleetJobHistoryArgs, readFleetJobHistory,
+  type FleetJobHistoryArgs } from './fleet-job-history.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -28,7 +37,11 @@ export interface FleetReaders {
   lanes?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
   resetHistory?: (input: FleetResetHistoryArgs) => Promise<unknown>;
+  resetGroupAwait?: (input: FleetResetGroupAwaitArgs) => Promise<unknown>;
   resetAwait?: (input: FleetResetAwaitArgs) => Promise<unknown>;
+  resetReleaseAwait?: (input: FleetResetReleaseAwaitArgs) => Promise<unknown>;
+  resetFollow?: (input: FleetResetFollowArgs) => Promise<unknown>;
+  jobHistory?: (input: FleetJobHistoryArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -105,11 +118,33 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_reset_await',
-      description: 'Wait for newly observed reset evidence from the configured default root. Observed is evidence only, not a release, lane health or successful launch. No provider probes or lane changes.',
+      description: 'Wait for newly observed reset evidence from the configured default root. Observed is evidence only, not a release, lane health or successful launch. No provider probes or lane changes. Pass a saved after watermark to also count evidence recorded after it while the supervisor was offline.',
       inputSchema: { type: 'object', properties: {
         lane: { type: 'string', pattern: '\\S', description: 'Exact case-sensitive nonblank lane.' },
         timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS },
         pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
+        after: { type: 'string', format: 'date-time', description: 'Optional RFC 3339 watermark with explicit offset (Z or ±HH:MM). Evidence must be strictly after it and no later than now; equal, older or future evidence never counts. Omitted means evidence after invocation time.' },
+      }, required: ['lane', 'timeoutMs'], additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_reset_group_await',
+      description: 'Wait for newly observed reset evidence across lanes from the configured default root in one bounded call. Evidence is not release authority, free quota, lane health or launch success. No provider probes or lane changes.',
+      inputSchema: { type: 'object', properties: {
+        lanes: { type: 'array', minItems: 1, maxItems: RESET_GROUP_AWAIT_MAX_LANES, uniqueItems: true,
+          items: { type: 'string', pattern: LANE_ID_RE.source } },
+        timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS },
+        pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
+      }, required: ['lanes', 'timeoutMs'], additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_reset_release_await',
+      description: 'Wait for proof that the reset loop recorded releasing a lane hold: resolves "recorded" only once the bounded audit log gains a line for the exact lane stamped after invocation and no later than the current wall clock — older, unparsable or future-dated lines never satisfy it. "recorded" is past audit evidence, never present lane health or successful dispatch. Reads the configured default root only and never releases a hold, probes a provider or changes a lane.',
+      inputSchema: { type: 'object', properties: {
+        lane: { type: 'string', pattern: '\\S', description: 'Exact case-sensitive nonblank lane.' },
+        timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_RELEASE_AWAIT_MS },
+        pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_RELEASE_AWAIT_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
       }, required: ['lane', 'timeoutMs'], additionalProperties: false },
       annotations,
     },
@@ -126,11 +161,36 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_reset_follow',
+      description: 'Follow the recorded autobackoff release audit and collect newly recorded lane releases across lanes in one bounded call, oldest first: lane, at, state, usedPct, readingAsOf and heldUntil per release. Only records stamped strictly after the exclusive after watermark (default: invocation time) are collected; an exact case-sensitive lane filter can narrow them. Returns one terminal outcome — deadline, cancelled, failed, or limit when collection stopped at the 200-record bound — with read count, delivered count and the capped-source caveat. These are recorded past releases, never a live lane-health, capacity or launch-success verdict, and an empty records list means no releases were emitted inside the call, not that the source is healthy. Reads the configured default root only and never releases a hold, probes a provider or changes a lane.',
+      inputSchema: { type: 'object', properties: {
+        timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_FOLLOW_MS },
+        pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_FOLLOW_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
+        lane: { type: 'string', pattern: '\\S', description: 'Exact case-sensitive nonblank lane; omit to collect every lane.' },
+        after: { type: 'string', description: 'Exclusive ISO-8601 watermark: only releases stamped strictly after it are collected. Default: invocation time.' },
+      }, required: ['timeoutMs'], additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_job_history',
+      description: 'Read which repository paths a fleet job landed, newest first: bridge commits on origin/master whose subject id exactly equals the requested job, from the same bounded git scan as `phm fleet path-history --job` — never a second scanner. The scan covers at most the newest 1000 commits and returns at most `limit` matching commits; an empty or truncated result proves only what that bounded scan saw and does not prove the job never landed. Recorded merge history, never a live lane, dispatch or merge-queue verdict. The ref is fixed at origin/master: no caller ref, path, root or cwd is accepted, and no tool mutates anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(…) commit subjects, never by prefix.' },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_JOB_HISTORY, default: 20 },
+        },
+        required: ['jobId'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -141,8 +201,16 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const limit = args['limit'] ?? 20;
     const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
     const history = name === 'fleet_reset_history' ? parseFleetResetHistoryArgs(args) : null;
+    const resetGroupAwait = name === 'fleet_reset_group_await' ? parseFleetResetGroupAwaitArgs(args) : null;
     const resetAwait = name === 'fleet_reset_await' ? parseFleetResetAwaitArgs(args) : null;
-    if (name === 'fleet_reset_await' ? resetAwait === null :
+    const resetReleaseAwait = name === 'fleet_reset_release_await' ? parseFleetResetReleaseAwaitArgs(args) : null;
+    const resetFollow = name === 'fleet_reset_follow' ? parseFleetResetFollowArgs(args) : null;
+    const jobHistory = name === 'fleet_job_history' ? parseFleetJobHistoryArgs(args) : null;
+    if (name === 'fleet_job_history' ? jobHistory === null :
+        name === 'fleet_reset_group_await' ? resetGroupAwait === null :
+        name === 'fleet_reset_await' ? resetAwait === null :
+        name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
+        name === 'fleet_reset_follow' ? resetFollow === null :
         name === 'fleet_bus_inbox' ? inbox === null :
         name === 'fleet_reset_history' ? history === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
@@ -157,8 +225,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
+        : name === 'fleet_reset_group_await' ? await (readers.resetGroupAwait ?? readFleetResetGroupAwait)(resetGroupAwait as FleetResetGroupAwaitArgs)
         : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
+        : name === 'fleet_reset_release_await' ? await (readers.resetReleaseAwait ?? readFleetResetReleaseAwait)(resetReleaseAwait as FleetResetReleaseAwaitArgs)
+        : name === 'fleet_reset_follow' ? await (readers.resetFollow ?? readFleetResetFollow)(resetFollow as FleetResetFollowArgs)
         : name === 'fleet_reset_history' ? await (readers.resetHistory ?? readFleetResetHistory)(history as FleetResetHistoryArgs)
+        : name === 'fleet_job_history' ? await (readers.jobHistory ?? readFleetJobHistory)(jobHistory as FleetJobHistoryArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.

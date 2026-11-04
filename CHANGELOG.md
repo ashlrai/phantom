@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.0 |
-| Latest dated changelog release (2026-10-12) | 3.29.13 |
+| Source package | 3.29.17 |
+| Latest dated changelog release (2026-11-03) | 3.29.17 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -98,6 +98,16 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ### Performance
 - The web console re-renders only the live turn's block of the transcript per
   streamed token.
+
+## [3.29.17] — 2026-11-03
+
+### Fixed
+- The pinned `@ashlrai/locus-mcp` companion moves to 0.6.2, because the 0.5.0
+  npm shim re-executed itself through `which` and forked without bound.
+- The Devin bus adapter runs in read-only auto mode.
+
+Unreleased work that landed alongside this patch release is described under
+3.30.0 above.
 
 ## [3.29.16] — 2026-11-01
 
@@ -3430,7 +3440,7 @@ discovered ID collision are in
 [`docs/MILESTONE-INDEX.md`](docs/MILESTONE-INDEX.md); the mechanics of
 turning any of this on — including four non-obvious gates that block
 unattended activation even after a grant — are in
-[`docs/RUNTIME_ACTIVATION_AUTHORITY.md`](docs/RUNTIME_ACTIVATION_AUTHORITY.md).
+[`docs/RUNTIME-FLEET-ACTIVATION.md`](docs/RUNTIME-FLEET-ACTIVATION.md).
 
 - **Daemon activation authority replaces its own denials (M470 — see
   collision note below).** Five hard-coded refusals — `DAEMON_ACTIVATION_TRUST_ROOTS`

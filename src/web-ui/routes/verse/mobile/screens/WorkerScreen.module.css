@@ -3,6 +3,7 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 60vh;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   margin: 0;
 }
