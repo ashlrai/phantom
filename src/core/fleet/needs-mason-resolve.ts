@@ -26,7 +26,7 @@ export interface NeedsMasonItem { id: string; text: string }
 export interface NeedsMasonOptions {
   runsDir?: string; bus?: BusInboxOptions; now?: () => number;
   /** Which surface resolved the item; recorded in the envelope body. Defaults to 'desktop'. */
-  source?: 'desktop' | 'telegram' | 'cli' | 'phone';
+  source?: 'desktop' | 'telegram' | 'cli' | 'phone' | 'email';
 }
 export type NeedsMasonResolveResult =
   | { ok: true; itemId: string; cursor: number; duplicate: boolean }
@@ -37,21 +37,30 @@ const runsDirOf = (options: NeedsMasonOptions): string =>
 const fileOf = (options: NeedsMasonOptions): string => join(runsDirOf(options), 'NEEDS-MASON.md');
 const itemId = (text: string): string => `nm-${createHash('sha256').update(text).digest('hex').slice(0, 12)}`;
 
-function readText(path: string): string | null {
+type TextRead = { status: 'ok'; text: string } | { status: 'missing' | 'unavailable' };
+
+function readTextResult(path: string): TextRead {
   let fd: number;
-  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { return null; }
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) { return { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unavailable' }; }
   try {
     const info = fstatSync(fd);
-    if (!info.isFile() || info.size > MAX_BYTES) return null;
+    if (!info.isFile() || info.size > MAX_BYTES) return { status: 'unavailable' };
     const bytes = Buffer.alloc(info.size);
     let offset = 0;
     while (offset < bytes.length) {
       const n = readSync(fd, bytes, offset, bytes.length - offset, offset);
-      if (!n) break;
+      if (!n) return { status: 'unavailable' };
       offset += n;
     }
-    return scrubSecrets(bytes.subarray(0, offset).toString('utf8'));
-  } finally { closeSync(fd); }
+    return { status: 'ok', text: scrubSecrets(bytes.toString('utf8')) };
+  } catch { return { status: 'unavailable' }; }
+  finally { try { closeSync(fd); } catch { /* The read result remains usable. */ } }
+}
+
+function readText(path: string): string | null {
+  const result = readTextResult(path);
+  return result.status === 'ok' ? result.text : null;
 }
 
 /** Open candidates follow the glance rule (parseIncidentLines): no headings, no resolved or checked lines. */
@@ -70,12 +79,21 @@ function scan(text: string): { candidates: NeedsMasonItem[]; resolved: Set<strin
   return { candidates, resolved };
 }
 
+export type NeedsMasonReadResult =
+  | { status: 'available' | 'missing'; items: NeedsMasonItem[] }
+  | { status: 'unavailable'; items: NeedsMasonItem[] };
+
+/** Read the ledger without confusing an unavailable file with an empty one. */
+export function readNeedsMason(options: NeedsMasonOptions = {}): NeedsMasonReadResult {
+  const result = readTextResult(fileOf(options));
+  if (result.status !== 'ok') return { status: result.status, items: [] };
+  const { candidates, resolved } = scan(result.text);
+  return { status: 'available', items: candidates.filter(item => !resolved.has(item.id)) };
+}
+
 /** Items still waiting on Mason, as the glance reader sees them. */
 export function listNeedsMason(options: NeedsMasonOptions = {}): NeedsMasonItem[] {
-  const text = readText(fileOf(options));
-  if (text === null) return [];
-  const { candidates, resolved } = scan(text);
-  return candidates.filter(item => !resolved.has(item.id));
+  return readNeedsMason(options).items;
 }
 
 /** The glance reader's view: resolved item lines removed (markers already read as resolved). */
@@ -115,6 +133,7 @@ export function resolveNeedsMason(input: unknown, options: NeedsMasonOptions = {
   if (resolved.has(id)) return fail('already-resolved', 'That item is already resolved.');
   const now = options.now ?? Date.now;
   // Control characters (newlines included) collapse to spaces; the reply stays a single line of text.
+  // eslint-disable-next-line no-control-regex
   const note = typeof reply === 'string' ? reply.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() : '';
   const posted = appendBusInbox({
     id: `needs-mason-resolved-${id}`, from: 'mason', to: 'leaders', priority: 'P1', ttl: 7 * 24 * 60 * 60 * 1000,
