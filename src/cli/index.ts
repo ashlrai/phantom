@@ -2350,6 +2350,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'disk': {
+        const { cmdDisk } = await import('./disk.js');
+        process.exitCode = await cmdDisk(rest);
+        break;
+      }
+
       case 'node': {
         const cmdNode = await loadNodeCmd();
         process.exitCode = await cmdNode(rest);
