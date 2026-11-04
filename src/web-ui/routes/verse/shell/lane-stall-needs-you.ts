@@ -45,7 +45,7 @@ export function deriveLaneStallNeedsYou(runs: FleetRuns | null | undefined, nowM
     if (minutes !== null && minutes < LANE_STALL_MINUTES) continue;
     items.push({
       id: laneStallId(l.lane),
-      open: { kind: 'pane', paneId: 'fleet-lanes' },
+      open: { kind: 'pane', paneId: 'fleet-lanes', lane: l.lane },
       severity: 'urgent',
       title: `${l.lane} stalled: ${l.queued} queued, ${l.running} of ${l.target} running, not held, ${minutes === null ? 'no launch observed' : `no launch for ${minutes} min`}`,
       detail: 'The lane has work and free slots and is not held, yet nothing is launching.',
