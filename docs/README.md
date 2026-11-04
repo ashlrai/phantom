@@ -290,4 +290,6 @@ canonical release guide for required hosted qualification and publication.
 
 - [Standing lane freshness](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.
 
-- [Dispatcher route hysteresis](ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
+- [Dispatcher route hysteresis](https://github.com/ashlrai/phantom/blob/master/docs/ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
+
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
