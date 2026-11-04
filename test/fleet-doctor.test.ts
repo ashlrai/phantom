@@ -15,6 +15,7 @@ function healthy(over: FleetDoctorOptions = {}): FleetDoctorOptions {
     leader: { readEvents: async () => `${localStamp(30)} OPUS-LEADER rc=0\n` },
     heartbeat: { queueStatus: async () => JSON.stringify({ last_tick: at(5) }), supervisorStatuses: async () => [] },
     readJobs: async () => '',
+    readLaneStatus: async () => JSON.stringify({ lanes: {} }),
     worktreeFs: { listDirs: async () => [], mtimeMs: async () => null },
     worktreeRoot: '/fixture/wt',
     ...over,
@@ -29,7 +30,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('fleet doctor', () => {
   it('prints one ok line per check and exits 0 when healthy', async () => {
     expect(await cmdFleetDoctor([], healthy())).toBe(0);
-    expect(out).toHaveLength(5);
+    expect(out).toHaveLength(6);
     expect(out.every(l => l.startsWith('ok '))).toBe(true);
   });
 
@@ -79,7 +80,7 @@ describe('fleet doctor', () => {
     expect(await cmdFleetDoctor(['--json'], healthy())).toBe(0);
     const parsed = JSON.parse(out[0]!);
     expect(parsed).toMatchObject({ v: 1, level: 'ok' });
-    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'waste', 'worktrees']);
+    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'waste', 'worktrees', 'lanes']);
   });
 
   it('rejects bad usage with 2 and prints help with 0', async () => {
