@@ -133,10 +133,12 @@ describe('companion workflow smoke', () => {
     writeFileSync(phm, `
 import { execFileSync } from 'node:child_process';
 if (process.argv.includes('ecosystem')) {
-  process.stdout.write(execFileSync(${JSON.stringify(process.execPath)}, [
+  const output = execFileSync(${JSON.stringify(process.execPath)}, [
     '--import', ${JSON.stringify(import.meta.resolve('tsx'))},
     ${JSON.stringify(join(process.cwd(), 'src/cli/index.ts'))}, ...process.argv.slice(2)
-  ], { env: process.env }));
+  ], { env: process.env });
+  if (!JSON.parse(output).added.includes('ashlr-md')) throw new Error('source CLI must discover MD');
+  process.stdout.write(output);
 } else await import(${JSON.stringify(server)});
 `);
     const checks = await smoke.phantomGateway({
@@ -147,6 +149,28 @@ if (process.argv.includes('ecosystem')) {
     const settings = JSON.parse(readFileSync(join(env.ASHLR_HOME, 'settings.json'), 'utf8'));
     expect(settings.mcpServers.locus.command).toBe(realpathSync(native['locus-mcp']!));
     expect(settings.mcpServers['ashlr-md'].command).toBe(realpathSync(native['mdopener-mcp']!));
+  });
+
+  it('routes MD through a published CLI that discovers only Locus', async () => {
+    const root = mkdtempSync(join(dir, 'published-md-'));
+    const home = join(root, 'home');
+    mkdirSync(home);
+    const env = smoke.smokeEnv(home);
+    const server = fakeServer('published-md', { tools: ['locus__locus_whoami', 'ashlr-md__open_file'] });
+    const phm = join(root, 'phm.mjs');
+    writeFileSync(phm, `
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv.includes('ecosystem')) {
+  mkdirSync(process.env.ASHLR_HOME, { recursive: true });
+  writeFileSync(join(process.env.ASHLR_HOME, 'settings.json'), JSON.stringify({ mcpServers: { locus: { command: 'locus-mcp' } } }));
+} else await import(${JSON.stringify(server)});
+`);
+    const checks = await smoke.phantomGateway({ phm, locusMcp: server, mdopenerMcp: server }, env, { root, home });
+    expect(checks).toHaveLength(3);
+    expect(checks.every((check: [string, { status: string }]) => check[1].status === 'pass')).toBe(true);
+    const settings = JSON.parse(readFileSync(join(env.ASHLR_HOME, 'settings.json'), 'utf8'));
+    expect(settings.mcpServers['ashlr-md']).toEqual({ command: server, args: [] });
   });
 
   it.each(['legacy', 'json', 'missing', 'invalid', 'failed', 'unregistered'])(
