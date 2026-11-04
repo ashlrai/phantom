@@ -46,7 +46,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 
 | Your task | Canonical guide |
 |-----------|-----------------|
-| Check fleet health, starting with doctor | [Fleet health](fleet-health.md) |
+| Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
@@ -290,4 +290,6 @@ canonical release guide for required hosted qualification and publication.
 
 - [Standing lane freshness](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.
 
-- [Dispatcher route hysteresis](ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
+- [Dispatcher route hysteresis](https://github.com/ashlrai/phantom/blob/master/docs/ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
+
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
