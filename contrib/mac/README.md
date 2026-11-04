@@ -11,9 +11,18 @@ tokens.
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
 the READY stock at >=30% `bet=bold` and parking security-pinned surfaces as
-`HOLD-SECURITY`. `dispatchd.py` is the per-tick supervisor: it reaps finished
-jobs, adapts per-lane slot targets inside `slots.json`, launches queued lines,
-and fires the restocker when a lane's queue runs shallow.
+`HOLD-SECURITY`. Lines whose `after=` dependencies are not yet landed are written
+as `PARKED-DEP.<lane>` rows with a `DEPENDENCY GATE:` id list in the prompt
+(RQ-QUEUE-AUTOUNPARK-1). Each restock tick re-reads those prompts; when
+`metrics/jobs.jsonl` shows every gate id `MERGED`, restock rewrites the row to a
+normal launch line and logs `UNPARK <job> deps=<ids>`. Unpark never rewrites the
+prompt body, so prose like `no merge without Security pin` stays put — unpark is
+not a merge. `phm fleet parked --json` lists the same parked rows and reports
+still-unmet gate ids under `unmetDeps`. `dispatchd.py` is the per-tick
+supervisor: it reaps finished jobs, adapts per-lane slot targets inside
+`slots.json`, launches queued lines, and fires the restocker when a lane's queue
+runs shallow. Restock changes need a Security re-pin before the live `bin/` copy
+is installed; do not install into `bin/` from an agent.
 
 Devin routing policy (RQ-DEVINROUTEDEFAULTQ7, DEVIN-LEVERAGE-20261026): a line
 that leaves its pool open (`pool=any` or no `pool=` attr) and is `tier=frontier`
@@ -44,7 +53,9 @@ every tick, immediately after the autopilot's `budget-overrides.json` floor and
 ceiling are reapplied, so neither the overrides nor the ramp can lift a pool
 past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
 `status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
-admission --json` reports the same verdict read-only. `queue/LOADGATE_OFF` is the
+admission --json` reports the same verdict read-only. `ashlr fleet admission --json`
+reads the embedded block and says, per lane, whether work is held, at target,
+blocked by the global cap, or ok. `queue/LOADGATE_OFF` is the
 owner's off switch. The `codex-local` mid-tier cap is 4 while the gate is clear
 and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
@@ -401,7 +412,11 @@ Host installation still requires Security review and re-pinning. Preview without
 
 ```sh
 python3 contrib/mac/restock.py --dry-run --json
-# {"dry_run": true, "queued": 0, "done_noop": ["RQ-EXAMPLE"], "skips": {"done-noop": 1}}
+# {"dry_run": true, "queued": 0, "done_noop": ["RQ-EXAMPLE"], "skips": {"done-noop": 1}, "unpark": [], "parked_dep": []}
+
+# Parked dependency rows still waiting on MERGED outcomes (read-only):
+phm fleet parked --json
+# … "unmetDeps": [{"job":"RQ-WAIT","lane":"devin","unmet":["RQ-UPSTREAM"]}] …
 ```
 
 Restock also cuts NOOP churn (RQ-PSEL-4-NOOPCUT): within one pass it keeps a

@@ -20,7 +20,7 @@
  * other missing reading is reported as NOT answered — silence never earns
  * an all-clear.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { ApiError, apiGet, apiPost } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
@@ -39,11 +39,15 @@ import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './fleet-ci-runs-query.j
 import { deriveLaneStallNeedsYou, laneStallId } from './lane-stall-needs-you.js';
 import { deriveLaneStreakNeedsYou } from './lane-streak-needs-you.js';
 import { laneStreaksQuery } from './lane-streak-query.js';
+import { memoryGuardQuery } from '../fleet-host/memory-guard-query.js';
+import { standbyCardQuery } from '../fleet-host/standby-card-query.js';
+import { deriveHostGuardNeedsYou } from './host-guard-needs-you.js';
 import { deriveMainHealthNeedsYou } from './main-health-needs-you.js';
 import { mainHealthQuery } from './main-health-query.js';
 import { selfTickNeedsYou } from './self-tick-needs-you.js';
 import { deriveStraySlotsNeedsYou } from './stray-slots-needs-you.js';
 import { straySlotsQuery } from './stray-slots-query.js';
+import { deriveMeterFlatNeedsYou, meterFlatBusQuery } from './meter-flat-needs-you.js';
 import { selfTickQuery } from './self-tick-query.js';
 import { runSelfTickNow, type SelfTickRunNowView } from './self-tick-run-now.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
@@ -61,6 +65,7 @@ import {
 } from './fleet-needs-you.js';
 import { fleetRunsNeedsYouQuery } from './fleet-needs-you-query.js';
 import { tellLeadersPrefill } from './needs-you-tell.js';
+import { needsMasonResolvedText } from './needs-mason-resolve-text.js';
 import { usePollWhileVisible } from './section-visibility.js';
 import styles from './NeedsYouDrawer.module.css';
 
@@ -156,20 +161,34 @@ function NeedsMasonRows() {
   const [replies, setReplies] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  useEffect(() => {
+  const [confirmation, setConfirmation] = useState<{ text: string; prefill?: string } | null>(null);
+  const readAbort = useRef<AbortController | null>(null);
+  function readItems() {
+    readAbort.current?.abort();
     const abort = new AbortController();
+    readAbort.current = abort;
     apiGet<{ items?: NeedsMasonRow[] }>('/api/verse/agent-bus/needs-mason', abort.signal)
-      .then(read => setItems(Array.isArray(read.items) ? read.items.filter(row => typeof row?.id === 'string' && typeof row.text === 'string') : []))
-      .catch(() => { /* a hub without the route shows nothing */ });
-    return () => abort.abort();
+      .then(read => {
+        if (!abort.signal.aborted) setItems(Array.isArray(read.items) ? read.items.filter(row => typeof row?.id === 'string' && typeof row.text === 'string') : []);
+      })
+      .catch(() => { /* keep the last list when a read fails */ });
+  }
+  useEffect(() => {
+    readItems();
+    return () => readAbort.current?.abort();
   }, []);
+  usePollWhileVisible(readItems, FLEET_NEEDS_YOU_POLL_MS);
   async function resolve(id: string) {
     if (!hasHold || !token || busy) { setError('Unlock to resolve.'); return; }
     setBusy(id);
     setError('');
+    setConfirmation(null);
     try {
       const reply = (replies[id] ?? '').trim();
-      await apiPost('/api/verse/agent-bus/needs-mason/resolve', reply ? { itemId: id, reply } : { itemId: id }, token);
+      const response = await apiPost<unknown>('/api/verse/agent-bus/needs-mason/resolve', reply ? { itemId: id, reply } : { itemId: id }, token);
+      readAbort.current?.abort();
+      const text = needsMasonResolvedText(items.find(row => row.id === id)?.text ?? '', response);
+      setConfirmation({ text, ...(response !== null && typeof response === 'object' && 'inbox' in response && response.inbox === 'failed' ? { prefill: `Re needs-you ${id}: ${reply}` } : {}) });
       touch();
       setItems(previous => previous.filter(row => row.id !== id));
     } catch (reason) {
@@ -177,11 +196,13 @@ function NeedsMasonRows() {
       else setError(reason instanceof ApiError ? reason.detail ?? reason.message : 'The resolve failed.');
     } finally { setBusy(''); }
   }
-  if (items.length === 0) return null;
+  if (items.length === 0 && !confirmation) return null;
   return (
     <section aria-label="Needs Mason">
       <div className={styles.batch}><p className={styles.rowKind}>Needs Mason</p></div>
       {error && <p role="status">{error}</p>}
+      {confirmation && <p role="status">{confirmation.text} {confirmation.prefill &&
+        <Button size="sm" variant="ghost" onClick={() => openInterjectDialog({ prefill: confirmation.prefill })}>Tell the leaders</Button>}</p>}
       {items.map(row => (
         <div key={row.id} className={styles.row}>
           <span className={styles.rule} aria-hidden="true" />
@@ -227,12 +248,29 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   const mainHealthRead = useQuery(mainHealthQuery);
   const refetchMainHealth = useRefetch(mainHealthQuery);
   usePollWhileVisible(refetchMainHealth, FLEET_NEEDS_YOU_POLL_MS, { enabled: mainHealthRead.data?.kind !== 'notInBuild' });
+  const memoryRead = useQuery(memoryGuardQuery);
+  const refetchMemory = useRefetch(memoryGuardQuery);
+  usePollWhileVisible(refetchMemory, FLEET_NEEDS_YOU_POLL_MS, { enabled: memoryRead.data !== null });
+  const standbyRead = useQuery(standbyCardQuery);
+  const refetchStandby = useRefetch(standbyCardQuery);
+  usePollWhileVisible(refetchStandby, FLEET_NEEDS_YOU_POLL_MS, { enabled: standbyRead.data !== null });
+  const hostGuardItems = useMemo(() => deriveHostGuardNeedsYou(
+    memoryRead.status === 'error' ? undefined : memoryRead.data,
+    standbyRead.status === 'error' ? undefined : standbyRead.data, nowMs),
+  [memoryRead.data, memoryRead.status, standbyRead.data, standbyRead.status, nowMs]);
   const strayRead = useQuery(straySlotsQuery);
   const refetchStrays = useRefetch(straySlotsQuery);
   usePollWhileVisible(refetchStrays, FLEET_NEEDS_YOU_POLL_MS, { enabled: strayRead.data !== null });
   const strayItems = useMemo(
     () => deriveStraySlotsNeedsYou(strayRead.status === 'error' ? undefined : strayRead.data, nowMs),
     [strayRead.data, strayRead.status, nowMs],
+  );
+  const meterRead = useQuery(meterFlatBusQuery);
+  const refetchMeter = useRefetch(meterFlatBusQuery);
+  usePollWhileVisible(refetchMeter, FLEET_NEEDS_YOU_POLL_MS);
+  const meterItems = useMemo(
+    () => deriveMeterFlatNeedsYou(meterRead.status === 'error' ? undefined : meterRead.data, nowMs),
+    [meterRead.data, meterRead.status, nowMs],
   );
   const selfTickRead = useQuery(selfTickQuery);
   const refetchSelfTick = useRefetch(selfTickQuery);
@@ -275,8 +313,8 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     [phoneRead.data, phoneRead.status]);
   // The stall row says more than the plain idle one for the same lane: it wins.
   const stalled = useMemo(() => new Set(laneStallItems.map(item => item.id)), [laneStallItems]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items.filter(item => !(item.id.startsWith('lane-idle:') && stalled.has(laneStallId(item.id.slice('lane-idle:'.length))))), ...strayItems, ...laneStallItems, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
-    [result, stalled, strayItems, laneStallItems, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items.filter(item => !(item.id.startsWith('lane-idle:') && stalled.has(laneStallId(item.id.slice('lane-idle:'.length))))), ...hostGuardItems, ...strayItems, ...meterItems, ...laneStallItems, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
+    [result, stalled, hostGuardItems, strayItems, meterItems, laneStallItems, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map<string, string | null>(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
