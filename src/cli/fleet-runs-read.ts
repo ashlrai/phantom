@@ -128,6 +128,8 @@ function formatParked(state: FleetQueueV1): string {
     `Total: ${state.total}; ready: ${state.ready}; parked: ${state.parked}; malformed: ${state.malformed}`,
     ...state.byLane.map(lane => `${lane.lane}: ${lane.ready} ready, ${lane.parked} parked`),
     ...state.groups.map(group => `${group.reason} (${value(group.lane)}): ${group.count} [${group.jobs.join(', ')}]`),
+    ...((state.unmetDeps ?? []).map(row =>
+      `UNMET-DEP ${row.job} (${value(row.lane)}): ${row.unmet.join(', ')}`)),
     `Precheck skips last 24h: ${value(state.skipsLast24h)}`,
     ...state.skips.map(skip => `${skip.at} ${skip.job} ${skip.code}: ${skip.reason}`),
   ].join('\n');
@@ -147,7 +149,7 @@ const SAMPLE_MAX = 200;
 const SAMPLE_ROW_KEYS: Record<Verb, readonly string[]> = {
   runs: ['lanes', 'claimed', 'publishesLastHour', 'events'],
   journal: ['notes', 'passes', 'ingest', 'ingested'],
-  parked: ['byLane', 'nextUp', 'groups', 'skips'],
+  parked: ['byLane', 'nextUp', 'groups', 'unmetDeps', 'skips'],
 };
 const ISO_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
@@ -289,7 +291,8 @@ export async function cmdFleetRunsRead(verb: Verb | string, args: string[] = [],
       if (lane === undefined) emit(state, formatParked);
       else {
         const filtered = { ...state, byLane: state.byLane.filter(row => row.lane === lane),
-          groups: state.groups.filter(row => row.lane === lane), skips: [],
+          groups: state.groups.filter(row => row.lane === lane),
+          unmetDeps: (state.unmetDeps ?? []).filter(row => row.lane === lane), skips: [],
           laneFilter: { lane: sanitizePublicJson(lane), global: ['sources', 'total', 'ready', 'parked', 'malformed', 'skipsLast24h'], omitted: ['skips'] } };
         emit(filtered, formatParked, `Lane filter: ${filtered.laneFilter.lane}; totals and source health are global; unattributed skips omitted\n`);
       }
