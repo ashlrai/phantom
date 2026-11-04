@@ -23,6 +23,8 @@ import { MAX_FLEET_RESET_RELEASE_AWAIT_MS, parseFleetResetReleaseAwaitArgs, read
   type FleetResetReleaseAwaitArgs } from './fleet-reset-release-await.js';
 import { MAX_FLEET_RESET_FOLLOW_MS, parseFleetResetFollowArgs, readFleetResetFollow,
   type FleetResetFollowArgs } from './fleet-reset-follow.js';
+import { MAX_FLEET_JOB_HISTORY, parseFleetJobHistoryArgs, readFleetJobHistory,
+  type FleetJobHistoryArgs } from './fleet-job-history.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -39,6 +41,7 @@ export interface FleetReaders {
   resetAwait?: (input: FleetResetAwaitArgs) => Promise<unknown>;
   resetReleaseAwait?: (input: FleetResetReleaseAwaitArgs) => Promise<unknown>;
   resetFollow?: (input: FleetResetFollowArgs) => Promise<unknown>;
+  jobHistory?: (input: FleetJobHistoryArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -169,11 +172,25 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       }, required: ['timeoutMs'], additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_job_history',
+      description: 'Read which repository paths a fleet job landed, newest first: bridge commits on origin/master whose subject id exactly equals the requested job, from the same bounded git scan as `phm fleet path-history --job` — never a second scanner. The scan covers at most the newest 1000 commits and returns at most `limit` matching commits; an empty or truncated result proves only what that bounded scan saw and does not prove the job never landed. Recorded merge history, never a live lane, dispatch or merge-queue verdict. The ref is fixed at origin/master: no caller ref, path, root or cwd is accepted, and no tool mutates anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(…) commit subjects, never by prefix.' },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_JOB_HISTORY, default: 20 },
+        },
+        required: ['jobId'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -188,7 +205,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const resetAwait = name === 'fleet_reset_await' ? parseFleetResetAwaitArgs(args) : null;
     const resetReleaseAwait = name === 'fleet_reset_release_await' ? parseFleetResetReleaseAwaitArgs(args) : null;
     const resetFollow = name === 'fleet_reset_follow' ? parseFleetResetFollowArgs(args) : null;
-    if (name === 'fleet_reset_group_await' ? resetGroupAwait === null :
+    const jobHistory = name === 'fleet_job_history' ? parseFleetJobHistoryArgs(args) : null;
+    if (name === 'fleet_job_history' ? jobHistory === null :
+        name === 'fleet_reset_group_await' ? resetGroupAwait === null :
         name === 'fleet_reset_await' ? resetAwait === null :
         name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
         name === 'fleet_reset_follow' ? resetFollow === null :
@@ -211,6 +230,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_reset_release_await' ? await (readers.resetReleaseAwait ?? readFleetResetReleaseAwait)(resetReleaseAwait as FleetResetReleaseAwaitArgs)
         : name === 'fleet_reset_follow' ? await (readers.resetFollow ?? readFleetResetFollow)(resetFollow as FleetResetFollowArgs)
         : name === 'fleet_reset_history' ? await (readers.resetHistory ?? readFleetResetHistory)(history as FleetResetHistoryArgs)
+        : name === 'fleet_job_history' ? await (readers.jobHistory ?? readFleetJobHistory)(jobHistory as FleetJobHistoryArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
