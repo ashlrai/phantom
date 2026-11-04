@@ -2668,6 +2668,14 @@ an automatic capacity-waiting queue or retry.
 `ashlr runtime run` still forwards Universe commands only; it does not forward
 the standalone resource-pool CLI.
 
+## Z.ai GLM Coding Lite lane
+
+Phantom runs coding tasks on Z.ai models through a lane mapped to queue
+tiers. The lane exposes two models, glm-5.3 (work) and glm-5.3-flash
+(fast). See [Z.ai GLM Coding Lite lane](lanes/zai.md) for models, credit
+formula, included allowance, rolling-window pacing, error classes, and test
+fixtures.
+
 ## Provider research and billing boundaries
 
 Research checked September 7, 2026; Grok scope notes updated October 9, 2026.
