@@ -7,10 +7,12 @@ import { stuckPrs } from './fleet-stuck-prs.js';
 import { fleetWaste } from './fleet-waste.js';
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
 import { findStaleWorktrees, type FleetWorktreeStaleFs } from './fleet-worktree-stale.js';
+import { summarizeFleetSlowPrs } from './fleet-slow-prs.js';
+import { parseKeptWorktrees, summarizeFleetKept } from './fleet-kept.js';
 import { parseIdleLanes } from '../core/fleet/idle-lanes.js';
 import { readFile, readdir, stat } from 'node:fs/promises';
 
-const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, waste, worktrees, lanes) as ok, warn or red, with the reason. Exits 1 when any check is red, 2 on bad usage.';
+const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees, lanes) as ok, warn or red, with the reason. Exits 1 when any check is red, 2 on bad usage.';
 
 export type DoctorLevel = 'ok' | 'warn' | 'red';
 export interface DoctorCheck { name: string; level: DoctorLevel; reason: string }
@@ -27,13 +29,18 @@ export interface FleetDoctorOptions {
   worktreeFs?: FleetWorktreeStaleFs;
   worktreeRoot?: string;
   readLaneStatus?: () => Promise<string>;
+  /** Queue status text for the kept check; defaults to reading queue/status.json. */
+  readKeptStatus?: () => Promise<string>;
   now?: () => number;
 }
 
 const HEARTBEAT_MAX_MIN = 30;
 const STUCK_RED = 5;
+const SLOW_PRS_RED = 5;
 const POOL_ERROR_RED = 5;
 const LEADER_RED = 3;
+const KEPT_WARN = 20;
+const KEPT_RED = 60;
 
 const defaultFs: FleetWorktreeStaleFs = {
   async listDirs(root) { return (await readdir(root, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name); },
@@ -92,9 +99,32 @@ async function worktreeCheck(o: FleetDoctorOptions, readJobs: TaskCheckReader, n
     : check('worktrees', 'warn', `${stale.length} stale worktree${stale.length === 1 ? '' : 's'} (see fleet worktree-stale)`);
 }
 
+/** Default reader for the queue status file, shared by the kept and lanes checks. */
+const readQueueStatus = (): Promise<string> =>
+  readFile(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'), 'utf8');
+
+async function slowPrsCheck(read: TaskCheckReader): Promise<DoctorCheck> {
+  const text = await read();
+  if (text === null) return check('slow-prs', 'warn', 'jobs ledger unreadable');
+  const n = summarizeFleetSlowPrs(text).repos.reduce((sum, group) => sum + group.count, 0);
+  if (n === 0) return check('slow-prs', 'ok', 'no PR open over 30 min');
+  return check('slow-prs', n >= SLOW_PRS_RED ? 'red' : 'warn', `${n} PR${n === 1 ? '' : 's'} open over 30 min (see fleet slow-prs)`);
+}
+
+async function keptCheck(o: FleetDoctorOptions, readJobs: TaskCheckReader): Promise<DoctorCheck> {
+  let ids: string[];
+  try { ids = parseKeptWorktrees(await (o.readKeptStatus ?? readQueueStatus)()); }
+  catch { return check('kept', 'warn', 'queue status unreadable'); }
+  // The count comes from the status list; the ledger only classifies reasons, so an unreadable ledger cannot change it.
+  const n = summarizeFleetKept(ids, (await readJobs()) ?? '').kept;
+  const detail = `${n} kept worktree${n === 1 ? '' : 's'}`;
+  if (n >= KEPT_RED) return check('kept', 'red', `${detail} (see fleet kept)`);
+  if (n >= KEPT_WARN) return check('kept', 'warn', `${detail} (see fleet kept)`);
+  return check('kept', 'ok', n === 0 ? 'no kept worktrees' : detail);
+}
+
 async function lanesCheck(o: FleetDoctorOptions): Promise<DoctorCheck> {
-  const read = o.readLaneStatus ?? (() => readFile(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'), 'utf8'));
-  const lanes = parseIdleLanes(await read());
+  const lanes = parseIdleLanes(await (o.readLaneStatus ?? readQueueStatus)());
   if (lanes.length === 0) return check('lanes', 'ok', 'no queued work waiting');
   const red = lanes.filter(lane => lane.status === 'red');
   if (red.length) return check('lanes', 'red', `room and queued work: ${red.map(lane => `${lane.lane} ${lane.running}/${lane.target} running, ${lane.queued} queued`).join('; ')}`);
@@ -113,7 +143,9 @@ export async function runFleetDoctor(o: FleetDoctorOptions = {}): Promise<FleetD
     await safe('leader', () => leaderCheck(o, now)),
     await safe('heartbeat', () => heartbeatCheck(o, now)),
     await safe('stuck-prs', () => stuckCheck(readJobs, now)),
+    await safe('slow-prs', () => slowPrsCheck(readJobs)),
     await safe('waste', () => wasteCheck(readWaste, now)),
+    await safe('kept', () => keptCheck(o, readJobs)),
     await safe('worktrees', () => worktreeCheck(o, readJobs, now)),
     await safe('lanes', () => lanesCheck(o)),
   ];
