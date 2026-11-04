@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the six
+ * a host timer or an agent with no desktop app open. It calls the seven
  * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → stray-stop → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -10,10 +10,12 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { cmdFleetResetRelease } from './fleet-reset-release.js';
 import { cmdFleetLaneAutohold } from './fleet-lane-autohold.js';
+import { cmdFleetStrayStop } from './fleet-stray-stop.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import { cmdFleetInboxAcks, type FleetInboxAcksDeps } from './fleet-inbox-acks.js';
 import { cmdFleetOrderNotices, type FleetOrderNoticesDeps } from './fleet-order-notices.js';
 import { cmdFleetLandedSweep } from './fleet-landed-sweep.js';
+import type { StrayStopDeps } from '../core/fleet/stray-stop.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
@@ -23,7 +25,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
 One locked pass of Phantom's self-management: reset-release first (a lane it
 frees counts as a free slot for the planner step), then lane-autohold, then
-planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
+stray-stop (stops at most 5 re-proven stray processes holding finished lane slots, so
+the planner sees them free), then planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
 (tells Mason when a merged job served one of his orders), then landed-sweep (closes DIRTY PRs whose work already landed;
 last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged or notified — the
 planner step still appends its observational PLANNER_TICK line to
@@ -50,6 +53,8 @@ interface Dependencies {
   home?: string;
   /** Inbox acknowledgement senders for tests; production defaults are unchanged. */
   senders?: FleetInboxAcksDeps['senders'];
+  /** stray-stop readers/kill/ledger seams for tests; production reads real lanes. */
+  strayStop?: Partial<StrayStopDeps>;
   /** Order-merge notice senders for tests; production defaults are unchanged. */
   noticeSenders?: FleetOrderNoticesDeps['senders'];
 }
@@ -70,6 +75,11 @@ function summary(step: string, report: unknown): string {
     const decisions = Array.isArray(row['decisions']) ? row['decisions'] : [];
     const held = decisions.filter((d) => (d as Record<string, unknown>)['result'] === 'held').length;
     return `held=${held} decisions=${decisions.length}`;
+  }
+  if (step === 'stray-stop') {
+    const s = row['summary'] as Record<string, unknown> | undefined;
+    const n = (value: unknown): number => typeof value === 'number' ? value : 0;
+    return `planned=${n(s?.['planned'])} signalled=${n(s?.['signalled'])}`;
   }
   if (step === 'inbox-acks') {
     const totals = row['totals'] as Record<string, unknown> | undefined;
@@ -108,7 +118,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all six steps: the verbs' own fallbacks
+  // One root for the lock and all seven steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -152,7 +162,22 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     'order-notices': bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders }),
     'landed-sweep': bind(cmdFleetLandedSweep, { now }),
   };
-  const steps = { ...defaults, ...deps.steps };
+  // A caller that injects its own step table owns the whole table: the real
+  // stray-stop (process-table read, SIGTERM under --apply) joins only the
+  // default table, or when that caller asks for it through `strayStop`.
+  // The verb prints with console.log and takes no output seam; its steps run
+  // one at a time under the lock, so capturing console.log here is race-free.
+  const stray = bind(async (argv, io) => {
+    const log = console.log;
+    console.log = (...parts: unknown[]) => io.output(parts.join(' '));
+    try { return await cmdFleetStrayStop([...argv, '--max', '5'], { ...deps.strayStop }); }
+    finally { console.log = log; }
+  });
+  const steps: SelfTickSteps = {
+    ...defaults,
+    ...(deps.steps === undefined || deps.strayStop !== undefined ? { 'stray-stop': stray } : {}),
+    ...deps.steps,
+  };
   const inboxAcks = steps['inbox-acks'];
   steps['inbox-acks'] = (argv) => inboxAcks(argv.map(arg => arg === '--apply' ? '--flush' : arg));
   const { report, exitCode, lock } = await runSelfTick({
