@@ -725,3 +725,11 @@ The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
 excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
+
+`phm fleet repo-rate --json` reads merged PR outcomes from
+`~/.ashlr-runs/metrics/jobs.jsonl` for the last six hours. It reports each repo's
+merge count, median time to merge in seconds, and newest merge time. Each PR
+counts once; missing durations remain unknown. `--hours N` changes the window.
+The default target is 20 merges for `ashlrai/phantom`; `--target N` changes it
+and `--all` checks every observed repo. Exit 1 means a checked repo is below
+target or the ledger could not be read. No work is launched or changed.
