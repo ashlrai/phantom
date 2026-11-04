@@ -8,6 +8,7 @@ function fixtures(readLaneStatus: () => Promise<string>): FleetDoctorOptions {
     leader: { readEvents: async () => '', now: NOW },
     heartbeat: { queueStatus: async () => JSON.stringify({ last_tick: new Date(NOW).toISOString() }), supervisorStatuses: async () => [] },
     readJobs: async () => '',
+    readKeptStatus: async () => '{"kept_worktrees":[]}',
     worktreeFs: { listDirs: async () => [], mtimeMs: async () => null },
     worktreeRoot: '/fixture/wt',
     readLaneStatus,
