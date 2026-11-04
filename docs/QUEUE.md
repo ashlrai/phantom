@@ -146,6 +146,12 @@ line with fleet running against the admission cap. It exits 1 when a lane is
 starved while the admission reason starts with `at_cap` — queued work parked
 because the whole fleet is full, the case `ashlr fleet trim` suggests a slot move for.
 
+`ashlr fleet starved [--json]` reads the same file and prints only the lanes that
+still have queued work: running of target and queued, marked `starved` when a lane
+is below its target while the admission reason starts with `at_cap`, then one line
+with the admission running, cap and reason. It exits 1 when any lane has 10 or
+more jobs queued and none running.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename
