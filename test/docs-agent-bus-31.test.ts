@@ -3,6 +3,7 @@
  * contract details that an agent or contributor needs.
  */
 import { strictEqual } from 'node:assert';
+import { describe, it } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,4 +50,6 @@ function run(): void {
     'docs/README.md must link AGENT-BUS.md');
 }
 
-run();
+describe('docs/AGENT-BUS.md agent-bus contract', () => {
+  it('documents routes, envelope fields, caps and the README link', run);
+});

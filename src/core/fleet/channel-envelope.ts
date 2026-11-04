@@ -11,6 +11,7 @@ import { CROSS_CHANNEL_WINDOW_MS, decideCrossChannelMerge, normalizeForDedupe } 
 import { addInboxSource, appendInboxEntry, INBOX_MAX_CHARS, readRecentChannelEntries, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
 import { publishChannelEnvelope, type ChannelPublishState } from './channel-bus-publish.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { queueCosEnvelope } from '../cos/intake.js';
 
 export type { ChannelPublishState } from './channel-bus-publish.js';
 
@@ -26,6 +27,8 @@ const MAX_TIMER_MS = 2_147_483_647;
 export const OPERATOR_SENDER_ID = 'mason';
 
 export interface ChannelMessage {
+  /** Adapter-verified originating message or thread, never parsed from body text. */
+  threadId?: string;
   channel: InboundChannel;
   /** Authenticated channel identity supplied by the trusted adapter. No credentials. */
   verifiedSenderId: string;
@@ -51,6 +54,8 @@ export type ChannelReceiveResult =
   | { ok: false; reason: 'dedupe-store-unavailable' | 'sender-not-allowed' | 'invalid' | 'full' | 'write-failed' | Exclude<InboxAppendResult, { ok: true }>['reason'] };
 
 export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDir' | 'now'> {
+  /** Custom desktop sinks can opt into the shared durable background queue. */
+  backgroundQueue?: boolean;
   allowedSenderIds: ReadonlySet<string>;
   /** Custom sinks without runsDir remain memory-only unless a store is supplied.
    * Default inbox sinks use a local receipt store under runsDir. */
@@ -104,6 +109,10 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   let tail = Promise.resolve();
   let lastTime = 0;
   async function success(envelope: ChannelEnvelope, status: ChannelAck['status'], original?: ChannelEnvelope, entryId?: string): Promise<ChannelReceiveResult> {
+    if (options.backgroundQueue ?? !options.write) {
+      try { await queueCosEnvelope(envelope, options.runsDir); }
+      catch { return { ok: false, reason: 'write-failed' }; }
+    }
     const ack: ChannelAck = { channel: envelope.channel, dedupeKey: envelope.dedupeKey, status, ...(entryId ? { entryId } : {}) };
     // Bus mirroring is best effort and observational: it runs after the durable
     // write committed, before acknowledge, and outside the ack timeout. Its
@@ -157,6 +166,10 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     if (!INBOUND_CHANNELS.includes(input.channel) || typeof input.body !== 'string' ||
         !input.verifiedSenderId.trim() || input.verifiedSenderId.length > 128 ||
         scrubSecrets(input.verifiedSenderId) !== input.verifiedSenderId) return { ok: false, reason: 'invalid' };
+    if (input.threadId !== undefined && (typeof input.threadId !== 'string' ||
+        !/^[!-~]{1,998}$/.test(input.threadId) || /[<>]/.test(input.threadId) || scrubSecrets(input.threadId) !== input.threadId)) {
+      return { ok: false, reason: 'invalid' };
+    }
     if (input.canonicalSenderId !== undefined && (typeof input.canonicalSenderId !== 'string' ||
         !input.canonicalSenderId.trim() || input.canonicalSenderId.length > 128 ||
         scrubSecrets(input.canonicalSenderId) !== input.canonicalSenderId)) return { ok: false, reason: 'invalid' };
@@ -184,6 +197,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
       const envelope: ChannelEnvelope = {
         channel: input.channel, verifiedSenderId: input.verifiedSenderId,
         receivedAt: new Date(now).toISOString(), body, dedupeKey,
+        ...(input.threadId ? { threadId: input.threadId } : {}),
       };
       let entryId: string | undefined;
       if (previous && !options.write) {
@@ -221,7 +235,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   }
   return (input) => {
     // Snapshot before queuing: callers cannot change identity/body while waiting.
-    const snapshot = { channel: input?.channel, verifiedSenderId: input?.verifiedSenderId, canonicalSenderId: input?.canonicalSenderId, body: input?.body };
+    const snapshot = { channel: input?.channel, verifiedSenderId: input?.verifiedSenderId, canonicalSenderId: input?.canonicalSenderId, body: input?.body, threadId: input?.threadId };
     const result = tail.then(() => receive(snapshot));
     tail = result.then(() => undefined, () => undefined);
     return result;
