@@ -35,11 +35,12 @@ it('finds exact bridge jobs and renamed paths through real git, preserving path 
 });
 
 it('discloses a full scan and result truncation, and validates before invoking git', async () => {
+  const oid = 'e'.repeat(40);
   const history = Array.from({ length: 1000 }, (_, i) => `${i.toString(16).padStart(40, '0')}\0date\0bridge(RQ-X): fake (#1)\0\n`).join('');
-  const run = vi.fn(async (args: string[]) => args[0] === 'log' ? history : 'a path\0');
+  const run = vi.fn(async (args: string[]) => args[0] === 'rev-parse' ? `${oid}\n` : args[0] === 'log' ? history : 'a path\0');
   const result = await jobPathHistory('RQ-X', 'HEAD', 1, run);
-  expect(result).toMatchObject({ scanned: 1000, scanMayBeTruncated: true, matchesTruncated: true, paths: ['a path'] });
-  expect(run).toHaveBeenCalledTimes(2);
+  expect(result).toMatchObject({ resolvedRef: oid, scanned: 1000, scanMayBeTruncated: true, matchesTruncated: true, paths: ['a path'] });
+  expect(run).toHaveBeenCalledTimes(3); // resolve + one bounded log + one kept diff-tree
   await expect(jobPathHistory('RQ-X', 'HEAD^', 1, run)).rejects.toThrow();
-  expect(run).toHaveBeenCalledTimes(2);
+  expect(run).toHaveBeenCalledTimes(3);
 });

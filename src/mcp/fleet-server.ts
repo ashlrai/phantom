@@ -25,10 +25,14 @@ import { MAX_FLEET_RESET_FOLLOW_MS, parseFleetResetFollowArgs, readFleetResetFol
   type FleetResetFollowArgs } from './fleet-reset-follow.js';
 import { MAX_FLEET_JOB_HISTORY, parseFleetJobHistoryArgs, readFleetJobHistory,
   type FleetJobHistoryArgs } from './fleet-job-history.js';
+import { MAX_FLEET_JOB_HISTORY_BATCH_IDS, MAX_FLEET_JOB_HISTORY_BATCH_LIMIT,
+  parseFleetJobHistoryBatchArgs, readFleetJobHistoryBatch,
+  type FleetJobHistoryBatchArgs } from './fleet-job-history-batch.js';
 import { MAX_FLEET_PATH_HISTORY, parseFleetPathHistoryArgs, readFleetPathHistory,
   type FleetPathHistoryArgs } from './fleet-path-history.js';
 import { parseFleetJobPrecheckArgs, readFleetJobPrecheck, type FleetJobPrecheckArgs } from './fleet-job-precheck.js';
 import { readFleetMainHealthTool } from './fleet-main-health.js';
+import { readFleetWasteRiskTool } from './fleet-waste-risk.js';
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
@@ -49,10 +53,12 @@ export interface FleetReaders {
   resetReleaseAwait?: (input: FleetResetReleaseAwaitArgs) => Promise<unknown>;
   resetFollow?: (input: FleetResetFollowArgs) => Promise<unknown>;
   jobHistory?: (input: FleetJobHistoryArgs) => Promise<unknown>;
+  jobHistoryBatch?: (input: FleetJobHistoryBatchArgs) => Promise<unknown>;
   pathHistory?: (input: FleetPathHistoryArgs) => Promise<unknown>;
   jobPrecheck?: (input: FleetJobPrecheckArgs) => Promise<unknown>;
   jobPrecheckBatch?: (input: FleetJobPrecheckBatchArgs) => Promise<unknown>;
   mainHealth?: () => Promise<unknown>;
+  wasteRisk?: () => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -198,6 +204,24 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_job_history_batch',
+      description: 'Audit up to 20 proposed fleet job ids against landed work in one bounded git scan: bridge commits on origin/master whose subject id exactly equals a requested job, from the same shared reader as `phm fleet job-history-batch` — never a second scanner. One scan of at most the newest 1000 commits serves every id in input order and keeps at most `limit` matching commits per id; a missing or truncated result proves only what that bounded scan saw and does not prove a job never landed. Recorded merge history, never a live lane, dispatch or merge-queue verdict; it never authorizes dispatch or merge. The ref is fixed at origin/master: no caller ref, path, root or cwd is accepted, and no tool mutates anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobIds: {
+            type: 'array', minItems: 1, maxItems: MAX_FLEET_JOB_HISTORY_BATCH_IDS, uniqueItems: true,
+            items: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(…) commit subjects, never by prefix.' },
+            description: 'Distinct exact job ids; results come back in this order.',
+          },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_JOB_HISTORY_BATCH_LIMIT, default: 20 },
+        },
+        required: ['jobIds'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_path_history',
       description: 'Read which landed fleet jobs touched one repository path, newest first: bridge commits on origin/master whose literal-pathspec history includes the requested path, from the same bounded git scan as `phm fleet path-history` — never a second scanner. The scan covers at most the newest limit×3 commits touching the path and returns at most `limit` distinct job ids; an empty or capped result proves only what that bounded scan saw and does not prove no job landed work on the path. Recorded merge history, never a live lane, dispatch or merge-queue verdict. The ref is fixed at origin/master: no caller ref, repository root or cwd is accepted, and no tool mutates anything.',
       inputSchema: {
@@ -244,11 +268,17 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_waste_risk',
+      description: 'Read the per-lane waste-risk projection: projected unused included capacity at reset, waste_risk level and recommended_target per lane, plus the count of high-risk lanes — a projection only that authorizes no target, hold or dispatch change.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -264,12 +294,14 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const resetReleaseAwait = name === 'fleet_reset_release_await' ? parseFleetResetReleaseAwaitArgs(args) : null;
     const resetFollow = name === 'fleet_reset_follow' ? parseFleetResetFollowArgs(args) : null;
     const jobHistory = name === 'fleet_job_history' ? parseFleetJobHistoryArgs(args) : null;
+    const jobHistoryBatch = name === 'fleet_job_history_batch' ? parseFleetJobHistoryBatchArgs(args) : null;
     const pathHistory = name === 'fleet_path_history' ? parseFleetPathHistoryArgs(args) : null;
     const jobPrecheck = name === 'fleet_job_precheck' ? parseFleetJobPrecheckArgs(args) : null;
     const jobPrecheckBatch = name === 'fleet_job_precheck_batch' ? parseFleetJobPrecheckBatchArgs(args) : null;
     if (name === 'fleet_job_precheck_batch' ? jobPrecheckBatch === null :
         name === 'fleet_job_precheck' ? jobPrecheck === null :
         name === 'fleet_path_history' ? pathHistory === null :
+        name === 'fleet_job_history_batch' ? jobHistoryBatch === null :
         name === 'fleet_job_history' ? jobHistory === null :
         name === 'fleet_reset_group_await' ? resetGroupAwait === null :
         name === 'fleet_reset_await' ? resetAwait === null :
@@ -296,9 +328,11 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_reset_history' ? await (readers.resetHistory ?? readFleetResetHistory)(history as FleetResetHistoryArgs)
         : name === 'fleet_path_history' ? await (readers.pathHistory ?? readFleetPathHistory)(pathHistory as FleetPathHistoryArgs)
         : name === 'fleet_job_history' ? await (readers.jobHistory ?? readFleetJobHistory)(jobHistory as FleetJobHistoryArgs)
+        : name === 'fleet_job_history_batch' ? await (readers.jobHistoryBatch ?? readFleetJobHistoryBatch)(jobHistoryBatch as FleetJobHistoryBatchArgs)
         : name === 'fleet_job_precheck_batch' ? await (readers.jobPrecheckBatch ?? readFleetJobPrecheckBatch)(jobPrecheckBatch as FleetJobPrecheckBatchArgs)
         : name === 'fleet_job_precheck' ? await (readers.jobPrecheck ?? readFleetJobPrecheck)(jobPrecheck as FleetJobPrecheckArgs)
         : name === 'fleet_main_health' ? await (readers.mainHealth ?? readFleetMainHealthTool)()
+        : name === 'fleet_waste_risk' ? await (readers.wasteRisk ?? readFleetWasteRiskTool)()
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
