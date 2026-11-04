@@ -289,6 +289,7 @@ describe('release workflow', () => {
       '.github/tests/ci-attestation-inputs.test.mjs',
       '.github/tests/hosted-build-artifact.test.mjs',
       '.github/tests/hosted-native-build.test.mjs',
+      '.github/tests/release-train.test.mjs',
     ].join(' '));
     expect(releaseScripts['check:release:fast']).toBe('npm run check:pack-contracts && npm run check:release');
     expect(snapshot?.run).toContain('npm run check:pack-contracts');
