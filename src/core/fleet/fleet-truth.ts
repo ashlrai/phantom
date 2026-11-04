@@ -48,6 +48,7 @@ export interface FleetTruth {
   /** null = unknown. */
   running: number | null;
   queued: number | null;
+  blocked?: number | null;
 }
 
 export interface LedgerMerge {
@@ -71,6 +72,8 @@ export interface FleetTruthOptions {
   liveWorkers?: () => Promise<number | null>;
   /** Bypass the 120s cache. */
   fresh?: boolean;
+  /** Use only GitHub merges, without unioning local observations. */
+  githubOnly?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,12 +168,13 @@ async function readGhMerges(sinceMs: number, nowMs: number, gh: GhRunner, fresh:
   if (!fresh && hit && nowMs >= hit.at && nowMs - hit.at < CACHE_MS) return hit;
   try {
     const stdout = await gh([
-      'search', 'prs', '--owner', FLEET_OWNER, '--merged', '--merged-at', `>=${key.replace(/\.\d{3}Z$/, 'Z')}`,
+      'search', 'prs', '--owner', FLEET_OWNER, '--merged', '--merged-at', fresh ? `${key}..${new Date(nowMs).toISOString()}` : `>=${key.replace(/\.\d{3}Z$/, 'Z')}`,
       '--json', 'repository,number,title,url,closedAt', '--limit', String(GH_LIMIT),
     ]);
     const rows = parseGhRows(stdout);
     const entry = { at: nowMs, rows, truncated: rows.length >= GH_LIMIT };
-    ghCache.set(key, entry);
+    // A bounded fresh read must not populate the open-ended shared cache.
+    if (!fresh) ghCache.set(key, entry);
     return entry;
   } catch {
     ghCache.delete(key);
@@ -200,11 +204,16 @@ function runsRoot(opts: FleetTruthOptions): string {
   return opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
 }
 
-async function readQueued(root: string): Promise<number | null> {
+async function readQueue(root: string): Promise<{ ready: number; blocked: number } | null> {
   try {
     const { parseReadyTsv } = await import('./lane-console.js');
     const text = await readFile(join(root, 'queue', 'ready.tsv'), 'utf8');
-    return parseReadyTsv(text).rows.filter((r) => r.status === 'READY' && !/^PARKED[^.]*\./i.test(r.pool)).length;
+    const rows = parseReadyTsv(text).rows;
+    const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
+    return {
+      ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,
+      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool)).length,
+    };
   } catch {
     return null;
   }
@@ -215,7 +224,7 @@ async function readRunning(root: string, nowMs: number, liveWorkers: FleetTruthO
     const adm = JSON.parse(await readFile(join(root, 'queue', 'admission.json'), 'utf8')) as Record<string, unknown>;
     const ts = typeof adm['ts'] === 'string' ? Date.parse(adm['ts']) : NaN;
     const running = adm['running'];
-    if (typeof running === 'number' && Number.isSafeInteger(running) && running >= 0 && Number.isFinite(ts) && nowMs - ts <= ADMISSION_MAX_AGE_MS) return running;
+    if (typeof running === 'number' && Number.isSafeInteger(running) && running >= 0 && Number.isFinite(ts) && nowMs >= ts && nowMs - ts <= ADMISSION_MAX_AGE_MS) return running;
   } catch {
     // fall through to the live process table
   }
@@ -239,16 +248,17 @@ export async function getFleetTruth(sinceMs: number, opts: FleetTruthOptions = {
   const root = runsRoot(opts);
   const gh = opts.gh ?? (process.env['ASHLR_FLEET_TRUTH_GH'] === 'off' ? null : realGh);
 
-  const [ghRead, ledger, queued, running] = await Promise.all([
+  const [ghRead, ledger, queue, running] = await Promise.all([
     gh ? readGhMerges(sinceMs, nowMs, gh, opts.fresh === true) : Promise.resolve(null),
     (async () => {
       try {
+        if (opts.githubOnly) return [];
         return await (opts.ledgerMerges ?? defaultLedgerMerges)(sinceMs, nowMs);
       } catch {
         return [] as LedgerMerge[];
       }
     })(),
-    readQueued(root),
+    readQueue(root),
     readRunning(root, nowMs, opts.liveWorkers),
   ]);
 
@@ -287,7 +297,8 @@ export async function getFleetTruth(sinceMs: number, opts: FleetTruthOptions = {
     mergeCountState: ghRead ? 'ok' : 'unavailable',
     truncated: ghRead?.truncated ?? false,
     running,
-    queued,
+    queued: queue?.ready ?? null,
+    blocked: queue?.blocked ?? null,
   };
 }
 
