@@ -48,6 +48,15 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
   'test/fleet-job-path-history-nov04-spb2.test.ts', // Creates and renames real git history for exact job lookup.
   'test/fleet-path-history-cli.test.ts', // Creates and reads real git history through the CLI.
+  'test/fleet-draft-check-stdin-04-spf2.test.ts', // Creates real git repositories and invokes the stdin CLI.
+  'test/fleet-job-current-04-spv1.test.ts', // Creates real git history and invokes the current-job CLI.
+  'test/fleet-job-history-batch-04-spn1.test.ts', // Creates real git history for batch job lookup.
+  'test/fleet-job-history-pinned-04-sps1.test.ts', // Creates real git history and moves refs during reads.
+  'test/fleet-job-overlap-04-spu1.test.ts', // Creates real git history for job overlap comparisons.
+  'test/fleet-job-precheck-stdin-04-spe2.test.ts', // Creates real git history and invokes the stdin precheck CLI.
+  'test/fleet-precheck-snapshot-nov04-spd2.test.ts', // Creates real git commits and moves the precheck ref.
+  'test/mcp/fleet-path-history-04-spm1.test.ts', // Creates real git history for MCP path lookup.
+  'test/mcp/fleet-path-history-snapshot-04-spt2.test.ts', // Creates real git history and moves refs during MCP reads.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
