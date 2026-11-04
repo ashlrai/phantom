@@ -27,7 +27,7 @@ export const radarSourceSchema = z.object({
   id: radarIdSchema,
   product: z.string().trim().min(1).max(160).refine(isRadarText),
   url: z.string().refine(isPublicRadarUrl, 'Expected a public HTTPS URL without credentials, query or fragment'),
-  kind: z.enum(['page', 'atom', 'npm', 'pypi', 'json']),
+  kind: z.enum(['page', 'atom', 'rss', 'npm', 'pypi', 'json']),
   verified: z.boolean(),
 }).strict();
 export type RadarSource = z.infer<typeof radarSourceSchema>;
