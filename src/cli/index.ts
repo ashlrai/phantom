@@ -13,6 +13,7 @@
  *   doctor                     One-glance health check (config, phantom, providers).
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
+ *   radar [list|run|diff]      Observe public documentation and package changes.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
@@ -2588,6 +2589,11 @@ async function main(): Promise<void> {
       case 'orient': {
         const cmdOrient = await loadOrientCmd();
         process.exitCode = await cmdOrient(rest);
+        break;
+      }
+
+      case 'radar': {
+        process.exitCode = await (await import('./radar.js')).cmdRadar(rest);
         break;
       }
 
