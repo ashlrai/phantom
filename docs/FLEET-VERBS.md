@@ -4,6 +4,7 @@
 
 | Verb | File | Reads or does | Writes anything? |
 |------|------|---------------|------------------|
+| admission | `src/cli/fleet-admission.ts` | Read-only global cap, running, load and admit reason from queue/status.json, plus each lane's running, target, queued, held and a plain reason (held, at target, blocked by the global cap, or ok). Red, exit 1, when any lane is blocked by the global cap with 5 or more queued | no |
 | backlog | `src/cli/fleet-backlog.ts` | Read-only triage of the open-PR merge backlog | no |
 | bet-trace | `src/cli/fleet-bet-trace.ts` | Offline supervisor-command reconciliation; no dispatch or mutation authority | no |
 | brains | `src/cli/fleet-brains.ts` | Read-only last-action view of each fleet brain from the dispatch-events tail; stale past 90 minutes, missing log is unknown | no |
@@ -22,7 +23,9 @@
 | job-class-share | `src/cli/fleet-job-class-share.ts` | Offline accounting only; share of finished-job tokens by class per lane | no |
 | job-read | `src/cli/fleet-job-read.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |
 | lane-models | `src/cli/fleet-lane-models.ts` | The effective model per lane and tier from models.json, cross-checked against the newest launch row in metrics/jobs.jsonl; read-only | no |
+| lane-yield | `src/cli/fleet-lane-yield.ts` | Read-only per-lane yield from metrics/jobs.jsonl over `--hours` (default 2): launches, precheck skips by code, empty finishes, MERGED outcomes joined to the lane through the job's launch row; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | lane-truth | `src/cli/fleet-lane-truth.ts` | Offline advisory only; never changes a hold or grants dispatch authority | no |
+| filler-yield | `src/cli/fleet-filler-yield.ts` | Read-only per-repo yield of author-filler jobs (`RQ-…A…Q8`) from metrics/jobs.jsonl: launches, code-13 precheck skips, empty finishes, MERGED outcomes; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
 | memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |
