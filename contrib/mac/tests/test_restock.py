@@ -460,7 +460,8 @@ class NoopCutTests(unittest.TestCase):
         if precheck_code is not None:
             b = home / '.ashlr-runs' / 'bin'
             b.mkdir(parents=True)
-            (b / 'precheck.sh').write_text(f'echo reason=already-done\nexit {precheck_code}\n')
+            (b / 'precheck.sh').write_text(
+                f'id=${{1%% *}}\necho "SKIP $id code={precheck_code} reason=id_merged_pr_7"\nexit {precheck_code}\n')
         return home
 
     def set_md(self, home, rows):
@@ -523,6 +524,94 @@ class NoopCutTests(unittest.TestCase):
         (home / '.ashlr-runs' / 'queue' / 'noop-streak.json').write_text('{not json')
         r = restock(home, '--dry-run', '--per-lane', '4')
         self.assertEqual(dry_ids(r.stdout), ['RQ-N'], r.stdout + r.stderr)
+
+
+class PrecheckAuthoringTests(unittest.TestCase):
+    make = NoopCutTests.make
+    set_md = NoopCutTests.set_md
+    state = NoopCutTests.state
+    def test_repeated_skips_fall_and_each_actionable_job_is_generated(self):
+        stale = line('RQ-SATISFIED', P=0, pool='devin', repo='phantom', text='file=src/a.ts old task')
+        blocked = line('RQ-UNCERTAIN', P=1, pool='devin', repo='phantom', text='file=src/a.ts fix existing code')
+        home = self.make([stale, blocked])
+        q = home / '.ashlr-runs/queue'
+        binary = home / '.ashlr-runs/bin'
+        binary.mkdir()
+        check = binary / 'precheck.sh'
+        check.write_text('echo "$1" >> "$HOME/checks"\ncase "$1" in RQ-UNCERTAIN*) exit 13;; esac\n')
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(
+            json.dumps({'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-SATISFIED', 'repo': 'ashlrai/phantom'}) + '\n')
+        for n in range(3):
+            job = f'RQ-ACTION-{n}'
+            self.set_md(home, [stale, blocked, line(job, P=2, pool='devin', repo='phantom',
+                                                  text='file=src/a.ts repair behavior')])
+            result = restock(home, '--per-lane', '1', '--json')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            out = json.loads(result.stdout)
+            self.assertEqual(out['queued'], 1, out)
+            self.assertEqual(out['done_noop'], [])
+            self.assertEqual(out['skips'], {'already-merged': 1, 'precheck-parked': 1})
+            self.assertIn(f'{job}\tphantom\tdevin\t', (q / 'ready.tsv').read_text())
+            self.assertTrue((q / f'prompts/{job}.md').exists())
+            self.assertIn(blocked, (q / 'router-queue.md').read_text())
+        checks = (home / 'checks').read_text()
+        self.assertEqual(checks.count('RQ-UNCERTAIN'), 1)  # One precheck across three fresh processes
+        self.assertNotIn('RQ-SATISFIED', checks)
+        self.assertEqual(checks.count('RQ-ACTION-'), 3)
+        # Due retries retain work, then recover when the precondition clears.
+        state_path = q / 'restock-precheck-parked.json'
+        state = json.loads(state_path.read_text())
+        state['RQ-UNCERTAIN']['retry_at'] = 0
+        state_path.write_text(json.dumps(state))
+        restock(home, '--per-lane', '1', '--json')
+        self.assertEqual(json.loads(state_path.read_text())['RQ-UNCERTAIN']['count'], 2)
+        check.write_text('exit 0\n')
+        self.set_md(home, [blocked.replace('fix existing code', 'fix revised behavior')])
+        result = restock(home, '--per-lane', '1', '--json')
+        self.assertEqual(json.loads(result.stdout)['queued'], 1, result.stdout)
+        self.assertNotIn('RQ-UNCERTAIN', json.loads(state_path.read_text()))
+
+    def test_only_exact_merged_evidence_suppresses_work(self):
+        jobs = ['RQ-MATCH', 'RQ-MATCH-FOLLOWUP', 'RQ-OTHER', 'RQ-OPEN', 'RQ-UNKNOWN']
+        home = self.make([line(j, pool='devin', repo='phantom') for j in jobs])
+        records = [None, [], {'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-MATCH'},
+                   {'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-OTHER', 'repo': 'locus'},
+                   {'event': 'outcome', 'state': 'PR_OPEN', 'job': 'RQ-OPEN'},
+                   {'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-UNKNOWN', 'repo': ''}]
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(
+            '{malformed\n' + '\n'.join(json.dumps(r) for r in records))
+        result = restock(home, '--dry-run', '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['queued'], 4)
+        self.assertEqual(json.loads(result.stdout)['skips'], {'already-merged': 1})
+        self.assertFalse((home / '.ashlr-runs/queue/restock-precheck-parked.json').exists())
+
+    def test_changed_task_resets_noop_suppression(self):
+        row = line('RQ-N', pool='devin', repo='phantom', text='original task')
+        home = self.make([row], precheck_code=10)
+        for _ in range(2):
+            self.set_md(home, [row])
+            restock(home, '--per-lane', '1')
+        (home / '.ashlr-runs/bin/precheck.sh').write_text('exit 0\n')
+        self.set_md(home, [row.replace('original task', 'fix existing implementation')])
+        result = restock(home, '--per-lane', '1', '--json')
+        self.assertEqual(json.loads(result.stdout)['queued'], 1, result.stdout)
+        self.assertNotIn('RQ-N', self.state(home))
+
+    def test_precheck_budget_defers_then_reaches_actionable_tail(self):
+        rows = [line(f'RQ-WAIT-{n}', pool='devin', repo='phantom') for n in range(21)]
+        rows.append(line('RQ-ACTION', pool='devin', repo='phantom'))
+        home = self.make(rows, precheck_code=13)
+        (home / '.ashlr-runs/bin/precheck.sh').write_text(
+            'echo "$1" >> "$HOME/checks"\ncase "$1" in RQ-WAIT-*) exit 13;; esac\n')
+        q = home / '.ashlr-runs/queue'
+        for expected in (0, 1):
+            result = restock(home, '--per-lane', '1', '--json')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)['queued'], expected)
+            self.assertEqual((q / 'router-queue.md').read_text().count('- READY RQ-WAIT-'), 21)
+        self.assertEqual(len((home / 'checks').read_text().splitlines()), 22)
+        self.assertIn('RQ-ACTION\tphantom\tdevin\t', (q / 'ready.tsv').read_text())
 
 
 if __name__ == '__main__':

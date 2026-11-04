@@ -55,6 +55,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'receipt',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions',
+  // Read-only disk report for agent worktrees (RQ-DISKFLOW).
+  'disk',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -62,6 +64,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   graph: ['nodes', 'edges', 'status', '--json', '--help'],
   sweep: ['report'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
+  disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
