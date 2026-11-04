@@ -15,6 +15,9 @@ import {
   MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs,
 } from './fleet-reset-history.js';
 
+import { parseFleetResetGroupAwaitArgs, readFleetResetGroupAwait, type FleetResetGroupAwaitArgs } from './fleet-reset-group-await.js';
+import { RESET_GROUP_AWAIT_MAX_LANES } from '../core/fleet/reset-group-await.js';
+import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
 import { MAX_FLEET_RESET_AWAIT_MS, parseFleetResetAwaitArgs, readFleetResetAwait, type FleetResetAwaitArgs } from './fleet-reset-await.js';
 import { MAX_FLEET_RESET_RELEASE_AWAIT_MS, parseFleetResetReleaseAwaitArgs, readFleetResetReleaseAwait,
   type FleetResetReleaseAwaitArgs } from './fleet-reset-release-await.js';
@@ -32,6 +35,7 @@ export interface FleetReaders {
   lanes?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
   resetHistory?: (input: FleetResetHistoryArgs) => Promise<unknown>;
+  resetGroupAwait?: (input: FleetResetGroupAwaitArgs) => Promise<unknown>;
   resetAwait?: (input: FleetResetAwaitArgs) => Promise<unknown>;
   resetReleaseAwait?: (input: FleetResetReleaseAwaitArgs) => Promise<unknown>;
   resetFollow?: (input: FleetResetFollowArgs) => Promise<unknown>;
@@ -121,6 +125,17 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_reset_group_await',
+      description: 'Wait for newly observed reset evidence across lanes from the configured default root in one bounded call. Evidence is not release authority, free quota, lane health or launch success. No provider probes or lane changes.',
+      inputSchema: { type: 'object', properties: {
+        lanes: { type: 'array', minItems: 1, maxItems: RESET_GROUP_AWAIT_MAX_LANES, uniqueItems: true,
+          items: { type: 'string', pattern: LANE_ID_RE.source } },
+        timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS },
+        pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
+      }, required: ['lanes', 'timeoutMs'], additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_reset_release_await',
       description: 'Wait for proof that the reset loop recorded releasing a lane hold: resolves "recorded" only once the bounded audit log gains a line for the exact lane stamped after invocation and no later than the current wall clock — older, unparsable or future-dated lines never satisfy it. "recorded" is past audit evidence, never present lane health or successful dispatch. Reads the configured default root only and never releases a hold, probes a provider or changes a lane.',
       inputSchema: { type: 'object', properties: {
@@ -158,7 +173,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -169,10 +184,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const limit = args['limit'] ?? 20;
     const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
     const history = name === 'fleet_reset_history' ? parseFleetResetHistoryArgs(args) : null;
+    const resetGroupAwait = name === 'fleet_reset_group_await' ? parseFleetResetGroupAwaitArgs(args) : null;
     const resetAwait = name === 'fleet_reset_await' ? parseFleetResetAwaitArgs(args) : null;
     const resetReleaseAwait = name === 'fleet_reset_release_await' ? parseFleetResetReleaseAwaitArgs(args) : null;
     const resetFollow = name === 'fleet_reset_follow' ? parseFleetResetFollowArgs(args) : null;
-    if (name === 'fleet_reset_await' ? resetAwait === null :
+    if (name === 'fleet_reset_group_await' ? resetGroupAwait === null :
+        name === 'fleet_reset_await' ? resetAwait === null :
         name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
         name === 'fleet_reset_follow' ? resetFollow === null :
         name === 'fleet_bus_inbox' ? inbox === null :
@@ -189,6 +206,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
+        : name === 'fleet_reset_group_await' ? await (readers.resetGroupAwait ?? readFleetResetGroupAwait)(resetGroupAwait as FleetResetGroupAwaitArgs)
         : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
         : name === 'fleet_reset_release_await' ? await (readers.resetReleaseAwait ?? readFleetResetReleaseAwait)(resetReleaseAwait as FleetResetReleaseAwaitArgs)
         : name === 'fleet_reset_follow' ? await (readers.resetFollow ?? readFleetResetFollow)(resetFollow as FleetResetFollowArgs)
