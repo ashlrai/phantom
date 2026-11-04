@@ -42,6 +42,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // 3.15 Devin lane.
   'devin',
   'openai-agents',
+  'agents',
   'benchmark', 'queue', 'issues', 'select', 'pool',
   // 3.15 automations.
   'automations',
@@ -68,6 +69,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
+  agents: ['bus', 'help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
