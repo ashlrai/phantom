@@ -117,6 +117,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'job-history-batch': () => import('./fleet-job-history-batch.js'),
   'job-latency': () => import('./fleet-job-latency.js'),
   'job-one': () => import('./fleet-job-one.js'),
+  'job-overlap': () => import('./fleet-job-overlap.js'),
   'job-precheck': () => import('./fleet-job-precheck.js'),
   'job-read': () => import('./fleet-job-read.js'),
   'kept': () => import('./fleet-kept.js'),
