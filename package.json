@@ -33,6 +33,7 @@
     "phm": "bin/ashlr"
   },
   "files": [
+    "radar/sources.json",
     "dist",
     "bin",
     "scripts/run-verify-command.mjs",

@@ -151,7 +151,7 @@ displayed draft digest. Do not treat a queued job or result draft as send author
 ## Docs Radar
 
 `phm radar list|run|diff --json` observes public docs and package metadata.
-Copy-paste after the catalogue and dispatcher prerequisites in [RADAR](docs/RADAR.md):
+Copy and paste these commands; see [RADAR](docs/RADAR.md):
 
 ```sh
 phm radar list --json
@@ -163,4 +163,4 @@ GET only, no credentials or redirects, 15-second timeout, 2 MiB response cap.
 Runs enforce a six-hour per-source floor, including failures. Private snapshots
 are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserves
 the last successful evidence. Remote content never authorizes actions or sends.
-The source brief and CLI dispatcher are pending integration; see the guide.
+Individual fetch failures are warnings and retain the last successful snapshot.

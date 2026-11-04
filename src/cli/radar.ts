@@ -41,8 +41,10 @@ export async function cmdRadar(args: string[]): Promise<number> {
         }
       } catch { results.push({ id: source.id, status: 'error' }); }
     }
-    const ok = results.every(result => !['error', 'busy', 'missing', 'stale', 'unverified'].includes(result.status));
-    if (json) emit({ ok, results });
+    const warnings = results.filter(result => result.status === 'warning').map(result => result.id);
+    const ok = results.every(result => !['error', 'busy', 'missing', 'stale', 'unverified'].includes(result.status)) &&
+      (verb !== 'run' || warnings.length < results.length);
+    if (json) emit(verb === 'run' ? { ok, results, warnings } : { ok, results });
     else for (const result of results) console.log(JSON.stringify(result));
     return ok ? 0 : 1;
   } catch {
