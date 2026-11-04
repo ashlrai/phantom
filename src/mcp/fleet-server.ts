@@ -33,6 +33,8 @@ import { MAX_FLEET_PATH_HISTORY, parseFleetPathHistoryArgs, readFleetPathHistory
 import { parseFleetJobPrecheckArgs, readFleetJobPrecheck, type FleetJobPrecheckArgs } from './fleet-job-precheck.js';
 import { readFleetMainHealthTool } from './fleet-main-health.js';
 import { readFleetWasteRiskTool } from './fleet-waste-risk.js';
+import { readFleetKeptTool } from './fleet-kept.js';
+import { readFleetTrimTool } from './fleet-trim.js';
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
@@ -59,6 +61,8 @@ export interface FleetReaders {
   jobPrecheckBatch?: (input: FleetJobPrecheckBatchArgs) => Promise<unknown>;
   mainHealth?: () => Promise<unknown>;
   wasteRisk?: () => Promise<unknown>;
+  kept?: () => Promise<unknown>;
+  trim?: () => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -274,11 +278,23 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_kept',
+      description: 'Read why worktrees were kept: per reason (abort_push, abort_pr, empty, other, unknown) the count and the oldest job ids, from queue status and the jobs ledger tail. Observation only; never removes a worktree or requeues a job.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_trim',
+      description: 'Read lanes that are starved (queued, none running, global cap full) or waste slots (low merge rate or high empty rate), with SLOTS suggestions. Advisory only; applies no target or hold change.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -333,6 +349,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_job_precheck' ? await (readers.jobPrecheck ?? readFleetJobPrecheck)(jobPrecheck as FleetJobPrecheckArgs)
         : name === 'fleet_main_health' ? await (readers.mainHealth ?? readFleetMainHealthTool)()
         : name === 'fleet_waste_risk' ? await (readers.wasteRisk ?? readFleetWasteRiskTool)()
+        : name === 'fleet_kept' ? await (readers.kept ?? readFleetKeptTool)()
+        : name === 'fleet_trim' ? await (readers.trim ?? readFleetTrimTool)()
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
