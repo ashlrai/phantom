@@ -104,6 +104,7 @@
 /scripts/ship-local.mjs @masonwyatt23
 /scripts/local-app-transaction.mjs @masonwyatt23
 /scripts/install-desktop-artifacts.mjs @masonwyatt23
+/scripts/publish-desktop-release.mjs @masonwyatt23
 /scripts/verify-release-policy.mjs @masonwyatt23
 /tools/custody/** @masonwyatt23
 **/*.plist @masonwyatt23
@@ -154,6 +155,7 @@
 /src/cli/desktop.ts @masonwyatt23
 /scripts/desktop-release-policy.mjs @masonwyatt23
 /scripts/finalize-desktop-update.mjs @masonwyatt23
+/scripts/publish-desktop-release.mjs @masonwyatt23
 /src/core/daemon/activation-permit.ts @masonwyatt23
 /src/core/daemon/tick-hooks.ts @masonwyatt23
 /src/core/daemon/loop.ts @masonwyatt23
