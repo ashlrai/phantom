@@ -2,6 +2,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { buildPlannerBrief, writePlannerBrief } from '../core/fleet/planner-brief.js';
 import { readOrderTrace } from '../core/fleet/order-trace.js';
+import { projectWasteRisk } from '../core/resources/waste-risk.js';
+import { readWasteRiskInputs } from '../core/resources/waste-risk-read.js';
 import { readLiveRealSupply } from './fleet-real-supply.js';
 
 type IO = { stdout?: { write(text: string): unknown } };
@@ -22,7 +24,7 @@ export async function cmdFleetPlannerBrief(args: string[], io: IO = {}): Promise
   }
   const runsRoot = values.get('--runs-dir') ?? join(homedir(), '.ashlr-runs');
   try {
-    const brief = await buildPlannerBrief({ runsRoot, repoRoot: values.get('--repo'), note: values.get('--note'), realSupply: readLiveRealSupply, orderCoverage: () => readOrderTrace({ runsDir: runsRoot }) });
+    const brief = await buildPlannerBrief({ runsRoot, repoRoot: values.get('--repo'), note: values.get('--note'), realSupply: readLiveRealSupply, orderCoverage: () => readOrderTrace({ runsDir: runsRoot }), wasteRisk: async () => (await readWasteRiskInputs(runsRoot)).map(projectWasteRisk) });
     const written = flags.has('--write') ? writePlannerBrief(runsRoot, brief.text) : undefined;
     const report = { v: brief.v, sections: brief.sections, missing: brief.missing, ...(written ?? {}) };
     output.write(flags.has('--json') ? `${JSON.stringify(report)}\n` :
