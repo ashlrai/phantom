@@ -47,6 +47,7 @@ import { mainHealthQuery } from './main-health-query.js';
 import { selfTickNeedsYou } from './self-tick-needs-you.js';
 import { deriveStraySlotsNeedsYou } from './stray-slots-needs-you.js';
 import { straySlotsQuery } from './stray-slots-query.js';
+import { deriveMeterFlatNeedsYou, meterFlatBusQuery } from './meter-flat-needs-you.js';
 import { selfTickQuery } from './self-tick-query.js';
 import { runSelfTickNow, type SelfTickRunNowView } from './self-tick-run-now.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
@@ -264,6 +265,13 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     () => deriveStraySlotsNeedsYou(strayRead.status === 'error' ? undefined : strayRead.data, nowMs),
     [strayRead.data, strayRead.status, nowMs],
   );
+  const meterRead = useQuery(meterFlatBusQuery);
+  const refetchMeter = useRefetch(meterFlatBusQuery);
+  usePollWhileVisible(refetchMeter, FLEET_NEEDS_YOU_POLL_MS);
+  const meterItems = useMemo(
+    () => deriveMeterFlatNeedsYou(meterRead.status === 'error' ? undefined : meterRead.data, nowMs),
+    [meterRead.data, meterRead.status, nowMs],
+  );
   const selfTickRead = useQuery(selfTickQuery);
   const refetchSelfTick = useRefetch(selfTickQuery);
   const refreshSelfTick = useRefresh(selfTickQuery);
@@ -305,8 +313,8 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     [phoneRead.data, phoneRead.status]);
   // The stall row says more than the plain idle one for the same lane: it wins.
   const stalled = useMemo(() => new Set(laneStallItems.map(item => item.id)), [laneStallItems]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items.filter(item => !(item.id.startsWith('lane-idle:') && stalled.has(laneStallId(item.id.slice('lane-idle:'.length))))), ...hostGuardItems, ...strayItems, ...laneStallItems, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
-    [result, stalled, hostGuardItems, strayItems, laneStallItems, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items.filter(item => !(item.id.startsWith('lane-idle:') && stalled.has(laneStallId(item.id.slice('lane-idle:'.length))))), ...hostGuardItems, ...strayItems, ...meterItems, ...laneStallItems, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
+    [result, stalled, hostGuardItems, strayItems, meterItems, laneStallItems, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map<string, string | null>(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
