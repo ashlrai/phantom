@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { NEEDS_WAIT_ID, NEEDS_WAIT_MAX_MS, waitNeedsMason, type NeedsWaitStatus } from './needs-mason-wait.js';
 
@@ -14,6 +15,23 @@ export interface NeedsWaitGroupOptions {
   /** Wall-clock budget timer; resolves when the shared budget is spent. Injectable for tests. */
   budgetSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
+  /** Optional stop file: when it exists, unresolved children are cancelled. Never created, deleted or read. */
+  stopFile?: string;
+  /** Presence probe for `stopFile`; injectable for tests. Throwing counts as "stop present". */
+  stopExists?: (path: string) => Promise<boolean>;
+  /** Stop-file polling sleep (every `pollMs`); injectable for tests. */
+  stopSleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+/**
+ * Presence check by stat only (never opens or reads the file). ENOENT/ENOTDIR mean absent; any other
+ * error (EACCES, EIO, ...) is treated as present: when we cannot prove the stop is absent we stop.
+ */
+export async function stopFilePresent(path: string): Promise<boolean> {
+  try { await stat(path); return true; } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return !(code === 'ENOENT' || code === 'ENOTDIR');
+  }
 }
 
 /** Worst-first aggregate: anything unresolved keeps the group from counting as resolved. */
@@ -32,7 +50,8 @@ export function validateNeedsWaitGroup(ids: string[], timeoutMs: number, pollMs:
 /** Wait for several needs-you items under one shared wall-clock budget; ordered like `ids`. */
 export async function waitNeedsMasonGroup(options: NeedsWaitGroupOptions): Promise<NeedsWaitGroupResult> {
   const { ids, timeoutMs, pollMs } = options;
-  if (!validateNeedsWaitGroup(ids, timeoutMs, pollMs)) throw new RangeError('Invalid wait group options');
+  const { stopFile } = options;
+  if (!validateNeedsWaitGroup(ids, timeoutMs, pollMs) || (stopFile !== undefined && (!stopFile || stopFile.includes('\0')))) throw new RangeError('Invalid wait group options');
   const controller = new AbortController();
   const abort = (): void => controller.abort();
   options.signal?.addEventListener('abort', abort, { once: true });
@@ -40,22 +59,39 @@ export async function waitNeedsMasonGroup(options: NeedsWaitGroupOptions): Promi
   // Every child registers SIGINT/SIGTERM handlers; avoid Node's leak warning for <=32 of them.
   const maxListeners = process.getMaxListeners();
   process.setMaxListeners(maxListeners + ids.length * 2);
-  let expired = false;
+  let expired = false, stopped = false;
   const budgetSleep = options.budgetSleep ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
   const budget = budgetSleep(timeoutMs, controller.signal).then(
     () => { expired = true; abort(); }, () => undefined);
+  const probe = options.stopExists ?? stopFilePresent;
+  const stopSleep = options.stopSleep ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
+  const present = async (): Promise<boolean> => { try { return await probe(stopFile!); } catch { return true; } };
+  let watcher: Promise<void> = Promise.resolve();
   try {
+    if (stopFile !== undefined) {
+      if (await present()) { // preexisting stop: no child ever starts or reads the ledger
+        stopped = true;
+        return { outcome: 'cancelled', items: ids.map(id => ({ id, status: 'cancelled' as const })) };
+      }
+      watcher = (async () => {
+        while (!controller.signal.aborted) {
+          try { await stopSleep(pollMs, controller.signal); } catch { return; }
+          if (controller.signal.aborted) return;
+          if (await present()) { stopped = true; abort(); return; }
+        }
+      })();
+    }
     const statuses = await Promise.all(ids.map(async (id): Promise<NeedsWaitStatus> => {
       try {
         const s = await waitNeedsMason({ id, timeoutMs, pollMs, runsDir: options.runsDir, now: options.now, sleep: options.sleep, signal: controller.signal });
-        return s === 'cancelled' && expired ? 'timeout' : s;
+        return s === 'cancelled' && expired && !stopped ? 'timeout' : s;
       } catch { return 'unavailable'; }
     }));
     const items = ids.map((id, i) => ({ id, status: statuses[i]! }));
     return { outcome: aggregate(items), items };
   } finally {
     abort(); // cancel the budget timer and any straggler, then wait for cleanup
-    await budget;
+    await Promise.all([budget, watcher]);
     options.signal?.removeEventListener('abort', abort);
     process.setMaxListeners(maxListeners);
   }
