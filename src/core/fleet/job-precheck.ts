@@ -1,4 +1,6 @@
 /** Draft-job paths compared with a git ref. No process spawn lives here. */
+import { parseBridgeSubject } from './path-job-history.js';
+import { validJobId } from './job-path-history.js';
 
 const SKIP_LINE = /do not edit|never touch/i;
 /** Repo-relative file with a known prefix and an extension. Segments cannot be `.` or `..`. */
@@ -10,6 +12,7 @@ export interface PrecheckFact {
   path: string;
   onMaster: boolean;
   lastCommit?: { sha: string; subject: string };
+  jobIdMatch?: boolean | null;
 }
 
 export interface JobPrecheckGit {
@@ -44,22 +47,29 @@ function bridgeLanded(fact: PrecheckFact): boolean {
 export async function precheckJob(
   markdown: string,
   git: JobPrecheckGit,
-): Promise<{ facts: PrecheckFact[]; newTestFiles: string[]; verdict: 'fresh' | 'partly-on-master' | 'likely-done' }> {
+  options?: { jobId?: string },
+): Promise<{ jobId?: string; facts: PrecheckFact[]; newTestFiles: string[]; verdict: 'fresh' | 'partly-on-master' | 'likely-done' }> {
+  if (options?.jobId !== undefined && !validJobId(options.jobId)) throw new Error('invalid job ID');
   const facts: PrecheckFact[] = [];
   for (const path of extractJobPaths(markdown)) {
     const onMaster = await git.exists(path);
     const commit = onMaster ? await git.lastCommit(path) : null;
     const fact: PrecheckFact = { path, onMaster };
     if (commit) fact.lastCommit = commit;
+    if (options?.jobId !== undefined) {
+      const bridge = commit ? parseBridgeSubject(commit.subject) : null;
+      fact.jobIdMatch = bridge ? bridge.jobId === options.jobId : null;
+    }
     facts.push(fact);
   }
   const src = facts.filter(fact => fact.path.startsWith('src/'));
   const work = src.filter(fact => !isTestPath(fact.path));
   // likely-done needs real non-test src work. A test-only list is not a landed feature.
   const verdict = !src.some(fact => fact.onMaster) ? 'fresh'
-    : work.length > 0 && work.every(bridgeLanded) ? 'likely-done'
+    : work.length > 0 && work.every(fact => options?.jobId === undefined ? bridgeLanded(fact) : fact.jobIdMatch === true) ? 'likely-done'
     : 'partly-on-master';
   return {
+    ...(options?.jobId !== undefined ? { jobId: options.jobId } : {}),
     facts,
     newTestFiles: facts.filter(fact => isTestPath(fact.path) && !fact.onMaster).map(fact => fact.path),
     verdict,
