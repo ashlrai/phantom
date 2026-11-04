@@ -13,8 +13,8 @@ const receipt = (cursor: number, b: unknown, over: { receivedAt?: number; ttl?: 
 it('turns a valid envelope into one Supply row', () => {
   const items = deriveWasteHighNeedsYou([receipt(1, body())], NOW);
   expect(items).toEqual([{ id: 'waste-high:fake-lane', severity: 'attention', title: 'fake-lane: 42% projected unused at reset in 9.5 h',
-    detail: '42% unused at reset · 9.5 h left', nextStep: 'Add jobs on this lane or raise its target',
-    target: 'fleet', open: { kind: 'pane', paneId: 'fleet-supply' } }]);
+    detail: '42% unused at reset · 9.5 h left', nextStep: "Raise this lane's target or add jobs for it",
+    target: 'fleet', open: { kind: 'pane', paneId: 'fleet-lanes', lane: 'fake-lane' } }]);
 });
 
 it('is urgent at 6 hours or less', () => {
