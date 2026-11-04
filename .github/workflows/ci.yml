@@ -8,6 +8,12 @@ on:
     branches: ["**"]
     types: [opened, synchronize, reopened]
   merge_group:
+  # Master pushes also run the seconds-fast gate only: a required "Merge Gate"
+  # check run must exist on the exact commit before auto-tag can create v*; a
+  # direct (non-queue) merge otherwise lands with no check runs and the tag —
+  # and therefore everything downstream of it — can never be produced.
+  push:
+    branches: [master]
   workflow_call:
   # Daily full suite on master at 05:03 ET (09:03 UTC). Staggered from the other
   # six repos' daily runs so its seven macOS jobs never share the org's macOS
@@ -63,11 +69,14 @@ jobs:
           perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
 
   quick:
-    # Per-PR and merge-queue typecheck plus authority drift checks.
+    # Per-PR, merge-queue and master-push typecheck plus authority drift checks.
     # Start alongside classification so the longest fast job has no serial wait.
     # This also checks docs-only PRs. Full suites run in the daily run.
+    # A push event whose ref is a TAG is the reusable M33 verify call — it keeps
+    # its own deferred-quick behavior, so the fast path is keyed on the master
+    # branch ref exactly.
     name: Quick typecheck
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -199,7 +208,9 @@ jobs:
 
   ci:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    # Direct master pushes take the seconds-fast gate only; a push event whose
+    # ref is a tag is the reusable M33 verify call and keeps the full matrix.
+    if: needs.classify.outputs.lane == 'full' && !(github.event_name == 'push' && github.ref == 'refs/heads/master') && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     # Node 22.15 is the hard minimum — install.sh and CONTRIBUTING.md both enforce it.
     # Ubuntu is the exhaustive authority, partitioned by Vitest's deterministic
     # file sharding so the full suite has margin below the hermetic hard cap.
@@ -995,6 +1006,7 @@ jobs:
       - name: Require selected CI lane
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           GATE_NEEDS: ${{ toJSON(needs) }}
         run: |
           node <<'NODE'
@@ -1010,7 +1022,11 @@ jobs:
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
           if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
+          // Direct master pushes take the same seconds-fast gate as PRs; a push
+          // event carrying a TAG ref is the reusable M33 verify call and keeps
+          // its full-lane requirement.
+          const masterPush = process.env.EVENT_NAME === 'push' && process.env.REF === 'refs/heads/master';
+          const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group' || masterPush;
           const lanes = ['site', 'docs', ...full];
           const selected = lane === 'full' ? full : [lane];
           // PR and merge queue: the independent quick check runs for every lane.
