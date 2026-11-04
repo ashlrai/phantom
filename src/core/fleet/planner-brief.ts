@@ -5,7 +5,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import { parseIngestedTsv } from './drop-job-fate.js';
 import type { OrderTraceV1 } from './order-trace.js';
+import { inflightBriefLines } from './planner-inflight.js';
 import { orderCoverageBriefLines } from './planner-order-coverage.js';
 import { realSupplyBriefLines, type RealSupplyV1 } from './planner-real-supply.js';
 import { readSource, type Source } from './runs-parked-queue.js';
@@ -25,6 +27,8 @@ const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
 const INGESTED = 'leader/drop/ingested.tsv';
 const MASON_INBOX = 'leader/MASON-INBOX.md';
 const UNAVAILABLE = '(unavailable from Phantom; read git log origin/master)';
+/** How far back the IN FLIGHT section looks for ingested-but-unmerged jobs. */
+const IN_FLIGHT_WINDOW_HOURS = 48;
 export type PlannerBriefGit = (program: string, args: string[], options: { timeout: number; maxBuffer: number; encoding: 'utf8'; shell: false }, callback: (error: Error | null, stdout: string) => void) => unknown;
 export interface PlannerBriefOptions {
   runsRoot?: string;
@@ -166,6 +170,24 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     mergeText = UNAVAILABLE;
     missing.push('git log origin/master');
   }
+  // Planner passes re-derive which earlier jobs are still unmerged by hand;
+  // a bounded merge scan over the same window answers it in one section.
+  let inFlight: string[];
+  if (ledgerState !== 'healthy') {
+    inFlight = [ledgerUnavailable];
+  } else {
+    try {
+      const stdout = await new Promise<string>((resolve, reject) => {
+        (opts.git ?? execFile)('git', ['-C', opts.repoRoot ?? join(homedir(), 'Projects', 'ashlrai', 'phantom'), 'log', 'origin/master', `--since=${IN_FLIGHT_WINDOW_HOURS}.hours`, '--format=%s'],
+          { timeout: 5000, maxBuffer: 1024 * 1024, encoding: 'utf8', shell: false },
+          (error, output) => error ? reject(error) : resolve(output));
+      });
+      inFlight = inflightBriefLines(parseIngestedTsv(ingested), lines(stdout), opts.now ?? Date.now(), IN_FLIGHT_WINDOW_HOURS);
+    } catch {
+      inFlight = ['(unavailable: git log origin/master)'];
+      missing.push('git log origin/master (in flight)');
+    }
+  }
   let realSupply: string[] | null = null;
   if (opts.realSupply !== undefined) {
     try {
@@ -195,12 +217,13 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     '## USED IDS', ...usedIdLines,
     '## USED TITLES', ...titleLines,
     '## RECENT PHANTOM MERGES', mergeText,
+    `## IN FLIGHT (ingested in the last ${IN_FLIGHT_WINDOW_HOURS}h, not yet merged on origin/master)`, ...inFlight,
     ...(orderCoverage === null ? [] : ['## ORDER COVERAGE', 'Orders marked UNSERVED have no job citing them; prefer them.', ...orderCoverage]),
     '## MASON INBOX (newest last)', ...inboxBody,
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
   await acknowledgeInboxEntries(ackEntries, root, new Date(opts.now ?? Date.now()).toISOString(), opts.inboxAckSenders);
-  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
+  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
 }
 
 /** Publish only a prompt the planner's bounded input reader can consume. */
