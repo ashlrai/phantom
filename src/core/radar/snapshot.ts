@@ -13,6 +13,8 @@ const textSchema = z.string().min(1).max(16_384).refine(isRadarText);
 export const radarDataSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('atom'), entries: z.array(z.object({ id: textSchema, title: textSchema }).strict()).max(10_000)
     .refine(entries => new Set(entries.map(entry => entry.id)).size === entries.length, 'Duplicate Atom identity') }).strict(),
+  z.object({ kind: z.literal('rss'), entries: z.array(z.object({ id: textSchema, title: textSchema }).strict()).max(10_000)
+    .refine(entries => new Set(entries.map(entry => entry.id)).size === entries.length, 'Duplicate RSS identity') }).strict(),
   z.object({ kind: z.literal('npm'), version: textSchema }).strict(),
   z.object({ kind: z.literal('pypi'), version: textSchema }).strict(),
   z.object({ kind: z.literal('page'), hash: hashSchema, headings: z.array(textSchema).max(10_000) }).strict(),
@@ -97,17 +99,18 @@ function pageProjection(html: string): { text: string; headings: string[] } {
 function plain(text: string): string { return pageProjection(text).text; }
 
 /** Small non-expanding XML reader. Reject malformed/truncated feeds and all DTDs. */
-function atomEntries(xml: string): Array<{ id: string; title: string }> {
+function feedEntries(xml: string, kind: 'atom' | 'rss'): Array<{ id: string; title: string }> {
   for (const char of xml) {
     const code = char.charCodeAt(0);
     if (code < 32 && ![9, 10, 13].includes(code)) throw new Error('Invalid XML character');
   }
   if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('Unsupported XML declaration');
-  const stack: Array<{ name: string; local: string; atom: boolean; text: string; type: string; namespaces: Record<string, string>; id?: string; title?: string }> = [];
+  const stack: Array<{ name: string; local: string; atom: boolean; text: string; type: string; namespaces: Record<string, string>; id?: string; title?: string; guid?: string; link?: string }> = [];
   const entries: Array<{ id: string; title: string }> = [];
   const token = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<\/?[A-Za-z_][\w.:-]*(?:"[^"]*"|'[^']*'|[^'"<>])*>|[^<]+/g;
   let offset = 0;
   let feeds = 0;
+  let channels = 0;
   for (const match of xml.matchAll(token)) {
     if (match.index !== offset) throw new Error('Invalid XML');
     offset += match[0].length;
@@ -133,7 +136,17 @@ function atomEntries(xml: string): Array<{ id: string; title: string }> {
         if (parent[local] !== undefined) throw new Error('Duplicate entry field');
         parent[local] = local === 'title' && node.type === 'html' ? plain(node.text) : clean(node.text);
       }
-      if (node.atom && local === 'entry' && parent?.atom && parent.local === 'feed') {
+      if (kind === 'rss' && parent?.local === 'item' && stack.at(-2)?.local === 'channel' && ['guid', 'link', 'title'].includes(local) && !name.includes(':')) {
+        const field = local as 'guid' | 'link' | 'title';
+        if (parent[field] !== undefined) throw new Error('Duplicate entry field');
+        parent[field] = clean(node.text);
+      }
+      if (kind === 'rss' && local === 'item' && parent?.local === 'channel' && stack.at(-2)?.local === 'rss' && !name.includes(':')) {
+        const id = node.guid || node.link;
+        if (!id || !node.title) throw new Error('Incomplete RSS item');
+        entries.push({ id, title: node.title });
+      }
+      if (kind === 'atom' && node.atom && local === 'entry' && parent?.atom && parent.local === 'feed') {
         if (!node.id || !node.title) throw new Error('Incomplete Atom entry');
         entries.push({ id: node.id, title: node.title });
       }
@@ -158,18 +171,21 @@ function atomEntries(xml: string): Array<{ id: string; title: string }> {
         else if (key.startsWith('xmlns:')) namespaces[key.slice(6)] = value;
       }
       const atom = namespaces[name.includes(':') ? name.split(':')[0] : ''] === 'http://www.w3.org/2005/Atom';
-      if (!stack.length) { if (local !== 'feed' || !atom || ++feeds !== 1) throw new Error('Expected one Atom feed'); }
+      if (!stack.length) {
+        if (++feeds !== 1 || (kind === 'atom' ? local !== 'feed' || !atom : name !== 'rss' || attributes.version !== '2.0')) throw new Error('Expected feed root');
+      }
+      if (kind === 'rss' && name === 'channel' && stack.length === 1 && stack[0].name === 'rss') channels++;
       const type = attributes.type ?? 'text';
       if (atom && local === 'title' && !['text', 'html', 'xhtml'].includes(type)) throw new Error('Unsupported Atom title');
       // Entry identity and title must contain data, not an empty element.
-      if (selfClosing && ['entry', 'id', 'title'].includes(local)) throw new Error('Empty Atom entry');
+      if (selfClosing && (kind === 'atom' ? ['entry', 'id', 'title'] : ['item', 'guid', 'link', 'title']).includes(local)) throw new Error('Empty Atom entry');
       if (!selfClosing) {
         if (stack.length >= 100) throw new Error('XML nesting limit');
         stack.push({ name, local, atom, type, namespaces, text: '' });
       }
     }
   }
-  if (offset !== xml.length || stack.length || feeds !== 1) throw new Error('Incomplete Atom feed');
+  if (offset !== xml.length || stack.length || feeds !== 1 || (kind === 'rss' && channels !== 1)) throw new Error('Incomplete Atom feed');
   if (new Set(entries.map(entry => entry.id)).size !== entries.length) throw new Error('Duplicate Atom id');
   return entries.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
@@ -187,7 +203,7 @@ export function normalizeRadarSnapshot(input: RadarSource, body: string, observe
   const source = radarSourceSchema.parse(input);
   if (Buffer.byteLength(body) > RADAR_MAX_BYTES || !body.trim()) throw new Error('Invalid Radar body');
   let data: RadarData;
-  if (source.kind === 'atom') data = { kind: 'atom', entries: atomEntries(body) };
+  if (source.kind === 'atom' || source.kind === 'rss') data = { kind: source.kind, entries: feedEntries(body, source.kind) };
   else if (source.kind === 'page') {
     const { text, headings } = pageProjection(body);
     if (!text) throw new Error('Empty page');
@@ -249,7 +265,7 @@ async function saveState(source: RadarSource, state: RadarState, home: string): 
   } finally { await file.close(); await unlink(temp).catch(() => undefined); }
 }
 
-export type RadarRunResult = { id: string; status: 'updated' | 'throttled' | 'busy' | 'error' | 'unverified'; retryAt?: string; state?: RadarState };
+export type RadarRunResult = { id: string; status: 'updated' | 'throttled' | 'busy' | 'warning' | 'unverified'; reason?: string; retryAt?: string; state?: RadarState };
 /** A per-source exclusive lock covers the persisted cooldown and network read. */
 export async function runRadarSource(input: RadarSource, options: {
   home?: string; now?: () => number; fetch?: (source: RadarSource) => Promise<string>;
@@ -274,9 +290,12 @@ export async function runRadarSource(input: RadarSource, options: {
     // the six-hour floor. Keep the last two successful observations intact.
     const state: RadarState = { schemaVersion: 1, lastRunAt: observedAt, current: old?.current ?? null, previous: old?.previous ?? null, failed: true };
     await saveState(source, state, home);
+    let body: string;
+    try { body = await (options.fetch ?? fetchRadarSource)(source); }
+    catch { return { id: source.id, status: 'warning', reason: 'source unavailable' }; }
     let current: RadarSnapshot;
-    try { current = normalizeRadarSnapshot(source, await (options.fetch ?? fetchRadarSource)(source), observedAt); }
-    catch { return { id: source.id, status: 'error' }; }
+    try { current = normalizeRadarSnapshot(source, body, observedAt); }
+    catch { return { id: source.id, status: 'warning', reason: 'invalid response' }; }
     state.previous = state.current;
     state.current = current;
     state.failed = false;
