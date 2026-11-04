@@ -8,6 +8,19 @@ import { AUTOMATION_ALL_GRANT_REPOS, type AutomationTemplate } from './types.js'
 
 export const AUTOMATION_TEMPLATES: readonly AutomationTemplate[] = Object.freeze([
   {
+    id: 'watch-pr', name: 'Tell me when a PR merges',
+    blurb: 'Hourly read-only check; draft a notification in Needs-you once.',
+    input: {
+      name: 'Tell me when a PR merges', enabled: false,
+      trigger: { kind: 'watch', rrule: 'FREQ=HOURLY',
+        command: ['gh', 'pr', 'view', '123', '--repo', 'ashlrai/phantom', '--json', 'state'],
+        condition: { path: '$.state', equals: 'MERGED' }, repeat: false },
+      lane: 'leader-review', playbookId: null, repos: ['ashlrai/phantom'],
+      instructions: 'Draft a notification for Mason when the condition matches. Sending requires approval.',
+      maxConcurrent: 1, maxPerDay: 1, queueDepth: 1, spendCapUsd: 0, dedupeKey: null, triage: null,
+    },
+  },
+  {
     id: 'fix-labeled-issues',
     name: 'Fix issues labeled ashlr',
     blurb: 'Every open issue labelled `ashlr` becomes one fleet task (one per issue, ever).',
