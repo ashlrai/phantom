@@ -68,7 +68,8 @@ describe('buildFleetDisk', () => {
   const sample = (minutesAgo: number, freeGb: number) => ({
     at: new Date(NOW - minutesAgo * 60_000).toISOString(), ms: NOW - minutesAgo * 60_000, freeGb,
   });
-  const base = { runsDir: RUNS, nowMs: NOW, source: 'healthy' as const, largestSubdirs: [] };
+  const base = { runsDir: RUNS, nowMs: NOW, source: 'healthy' as const, overridesSource: 'healthy' as const,
+    laneLines: { freezeBelowGb: 60, halveBelowGb: 35 }, largestSubdirs: [] };
 
   it('computes GB per hour lost and hours until 100 GB free', () => {
     // 140 -> 120 over 4 hours: 5 GB/hour, 20 GB to go, 4 hours left.
@@ -170,9 +171,11 @@ describe('formatFleetDisk plain words', () => {
   const report = (over: Partial<Parameters<typeof formatFleetDisk>[0]> = {}) =>
     formatFleetDisk({
       schema: 'fleet.disk.v1', generatedAt: new Date(NOW).toISOString(), runsDir: RUNS,
-      windowHours: 12, targetFreeGb: 100, source: 'healthy', samples: 2,
+      windowHours: 12, targetFreeGb: 100, source: 'healthy', overridesSource: 'healthy', samples: 2,
       freeGbNow: 120, firstFreeGb: 140, observedHours: 4, gbPerHour: 5,
-      hoursUntilTargetFreeGb: 4, largestSubdirs: [{ name: 'wt', gb: 84.2 }],
+      hoursUntilTargetFreeGb: 4, laneFreezeBelowGb: 60, laneHalveBelowGb: 35,
+      hoursUntilLaneFreeze: 12, hoursUntilLaneHalve: 17,
+      largestSubdirs: [{ name: 'wt', gb: 84.2 }],
       ...over,
     });
 
@@ -182,6 +185,8 @@ describe('formatFleetDisk plain words', () => {
       'readings: 2 in the last 12 hours',
       'use rate: 5 GB per hour',
       '100 GB free in: 4 hours',
+      'lane freeze below 60 GB in: 12 hours',
+      'lane halve below 35 GB in: 17 hours',
       `largest folders under ${RUNS}:`,
       '  wt: 84.2 GB',
     ]);
@@ -194,12 +199,15 @@ describe('formatFleetDisk plain words', () => {
   it('prints unknown — never zero — when nothing was read', () => {
     expect(report({
       source: 'missing', samples: 0, freeGbNow: null, firstFreeGb: null,
-      observedHours: null, gbPerHour: null, hoursUntilTargetFreeGb: null, largestSubdirs: null,
+      observedHours: null, gbPerHour: null, hoursUntilTargetFreeGb: null,
+      hoursUntilLaneFreeze: null, hoursUntilLaneHalve: null, largestSubdirs: null,
     })).toEqual([
       'disk free now: unknown',
       'readings: 0 in the last 12 hours',
       'use rate: unknown',
       '100 GB free in: unknown',
+      'lane freeze below 60 GB in: unknown',
+      'lane halve below 35 GB in: unknown',
       `largest folders under ${RUNS}:`,
       '  unknown',
     ]);
@@ -233,7 +241,7 @@ describe('cmdFleetDisk', () => {
   });
 
   it('prints unknown and still exits 0 when the log cannot be read', async () => {
-    const { code, logs, report } = await run(['--json'], {
+    const { code, report } = await run(['--json'], {
       ...goodDeps, readEvents: () => ({ state: 'missing' as const, text: '' }),
     });
     expect(code).toBe(0);
