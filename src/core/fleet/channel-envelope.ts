@@ -202,7 +202,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
       let entryId: string | undefined;
       if (previous && !options.write) {
         // The receipt proves sender+text; pinning to the receipt time identifies its exact entry.
-        const runsDir = options.runsDir ?? join(homedir(), '.ashlr-runs');
+        const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
         const decision = decideCrossChannelMerge(
           { text: body, channel: inboxChannelSlug(envelope.channel), senderId: senderKey, receivedAt: now },
           readRecentChannelEntries(runsDir, now, CROSS_CHANNEL_WINDOW_MS)
