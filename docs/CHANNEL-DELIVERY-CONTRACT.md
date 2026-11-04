@@ -5,9 +5,13 @@ adapter, not an authentication or transport service. Before calling it, the
 adapter must authenticate the sender using its channel's trusted evidence and
 map that identity to a canonical `verifiedSenderId`. Use the same canonical ID
 for the same person across channels, and configure `allowedSenderIds` with the
-permitted IDs. Never use a sender or channel asserted in the message body as
-proof of identity. The receiver checks the supplied ID against the allowlist; it
-does not independently verify the adapter's claim.
+permitted IDs. When the channel's evidence id is per-channel (for example
+`telegram:<userId>` or `email:<address>`), the adapter also supplies
+`canonicalSenderId`: the shared person id the dedupe receipt and cross-channel
+merge key on (`OPERATOR_SENDER_ID` for the operator surfaces). Never use a
+sender or channel asserted in the message body as proof of identity. The
+receiver checks the supplied ID against the allowlist; it does not
+independently verify the adapter's claim.
 
 The default inbox records the receiving channel as its displayed `source`; it
 does not record `verifiedSenderId`. Source is presentation, not identity or
