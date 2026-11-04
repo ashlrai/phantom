@@ -41,7 +41,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createChannelReceiver, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
+import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
 import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
@@ -472,7 +472,7 @@ export async function recordEmailToInbox(
       busRoot: opts.busRoot,
       acknowledge: reply,
     });
-    const result = await receive(message);
+    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
     if (result.ok && result.ack.status === 'accepted' && parsed.messageId) {
       recordSeenMessageId(opts.runsDir, parsed.messageId);
     }
