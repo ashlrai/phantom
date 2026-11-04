@@ -2691,7 +2691,7 @@ function printFleetHelp(): void {
   console.log(`    phm fleet wait-jobs --job ID --timeout-ms N [--interval-ms N] --json`);
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
-  console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
+  console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
   console.log('    ashlr fleet merge-throughput --input <snapshot.json> [--json]');

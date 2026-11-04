@@ -32,6 +32,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 ## Fleet
 
+- Parked dependency gates: `phm fleet parked --json` lists `PARKED-DEP` rows and `unmetDeps` (gate ids not yet `MERGED` in `jobs.jsonl`). Restock auto-unparks when every gate id is merged; unpark does not merge. See [Mac queue scripts](../contrib/mac/README.md).
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
 - [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
