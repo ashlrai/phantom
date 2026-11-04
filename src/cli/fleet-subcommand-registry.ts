@@ -165,6 +165,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'red-merges': () => import('./fleet-red-merges.js'),
   'repo-rate': () => import('./fleet-repo-rate.js'),
   'reset-release': () => import('./fleet-reset-release.js'),
+  'running': () => import('./fleet-running.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
   'self-loop': () => import('./fleet-self-loop.js'),
   'self-loop-await': () => import('./fleet-self-loop-await.js'),
