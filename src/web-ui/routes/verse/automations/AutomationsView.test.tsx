@@ -222,6 +222,7 @@ describe('<AutomationsView>', () => {
     await screen.findByText('Nightly flaky test hunt');
     fireEvent.click(screen.getByRole('button', { name: 'New automation' }));
     const form = screen.getByRole('form', { name: 'New automation' });
+    expect(within(within(form).getByRole('combobox', { name: 'When' })).getByRole('option', { name: 'Watch a GitHub condition' })).toHaveValue('watch');
     fireEvent.change(within(form).getByLabelText('Repos'), { target: { value: 'acme/app' } });
     fireEvent.change(within(form).getByLabelText('Name'), { target: { value: 'Fix ashlr issues' } });
     const picker = (await within(form).findByRole('combobox', { name: 'Playbook (optional)' })) as HTMLSelectElement;
