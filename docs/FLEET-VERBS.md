@@ -9,6 +9,7 @@
 | backlog | `src/cli/fleet-backlog.ts` | Read-only triage of the open-PR merge backlog | no |
 | bets | `src/cli/fleet-bets.ts` | Read-only status of every `- READY RQ-` bet in leader/VISION.md from the last 3000 jobs.jsonl lines: not seen, launched, skipped, PR open, merged, empty or closed; first line is merged n of m | no |
 | bet-trace | `src/cli/fleet-bet-trace.ts` | Offline supervisor-command reconciliation; no dispatch or mutation authority | no |
+| bet-wait | `src/cli/fleet-bet-wait.ts` | Read-only place of each ready `src=leader` job in its lane (filler counts last), from `queue/ready.tsv` and `queue/router-queue.md`; places over 10 flagged long (exit 1) | no |
 | brains | `src/cli/fleet-brains.ts` | Read-only last-action view of each fleet brain from the dispatch-events tail; stale past 90 minutes, missing log is unknown | no |
 | bus-thread | `src/cli/fleet-bus-thread.ts` | Reads retained live local context only; routing labels are not authenticated identities | no |
 | canary-ladder | `src/cli/fleet-canary-ladder.ts` | Read-only report of which auto-merge rung each repo's recent merge outcomes compute on the canary enforce ladder | no |
