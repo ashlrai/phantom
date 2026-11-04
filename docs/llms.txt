@@ -11,12 +11,14 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Self-hosting](SELF-HOSTING.md): Install, connect MCP, upgrade, and uninstall.
 - [User guide](VERSE.md): Console surfaces and shortcuts.
 - [Architecture](ARCHITECTURE.md): TypeScript/ESM CLI and SDK plus a React web console. `phm` and `ashlr` share one launcher.
+- [Agent Bus v2 contract](AGENT-BUS.md#v2): Participants, body kinds, claim keys with overlap rules, and the work feed for every provider. Print it with `ashlr agents bus contract --json`.
 - [Agent operations](AGENT-OPERATIONS.md): Cold-start checklist for building and operating Phantom from source.
 - [Automatic work](AUTOMATIC-OUTCOMES.md): Chat routing and fleet outcomes.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
 
 ## CLI
 
+- [Apps control](APPS-CONTROL.md): Manage allowlisted desktop apps (`~/.ashlr/apps-allow.json`, empty by default). Commands: `phm apps list|open|quit|focus|status [--json]`. Runs through the desktop adapter only, logs every action to the feed, sends a quit with unsaved work to needs-you.
 - [Docs Radar](RADAR.md): Public source list, bounded unauthenticated reads, private snapshots and offline diffs. Commands: `phm radar list|run|diff --json`. Individual fetch failures are warnings; the last successful snapshot is retained.
 
 - [CLI reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all`. The checkout is the authority.

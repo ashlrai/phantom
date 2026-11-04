@@ -341,6 +341,11 @@ const loadDesktopCmd = lazyCmd(
   'desktop command requires the installed compiled consumer installer.',
 );
 
+const loadAppsCmd = lazyCmd(
+  () => import('./apps-control.js'), (m) => m.cmdApps as Cmd,
+  'apps command requires src/cli/apps-control.ts.',
+);
+
 const loadDesktopUpdateCmd = lazyCmd(
   () => import('./desktop-update.js'), (m) => m.cmdDesktopUpdate as Cmd,
   'desktop-update command requires the installed compiled update consumer.',
@@ -783,6 +788,12 @@ const loadOpenaiAgentsCmd = lazyCmd(
   () => import('./openai-agents.js'),
   (m) => m.runOpenaiAgentsCli as Cmd,
   'openai-agents command requires a current build of src/cli/openai-agents.ts.',
+);
+
+const loadAgentsCmd = lazyCmd(
+  () => import('./agents-bus-contract.js'),
+  (m) => m.runAgentsCli as Cmd,
+  'agents command requires a current build of src/cli/agents-bus-contract.ts.',
 );
 
 // ─── 3.15 Automations ───────────────────────────────────────────────
@@ -2240,6 +2251,10 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopCmd())(rest);
         break;
       }
+      case 'apps': {
+        process.exitCode = await (await loadAppsCmd())(rest);
+        break;
+      }
       case 'desktop-update': {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
@@ -2760,6 +2775,13 @@ async function main(): Promise<void> {
       case 'openai-agents': {
         const cmdOpenaiAgents = await loadOpenaiAgentsCmd();
         process.exitCode = await cmdOpenaiAgents(rest);
+        break;
+      }
+
+      case 'agents': {
+        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        const cmdAgents = await loadAgentsCmd();
+        process.exitCode = await cmdAgents(rest);
         break;
       }
 
