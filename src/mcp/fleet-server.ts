@@ -18,6 +18,8 @@ import {
 import { MAX_FLEET_RESET_AWAIT_MS, parseFleetResetAwaitArgs, readFleetResetAwait, type FleetResetAwaitArgs } from './fleet-reset-await.js';
 import { MAX_FLEET_RESET_RELEASE_AWAIT_MS, parseFleetResetReleaseAwaitArgs, readFleetResetReleaseAwait,
   type FleetResetReleaseAwaitArgs } from './fleet-reset-release-await.js';
+import { MAX_FLEET_RESET_FOLLOW_MS, parseFleetResetFollowArgs, readFleetResetFollow,
+  type FleetResetFollowArgs } from './fleet-reset-follow.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -32,6 +34,7 @@ export interface FleetReaders {
   resetHistory?: (input: FleetResetHistoryArgs) => Promise<unknown>;
   resetAwait?: (input: FleetResetAwaitArgs) => Promise<unknown>;
   resetReleaseAwait?: (input: FleetResetReleaseAwaitArgs) => Promise<unknown>;
+  resetFollow?: (input: FleetResetFollowArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -140,11 +143,22 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_reset_follow',
+      description: 'Follow the recorded autobackoff release audit and collect newly recorded lane releases across lanes in one bounded call, oldest first: lane, at, state, usedPct, readingAsOf and heldUntil per release. Only records stamped strictly after the exclusive after watermark (default: invocation time) are collected; an exact case-sensitive lane filter can narrow them. Returns one terminal outcome — deadline, cancelled, failed, or limit when collection stopped at the 200-record bound — with read count, delivered count and the capped-source caveat. These are recorded past releases, never a live lane-health, capacity or launch-success verdict, and an empty records list means no releases were emitted inside the call, not that the source is healthy. Reads the configured default root only and never releases a hold, probes a provider or changes a lane.',
+      inputSchema: { type: 'object', properties: {
+        timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_FOLLOW_MS },
+        pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_FOLLOW_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
+        lane: { type: 'string', pattern: '\\S', description: 'Exact case-sensitive nonblank lane; omit to collect every lane.' },
+        after: { type: 'string', description: 'Exclusive ISO-8601 watermark: only releases stamped strictly after it are collected. Default: invocation time.' },
+      }, required: ['timeoutMs'], additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_release_await') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -157,8 +171,10 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const history = name === 'fleet_reset_history' ? parseFleetResetHistoryArgs(args) : null;
     const resetAwait = name === 'fleet_reset_await' ? parseFleetResetAwaitArgs(args) : null;
     const resetReleaseAwait = name === 'fleet_reset_release_await' ? parseFleetResetReleaseAwaitArgs(args) : null;
+    const resetFollow = name === 'fleet_reset_follow' ? parseFleetResetFollowArgs(args) : null;
     if (name === 'fleet_reset_await' ? resetAwait === null :
         name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
+        name === 'fleet_reset_follow' ? resetFollow === null :
         name === 'fleet_bus_inbox' ? inbox === null :
         name === 'fleet_reset_history' ? history === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
@@ -175,6 +191,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
         : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
         : name === 'fleet_reset_release_await' ? await (readers.resetReleaseAwait ?? readFleetResetReleaseAwait)(resetReleaseAwait as FleetResetReleaseAwaitArgs)
+        : name === 'fleet_reset_follow' ? await (readers.resetFollow ?? readFleetResetFollow)(resetFollow as FleetResetFollowArgs)
         : name === 'fleet_reset_history' ? await (readers.resetHistory ?? readFleetResetHistory)(history as FleetResetHistoryArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
