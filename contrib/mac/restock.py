@@ -3,7 +3,8 @@
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
-import os, re, sys, json, time, fcntl, subprocess
+import os, re, sys, json, time, fcntl, subprocess, math
+from datetime import datetime
 from launch_precheck import precheck, park, parked as precheck_parked, park_key
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 DRY = "--dry-run" in sys.argv
@@ -170,7 +171,50 @@ for i, j, a2, t2, raw2 in recs:
 parked = {i for i, j in seclist}
 # under the bold floor bold lines pick first, then P-level, then line order; at/above it the order is unchanged
 ordk = (lambda r: (not ISBOLD.search(r[2]), prio(r[2]), r[0])) if prefer_bold else (lambda r: (prio(r[2]), r[0]))
-for i, j, attrs, text, raw in sorted(recs, key=ordk):
+def ranked_records(records):
+    ordered = sorted(records, key=ordk)
+    try:
+        state = json.loads(rd(H + "/.ashlr/repo-rank.json"))
+        rows = state["rankings"]
+        enrolled = state["enrolled"]
+        datetime.fromisoformat(state["generatedAt"].replace("Z", "+00:00"))
+        blend = [state["weights"][k] for k in ("prior", "recency", "leverage")]
+        if (any(not isinstance(w, (int, float)) or isinstance(w, bool) or not math.isfinite(w) or w < 0 for w in blend)
+                or not math.isfinite(sum(blend)) or sum(blend) <= 0
+                or not isinstance(state["proposals"], list) or not isinstance(state["history"], list)):
+            return ordered
+        if (state["schemaVersion"] != 1 or not isinstance(enrolled, list) or not enrolled
+                or any(not isinstance(r, str) or not re.fullmatch(r"[a-z0-9-]+", r) for r in enrolled)
+                or len(set(enrolled)) != len(enrolled) or len(rows) != len(enrolled)
+                or {r["repo"] for r in rows} != set(enrolled)
+                or any(not isinstance(r["weight"], (int, float)) or isinstance(r["weight"], bool)
+                       or not math.isfinite(r["weight"]) or r["weight"] <= 0 for r in rows)):
+            return ordered
+        weights = {r["repo"]: r["weight"] for r in rows}
+        total = sum(weights.values())
+        if not math.isfinite(total): return ordered
+        weights = {r: w / total for r, w in weights.items()}
+        if weights[rows[0]["repo"]] < 0.4:
+            top = rows[0]["repo"]
+            rest = 1 - weights[top]
+            weights = {r: (0.4 if r == top else w / rest * 0.6) for r, w in weights.items()}
+        groups = {r["repo"]: [] for r in rows}
+        other = []
+        for record in ordered:
+            match = re.search(r"\brepo=(?:ashlrai/)?([a-z0-9-]+)", record[2])
+            repo = match.group(1) if match else None
+            (groups[repo] if repo in groups else other).append(record)
+        result = []
+        counts = dict.fromkeys(groups, 0)
+        while any(groups.values()):
+            repo = min((r for r in groups if groups[r]), key=lambda r: ((counts[r] + 1) / weights[r], list(groups).index(r)))
+            result.append(groups[repo].pop(0))
+            counts[repo] += 1
+        return result + other
+    except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
+        return ordered
+
+for i, j, attrs, text, raw in ranked_records(recs):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue

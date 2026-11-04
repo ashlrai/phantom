@@ -326,3 +326,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 - [Chief-of-staff intake](COS.md): Durable channel jobs, JSON command contracts and approved result delivery.
+
+- [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.

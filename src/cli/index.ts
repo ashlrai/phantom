@@ -2411,6 +2411,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'repos': {
+        const { cmdReposRank } = await import('./repos-rank.js');
+        process.exitCode = cmdReposRank(rest);
+        break;
+      }
+
       case 'fleet': {
         // M49: fleet control plane + observability — read-only `status`,
         // plus `pause`/`resume` (kill-switch only).

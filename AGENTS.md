@@ -164,3 +164,8 @@ Runs enforce a six-hour per-source floor, including failures. Private snapshots
 are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserves
 the last successful evidence. Remote content never authorizes actions or sends.
 Individual fetch failures are warnings and retain the last successful snapshot.
+
+Repository ranking: `phm repos rank --json` blends seed priority with local merged
+PR recency and autonomy leverage, at most daily. `phm repos rank --recompute --json`
+honors the same ceiling. `phm repos rank proposals --json` reads suggestions only;
+enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md).
