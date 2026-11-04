@@ -42,6 +42,7 @@ import { verseBootstrapQuery } from '../verse-queries.js';
 import { AccountCard } from '../usage/AccountCard.js';
 import { CodexBurnCard } from '../usage/CodexBurnCard.js';
 import { FleetLedgerCard } from '../usage/FleetLedgerCard.js';
+import { UsageResourcesPanel } from '../usage/UsageResourcesPanel.js';
 import { AccountDetail } from '../usage/AccountDetail.js';
 import { CapacityFacts } from '../usage/CapacityFacts.js';
 import { CapacityStrip, useCapacityData, useCapacityClock } from '../usage/CapacityStrip.js';
@@ -57,6 +58,7 @@ import { JevPanel } from '../jev/JevPanel.js';
 import { LiveSeatBurnDowns } from '../command/SeatBurnDowns.js';
 import {
   frontierUsageQuery,
+  usageResourcesQuery,
   usageSeriesQuery,
   verseAccountsQuery,
   verseControlQuery,
@@ -189,6 +191,7 @@ export function UsageSection(): ReactNode {
   const refetchControl = useRefresh(controlSnapshotQuery);
   const refetchVerseControl = useRefresh(verseControlQuery);
   const refetchBootstrap = useRefresh(verseBootstrapQuery);
+  const refetchResources = useRefresh(usageResourcesQuery);
 
   // Live without a server signal. Kept to the two reads that actually go stale
   // on their own; everything else rides the daemon SSE event (data/sse.ts) or
@@ -206,6 +209,7 @@ export function UsageSection(): ReactNode {
     refetchControl();
     refetchVerseControl();
     refetchBootstrap();
+    refetchResources();
   };
 
   // ---- projections -------------------------------------------------------
@@ -449,6 +453,13 @@ export function UsageSection(): ReactNode {
           <>
             <CodexBurnCard now={now} />
             <FleetLedgerCard now={now} />
+            {/*
+              The twelve operator resources, one row each (RQ-NIGHT-USAGE-1):
+              Ultra, Claude Max, the claude-api pools, codex ×2, Devin, zai,
+              agy, Gemini, local and Stacksync — a measured reading or an
+              explicit "no reader yet", never a fake number.
+            */}
+            <UsageResourcesPanel />
             {/*
               The ONE capacity view every surface shares (SPEC-310C §4),
               from the seat roster, A2 health and A9 budget. A seat name
