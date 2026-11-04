@@ -52,9 +52,10 @@ export function resourceAccountProfileDigest(account: ResourceConnectionConfig['
  * prior successful native account check can witness historical identity across restart.
  * Claude's pinned .claude.json supplies local OAuth account metadata, not keychain
  * authentication. Matching it qualifies historical display only, never a current login. */
-export function readResourceAccountLocalEpoch(accountsRoot: string, account: ResourceConnectionConfig['accounts'][number]): ResourceAccountLocalEpoch | null {
+export function readResourceAccountLocalEpoch(accountsRoot: string, account: ResourceConnectionConfig['accounts'][number],
+  historicalDisplayOnly = false): ResourceAccountLocalEpoch | null {
   try {
-    const result = resolveNativeSeatLaunch({ accountsRoot, provider: account.provider, seatId: account.id });
+    const result = resolveNativeSeatLaunch({ accountsRoot, provider: account.provider, seatId: account.id, historicalDisplayOnly });
     if (!result.ok || canonical(result.launch.command) !== canonical(account.command)) return null;
     inspectPrivateDirectory(result.launch.nativeStatePath);
     const file = join(result.launch.nativeStatePath, account.provider === 'claude' ? '.claude.json' : 'auth.json');

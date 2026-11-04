@@ -72,6 +72,25 @@ const LAUNCHER_BOOT_PREFIX = 'const preparedBootId=';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 type DirectoryBinding = { path: string; dev: string; ino: string; birthtimeNs?: string; volumeUuid?: string };
 
+/** Bounded display-only APFS observations. Launch/admission checks bypass this cache. */
+type VolumeIdentity = { bootId: string; volumeUuid: string };
+const observations = new Map<string, { at: number; value: VolumeIdentity | null }>();
+const INTERVAL_MS = 60_000;
+
+function observeNativeVolumeIdentity(device: string, probe: () => VolumeIdentity): VolumeIdentity {
+  const now = performance.now();
+  let observation = observations.get(device);
+  if (!observation || now < observation.at || now - observation.at >= INTERVAL_MS) {
+    // Cache failures too: an unavailable disk must not become a busy retry loop.
+    observation = { at: now, value: null };
+    if (observations.size >= 32 && !observations.has(device)) observations.delete(observations.keys().next().value!);
+    observations.set(device, observation);
+    try { observation.value = probe(); } catch { /* Unavailable remains fail-closed. */ }
+  }
+  if (!observation.value) throw new Error('Native profile identity unavailable');
+  return { ...observation.value };
+}
+
 /** Bounded OS reads. A missing or ambiguous APFS identity must never relax a binding. */
 function macIdentity(path: string): { bootId: string; volumeUuid: string } {
   const env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C', LC_ALL: 'C' };
@@ -443,7 +462,7 @@ function launcherWithExecutable(state: RepinInspection, executable: string): str
  * Read-only. Throws `invalid` for directory/file-mode problems and
  * `inconsistent` for content that is not prepare's own output.
  */
-function inspectRepinTarget(directory: string): RepinInspection {
+function inspectRepinTarget(directory: string, historicalDisplayOnly = false): RepinInspection {
   let parent: string; let parentStat: BigIntStats; let directoryStat: BigIntStats;
   let paths: RepinInspection['paths']; let files: RepinInspection['files'];
   try {
@@ -498,7 +517,9 @@ function inspectRepinTarget(directory: string): RepinInspection {
     const preparedBootId = witnessed ? embedded(bootIndexes[0]!, LAUNCHER_BOOT_PREFIX) : undefined;
     if (witnessed && (typeof preparedBootId !== 'string' || !UUID.test(preparedBootId) ||
       preparedBootId === '00000000-0000-0000-0000-000000000000')) throw new Error();
-    const current = witnessed ? macIdentity(directory) : null;
+    const current = witnessed ? (historicalDisplayOnly
+      ? observeNativeVolumeIdentity(lstatSync(directory, { bigint: true }).dev.toString(), () => macIdentity(directory))
+      : macIdentity(directory)) : null;
     const profileStat = witnessed ? lstatSync(directory, { bigint: true }) : null;
     directories.forEach((row: unknown, index) => {
       if (!isRecord(row) || row['path'] !== expectedDirectories[index] || typeof row['dev'] !== 'string' ||
@@ -1027,6 +1048,8 @@ export function resolveNativeSeatLaunch(options: {
   seatId?: string | null;
   /** Host-owned broker requires the current fixed safety environment. */
   requireClaudeBrokerSafety?: boolean;
+  /** Historical projection only; never use this result to authorize a launch. */
+  historicalDisplayOnly?: boolean;
 }): NativeSeatLaunchResult {
   const { accountsRoot, provider } = options;
   const seatId = options.seatId ?? null;
@@ -1049,7 +1072,7 @@ export function resolveNativeSeatLaunch(options: {
   if (!isStringArray(command) || command.length !== 2 || !path(command[0]) || !path(command[1]) ||
     basename(command[1]!) !== 'launcher.mjs') return seatFailure('not-a-profile-launcher');
   let state: RepinInspection;
-  try { state = inspectRepinTarget(dirname(command[1]!)); } catch { return seatFailure('profile-invalid'); }
+  try { state = inspectRepinTarget(dirname(command[1]!), options.historicalDisplayOnly); } catch { return seatFailure('profile-invalid'); }
   const manifestCommand = state.manifest['command'];
   if (!state.identityConsistent || state.provider !== provider || state.launcherExecutable !== state.manifestExecutable ||
     !isStringArray(manifestCommand) || manifestCommand.length !== 2 ||

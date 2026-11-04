@@ -151,10 +151,11 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
     const own = roster.get(a.id);
     return own !== undefined && resourceAccountProfileDigest(own) === resourceAccountProfileDigest(a);
   };
-  const epoch = (a: Account): ResourceAccountLocalEpoch | null => {
+  const epoch = (a: Account, historicalDisplayOnly = false): ResourceAccountLocalEpoch | null => {
     try {
       if (!belongs(a)) return null;
-      const result = readEpoch(a);
+      const result = historicalDisplayOnly && !options.readEpoch
+        ? readResourceAccountLocalEpoch(options.accountsRoot, a, true) : readEpoch(a);
       return result && result.profileDigest === resourceAccountProfileDigest(a) && hash(result.epochDigest) &&
         (result.accountDigest === undefined || hash(result.accountDigest)) ? result : null;
     } catch { return null; }
@@ -213,7 +214,7 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
   const witness = (a: Account, nowMs = Date.now()): ResourceAccountIdentityWitness | null => {
     if (!Number.isFinite(nowMs) || nowMs < 0 || nowMs > Date.now() || !belongs(a)) return null;
     const row = rows.get(a.id); if (!row || Date.parse(row.observedAt) > nowMs || row.profileDigest !== resourceAccountProfileDigest(a) || row.provider !== a.provider) return null;
-    const local = epoch(a);
+    const local = epoch(a, true);
     if (row.epochDigest !== null && (!local || local.epochDigest !== row.epochDigest ||
       local.accountDigest !== undefined && local.accountDigest !== row.accountDigest)) return null;
     const live = native.get(a.id);
@@ -287,7 +288,7 @@ export function createResourceReadingCache(options: { root: string; accountsRoot
       if (!row || Date.parse(row.observedAt) > Date.now() || !belongs(a) ||
         row.profileDigest !== resourceAccountProfileDigest(a)) return null;
       // Never expose this fallback through witness() or financial snapshots.
-      if (!current && !displayIdentityMatches(row, epoch(a))) return null;
+      if (!current && !displayIdentityMatches(row, epoch(a, true))) return null;
       return { observedAt: row.observedAt, expiresAt: row.expiresAt, windows: structuredClone(row.windows),
         source: 'native-account-checked-history', identitySource: current?.source ?? 'native-account-checked-display-identity',
         ...(row.creditHistory ? { creditHistory: structuredClone(row.creditHistory) } : {}) };
