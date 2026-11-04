@@ -13,11 +13,12 @@ import {createHash, generateKeyPairSync, sign} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import ts from 'typescript';
 import {parse} from 'yaml';
-import {createTagAndDraftRelease} from '../scripts/tag-github-release.mjs';
+import {createTagAndDraftRelease, releaseForTag} from '../scripts/tag-github-release.mjs';
 import {
   parseReleasePublishArguments, planDesktopReleasePublication,
-  inspectDesktopReleasePublication, applyDesktopReleasePublication,
+  inspectDesktopReleasePublication, applyDesktopReleasePublication, acquirePublishLock,
 } from '../../scripts/publish-desktop-release.mjs';
+import {duplicateDraftGroups} from '../../scripts/list-duplicate-draft-releases.mjs';
 
 const REPO = 'ashlrai/phantom';
 const hash = data => createHash('sha256').update(data).digest('hex');
@@ -49,8 +50,11 @@ function remote() {
     if (seg[3] === 'git' && seg[4] === 'ref') { const ref = refs.get(seg.slice(5).join('/')); if (!ref) throw notFound(); return ref; }
     if (seg[3] === 'git' && seg[4] === 'tags') { const tag = refs.get(`tags/${seg[5]}`); if (!tag) throw notFound(); return tag; }
     if (seg[3] === 'compare') { const [base, head] = seg[4].split('...'); return {status: base === head ? 'identical' : descendants.has(`${base}...${head}`) ? 'ahead' : 'diverged'}; }
-    if (seg[3] === 'releases' && seg[4] === 'tags') { const r = [...releases.values()].find(x => x.tag_name === seg[5]); if (!r) throw notFound(); return publicJson(r); }
+    // Real GitHub: releases/tags/<tag> answers PUBLISHED releases only — a
+    // draft 404s there — while the list shows drafts to push-access tokens.
+    if (seg[3] === 'releases' && seg[4] === 'tags') { const r = [...releases.values()].find(x => x.tag_name === seg[5] && !x.draft); if (!r) throw notFound(); return publicJson(r); }
     if (seg[3] === 'releases' && seg[4] === 'latest') { const r = latestRelease(); if (!r) throw notFound(); return publicJson(r); }
+    if (seg[3] === 'releases' && seg.length === 4) return [...releases.values()].map(publicJson).sort((a, b) => b.id - a.id);
     if (seg[3] === 'releases' && seg[5] === 'assets') { return [...(assets.get(Number(seg[4]))?.values() ?? [])].map((asset) => { const rest = {...asset}; delete rest.data; return rest; }); }
     if (seg[3] === 'releases') { const r = releases.get(Number(seg[4])); if (!r) throw notFound(); return publicJson(r); }
     throw new Error(`unhandled read ${endpoint}`);
@@ -260,6 +264,93 @@ test('tag+draft script is idempotent and refuses tag drift', async () => {
   assert.equal(second.release, 'exists');
   assert.equal(remoteRepo.calls.some(c => c[0] === 'write'), false, 'rerun rewrote the remote');
   await assert.rejects(createTagAndDraftRelease({repo: REPO, version: '3.29.17', sha: 'b'.repeat(40), read, write}), /different commit/);
+});
+
+test('tag+draft script reuses a draft it can only see through the list', async () => {
+  // Regression for the duplicate-draft storm: releases/tags/<tag> 404s on
+  // drafts, so the old probe minted one draft per run. The list shows them.
+  const remoteRepo = remote(); const sha = 'a'.repeat(40);
+  const read = async ep => { try { return remoteRepo.read(ep); } catch (e) { if (e.status === 404) return null; throw e; } };
+  const write = (m, ep, fields) => remoteRepo.write(m, ep, fields);
+  remoteRepo.refs.set('tags/v3.29.17', {ref: 'refs/tags/v3.29.17', object: {type: 'commit', sha}});
+  remoteRepo.releases.set(50, {id: 50, tag_name: 'v3.29.17', draft: true, prerelease: false, target_commitish: sha, name: 'Phantom 3.29.17'});
+  const result = await createTagAndDraftRelease({repo: REPO, version: '3.29.17', sha, read, write});
+  assert.deepEqual(result, {tag: 'v3.29.17', sha, release: 'exists', releaseId: 50});
+  assert.equal(remoteRepo.calls.some(c => c[0] === 'write' && c[2].endsWith('/releases')), false, 'rerun minted a duplicate draft');
+});
+
+test('tag+draft script adopts the winner of a create race', async () => {
+  const remoteRepo = remote(); const sha = 'a'.repeat(40);
+  const read = async ep => { try { return remoteRepo.read(ep); } catch (e) { if (e.status === 404) return null; throw e; } };
+  let raced = false;
+  const write = async (method, endpoint, fields) => {
+    if (method === 'POST' && endpoint.endsWith('/releases')) {
+      raced = true;
+      // A parallel leg passed the same empty lookup and landed its draft while
+      // our POST was rejected (or its response was lost after committing).
+      remoteRepo.releases.set(77, {id: 77, tag_name: 'v3.30.0', draft: true, prerelease: false, target_commitish: sha, name: 'Phantom 3.30.0'});
+      const error = new Error('HTTP 422'); error.status = 422; throw error;
+    }
+    return remoteRepo.write(method, endpoint, fields);
+  };
+  const result = await createTagAndDraftRelease({repo: REPO, version: '3.30.0', sha, read, write});
+  assert.equal(raced, true);
+  assert.deepEqual(result, {tag: 'v3.30.0', sha, release: 'exists', releaseId: 77});
+  assert.equal([...remoteRepo.releases.values()].filter(r => r.tag_name === 'v3.30.0').length, 1, 'race left a second draft');
+});
+
+test('releaseForTag picks the canonical row among duplicates', async () => {
+  const remoteRepo = remote();
+  const read = async ep => { try { return remoteRepo.read(ep); } catch (e) { if (e.status === 404) return null; throw e; } };
+  for (const id of [90, 88, 89]) remoteRepo.releases.set(id, {id, tag_name: 'v3.30.0', draft: true, name: 'x'});
+  assert.equal((await releaseForTag(read, `repos/${REPO}`, 'v3.30.0')).id, 88, 'lowest draft id is canonical');
+  remoteRepo.releases.set(99, {id: 99, tag_name: 'v3.30.0', draft: false, name: 'x'});
+  assert.equal((await releaseForTag(read, `repos/${REPO}`, 'v3.30.0')).id, 99, 'published release outranks drafts');
+  assert.equal(await releaseForTag(read, `repos/${REPO}`, 'v9.9.9'), null);
+});
+
+test('publisher plans against an existing draft instead of creating another', async () => {
+  const remoteRepo = remote();
+  const read = async ep => { try { return remoteRepo.read(ep); } catch (e) { if (e.status === 404) return null; throw e; } };
+  remoteRepo.releases.set(50, {id: 50, tag_name: 'v3.29.17', draft: true, prerelease: false, target_commitish: 'c'.repeat(40), name: 'x'});
+  const release = await releaseForTag(read, `repos/${REPO}`, 'v3.29.17');
+  const plan = planDesktopReleasePublication({version: '3.29.17', revision: 'c'.repeat(40), release, assets: [], expected: [{name: 'a.tgz', sha256: 'a'.repeat(64)}]});
+  assert.deepEqual(plan, {releaseId: 50, create: false, uploads: ['a.tgz'], publish: true});
+});
+
+test('publish lock excludes a second publisher and frees on release', async t => {
+  const dir = fs.mkdtempSync(join(tmpdir(), 'pub-lock-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const lockPath = join(dir, 'publish.lock');
+  const lock = acquirePublishLock(lockPath);
+  assert.throws(() => acquirePublishLock(lockPath), /already running/);
+  lock.release();
+  const again = acquirePublishLock(lockPath); again.release();
+});
+
+test('a stale publish lock is reclaimed', async t => {
+  const dir = fs.mkdtempSync(join(tmpdir(), 'pub-lock-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const lockPath = join(dir, 'publish.lock');
+  fs.mkdirSync(lockPath, {mode: 0o700});
+  fs.writeFileSync(join(lockPath, 'pid'), 'not-a-pid\n');
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(lockPath, old, old);
+  const lock = acquirePublishLock(lockPath); lock.release();
+});
+
+test('duplicate draft inventory groups repeated tags for dry-run cleanup review', () => {
+  const rows = [
+    {id: 1, tag_name: 'v3.29.15', draft: false, created_at: '2026-10-13T00:00:00Z'},
+    {id: 2, tag_name: 'v3.30.0', draft: true, created_at: '2026-11-04T12:12:17Z'},
+    {id: 3, tag_name: 'v3.30.0', draft: true, created_at: '2026-11-04T12:12:17Z'},
+    {id: 4, tag_name: 'v3.29.17', draft: true, created_at: '2026-11-04T08:48:52Z'},
+    {id: 5, tag_name: 'v3.29.17', draft: true, created_at: '2026-11-04T08:48:52Z'},
+  ];
+  assert.deepEqual(duplicateDraftGroups(rows), [
+    {tag: 'v3.29.17', releases: [{id: 4, draft: true, created_at: '2026-11-04T08:48:52Z'}, {id: 5, draft: true, created_at: '2026-11-04T08:48:52Z'}]},
+    {tag: 'v3.30.0', releases: [{id: 2, draft: true, created_at: '2026-11-04T12:12:17Z'}, {id: 3, draft: true, created_at: '2026-11-04T12:12:17Z'}]},
+  ]);
 });
 
 test('tag+draft script completes the release for a later commit that descends from the tag', async () => {
