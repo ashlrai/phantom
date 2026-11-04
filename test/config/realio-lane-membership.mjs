@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
