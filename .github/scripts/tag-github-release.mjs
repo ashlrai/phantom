@@ -2,8 +2,10 @@
 // Tag -> draft GitHub release, the leg of the release train that never ran.
 // Called from auto-tag.yml only after every required check is green on the
 // exact candidate commit and only ever with the ashlr-release App token.
-// Idempotent: an existing tag must point at the candidate commit, an existing
-// release is left untouched. The release starts as a DRAFT so releases/latest
+// Idempotent: an existing tag is immutable and must be the candidate commit or
+// one of its ancestors (a later master commit carrying the same version), in
+// which case the release is cut at the tag's commit. An existing release is
+// left untouched. The release starts as a DRAFT so releases/latest
 // keeps resolving to the last fully stocked feed; the sanctioned local
 // publisher (scripts/publish-desktop-release.mjs) attaches the signed
 // artifacts and flips it public.
@@ -24,24 +26,31 @@ export async function createTagAndDraftRelease({ repo, version, sha, read, write
   assert.ok(SHA.test(sha), 'candidate revision must be an exact commit SHA');
   const base = `repos/${repo}`;
   const ref = await read(`${base}/git/ref/tags/${tag}`);
+  let target = sha;
   if (ref === null) {
     await write('POST', `${base}/git/refs`, { ref: `refs/tags/${tag}`, sha });
   } else {
     assert.equal(ref.ref, `refs/tags/${tag}`, 'tag reference mismatch');
     assert.equal(ref.object?.type, 'commit', 'tag does not point at a commit');
-    assert.equal(ref.object?.sha, sha, 'existing tag points at a different commit');
+    assert.ok(SHA.test(ref.object?.sha ?? ''), 'tag points at an invalid revision');
+    if (ref.object.sha !== sha) {
+      // Tags never move. Accept only a tag that is an ancestor of the candidate.
+      const cmp = await read(`${base}/compare/${ref.object.sha}...${sha}`);
+      assert.equal(object(cmp)?.status, 'ahead', 'existing tag points at a different commit');
+      target = ref.object.sha;
+    }
   }
   const existing = await read(`${base}/releases/tags/${tag}`);
-  if (existing !== null) return { tag, sha, release: 'exists', releaseId: existing.id };
+  if (existing !== null) return { tag, sha: target, release: 'exists', releaseId: existing.id };
   const latest = await read(`${base}/releases/latest`);
   const fields = {
-    tag_name: tag, target_commitish: sha, name: `Phantom ${version}`,
+    tag_name: tag, target_commitish: target, name: `Phantom ${version}`,
     draft: true, prerelease: false, generate_notes: true,
   };
   if (object(latest) && TAG.test(latest.tag_name ?? '')) fields.notes_start_tag = latest.tag_name;
   const created = await write('POST', `${base}/releases`, fields);
   assert.equal(object(created)?.draft, true, 'release did not land as a draft');
-  return { tag, sha, release: 'draft-created', releaseId: created.id };
+  return { tag, sha: target, release: 'draft-created', releaseId: created.id };
 }
 
 function ghApi(args) {
