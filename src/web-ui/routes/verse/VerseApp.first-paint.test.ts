@@ -180,6 +180,9 @@ const FIRST_PAINT_ROOTS = ['web-ui/main.tsx', 'web-ui/app/VerseConsoleApp.tsx', 
  * loaded with import() (or preloaded) by whoever needs it; the note says who.
  */
 const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
+  'web-ui/routes/verse/sections/useAutoSelfUpdate.ts': 'ShellUpdates loads the background update observer after shell paint',
+  'web-ui/routes/verse/shell/self-update-badge.ts': 'ShellUpdates and GearUpdateDot load the update observer lazily',
+
   'web-ui/routes/verse/verse-transcript.ts': 'transcript derivation — workspace/dock only (verse-store must not import it back)',
   'web-ui/routes/verse/useVerseTranscript.ts': 'transcript hook — workspace/dock only',
   'web-ui/routes/verse/Workspace.tsx': 'ChatSection preloads it',
