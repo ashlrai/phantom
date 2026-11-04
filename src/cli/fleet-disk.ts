@@ -1,7 +1,7 @@
 /**
  * `ashlr fleet disk` — read-only disk-pressure report for the fleet host.
  *
- * Two facts, two injected readers, no writes:
+ * Three facts, three injected readers, no writes:
  *
  *   Trend — LEADER rows in ~/.ashlr-runs/queue/dispatch-events.log carry
  *   `free_gb=N`. The readings inside the last 12 hours give free GB lost per
@@ -9,6 +9,14 @@
  *   (`readEvents`); the default is the bounded, symlink-refusing tail read
  *   shared with `fleet brains`. An unread log prints `unknown` for every
  *   trend fact — never a guessed zero.
+ *
+ *   Lane lines — the same trend is projected against the lane disk gate:
+ *   `compact.lanes.raise_freeze_below_gb` (default 60) freezes lane raises
+ *   and `compact.lanes.halve_below_gb` (default 35) halves lane targets.
+ *   The values come from ~/.ashlr-runs/queue/budget-overrides.json through an
+ *   injected reader (`readOverrides`); an unread file falls back to the same
+ *   defaults the host autopilot uses, and the read state is reported as
+ *   `overridesSource`. A line already crossed prints `now`.
  *
  *   Folders — an injected `du` runner lists the ten largest direct
  *   subdirectories of the runs root (wt, logs, queue and so on). A failed du
@@ -27,6 +35,9 @@ export const FLEET_DISK_WINDOW_HOURS = 12;
 export const FLEET_DISK_TARGET_FREE_GB = 100;
 export const FLEET_DISK_TOP_DIRS = 10;
 export const FLEET_DISK_MAX_TAIL_BYTES = 5 * 1024 * 1024;
+export const FLEET_DISK_MAX_OVERRIDES_BYTES = 1024 * 1024;
+export const FLEET_DISK_LANE_FREEZE_GB = 60;
+export const FLEET_DISK_LANE_HALVE_GB = 35;
 const DU_TIMEOUT_MS = 120_000;
 const DU_MAX_BUFFER = 4 * 1024 * 1024;
 
@@ -40,12 +51,16 @@ export interface FleetDiskDeps {
   output?: Output;
   /** Injected reader for queue/dispatch-events.log; default reads a bounded tail. */
   readEvents?: (path: string) => EventsSource | Promise<EventsSource>;
+  /** Injected reader for queue/budget-overrides.json; default reads a bounded file. */
+  readOverrides?: (path: string) => EventsSource | Promise<EventsSource>;
   /** Injected `du -sk`-style runner over the runs root; returns raw stdout text. */
   du?: (root: string) => string | Promise<string>;
 }
 
 export interface FleetDiskSample { at: string; ms: number; freeGb: number }
 export interface FleetDiskDir { name: string; gb: number }
+/** The two lane disk-gate lines, in free GB. */
+export interface LaneDiskLines { freezeBelowGb: number; halveBelowGb: number }
 export interface FleetDiskV1 {
   schema: 'fleet.disk.v1';
   generatedAt: string;
@@ -54,6 +69,8 @@ export interface FleetDiskV1 {
   targetFreeGb: number;
   /** State of the dispatch-events read; 'missing' or 'degraded' leave trend facts null. */
   source: Source;
+  /** State of the budget-overrides read; any state still yields the lane lines (defaults apply). */
+  overridesSource: Source;
   samples: number;
   /** Newest free_gb reading inside the window; null when none. */
   freeGbNow: number | null;
@@ -63,6 +80,14 @@ export interface FleetDiskV1 {
   gbPerHour: number | null;
   /** Hours until free space reaches targetFreeGb; 0 when already there, null when not shrinking or unprovable. */
   hoursUntilTargetFreeGb: number | null;
+  /** Free-GB line where lane raises freeze (compact.lanes raise_freeze_below_gb, default 60). */
+  laneFreezeBelowGb: number;
+  /** Free-GB line where lane targets halve (compact.lanes halve_below_gb, default 35). */
+  laneHalveBelowGb: number;
+  /** Hours until free space crosses the lane freeze line; 0 when already below, null when unprovable. */
+  hoursUntilLaneFreeze: number | null;
+  /** Hours until free space crosses the lane halve line; 0 when already below, null when unprovable. */
+  hoursUntilLaneHalve: number | null;
   /** Up to ten largest direct subdirs of runsDir; null when `du` could not run. */
   largestSubdirs: FleetDiskDir[] | null;
 }
@@ -125,12 +150,38 @@ export function parseDuSubdirs(text: string, root: string, limit = FLEET_DISK_TO
     .map(([name, kb]) => ({ name, gb: round1(kb * 1024 / 1e9) }));
 }
 
-/** Fold samples and the folder list into the report. Pure — no I/O. */
+/**
+ * The lane disk-gate lines from budget-overrides.json `compact.lanes`:
+ * `raise_freeze_below_gb` freezes lane raises, `halve_below_gb` halves lane
+ * targets. Missing keys, invalid values and an unreadable file all fall back
+ * to the same defaults the host autopilot uses. Pure — no I/O.
+ */
+export function parseLaneDiskLines(text: string): LaneDiskLines {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { parsed = undefined; }
+  const compact = parsed && typeof parsed === 'object'
+    ? (parsed as Record<string, unknown>)['compact'] : undefined;
+  const lanes = compact && typeof compact === 'object'
+    ? (compact as Record<string, unknown>)['lanes'] : undefined;
+  const block = lanes && typeof lanes === 'object' ? lanes as Record<string, unknown> : {};
+  const gb = (key: string, fallback: number): number => {
+    const value = block[key];
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+  };
+  return {
+    freezeBelowGb: gb('raise_freeze_below_gb', FLEET_DISK_LANE_FREEZE_GB),
+    halveBelowGb: gb('halve_below_gb', FLEET_DISK_LANE_HALVE_GB),
+  };
+}
+
+/** Fold samples, the lane lines and the folder list into the report. Pure — no I/O. */
 export function buildFleetDisk(opts: {
   runsDir: string;
   nowMs: number;
   source: Source;
+  overridesSource: Source;
   samples: FleetDiskSample[];
+  laneLines: LaneDiskLines;
   largestSubdirs: FleetDiskDir[] | null;
 }): FleetDiskV1 {
   const first = opts.samples[0] ?? null;
@@ -139,10 +190,10 @@ export function buildFleetDisk(opts: {
   const gbPerHour = first && last && observedHours !== null && observedHours > 0
     ? round1((first.freeGb - last.freeGb) / observedHours)
     : null;
-  const hoursUntilTargetFreeGb =
+  const hoursUntil = (lineGb: number): number | null =>
     last === null ? null
-    : last.freeGb <= FLEET_DISK_TARGET_FREE_GB ? 0
-    : gbPerHour !== null && gbPerHour > 0 ? round1((last.freeGb - FLEET_DISK_TARGET_FREE_GB) / gbPerHour)
+    : last.freeGb <= lineGb ? 0
+    : gbPerHour !== null && gbPerHour > 0 ? round1((last.freeGb - lineGb) / gbPerHour)
     : null;
   return {
     schema: 'fleet.disk.v1',
@@ -151,12 +202,17 @@ export function buildFleetDisk(opts: {
     windowHours: FLEET_DISK_WINDOW_HOURS,
     targetFreeGb: FLEET_DISK_TARGET_FREE_GB,
     source: opts.source,
+    overridesSource: opts.overridesSource,
     samples: opts.samples.length,
     freeGbNow: last?.freeGb ?? null,
     firstFreeGb: first?.freeGb ?? null,
     observedHours: observedHours === null ? null : round1(observedHours),
     gbPerHour,
-    hoursUntilTargetFreeGb,
+    hoursUntilTargetFreeGb: hoursUntil(FLEET_DISK_TARGET_FREE_GB),
+    laneFreezeBelowGb: opts.laneLines.freezeBelowGb,
+    laneHalveBelowGb: opts.laneLines.halveBelowGb,
+    hoursUntilLaneFreeze: hoursUntil(opts.laneLines.freezeBelowGb),
+    hoursUntilLaneHalve: hoursUntil(opts.laneLines.halveBelowGb),
     largestSubdirs: opts.largestSubdirs,
   };
 }
@@ -182,20 +238,28 @@ export async function readFleetDisk(deps: FleetDiskDeps = {}): Promise<FleetDisk
   const nowMs = deps.now ?? Date.now();
   const runsDir = deps.runsRoot ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const readEvents = deps.readEvents ?? ((path: string) => readSource(path, FLEET_DISK_MAX_TAIL_BYTES, true));
+  const readOverrides = deps.readOverrides ?? ((path: string) => readSource(path, FLEET_DISK_MAX_OVERRIDES_BYTES, false));
   let events: EventsSource;
   try {
     events = await readEvents(join(runsDir, 'queue', 'dispatch-events.log'));
   } catch {
     events = { state: 'degraded', text: '' };
   }
+  let overrides: EventsSource;
+  try {
+    overrides = await readOverrides(join(runsDir, 'queue', 'budget-overrides.json'));
+  } catch {
+    overrides = { state: 'degraded', text: '' };
+  }
   const samples = parseLeaderFreeGb(events.text, nowMs);
+  const laneLines = parseLaneDiskLines(overrides.text);
   let largestSubdirs: FleetDiskDir[] | null = null;
   try {
     largestSubdirs = parseDuSubdirs(await (deps.du ?? defaultDu)(runsDir), runsDir);
   } catch {
     largestSubdirs = null;
   }
-  return buildFleetDisk({ runsDir, nowMs, source: events.state, samples, largestSubdirs });
+  return buildFleetDisk({ runsDir, nowMs, source: events.state, overridesSource: overrides.state, samples, laneLines, largestSubdirs });
 }
 
 /** Collapse the operator's home to `~` for display; the JSON side uses sanitizePublicJson. */
@@ -223,6 +287,12 @@ export function formatFleetDisk(report: FleetDiskV1): string[] {
   } else {
     lines.push(`${report.targetFreeGb} GB free in: ${report.hoursUntilTargetFreeGb} hours`);
   }
+  const laneWhen = (hours: number | null): string =>
+    hours === 0 ? 'now'
+    : hours === null ? (report.gbPerHour !== null ? 'not at this rate' : 'unknown')
+    : `${hours} hours`;
+  lines.push(`lane freeze below ${report.laneFreezeBelowGb} GB in: ${laneWhen(report.hoursUntilLaneFreeze)}`);
+  lines.push(`lane halve below ${report.laneHalveBelowGb} GB in: ${laneWhen(report.hoursUntilLaneHalve)}`);
   lines.push(`largest folders under ${displayDir(report.runsDir)}:`);
   if (report.largestSubdirs === null) lines.push('  unknown');
   else if (report.largestSubdirs.length === 0) lines.push('  none');
@@ -243,8 +313,9 @@ export async function cmdFleetDisk(args: string[], deps: FleetDiskDeps = {}): Pr
     if (arg === '--help' || arg === '-h') {
       output.log('ashlr fleet disk [--runs-dir <abs>] [--json]\n' +
         'Read-only disk-pressure view: free-GB trend from LEADER rows in the last\n' +
-        '12 hours and the ten largest folders under ~/.ashlr-runs. Unread\n' +
-        'sources print unknown, never zero.');
+        '12 hours, projected against the lane freeze and halve lines from\n' +
+        'queue/budget-overrides.json, plus the ten largest folders under\n' +
+        '~/.ashlr-runs. Unread sources print unknown, never zero.');
       return 0;
     }
     if (seen.has(arg)) { output.error(`error: duplicate option\n${USAGE}`); return 2; }
