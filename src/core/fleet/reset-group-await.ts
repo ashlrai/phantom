@@ -1,7 +1,8 @@
 import { performance } from 'node:perf_hooks';
 import { LANE_ID_RE } from './runs-lane-targets.js';
 import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
-import { RESET_AWAIT_MAX_POLL_MS, RESET_AWAIT_MAX_TIMEOUT_MS, type ResetAwaitDeps, type ResetAwaitOutcome } from './reset-evidence-await.js';
+import { parseResetAwaitWatermarkMs, RESET_AWAIT_MAX_POLL_MS, RESET_AWAIT_MAX_TIMEOUT_MS,
+  type ResetAwaitDeps, type ResetAwaitOutcome } from './reset-evidence-await.js';
 import { readUsageResets, type UsageResetsV1 } from './usage-reset-detect.js';
 
 export const RESET_GROUP_AWAIT_MAX_LANES = 16;
@@ -41,8 +42,8 @@ function resetEvidence(source: UsageResetsV1, lane: string, boundary: number, no
  * The lanes' first qualifying evidence accumulates across polls, in requested order.
  */
 export async function awaitResetGroup(options: { lanes: string[]; timeoutMs: number; pollMs?: number;
-  runsDir?: string; signal?: AbortSignal }, deps: ResetAwaitDeps = {}): Promise<ResetGroupAwaitResult> {
-  const { lanes, timeoutMs, pollMs = 60_000, runsDir, signal } = options;
+  runsDir?: string; signal?: AbortSignal; after?: string }, deps: ResetAwaitDeps = {}): Promise<ResetGroupAwaitResult> {
+  const { lanes, timeoutMs, pollMs = 60_000, runsDir, signal, after } = options;
   const result: ResetGroupAwaitResult = { v: 1, authority: 'none', outcome: 'deadline', checks: 0, observed: [], pending: [] };
   if (!isResetGroupLaneList(lanes) || !isAwaitMs(timeoutMs, RESET_AWAIT_MAX_TIMEOUT_MS) || !isAwaitMs(pollMs, RESET_AWAIT_MAX_POLL_MS)) {
     result.outcome = 'failed'; return result;
@@ -51,8 +52,16 @@ export async function awaitResetGroup(options: { lanes: string[]; timeoutMs: num
   const now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? abortableSleep;
   const wallNow = deps.wallNow ?? Date.now;
-  // Invocation time is the exclusive evidence boundary, matching the single-lane awaiter's default.
-  const boundary = wallNow();
+  // Invocation time is the exclusive evidence boundary, matching the single-lane
+  // awaiter's default, unless the caller supplies a persisted `after` watermark so
+  // evidence written while the supervisor was down still counts. The bound is
+  // validated before the first read; this never releases a hold or infers quota.
+  let boundary = wallNow();
+  if (after !== undefined) {
+    const parsed = parseResetAwaitWatermarkMs(after);
+    if (parsed === null) { result.outcome = 'failed'; return result; }
+    boundary = parsed;
+  }
   const deadline = now() + timeoutMs;
   const controller = new AbortController();
   const cancel = (): void => controller.abort();
