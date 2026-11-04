@@ -5,23 +5,9 @@ read-only HTTPS GET requests without credentials and saves normalized observatio
 locally. A change is evidence of different source content, not proof that a
 feature is available or that a model capability works.
 
-## Handoff status
-
-The core and command handler are implemented. Two integration prerequisites remain:
-
-- The source brief at `/workspace/phantom-work/docs-radar-lines-20261104.md` was
-  unavailable in this checkout. `radar/sources.json` is deliberately empty until
-  its section 1 list is supplied. An empty catalogue fails validation.
-- The allowed file scope excludes `src/cli/index.ts`, which dispatches commands.
-  The handler needs registration there before the commands below are reachable.
-
-The root catalogue is also outside the current npm package file list. These
-instructions target a source checkout; npm distribution requires a separate
-packaging change. No package or release configuration was changed.
-
 ## Commands
 
-Once the catalogue and dispatcher are connected, copy and paste:
+Copy and paste:
 
 ```sh
 phm radar list --json
@@ -36,17 +22,23 @@ compares the last two successful observations. The first observation is a
 `baseline`, not a report that every entry was newly added.
 
 All verbs accept `--json`. Help supports `phm radar --help --json`. List emits
-`{ok,sources}`; run and diff emit `{ok,results}`. Exit codes are 0 for a successful
-operation, 1 for unavailable, stale, missing or failed source evidence, and 2
-for invalid arguments. A throttled run exits 0 and includes `retryAt`; it does
+`{ok,sources}`; run emits `{ok,results,warnings}` and diff emits `{ok,results}`.
+A run reports individual fetch or parse failures as warnings and exits 0 unless
+every source errors or the catalogue is invalid. Diff reports unavailable, stale
+or missing evidence as an error. Invalid arguments exit 2. A throttled run exits 0 and includes `retryAt`; it does
 not claim to have refreshed the source.
 
 ## Source catalogue
 
 Each entry has exactly `id`, `product`, `url`, `kind`, and `verified`.
-Kinds are `page`, `atom`, `npm`, `pypi`, or `json`. IDs are unique lowercase
+Kinds are `page`, `atom`, `rss`, `npm`, `pypi`, or `json`. IDs are unique lowercase
 letters, digits and hyphens, up to 80 characters. `verified` is a boolean and
 means a maintainer checked the public endpoint, not that the content is trusted.
+
+The catalogue covers Claude, Codex, Grok, Cursor, Devin, GLM, Gemini,
+Antigravity, MLX, Qwen, GitHub CLI, Vercel CLI, Supabase CLI, Wrangler,
+Context7 and the MCP SDK. Grok Bot and Grok Build use their RSS feeds for
+fetching their changelogs.
 
 Only public HTTPS URLs on port 443 are accepted. Credentials, query strings,
 fragments, IP literals, local hostnames and extra configuration such as headers
@@ -65,6 +57,8 @@ uncompressed. The entire read, including DNS, has a 15-second deadline and a
   feeds and entries without identity/title are refused. Diffs report added and
   removed IDs and changed titles. Removal means absence from this fetched feed
   window, not deletion from the provider's complete history.
+- RSS 2.0: item GUIDs, or links when GUIDs are absent, and titles. The same
+  XML safety rules and added, removed and changed title diffs apply as for Atom.
 - npm: `dist-tags.latest`, or `version` for a version-specific endpoint.
 - PyPI: `info.version`.
 - Page: SHA-256 of whitespace-normalized visible text and an ordered heading
@@ -106,5 +100,5 @@ reported as an error rather than silently reset to an empty successful baseline.
 All test responses are synthetic. With a temporary test home:
 
 ```sh
-HOME=$(mktemp -d) npx vitest run test/radar-sources.test.ts test/radar-diff.test.ts test/radar-modelcaps.test.ts --bail 1
+HOME=$(mktemp -d) npx vitest run test/radar-sources.test.ts test/radar-diff.test.ts test/radar-cli.test.ts test/radar-modelcaps.test.ts --bail 1
 ```
