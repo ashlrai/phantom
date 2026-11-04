@@ -1296,6 +1296,7 @@ export async function handleApi(
     allowDispatch: boolean;
     readSession?: { id: string; expiresAt: number };
     readProjections?: ReadProjectionReader;
+    usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -2446,6 +2447,7 @@ export async function handleApi(
     if (isVerseApiPath(path)) {
       const handled = await handleVerseApi(
         { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+          usageResourcesApi: ctx.usageResourcesApi,
           ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) },
         req,
         res,
