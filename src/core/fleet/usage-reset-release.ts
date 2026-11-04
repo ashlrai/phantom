@@ -1,7 +1,7 @@
 /**
  * Usage-reset release — Phantom releases its own autobackoff usage holds once
  * the resource ledger proves the window reset. usage-reset-detect.ts already
- * computes 'reset-detected' / 'hold-expired' rows for the read-only
+ * computes 'reset-detected' / 'reset-time-passed' / 'hold-expired' rows for the read-only
  * /api/verse/leader/resources/resets projection; dispatchd only enforces
  * held_until, so an autobackoff hold whose until-time was a guess (e.g. "held
  * until Nov 4" while the window already reset to 0%) outlived the real reset
@@ -45,7 +45,7 @@ const TAIL = 64 * 1024;
 /** One released lane, as surfaced in the run result and the audit record. */
 export interface ResetReleaseRow {
   lane: string;
-  state: 'reset-detected' | 'hold-expired';
+  state: 'reset-detected' | 'reset-time-passed' | 'hold-expired';
   usedPct: number | null;
   readingAsOf: string | null;
   heldUntil: string | null;
@@ -87,13 +87,13 @@ const message = (error: unknown): string => error instanceof Error ? error.messa
 /** The only lanes Phantom may release on its own. A manual hold is never a candidate. */
 export function planResetReleases(rows: UsageResetRow[]): UsageResetRow[] {
   return rows.filter((row) => row.releasable && row.heldBy === 'autobackoff'
-    && (row.state === 'reset-detected' || row.state === 'hold-expired'));
+    && (row.state === 'reset-detected' || row.state === 'reset-time-passed' || row.state === 'hold-expired'));
 }
 
 function reasonFor(row: UsageResetRow): string {
-  return row.state === 'hold-expired'
-    ? `hold expired at ${row.heldUntil ?? 'unknown'}`
-    : `window reset: reads ${row.usedPct ?? '?'}% at ${row.readingAsOf ?? 'unknown'}`;
+  if (row.state === 'hold-expired') return `hold expired at ${row.heldUntil ?? 'unknown'}`;
+  if (row.state === 'reset-time-passed') return `provider reset passed at ${row.resetAt ?? 'unknown'}`;
+  return `window reset: reads ${row.usedPct ?? '?'}% at ${row.readingAsOf ?? 'unknown'}`;
 }
 
 /** Append one audit line the same guarded way lane-target-changes.log is written. */
@@ -226,7 +226,7 @@ export async function readResetReleases(runsDir?: string, limit = 20): Promise<R
     if (!object(row) || typeof row.lane !== 'string' || typeof row.at !== 'string') continue;
     records.push({
       v: 1, at: row.at, lane: row.lane,
-      state: row.state === 'hold-expired' ? 'hold-expired' : 'reset-detected',
+      state: row.state === 'hold-expired' || row.state === 'reset-time-passed' ? row.state : 'reset-detected',
       usedPct: typeof row.usedPct === 'number' && Number.isFinite(row.usedPct) ? row.usedPct : null,
       readingAsOf: text(row.readingAsOf), heldUntil: text(row.heldUntil),
       by: RELEASED_BY, reason: text(row.reason) ?? '',
