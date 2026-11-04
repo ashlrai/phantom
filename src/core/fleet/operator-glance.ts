@@ -20,6 +20,8 @@ export interface OperatorGlance {
   incidents: string[];
   /** Per-repo main-guardian chips for the desktop; absent when no status table. */
   guardian?: GuardianGlanceRow[];
+  /** PRs open 30+ min, by repo. Absent when the jobs ledger was not read; never a made-up zero. */
+  slowPrs?: { count: number; repos: { repo: string; count: number }[] };
 }
 
 export interface OperatorLane {
@@ -186,8 +188,11 @@ export function formatOperatorGlance(glance: OperatorGlance, nowMs = Date.now())
   const main = Array.isArray(glance.guardian) && glance.guardian.length > 0
     ? guardianLine(glance.guardian)
     : glance.main === 'up' ? 'Main is healthy.' : glance.main === 'down' ? 'Main needs you.' : 'Main health unknown.';
+  const slow = glance.slowPrs && glance.slowPrs.count > 0
+    ? `Slow PRs: ${glance.slowPrs.count} open over 30 min (${nameList(glance.slowPrs.repos.map((row) => `${repoLabel(row.repo.slice(row.repo.lastIndexOf('/') + 1))} ${row.count}`))}).`
+    : '';
   const incidents = glance.incidents.length > 0 ? `Incidents: ${glance.incidents.join('; ')}.` : '';
-  return [running, usage, merges, main, incidents].filter(Boolean).join('\n');
+  return [running, usage, merges, slow, main, incidents].filter(Boolean).join('\n');
 }
 
 export function isOperatorGlance(value: unknown): value is OperatorGlance {
@@ -198,7 +203,16 @@ export function isOperatorGlance(value: unknown): value is OperatorGlance {
     && num(row.usagePct) && (row.resetsAt === null || typeof row.resetsAt === 'string')
     && num(row.mergesToday) && (row.main === 'up' || row.main === 'down' || row.main === 'unknown')
     && Array.isArray(row.incidents) && row.incidents.every((item) => typeof item === 'string')
-    && (row.guardian === undefined || (Array.isArray(row.guardian) && row.guardian.every(isGuardianRow)));
+    && (row.guardian === undefined || (Array.isArray(row.guardian) && row.guardian.every(isGuardianRow)))
+    && (row.slowPrs === undefined || isSlowPrs(row.slowPrs));
+}
+
+function isSlowPrs(value: unknown): value is NonNullable<OperatorGlance['slowPrs']> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as NonNullable<OperatorGlance['slowPrs']>;
+  const total = (item: unknown): boolean => typeof item === 'number' && Number.isSafeInteger(item) && item >= 0;
+  return total(row.count) && Array.isArray(row.repos)
+    && row.repos.every((item) => !!item && typeof item === 'object' && typeof item.repo === 'string' && total(item.count));
 }
 
 function isGuardianRow(value: unknown): value is GuardianGlanceRow {

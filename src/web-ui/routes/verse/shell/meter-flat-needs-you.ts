@@ -41,7 +41,7 @@ export function deriveMeterFlatNeedsYou(envelopes: readonly AgentBusReceipt[] | 
       title: b.text.slice(0, TITLE_MAX),
       detail: `${first !== null && last !== null ? `used ${first}% → ${last}% ` : ''}over ${b.observedMinutes} min`,
       nextStep: 'Check the lane is really spending, or hold it',
-      target: 'fleet', open: { kind: 'pane', paneId: 'fleet-lanes' },
+      target: 'fleet', open: { kind: 'pane', paneId: 'fleet-lanes', lane: b.provider },
     };
     if (receivedAt >= (newest.get(b.provider)?.at ?? -Infinity)) newest.set(b.provider, { at: receivedAt, item });
   }

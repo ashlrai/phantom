@@ -26,6 +26,7 @@ const viaRealReader = (run: (args: string[]) => Promise<string>) =>
     readFleetJobHistory(input, { read: (job, ref, limit) => jobPathHistory(job, ref, limit, run) });
 
 const SHA1 = 'a'.repeat(40), SHA2 = 'b'.repeat(40), SHA3 = 'c'.repeat(40);
+const PINNED = 'd'.repeat(40);
 const gitLogFor = (...commits: Array<[string, string, string]>) =>
   commits.map(([sha, date, subject]) => `${sha}\0${date}\0${subject}\0\n`).join('');
 
@@ -49,6 +50,7 @@ describe('fleet_job_history over MCP', () => {
 
   it('round trips jobId and limit through the injected existing-reader adapter', async () => {
     const run = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return `${PINNED}\n`;
       if (args[0] === 'log') return gitLogFor(
         [SHA1, '2026-10-31T00:33:00Z', 'bridge(RQ-EXAMPLE-1): landed one (#101)'],
         [SHA2, '2026-10-30T23:51:00Z', 'plain commit'],
@@ -60,7 +62,8 @@ describe('fleet_job_history over MCP', () => {
     const client = await connect(input => readFleetJobHistory(input, { read }));
     const out = parse(await client.callTool({ name: 'fleet_job_history', arguments: { jobId: 'RQ-EXAMPLE-1', limit: 5 } }));
     expect(read).toHaveBeenCalledWith('RQ-EXAMPLE-1', 'origin/master', 5);
-    expect(run).toHaveBeenNthCalledWith(1, ['log', '-n1000', '--format=%H%x00%cI%x00%s%x00', 'origin/master', '--']);
+    expect(run).toHaveBeenNthCalledWith(1, ['rev-parse', '--verify', 'origin/master^{commit}']);
+    expect(run).toHaveBeenNthCalledWith(2, ['log', '-n1000', '--format=%H%x00%cI%x00%s%x00', PINNED, '--']);
     expect(out).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       jobId: 'RQ-EXAMPLE-1', ref: 'origin/master',
@@ -85,6 +88,7 @@ describe('fleet_job_history over MCP', () => {
 
   it('matches exact job ids only — unrelated RQ prefixes never collide', async () => {
     const run = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse') return `${PINNED}\n`;
       if (args[0] === 'log') return gitLogFor(
         [SHA1, 'd1', 'bridge(RQ-EXAMPLE-EXTRA): other job (#1)'],
         [SHA2, 'd2', 'bridge(RQ-OTHER-9): other job (#2)'],
@@ -94,7 +98,7 @@ describe('fleet_job_history over MCP', () => {
     const client = await connect(viaRealReader(run));
     const out = parse(await client.callTool({ name: 'fleet_job_history', arguments: { jobId: 'RQ-EXAMPLE' } }));
     expect(out).toMatchObject({ jobId: 'RQ-EXAMPLE', scanned: 2, commits: [], paths: [] });
-    expect(run).toHaveBeenCalledTimes(1); // no matching commit, so no diff-tree calls
+    expect(run).toHaveBeenCalledTimes(2); // resolve + log; no matching commit, so no diff-tree calls
     expect(out.note).toMatch(/does not prove the job never landed/i);
   });
 
