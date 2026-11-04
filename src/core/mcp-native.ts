@@ -30,7 +30,14 @@ import { loadConfig } from './config.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
 import { killSwitchOn } from './sandbox/policy.js';
 import { audit } from './sandbox/audit.js';
-import { scrubSecrets } from './knowledge/index.js';
+import {
+  MAX_TOOL_OUTPUT_CHARS,
+  renderToolText,
+  scrubSecrets,
+  textResult,
+  TOOL_TRUNCATION_MARK,
+  type NativeToolResult,
+} from './knowledge/index.js';
 import { recall } from './genome/recall.js';
 import { ask } from './knowledge/ask.js';
 import { impact } from './knowledge/graph.js';
@@ -60,14 +67,8 @@ import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Hard cap on a serialized tool result (chars ≈ bytes for ASCII JSON). */
-const MAX_OUTPUT_CHARS = 32 * 1024;
-
 /** Cap on an individual proposal diff echoed back through ashlr_inbox_list. */
 const MAX_DIFF_CHARS = 4 * 1024;
-
-/** Marker inserted where output was truncated. */
-const TRUNCATION_MARK = '\n…[ashlr: output truncated]…\n';
 
 /** Internal privilege tags that external MCP callers may not persist. */
 const RESERVED_LEARN_TAGS = new Set(['m243:skill']);
@@ -734,7 +735,7 @@ const TOOLS: NativeToolImpl[] = [
           const raw = p.diff ?? '';
           const scrubbed = scrubSecrets(raw);
           return scrubbed.length > MAX_DIFF_CHARS
-            ? scrubbed.slice(0, MAX_DIFF_CHARS) + TRUNCATION_MARK
+            ? scrubbed.slice(0, MAX_DIFF_CHARS) + TOOL_TRUNCATION_MARK
             : scrubbed || undefined;
         })(),
       }));
@@ -1305,37 +1306,12 @@ function validateArgs(schema: object, args: Record<string, unknown>): string | n
 // callNativeTool — the gated pipeline
 // ---------------------------------------------------------------------------
 
-/**
- * MCP-style text result (plain object; the SDK validates it gateway-side).
- * A `type` alias (not an interface) so it picks up an implicit index signature
- * and stays assignable to the SDK's CallToolResult without importing the SDK.
- */
-export type NativeToolResult = {
-  content: { type: 'text'; text: string }[];
-  isError?: boolean;
-};
-
-/** Exported for tests: serialize + scrub + cap exactly as tool results do. */
-export function renderToolText(payload: unknown): string {
-  return textResult(payload).content[0]?.text ?? '';
-}
-
-function textResult(payload: unknown, isError = false): NativeToolResult {
-  let text: string;
-  try {
-    text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
-  } catch {
-    text = String(payload);
-  }
-  // Scrub BEFORE capping so a secret straddling the cap boundary can't survive.
-  text = scrubSecrets(text);
-  if (text.length > MAX_OUTPUT_CHARS) {
-    const head = text.slice(0, Math.floor(MAX_OUTPUT_CHARS * 0.75));
-    const tail = text.slice(-Math.floor(MAX_OUTPUT_CHARS * 0.2));
-    text = head + TRUNCATION_MARK + tail;
-  }
-  return isError ? { content: [{ type: 'text', text }], isError: true } : { content: [{ type: 'text', text }] };
-}
+// NativeToolResult, renderToolText and textResult live beside the strict
+// scrubSecrets in knowledge/index.js so light callers (e.g. the verify runner)
+// can render tool output without pulling in this orchestration graph. They are
+// re-exported here to keep the established import surface unchanged.
+export { renderToolText };
+export type { NativeToolResult };
 
 /** A handler's `{ error: "<reason>" }` refusal (a non-empty string error). */
 function isRefusalPayload(payload: unknown): payload is { error: string } {
@@ -1511,7 +1487,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
         /^(env|environment)$/i.test(key) ? undefined :
           typeof value === 'string' ? scrubSecrets(value) : value,
       );
-      return text.length > MAX_OUTPUT_CHARS
+      return text.length > MAX_TOOL_OUTPUT_CHARS
         ? { isError: true, content: [{ type: 'text', text: '{"error":"Fleet observation exceeds output limit"}' }] }
         : { content: [{ type: 'text', text }] };
     }

@@ -43,7 +43,7 @@ export {
 export type { AutomationDecider, AutomationTriageAnswer, AutomationTriageInput } from './triage.js';
 export type { AutomationGh } from './github.js';
 export type { AutomationLaneDeps, LaneOutcome, LaneStatus } from './lanes.js';
-export { readAutomationJournal, readAutomationState, type AutomationJournalRecord } from './store.js';
+export { readAutomationJournal, readAutomationState, saveAutomation, type AutomationJournalRecord } from './store.js';
 
 export async function listAutomations(): Promise<AutomationV1[]> {
   return (await readAutomations()).automations;

@@ -30,7 +30,7 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import { fileURLToPath } from 'node:url';
 import { processGroupHasOnlyZombies } from '../util/process-group-liveness.js';
 import type { AshlrConfig } from '../types.js';
-import { renderToolText } from '../mcp-native.js';
+import { renderToolText } from '../knowledge/index.js';
 import { currentStandingPolicy } from '../authority/effective-config.js';
 import { audit } from '../sandbox/audit.js';
 import { prepareConfinedVerification, recordAutonomousViolations, type ConfinedVerification } from '../sandbox/autonomous-run.js';
@@ -1028,6 +1028,18 @@ export async function runVerifySubprocessAsync(
       });
     } catch (err) {
       settleBeforeSpawn(emptyResult({ error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    // A child handle that cannot be signalled or observed cannot be bounded by
+    // this runner's deadlines: events would never arrive and kill() does not
+    // exist, so every timeout would end in a parked promise. Fail closed as a
+    // spawn failure instead of awaiting a ghost.
+    if (typeof child !== 'object' || child === null
+      || typeof child.kill !== 'function' || typeof child.on !== 'function') {
+      settleBeforeSpawn(emptyResult({
+        error: 'spawn returned a process handle without termination authority',
+      }));
       return;
     }
 
