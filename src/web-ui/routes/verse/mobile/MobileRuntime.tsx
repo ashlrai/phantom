@@ -23,6 +23,7 @@ import { MobileContext, type MobileContextValue } from './mobile-context.js';
 import type { MobileRoute, NavigateOptions } from './mobile-router.js';
 import { MobileToasts } from './mobile-toast.js';
 import styles from './MobileShell.module.css';
+import { BuildFooter } from './BuildFooter.js';
 
 /**
  * The confirmation / unlock sheet draws nothing until an action starts; its
@@ -72,6 +73,7 @@ export function MobileRuntime({ navigate, children }: MobileRuntimeProps) {
 
   const overlays = (
     <>
+      <BuildFooter />
       <ReachStrip state={reachability} updatedAt={activity.updatedAt} />
       {guardOpen ? <Suspense fallback={null}><GuardSheet /></Suspense> : null}
       <MobileToasts />
