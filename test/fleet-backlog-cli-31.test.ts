@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetBacklog, type FleetBacklogDeps } from '../src/cli/fleet-backlog.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { newFleetMergeState, type FleetMergeStateV1 } from '../src/core/fleet/fleet-merge-state.js';
 
 const SHA = 'a'.repeat(40);

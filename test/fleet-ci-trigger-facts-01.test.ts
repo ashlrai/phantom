@@ -8,7 +8,7 @@ import {
   type CiTriggerRepoRead,
   type CiTriggerWorkflowItem,
 } from '../src/core/fleet/ci-trigger-facts.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import type { CloudGh } from '../src/core/cloud/pr-actions.js';
 
 const NOW = new Date('2026-11-01T12:00:00.000Z');

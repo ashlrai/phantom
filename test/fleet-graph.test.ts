@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 import { buildFleetGraph } from '../src/core/fleet/graph.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 const queueDir = fileURLToPath(new URL('./fixtures/fleet-graph', import.meta.url));
 const validate = new AjvJsonSchemaValidator().getValidator(JSON.parse(readFileSync(new URL('../schemas/fleet.v1.schema.json', import.meta.url), 'utf8')));

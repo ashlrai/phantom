@@ -48,7 +48,7 @@ import { readDecisions } from './fleet/decisions-ledger.js';
 import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
 import { listProposals } from './inbox/store.js';
-import { FLEET_APPS } from './verse/fleet-apps-api.js';
+import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
 // M169: best-effort imports for new elite-state tools
@@ -169,7 +169,7 @@ export function deriveRoutingData(limit = 50): RoutingData {
 // ---------------------------------------------------------------------------
 
 /** A native tool definition plus its handler (handler kept out of types.ts). */
-interface NativeToolImpl extends NativeToolDef {
+export interface NativeToolImpl extends NativeToolDef {
   handler: (args: Record<string, unknown>, cfg: AshlrConfig) => Promise<unknown>;
 }
 
@@ -285,56 +285,6 @@ const TOOLS: NativeToolImpl[] = [
         plannerRunStartedAt = null;
       }
     },
-  },
-  {
-    name: 'phantom_fleet_apps_ensure',
-    description: 'Ensure an explicit group of local managed apps is running under one shared deadline.',
-    get inputSchema() { return { type: 'object', properties: {
-      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
-      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
-    }, required: ['apps'], additionalProperties: false }; },
-    safety: 'append',
-    handler: async args => (await import('../cli/fleet-apps-ensure.js')).ensureFleetApps({
-      apps: args.apps as string[], timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
-    }),
-  },
-  {
-    name: 'phantom_fleet_apps_changes',
-    description: 'Observe selected local managed app state changes within a bounded deadline.',
-    get inputSchema() { return { type: 'object', properties: {
-      durationMs: { type: 'integer', minimum: 1, maximum: 10000 },
-      intervalMs: { type: 'integer', minimum: 100, maximum: 10000 },
-      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
-    }, required: ['durationMs'], additionalProperties: false }; },
-    safety: 'read',
-    handler: async args => (await import('../cli/fleet-apps-changes.js')).observeFleetAppsChanges({
-      durationMs: args.durationMs as number, intervalMs: args.intervalMs as number | undefined,
-      apps: args.apps as string[] | undefined, maxEvents: 256,
-    }),
-  },
-  {
-    name: 'phantom_fleet_apps_status',
-    description: 'Read the bounded local inventory of managed desktop app running states; unavailable and unknown states are reported explicitly.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    safety: 'read',
-    handler: async () => (await import('../cli/fleet-apps-status.js')).readFleetAppsStatus(),
-  },
-  {
-    name: 'phantom_fleet_apps_await',
-    description: 'Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart.',
-    get inputSchema() { return { type: 'object', properties: {
-      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
-      target: { type: 'string', enum: ['running', 'stopped'] },
-      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
-      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
-    }, required: ['apps'], additionalProperties: false }; },
-    safety: 'read',
-    handler: async args => (await import('../cli/fleet-apps-await.js')).awaitFleetApps({
-      apps: args.apps as string[],
-      target: (args.target as 'running' | 'stopped') ?? 'running',
-      timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
-      intervalMs: (args.intervalMs as number | undefined) ?? 1000,
-    }),
   },
   {
     name: 'phantom_fleet_orders',
@@ -1233,6 +1183,15 @@ const TOOLS: NativeToolImpl[] = [
 // ---------------------------------------------------------------------------
 // Public registry surface
 // ---------------------------------------------------------------------------
+
+/** Register entry-point extensions without importing their implementation into authority code. */
+export function registerNativeTools(tools: readonly NativeToolImpl[]): void {
+  for (const tool of tools) {
+    const existing = TOOLS.find(candidate => candidate.name === tool.name);
+    if (existing && existing !== tool) throw new Error(`Duplicate native tool: ${tool.name}`);
+    if (!existing) TOOLS.push(tool);
+  }
+}
 
 /** The native tool definitions (no handlers) for diagnostics/docs surfaces. */
 export function nativeToolDefs(): NativeToolDef[] {

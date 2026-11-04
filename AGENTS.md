@@ -137,3 +137,5 @@ Connector profiles: `phm connectors add|list|remove|show|import --json` manages
 `~/.phantom/connectors/profile.toml`; see [connector profiles](docs/CONNECTORS.md).
 Use vault names only. Import withholds inline credentials; Codex requires a
 lane-owned CODEX_HOME under `~/.ashlr-runs`, never `~/.codex`.
+
+Tier-1 import diagnosis: `npx tsx scripts/tier1-why.ts <file> [--json]` prints a shortest runtime chain or unreachable. See [Tier-1 why](docs/TIER1-WHY.md). Keep fleet apps outside Tier-1; run `test/tier1-apps-boundary.test.ts`. Snapshot regeneration remains Mason-only.
