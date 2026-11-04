@@ -75,6 +75,43 @@ describe('email drop in comms cycle', () => {
     expect(readFileSync(join(runs, 'leader', 'MASON-INBOX.md'), 'utf8').match(/Please check the fleet\./g)).toHaveLength(1);
   });
 
+  it('email-cycle uses the shared receiver and silently archives an unknown sender', async () => {
+    await writeEmailDropConfig(runs, { v: 1, enabled: true, inboxDir: inbox, from: [sender] });
+    writeFileSync(join(inbox, 'order.eml'), eml);
+    expect(await cmdComms(['email-cycle'])).toBe(0);
+    expect(readFileSync(join(runs, 'leader', 'MASON-INBOX.md'), 'utf8')).toContain('[src:email');
+    expect(readFileSync(join(outbox, readdirSync(outbox)[0]!), 'utf8')).toContain('In-Reply-To: <order-1@example.invalid>');
+    const before = readFileSync(join(runs, 'leader', 'MASON-INBOX.md'), 'utf8');
+    const replies = readdirSync(outbox);
+    writeFileSync(join(inbox, 'unknown.eml'), eml.replaceAll(sender, 'unknown@example.invalid'));
+    writeFileSync(join(inbox, 'duplicate.eml'), eml);
+    expect(await cmdComms(['email-cycle'])).toBe(0);
+    expect(logs).toContain('cycle: email-drop accepted=0 duplicate=1 refused=1 failed=0');
+    expect(readFileSync(join(runs, 'leader', 'MASON-INBOX.md'), 'utf8')).toBe(before);
+    expect(readdirSync(outbox)).toEqual(replies);
+    expect(readFileSync(join(processed, 'unknown.eml'), 'utf8')).toContain('unknown@example.invalid');
+  });
+
+  it('does not invoke the bridge when saved configuration is disabled', async () => {
+    await writeEmailDropConfig(runs, { v: 1, enabled: false, inboxDir: inbox, from: [sender], sendReplies: true });
+    writeFileSync(join(inbox, 'order.eml'), eml);
+    mock.fail = true;
+    expect(await cmdComms(['cycle'])).toBe(0);
+    expect(await cmdComms(['email-cycle'])).toBe(0);
+    expect(errors).toEqual([]);
+    expect(existsSync(join(inbox, 'order.eml'))).toBe(true);
+    expect(existsSync(outbox)).toBe(false);
+  });
+
+  it('prints setup paths and recipes without creating configuration or processing mail', async () => {
+    expect(await cmdComms(['setup-email'])).toBe(0);
+    expect(logs.join('\n')).toContain(join(runs, 'email-drop', 'inbox'));
+    expect(logs.join('\n')).toContain('Mail.app');
+    expect(logs.join('\n')).toContain('Authentication-Results');
+    expect(existsSync(join(runs, 'queue', 'email-drop.json'))).toBe(false);
+    expect(await cmdComms(['email-cycle', '--send'])).toBe(2);
+  });
+
   it('uses default sibling folders and writes a threaded fleet status reply', async () => {
     await writeEmailDropConfig(runs, { v: 1, inboxDir: inbox, from: [sender] });
     writeFileSync(join(inbox, 'status.eml'), eml.replace('Please check the fleet.', '/fleet-status'));
