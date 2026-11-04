@@ -17,6 +17,11 @@ export function verdictTone(verdict: LaneVerdict): 'bad' | 'warn' | null {
   return null;
 }
 
+export function meterlessIdle(row: LaneTruthLane): boolean {
+  return row.meter === null && row.held === false && row.running === 0
+    && row.queued !== null && row.queued > 0 && row.target !== null && row.target > 0;
+}
+
 export function verdictText(row: LaneTruthLane): string | null {
   const meter = row.meter;
   switch (row.verdict) {
@@ -36,6 +41,10 @@ export function verdictText(row: LaneTruthLane): string | null {
     case 'idle_with_work':
       return `Idle with work: ${row.running ?? 0} of ${row.target ?? '—'} running, ${row.queued ?? 0} queued.`;
     case 'unknown':
+      if (meterlessIdle(row)) return `No usage meter for ${row.lane}; nothing running with ${row.queued} queued.`;
+      if (meter === null && row.running !== null && row.target !== null) {
+        return `No usage meter for ${row.lane}; ${row.running} of ${row.target} running, ${row.queued ?? 0} queued.`;
+      }
       return 'Lane truth unknown: slots.json or the meter is older than 15 min.';
   }
 }
@@ -48,8 +57,9 @@ const ATTENTION_LABELS: Record<Exclude<LaneVerdict, 'ok'>, string> = {
 };
 
 export function truthHeadline(rows: readonly LaneTruthLane[]): string | null {
-  const flagged = rows.filter((row) => row.verdict !== 'ok');
+  const flagged = rows.filter((row) => row.verdict !== 'ok'
+    && (row.verdict !== 'unknown' || row.meter !== null || meterlessIdle(row)));
   if (!flagged.length) return null;
-  const list = flagged.map((row) => `${row.lane} ${ATTENTION_LABELS[row.verdict as Exclude<LaneVerdict, 'ok'>]}`).join(', ');
+  const list = flagged.map((row) => `${row.lane} ${row.verdict === 'unknown' && meterlessIdle(row) ? 'idle (no meter)' : ATTENTION_LABELS[row.verdict as Exclude<LaneVerdict, 'ok'>]}`).join(', ');
   return `${flagged.length} ${flagged.length === 1 ? 'lane needs' : 'lanes need'} attention: ${list}.`;
 }
