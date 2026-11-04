@@ -45,8 +45,31 @@ export interface DriveReport {
   published: string[];
   publicationUnknown: string[];
   held: string | null;
+  /** The pressure reading this tick launched under; null when the gate was not reached. */
+  pressure: DrivePressureLevel | null;
+  /** Running workers critical pressure asks the host to pause, newest and lowest value first. */
+  pauseWorkers: string[];
   laneHealth?: LaneHealth;
   laneBreakers?: LaneBreaker[];
+}
+
+/**
+ * The host's memory-pressure reading for a tick. `warning` and `critical`
+ * stop every new launch; `critical` additionally asks which running workers
+ * to pause. `normal` is the only level that launches.
+ */
+export type DrivePressureLevel = 'normal' | 'warning' | 'critical';
+
+/**
+ * A running worker as the host reports it (fleet/runs-live-workers.ts shape).
+ * The launch.sh process filter guarantees only Phantom workers arrive here —
+ * a GUI app (Cursor, ChatGPT, Codex, a bot) can never parse as a row.
+ */
+export interface DrivePressureWorker {
+  /** Job id — the launch.sh `<job>` token. */
+  job: string;
+  /** ps etime in seconds; null = unreadable, sorts after every known age. */
+  ageSeconds: number | null;
 }
 
 /**
@@ -72,6 +95,17 @@ export interface DriveDependencies {
   /** Only the existing publish.sh may implement this callback in the CLI. */
   publish(job: string, lease: string): Promise<void>;
   now?(): Date;
+  /**
+   * Host memory-pressure reading, sampled once per tick before launches are
+   * planned. Absent dep = no pressure gate installed; a missing or malformed
+   * reading holds launches like `warning` (fail closed, pauses nothing).
+   */
+  pressure?(): Promise<DrivePressureLevel | null>;
+  /**
+   * Running workers visible to the supervisor, evaluated only at `critical`.
+   * Absent or a failed read = no known workers, so the pause list is empty.
+   */
+  liveWorkers?(): Promise<readonly DrivePressureWorker[]>;
 }
 
 const states = new Set<DriveJobState>(['READY', 'HELD', 'STARTING', 'RUNNING', 'FINISHED', 'FAILED', 'PUBLISHING', 'PUBLISHED', 'PUBLISH_UNKNOWN']);
@@ -166,13 +200,52 @@ export function planDrive(snapshot: DriveSnapshot, nowMs = Date.now()): string[]
   return result;
 }
 
+/**
+ * The order in which critical pressure sacrifices running workers: the
+ * NEWEST first (the least completed work is lost), then the lowest value
+ * (`valueOf` — the queue's own priority), job id last. Workers whose age the
+ * host cannot report sort behind every known age; only well-formed, unique
+ * job ids are ever listed.
+ */
+export function pressurePauseOrder(workers: readonly DrivePressureWorker[], valueOf: (job: string) => number): string[] {
+  const seen = new Set<string>();
+  const age = (worker: DrivePressureWorker): number =>
+    typeof worker.ageSeconds === 'number' && worker.ageSeconds >= 0 ? worker.ageSeconds : Number.MAX_SAFE_INTEGER;
+  return [...workers]
+    .filter(worker => object(worker) && id(worker.job) && !seen.has(worker.job) && seen.add(worker.job))
+    .sort((a, b) => age(a) - age(b) || valueOf(a.job) - valueOf(b.job) || a.job.localeCompare(b.job))
+    .map(worker => worker.job);
+}
+
+/** One reading per tick; anything it cannot prove normal holds launches. */
+async function pressureLevel(deps: DriveDependencies): Promise<DrivePressureLevel> {
+  if (!deps.pressure) return 'normal';
+  try {
+    const level = await deps.pressure();
+    return level === 'normal' || level === 'warning' || level === 'critical' ? level : 'warning';
+  } catch {
+    return 'warning';
+  }
+}
+
+async function liveWorkers(deps: DriveDependencies): Promise<readonly DrivePressureWorker[]> {
+  if (!deps.liveWorkers) return [];
+  try {
+    const workers = await deps.liveWorkers();
+    return Array.isArray(workers) ? workers : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function driveTick(deps: DriveDependencies, options: { dryRun?: boolean; signal?: AbortSignal } = {}): Promise<DriveReport> {
   const { bridge } = deps;
   const dryRun = options.dryRun === true;
   let lease: string | null = null;
   const nowMs = (): number => (deps.now?.() ?? new Date()).getTime();
   const report: DriveReport = { version: 1, at: (deps.now?.() ?? new Date()).toISOString(), dryRun,
-    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null };
+    paused: false, active: 0, ready: 0, planned: [], launched: [], published: [], publicationUnknown: [], held: null,
+    pressure: null, pauseWorkers: [] };
   const snapshot = async (): Promise<DriveSnapshot> => {
     const state = parseDriveSnapshot(await bridge.snapshot(lease ?? undefined));
     state.paused ||= await deps.paused();
@@ -210,10 +283,26 @@ export async function driveTick(deps: DriveDependencies, options: { dryRun?: boo
       else report.publicationUnknown.push(job.id);
     }
     state = await snapshot();
-    report.planned = planDrive(state, nowMs());
+    // One pressure reading gates every launch below; nothing latches, so the
+    // first `normal` tick launches again with no manual step. `critical` also
+    // names the running workers to pause — only jobs this queue runs, so a
+    // GUI app can never be named.
+    const level = await pressureLevel(deps);
+    report.pressure = level;
+    if (level === 'normal') report.planned = planDrive(state, nowMs());
+    else {
+      report.held ??= 'memory-pressure';
+      if (level === 'critical') {
+        const running = new Set(state.jobs.filter(active).map(job => job.id));
+        const priority = new Map(state.jobs.map(job => [job.id, job.priority]));
+        report.pauseWorkers = pressurePauseOrder(
+          (await liveWorkers(deps)).filter(worker => running.has(worker.job)),
+          job => priority.get(job) ?? Number.MAX_SAFE_INTEGER);
+      }
+    }
     const launchBudget = report.planned.length;
     const attempted = new Set<string>();
-    while (attempted.size < launchBudget && !options.signal?.aborted) {
+    while (level === 'normal' && attempted.size < launchBudget && !options.signal?.aborted) {
       // Fresh snapshots account for external pool users and changed ceilings.
       state = await snapshot();
       const next = planDrive(state, nowMs()).find(job => !attempted.has(job));
