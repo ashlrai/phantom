@@ -7,11 +7,17 @@ import {
   type JobPrecheckCollision,
   type JobPrecheckReport,
 } from '../core/fleet/job-precheck-batch.js';
-import type { JobPrecheckGit, PrecheckFact } from '../core/fleet/job-precheck.js';
+import { extractJobPaths, type JobPrecheckGit, type PrecheckFact } from '../core/fleet/job-precheck.js';
+import {
+  queuedCollisions,
+  readQueuedPathClaims,
+  type QueuedCollision,
+  type QueuedPathClaims,
+} from '../core/fleet/queued-path-claims.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { gitJobProbe, resolveJobPrecheckRef } from './fleet-job-precheck.js';
 
-const usage = 'Usage: ashlr fleet draft-check --stdin [--json]';
+const usage = 'Usage: ashlr fleet draft-check --stdin [--json] [--queued]';
 const REF = 'origin/master';
 const STDIN_MAX_BYTES = 180_000;
 const MARKDOWN_MAX_BYTES = 8_000;
@@ -22,6 +28,7 @@ export interface DraftCheckCliDeps {
   git?: JobPrecheckGit;
   resolveRef?: (ref: string) => Promise<string>;
   readStdin?: () => AsyncIterable<Uint8Array>;
+  readQueuedClaims?: () => Promise<QueuedPathClaims>;
   log?: (line: string) => void;
   error?: (line: string) => void;
 }
@@ -117,15 +124,18 @@ export async function cmdFleetDraftCheck(args: string[], deps: DraftCheckCliDeps
       `The whole input is limited to ${STDIN_MAX_BYTES} bytes. Unknown fields, duplicate names and malformed input are rejected before any git probe.\n` +
       `There are no file, ref, cwd or executable arguments: the batch is always checked against origin/master, resolved once to an immutable commit.\n` +
       `Each draft's named src, test, docs, schema and scripts paths are probed over a shared fact cache, so a path several drafts name is probed once; paths named by two or more drafts are reported as collisions.\n` +
+      `--queued also reads only the queue prompts directory (<runs>/queue/prompts under ASHLR_RUNS_DIR, default ~/.ashlr-runs) and reports queued-collision lines when a draft names a path a still-waiting RQ-PHX job names; the queue source prints as queued: healthy|missing|degraded. A queued prompt with the draft's own id is a re-issue, not a collision. Advisory only: it never changes the exit code.\n` +
       `Read-only: never writes files, deletes, launches jobs or mutates queue state.\n` +
       `Exits 2 on malformed input, an unresolvable ref or any per-draft error; else 3 when any draft is likely-done; else 0.`);
     return 0;
   }
   let json = false;
   let stdin = false;
+  let queued = false;
   for (const arg of args) {
     if (arg === '--json' && !json) { json = true; continue; }
     if (arg === '--stdin' && !stdin) { stdin = true; continue; }
+    if (arg === '--queued' && !queued) { queued = true; continue; }
     error(usage);
     return 2;
   }
@@ -158,13 +168,32 @@ export async function cmdFleetDraftCheck(args: string[], deps: DraftCheckCliDeps
   });
   const results = result.entries.map((entry) =>
     entry.report ? { file: entry.file, ...entry.report } : { file: entry.file, error: entry.error });
+  // Advisory: the queued-claims read can never make the batch check fail.
+  let queuedSource: QueuedPathClaims['sourceState'] | undefined;
+  let queuedHits: QueuedCollision[] = [];
+  if (queued) {
+    try {
+      const read = await (deps.readQueuedClaims ?? readQueuedPathClaims)();
+      queuedSource = read.sourceState;
+      queuedHits = queuedCollisions(
+        drafts.map(draft => ({ name: draft.name, paths: extractJobPaths(draft.markdown) })),
+        read.claims,
+      );
+    } catch {
+      queuedSource = 'degraded';
+      queuedHits = [];
+    }
+  }
   const safe = sanitizePublicJson({
     schema: 'fleet.draft-check.v1', ref: REF, resolvedRef,
     results, counts: result.counts, collisions: result.collisions,
+    ...(queued ? { queuedCollisions: queuedHits, queuedSource } : {}),
   }) as {
     results: Array<{ file: string; error?: string } & Partial<JobPrecheckReport>>;
     counts: JobPrecheckBatchCounts;
     collisions: JobPrecheckCollision[];
+    queuedCollisions?: QueuedCollision[];
+    queuedSource?: QueuedPathClaims['sourceState'];
   };
   if (json) log(JSON.stringify(safe));
   else {
@@ -178,9 +207,11 @@ export async function cmdFleetDraftCheck(args: string[], deps: DraftCheckCliDeps
       }
     }
     for (const collision of safe.collisions) log(`collision: ${collision.path} <- ${collision.files.join(', ')}`);
+    for (const hit of safe.queuedCollisions ?? []) log(`queued-collision: ${hit.path} <- ${hit.draft} vs ${hit.queued.join(', ')}`);
     const counts = safe.counts;
     log(`batch: fresh=${counts.fresh} partly-on-master=${counts['partly-on-master']} ` +
       `likely-done=${counts['likely-done']} errors=${counts.errors}`);
+    if (queued) log(`queued: ${safe.queuedSource}`);
   }
   if (safe.counts.errors > 0) return 2;
   return safe.counts['likely-done'] > 0 ? 3 : 0;
