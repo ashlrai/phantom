@@ -32,7 +32,16 @@ export interface FleetUsageResetsV1 {
   rows: FleetUsageResetRow[];
 }
 
-const STATES: readonly string[] = ['reset-detected', 'hold-expired', 'consistent', 'stale-reading', 'no-reading', 'manual-hold', 'open'];
+const STATES = {
+  'reset-detected': true,
+  'reset-time-passed': true,
+  'hold-expired': true,
+  'consistent': true,
+  'stale-reading': true,
+  'no-reading': true,
+  'manual-hold': true,
+  'open': true,
+} satisfies Record<UsageResetRow['state'], true>;
 const NOTE = 'Evidence only: releasable never authorizes a release, and is forced false unless sourceState is healthy. Manual holds need operator release.';
 
 const text = (value: unknown): string | null =>
@@ -48,7 +57,7 @@ export async function readFleetUsageResets(read: () => Promise<UsageResetsV1> = 
   const rows: FleetUsageResetRow[] = [];
   for (const raw of input.slice(0, MAX_FLEET_LANES)) {
     const row = (raw ?? {}) as Partial<Record<keyof UsageResetRow, unknown>>;
-    if (typeof row.lane !== 'string' || typeof row.state !== 'string' || !STATES.includes(row.state)) { sourceState = 'degraded'; continue; }
+    if (typeof row.lane !== 'string' || typeof row.state !== 'string' || !Object.hasOwn(STATES, row.state)) { sourceState = 'degraded'; continue; }
     rows.push({
       lane: scrubPrivateText(row.lane, { emails: true }),
       state: row.state as FleetUsageResetState,
