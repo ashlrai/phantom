@@ -13,13 +13,15 @@ export type BetStatus = 'not seen' | 'launched' | 'skipped' | 'PR open' | 'merge
 export interface Bet {
   id: string;
   status: BetStatus;
+  asked_pool?: string;
+  rerouted?: boolean;
   lane?: string;
   model?: string;
   precheck_code?: string | number;
   url?: string;
   ttm_s?: number;
 }
-export interface FleetBetsReport { schema: 'fleet.bets.v1'; merged: number; total: number; bets: Bet[] }
+export interface FleetBetsReport { schema: 'fleet.bets.v1'; merged: number; total: number; rerouted: number; bets: Bet[] }
 
 const usage = 'Usage: ashlr fleet bets [--json]';
 const TAIL = 3000;
@@ -35,10 +37,15 @@ const text = (v: unknown) => typeof v === 'string' && v ? v : undefined;
 const seconds = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
 
 export function readBets(vision: string | null, jobs: string | null): FleetBetsReport {
-  const ids = [...new Set((vision ?? '').split(/\r?\n/).flatMap(line => {
-    const m = /^- READY (RQ-[A-Za-z0-9_-]+)/.exec(line);
-    return m ? [m[1]!] : [];
-  }))];
+  const requested = new Map<string, string | undefined>();
+  for (const line of (vision ?? '').split(/\r?\n/)) {
+    const match = /^- READY (RQ-[A-Za-z0-9_-]+)/.exec(line);
+    if (!match || requested.has(match[1]!)) continue;
+    const metadata = /^\s*\(([^)]*)\)/.exec(line.slice(match[0].length));
+    const pool = /(?:^|,\s*)pool=([A-Za-z0-9._-]+)(?=\s*(?:,|$))/.exec(metadata?.[1] ?? '');
+    requested.set(match[1]!, pool?.[1]);
+  }
+  const ids = [...requested.keys()];
   const wanted = new Set(ids);
   // Per id, keep the newest row of each kind; a row with no usable ts counts as oldest.
   const latest = new Map<string, Map<string, { row: Row; at: number }>>();
@@ -59,6 +66,8 @@ export function readBets(vision: string | null, jobs: string | null): FleetBetsR
     const state = outcome?.state;
     const url = [outcome?.url, publish?.url].find((u): u is string => typeof u === 'string' && PR_URL.test(u));
     const bet: Bet = { id, status: 'not seen' };
+    const askedPool = requested.get(id);
+    if (askedPool) bet.asked_pool = askedPool;
     if (state === 'MERGED') {
       Object.assign(bet, { status: 'merged' }, url && { url }, seconds(outcome!.ttm_s) !== undefined && { ttm_s: outcome!.ttm_s });
     } else if (state === 'OPEN' || (url && state === undefined)) {
@@ -76,16 +85,20 @@ export function readBets(vision: string | null, jobs: string | null): FleetBetsR
     }
     if (launch && bet.status !== 'skipped' && bet.status !== 'not seen') {
       const lane = text(launch.lane), model = text(launch.model);
-      if (lane) bet.lane = lane;
+      if (lane) {
+        bet.lane = lane;
+        if (askedPool && lane !== askedPool) bet.rerouted = true;
+      }
       if (model) bet.model = model;
     }
     return bet;
   });
-  return { schema: 'fleet.bets.v1', merged: bets.filter(b => b.status === 'merged').length, total: bets.length, bets };
+  return { schema: 'fleet.bets.v1', merged: bets.filter(b => b.status === 'merged').length, total: bets.length, rerouted: bets.filter(b => b.rerouted).length, bets };
 }
 
 const describe = (b: Bet): string => {
-  const via = [b.lane, b.model].filter(Boolean).join(', ');
+  const lane = b.lane && `${b.lane}${b.rerouted ? ` (asked ${b.asked_pool})` : ''}`;
+  const via = [lane, b.model].filter(Boolean).join(', ');
   switch (b.status) {
     case 'launched': return via ? `launched (${via})` : 'launched';
     case 'skipped': return b.precheck_code === undefined ? 'skipped' : `skipped (precheck ${b.precheck_code})`;
@@ -95,7 +108,7 @@ const describe = (b: Bet): string => {
   }
 };
 export const formatBets = (r: FleetBetsReport): string =>
-  [`merged ${r.merged} of ${r.total}`, ...r.bets.map(b => `${b.id}: ${describe(b)}`)].join('\n');
+  [`merged ${r.merged} of ${r.total}`, ...r.bets.map(b => `${b.id}: ${describe(b)}${b.rerouted && b.status !== 'launched' ? ` via ${b.lane} (asked ${b.asked_pool})` : ''}`)].join('\n');
 
 export function defaultFleetBetsReaders(root = join(homedir(), '.ashlr-runs')): FleetBetsReaders {
   const optional = async (path: string): Promise<string | null> => {
@@ -113,7 +126,7 @@ export function defaultFleetBetsReaders(root = join(homedir(), '.ashlr-runs')): 
 
 export async function cmdFleetBets(args: string[], readers: FleetBetsReaders = defaultFleetBetsReaders()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nFor each "- READY RQ-" bet in leader/VISION.md, show where it got to: not seen, launched (lane, model), skipped (precheck code), PR open (url), merged (seconds to merge), empty or closed. First line: merged n of m. Reads the last ${TAIL} lines of metrics/jobs.jsonl. Read-only.`);
+    console.log(`${usage}\nFor each "- READY RQ-" bet in leader/VISION.md, show where it got to: not seen, launched (lane, model), skipped (precheck code), PR open (url), merged (seconds to merge), empty or closed. Rerouted bets show the launch lane followed by (asked pool). JSON includes asked_pool, rerouted and a rerouted count. First line: merged n of m. Reads the last ${TAIL} lines of metrics/jobs.jsonl. Read-only.`);
     return 0;
   }
   if (args.length > 1 || args.some(arg => arg !== '--json')) { console.error(usage); return 2; }
