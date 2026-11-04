@@ -293,6 +293,7 @@ Every command, grouped by topic.
     sandbox gc                                                                         Reclaim STALE orphan sandboxes (crash leftovers); H5 explicit human repair surface for the orphan sweep.
     seams                                                                              Cloud-ready seam diagnostic: every v2 store, active=local, cloud=gated (read-only).
     seams status                                                                       Same as `seams`: list seams + active impl; proves local-first + cloud gated on Mason.
+    verify change --worktree <path> [--checks typecheck,unit,lint,secrets]             Run trusted worktree checks; JSON verdict and ten-line handoff.
     verify-safety                                                                      Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing.
     verify-pr                                                                          Verify an explicitly reviewed maintainer PR through the host-owned App check; no merge or deploy.
     preflight [--json]                                                                 Read-only first-activation readiness check: ready=true|false + blockers/warnings (model/enrollment/kill/daemon/writeable/sandbox/git/phantom/locus); mutates nothing.
