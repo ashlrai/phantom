@@ -23,7 +23,7 @@ export function diffRadarSnapshots(before: RadarSnapshot | null, after: RadarSna
     before: previous?.data ?? null, after: current.data, added: [], removed: [], changed: [],
   };
   if (!previous) return result;
-  if (previous.data.kind === 'atom' && current.data.kind === 'atom') {
+  if ((previous.data.kind === 'atom' || previous.data.kind === 'rss') && (current.data.kind === 'atom' || current.data.kind === 'rss')) {
     const old = new Map(previous.data.entries.map(entry => [entry.id, entry.title]));
     const next = new Map(current.data.entries.map(entry => [entry.id, entry.title]));
     if (old.size !== previous.data.entries.length || next.size !== current.data.entries.length) throw new Error('Duplicate Atom identity');

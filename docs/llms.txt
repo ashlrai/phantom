@@ -17,7 +17,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 ## CLI
 
-- [Docs Radar](RADAR.md): Public source list, bounded unauthenticated reads, private snapshots and offline diffs. Commands: `phm radar list|run|diff --json`. See the guide for the pending catalogue and dispatcher prerequisites.
+- [Docs Radar](RADAR.md): Public source list, bounded unauthenticated reads, private snapshots and offline diffs. Commands: `phm radar list|run|diff --json`. Individual fetch failures are warnings; the last successful snapshot is retained.
 
 - [CLI reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all`. The checkout is the authority.
 - [CLI docs](cli.md): Regenerated from `phm --help` by `scripts/generate-cli-docs.mjs`. Do not edit by hand.
