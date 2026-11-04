@@ -119,6 +119,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'job-class-share': () => import('./fleet-job-class-share.js'),
   'job-current': () => import('./fleet-job-current.js'),
   'job-history-batch': () => import('./fleet-job-history-batch.js'),
+  'job-impact': () => import('./fleet-job-impact.js'),
   'job-latency': () => import('./fleet-job-latency.js'),
   'job-one': () => import('./fleet-job-one.js'),
   'job-overlap': () => import('./fleet-job-overlap.js'),
