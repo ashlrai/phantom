@@ -734,3 +734,8 @@ counts once; missing durations remain unknown. `--hours N` changes the window.
 The default target is 20 merges for `ashlrai/phantom`; `--target N` changes it
 and `--all` checks every observed repo. Exit 1 means a checked repo is below
 target or the ledger could not be read. No work is launched or changed.
+
+`phm fleet slow-prs [--json]` lists open PRs at least 30 minutes old, measured
+against the newest timestamp in the last 3000 lines of the jobs ledger. Plain
+output shows one line per repository with its count and PR URLs; JSON returns
+the typed `fleet.slow-prs.v1` report. This command only reads the local ledger.
