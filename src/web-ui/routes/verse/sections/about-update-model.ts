@@ -57,6 +57,15 @@ export function aboutUpdateLines(status: ServerObservation, now: number): AboutU
     rows.push({ label: 'Last update', value });
   }
 
+  if (status.dirty === true) {
+    const v = status as { dirtyPaths?: unknown; dirtyCount?: unknown };
+    const paths = Array.isArray(v.dirtyPaths) ? v.dirtyPaths.filter((p): p is string => typeof p === 'string') : [];
+    if (paths.length > 0) {
+      const extra = typeof v.dirtyCount === 'number' && v.dirtyCount > 3 ? ` +${v.dirtyCount - 3} more` : '';
+      rows.push({ label: 'Local changes', value: paths.slice(0, 3).join(', ') + extra });
+    }
+  }
+
   const origin = status.branch ? `origin/${status.branch}` : 'origin';
   if (status.sourceState === 'unavailable') return { tone: 'unknown', headline: 'Self-update status unavailable.', rows };
   if (status.behind !== null && status.behind > 0) {
