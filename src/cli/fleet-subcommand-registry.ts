@@ -114,6 +114,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'idle-lanes': () => import('./fleet-idle-lanes.js'),
   'inbox-acks': () => import('./fleet-inbox-acks.js'),
   'job-class-share': () => import('./fleet-job-class-share.js'),
+  'job-current': () => import('./fleet-job-current.js'),
   'job-history-batch': () => import('./fleet-job-history-batch.js'),
   'job-latency': () => import('./fleet-job-latency.js'),
   'job-one': () => import('./fleet-job-one.js'),
