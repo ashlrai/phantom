@@ -24,7 +24,7 @@ export function deriveLaneStreakNeedsYou(read: LaneStreaksRead | undefined, runs
       nextStep: claude
         ? `run the Claude lane fix, then release the lane${lane.medianMinutes === null ? '' : `; until then every launch burns about ${lane.medianMinutes} minutes`}`
         : "hold the lane and read the last empty job's worker log",
-      open: claude ? { kind: 'terminal', command: CLAUDE_LANE_FIX_COMMAND } : { kind: 'pane', paneId: 'fleet-lanes' },
+      open: claude ? { kind: 'terminal', command: CLAUDE_LANE_FIX_COMMAND } : { kind: 'pane', paneId: 'fleet-lanes', lane: lane.lane },
     }];
   });
 }
