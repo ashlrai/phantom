@@ -134,7 +134,7 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
   if (scrubSecrets(clean) !== clean) return { ok: false, reason: 'secret-shaped' };
 
   try {
-    const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+    const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
     const source = safeSource(opts.source);
     const now = (opts.now ?? (() => new Date()))();
     const at = localTimestamp(now);
@@ -153,7 +153,7 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
 export async function readInboxEntries(opts: { runsDir?: string; limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'degraded'; entries: InboxEntry[] }> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+    const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
     handle = await open(join(runsDir, 'leader', 'MASON-INBOX.md'), 'r');
     const { size } = await handle.stat();
     const offset = Math.max(0, size - MAX_READ_BYTES);
@@ -203,7 +203,7 @@ const CHANNEL_LINE_WITH_ID = /^(\d{4}-\d{2}-\d{2}T\S+)\s+\[src:([a-z0-9._-]{1,32
 export function addInboxSource(entryId: string, channel: string, opts: { runsDir?: string } = {}): boolean {
   if (!/^[a-z0-9._-]{1,32}$/.test(channel) || !/^[A-Za-z0-9._:-]{1,64}$/.test(entryId)) return false;
   try {
-    const file = join(opts.runsDir ?? join(homedir(), '.ashlr-runs'), 'leader', 'MASON-INBOX.md');
+    const file = join(opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'leader', 'MASON-INBOX.md');
     const lines = readFileSync(file, 'utf8').split('\n');
     const at = lines.findIndex((line) => CHANNEL_LINE_WITH_ID.exec(line)?.[3] === entryId);
     if (at < 0) return false;
