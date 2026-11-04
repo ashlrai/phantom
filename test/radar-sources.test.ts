@@ -47,7 +47,7 @@ function responseFixture(options: { status?: number; headers?: Record<string, st
 
 describe('Radar public source catalogue', () => {
   it('accepts every declared source kind and explicit verification state', () => {
-    for (const kind of ['page', 'atom', 'npm', 'pypi', 'json']) {
+    for (const kind of ['page', 'atom', 'rss', 'npm', 'pypi', 'json']) {
       expect(radarSourceSchema.parse({ ...source, kind, verified: false })).toMatchObject({ kind, verified: false });
     }
     expect(radarSourcesSchema.parse([source])).toEqual([source]);
