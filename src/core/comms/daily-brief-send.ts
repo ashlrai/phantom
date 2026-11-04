@@ -1,6 +1,15 @@
 /**
- * RQ-PHX-DAILYBRIEFSEND04: one short daily fleet summary per channel, on a
+ * RQ-PHX-DAILYBRIEFSEND04: one short fleet summary per channel per slot, on a
  * local-day budget — `ashlr fleet brief-send` dry-runs, `--apply` sends.
+ * RQ-COS-BRIEF-1 adds two slots per day: 'morning' (7:30 ET) and 'overnight'
+ * (22:30 ET), times configurable (ASHLR_BRIEF_MORNING_AT / _OVERNIGHT_AT as
+ * 'HH:MM', or the slotTimes seam). Each slot keeps its own local-day stamp, so
+ * a channel gets at most one morning and one overnight brief per day. With no
+ * explicit slot the latest slot whose time has passed today is used; before
+ * the morning time nothing is due ('slot-not-due'). The text opens with a
+ * needs-you list of at most DAILY_BRIEF_NEEDS_MAX items (automation review
+ * items, then pending drafts when a drafts source is supplied; no source means
+ * the drafts section is skipped cleanly).
  *
  *   planDailyBrief({ runsDir, now, lastSent }) — for each channel ('email',
  *     'telegram') yields { send: true, text } or { send: false, reason }.
@@ -9,7 +18,8 @@
  *     DAILY_BRIEF_MAX_CHARS of plain text. Skip reasons:
  *     'already-sent-today', 'not-configured', 'status-unavailable'.
  *   queue/daily-brief-last.json — the stamp: { email?: 'YYYY-MM-DD',
- *     telegram?: 'YYYY-MM-DD' } in America/New_York local date. A channel
+ *     telegram?: 'YYYY-MM-DD' } in America/New_York local date. Those keys are
+ *     the morning slot; the overnight slot uses emailOvernight / telegramOvernight. A channel
  *     stamped today is skipped; the stamp is written only after a send
  *     succeeds, via writePrivateFileAtomic under the local store lock — the
  *     same claim-then-record shape order-merge-notice uses.
@@ -28,6 +38,7 @@
 
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { needsYouItems, refreshAutomationsNeedsYou } from '../automations/needs-you.js';
 import { loadConfigReadOnly } from '../config.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
@@ -41,7 +52,13 @@ import { telegramFleetStatus, type TelegramFleetStatusDeps } from './telegram-fl
 
 export const DAILY_BRIEF_CHANNELS = ['email', 'telegram'] as const;
 export type DailyBriefChannel = (typeof DAILY_BRIEF_CHANNELS)[number];
+export const DAILY_BRIEF_SLOTS = ['morning', 'overnight'] as const;
+export type DailyBriefSlot = (typeof DAILY_BRIEF_SLOTS)[number];
 export const DAILY_BRIEF_MAX_CHARS = 1200;
+export const DAILY_BRIEF_NEEDS_MAX = 5;
+/** Default slot times, America/New_York 'HH:MM'. */
+export const DAILY_BRIEF_SLOT_TIMES: Readonly<Record<DailyBriefSlot, string>> = { morning: '07:30', overnight: '22:30' };
+const SLOT_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const DAILY_BRIEF_STAMP = join('queue', 'daily-brief-last.json');
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -49,14 +66,24 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 export interface DailyBriefLastSent {
   email?: string;
   telegram?: string;
+  emailOvernight?: string;
+  telegramOvernight?: string;
+}
+type StampKey = keyof DailyBriefLastSent;
+const STAMP_KEYS: readonly StampKey[] = ['email', 'telegram', 'emailOvernight', 'telegramOvernight'];
+
+/** Morning keeps the legacy per-channel keys so existing stamps stay valid. */
+export function dailyBriefStampKey(channel: DailyBriefChannel, slot: DailyBriefSlot): StampKey {
+  return slot === 'morning' ? channel : channel === 'email' ? 'emailOvernight' : 'telegramOvernight';
 }
 
-export type DailyBriefSkipReason = 'already-sent-today' | 'not-configured' | 'status-unavailable';
+export type DailyBriefSkipReason = 'already-sent-today' | 'not-configured' | 'status-unavailable' | 'slot-not-due';
 export type DailyBriefPlanEntry =
   | { channel: DailyBriefChannel; send: true; text: string }
   | { channel: DailyBriefChannel; send: false; reason: DailyBriefSkipReason };
 
 export interface DailyBriefPlan {
+  slot: DailyBriefSlot;
   /** Local day the plan applies to (America/New_York 'YYYY-MM-DD'). */
   day: string;
   entries: DailyBriefPlanEntry[];
@@ -83,9 +110,48 @@ export function dailyBriefLocalDay(at: Date, timeZone = 'America/New_York'): str
   }
 }
 
-/** Needs-you count first, then the allowlisted composer text, ≤1200 chars. */
-export function dailyBriefText(needs: number | null, status: string): string {
-  const head = `Needs you: ${needs === null || !Number.isSafeInteger(needs) || needs < 0 ? 'unavailable' : needs}`;
+/** Minutes since local midnight in the operator's zone. */
+function localMinutes(at: Date, timeZone = 'America/New_York'): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(at);
+    const p = (type: string): number => Number(parts.find(part => part.type === type)?.value ?? '0');
+    return p('hour') * 60 + p('minute');
+  } catch {
+    return at.getUTCHours() * 60 + at.getUTCMinutes();
+  }
+}
+
+const toMinutes = (hhmm: string): number => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+
+/** Env and override values that are not 'HH:MM' fall back to the defaults. */
+export function resolveDailyBriefSlotTimes(
+  override: Partial<Record<DailyBriefSlot, string>> = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Record<DailyBriefSlot, string> {
+  const pick = (slot: DailyBriefSlot, fromEnv: string | undefined): string => {
+    for (const candidate of [override[slot], fromEnv]) if (candidate && SLOT_TIME.test(candidate)) return candidate;
+    return DAILY_BRIEF_SLOT_TIMES[slot];
+  };
+  return { morning: pick('morning', env.ASHLR_BRIEF_MORNING_AT), overnight: pick('overnight', env.ASHLR_BRIEF_OVERNIGHT_AT) };
+}
+
+/** The latest slot whose time has passed today, or null before the first one. */
+export function dueDailyBriefSlot(at: Date, times: Record<DailyBriefSlot, string>): DailyBriefSlot | null {
+  const minutes = localMinutes(at);
+  return DAILY_BRIEF_SLOTS
+    .filter(slot => toMinutes(times[slot]) <= minutes)
+    .sort((a, b) => toMinutes(times[b]) - toMinutes(times[a]))[0] ?? null;
+}
+
+/**
+ * Needs-you count first, then up to DAILY_BRIEF_NEEDS_MAX list lines, then the
+ * allowlisted composer text, all within 1200 chars. The overnight slot is
+ * labelled on the head line; morning stays unlabelled for back-compat.
+ */
+export function dailyBriefText(needs: number | null, status: string, list: readonly string[] = [], slot: DailyBriefSlot = 'morning'): string {
+  const count = needs === null || !Number.isSafeInteger(needs) || needs < 0 ? 'unavailable' : needs;
+  const lines = list.slice(0, DAILY_BRIEF_NEEDS_MAX).map(line => scrubSecrets(String(line)).replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const head = [`Needs you: ${count}${slot === 'overnight' ? ' (overnight)' : ''}`, ...lines.map(line => `- ${line}`)].join('\n');
   const body = scrubSecrets(String(status)).replace(/\r\n?/g, '\n').trim();
   if (!body) return head;
   const room = DAILY_BRIEF_MAX_CHARS - head.length - 1;
@@ -104,20 +170,50 @@ export function readDailyBriefStamp(runsDir: string): DailyBriefLastSent {
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const stamp: DailyBriefLastSent = {};
-  for (const channel of DAILY_BRIEF_CHANNELS) {
-    const value = (raw as Record<string, unknown>)[channel];
-    if (typeof value === 'string' && DAY.test(value)) stamp[channel] = value;
+  for (const key of STAMP_KEYS) {
+    const value = (raw as Record<string, unknown>)[key];
+    if (typeof value === 'string' && DAY.test(value)) stamp[key] = value;
   }
   return stamp;
 }
 
-function defaultNeedsYou(runsDir: string): number | null {
+/** Needs-you as a total plus the lines to list: the owner ledger, then automation reviews, then drafts. */
+export interface DailyBriefNeeds {
+  total: number | null;
+  lines: string[];
+}
+
+/**
+ * Pending drafts source (RQ-COS-DRAFTS-1). That lane has not merged, so there
+ * is no default reader: callers that have one pass it via planDeps.drafts and
+ * the section is skipped cleanly otherwise.
+ */
+export type DailyBriefDraftsSource = () => string[] | Promise<string[]>;
+
+async function defaultNeeds(runsDir: string, drafts?: DailyBriefDraftsSource): Promise<DailyBriefNeeds> {
+  let total: number | null = null;
+  const lines: string[] = [];
   try {
     const result = readNeedsMason({ runsDir });
-    return result.status === 'unavailable' ? null : result.items.length;
-  } catch {
-    return null;
+    if (result.status !== 'unavailable') {
+      total = result.items.length;
+      for (const item of result.items) lines.push(item.text);
+    }
+  } catch { /* ledger unavailable: total stays null */ }
+  try {
+    await refreshAutomationsNeedsYou();
+    const items = needsYouItems();
+    if (total !== null) total += items.length;
+    for (const item of items) lines.push(item.title);
+  } catch { /* automation items are best effort */ }
+  if (drafts) {
+    try {
+      const pending = await drafts();
+      if (total !== null) total += pending.length;
+      for (const draft of pending) lines.push(`Draft to approve: ${draft}`);
+    } catch { /* drafts section skipped */ }
   }
+  return { total, lines };
 }
 
 /**
@@ -159,10 +255,16 @@ export interface DailyBriefPlanDeps {
   lastSent?: DailyBriefLastSent;
   /** Channels to plan; default both. */
   channels?: readonly DailyBriefChannel[];
+  /** Slot to plan; default is the latest slot due now (null before the first). */
+  slot?: DailyBriefSlot;
+  /** 'HH:MM' overrides for the slot times; env and defaults fill the rest. */
+  slotTimes?: Partial<Record<DailyBriefSlot, string>>;
+  /** Pending draft titles to list under needs-you; absent skips the section. */
+  drafts?: DailyBriefDraftsSource;
   /** Test seams — production defaults read the real config and composers. */
   isConfigured?: (channel: DailyBriefChannel) => boolean | Promise<boolean>;
   composeStatus?: (channel: DailyBriefChannel) => Promise<string>;
-  needsYou?: () => number | null;
+  needsYou?: () => number | null | DailyBriefNeeds | Promise<number | null | DailyBriefNeeds>;
   /** Reader overrides forwarded to the default status composers. */
   readers?: { email?: EmailFleetStatusReaders; telegram?: TelegramFleetStatusDeps };
 }
@@ -170,10 +272,17 @@ export interface DailyBriefPlanDeps {
 export async function planDailyBrief(opts: { runsDir: string } & DailyBriefPlanDeps): Promise<DailyBriefPlan> {
   const now = opts.now ?? (() => new Date());
   const day = dailyBriefLocalDay(now());
-  const needs = opts.needsYou ? opts.needsYou() : defaultNeedsYou(opts.runsDir);
+  const due = opts.slot ?? dueDailyBriefSlot(now(), resolveDailyBriefSlotTimes(opts.slotTimes));
+  const slot: DailyBriefSlot = due ?? 'morning';
   const entries: DailyBriefPlanEntry[] = [];
+  if (!due) {
+    for (const channel of opts.channels ?? DAILY_BRIEF_CHANNELS) entries.push({ channel, send: false, reason: 'slot-not-due' });
+    return { slot, day, entries };
+  }
+  const raw = opts.needsYou ? await opts.needsYou() : await defaultNeeds(opts.runsDir, opts.drafts);
+  const needs: DailyBriefNeeds = raw !== null && typeof raw === 'object' ? raw : { total: raw, lines: [] };
   for (const channel of opts.channels ?? DAILY_BRIEF_CHANNELS) {
-    if (opts.lastSent?.[channel] === day) {
+    if (opts.lastSent?.[dailyBriefStampKey(channel, slot)] === day) {
       entries.push({ channel, send: false, reason: 'already-sent-today' });
       continue;
     }
@@ -184,12 +293,12 @@ export async function planDailyBrief(opts: { runsDir: string } & DailyBriefPlanD
     }
     try {
       const status = await (opts.composeStatus ?? ((c: DailyBriefChannel) => defaultComposeStatus(opts.runsDir, c, now, opts.readers)))(channel);
-      entries.push({ channel, send: true, text: dailyBriefText(needs, status) });
+      entries.push({ channel, send: true, text: dailyBriefText(needs.total, status, needs.lines, slot) });
     } catch {
       entries.push({ channel, send: false, reason: 'status-unavailable' });
     }
   }
-  return { day, entries };
+  return { slot, day, entries };
 }
 
 /**
@@ -198,7 +307,7 @@ export async function planDailyBrief(opts: { runsDir: string } & DailyBriefPlanD
  * file is the send this verb dedupes. Throws when the drop config cannot name
  * exactly one recipient so the stamp is not written and the run retries.
  */
-export function createDailyBriefEmailSender(runsDir: string, day: string): DailyBriefSender {
+export function createDailyBriefEmailSender(runsDir: string, day: string, slot: DailyBriefSlot = 'morning'): DailyBriefSender {
   return async (text) => {
     const { state, config } = await readEmailDropConfig(runsDir);
     if (state !== 'ok' || !config || config.from.length !== 1) {
@@ -206,11 +315,11 @@ export function createDailyBriefEmailSender(runsDir: string, day: string): Daily
     }
     const outbox = config.outboxDir ?? join(config.inboxDir, '..', 'outbox');
     ensurePrivateDirectory(outbox);
-    const name = `daily-brief-${day}.reply.eml`;
+    const name = slot === 'morning' ? `daily-brief-${day}.reply.eml` : `daily-brief-${day}-${slot}.reply.eml`;
     const tmp = join(outbox, `.${name}.${process.pid}.tmp`);
     const body = text.replace(/\r?\n/g, '\r\n');
     try {
-      writeFileSync(tmp, `To: ${config.from[0]}\r\nSubject: Phantom daily brief ${day}\r\n\r\n${body}\r\n`, { mode: 0o600 });
+      writeFileSync(tmp, `To: ${config.from[0]}\r\nSubject: Phantom ${slot} brief ${day}\r\n\r\n${body}\r\n`, { mode: 0o600 });
       renameSync(tmp, join(outbox, name));
     } catch (error) {
       rmSync(tmp, { force: true });
@@ -228,9 +337,9 @@ export function createDailyBriefTelegramSender(cfg: AshlrConfig): DailyBriefSend
 }
 
 /** Production senders; a missing/!configured channel is simply absent. */
-export async function defaultDailyBriefSenders(runsDir: string, day: string): Promise<DailyBriefSenders> {
+export async function defaultDailyBriefSenders(runsDir: string, day: string, slot: DailyBriefSlot = 'morning'): Promise<DailyBriefSenders> {
   const senders: DailyBriefSenders = {};
-  if (await defaultIsConfigured(runsDir, 'email')) senders.email = createDailyBriefEmailSender(runsDir, day);
+  if (await defaultIsConfigured(runsDir, 'email')) senders.email = createDailyBriefEmailSender(runsDir, day, slot);
   try {
     const cfg = loadConfigReadOnly();
     if (telegramEnabled(cfg)) senders.telegram = createDailyBriefTelegramSender(cfg);
@@ -263,7 +372,8 @@ export async function applyDailyBriefPlan(
     const results: DailyBriefApplied[] = [];
     for (const entry of plan.entries) {
       if (!entry.send) { results.push(skipped(entry)); continue; }
-      if (stamp[entry.channel] === plan.day) { results.push(skipped(entry, 'already-sent-today')); continue; }
+      const key = dailyBriefStampKey(entry.channel, plan.slot);
+      if (stamp[key] === plan.day) { results.push(skipped(entry, 'already-sent-today')); continue; }
       const send = senders[entry.channel];
       if (!send) { results.push(skipped(entry, 'no-sender')); continue; }
       try {
@@ -272,7 +382,7 @@ export async function applyDailyBriefPlan(
         results.push({ channel: entry.channel, outcome: 'failed' });
         continue;
       }
-      stamp[entry.channel] = plan.day;
+      stamp[key] = plan.day;
       writePrivateFileAtomic(stampPath, `${JSON.stringify(stamp, null, 2)}\n`);
       results.push({ channel: entry.channel, outcome: 'sent' });
     }
