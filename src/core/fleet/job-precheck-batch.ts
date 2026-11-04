@@ -19,9 +19,16 @@ export interface JobPrecheckBatchCounts {
   errors: number;
 }
 
+/** One implementation path at least two distinct drafts name. Evidence only, never a refusal. */
+export interface JobPrecheckCollision {
+  path: string;
+  files: string[];
+}
+
 export interface JobPrecheckBatchResult {
   entries: JobPrecheckBatchEntry[];
   counts: JobPrecheckBatchCounts;
+  collisions: JobPrecheckCollision[];
 }
 
 export interface JobPrecheckBatchDeps {
@@ -57,7 +64,16 @@ function probeError(err: unknown): string {
   return (message || 'git precheck failed').slice(0, 300);
 }
 
-/** Checks drafts in order; one draft's failure never skips the rest. */
+/** Mirrors the verdict's test/spec exclusion in job-precheck.ts: collisions track implementation files. */
+function isTestPath(path: string): boolean {
+  return path.startsWith('test/') || (path.startsWith('src/') && /\.(?:test|spec)\.[A-Za-z0-9]+$/.test(path));
+}
+
+/**
+ * Checks drafts in order; one draft's failure never skips the rest.
+ * Collisions come from successful reports' non-test facts, sorted by path with
+ * draft filenames in input order. A failed draft contributes no inferred facts.
+ */
 export async function precheckJobBatch(
   files: readonly string[],
   deps: JobPrecheckBatchDeps,
@@ -65,6 +81,7 @@ export async function precheckJobBatch(
   const git = cachingJobPrecheckGit(deps.git);
   const entries: JobPrecheckBatchEntry[] = [];
   const counts: JobPrecheckBatchCounts = { fresh: 0, 'partly-on-master': 0, 'likely-done': 0, errors: 0 };
+  const shared = new Map<string, Set<string>>();
   for (const file of files) {
     let markdown: string;
     try {
@@ -78,10 +95,20 @@ export async function precheckJobBatch(
       const report = await precheckJob(markdown, git);
       entries.push({ file, report });
       counts[report.verdict] += 1;
+      for (const fact of report.facts) {
+        if (isTestPath(fact.path)) continue;
+        let owners = shared.get(fact.path);
+        if (!owners) shared.set(fact.path, (owners = new Set()));
+        owners.add(file);
+      }
     } catch (err) {
       entries.push({ file, error: probeError(err) });
       counts.errors += 1;
     }
   }
-  return { entries, counts };
+  const collisions: JobPrecheckCollision[] = [...shared]
+    .filter(([, owners]) => owners.size > 1)
+    .map(([path, owners]) => ({ path, files: [...owners] }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { entries, counts, collisions };
 }
