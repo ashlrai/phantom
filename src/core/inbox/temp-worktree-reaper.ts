@@ -52,7 +52,11 @@ import {
   releaseOutwardMutationFence,
 } from '../sandbox/mutation-fence.js';
 import { killSwitchOn } from '../sandbox/policy.js';
-import { filterDriverOverrides, repoScopedFilterDrivers, withDaemonGitHardening } from '../sandbox/worktree.js';
+// From safe-git.js, never worktree.js: this file sits in the swarm runner's
+// eager import graph, and a worktree.js that fails to load must not take the
+// runner down (the "sandbox worktree module unavailable" abort depends on
+// runner.js still loading).
+import { filterDriverOverrides, repoScopedFilterDrivers, withDaemonGitHardening } from '../sandbox/safe-git.js';
 import { isKeptWorktree, measureWorktreeBytes, readKeptWorktrees } from '../worktree-retention.js';
 import {
   verifiedProcessStartIdentity,
