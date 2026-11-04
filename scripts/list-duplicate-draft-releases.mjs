@@ -17,8 +17,8 @@ const object = (value) => value !== null && typeof value === 'object' && !Array.
 
 /** Group release rows by tag; keep only tags with more than one release where
  * at least one is a draft (a published-plus-draft pair is still one feed but
- * worth seeing). Releases within a group sort by id so the row the train
- * treats as canonical — the lowest id — is first. */
+ * worth seeing). Releases within a group sort by id for stable inventory output.
+ * Use dedupe-draft-releases.mjs for a dry-run cleanup plan that keeps the newest. */
 export function duplicateDraftGroups(rows) {
   assert.ok(Array.isArray(rows), 'release listing did not return an array');
   const byTag = new Map();
