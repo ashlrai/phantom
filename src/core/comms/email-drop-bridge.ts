@@ -47,6 +47,10 @@ import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from 
 import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
 import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
+import { isEmailNeedsCommand, runEmailNeedsCommand } from './email-needs-command.js';
+import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
+import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
+import { renderNeedsCommandReply } from './telegram-needs-command.js';
 
 export interface ParsedEml {
   from: string;
@@ -268,7 +272,9 @@ function seenFilePath(runsDir: string | undefined): string {
   return join(runsRoot(runsDir), 'queue', 'email-drop-seen.jsonl');
 }
 
-// Status requests use permanent exclusive claims rather than the bounded,
+const SAFE_MESSAGE_ID = /^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9.-]+$/;
+
+// Status and needs requests use permanent exclusive claims rather than the bounded,
 // best-effort inbox journal: a replay must not read or queue a second reply.
 function statusClaimPath(runsDir: string | undefined, id: string): string {
   const hash = createHash('sha256').update(id).digest('hex');
@@ -388,9 +394,32 @@ export async function recordEmailToInbox(
     const status = isFleetStatusRequest(raw) || ask;
     const claim = parsed.messageId ? statusClaimPath(opts.runsDir, parsed.messageId) : null;
     if (claim && statusWasClaimed(claim)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
+    const commandText = parsed.body.trim() || parsed.subject.trim();
+    if (isEmailNeedsCommand(commandText)) {
+      // Same replay protection as status: one permanent claim per Message-ID, so a
+      // redelivered mail never resolves or replies twice.
+      if (!parsed.messageId || !SAFE_MESSAGE_ID.test(parsed.messageId) || !claim || !opts.outboxDir) return { ok: false, reason: 'invalid' };
+      mkdirSync(dirname(claim), { recursive: true });
+      try { writeFileSync(claim, '', { flag: 'wx', mode: 0o600 }); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, kind: 'status', reason: 'status-duplicate' };
+        throw error;
+      }
+      const reply = await runEmailNeedsCommand(commandText, {
+        list: listNeedsMason,
+        resolve: (request, options) => resolveNeedsMasonWithInbox(request, { ...options, ...(opts.busRoot ? { bus: { root: opts.busRoot } } : {}) }),
+        runsDir: runsRoot(opts.runsDir),
+      });
+      mkdirSync(opts.outboxDir, { recursive: true });
+      const headers = [`To: ${parsed.from}`, 'Subject: Re: Phantom needs', `In-Reply-To: <${parsed.messageId}>`,
+        `References: <${parsed.messageId}>`, 'Content-Type: text/plain; charset=utf-8'];
+      writeFileSync(join(opts.outboxDir, `needs-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+        `${headers.join('\r\n')}\r\n\r\n${renderNeedsCommandReply(reply)}\r\n`, { flag: 'wx', mode: 0o600 });
+      return { ok: false, kind: 'status', reason: 'status-queued' };
+    }
     if (status) {
       // A safe Message-ID is required for threading and durable replay protection.
-      if (!parsed.messageId || !/^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9.-]+$/.test(parsed.messageId) || !claim || !opts.outboxDir) {
+      if (!parsed.messageId || !SAFE_MESSAGE_ID.test(parsed.messageId) || !claim || !opts.outboxDir) {
         return { ok: false, reason: 'invalid' };
       }
       if (readSeenMessageIds(opts.runsDir).has(parsed.messageId)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
