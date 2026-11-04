@@ -582,7 +582,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
   { cmd: 'plugins init|list|info|enable|disable', desc: 'Scaffold + manage plugins (~/.ashlr/plugins/) — default-off, integrity-pinned, audited (see docs/PLUGINS.md).', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },
-  { cmd: 'help [<topic>] [--all]',       desc: 'Topic-grouped help; --all prints every command; --search <term> filters.', topic: 'core' },
+  { cmd: 'help [<topic>|--all|--search <term>]', desc: 'Topic-grouped help; --all prints every command; --search <term> filters.', topic: 'core' },
   { cmd: 'version',                      desc: 'Print the installed ashlr version (aliases: --version, -v).', topic: 'core' },
 
   { cmd: 'run "<goal>" [opts]',          desc: 'Decompose goal into tasks; execute via local model (Ollama/LM Studio).', topic: 'run' },
@@ -742,7 +742,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'digest --notify',              desc: 'Also deliver the digest via a configured Slack/Discord webhook (OPT-IN; no-op when unconfigured).', topic: 'autonomy' },
 
   { cmd: 'queue report --events <file> [--json]', desc: 'Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.', topic: 'observability' },
-  { cmd: 'queue add|claim|done|block|list|import|export', desc: 'Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.', topic: 'autonomy' },
+  { cmd: 'queue add|claim|done|block|replay|list|import|export', desc: 'Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.', topic: 'autonomy' },
   { cmd: 'issues [--retry] [--dir <queue-directory>] [--json]', desc: 'Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.', topic: 'autonomy' },
   { cmd: 'signals [--json]', desc: 'Read real repository adoption signals.', topic: 'observability' },
   { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
@@ -779,7 +779,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'gh pr create',                 desc: 'Create a PR via gh CLI — explicit + confirm-gated (the only gh mutation).', topic: 'integrations' },
   { cmd: 'vercel <ls|logs>',             desc: 'Read recent Vercel deployments or latest build logs (read-only).', topic: 'integrations' },
   { cmd: 'wire [claude|codex|cursor|all]', desc: 'Wire ashlr MCP gateway into editor config(s); defaults to detected editors.', topic: 'integrations' },
-  { cmd: 'wire status [claude|codex|cursor|all]', desc: 'Read-only report of whether each editor is wired to the ashlr gateway.', topic: 'integrations' },
+  { cmd: 'wire status [claude|codex|cursor|gemini|all]', desc: 'Read-only report of whether each editor is wired to the ashlr gateway.', topic: 'integrations' },
   { cmd: 'wire --claude-md',             desc: 'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).', topic: 'integrations' },
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
