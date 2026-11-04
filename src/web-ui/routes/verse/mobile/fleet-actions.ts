@@ -74,3 +74,14 @@ export function runFleetAction(action: Extract<FleetPrimaryAction, { kind: 'daem
     },
   });
 }
+
+/** Persist an owner hold through the existing Hub route and remote step-up. */
+export async function holdApprovalRepo(repo: string): Promise<void> {
+  const token = getMutationToken();
+  if (!token) throw new VerseControlLockedError();
+  await apiPost('/api/verse/fleet/live', {
+    action: 'pause-repo', repo, reason: 'Held for review from the phone approval panel.',
+  }, token);
+  touchMutationHold();
+  refreshFleetReads();
+}
