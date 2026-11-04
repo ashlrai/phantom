@@ -233,5 +233,6 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'workers': () => import('./fleet-workers.js'),
   'worktree-stale': () => import('./fleet-worktree-stale.js'),
   'worktrees': () => import('./fleet-worktrees.js'),
+  'wt-cache': () => import('./fleet-wt-cache.js'),
   'wt-reap': () => import('./fleet-wt-reap.js'),
 };
