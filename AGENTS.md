@@ -132,3 +132,12 @@ Connector profiles: `phm connectors add|list|remove|show|import --json` manages
 `~/.phantom/connectors/profile.toml`; see [connector profiles](docs/CONNECTORS.md).
 Use vault names only. Import withholds inline credentials; Codex requires a
 lane-owned CODEX_HOME under `~/.ashlr-runs`, never `~/.codex`.
+
+## Chief-of-staff intake
+
+See [docs/COS.md](docs/COS.md) for `phm cos ask "Prepare a weekly project brief" --channel cli --json`
+and `phm cos status <id> --json`. The handler is implemented; top-level CLI and
+desktop custom-sink registration require an explicit named-file scope extension.
+Intake jobs use `phm queue`; `done --result <text> --json` drafts the reply and
+surfaces a needs-you item. Outbound results require explicit approval of the
+displayed draft digest. Do not treat a queued job or result draft as send authority.

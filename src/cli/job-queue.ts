@@ -3,12 +3,14 @@ import { parseArgs } from 'node:util';
 import { importMarkdown } from '../core/queue/markdown.js';
 import { QueueStore } from '../core/queue/store.js';
 import { validateQueue, type QueueDocument } from '../core/queue/schema.js';
+import { draftCosResult } from '../core/cos/intake.js';
+import { dirname } from 'node:path';
 
 const HELP = `Usage: phm queue <command> [--dir <queue-directory>] [--json]
   add <id> --priority P0 --pool <pool> --tier <tier> --repo <repo>
       --scope <text> --acceptance <text> [--deps <id,id>]
   claim <id> --owner <worker>
-  done <id> --owner <worker> [--pr-url <https-url>]
+  done <id> --owner <worker> [--pr-url <https-url>] [--result <text>]
   block <id> --owner <worker> --reason <text>
   replay --failed [--since <iso>] [--query <text>]
       [--mode replay_failed|replay_failed_and_dependents] [--dry-run]
@@ -22,7 +24,7 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
   try {
     const { values: parsedValues, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
       failed: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, json: { type: 'boolean' }, md: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
-      ...Object.fromEntries(['since', 'query', 'mode', 'dir', 'priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'owner', 'pr-url', 'reason'].map(key => [key, { type: 'string' as const }])),
+      ...Object.fromEntries(['since', 'query', 'mode', 'dir', 'priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'owner', 'pr-url', 'reason', 'result'].map(key => [key, { type: 'string' as const }])),
     } });
     const values: Record<string, string | boolean | undefined> = parsedValues;
     json = values.json === true;
@@ -30,7 +32,7 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
     const [command, operand] = positionals;
     const allowed: Record<string, string[]> = {
       add: ['priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps'], claim: ['owner'],
-      replay: ['failed', 'since', 'query', 'mode', 'dry-run'], done: ['owner', 'pr-url'], block: ['owner', 'reason'], list: [], import: [], export: ['md'],
+      replay: ['failed', 'since', 'query', 'mode', 'dry-run'], done: ['owner', 'pr-url', 'result'], block: ['owner', 'reason'], list: [], import: [], export: ['md'],
     };
     if (!Object.hasOwn(allowed, command)) throw new Error(`Unknown queue command: ${command}`);
     if (positionals.length !== (['replay', 'list', 'export'].includes(command) ? 1 : 2)) throw new Error('Unexpected or missing operand');
@@ -48,7 +50,15 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
         result = await store.replay({ since: values.since as string | undefined, query: values.query as string | undefined, mode: values.mode as import('../core/queue/replay.js').ReplayOptions['mode'], dryRun: values['dry-run'] === true }); break;
       case 'add': result = await store.add({ id: operand, status: 'READY', priority: required('priority'), pool: required('pool'), tier: required('tier'), repo: required('repo'), scope: required('scope'), acceptance: required('acceptance'), deps: typeof values.deps === 'string' ? values.deps.split(',') : [], claims: [] }); break;
       case 'claim': result = await store.claim(operand, required('owner')); break;
-      case 'done': result = await store.finish(operand, required('owner'), { prUrl: typeof values['pr-url'] === 'string' ? values['pr-url'] : undefined }); break;
+      case 'done': {
+        if (operand.startsWith('cos-')) {
+          const job = (await store.read()).jobs.find(job => job.id === operand);
+          if (!job || job.status !== 'CLAIMED' || job.claims.at(-1)?.owner !== required('owner')) throw new Error('An active claim owned by --owner is required');
+          if (values['pr-url']) throw new Error('Chief-of-staff completion requires a result, not a PR handoff');
+          await draftCosResult(operand, required('result'), dirname(store.directory));
+        } else if (values.result) throw new Error('--result requires a chief-of-staff job');
+        result = await store.finish(operand, required('owner'), { prUrl: typeof values['pr-url'] === 'string' ? values['pr-url'] : undefined }); break;
+      }
       case 'block': result = await store.finish(operand, required('owner'), { reason: required('reason') }); break;
       case 'import': {
         const text = await readFile(operand, 'utf8');
