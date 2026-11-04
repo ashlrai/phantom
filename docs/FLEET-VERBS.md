@@ -35,6 +35,7 @@
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |
 | real-supply | `src/cli/fleet-real-supply.ts` | Read-only live supply for the planner: Dependabot alerts, red scheduled suites and open issues across the seven repos, plus local registry↔docs drift signals | no |
 | red-merges | `src/cli/fleet-red-merges.ts` | Read-only per-hour rollup of merges landed on red vs green checks per lane, from metrics/jobs.jsonl outcome rows joined to launches by job id; unread ledger prints unknown | no |
+| resources | `src/cli/fleet-resources.ts` | Read-only per-lane resource window from queue/slots.json and queue/resources.json: one line per lane with target, used_frac (or "unset, router assumes 0.5") and reset time; marks `skipped` at used_frac 1 or more and `unseen` when a lane with target above 0 has no entry; exit 1 on any unseen lane | no |
 | runs-read | `src/cli/fleet-runs-read.ts` | Reads runs dir state, leader journal and parked queue | no |
 | ship-gap | `src/cli/fleet-ship-gap.ts` | Read-only ship-gap report for the seven approved repos; drift past newest version tag | no |
 | stray-slots | `src/cli/fleet-stray-slots.ts` | Read-only host evidence: one lost slot per finished job with leftover processes | no |
