@@ -4,7 +4,7 @@ import { NEEDS_WAIT_GROUP_MAX_IDS, validateNeedsWaitGroup, waitNeedsMasonGroup, 
 const usage = 'Usage: ashlr fleet needs-wait-group <nm-id>... --timeout-ms N [--poll-ms N] [--runs-dir DIR] [--stop-file PATH] [--json]';
 export async function cmdFleetNeedsWaitGroup(args: string[], deps: Partial<Pick<NeedsWaitGroupOptions, 'now' | 'sleep' | 'budgetSleep' | 'signal' | 'stopExists' | 'stopSleep'>> & { emit?: (line: string) => void } = {}): Promise<number> {
   const emit = deps.emit ?? console.log;
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { emit(usage); return 0; }
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { emit(`${usage}\nSIGINT or SIGTERM cancels unresolved items and exits 130.`); return 0; }
   const invalid = (): number => { process.stderr.write(`error: invalid arguments\n${usage}\n`); return 2; };
   const ids: string[] = [];
   let timeoutMs = 0, pollMs = 1000, runsDir: string | undefined, stopFile: string | undefined, json = false, i = 0;
@@ -25,7 +25,17 @@ export async function cmdFleetNeedsWaitGroup(args: string[], deps: Partial<Pick<
     if (arg === '--timeout-ms') timeoutMs = n; else pollMs = n;
   }
   if (!timeoutMs || !validateNeedsWaitGroup(ids, timeoutMs, pollMs)) return invalid();
-  const { outcome, items } = await waitNeedsMasonGroup({ ids, timeoutMs, pollMs, runsDir, now: deps.now, sleep: deps.sleep, budgetSleep: deps.budgetSleep, signal: deps.signal, stopFile, stopExists: deps.stopExists, stopSleep: deps.stopSleep });
-  emit(json ? JSON.stringify({ outcome, items }) : [`${outcome} (${items.length} ids)`, ...items.map(it => `${it.status} ${it.id}`)].join('\n'));
-  return outcome === 'resolved' ? 0 : 1;
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  process.on('SIGINT', abort); process.on('SIGTERM', abort);
+  deps.signal?.addEventListener('abort', abort, { once: true });
+  try {
+    if (deps.signal?.aborted) abort();
+    const { outcome, items } = await waitNeedsMasonGroup({ ids, timeoutMs, pollMs, runsDir, now: deps.now, sleep: deps.sleep, budgetSleep: deps.budgetSleep, signal: controller.signal, stopFile, stopExists: deps.stopExists, stopSleep: deps.stopSleep });
+    emit(json ? JSON.stringify({ outcome, items }) : [`${outcome} (${items.length} ids)`, ...items.map(it => `${it.status} ${it.id}`)].join('\n'));
+    return outcome === 'resolved' ? 0 : outcome === 'cancelled' ? 130 : 1;
+  } finally {
+    process.off('SIGINT', abort); process.off('SIGTERM', abort);
+    deps.signal?.removeEventListener('abort', abort);
+  }
 }
