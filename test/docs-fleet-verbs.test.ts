@@ -13,6 +13,7 @@ import * as assert from 'node:assert';
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli');
 
 const VERBS = [
+  'admission',
   'backlog',
   'bet-trace',
   'brains',

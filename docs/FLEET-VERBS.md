@@ -4,6 +4,7 @@
 
 | Verb | File | Reads or does | Writes anything? |
 |------|------|---------------|------------------|
+| admission | `src/cli/fleet-admission.ts` | Read-only global cap, running, load and admit reason from queue/status.json, plus each lane's running, target, queued, held and a plain reason (held, at target, blocked by the global cap, or ok). Red, exit 1, when any lane is blocked by the global cap with 5 or more queued | no |
 | backlog | `src/cli/fleet-backlog.ts` | Read-only triage of the open-PR merge backlog | no |
 | bet-trace | `src/cli/fleet-bet-trace.ts` | Offline supervisor-command reconciliation; no dispatch or mutation authority | no |
 | brains | `src/cli/fleet-brains.ts` | Read-only last-action view of each fleet brain from the dispatch-events tail; stale past 90 minutes, missing log is unknown | no |
