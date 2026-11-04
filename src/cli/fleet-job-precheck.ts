@@ -7,6 +7,7 @@ import {
   JOB_PRECHECK_BATCH_MAX,
   precheckJobBatch,
   type JobPrecheckBatchCounts,
+  type JobPrecheckCollision,
   type JobPrecheckReport,
 } from '../core/fleet/job-precheck-batch.js';
 import { validJobId } from '../core/fleet/job-path-history.js';
@@ -110,9 +111,10 @@ async function runPrecheckBatch(
   });
   const results = result.entries.map((entry) =>
     entry.report ? { file: entry.file, ...entry.report } : { file: entry.file, error: entry.error });
-  const safe = sanitizePublicJson({ schema: 'fleet.job-precheck-batch.v1', ref, resolvedRef, results, counts: result.counts }) as {
+  const safe = sanitizePublicJson({ schema: 'fleet.job-precheck-batch.v1', ref, resolvedRef, results, counts: result.counts, collisions: result.collisions }) as {
     results: Array<{ file: string; error?: string } & Partial<JobPrecheckReport>>;
     counts: JobPrecheckBatchCounts;
+    collisions: JobPrecheckCollision[];
   };
   if (json) log(JSON.stringify(safe));
   else {
@@ -124,6 +126,9 @@ async function runPrecheckBatch(
         for (const fact of entry.facts ?? []) log(factLine(fact));
         log(`verdict: ${entry.verdict}`);
       }
+    }
+    for (const collision of safe.collisions) {
+      log(`collision (evidence only): ${collision.path} — ${collision.files.join(", ")}`);
     }
     const counts = safe.counts;
     log(`batch: fresh=${counts.fresh} partly-on-master=${counts['partly-on-master']} ` +
@@ -140,7 +145,7 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     log(`${usage}\nNames src, test, docs, schema and scripts files in the draft, skipping Do not edit and Never touch lines. Exit 3 when every non-test src file is already on the ref and its last commit subject contains bridge(RQ-...). Exit 0 when the draft is fresh or only partly on the ref. Exit 2 on a read or git failure.\n` +
       `Use - for one UTF-8 draft on stdin (maximum 8000 bytes; nonempty). Cannot combine with --batch.\n` +
       `--job-id requires an exact parsed identity in each non-test source path’s last commit. Unknown or unmatched evidence does not rule out earlier commits; a match does not establish semantic correctness. Cannot combine with --batch.\n` +
-      `--batch takes 1-${JOB_PRECHECK_BATCH_MAX} draft paths and reports each in input order over a shared fact cache, so a path several drafts name is probed once. A draft that cannot be read or whose git probe fails is reported as an error for that draft and the batch continues; errors are never called fresh. After the per-draft reports a count line tallies fresh, partly-on-master, likely-done and errors. Batch exits 2 when any draft errored, else 3 when any draft is likely-done, else 0. Read-only: never deletes files, launches jobs or writes queue state.`);
+      `--batch takes 1-${JOB_PRECHECK_BATCH_MAX} draft paths and reports each in input order over a shared fact cache, so a path several drafts name is probed once. A draft that cannot be read or whose git probe fails is reported as an error for that draft and the batch continues; errors are never called fresh. Collisions list paths shared by successful drafts and their filenames as evidence only; JSON includes a collisions array. Collisions do not change the exit status. After the per-draft reports a count line tallies fresh, partly-on-master, likely-done and errors. Batch exits 2 when any draft errored, else 3 when any draft is likely-done, else 0. Read-only: never deletes files, launches jobs or writes queue state.`);
     return 0;
   }
   let ref = 'origin/master';
