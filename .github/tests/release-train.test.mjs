@@ -37,7 +37,7 @@ function transpile(dir) {
 
 /** In-memory GitHub: refs, releases and assets behind the exact API surface the scripts use. */
 function remote() {
-  const refs = new Map(), releases = new Map(), assets = new Map();
+  const refs = new Map(), releases = new Map(), assets = new Map(), descendants = new Set();
   let nextId = 100; const calls = [];
   const notFound = () => { const e = new Error('HTTP 404'); e.status = 404; return e; };
   const latestRelease = () => [...releases.values()].filter(r => !r.draft).sort((a, b) => b.id - a.id)[0] ?? null;
@@ -48,9 +48,10 @@ function remote() {
     if (path === `repos/${REPO}`) return repository;
     if (seg[3] === 'git' && seg[4] === 'ref') { const ref = refs.get(seg.slice(5).join('/')); if (!ref) throw notFound(); return ref; }
     if (seg[3] === 'git' && seg[4] === 'tags') { const tag = refs.get(`tags/${seg[5]}`); if (!tag) throw notFound(); return tag; }
+    if (seg[3] === 'compare') { const [base, head] = seg[4].split('...'); return {status: base === head ? 'identical' : descendants.has(`${base}...${head}`) ? 'ahead' : 'diverged'}; }
     if (seg[3] === 'releases' && seg[4] === 'tags') { const r = [...releases.values()].find(x => x.tag_name === seg[5]); if (!r) throw notFound(); return publicJson(r); }
     if (seg[3] === 'releases' && seg[4] === 'latest') { const r = latestRelease(); if (!r) throw notFound(); return publicJson(r); }
-    if (seg[3] === 'releases' && seg[5] === 'assets') { return [...(assets.get(Number(seg[4]))?.values() ?? [])].map(({data, ...rest}) => rest); }
+    if (seg[3] === 'releases' && seg[5] === 'assets') { return [...(assets.get(Number(seg[4]))?.values() ?? [])].map((asset) => { const rest = {...asset}; delete rest.data; return rest; }); }
     if (seg[3] === 'releases') { const r = releases.get(Number(seg[4])); if (!r) throw notFound(); return publicJson(r); }
     throw new Error(`unhandled read ${endpoint}`);
   };
@@ -93,7 +94,7 @@ function remote() {
     assert.ok(asset, `feed asset ${match[4]} absent`);
     return asset.data;
   };
-  return {refs, releases, assets, calls, read, write, upload, downloadRead, latestRelease};
+  return {refs, releases, assets, descendants, calls, read, write, upload, downloadRead, latestRelease};
 }
 
 function fixtureKeys() {
@@ -191,7 +192,7 @@ test('release train dry run: merged PR -> tag -> draft -> published feed -> upda
   // 2. Sanctioned publish leg: verification only (dry run) mutates nothing.
   const deps = {primitives: f.primitives, transport: transport(remoteRepo),
     verifySource: async (i, m) => { assert.equal(m.version, '3.29.17'); return {revision: f.revision}; },
-    verifyPublication: async ({manifestText, signature, githubRead, downloadRead}) => {
+    verifyPublication: async ({manifestText, signature, downloadRead}) => {
       const checked = f.manifestModule.verifyCompatibleUpdateManifest({manifestText, signature}, f.primitives.trust);
       assert.equal(checked.manifest.version, '3.29.17');
       const feed = JSON.parse((await downloadRead(`https://github.com/${REPO}/releases/latest/download/latest.json`)).toString());
@@ -259,6 +260,19 @@ test('tag+draft script is idempotent and refuses tag drift', async () => {
   assert.equal(second.release, 'exists');
   assert.equal(remoteRepo.calls.some(c => c[0] === 'write'), false, 'rerun rewrote the remote');
   await assert.rejects(createTagAndDraftRelease({repo: REPO, version: '3.29.17', sha: 'b'.repeat(40), read, write}), /different commit/);
+});
+
+test('tag+draft script completes the release for a later commit that descends from the tag', async () => {
+  const remoteRepo = remote(); const tagged = 'a'.repeat(40), later = 'c'.repeat(40);
+  const read = async ep => { try { return remoteRepo.read(ep); } catch (e) { if (e.status === 404) return null; throw e; } };
+  const write = (m, ep, fields) => remoteRepo.write(m, ep, fields);
+  remoteRepo.refs.set('tags/v3.29.17', {ref: 'refs/tags/v3.29.17', object: {type: 'commit', sha: tagged}});
+  remoteRepo.descendants.add(`${tagged}...${later}`);
+  const result = await createTagAndDraftRelease({repo: REPO, version: '3.29.17', sha: later, read, write});
+  assert.equal(result.release, 'draft-created');
+  assert.equal(result.sha, tagged);
+  assert.equal([...remoteRepo.releases.values()][0].target_commitish, tagged);
+  assert.equal(remoteRepo.calls.some(c => c[0] === 'write' && c[2].endsWith('/git/refs')), false, 'tag was rewritten');
 });
 
 test('workflows carry the merged-PR -> tag -> release wiring with no widened permissions', () => {
