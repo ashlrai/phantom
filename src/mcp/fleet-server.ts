@@ -25,6 +25,7 @@ import { MAX_FLEET_RESET_FOLLOW_MS, parseFleetResetFollowArgs, readFleetResetFol
   type FleetResetFollowArgs } from './fleet-reset-follow.js';
 import { MAX_FLEET_JOB_HISTORY, parseFleetJobHistoryArgs, readFleetJobHistory,
   type FleetJobHistoryArgs } from './fleet-job-history.js';
+import { parseFleetJobPrecheckArgs, readFleetJobPrecheck, type FleetJobPrecheckArgs } from './fleet-job-precheck.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -42,6 +43,7 @@ export interface FleetReaders {
   resetReleaseAwait?: (input: FleetResetReleaseAwaitArgs) => Promise<unknown>;
   resetFollow?: (input: FleetResetFollowArgs) => Promise<unknown>;
   jobHistory?: (input: FleetJobHistoryArgs) => Promise<unknown>;
+  jobPrecheck?: (input: FleetJobPrecheckArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -186,11 +188,25 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_job_precheck',
+      description: 'Check a proposed job draft against origin/master before writing a drop file: names the src, test, docs, schema and scripts files the draft mentions (skipping Do not edit and Never touch lines), reports whether each is present on origin/master with its last commit, and returns an advisory verdict — fresh, partly-on-master or likely-done — plus the test files that would be new. With an optional exact jobId, likely-done requires each named non-test src path\'s last commit to carry that exact bridge(…) id. Path presence or last-commit identity is recorded evidence and cannot prove semantic completion. The ref is fixed at origin/master with no fetch: no caller ref, path, root or cwd is accepted, the submitted markdown is never echoed, and this tool never writes a file, enqueues, deletes, launches or merges anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          markdown: { type: 'string', minLength: 1, description: 'Proposed job draft markdown, at most 8000 UTF-8 bytes. Analyzed only — never echoed back.' },
+          jobId: { type: 'string', description: 'Optional exact case-sensitive fleet job id such as RQ-EXAMPLE-1; when given, likely-done requires each named non-test src path\'s last commit to be a bridge(…) commit with exactly this id.' },
+        },
+        required: ['markdown'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_precheck') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -206,7 +222,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const resetReleaseAwait = name === 'fleet_reset_release_await' ? parseFleetResetReleaseAwaitArgs(args) : null;
     const resetFollow = name === 'fleet_reset_follow' ? parseFleetResetFollowArgs(args) : null;
     const jobHistory = name === 'fleet_job_history' ? parseFleetJobHistoryArgs(args) : null;
-    if (name === 'fleet_job_history' ? jobHistory === null :
+    const jobPrecheck = name === 'fleet_job_precheck' ? parseFleetJobPrecheckArgs(args) : null;
+    if (name === 'fleet_job_precheck' ? jobPrecheck === null :
+        name === 'fleet_job_history' ? jobHistory === null :
         name === 'fleet_reset_group_await' ? resetGroupAwait === null :
         name === 'fleet_reset_await' ? resetAwait === null :
         name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
@@ -231,6 +249,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_reset_follow' ? await (readers.resetFollow ?? readFleetResetFollow)(resetFollow as FleetResetFollowArgs)
         : name === 'fleet_reset_history' ? await (readers.resetHistory ?? readFleetResetHistory)(history as FleetResetHistoryArgs)
         : name === 'fleet_job_history' ? await (readers.jobHistory ?? readFleetJobHistory)(jobHistory as FleetJobHistoryArgs)
+        : name === 'fleet_job_precheck' ? await (readers.jobPrecheck ?? readFleetJobPrecheck)(jobPrecheck as FleetJobPrecheckArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
