@@ -293,6 +293,14 @@ interface Gesture {
   dragging: boolean;
 }
 
+interface SwipeHandlers {
+  onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void;
+  onPointerMove: (e: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: (e: ReactPointerEvent<HTMLElement>) => void;
+  onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => void;
+  onClickCapture: (e: ReactMouseEvent<HTMLElement>) => void;
+}
+
 /**
  * Horizontal drag on a card. Vertical movement first = a scroll: the gesture
  * is abandoned. Past SWIPE_COMMIT_FRACTION of the width on release = commit.
