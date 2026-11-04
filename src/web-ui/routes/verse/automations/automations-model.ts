@@ -38,6 +38,7 @@ export const TRIGGER_LABEL: Readonly<Record<AutomationTriggerKind, string>> = {
   schedule: 'Schedule (RRULE)',
   webhook: 'Local webhook (n8n, Linear bridge…)',
   telegram: 'Telegram /task',
+  watch: 'Watch a GitHub condition',
 };
 
 export interface AutomationForm {
