@@ -2537,6 +2537,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'verify': {
+        const { cmdVerify } = await import('./verify.js');
+        process.exitCode = await cmdVerify(rest);
+        break;
+      }
+
       case 'verify-safety': {
         const cmdVerifySafety = await loadVerifySafetyCmd();
         process.exitCode = await cmdVerifySafety(rest);
