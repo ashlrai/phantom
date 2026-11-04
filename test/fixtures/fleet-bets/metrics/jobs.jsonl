@@ -1,0 +1,11 @@
+{"event":"launch","job":"RQ-MERGEDQ8","lane":"codex","model":"gpt-x","ts":"2026-11-03T09:00:00-0500"}
+{"event":"outcome","job":"RQ-MERGEDQ8","state":"OPEN","url":"https://github.com/ashlrai/phantom/pull/1","ts":"2026-11-03T09:30:00-0500"}
+{"event":"outcome","job":"RQ-MERGEDQ8","state":"MERGED","url":"https://github.com/ashlrai/phantom/pull/1","ttm_s":1800,"ts":"2026-11-03T09:45:00-0500"}
+{"event":"launch","job":"RQ-OPENQ8","lane":"claude","model":"opus","ts":"2026-11-03T14:00:00Z"}
+{"event":"publish","job":"RQ-OPENQ8","url":"https://github.com/ashlrai/phantom/pull/2","ts":"2026-11-03T14:20:00Z"}
+{"event":"launch","job":"RQ-RUNQ8","lane":"codex","model":"gpt-x","ts":"2026-11-03T15:00:00Z"}
+{"event":"precheck_skip","job":"RQ-SKIPQ8","code":42,"ts":"2026-11-03T15:00:00Z"}
+{"event":"launch","job":"RQ-EMPTYQ8","lane":"codex","model":"gpt-x"}
+{"event":"outcome","job":"RQ-EMPTYQ8","state":"EMPTY"}
+not json
+{"event":"launch","job":"RQ-UNLISTEDQ8"}
