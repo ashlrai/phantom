@@ -149,3 +149,5 @@ Route hysteresis: see docs/ROUTE-HYSTERESIS.md. Dispatcher pool proposals keep a
 60-minute residency; only auth failure or zero quota permits early movement.
 Launched jobs never move. At most two moves per six hours; blocked moves log
 ROUTE_HOLD. Read accepted trailing-hour moves with phm route explain --json.
+
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
