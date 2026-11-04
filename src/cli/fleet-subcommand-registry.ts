@@ -64,6 +64,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'diff-scan': () => import('./fleet-diff-scan.js'),
   'dirty-landed': () => import('./fleet-dirty-landed.js'),
   'disk': () => import('./fleet-disk.js'),
+  'disk-trend': () => import('./fleet-disk-trend.js'),
   'dispatch-proof': () => import('./fleet-dispatch-proof.js'),
   'dispatch-summary': () => import('./fleet-dispatch-summary.js'),
   'doctor': () => import('./fleet-doctor.js'),
