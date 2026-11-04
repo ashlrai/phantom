@@ -1,0 +1,17 @@
+{
+  "capabilities": {
+    "inspect-repo": { "requires": [], "tools": ["cli.git-status"] },
+    "check-env": { "requires": [], "tools": ["cli.phm-doctor"] },
+    "validate": { "requires": ["inspect-repo", "check-env"], "tools": ["cli.npm-test"] },
+    "deploy": { "requires": ["validate"], "tools": ["cli.release-workflow"] },
+    "verify-prod": { "requires": ["deploy"], "tools": ["mcp.playwright-browser-navigate"] }
+  },
+  "tools": {
+    "cli.git-status": { "permissions": ["read"] },
+    "cli.phm-doctor": { "permissions": ["read", "secret-adjacent"] },
+    "cli.npm-test": { "permissions": ["write"] },
+    "cli.release-workflow": { "permissions": ["deploy"] },
+    "mcp.playwright-browser-navigate": { "permissions": ["read"] }
+  },
+  "tasks": { "deploy-feature": ["verify-prod"] }
+}
