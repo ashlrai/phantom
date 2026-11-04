@@ -51,6 +51,23 @@ import { isEmailNeedsCommand, runEmailNeedsCommand } from './email-needs-command
 import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
 import { renderNeedsCommandReply } from './telegram-needs-command.js';
+import { deliverCosResult } from '../cos/intake.js';
+
+/** Place an explicitly approved result in the existing mail transport outbox. */
+export async function deliverEmailCosResult(id: string, approvedDigest: string,
+  opts: Pick<EmailDropRecordOptions, 'runsDir' | 'outboxDir'>): Promise<void> {
+  await deliverCosResult(id, approvedDigest, async draft => {
+    const address = draft.origin.senderId.replace(/^email:/, '');
+    if (draft.origin.channel !== 'email' || !draft.origin.senderId.startsWith('email:') ||
+        !/^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+$/.test(address) || !opts.outboxDir ||
+        !SAFE_MESSAGE_ID.test(draft.origin.threadId ?? '')) throw new Error('No verified email origin');
+    mkdirSync(opts.outboxDir, { recursive: true, mode: 0o700 });
+    const headers = [`To: ${address}`, 'Subject: Phantom result',
+      `In-Reply-To: <${draft.origin.threadId}>`, `References: <${draft.origin.threadId}>`,
+      'Content-Type: text/plain; charset=utf-8'];
+    writeFileSync(join(opts.outboxDir, `${id}.result.eml`), `${headers.join('\r\n')}\r\n\r\n${draft.text}\r\n`, { flag: 'wx', mode: 0o600 });
+  }, opts.runsDir);
+}
 
 export interface ParsedEml {
   from: string;
@@ -472,8 +489,9 @@ export async function recordEmailToInbox(
       busRoot: opts.busRoot,
       acknowledge: reply,
     });
-    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
-    if (result.ok && result.ack.status === 'accepted' && parsed.messageId) {
+    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID,
+      ...(parsed.messageId && SAFE_MESSAGE_ID.test(parsed.messageId) ? { threadId: parsed.messageId } : {}) });
+    if (result.ok && parsed.messageId) {
       recordSeenMessageId(opts.runsDir, parsed.messageId);
     }
     return result;
