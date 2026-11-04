@@ -59,8 +59,6 @@ import { useResourcesUi } from './resources/resources-store.js';
 import { commandChord, detectKeyPlatform, formatChord, matchKey } from './shell/command-keys.js';
 import { useGuardState } from './shell/guard-store.js';
 import { gearUpdateSpoken } from './shell/gear-update-dot.js';
-import { useAutoSelfUpdate } from './sections/useAutoSelfUpdate.js';
-import { useSelfUpdateBadge } from './shell/self-update-badge.js';
 import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
 import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
@@ -317,8 +315,9 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
   if (paneId) openPaneInChat(paneId, sessionId);
 }
 
+const ShellUpdates = lazy(() => import('./shell/ShellUpdates.js'));
+
 export function VerseApp() {
-  useAutoSelfUpdate();
   useWindowTitle();
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
@@ -328,7 +327,7 @@ export function VerseApp() {
   const ciRead = useQuery(fleetCiRunsQuery, { freshMs: FLEET_CI_RUNS_POLL_MS });
   const refetchCi = useRefetch(fleetCiRunsQuery);
   usePollWhileVisible(refetchCi, FLEET_CI_RUNS_POLL_MS);
-  const updateLabel = useSelfUpdateBadge()?.label ?? null;
+  const [updateLabel, setUpdateLabel] = useState<string | null>(null);
   const { compact } = useViewport();
   const platform = useMemo(() => detectKeyPlatform(), []);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -605,7 +604,7 @@ export function VerseApp() {
               data-active={gearPage ? true : undefined}
               onClick={() => setTrayOpen((v) => !v)}
             >
-              <span className={styles.railIcon}><GearIcon /><Suspense fallback={null}><GearUpdateDot /></Suspense></span>
+              <span className={styles.railIcon}><GearIcon /><Suspense fallback={null}><ShellUpdates onLabel={setUpdateLabel} /><GearUpdateDot /></Suspense></span>
               {expanded || compact ? <span className={styles.railLabel}>{compact ? 'More' : 'Settings'}</span> : null}
             </button>
           </Tooltip>
