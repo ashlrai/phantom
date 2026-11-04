@@ -22,6 +22,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'behind-sweep': () => import('./fleet-behind-sweep.js'),
   'bet-audit': () => import('./fleet-bet-audit.js'),
   'bet-trace': () => import('./fleet-bet-trace.js'),
+  'bets': () => import('./fleet-bets.js'),
   'brains': () => import('./fleet-brains.js'),
   'bridge-install': () => import('./fleet-bridge-install.js'),
   'brief-send': () => import('./fleet-brief-send.js'),
