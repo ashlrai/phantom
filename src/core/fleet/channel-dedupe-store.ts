@@ -25,7 +25,7 @@ export interface ChannelDedupeStore {
   transaction<T>(work: (receipts: Map<string, ChannelReceipt>, commit: () => void | Promise<void>) => Promise<T>): Promise<T>;
 }
 
-export function createLocalChannelDedupeStore(runsDir = join(homedir(), '.ashlr-runs')): ChannelDedupeStore {
+export function createLocalChannelDedupeStore(runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs')): ChannelDedupeStore {
   const parent = resolve(runsDir, 'channel-receipts');
   const file = join(parent, 'receipts.json');
   return {
