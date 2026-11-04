@@ -44,6 +44,8 @@ import { standbyCardQuery } from '../fleet-host/standby-card-query.js';
 import { deriveHostGuardNeedsYou } from './host-guard-needs-you.js';
 import { deriveMainHealthNeedsYou } from './main-health-needs-you.js';
 import { mainHealthQuery } from './main-health-query.js';
+import { deriveStuckFixesNeedsYou } from './stuck-fixes-needs-you.js';
+import { stuckFixesQuery } from './stuck-fixes-query.js';
 import { selfTickNeedsYou } from './self-tick-needs-you.js';
 import { deriveStraySlotsNeedsYou } from './stray-slots-needs-you.js';
 import { straySlotsQuery } from './stray-slots-query.js';
@@ -248,6 +250,9 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
   const mainHealthRead = useQuery(mainHealthQuery);
   const refetchMainHealth = useRefetch(mainHealthQuery);
   usePollWhileVisible(refetchMainHealth, FLEET_NEEDS_YOU_POLL_MS, { enabled: mainHealthRead.data?.kind !== 'notInBuild' });
+  const stuckFixesRead = useQuery(stuckFixesQuery);
+  const refetchStuckFixes = useRefetch(stuckFixesQuery);
+  usePollWhileVisible(refetchStuckFixes, FLEET_NEEDS_YOU_POLL_MS, { enabled: stuckFixesRead.data?.kind !== 'notInBuild' });
   const memoryRead = useQuery(memoryGuardQuery);
   const refetchMemory = useRefetch(memoryGuardQuery);
   usePollWhileVisible(refetchMemory, FLEET_NEEDS_YOU_POLL_MS, { enabled: memoryRead.data !== null });
@@ -303,6 +308,10 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     () => deriveMainHealthNeedsYou(mainHealthRead.status === 'error' ? undefined : mainHealthRead.data),
     [mainHealthRead.data, mainHealthRead.status],
   );
+  const stuckFixItems = useMemo(
+    () => deriveStuckFixesNeedsYou(stuckFixesRead.status === 'error' ? undefined : stuckFixesRead.data),
+    [stuckFixesRead.data, stuckFixesRead.status],
+  );
   const selfTickItems = useMemo(
     () => selfTickNeedsYou(selfTickRead.status === 'error' || selfTickRead.data?.kind !== 'available' ? undefined : selfTickRead.data.data.last, nowMs),
     [selfTickRead.data, selfTickRead.status, nowMs],
@@ -313,8 +322,8 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
     [phoneRead.data, phoneRead.status]);
   // The stall row says more than the plain idle one for the same lane: it wins.
   const stalled = useMemo(() => new Set(laneStallItems.map(item => item.id)), [laneStallItems]);
-  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items.filter(item => !(item.id.startsWith('lane-idle:') && stalled.has(laneStallId(item.id.slice('lane-idle:'.length))))), ...hostGuardItems, ...strayItems, ...meterItems, ...laneStallItems, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
-    [result, stalled, hostGuardItems, strayItems, meterItems, laneStallItems, releaseItems, laneStreakItems, mainHealthItems, selfTickItems, ciItems, phoneItems, resetItems]);
+  const combined = useMemo(() => mergeNeedsYou({ ...result, items: [...result.items.filter(item => !(item.id.startsWith('lane-idle:') && stalled.has(laneStallId(item.id.slice('lane-idle:'.length))))), ...hostGuardItems, ...strayItems, ...meterItems, ...laneStallItems, ...releaseItems, ...laneStreakItems, ...mainHealthItems, ...stuckFixItems, ...selfTickItems, ...ciItems, ...phoneItems] }, resetItems),
+    [result, stalled, hostGuardItems, strayItems, meterItems, laneStallItems, releaseItems, laneStreakItems, mainHealthItems, stuckFixItems, selfTickItems, ciItems, phoneItems, resetItems]);
   const releaseUrls = useMemo(() => new Map<string, string | null>(releaseRead.data?.kind === 'available'
     ? releaseRead.data.data.repos.flatMap(({ repo, pr }) => pr?.blocked
       ? [[`release-blocked:${repo}:${pr.number}`, safeHref(pr.url, 'github.com')] as const] : []) : []), [releaseRead.data]);
