@@ -22,7 +22,7 @@ export interface FleetKeptReport {
   reasons: FleetKeptGroup[];
 }
 
-/** Reads one file as text. The jobs reader returns only the last 3000 lines. */
+/** Reads one file as text. */
 export type FleetKeptReader = (path: string) => Promise<string>;
 
 const USAGE = `Usage: ashlr fleet kept [--json]
@@ -69,8 +69,13 @@ export function summarizeFleetKept(kept: string[], ledgerText: string): FleetKep
   };
 }
 
-/** Last N lines of a text, so a plain file reader can be used for the ledger. */
-const tail = (text: string) => text.split('\n').slice(-FLEET_ABORTS_TAIL_LINES).join('\n');
+/** Parse queue/status.json text into kept ids; throws when the list is missing, malformed or unsafe. */
+export function parseKeptWorktrees(statusText: string): string[] {
+  const status: unknown = JSON.parse(statusText);
+  const list = (status as { kept_worktrees?: unknown } | null)?.kept_worktrees;
+  if (!Array.isArray(list) || !list.every(id => typeof id === 'string' && SAFE_ID.test(id))) throw new Error('Invalid kept list');
+  return [...new Set<string>(list)];
+}
 
 /** Read-only. The two injected readers are the only filesystem operations. */
 export async function cmdFleetKept(
@@ -88,11 +93,8 @@ export async function cmdFleetKept(
   }
   const json = args[0] === '--json';
   try {
-    const status: unknown = JSON.parse(await readStatus(join(homedir(), '.ashlr-runs', 'queue', 'status.json')));
-    const list = (status as { kept_worktrees?: unknown } | null)?.kept_worktrees;
-    if (!Array.isArray(list) || !list.every(id => typeof id === 'string' && SAFE_ID.test(id))) throw new Error('Invalid kept list');
-    const ledger = tail(await readJobs(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl')));
-    const report = summarizeFleetKept([...new Set<string>(list)], ledger);
+    const kept = parseKeptWorktrees(await readStatus(join(homedir(), '.ashlr-runs', 'queue', 'status.json')));
+    const report = summarizeFleetKept(kept, await readJobs(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl')));
     if (json) console.log(JSON.stringify(report));
     else if (report.reasons.length === 0) console.log('No kept worktrees.');
     else for (const g of report.reasons) console.log(`${g.reason} ${g.count} ${g.oldest.join(' ')}`);
