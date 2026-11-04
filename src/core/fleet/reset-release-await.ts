@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
+import { parseResetAwaitWatermarkMs } from './reset-evidence-await.js';
 import { readResetReleases, type ResetReleaseRecord } from './usage-reset-release.js';
 import { scrubPrivateText } from '../util/scrub.js';
 
@@ -23,15 +24,16 @@ export interface ResetReleaseAwaitDeps {
  * healthy fresh reset; the release loop can still fail to act on it, so a
  * supervisor that stopped there would resume work while the hold still stood.
  * This resolves 'recorded' only once queue/reset-releases.jsonl carries an
- * audit line for the exact lane stamped strictly after invocation and no later
- * than the current wall clock — older, unparsable or future-dated lines never
+ * audit line for the exact lane stamped strictly after invocation (or after a
+ * caller-persisted `after` watermark) and no later than the current wall
+ * clock — older, unparsable or future-dated lines never
  * satisfy it. 'recorded' is audit evidence only: it is not a verdict on
  * present lane health or successful dispatch, and this module never releases
  * a hold or launches work.
  */
 export async function awaitResetRelease(options: { lane: string; timeoutMs: number; pollMs?: number;
-  runsDir?: string; signal?: AbortSignal }, deps: ResetReleaseAwaitDeps = {}): Promise<ResetReleaseAwaitResult> {
-  const { lane, timeoutMs, pollMs = 60_000, runsDir, signal } = options;
+  runsDir?: string; signal?: AbortSignal; after?: string }, deps: ResetReleaseAwaitDeps = {}): Promise<ResetReleaseAwaitResult> {
+  const { lane, timeoutMs, pollMs = 60_000, runsDir, signal, after } = options;
   const result: ResetReleaseAwaitResult = { v: 1, authority: 'none', outcome: 'deadline',
     lane: scrubPrivateText(lane, { emails: true }), checks: 0, release: null };
   if (!isAwaitMs(timeoutMs, RESET_RELEASE_AWAIT_MAX_TIMEOUT_MS) || !isAwaitMs(pollMs, RESET_RELEASE_AWAIT_MAX_POLL_MS)) {
@@ -40,7 +42,16 @@ export async function awaitResetRelease(options: { lane: string; timeoutMs: numb
   const now = deps.now ?? (() => performance.now());
   const sleep = deps.sleep ?? abortableSleep;
   const wallNow = deps.wallNow ?? Date.now;
-  const start = wallNow();
+  // A caller-persisted `after` watermark becomes the exclusive lower audit
+  // boundary, so a release recorded while the supervisor was offline still
+  // counts. Default stays invocation time. Both bounds are validated before
+  // the first read; this never releases a hold or launches work.
+  let boundary = wallNow();
+  if (after !== undefined) {
+    const parsed = parseResetAwaitWatermarkMs(after);
+    if (parsed === null) { result.outcome = 'failed'; return result; }
+    boundary = parsed;
+  }
   const deadline = now() + timeoutMs;
   const controller = new AbortController();
   const cancel = (): void => controller.abort();
@@ -77,7 +88,7 @@ export async function awaitResetRelease(options: { lane: string; timeoutMs: numb
       const match = read.value.find(item => {
         if (item.lane !== lane) return false;
         const at = Date.parse(item.at);
-        return Number.isFinite(at) && at > start && at <= wall;
+        return Number.isFinite(at) && at > boundary && at <= wall;
       });
       if (match) {
         result.outcome = 'recorded';
