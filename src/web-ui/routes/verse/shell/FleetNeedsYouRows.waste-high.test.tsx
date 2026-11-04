@@ -19,7 +19,7 @@ const page = { v: 1, status: 'ok', nextCursor: 2, messages: [
     hoursToReset: 9.5, text: wasteText }) },
 ] };
 
-it('shows a waste-high row beside the meter-flat row and opens the Supply pane', async () => {
+it('shows a waste-high row beside the meter-flat row and opens the Lanes pane', async () => {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === '/api/verse/agent-bus/status') return Response.json(status);
@@ -30,7 +30,7 @@ it('shows a waste-high row beside the meter-flat row and opens the Supply pane',
   expect(await screen.findByText(wasteText)).toBeInTheDocument();
   expect(screen.getByText(meterText)).toBeInTheDocument();
   expect(screen.getByText('42% unused at reset · 9.5 h left')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Open Supply' })).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Open Lanes' })).toHaveLength(2);
   fireEvent.click(screen.getByText(wasteText));
-  expect(openDockPane).toHaveBeenCalledWith('fleet-supply');
+  expect(openDockPane).toHaveBeenCalledWith('fleet-lanes');
 });
