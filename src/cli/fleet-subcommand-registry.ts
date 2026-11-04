@@ -144,6 +144,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'login-health': () => import('./fleet-login-health.js'),
   'main-health': () => import('./fleet-main-health.js'),
   'main-red-age': () => import('./fleet-main-red-age.js'),
+  'main-red-notify': () => import('./fleet-main-red-notify.js'),
   'main-repair-time': () => import('./fleet-main-repair-time.js'),
   'mains': () => import('./fleet-mains.js'),
   'memory': () => import('./fleet-memory.js'),
