@@ -2004,6 +2004,11 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'route': {
+        const { cmdRoute } = await import('./route.js');
+        process.exitCode = await cmdRoute(rest);
+        break;
+      }
       case 'router-calibration': {
         const { cmdRouterCalibration } = await import('./router-calibration.js');
         process.exitCode = await cmdRouterCalibration(rest);
@@ -2601,6 +2606,12 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'connectors': {
+        const { cmdConnectors } = await import('./connectors.js');
+        process.exitCode = await cmdConnectors(rest);
         break;
       }
 
