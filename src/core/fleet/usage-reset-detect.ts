@@ -7,13 +7,15 @@ export interface UsageResetRow {
   lane: string; held: boolean; heldReason: string | null; heldUntil: string | null;
   holdSince: string | null; heldBy: 'autobackoff' | 'manual' | null;
   usedPct: number | null; readingAsOf: string | null; resetAt: string | null;
-  state: 'reset-detected' | 'hold-expired' | 'consistent' | 'stale-reading' | 'no-reading' | 'manual-hold' | 'open';
+  state: 'reset-detected' | 'reset-time-passed' | 'hold-expired' | 'consistent' | 'stale-reading' | 'no-reading' | 'manual-hold' | 'open';
   releasable: boolean; tell: string;
 }
 export interface UsageResetsV1 {
   v: 1; generatedAt: string; sourceState: 'healthy' | 'degraded' | 'missing'; rows: UsageResetRow[];
 }
 export const RESET_DETECT_USED_PCT_MAX = 25;
+/** A provider reset further than this behind 'now' is stale evidence, not a passed window. */
+export const RESET_TIME_PASSED_MAX_AGE_MS = 8 * 86_400_000;
 
 export function detectUsageResets(input: { lanes: LaneTargetRow[]; ledger: ResourceLaneRow[]; ledgerAsOf: string | null; nowMs: number }): UsageResetRow[] {
   const ledger = new Map(input.ledger.map(row => [row.lane, row]));
@@ -23,6 +25,15 @@ export function detectUsageResets(input: { lanes: LaneTargetRow[]; ledger: Resou
     const readingMs = Date.parse(asOf ?? '');
     const valid = Number.isFinite(readingMs) && readingMs <= input.nowMs;
     const usedPct = valid && typeof reading?.usedPct === 'number' && Number.isFinite(reading.usedPct) ? Math.max(0, reading.usedPct) : null;
+    const holdSinceMs = Date.parse(lane.lastChange ?? '');
+    const resetMs = Date.parse(reading?.resetAt ?? '');
+    // The provider's own reset time is evidence even when the reading carrying
+    // it predates the hold: a resetAt after the hold started and already
+    // behind us means the held window ended. A resetAt beyond the max age is
+    // stale data, and one at or before the hold belongs to the old window.
+    const resetTimePassed = valid && Number.isFinite(resetMs) && resetMs <= input.nowMs
+      && Number.isFinite(holdSinceMs) && resetMs > holdSinceMs
+      && input.nowMs - resetMs <= RESET_TIME_PASSED_MAX_AGE_MS;
     const heldBy = lane.held ? (/^autobackoff\b/i.test(lane.heldReason ?? '') ? 'autobackoff' : 'manual') : null;
     const row: UsageResetRow = {
       lane: lane.lane, held: lane.held, heldReason: lane.heldReason, heldUntil: lane.heldUntil,
@@ -36,6 +47,9 @@ export function detectUsageResets(input: { lanes: LaneTargetRow[]; ledger: Resou
     } else if (Date.parse(lane.heldUntil ?? '') <= input.nowMs) {
       row.state = 'hold-expired'; row.releasable = true;
       row.tell = `${lane.lane} has an expired autobackoff hold that can be released.`;
+    } else if (resetTimePassed) {
+      row.state = 'reset-time-passed'; row.releasable = true;
+      row.tell = `${lane.lane} passed its provider reset at ${new Date(resetMs).toISOString()}: release the hold.`;
     } else if (usedPct === null || !valid) {
       row.state = 'no-reading';
       row.tell = `${lane.lane} has no usable usage reading to evaluate its hold.`;
