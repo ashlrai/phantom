@@ -39,6 +39,18 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   {
+    usage: 'phm connectors list|show <id> [--json]',
+    description: 'Read validated connector metadata from ~/.phantom/connectors/profile.toml. Credential names only; never resolves secrets. Exit 0 success, 2 invalid profile/usage.',
+    safety: 'read',
+    jsonShape: 'ConnectorProfile {version:1, connectors[]} | {connector}',
+  },
+  {
+    usage: 'phm connectors add <id> --kind <kind> [--command <executable>|--url <url>] [--arg <argument>] [--scope <scope>] [--tool <tool>] [--lane <lane>] [--credential <binding=vault-name>] [--json] | phm connectors remove <id> [--json] | phm connectors import [--json]',
+    description: 'Write metadata only. Import projects safe client names/endpoints; withholds credential-bearing entries and reports skipped Codex lanes. Never reads ~/.codex. Exit 0 success, 1 partial import, 2 invalid input/IO.',
+    safety: 'append',
+    jsonShape: '{ok, connector? , removed?} | {imported, skipped} | {ok:false,error}',
+  },
+  {
     usage: 'phm capacity publish [--json]',
     description: 'Publish local subscription usage metadata once using this node’s local auth. Exit 0 fresh/published, 1 unavailable, 2 bad usage/configuration. No model execution.',
     safety: 'append',
@@ -439,6 +451,11 @@ export function agentDocsText(): string {
   lines.push('Elite fleet-state read tools (M169): ashlr_north_star (north-star metric,');
   lines.push('7d window), ashlr_self_heal (self-heal queue summary), ashlr_racing');
   lines.push('(model-racing distillation stats), ashlr_comms (comms channel status).');
+  lines.push('Fleet command tools: phantom_agent_bus_read, phantom_agent_bus_status,');
+  lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
+  lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
+  lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_orders,');
+  lines.push('phantom_fleet_graph, phantom_fleet_session. Tool discovery is not authorization.');
   lines.push('Website tools: ashlr_website_status reads publication mode, phase and holds;');
   lines.push('ashlr_website_publish requests the exact normally merged website revision with');
   lines.push('profile=phantom-public-web and expectedMerge=<40-hex SHA>. The commissioned host');
@@ -703,6 +720,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
+  { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json]', desc: 'Bring a channel up (config only, credentials stay in custody) or read the per-channel rollup.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },

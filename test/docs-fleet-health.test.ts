@@ -15,7 +15,12 @@ describe('fleet health guide', () => {
     expect(readFileSync(join(root, 'docs/README.md'), 'utf8')).toContain('](fleet-health.md)');
     expect(page).toContain('Unknown does not mean healthy');
     expect(page).toContain('not an `ok`/`warn`/`red` report');
-    expect(examples).toHaveLength(19);
+    expect(examples).toHaveLength(20);
+    const admission = page.split('\n').find(line => line.includes('fleet admission --json'));
+    expect(admission).toContain('Ok:');
+    expect(admission).toContain('Red:');
+    expect(admission).toContain('5 or more');
+    expect(admission).toContain('global cap');
     expect(page.split('\n').length).toBeLessThan(65);
   });
 
