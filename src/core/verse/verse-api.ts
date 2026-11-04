@@ -89,6 +89,7 @@
  * its directory and prompt block go into the private launch record only.
  */
 
+import { readBuildIdentity } from '../build-identity.js';
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
@@ -2025,6 +2026,10 @@ export async function handleVerseApi(
   if (!isVerseApiPath(path)) return false;
 
   try {
+    if (path === `${VERSE_API_PREFIX}/version` && method === 'GET') {
+      sendJson(res, 200, readBuildIdentity());
+      return true;
+    }
     if (path === `${VERSE_API_PREFIX}/fleet/grok-ultra` || path.startsWith(`${VERSE_API_PREFIX}/fleet/grok-ultra/`)) {
       if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
       return (await import('./grok-ultra-api.js')).handleGrokUltraApi(req, res, path, method);
