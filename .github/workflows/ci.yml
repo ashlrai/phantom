@@ -1,9 +1,11 @@
 name: CI
 
 on:
-  # PRs and the merge queue run only the seconds-fast gate (Mason, Oct 28 2026:
-  # merge fast, test later, fix forward daily). Full suites run once a day on
-  # master, on manual dispatch, and on reusable workflow_call.
+  # PRs and the merge queue run the fast gate plus only the tests affected by
+  # the diff and the Tier-1 set, Ubuntu only (RQ-CI-DAILYFULL-1; Mason, Oct 28
+  # 2026: merge fast, test later, fix forward daily). The full suites, with Mac
+  # and Windows, run once a day on master, on manual dispatch, and on reusable
+  # workflow_call, which is how a candidate build is qualified.
   pull_request:
     branches: ["**"]
     types: [opened, synchronize, reopened]
@@ -91,6 +93,59 @@ jobs:
           HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
           test/authority-codeowners-310b.test.ts
           test/authority-tier1-closure-310b.test.ts
+
+  affected:
+    # Per-PR and merge-queue tests: the Tier-1 set plus every backend test that
+    # can reach a changed file (.github/scripts/ci-affected-tests.mjs). Global
+    # inputs (package manifests, test runner config, test setup) run the whole
+    # backend suite instead. Ubuntu only; the daily run owns the full matrix.
+    name: Affected tests (${{ matrix.shard }}/3)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
+      ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the selector needs the merge base, and some real-io
+          # tests read pinned historical commits.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind candidate source
+        env:
+          ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-source-binding.mjs
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      # Same hosted-runner fixes as the `ci` job: native-profile and custody
+      # checks refuse a group-writable Node binary and the world-writable /tmp.
+      - name: Drop group/other write from the hosted Node runtime
+        shell: bash
+        run: |
+          node_bin="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
+          chmod go-w -- "$node_bin"
+      - name: Use a private temp root on Linux
+        shell: bash
+        run: |
+          private_tmp="/ashlr-private-tmp"
+          sudo install -d -m 0700 -o "$(id -un)" -g "$(id -gn)" -- "$private_tmp"
+          echo "TMPDIR=$private_tmp" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run affected and Tier-1 tests (hermetic)
+        run: node .github/scripts/ci-affected-tests.mjs --shard ${{ matrix.shard }}/3
 
   classify:
     name: Classify PR site lane
@@ -980,14 +1035,14 @@ jobs:
           test/m93.daemon-service-windows-integration.test.ts
 
   merge-gate:
-    # One stable required check. PR and merge_group: Secret-shape scan, Classify
-    # and Quick typecheck must pass, and every full lane must
-    # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
+    # One stable required check. PR and merge_group: Secret-shape scan, Classify,
+    # Quick typecheck and the Affected tests shards must pass, and every full
+    # lane must be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
     # selected full lanes. Exact dependency keys; anything skipped, cancelled or
     # missing that should have run is a failure.
     name: Merge Gate
     # macOS lanes are not needed: they never run on PR or merge_group (waiver).
-    needs: [secret-shape, classify, quick, site, docs, ci, windows-service-authority]
+    needs: [secret-shape, classify, quick, affected, site, docs, ci, windows-service-authority]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1000,7 +1055,7 @@ jobs:
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'windows-service-authority'];
-          const expected = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full];
+          const expected = ['secret-shape', 'classify', 'quick', 'affected', 'site', 'docs', ...full];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -1013,9 +1068,10 @@ jobs:
           const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
           const lanes = ['site', 'docs', ...full];
           const selected = lane === 'full' ? full : [lane];
-          // PR and merge queue: the independent quick check runs for every lane.
-          const chosen = fast ? ['quick'] : selected;
-          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name));
+          // PR and merge queue: the quick check and the affected-test shards run
+          // for every lane; the daily run owns the full suites.
+          const chosen = fast ? ['quick', 'affected'] : selected;
+          const excluded = ['quick', 'affected', ...lanes].filter((name) => !chosen.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
           const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];

@@ -39,11 +39,18 @@ the import graph, so a test that reads a changed file as text is not selected;
 name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and — unless the change is
-docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
-required check and fails unless exactly that selection ran and every full lane
-was skipped. No pull request or merge-queue commit may occupy a macOS or
+**Hosted CI.** A pull request or merge-queue commit runs the fast gate: the
+secret-shape scan, lane classification, the quick typecheck and
+`Affected tests (N/3)`, all on Ubuntu. The affected shards run the Tier-1 set
+(`test/authority-*`, the `test/h<N>*` invariants, `test/protected-paths-*` and
+the workflow pins) plus every backend test whose import graph or named data
+files reach the diff, chosen by `.github/scripts/ci-affected-tests.mjs`; a
+changed package manifest, tsconfig, Vitest config, test setup or test runner
+runs the whole backend suite instead, and `src/web-ui` changes add the web
+typecheck and suite. Run `ASHLR_CI_BASE_SHA=<sha> ASHLR_CI_HEAD_SHA=<sha> node
+.github/scripts/ci-affected-tests.mjs --shard 1/3 --dry-run` to see a
+selection. `Merge Gate` is the one required check and fails unless exactly that
+selection ran and every full lane was skipped. No pull request or merge-queue commit may occupy a macOS or
 Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
 native-broker lanes, and the Windows service authority run only in the daily

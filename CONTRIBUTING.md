@@ -198,7 +198,10 @@ only inactivity after Vitest's final summary is evidence of a possible leaked
 handle. The runner preserves the separate worker limits of the unit and
 serialized real-I/O lanes defined in [vitest.config.ts](vitest.config.ts).
 
-Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
+Pull requests and merge-queue commits run only the Tier-1 set and the tests the
+diff reaches (`Affected tests (N/3)`, Ubuntu only); see
+[Agent operations](docs/AGENT-OPERATIONS.md). The full workflow below runs once a
+day on master and on release candidates. Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
