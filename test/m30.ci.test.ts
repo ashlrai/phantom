@@ -139,7 +139,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'windows-service-authority'];
-    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full];
+    const keys = ['secret-shape', 'classify', 'quick', 'affected', 'site', 'docs', ...full];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
@@ -162,27 +162,36 @@ describe('M30 CI workflow', () => {
     };
     const ok = { 'secret-shape': 'success', classify: 'success' };
     for (const event of ['pull_request', 'merge_group']) {
-      expect(execute(event, 'full', { ...ok, quick: 'success' })).not.toThrow();
-      expect(execute(event, 'site', { ...ok, quick: 'success' })).not.toThrow();
+      const fast = { ...ok, quick: 'success', affected: 'success' };
+      expect(execute(event, 'full', fast)).not.toThrow();
+      expect(execute(event, 'site', fast)).not.toThrow();
       expect(execute(event, 'docs', ok)).toThrow();
-      expect(execute(event, 'docs', { ...ok, quick: 'success' })).not.toThrow();
+      expect(execute(event, 'docs', { ...ok, quick: 'success' })).toThrow();
+      expect(execute(event, 'docs', { ...ok, affected: 'success' })).toThrow();
+      expect(execute(event, 'docs', fast)).not.toThrow();
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
-        expect(execute(event, 'full', { ...ok, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...ok, quick: 'success', 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
-        expect(execute(event, 'full', { ...ok, quick: outcome }), `quick ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...ok, quick: outcome }), `docs quick ${outcome}`).toThrow();
-        expect(execute(event, 'full', { ...ok, quick: 'success', classify: outcome })).toThrow();
+        for (const lane of ['full', 'site', 'docs']) {
+          expect(execute(event, lane, { ...fast, affected: outcome }), `${lane} affected ${outcome}`).toThrow();
+        }
+      }
+      for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+        expect(execute(event, 'full', { ...fast, 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...fast, 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...fast, quick: outcome }), `quick ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...fast, quick: outcome }), `docs quick ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...fast, classify: outcome })).toThrow();
       }
       for (const name of ['site', 'docs', ...full]) {
-        expect(execute(event, 'full', { ...ok, quick: 'success', [name]: 'success' }), `${event} ran ${name}`).toThrow();
+        expect(execute(event, 'full', { ...fast, [name]: 'success' }), `${event} ran ${name}`).toThrow();
       }
-      for (const name of keys) expect(execute(event, 'full', { ...ok, quick: 'success' }, name), `missing ${name}`).toThrow();
-      expect(execute(event, 'bogus', { ...ok, quick: 'success' })).toThrow();
+      for (const name of keys) expect(execute(event, 'full', fast, name), `missing ${name}`).toThrow();
+      expect(execute(event, 'bogus', fast)).toThrow();
     }
     const complete = { ...ok, ci: 'success', 'windows-service-authority': 'success' };
     for (const event of ['schedule', 'workflow_dispatch']) {
       expect(execute(event, 'full', complete)).not.toThrow();
       expect(execute(event, 'full', { ...complete, quick: 'success' })).toThrow();
+      expect(execute(event, 'full', { ...complete, affected: 'success' })).toThrow();
       expect(execute(event, 'full', { ...complete, 'secret-shape': 'skipped' })).toThrow();
       for (const name of full) {
         for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
@@ -241,9 +250,9 @@ describe('M30 CI workflow', () => {
     };
     const fastEvents = ['pull_request', 'merge_group'];
     const lanes = ['full', 'site', 'docs'];
-    // The fast gate: secret-shape scan, classification, the quick typecheck and
-    // the required Merge Gate — Ubuntu runners only.
-    const approvedFast = ['secret-shape', 'classify', 'quick', 'merge-gate'];
+    // The fast gate: secret-shape scan, classification, the quick typecheck, the
+    // affected-test shards and the required Merge Gate — Ubuntu runners only.
+    const approvedFast = ['secret-shape', 'classify', 'quick', 'affected', 'merge-gate'];
     for (const [id, job] of Object.entries(jobs)) {
       const oses = runners(job);
       expect(oses.length, `${id} declares no runner`).toBeGreaterThan(0);
@@ -267,6 +276,7 @@ describe('M30 CI workflow', () => {
       for (const lane of lanes) {
         expect(evaluateIf(jobs['merge-gate']!.if, event, lane)).toBe(true);
         expect(evaluateIf(jobs.quick!.if, event, lane)).toBe(true);
+        expect(evaluateIf(jobs.affected!.if, event, lane)).toBe(true);
       }
     }
     // The reusable release call arrives under the caller's push event: `ci`
@@ -275,7 +285,7 @@ describe('M30 CI workflow', () => {
     for (const id of ['ci', 'secret-shape', 'classify', 'merge-gate']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full'), `push ${id}`).toBe(true);
     }
-    for (const id of ['quick', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
+    for (const id of ['quick', 'affected', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full'), `push ${id}`).toBe(false);
     }
     // The daily scheduled run and manual dispatch still own the complete matrix.
@@ -284,7 +294,24 @@ describe('M30 CI workflow', () => {
         expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(true);
       }
       expect(evaluateIf(jobs.quick!.if, event, 'full'), `${event} quick`).toBe(false);
+      expect(evaluateIf(jobs.affected!.if, event, 'full'), `${event} affected`).toBe(false);
     }
+  });
+
+  it('runs the affected-test shards on every PR and queue commit without suppressing failure (RQ-CI-DAILYFULL-1)', () => {
+    const { jobs } = parse(ciYml) as { jobs: Record<string, { name: string; strategy: { 'fail-fast': boolean; matrix: { shard: number[] } }; steps: { name?: string; run?: string; uses?: string; with?: { ref?: string; 'fetch-depth'?: number }; 'continue-on-error'?: boolean }[]; 'continue-on-error'?: boolean; needs?: unknown }> };
+    const affected = jobs.affected!;
+    expect(affected.name).toBe('Affected tests (${{ matrix.shard }}/3)');
+    expect(affected['continue-on-error']).toBeUndefined();
+    expect(affected.needs).toBeUndefined();
+    expect(affected.strategy.matrix.shard).toEqual([1, 2, 3]);
+    expect(affected.steps.some((step) => step['continue-on-error'])).toBe(false);
+    const checkout = affected.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.with?.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
+    expect(checkout?.with?.['fetch-depth']).toBe(0);
+    expect(affected.steps.at(-1)?.run).toBe('node .github/scripts/ci-affected-tests.mjs --shard ${{ matrix.shard }}/3');
+    // The Merge Gate waits for the shards, and the daily run never schedules them.
+    expect(jobs['merge-gate' as keyof typeof jobs]!.needs).toContain('affected');
   });
 
   it('runs both authority drift checks in the required fast job without regeneration or failure suppression', () => {
@@ -528,8 +555,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(22);
-    expect(new Set(names).size).toBe(22);
+    expect(names).toHaveLength(25);
+    expect(new Set(names).size).toBe(25);
+    expect(names.filter((name) => name.startsWith('Affected tests ('))).toEqual(['Affected tests (1/3)', 'Affected tests (2/3)', 'Affected tests (3/3)']);
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');
