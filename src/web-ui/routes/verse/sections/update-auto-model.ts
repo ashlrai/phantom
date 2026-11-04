@@ -27,7 +27,7 @@ export function readAutoUpdateAttempt(): AutoUpdateAttempt | null {
 export function writeAutoUpdateAttempt(a: AutoUpdateAttempt): boolean {
   try { localStorage.setItem(attemptKey, JSON.stringify(a)); return true; } catch { return false; }
 }
-type Reason = 'off' | 'no-status' | 'current' | 'cannot-fast-forward' | 'dirty' | 'applying' | 'native-busy' | 'workers-unknown' | 'workers-active' | 'recent-attempt';
+type Reason = 'off' | 'no-status' | 'current' | 'cannot-fast-forward' | 'dirty' | 'applying' | 'native-busy' | 'workers-unknown' | 'workers-active' | 'recent-attempt' | 'failed-commit';
 export type AutoDecision = { apply: true; reason: 'ready' } | { apply: false; reason: Reason; lastAttempt?: AutoUpdateAttempt };
 export function decideAutoUpdate({ policy, status, workers, nativePhase, lastAttempt, nowMs }: {
   policy: AutoUpdatePolicy; status: ServerObservation | undefined; workers: Workers | null | undefined;
@@ -43,6 +43,7 @@ export function decideAutoUpdate({ policy, status, workers, nativePhase, lastAtt
   if (nativePhase === 'downloading' || nativePhase === 'installing') return wait('native-busy');
   if (!workers || workers.sources.workers !== 'healthy' || workers.workers.some(w => w.ageSeconds === null || !Number.isFinite(w.ageSeconds) || w.ageSeconds < 0)) return wait('workers-unknown');
   if (workers.workers.some(w => w.ageSeconds! < policy.quietMinutes * 60)) return wait('workers-active');
+  if (lastAttempt?.originSha === status.originSha && lastAttempt.outcome === 'failed') return { apply: false, reason: 'failed-commit', lastAttempt };
   if (lastAttempt?.originSha === status.originSha && nowMs - lastAttempt.at < 30 * 60_000) return { apply: false, reason: 'recent-attempt', lastAttempt };
   return { apply: true, reason: 'ready' };
 }
@@ -50,6 +51,7 @@ export function describeAutoDecision(decision: AutoDecision, workers: Workers | 
   if (decision.reason === 'off') return 'Auto-update off';
   const last = !decision.apply ? decision.lastAttempt : undefined;
   if (decision.reason === 'recent-attempt' && last) return `Last auto-update ${new Date(Math.min(last.at, nowMs)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })} → ${last.originSha.slice(0, 7)} (${last.outcome})`;
+  if (decision.reason === 'failed-commit' && last) return `Auto-update paused: ${last.originSha.slice(0, 7)} failed to build. Waiting for a newer master.`;
   if (decision.reason === 'workers-active' && workers) return `Auto-update on · waiting: ${workers.workers.length} workers running, youngest ${Math.floor(Math.min(...workers.workers.map(w => w.ageSeconds ?? 0)) / 60)} min`;
   return `Auto-update on · ${decision.apply ? 'fleet quiet; updating' : `waiting: ${decision.reason.replaceAll('-', ' ')}`}`;
 }
