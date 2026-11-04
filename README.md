@@ -27,7 +27,7 @@ phm --version
 phm docs --agent --json
 ```
 
-This source tree targets version 3.29.17; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.0; check canonical release availability and exact matching assets before installation.
 Install the promoted npm `latest` release, or pin a published version from
 [GitHub releases](https://github.com/ashlrai/phantom/releases/latest).
 The source tree is not proof that npm has that version yet.
