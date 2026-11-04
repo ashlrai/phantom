@@ -480,6 +480,7 @@
     "src/core/fleet/dispatch-production-ledger/yield.ts",
     "src/core/fleet/dispatch-router.ts",
     "src/core/fleet/drop-job-writer.ts",
+    "src/core/fleet/engine-admission-view.ts",
     "src/core/fleet/engine-readiness.ts",
     "src/core/fleet/enrollment-cutoff-snapshot.ts",
     "src/core/fleet/event-bus.ts",
