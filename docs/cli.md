@@ -294,6 +294,7 @@ Every command, grouped by topic.
     seams                                                                              Cloud-ready seam diagnostic: every v2 store, active=local, cloud=gated (read-only).
     seams status                                                                       Same as `seams`: list seams + active impl; proves local-first + cloud gated on Mason.
     verify change --worktree <path> [--checks typecheck,unit,lint,secrets]             Run trusted worktree checks; JSON verdict and ten-line handoff.
+    engineering-receipt --events <file.jsonl> [--claims <file>] [--task <text>] [--json]  Engineering receipt from tool events (Evidence) vs model statements (Claims); needs PHANTOM_RECEIPTS=1.
     verify-safety                                                                      Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing.
     verify-pr                                                                          Verify an explicitly reviewed maintainer PR through the host-owned App check; no merge or deploy.
     preflight [--json]                                                                 Read-only first-activation readiness check: ready=true|false + blockers/warnings (model/enrollment/kill/daemon/writeable/sandbox/git/phantom/locus); mutates nothing.
