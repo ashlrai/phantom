@@ -1,0 +1,16 @@
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T11:00:00Z","url":"https://github.com/ashlrai/phantom/pull/1","ttm_s":100}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T10:00:00Z","url":"https://github.com/ashlrai/phantom/pull/2","ttm_s":300}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T09:00:00Z","url":"https://github.com/ashlrai/phantom/pull/3","ttm_s":0}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T08:00:00Z","url":"https://github.com/ashlrai/phantom/pull/4","ttm_s":-1}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T06:00:00Z","url":"https://github.com/ashlrai/phantom/pull/5","ttm_s":500}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T05:59:59Z","url":"https://github.com/ashlrai/phantom/pull/6"}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T12:00:01Z","url":"https://github.com/ashlrai/phantom/pull/7"}
+{"event":"outcome","state":"OPEN","ts":"2026-11-03T11:00:00Z","url":"https://github.com/ashlrai/phantom/pull/8"}
+{"event":"finish","state":"MERGED","ts":"2026-11-03T11:00:00Z","url":"https://github.com/ashlrai/phantom/pull/9"}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T10:00:00Z","url":"https://github.com/ashlrai/phantom/pull/1"}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T11:00:00Z","url":"https://github.com/other/locus/pull/1","repo":"wrong"}
+{"event":"outcome","state":"MERGED","ts":"bad","url":"https://github.com/ashlrai/phantom/pull/10"}
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T11:00:00Z","url":"https://example.com/ashlrai/phantom/pull/11"}
+null
+broken
+{"event":"outcome","state":"MERGED","ts":"2026-11-03T12:00:00","url":"https://github.com/ashlrai/phantom/pull/12"}

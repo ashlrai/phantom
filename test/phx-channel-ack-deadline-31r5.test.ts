@@ -119,7 +119,7 @@ describe('channel acknowledgement deadline', () => {
     const path = join(runsDir, 'leader', 'MASON-INBOX.md');
     const before = readFileSync(path, 'utf8');
     expect(before).toContain(message.body);
-    expect(before.match(/^## /gm)).toHaveLength(1);
+    expect(before.match(/^\d{4}-\d{2}-\d{2}T\S+ \[src:/gm)).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(10);
     const accepted = await first;
     const duplicate = await createChannelReceiver({ ...options, runsDir })({ ...message, channel: 'mobile' });
@@ -127,7 +127,10 @@ describe('channel acknowledgement deadline', () => {
     expect(duplicate).toMatchObject({ ok: true, ack: { channel: 'mobile', status: 'duplicate' } });
     if (!accepted.ok || !duplicate.ok) throw new Error('expected successful receipts');
     expect(duplicate.ack.dedupeKey).toBe(accepted.ack.dedupeKey);
-    expect(readFileSync(path, 'utf8')).toBe(before);
+    // A duplicate from another channel joins the existing entry (cross-channel dedupe) instead of adding one.
+    const after = readFileSync(path, 'utf8');
+    expect(after).toBe(before.replace(/(\[src:email id:\S+\]) /, '$1 [also:phone] '));
+    expect(after.match(/^\d{4}-\d{2}-\d{2}T\S+ \[src:/gm)).toHaveLength(1);
   });
 
   it.each([0, -1, 1.5, NaN, Infinity, 2_147_483_648, null])('rejects invalid timeout %s', (value) => {
