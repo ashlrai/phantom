@@ -71,6 +71,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'dispatch-proof': () => import('./fleet-dispatch-proof.js'),
   'dispatch-summary': () => import('./fleet-dispatch-summary.js'),
   'doctor': () => import('./fleet-doctor.js'),
+  'draft-check': () => import('./fleet-draft-check.js'),
   'drip': () => import('./fleet-drip.js'),
   'edit-collisions': () => import('./fleet-edit-collisions.js'),
   'email-outbox': () => import('./fleet-email-outbox.js'),

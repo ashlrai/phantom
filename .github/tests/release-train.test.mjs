@@ -50,7 +50,7 @@ function remote() {
     if (seg[3] === 'git' && seg[4] === 'tags') { const tag = refs.get(`tags/${seg[5]}`); if (!tag) throw notFound(); return tag; }
     if (seg[3] === 'releases' && seg[4] === 'tags') { const r = [...releases.values()].find(x => x.tag_name === seg[5]); if (!r) throw notFound(); return publicJson(r); }
     if (seg[3] === 'releases' && seg[4] === 'latest') { const r = latestRelease(); if (!r) throw notFound(); return publicJson(r); }
-    if (seg[3] === 'releases' && seg[5] === 'assets') { return [...(assets.get(Number(seg[4]))?.values() ?? [])].map(({data, ...rest}) => rest); }
+    if (seg[3] === 'releases' && seg[5] === 'assets') { return [...(assets.get(Number(seg[4]))?.values() ?? [])].map((asset) => { const rest = {...asset}; delete rest.data; return rest; }); }
     if (seg[3] === 'releases') { const r = releases.get(Number(seg[4])); if (!r) throw notFound(); return publicJson(r); }
     throw new Error(`unhandled read ${endpoint}`);
   };
@@ -191,7 +191,7 @@ test('release train dry run: merged PR -> tag -> draft -> published feed -> upda
   // 2. Sanctioned publish leg: verification only (dry run) mutates nothing.
   const deps = {primitives: f.primitives, transport: transport(remoteRepo),
     verifySource: async (i, m) => { assert.equal(m.version, '3.29.17'); return {revision: f.revision}; },
-    verifyPublication: async ({manifestText, signature, githubRead, downloadRead}) => {
+    verifyPublication: async ({manifestText, signature, downloadRead}) => {
       const checked = f.manifestModule.verifyCompatibleUpdateManifest({manifestText, signature}, f.primitives.trust);
       assert.equal(checked.manifest.version, '3.29.17');
       const feed = JSON.parse((await downloadRead(`https://github.com/${REPO}/releases/latest/download/latest.json`)).toString());
