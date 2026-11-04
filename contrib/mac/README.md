@@ -44,7 +44,9 @@ every tick, immediately after the autopilot's `budget-overrides.json` floor and
 ceiling are reapplied, so neither the overrides nor the ramp can lift a pool
 past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
 `status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
-admission --json` reports the same verdict read-only. `queue/LOADGATE_OFF` is the
+admission --json` reports the same verdict read-only. `ashlr fleet admission --json`
+reads the embedded block and says, per lane, whether work is held, at target,
+blocked by the global cap, or ok. `queue/LOADGATE_OFF` is the
 owner's off switch. The `codex-local` mid-tier cap is 4 while the gate is clear
 and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
