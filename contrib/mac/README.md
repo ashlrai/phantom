@@ -398,9 +398,16 @@ the live queue or GitHub:
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
 ```
 
-Restock and dispatch share `launch_precheck.py`. Restock treats precheck exit
-codes 10 through 13 as `DONE-NOOP` before writing a prompt, claim, or
-`ready.tsv` entry. Errors and timeouts keep the existing fail-open behavior;
+Restock and dispatch share `launch_precheck.py`. Only exit 10 with an exact
+job-matching merged/closed PR receipt proves completion. Restock also excludes
+exact jobs with recorded `MERGED` outcomes before creating prompts or claims;
+an explicit repository must match (legacy outcomes use fleet-wide job IDs).
+Restock keeps exit 11–13 rows READY with bounded retries recorded separately in
+`queue/restock-precheck-parked.json`. They consume neither lane slots nor target
+file/PR reservations, so actionable siblings can fill demand in the same pass.
+Each pass runs at most the larger of 20 prechecks or total lane demand.
+Retry and NOOP history is tied to task content; revised work retries immediately.
+Errors and timeouts keep the existing fail-open behavior;
 dispatch checks again at launch. In dispatch, legacy code 13 means acceptance
 unproven, not completion. The job remains in `ready.tsv` with per-job retry
 state in `queue/precheck-parked.json`: delays double from one minute to a
