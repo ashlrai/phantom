@@ -30,7 +30,7 @@
  */
 
 import { sendTelegramMessage, type InboundEvent, type TelegramSendOpts, type TelegramSendResult } from '../integrations/telegram.js';
-import { createChannelReceiver, type ChannelAck, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
+import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
 import { telegramFleetStatus, type TelegramFleetStatusDeps } from './telegram-fleet-status.js';
@@ -118,7 +118,7 @@ export async function recordTelegramToInbox(
         await send(`${formatChannelAck(ack)}\nInbox: ${preview}`, replyTo, cfg);
       },
     });
-    const result = await receive(message);
+    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
     if (!result.ok && result.reason !== 'sender-not-allowed') {
       await send(`Not recorded: ${result.reason}`, replyTo, cfg).catch(() => undefined);
     }
