@@ -501,6 +501,8 @@ function rootPackageIsPortable(
     'docs/FLEET-API.md',
     'docs/PHANTOM-BRAND.md',
     'docs/COMPANIONS.md',
+    'docs/CONNECTORS.md',
+    'docs/lanes/zai.md',
     'docs/MEMORY-FOUNDATION.md',
     'docs/MEMORY-EVALUATION.md',
     'docs/QUICKSTART.md',

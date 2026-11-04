@@ -43,6 +43,10 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/changelog-sync-bridge-04.test.ts', // Runs the changelog script in real child processes.
+  'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
+  'test/fleet-path-history-cli.test.ts', // Creates and reads real git history through the CLI.
+  'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
   'test/docs-fleet-health.test.ts', // Executes documented health commands through the real CLI.

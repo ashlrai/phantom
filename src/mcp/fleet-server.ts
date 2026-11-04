@@ -10,6 +10,12 @@ import {
   MAX_FLEET_BUS_INBOX_READ, parseFleetBusInboxArgs, readFleetBusInbox, type FleetBusInboxArgs,
 } from './fleet-inbox.js';
 import { readFleetLanes } from './fleet-lanes.js';
+import { readFleetUsageResets } from './fleet-usage-resets.js';
+import {
+  MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs,
+} from './fleet-reset-history.js';
+
+import { MAX_FLEET_RESET_AWAIT_MS, parseFleetResetAwaitArgs, readFleetResetAwait, type FleetResetAwaitArgs } from './fleet-reset-await.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -20,6 +26,9 @@ export interface FleetReaders {
   hostRuns?: () => Promise<unknown>;
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
   lanes?: () => Promise<unknown>;
+  usageResets?: () => Promise<unknown>;
+  resetHistory?: (input: FleetResetHistoryArgs) => Promise<unknown>;
+  resetAwait?: (input: FleetResetAwaitArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -88,11 +97,40 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_usage_resets',
+      description: 'Read the usage-reset detector evidence per lane: state (reset-detected, reset-time-passed, hold-expired, consistent, stale-reading, no-reading, manual-hold, open), held/heldBy/heldUntil, usedPct, readingAsOf, resetAt and releasable, with the overall sourceState. releasable is evidence only and never authorizes a release; it is false unless sourceState is healthy, and manual holds stay manual. Takes no arguments, reads default configured roots only, and never releases a hold, probes a provider or changes a lane.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_reset_await',
+      description: 'Wait for newly observed reset evidence from the configured default root. Observed is evidence only, not a release, lane health or successful launch. No provider probes or lane changes.',
+      inputSchema: { type: 'object', properties: {
+        lane: { type: 'string', pattern: '\\S', description: 'Exact case-sensitive nonblank lane.' },
+        timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS },
+        pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
+      }, required: ['lane', 'timeoutMs'], additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_reset_history',
+      description: 'Read the recorded autobackoff release history from the bounded audit log, newest first: lane, at, state, usedPct, readingAsOf and heldUntil per release. An exact case-sensitive lane filter scans up to 200 records before matching. This is recorded release history — completed past releases, never a live lane-health or launch-success verdict — and an empty records list means no recorded releases were returned, not that the source is healthy. Reads the configured default root only and never releases a hold, probes a provider or changes a lane.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_HISTORY, default: 20 },
+          lane: { type: 'string', description: 'Exact case-sensitive lane name filter, applied before the limit.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -102,7 +140,11 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const maxLimit = name === 'fleet_bus_hops' ? MAX_FLEET_BUS_HOPS : MAX_FLEET_TICKS;
     const limit = args['limit'] ?? 20;
     const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
-    if (name === 'fleet_bus_inbox' ? inbox === null :
+    const history = name === 'fleet_reset_history' ? parseFleetResetHistoryArgs(args) : null;
+    const resetAwait = name === 'fleet_reset_await' ? parseFleetResetAwaitArgs(args) : null;
+    if (name === 'fleet_reset_await' ? resetAwait === null :
+        name === 'fleet_bus_inbox' ? inbox === null :
+        name === 'fleet_reset_history' ? history === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
         (limited && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > maxLimit)) ||
         args['limit'] === null) {
@@ -114,6 +156,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
+        : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
+        : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
+        : name === 'fleet_reset_history' ? await (readers.resetHistory ?? readFleetResetHistory)(history as FleetResetHistoryArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
