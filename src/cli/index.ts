@@ -785,6 +785,12 @@ const loadOpenaiAgentsCmd = lazyCmd(
   'openai-agents command requires a current build of src/cli/openai-agents.ts.',
 );
 
+const loadAgentsCmd = lazyCmd(
+  () => import('./agents-bus-contract.js'),
+  (m) => m.runAgentsCli as Cmd,
+  'agents command requires a current build of src/cli/agents-bus-contract.ts.',
+);
+
 // ─── 3.15 Automations ───────────────────────────────────────────────
 const loadAutomationsCmd = lazyCmd(
   () => import('./automations.js'),
@@ -2756,6 +2762,13 @@ async function main(): Promise<void> {
       case 'openai-agents': {
         const cmdOpenaiAgents = await loadOpenaiAgentsCmd();
         process.exitCode = await cmdOpenaiAgents(rest);
+        break;
+      }
+
+      case 'agents': {
+        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        const cmdAgents = await loadAgentsCmd();
+        process.exitCode = await cmdAgents(rest);
         break;
       }
 
