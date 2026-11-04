@@ -9,7 +9,7 @@ import { scrubSecrets } from '../util/scrub.js';
 
 export interface CosOrigin { channel: InboundChannel; senderId: string; threadId?: string }
 export interface CosRoute { kind: 'cos-intake'; origin: CosOrigin }
-const root = (runsDir?: string): string => runsDir ?? join(homedir(), '.ashlr-runs');
+const root = (runsDir?: string): string => runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 const store = (runsDir?: string): QueueStore => new QueueStore(join(root(runsDir), 'queue'), 250);
 export const cosJobId = (dedupeKey: string): string => `cos-${dedupeKey.slice(0, 32)}`;
 
