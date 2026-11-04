@@ -41,6 +41,8 @@ export interface FleetPathHistoryArgs {
 export interface FleetPathHistoryDeps {
   /** Newest-first commits touching `path`, at most `maxCommits` rows. */
   log?: (path: string, maxCommits: number) => Promise<Array<{ sha: string; date: string; subject: string }>>;
+  /** Internal command seam for testing the production reader. */
+  git?: (args: string[]) => Promise<string>;
 }
 
 export interface FleetPathHistoryV1 {
@@ -51,6 +53,7 @@ export interface FleetPathHistoryV1 {
   note: string;
   path: string;
   ref: string;
+  resolvedRef: string | null;
   scanBound: number;
   scanned: number;
   scanMayBeTruncated: boolean;
@@ -96,21 +99,10 @@ export function parseFleetPathHistoryArgs(args: Record<string, unknown>): FleetP
   return { path, limit };
 }
 
-/**
- * The default evidence source: one bounded `git log` on the fixed ref with
- * literal pathspec semantics and end-of-options before the caller path, all
- * through an execFile argument array — no shell — under a hard timeout and
- * output cap. Subjects stay opaque here; pathJobHistory parses them.
- */
-const gitLog: NonNullable<FleetPathHistoryDeps['log']> = async (path, maxCommits) => {
-  const { stdout } = await exec('git', [
-    '--literal-pathspecs', 'log', `-n${maxCommits}`,
-    '--format=%H%x09%cI%x09%s', FLEET_PATH_HISTORY_REF, '--', path,
-  ], { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-  return stdout.split('\n').filter(Boolean).map(line => {
-    const [sha = '', date = '', ...subject] = line.split('\t');
-    return { sha, date, subject: subject.join('\t') };
-  });
+/** Execute bounded git commands without a shell. */
+const runGit = async (args: string[]): Promise<string> => {
+  const { stdout } = await exec('git', args, { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+  return stdout;
 };
 
 /**
@@ -121,12 +113,30 @@ const gitLog: NonNullable<FleetPathHistoryDeps['log']> = async (path, maxCommits
  * title cross this boundary, all passed through the shared public-JSON scrub.
  */
 export async function readFleetPathHistory(input: FleetPathHistoryArgs, deps: FleetPathHistoryDeps = {}): Promise<FleetPathHistoryV1> {
-  const log = deps.log ?? gitLog;
+  let resolvedRef: string | null = null;
+  let log = deps.log;
+  if (!log) {
+    const git = deps.git ?? runGit;
+    resolvedRef = (await git(['rev-parse', '--verify', `${FLEET_PATH_HISTORY_REF}^{commit}`])).trim();
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(resolvedRef)) throw new Error('Invalid resolved commit OID');
+    const oid = resolvedRef;
+    log = async (path, maxCommits) => {
+      const stdout = await git([
+        '--literal-pathspecs', 'log', `-n${maxCommits}`,
+        '--format=%H%x09%cI%x09%s', oid, '--', path,
+      ]);
+      return stdout.split('\n').filter(Boolean).map(line => {
+        const [sha = '', date = '', ...subject] = line.split('\t');
+        return { sha, date, subject: subject.join('\t') };
+      });
+    };
+  }
+  const readLog = log;
   const scanBound = input.limit * FLEET_PATH_HISTORY_SCAN_FACTOR;
   let scanned = 0;
   const jobs = await pathJobHistory(input.path, {
     log: async (path, limit) => {
-      const commits = await log(path, limit * FLEET_PATH_HISTORY_SCAN_FACTOR);
+      const commits = await readLog(path, limit * FLEET_PATH_HISTORY_SCAN_FACTOR);
       scanned = commits.length;
       return commits;
     },
@@ -134,7 +144,7 @@ export async function readFleetPathHistory(input: FleetPathHistoryArgs, deps: Fl
   return sanitizePublicJson({
     schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
     generatedAt: new Date().toISOString(), note: NOTE,
-    path: input.path, ref: FLEET_PATH_HISTORY_REF,
+    path: input.path, ref: FLEET_PATH_HISTORY_REF, resolvedRef,
     scanBound, scanned, scanMayBeTruncated: scanned >= scanBound,
     limit: input.limit, matchesTruncated: jobs.length === input.limit,
     jobs,
