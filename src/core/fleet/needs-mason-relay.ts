@@ -19,9 +19,11 @@ export async function resolveNeedsMasonWithInbox(
   const reply = typeof fields.reply === 'string' ? fields.reply.trim() : '';
   if (!result.ok || result.duplicate || !reply) return { ...result, inbox: 'skipped' };
   try {
+    const sourceLabel = typeof options.source === 'string' ? options.source
+      : (typeof fields.source === 'string' ? fields.source : 'Phantom desktop');
     const appended = await (options.appendInbox ?? appendInboxEntry)(
       `Re needs-you ${result.itemId} ("${(item?.text ?? '').slice(0, 160)}"): ${reply}`,
-      { runsDir, source: 'Phantom desktop', ...(options.now ? { now: () => new Date(options.now!()) } : {}) },
+      { runsDir, source: sourceLabel, ...(options.now ? { now: () => new Date(options.now!()) } : {}) },
     );
     return { ...result, inbox: appended.ok ? 'appended' : 'failed' };
   } catch {
