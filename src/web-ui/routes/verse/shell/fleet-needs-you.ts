@@ -36,7 +36,7 @@ export interface FleetNeedsYouItem {
   /** The plain next step, in operator language — never a path. */
   nextStep: string;
   target: FleetNeedsYouTarget;
-  open?: { kind: 'pane'; paneId: string } | { kind: 'terminal'; command: string } | { kind: 'copy'; command: string };
+  open?: { kind: 'pane'; paneId: string; lane?: string } | { kind: 'terminal'; command: string } | { kind: 'copy'; command: string };
 }
 
 export interface FleetNeedsYouResult {
@@ -141,7 +141,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
     if (!l.held) continue;
     items.push({
       id: `lane-held:${l.lane}`,
-      open: { kind: 'pane', paneId: 'fleet-lanes' },
+      open: { kind: 'pane', paneId: 'fleet-lanes', lane: l.lane },
       severity: 'attention',
       title: `Lane ${l.lane} is held`,
       detail: l.heldReason ?? 'No reason recorded',
@@ -162,7 +162,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
   if (heldForLimit && used != null && Number.isFinite(used) && used <= 25 && Number.isFinite(asOf) && asOf <= nowMs) {
     items.push({
       id: 'supply-personal-reset',
-      open: { kind: 'pane', paneId: 'fleet-lanes' },
+      open: { kind: 'pane', paneId: 'fleet-lanes', lane: 'codex-personal' },
       severity: personalLane.queued > 0 ? 'urgent' : 'attention',
       title: 'Personal Codex has reset; its lane is still held',
       detail: `Reads ${used}% as of ${formatDateTime(asOf, 'en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })} · ${personalLane.queued} jobs waiting`,
@@ -230,7 +230,7 @@ export function deriveFleetNeedsYou(snapshot: unknown, nowMs: number): FleetNeed
     if (l.running !== 0 || l.target <= 0 || l.queued <= 0 || l.held) continue;
     items.push({
       id: `lane-idle:${l.lane}`,
-      open: { kind: 'pane', paneId: 'fleet-lanes' },
+      open: { kind: 'pane', paneId: 'fleet-lanes', lane: l.lane },
       severity: 'attention',
       title: `Lane ${l.lane} is idle`,
       detail: `${l.queued} queued jobs but nothing is running.`,
