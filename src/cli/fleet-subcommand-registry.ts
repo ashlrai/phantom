@@ -38,6 +38,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'bus-work-loop': () => import('./fleet-bus-work-loop.js'),
   'bus-work-pool': () => import('./fleet-bus-work-pool.js'),
   'canary-ladder': () => import('./fleet-canary-ladder.js'),
+  'checks-red': () => import('./fleet-checks-red.js'),
   'ci-annotations': () => import('./fleet-ci-annotations.js'),
   'ci-duplicate-runs': () => import('./fleet-ci-duplicate-runs.js'),
   'ci-evidence': () => import('./fleet-ci-evidence.js'),
