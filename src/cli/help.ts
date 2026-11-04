@@ -455,7 +455,8 @@ export function agentDocsText(): string {
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_orders,');
-  lines.push('phantom_fleet_graph, phantom_fleet_session. Tool discovery is not authorization.');
+  lines.push('phantom_fleet_graph, phantom_fleet_session, phantom_fleet_verbs.');
+  lines.push('Tool discovery is not authorization.');
   lines.push('Website tools: ashlr_website_status reads publication mode, phase and holds;');
   lines.push('ashlr_website_publish requests the exact normally merged website revision with');
   lines.push('profile=phantom-public-web and expectedMerge=<40-hex SHA>. The commissioned host');

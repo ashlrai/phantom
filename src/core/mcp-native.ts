@@ -373,6 +373,15 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'phantom_fleet_verbs',
+    description: 'Read the local `ashlr fleet` verb catalog as fleet.verbs.v1 JSON: every registered subcommand with its usage and summary, optionally filtered by one grep word. Observation only; verbs are discovered, never executed.',
+    inputSchema: { type: 'object', properties: {
+      grep: { type: 'string', maxLength: 64 },
+    }, additionalProperties: false },
+    safety: 'read',
+    handler: async args => (await import('./fleet/fleet-verbs-tool.js')).fleetVerbsCatalog(args.grep as string | undefined),
+  },
+  {
     name: 'phm_proactive_agents_list', description: 'List personal-agent profiles and readiness. Profiles do not verify adapters or authorize spending.',
     inputSchema: { type: 'object', properties: { accountId: { type: 'string' }, provider: { type: 'string', pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 64 }, offset: { type: 'number' }, limit: { type: 'number' } }, additionalProperties: false },
     safety: 'read', handler: async args => (await import('./proactive/tools.js')).listProactiveProfiles(args),
@@ -1457,6 +1466,11 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('unservedOnly' in args && typeof args.unservedOnly !== 'boolean') ||
       ('limit' in args && (!Number.isSafeInteger(args.limit) || (args.limit as number) < 1 || (args.limit as number) > 100))
       ? 'invalid orders arguments' : null;
+  } else if (name === 'phantom_fleet_verbs') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).some(key => key !== 'grep') ||
+      ('grep' in args && (typeof args.grep !== 'string' || [...args.grep].length > 64))
+      ? 'invalid fleet verbs arguments' : null;
   } else if (name === 'phantom_agent_bus_read' || name === 'phantom_agent_bus_status') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const keys = Object.keys(args);
