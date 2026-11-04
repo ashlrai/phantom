@@ -201,7 +201,7 @@ const loadSkillsAuditWorkerCmd = lazyCmd(
 // ─── M49 fleet control plane + observability ──────────────────────────────────
 
 const loadFleetCmd = lazyCmd(
-  () => import('./fleet.js' as unknown as string),
+  () => import('./fleet-entry.js'),
   (m) => m.cmdFleet as Cmd,
   'fleet command requires src/cli/fleet.ts (M49 module not yet built).',
 );

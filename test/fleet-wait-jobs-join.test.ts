@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { getEventListeners } from 'node:events';
 import { getFleetJobDetail } from '../src/core/fleet/runs-job-detail.js';
 import { type FleetWaitJobsDeps } from '../src/cli/fleet-wait-jobs.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 // Exercise actual dispatcher routing while keeping timing and reads hermetic.
 const injected = vi.hoisted(() => ({ deps: {} as FleetWaitJobsDeps }));
@@ -145,7 +145,7 @@ describe('fleet wait-jobs bounded artifact join', () => {
   it('runs one real local child through the dispatcher with fake artifacts', async () => {
     await mkdir(join(dir, '.ashlr-runs'));
     await writeFile(join(dir, '.ashlr-runs', 'JOB-A.publish'), publication);
-    const moduleUrl = new URL('../src/cli/fleet.ts', import.meta.url).href;
+    const moduleUrl = new URL('../src/cli/fleet-entry.ts', import.meta.url).href;
     const script = `import { cmdFleet } from ${JSON.stringify(moduleUrl)}; process.exitCode = await cmdFleet(${JSON.stringify(args('JOB-A'))});`;
     const { stdout } = await promisify(execFile)(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
       env: { ...process.env, HOME: dir }, timeout: 20000,

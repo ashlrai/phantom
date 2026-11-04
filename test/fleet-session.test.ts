@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { followFleetSession, getFleetSession } from '../src/core/fleet/session.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 let queueDir: string;
 const job = 'RQ-SESSION';

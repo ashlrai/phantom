@@ -320,3 +320,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Route hysteresis](ROUTE-HYSTERESIS.md): 60-minute pool residency, immutable launched jobs, two moves per six hours, ROUTE_HOLD and phm route explain --json.
 
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+
+- [Tier-1 import chains](TIER1-WHY.md): `npx tsx scripts/tier1-why.ts <file> [--json]` explains a shortest authority import chain.

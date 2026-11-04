@@ -23,7 +23,7 @@ import {
   readDispatchProductionYieldDetailed,
   type DispatchProductionInvalidReasonCount,
 } from '../src/core/fleet/dispatch-production-ledger.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 let home: string;
 let previousAshlrHome: string | undefined;

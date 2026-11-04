@@ -151,3 +151,7 @@ Launched jobs never move. At most two moves per six hours; blocked moves log
 ROUTE_HOLD. Read accepted trailing-hour moves with phm route explain --json.
 
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+
+Tier-1 import diagnosis: npx tsx scripts/tier1-why.ts <file> [--json]
+Prints a shortest runtime import chain from a Tier-1 root, or unreachable.
+Guide: docs/TIER1-WHY.md. The ordinary test/tier1-apps-boundary.test.ts guards fleet apps isolation. Do not regenerate the protected snapshot.

@@ -29,7 +29,7 @@ vi.mock('../src/core/daemon/service.js', () => ({
 }));
 
 import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
 import { killSwitchOn, setKill } from '../src/core/sandbox/policy.js';
 import type { WebServerOptions } from '../src/core/types.js';

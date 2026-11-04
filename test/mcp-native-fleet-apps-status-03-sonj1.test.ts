@@ -1,9 +1,11 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as inventory from '../src/cli/fleet-apps-status.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
 import { FLEET_APPS } from '../src/core/verse/fleet-apps-api.js';
 
 const name = 'phantom_fleet_apps_status';
+const beforeRegistration = listNativeTools().map(tool => tool.name);
 const timestamp = '2026-11-01T18:09:00.000Z';
 const view = (available: boolean, degraded?: boolean): inventory.FleetAppsStatusView => ({
   v: 1, generatedAt: timestamp, available, ...(degraded === undefined ? {} : { degraded }),
@@ -13,6 +15,14 @@ const view = (available: boolean, degraded?: boolean): inventory.FleetAppsStatus
 afterEach(() => vi.restoreAllMocks());
 
 describe('native fleet apps status', () => {
+  it('installs entry tools explicitly and idempotently', () => {
+    expect(beforeRegistration.filter(tool => tool.startsWith('phantom_fleet_apps_'))).toEqual([]);
+    const before = listNativeTools();
+    registerFleetNativeTools();
+    registerFleetNativeTools();
+    expect(listNativeTools()).toEqual(before);
+    expect(before.filter(tool => tool.name.startsWith('phantom_fleet_apps_'))).toHaveLength(4);
+  });
   it('advertises a closed read-only tool and rejects arguments before reading', async () => {
     expect(listNativeTools().find(tool => tool.name === name)?.inputSchema).toEqual({ type: 'object', properties: {}, additionalProperties: false });
     expect(nativeToolSafety(name)).toBe('read');
@@ -58,3 +68,5 @@ describe('native fleet apps status', () => {
     expect(exec).toHaveBeenCalledTimes(8);
   });
 });
+
+registerFleetNativeTools();

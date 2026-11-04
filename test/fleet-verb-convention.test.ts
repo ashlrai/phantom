@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { afterEach, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 
 afterEach(() => vi.restoreAllMocks());

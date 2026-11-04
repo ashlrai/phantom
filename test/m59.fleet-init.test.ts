@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 function captureLog(): { lines: string[]; restore: () => void } {
   const lines: string[] = [];
