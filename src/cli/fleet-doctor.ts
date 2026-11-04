@@ -7,9 +7,10 @@ import { stuckPrs } from './fleet-stuck-prs.js';
 import { fleetWaste } from './fleet-waste.js';
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
 import { findStaleWorktrees, type FleetWorktreeStaleFs } from './fleet-worktree-stale.js';
-import { readdir, stat } from 'node:fs/promises';
+import { parseIdleLanes } from '../core/fleet/idle-lanes.js';
+import { readFile, readdir, stat } from 'node:fs/promises';
 
-const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, waste, worktrees) as ok, warn or red, with the reason. Exits 1 when any check is red, 2 on bad usage.';
+const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, waste, worktrees, lanes) as ok, warn or red, with the reason. Exits 1 when any check is red, 2 on bad usage.';
 
 export type DoctorLevel = 'ok' | 'warn' | 'red';
 export interface DoctorCheck { name: string; level: DoctorLevel; reason: string }
@@ -25,6 +26,7 @@ export interface FleetDoctorOptions {
   readWaste?: TaskCheckReader;
   worktreeFs?: FleetWorktreeStaleFs;
   worktreeRoot?: string;
+  readLaneStatus?: () => Promise<string>;
   now?: () => number;
 }
 
@@ -90,6 +92,15 @@ async function worktreeCheck(o: FleetDoctorOptions, readJobs: TaskCheckReader, n
     : check('worktrees', 'warn', `${stale.length} stale worktree${stale.length === 1 ? '' : 's'} (see fleet worktree-stale)`);
 }
 
+async function lanesCheck(o: FleetDoctorOptions): Promise<DoctorCheck> {
+  const read = o.readLaneStatus ?? (() => readFile(join(process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue', 'status.json'), 'utf8'));
+  const lanes = parseIdleLanes(await read());
+  if (lanes.length === 0) return check('lanes', 'ok', 'no queued work waiting');
+  const red = lanes.filter(lane => lane.status === 'red');
+  if (red.length) return check('lanes', 'red', `room and queued work: ${red.map(lane => `${lane.lane} ${lane.running}/${lane.target} running, ${lane.queued} queued`).join('; ')}`);
+  return check('lanes', 'warn', `held with queued work: ${lanes.map(lane => `${lane.lane} (${lane.queued})`).join(', ')}`);
+}
+
 /** Typed API behind the verb; agents call this directly. A throwing reader degrades to warn, never crashes. */
 export async function runFleetDoctor(o: FleetDoctorOptions = {}): Promise<FleetDoctorReport> {
   const now = (o.now ?? Date.now)();
@@ -104,6 +115,7 @@ export async function runFleetDoctor(o: FleetDoctorOptions = {}): Promise<FleetD
     await safe('stuck-prs', () => stuckCheck(readJobs, now)),
     await safe('waste', () => wasteCheck(readWaste, now)),
     await safe('worktrees', () => worktreeCheck(o, readJobs, now)),
+    await safe('lanes', () => lanesCheck(o)),
   ];
   const level: DoctorLevel = checks.some(c => c.level === 'red') ? 'red' : checks.some(c => c.level === 'warn') ? 'warn' : 'ok';
   return { v: 1, generatedAt: new Date(now).toISOString(), level, checks };
