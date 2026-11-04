@@ -100,7 +100,7 @@ export interface CodexSessionUsage {
   accountId: string;
   /** Which credential slot the reading came from. */
   slot: 'primary' | 'secondary';
-  /** ISO time of the winning rate-limit record; file mtime when absent. */
+  /** ISO time of the winning rate-limit record, or null when absent. */
   observedAt: string | null;
   /** The allowlisted plan id, or null. */
   planType: string | null;
@@ -430,7 +430,7 @@ export function parseCodexSessionLine(line: string, state: CodexSessionParseStat
   const limits = parseRateLimits(payload['rate_limits']);
   if (limits) {
     state.limits = limits;
-    state.observedAt = rowTs ?? state.observedAt;
+    state.observedAt = rowTs;
   }
 }
 
@@ -625,7 +625,6 @@ function readRolloutUsage(file: SessionFile): CodexSessionParseState | null {
         parseCodexSessionLine(line, state);
       }
     }
-    if (state.observedAt === null) state.observedAt = new Date(file.mtime).toISOString();
     return state;
   } finally {
     try {
