@@ -179,6 +179,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'planner-tick': () => import('./fleet-planner-tick.js'),
   'post-merge-verify': () => import('./fleet-post-merge-verify.js'),
   'precheck-waste': () => import('./fleet-precheck-waste.js'),
+  'procs': () => import('./fleet-procs.js'),
   'queue-age': () => import('./fleet-queue-age.js'),
   'queue-latency': () => import('./fleet-queue-latency.js'),
   'ready-supply': () => import('./fleet-ready-supply.js'),
