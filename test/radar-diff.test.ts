@@ -104,13 +104,25 @@ describe('Radar private storage and cooldown', () => {
     const dir = await home();
     await runRadarSource(source, { home: dir, now: () => time, fetch: async () => '<h1>Known</h1>' });
     const fetch = vi.fn().mockRejectedValue(new Error('transport details must stay local'));
-    expect(await runRadarSource(source, { home: dir, now: () => time + RADAR_MIN_INTERVAL_MS, fetch })).toEqual({ id: source.id, status: 'error' });
+    expect(await runRadarSource(source, { home: dir, now: () => time + RADAR_MIN_INTERVAL_MS, fetch })).toEqual({ id: source.id, status: 'warning', reason: 'source unavailable' });
     const state = await readRadarState(source, dir);
     expect(state?.failed).toBe(true);
     expect(state?.current?.data).toEqual(snapshot('<h1>Known</h1>').data);
     expect(await readFile(join(radarSnapshotsDir(dir), `${source.id}.json`), 'utf8')).not.toContain('transport details');
     for (const now of [time - 1, time + RADAR_MIN_INTERVAL_MS + 1]) expect((await runRadarSource(source, { home: dir, now: () => now, fetch })).status).toBe('throttled');
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('parses and compares RSS 2.0 items with guid preferred over link', () => {
+    const rss = (items: string) => `<rss version="2.0"><channel>${items}</channel></rss>`;
+    const a = snapshot(rss('<item><guid>one</guid><link>https://example.org/one</link><title>Before &amp; more</title></item><item><link>https://example.org/old</link><title>Old</title></item>'), 'rss');
+    const b = snapshot(rss('<item><guid>one</guid><title>After</title></item><item><link>https://example.org/new</link><title>New</title></item>'), 'rss');
+    expect(diffRadarSnapshots(a, b)).toMatchObject({ status: 'changed', added: ['https://example.org/new'], removed: ['https://example.org/old'], changed: [{ id: 'one', before: 'Before & more', after: 'After' }] });
+    for (const body of [
+      '<!DOCTYPE rss><rss version="2.0"><channel/></rss>',
+      rss('<item><guid>a</guid><title>&unknown;</title></item>'),
+      rss('<item><guid>a</guid><title>One</title></item><item><guid>a</guid><title>Two</title></item>'),
+      '<rss version="1.0"><channel/></rss>', '<rss version="2.0"></rss>',
+    ]) expect(() => snapshot(body, 'rss')).toThrow();
   });
   it('serializes concurrent runs and does no I/O for unverified sources', async () => {
     const dir = await home();
@@ -171,7 +183,7 @@ describe('Radar CLI offline contract', () => {
     const load = vi.spyOn(catalogue, 'loadRadarSources').mockResolvedValue([source, { ...source, id: 'fixture-other' }]);
     vi.spyOn(storage, 'runRadarSource').mockRejectedValueOnce(new Error('fixture private detail')).mockResolvedValueOnce({ id: 'fixture-other', status: 'throttled' });
     expect(await cmdRadar(['run', '--json'])).toBe(1);
-    expect(JSON.parse(log.mock.calls.at(-1)![0])).toEqual({ ok: false, results: [{ id: source.id, status: 'error' }, { id: 'fixture-other', status: 'throttled' }] });
+    expect(JSON.parse(log.mock.calls.at(-1)![0])).toEqual({ ok: false, results: [{ id: source.id, status: 'error' }, { id: 'fixture-other', status: 'throttled' }], warnings: [] });
     load.mockRejectedValue(new Error('fixture private detail'));
     expect(await cmdRadar(['list', '--json'])).toBe(1);
     expect(log.mock.calls.at(-1)![0]).not.toContain('fixture private detail');
