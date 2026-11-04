@@ -163,14 +163,14 @@ function newestFirst(rows: readonly unknown[]): unknown[] {
 }
 
 /** Cap each emitted row collection to its newest `n` rows; `truncated` reports rows cut by the bound. */
-function boundSample<T extends object>(state: T, verb: Verb, n: number): T & { sampled: number; truncated: boolean } {
+function boundSample<T extends object>(state: T, verb: Verb | string, n: number): T & { sampled: number; truncated: boolean } {
   let truncated = false;
   const capped = { ...(state as Record<string, unknown>) };
   const take = (key: string, rows: unknown[]): void => {
     if (rows.length > n) truncated = true;
     capped[key] = newestFirst(rows).slice(0, n);
   };
-  for (const key of SAMPLE_ROW_KEYS[verb]) {
+  for (const key of SAMPLE_ROW_KEYS[verb as Verb] ?? []) {
     const rows = capped[key];
     if (Array.isArray(rows)) take(key, rows);
   }
@@ -186,7 +186,14 @@ function boundSample<T extends object>(state: T, verb: Verb, n: number): T & { s
 }
 
 /** Read only the host's standard runs directory; callers cannot supply paths. */
-export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
+export async function cmdFleetRunsRead(verb: Verb | string, args: string[] = [], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
+  // `fleet runs-read <rest>` reaches this export through registry convention:
+  // the rest args land in `verb`'s slot and `args` stays unset. The named
+  // runs/journal/parked entry points already pass both parameters.
+  if (!Array.isArray(args)) {
+    args = Array.isArray(verb) ? verb : [];
+    verb = 'runs-read';
+  }
   const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? ' [--rejections-only]' : ' [--lane <lane>]'} [--sample <1..${SAMPLE_MAX}>] [--watch] [--interval-ms <1000..60000>]${verb === 'runs' ? ' [--check-ready | --wait-ready --lane <lane> --timeout-ms <1..3600000>]' : ''}`;
   const seen = new Set<string>();
   let lane: string | undefined;
