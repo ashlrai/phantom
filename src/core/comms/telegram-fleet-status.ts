@@ -2,11 +2,13 @@
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
 import { readStatusSupply, supplyLines, type StatusSupply } from './status-supply-line.js';
+import { boundedQuotaLines, readQuotaLines } from './status-quota-lines.js';
 
 export interface TelegramFleetStatusDeps {
   readRuns?: () => Promise<FleetRunsDirState>;
   readWorkers?: () => Promise<LiveWorkersSnapshot>;
   readSupply?: () => Promise<StatusSupply>;
+  readQuota?: () => string[];
   runsDir?: string;
   now?: () => Date;
 }
@@ -26,10 +28,11 @@ const timestamp = (value: string | null | undefined): string => {
 export async function telegramFleetStatus(deps: TelegramFleetStatusDeps = {}): Promise<string> {
   const now = (deps.now ?? (() => new Date()))();
   const time = Number.isFinite(now.getTime()) ? now.toISOString() : 'unavailable';
-  const [runsResult, workersResult, supplyResult] = await Promise.allSettled([
+  const [runsResult, workersResult, supplyResult, quotaResult] = await Promise.allSettled([
     Promise.resolve().then(() => (deps.readRuns ?? (() => readFleetRunsDirState({ runsDir: deps.runsDir, now: () => now.getTime() })))()),
     Promise.resolve().then(() => (deps.readWorkers ?? (() => listLiveWorkers({ now: () => now.getTime() })))()),
     Promise.resolve().then(() => (deps.readSupply ?? (() => readStatusSupply(deps.runsDir, () => now)))()),
+    Promise.resolve().then(() => (deps.readQuota ?? (() => readQuotaLines(now.getTime())))()),
   ]);
   const runs = runsResult.status === 'fulfilled' ? runsResult.value : null;
   const workers = workersResult.status === 'fulfilled' ? workersResult.value : null;
@@ -48,7 +51,8 @@ export async function telegramFleetStatus(deps: TelegramFleetStatusDeps = {}): P
     `Other lanes: observed ${other}; reported/queue/target/held unavailable`,
     `Last tick: ${timestamp(runs?.lastTick)}`,
     `Sources: runs=${health(runs?.sourceState)}, workers=${health(workers?.sourceState)}; ${sources}`,
-    'Usage: token counts are local completed-job metrics, not subscription quota; unavailable when unknown.',
+    'Usage: token counts are local completed-job metrics; quota lines come from provider windows; unavailable when unknown.',
+    ...(quotaResult.status === 'fulfilled' ? boundedQuotaLines(quotaResult.value) : ['Quota: unavailable']),
     ...(supplyResult.status === 'fulfilled' ? supplyLines(supplyResult.value) : ['Supply: unavailable', 'Planner: unknown (unavailable)']),
   ].join('\n');
 }
