@@ -35,6 +35,8 @@ import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
 import { telegramFleetStatus, type TelegramFleetStatusDeps } from './telegram-fleet-status.js';
 import { shipCommandReply, TELEGRAM_SHIP_RE, type ShipCommandDeps } from './telegram-ship-command.js';
+import { deliverCosResult } from '../cos/intake.js';
+import { recordTelegramMessages } from './telegram-thread-map.js';
 
 export interface TelegramInboxDeps extends TelegramFleetStatusDeps {
   /** Release command dependencies. */
@@ -75,6 +77,21 @@ export type TelegramInboxResult = ChannelReceiveResult | { ok: false; reason: 's
 
 /** `/fleet-status` (optionally @bot) is answered by the bridge. */
 export const TELEGRAM_FLEET_STATUS_RE = /^\/fleet-status(?:@\w+)?$/;
+
+/** Called only by a trusted approval surface after displaying the exact draft. */
+export async function deliverTelegramCosResult(id: string, approvedDigest: string,
+  cfg: AshlrConfig, deps: TelegramInboxDeps = {}): Promise<void> {
+  await deliverCosResult(id, approvedDigest, async draft => {
+    const owner = configuredOwnerIds(cfg)[0];
+    if (!owner || draft.origin.channel !== 'telegram' || draft.origin.senderId !== `telegram:${owner}` ||
+        !/^[1-9]\d*$/.test(draft.origin.threadId ?? '')) throw new Error('No verified Telegram origin');
+    const replyToMessageId = Number(draft.origin.threadId);
+    if (!Number.isSafeInteger(replyToMessageId)) throw new Error('Invalid Telegram origin');
+    const result = await (deps.send ?? sendTelegramMessage)(draft.text, { replyToMessageId }, cfg);
+    if (!result.ok) throw new Error('Telegram delivery failed');
+    if (result.messageId) recordTelegramMessages([result.messageId], { kind: 'update', threadId: id });
+  }, deps.runsDir);
+}
 
 export async function recordTelegramToInbox(
   event: InboundEvent,
@@ -118,7 +135,8 @@ export async function recordTelegramToInbox(
         await send(`${formatChannelAck(ack)}\nInbox: ${preview}`, replyTo, cfg);
       },
     });
-    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
+    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID,
+      ...(Number.isSafeInteger(event.messageId) && event.messageId! > 0 ? { threadId: String(event.messageId) } : {}) });
     if (!result.ok && result.reason !== 'sender-not-allowed') {
       await send(`Not recorded: ${result.reason}`, replyTo, cfg).catch(() => undefined);
     }
