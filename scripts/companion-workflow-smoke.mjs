@@ -881,12 +881,21 @@ export async function phantomGateway(options, env, box) {
   const settingsPath = join(env.ASHLR_HOME, 'settings.json');
   let settings = null;
   try { settings = JSON.parse(readFileSync(settingsPath, 'utf8')); } catch { /* reported below */ }
-  const unregistered = expected.filter(server => !settings?.mcpServers?.[server.name]?.command).map(server => server.name);
+  // Published Phantom 3.29.15 discovers Secrets and Locus only. MD is an
+  // explicit gateway entry until ecosystem discovery ships in a release.
+  const discovered = expected.filter(server => server.name !== 'ashlr-md');
+  const unregistered = discovered.filter(server => !settings?.mcpServers?.[server.name]?.command).map(server => server.name);
   const registered = write.code === 0 && !write.timedOut && settings && !unregistered.length;
   checks.push(['phm:mcp-ecosystem', registered
-    ? { status: 'pass', detail: `registered ${expected.map(server => server.name).join(', ')}` }
+    ? { status: 'pass', detail: `registered ${discovered.map(server => server.name).join(', ')}` }
     : { status: 'fail', detail: `ecosystem --write exit ${write.code}${write.timedOut ? ' (timed out)' : ''}; ${settings ? `not registered: ${unregistered.join(', ')}` : 'missing or invalid settings.json'}` }]);
   if (!registered) return checks;
+
+  if (expected.includes(GATEWAY_SERVERS[2])) {
+    settings.mcpServers ??= {};
+    settings.mcpServers['ashlr-md'] ??= { command: options.mdopenerMcp, args: [] };
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  }
 
   if (withSecrets) {
     const entry = settings.mcpServers?.['phantom-secrets'];
