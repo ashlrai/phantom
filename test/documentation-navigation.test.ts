@@ -190,6 +190,15 @@ describe('operator documentation navigation', () => {
     }
   });
 
+  it.each(['fleet-health.md', 'VERIFY-CHANGE.md'])(
+    'links the source-only %s guide from the packaged documentation index', (guide) => {
+      const root = packagedDocumentation();
+      const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
+      expect(index).toContain(`https://github.com/ashlrai/phantom/blob/master/docs/${guide}`);
+      expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+    },
+  );
+
   it('links the source-only model inventory guide from the packaged documentation index', () => {
     const root = packagedDocumentation();
     const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
