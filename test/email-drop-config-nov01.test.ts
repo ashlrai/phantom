@@ -25,7 +25,7 @@ describe('email drop configuration', () => {
 
   it('rejects invalid shapes, paths and noncanonical sender lists', async () => {
     mkdirSync(join(root, 'queue'));
-    const invalid: unknown[] = [null, [], {}, { ...config(), v: 2 }, { ...config(), other: true },
+    const invalid: unknown[] = [null, [], {}, { ...config(), v: 2 }, { ...config(), other: true }, { ...config(), enabled: "yes" },
       { ...config(), inboxDir: 'relative' }, { ...config(), inboxDir: '/tmp/\0bad' },
       { ...config(), outboxDir: null }, { ...config(), processedDir: 'relative' },
       { ...config(), from: [] }, { ...config(), from: Array(33).fill('a@example.invalid') },
