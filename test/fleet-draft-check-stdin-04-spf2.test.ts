@@ -34,9 +34,11 @@ function deps(c: ReturnType<typeof capture>, git: JobPrecheckGit, stdin: Uint8Ar
   return { deps: { ...c, git, resolveRef, readStdin: stream(stdin) }, resolveRef };
 }
 
+const HEADER = '#job repo=phantom lane=devin tier=work';
+const md = (body: string) => `${HEADER}\n${body}`;
 const DONE = { 'src/done.ts': 'bridge(RQ-PHX-AAAA1): landed', 'src/shared.ts': 'bridge(RQ-PHX-BBBB2): landed' };
-const A = { name: 'RQ-PHX-AAA1.md', markdown: 'Edit src/done.ts and src/shared.ts\n' };
-const B = { name: 'RQ-PHX-BBB2.md', markdown: 'Touch src/shared.ts and src/new.ts\n' };
+const A = { name: 'RQ-PHX-AAA1.md', markdown: md('Edit src/done.ts and src/shared.ts\n') };
+const B = { name: 'RQ-PHX-BBB2.md', markdown: md('Touch src/shared.ts and src/new.ts\n') };
 
 it('pipes a two-draft batch through the batch path over one immutable ref', async () => {
   const git = fakeGit(DONE);
@@ -68,7 +70,7 @@ it('exits 2 when any draft errors even with a likely-done present, 0 when all fr
     lastCommit: vi.fn(async (path: string) => (DONE[path] ? { sha: 'abc1234', subject: DONE[path]! } : null)),
   };
   const c = capture();
-  const failing = { name: 'RQ-PHX-CCC3.md', markdown: 'src/boom.ts\n' };
+  const failing = { name: 'RQ-PHX-CCC3.md', markdown: md('src/boom.ts\n') };
   const { deps: d } = deps(c, boom, input([A, failing]));
   expect(await cmdFleetDraftCheck(['--stdin', '--json'], d)).toBe(2);
   const body = JSON.parse(c.out[0]!) as { results: Array<{ verdict?: string; error?: string }>; counts: Record<string, number> };
@@ -76,7 +78,7 @@ it('exits 2 when any draft errors even with a likely-done present, 0 when all fr
   expect(body.results[1]!.error).toBe('fatal: bad revision');
   expect(body.counts).toEqual({ fresh: 0, 'partly-on-master': 0, 'likely-done': 1, errors: 1 });
   const c2 = capture();
-  const fresh = { name: 'RQ-PHX-DDD4.md', markdown: 'Create src/never.ts\n' };
+  const fresh = { name: 'RQ-PHX-DDD4.md', markdown: md('Create src/never.ts\n') };
   expect(await cmdFleetDraftCheck(['--stdin', '--json'], deps(c2, fakeGit({}), input([fresh])).deps)).toBe(0);
   expect((JSON.parse(c2.out[0]!) as { counts: Record<string, number> }).counts).toEqual({ fresh: 1, 'partly-on-master': 0, 'likely-done': 0, errors: 0 });
 });
@@ -185,8 +187,8 @@ it('checks a piped batch against a real repo over a pinned origin/master', { tim
   const tsx = resolve('node_modules/.bin/tsx');
   const payload = JSON.stringify({
     drafts: [
-      { name: 'RQ-PHX-E2EA1.md', markdown: 'Edit src/done.ts and add test/e2e-spf2.test.ts\n' },
-      { name: 'RQ-PHX-E2EB2.md', markdown: 'Touch src/done.ts and src/absent-spf2.ts\n' },
+      { name: 'RQ-PHX-E2EA1.md', markdown: md('Edit src/done.ts and add test/e2e-spf2.test.ts\n') },
+      { name: 'RQ-PHX-E2EB2.md', markdown: md('Touch src/done.ts and src/absent-spf2.ts\n') },
     ],
   });
   const result = spawnSync(tsx, [cli, 'fleet', 'draft-check', '--stdin', '--json'], { cwd: dir, env, input: payload, encoding: 'utf8' });
