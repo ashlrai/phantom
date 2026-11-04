@@ -11,6 +11,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Self-hosting](SELF-HOSTING.md): Install, connect MCP, upgrade, and uninstall.
 - [User guide](VERSE.md): Console surfaces and shortcuts.
 - [Architecture](ARCHITECTURE.md): TypeScript/ESM CLI and SDK plus a React web console. `phm` and `ashlr` share one launcher.
+- [Agent Bus v2 contract](AGENT-BUS.md#v2): Participants, body kinds, claim keys with overlap rules, and the work feed for every provider. Print it with `ashlr agents bus contract --json`.
 - [Agent operations](AGENT-OPERATIONS.md): Cold-start checklist for building and operating Phantom from source.
 - [Automatic work](AUTOMATIC-OUTCOMES.md): Chat routing and fleet outcomes.
 - [Autonomy setup](AUTONOMY-SETUP.md): Dormant macOS autonomy. Status is not activation.
@@ -326,3 +327,4 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 - [Chief-of-staff intake](COS.md): Durable channel jobs, JSON command contracts and approved result delivery.
+- [Release autonomy audit](RELEASE-AUTONOMY.md): Once wired into the CLI, `phm release autonomy --json` inventories release gates with read-only GitHub calls. Use `--repo locus --md` for a single Markdown report.

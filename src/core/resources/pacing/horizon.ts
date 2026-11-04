@@ -8,7 +8,7 @@
  * the Grok Ultra orchestration reserve is released.
  */
 
-import type { MilpSolver } from './types.js';
+import type { PaceSolver } from './types.js';
 
 export interface HorizonKnobs {
   bufferFraction: number;
@@ -71,13 +71,14 @@ export interface PacePlan {
 }
 
 export interface HorizonPlan extends PacePlan {
-  solver: 'highs' | 'greedy';
+  solver: 'lp' | 'even';
 }
 
 /** Fraction held back. Full until the window, then linear to 0 at reset. */
 export function safetyBuffer(timeLeftMs: number, fraction: number, windowMs: number): number {
-  if (fraction <= 0 || timeLeftMs <= 0) return 0;
-  if (windowMs <= 0) return 0;
+  if (!Number.isFinite(timeLeftMs) || !Number.isFinite(fraction) || fraction < 0 || fraction > 1
+    || !Number.isFinite(windowMs) || windowMs <= 0) throw new RangeError('Invalid safety buffer');
+  if (fraction === 0 || timeLeftMs <= 0) return 0;
   const ramp = Math.max(0, Math.min(1, timeLeftMs / windowMs));
   return fraction * ramp;
 }
@@ -162,7 +163,7 @@ function roomForAdd(used: number, periods: readonly Period[], spends: readonly n
 }
 
 function committed(plannedFirst: number, used: number, timeLeftMs: number, knobs: HorizonKnobs): number {
-  if (timeLeftMs <= 0) return Math.max(0, 1 - used);
+  if (timeLeftMs <= 0) return 0;
   const room = Math.max(0, 1 - holdAt(timeLeftMs, knobs) - used);
   return Math.max(0, Math.min(plannedFirst, room));
 }
@@ -178,10 +179,10 @@ function seriesFor(input: {
   stamp: ReadingStamp | null;
 }): PoolPaceSeries {
   const points: PacePoint[] = [{
-    atMs: input.nowMs,
-    actualCumulative: input.used,
+    atMs: input.stamp?.atMs ?? input.nowMs,
+    actualCumulative: input.stamp ? input.used : null,
     idealPace: idealAt(input.windowStartMs, input.resetAtMs, input.nowMs),
-    projectedCumulative: input.used,
+    projectedCumulative: input.stamp && input.stamp.atMs !== input.nowMs ? null : input.used,
   }];
   let cursor = input.used;
   input.periods.forEach((period, index) => {
@@ -197,11 +198,11 @@ function seriesFor(input: {
     poolId: input.poolId,
     projection: 'derived',
     isReading: false,
-    actualCumulative: input.used,
+    actualCumulative: input.stamp ? input.used : null,
     idealPaceNow: idealAt(input.windowStartMs, input.resetAtMs, input.nowMs),
     projectedLanding: cursor,
     uncertainty: input.stamp?.uncertainty ?? 1,
-    stale: input.stamp?.stale ?? false,
+    stale: input.stamp?.stale ?? true,
     readingAgeMs: input.stamp?.ageMs ?? null,
     readingSource: input.stamp?.source ?? null,
     points,
@@ -217,10 +218,27 @@ export function paceWindow(input: {
   knobs: HorizonKnobs;
   stamp?: ReadingStamp | null;
 }): PacePlan {
-  const used = clamp01(input.used);
+  const k = input.knobs;
+  const finite = (v: number) => Number.isFinite(v);
+  if (!finite(input.used) || input.used < 0 || input.used > 1
+    || ![input.nowMs, input.resetAtMs, input.windowStartMs].every(finite)
+    || input.windowStartMs < 0 || input.nowMs < input.windowStartMs || input.resetAtMs <= input.windowStartMs
+    || !Object.values(k).every(finite) || k.bufferFraction < 0 || k.bufferFraction > 1
+    || k.reserveFraction < 0 || k.reserveFraction >= 1 || k.bufferWindowMs <= 0
+    || k.flex < 1 || k.deviationWeight < 0 || k.flexPenalty < 0 || k.landingWeight < 0
+    || k.periodMs <= 0 || !Number.isInteger(k.maxPeriods) || k.maxPeriods < 1 || k.maxPeriods > 256) {
+    throw new RangeError('Invalid pacing window or controls');
+  }
+  const stamp = input.stamp;
+  if (stamp && (![stamp.atMs, stamp.ageMs, stamp.uncertainty].every(finite)
+    || stamp.atMs > input.nowMs || stamp.atMs < 0 || stamp.ageMs < 0
+    || stamp.ageMs !== input.nowMs - stamp.atMs || stamp.uncertainty < 0 || stamp.uncertainty > 1)) {
+    throw new RangeError('Invalid reading metadata');
+  }
+  const used = input.used;
   const periods = buildPeriods(input.nowMs, input.resetAtMs, input.windowStartMs, input.knobs, used);
   const spends = evenSpends(used, periods);
-  const allowance = committed(spends[0] ?? Math.max(0, 1 - used), used, input.resetAtMs - input.nowMs, input.knobs);
+  const allowance = committed(spends[0] ?? 0, used, input.resetAtMs - input.nowMs, input.knobs);
   const series = seriesFor({
     poolId: input.poolId,
     used,
@@ -241,7 +259,7 @@ function valuesVary(values: readonly number[]): boolean {
 }
 
 function objectiveTerm(coef: number, name: string): string {
-  const abs = Math.abs(coef).toFixed(6);
+  const abs = Math.abs(coef).toFixed(12);
   return coef < 0 ? `- ${abs} ${name}` : `${abs} ${name}`;
 }
 
@@ -262,14 +280,14 @@ function buildPaceLp(used: number, periods: readonly Period[], spends: readonly 
   let cumulative = '';
   periods.forEach((period, index) => {
     cumulative = cumulative === '' ? `s${index}` : `${cumulative} + s${index}`;
-    lines.push(` cum${index}: ${cumulative} <= ${Math.max(0, period.ceiling - used).toFixed(6)}`);
+    lines.push(` cum${index}: ${cumulative} <= ${Math.max(0, period.ceiling - used).toFixed(12)}`);
     const ideal = spends[index] ?? period.natural;
-    lines.push(` devhi${index}: s${index} - d${index} <= ${ideal.toFixed(6)}`);
-    lines.push(` devlo${index}: - s${index} - d${index} <= ${(-ideal).toFixed(6)}`);
-    lines.push(` flex${index}: s${index} - o${index} <= ${(knobs.flex * period.natural).toFixed(6)}`);
+    lines.push(` devhi${index}: s${index} - d${index} <= ${ideal.toFixed(12)}`);
+    lines.push(` devlo${index}: - s${index} - d${index} <= ${(-ideal).toFixed(12)}`);
+    lines.push(` flex${index}: s${index} - o${index} <= ${(knobs.flex * period.natural).toFixed(12)}`);
   });
   const names = periods.map((_, index) => `s${index}`).join(' + ');
-  lines.push(names === '' ? ' land: short = 0' : ` land: ${names} + short = ${target.toFixed(6)}`);
+  lines.push(names === '' ? ' land: short = 0' : ` land: ${names} + short = ${target.toFixed(12)}`);
   lines.push('Bounds');
   periods.forEach((_, index) => {
     lines.push(` 0 <= s${index} <= 1`);
@@ -281,24 +299,32 @@ function buildPaceLp(used: number, periods: readonly Period[], spends: readonly 
   return `${lines.join('\n')}\n`;
 }
 
-async function flexSpends(used: number, periods: readonly Period[], even: readonly number[], values: readonly number[], knobs: HorizonKnobs, solver: MilpSolver, budgetMs: number): Promise<number[] | null> {
+async function flexSpends(used: number, periods: readonly Period[], even: readonly number[], values: readonly number[], knobs: HorizonKnobs, solver: PaceSolver, budgetMs: number): Promise<number[] | null> {
   if (periods.length === 0 || !valuesVary(values)) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let outcome;
   try {
-    outcome = await solver(buildPaceLp(used, periods, even, values, knobs), budgetMs);
+    outcome = await Promise.race([
+      Promise.resolve().then(() => solver(buildPaceLp(used, periods, even, values, knobs), budgetMs)),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), budgetMs); }),
+    ]);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
-  if (outcome.status !== 'optimal') return null;
-  const spends = periods.map((_, index) => Math.max(0, outcome.values[`s${index}`] ?? 0));
-  const total = spends.reduce((sum, spend) => sum + spend, 0);
-  const target = Math.max(0, 1 - used);
-  if (Math.abs(total - target) > 0.02) return null;
-  let cursor = 0;
+  if (!outcome || outcome.status !== 'optimal' || !outcome.values) return null;
+  const spends: number[] = [];
+  let cursor = used;
   for (let index = 0; index < periods.length; index += 1) {
-    cursor += spends[index] ?? 0;
-    if (cursor > periods[index]!.ceiling - used + 0.02) return null;
+    const value = outcome.values[`s${index}`];
+    const room = Math.max(0, periods[index]!.ceiling - cursor);
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > room + 1e-9) return null;
+    const spend = Math.min(value, room);
+    spends.push(spend);
+    cursor += spend;
   }
+  if (Math.abs(cursor - 1) > 1e-9) return null;
   return spends;
 }
 
@@ -311,13 +337,18 @@ export async function planHorizon(input: {
   values?: readonly number[];
   knobs: HorizonKnobs;
   stamp?: ReadingStamp | null;
-  solver?: MilpSolver;
+  solver?: PaceSolver;
   solverBudgetMs?: number;
 }): Promise<HorizonPlan> {
+  input = { ...input, knobs: { ...input.knobs }, values: input.values ? [...input.values] : undefined,
+    stamp: input.stamp ? { ...input.stamp } : input.stamp };
+  if (input.values?.some((value) => !Number.isFinite(value))
+    || (input.solverBudgetMs !== undefined && (!Number.isFinite(input.solverBudgetMs)
+      || input.solverBudgetMs <= 0 || input.solverBudgetMs > 60_000))) throw new RangeError('Invalid solver controls');
   const base = paceWindow(input);
   const values = input.values ?? [];
   if (!input.solver || !valuesVary(values)) {
-    return { ...base, solver: 'greedy' };
+    return { ...base, solver: 'even' };
   }
   const flexed = await flexSpends(
     clamp01(input.used),
@@ -328,7 +359,7 @@ export async function planHorizon(input: {
     input.solver,
     input.solverBudgetMs ?? 100,
   );
-  if (!flexed) return { ...base, solver: 'greedy' };
+  if (!flexed) return { ...base, solver: 'even' };
   const used = clamp01(input.used);
   const allowance = committed(flexed[0] ?? 0, used, input.resetAtMs - input.nowMs, input.knobs);
   const series = seriesFor({
@@ -347,7 +378,7 @@ export async function planHorizon(input: {
     allowance,
     projectedLanding: series.projectedLanding ?? used,
     series,
-    solver: 'highs',
+    solver: 'lp',
   };
 }
 
