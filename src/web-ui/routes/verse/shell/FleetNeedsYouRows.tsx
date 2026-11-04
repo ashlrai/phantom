@@ -30,6 +30,7 @@ import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { releasePrQuery } from '../fleet/release-pr-query.js';
 import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
 import { mainRedFixDraft } from '../fleet-queue/main-red-fix-draft.js';
+import { requestLaneFocus } from '../fleet-lanes/lane-focus-request.js';
 import { postReleaseHold } from '../fleet-lanes/lane-hold-release.js';
 import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
 import { normalizePaneId } from './dock-catalog.js';
@@ -378,6 +379,7 @@ export function FleetNeedsYouRows({ split, nowMs, onResult }: {
             setVerseSection('settings', 'fleet-sources');
           } else if (paneId) {
             closeVerseOverlay();
+            if (destination?.kind === 'pane' && destination.lane) requestLaneFocus(destination.lane);
             revealPane(paneId);
           } else {
             openSurface(item.target);

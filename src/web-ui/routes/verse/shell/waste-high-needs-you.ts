@@ -23,8 +23,8 @@ export function deriveWasteHighNeedsYou(envelopes: readonly AgentBusReceipt[] | 
       severity: b.hoursToReset <= URGENT_HOURS ? 'urgent' : 'attention',
       title: b.text.slice(0, TITLE_MAX),
       detail: `${b.projectedUnusedPct}% unused at reset · ${b.hoursToReset} h left${finite(b.recommendedTarget) ? ` · suggested target ${b.recommendedTarget}` : ''}`,
-      nextStep: 'Add jobs on this lane or raise its target',
-      target: 'fleet', open: { kind: 'pane', paneId: 'fleet-supply' },
+      nextStep: "Raise this lane's target or add jobs for it",
+      target: 'fleet', open: { kind: 'pane', paneId: 'fleet-lanes', lane: b.lane },
     };
     if (receivedAt >= (newest.get(b.lane)?.at ?? -Infinity)) newest.set(b.lane, { at: receivedAt, item });
   }
