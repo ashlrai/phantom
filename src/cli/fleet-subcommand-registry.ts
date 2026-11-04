@@ -203,6 +203,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ship-gap': () => import('./fleet-ship-gap.js'),
   'skill-calibration': () => import('./fleet-skill-calibration.js'),
   'skip-forecast': () => import('./fleet-skip-forecast.js'),
+  'slow-prs': () => import('./fleet-slow-prs.js'),
   'standby': () => import('./fleet-standby.js'),
   'standby-await': () => import('./fleet-standby-await.js'),
   'standby-config': () => import('./fleet-standby-config.js'),
