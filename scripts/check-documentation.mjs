@@ -31,6 +31,9 @@ const SOURCE_PREFIXES = Object.freeze([
   'https://github.com/ashlrai/phantom/blob/master/',
 ]);
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
+// The frozen 3.3.0 CHANGELOG record is hash-pinned by test/authority-release-truth.test.ts
+// and links a guide that was deliberately removed. Only that exact link is exempt.
+const FROZEN_DEAD_LINKS = Object.freeze({ 'CHANGELOG.md': Object.freeze(['docs/RUNTIME-FLEET-ACTIVATION.md']) });
 
 function inside(root, target) {
   const rel = relative(root, target);
@@ -168,6 +171,7 @@ export function checkDocumentation({ root, mode = 'source', entrypoints = OPERAT
         continue;
       } else {
         localLinks++;
+        if (FROZEN_DEAD_LINKS[file]?.includes(href)) continue;
       }
       try {
         const hash = local.indexOf('#');
