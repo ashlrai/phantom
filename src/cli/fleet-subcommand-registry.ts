@@ -215,6 +215,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'telegram-pulse': () => import('./fleet-telegram-pulse.js'),
   'thread-run': () => import('./fleet-thread-run.js'),
   'tick-gaps': () => import('./fleet-tick-gaps.js'),
+  'trim': () => import('./fleet-trim.js'),
   'ttm': () => import('./fleet-ttm.js'),
   'union-apply': () => import('./fleet-union-apply.js'),
   'union-preview': () => import('./fleet-union-preview.js'),
