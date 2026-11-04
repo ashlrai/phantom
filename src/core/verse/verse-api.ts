@@ -629,6 +629,8 @@ async function dispatchWorkbenchModules(
 
 export interface VerseApiContext {
   cfg: AshlrConfig;
+  /** Display route supplied by the HTTP composition root, outside authority imports. */
+  usageResourcesApi?: ApiModule;
   token: string;
   allowDispatch: boolean;
   readSession?: { id: string; expiresAt: number };
@@ -2046,6 +2048,14 @@ export async function handleVerseApi(
       // legacy mounted modules (including the active cloud scheduler).
       if (path !== `${VERSE_API_PREFIX}/resources/credit-pools`) { sendJson(res, 404, { error: 'Credit pool route not found.' }); return true; }
       return (await import('./credit-pools-api.js')).handleCreditPoolsApi(ctx, req, res, path, method);
+    }
+    if (path === `${VERSE_API_PREFIX}/usage-resources` || path.startsWith(`${VERSE_API_PREFIX}/usage-resources/`)) {
+      // Read-only resource-usage aggregate; unknown children 404 here rather
+      // than evaluating the mounted modules.
+      if (path !== `${VERSE_API_PREFIX}/usage-resources`) { sendJson(res, 404, { error: 'Usage resources route not found.' }); return true; }
+      if (ctx.usageResourcesApi) return ctx.usageResourcesApi(ctx, req, res, path, method);
+      sendJson(res, 503, { error: 'Usage resources are unavailable.' });
+      return true;
     }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {
