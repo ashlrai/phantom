@@ -1,8 +1,12 @@
-# Auto-tag: create v<version> when the version in package.json changes on master
-# and every required check for that exact commit is green.
-# Tags are created only here, with the ashlr-release GitHub App token, so the
-# tag-triggered release workflow runs. release-please (if present) only opens
-# version PRs and never creates tags.
+# Auto-tag: create v<version> and its draft GitHub release when the version in
+# package.json on master is untagged and every required check for that exact
+# commit is green. A missing tag is owed even when the bump landed earlier, so
+# this heals a stranded release instead of waiting for the next bump.
+# Tags and releases are created only here, with the ashlr-release GitHub App
+# token. The release starts as a draft: releases/latest keeps resolving to the
+# last fully stocked feed until scripts/publish-desktop-release.mjs attaches
+# the signed artifacts and publishes it. release-please (if present) only opens
+# version PRs and never creates tags or releases.
 #
 # Required checks are discovered at run time from the branch rules API
 # (rulesets) unioned with classic branch protection contexts. Fail closed:
@@ -64,13 +68,20 @@ jobs:
           new=$(read_version "$SHA")
           old=$(read_version "$parent" || echo none)
           [[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::unexpected version '$new'"; exit 1; }
-          if [ "$new" = "$old" ]; then
-            echo "Version unchanged ($new); nothing to tag."
+          # Existence first: an untagged version on master is owed its tag even
+          # when the bump landed earlier (a merge that carried no checks used
+          # to leave the tag stranded forever). The release leg is owed too: a
+          # tag whose GitHub release was never created (or whose creation step
+          # failed) still owes the draft, so "nothing to do" requires BOTH.
+          if git ls-remote --exit-code --tags "https://github.com/$REPO.git" "refs/tags/v$new" >/dev/null && \
+             gh api "repos/$REPO/releases/tags/v$new" >/dev/null 2>&1; then
+            echo "Tag v$new and its release already exist; nothing to do."
             echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if git ls-remote --exit-code --tags "https://github.com/$REPO.git" "refs/tags/v$new" >/dev/null; then
-            echo "Tag v$new already exists; nothing to do."
-            echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          if [ "$new" = "$old" ]; then
+            echo "Version unchanged ($new) but tag v$new is missing; tagging this commit."
+          else
+            echo "Version bumped $old -> $new; tagging this commit."
           fi
           echo "version=$new" >> "$GITHUB_OUTPUT"
           echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -123,6 +134,13 @@ jobs:
           fi
           echo "::error::required checks missing or pending after CI completed and a bounded wait; refusing to tag"; exit 1
 
+      - name: Checkout candidate revision
+        if: steps.checks.outputs.green == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
       - name: Mint ashlr-release App token (contents write, this repo only)
         id: app
         if: steps.checks.outputs.green == 'true'
@@ -134,17 +152,15 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
 
-      - name: Create tag v${{ steps.version.outputs.version }}
+      # One step creates the tag then the DRAFT GitHub release — the train leg
+      # that used to depend on someone doing it by hand. The release stays a
+      # draft so releases/latest keeps serving the last complete feed until the
+      # sanctioned local publisher attaches the signed artifacts.
+      - name: Create tag v${{ steps.version.outputs.version }} and its draft release
         if: steps.checks.outputs.green == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          if git ls-remote --exit-code --tags "https://github.com/$REPO.git" "refs/tags/v$VERSION" >/dev/null; then
-            echo "Tag v$VERSION appeared meanwhile; nothing to do."; exit 0
-          fi
-          gh api -X POST "repos/$REPO/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$SHA" >/dev/null
-          echo "Created v$VERSION at $SHA" >> "$GITHUB_STEP_SUMMARY"
+        run: node .github/scripts/tag-github-release.mjs
 
