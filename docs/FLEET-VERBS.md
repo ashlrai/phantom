@@ -4,6 +4,7 @@
 
 | Verb | File | Reads or does | Writes anything? |
 |------|------|---------------|------------------|
+| aborts | `src/cli/fleet-aborts.ts` | Read-only count of `abort_*` jobs from the last 2 hours of the last 3000 lines of `~/.ashlr-runs/metrics/jobs.jsonl`, by class, lane and 15 minute bucket. Prints `GITHUB_PUSH_FAILING` and exits 1 when `abort_push` has 3 or more rows in the newest 15 minutes | no |
 | admission | `src/cli/fleet-admission.ts` | Read-only global cap, running, load and admit reason from queue/status.json, plus each lane's running, target, queued, held and a plain reason (held, at target, blocked by the global cap, or ok). Red, exit 1, when any lane is blocked by the global cap with 5 or more queued | no |
 | backlog | `src/cli/fleet-backlog.ts` | Read-only triage of the open-PR merge backlog | no |
 | bets | `src/cli/fleet-bets.ts` | Read-only status of every `- READY RQ-` bet in leader/VISION.md from the last 3000 jobs.jsonl lines: not seen, launched, skipped, PR open, merged, empty or closed; first line is merged n of m | no |
