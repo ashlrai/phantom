@@ -2232,6 +2232,10 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'app': {
+        process.exitCode = await (await import('./app.js')).cmdApp(rest);
+        break;
+      }
       case 'desktop': {
         process.exitCode = await (await loadDesktopCmd())(rest);
         break;
