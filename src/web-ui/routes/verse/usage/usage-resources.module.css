@@ -1,0 +1,124 @@
+/*
+ * usage-resources.module.css — the "Every resource" grid (RQ-NIGHT-USAGE-1).
+ * Same ground rules as usage.module.css: hairline separation, no shadows,
+ * display-face numerals, --meter-track for the unfilled half so remaining
+ * capacity stays readable.
+ */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+/* Narrow panes (≈390 px): every resource reads as its own full-width row. */
+@media (max-width: 560px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cell {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface, transparent);
+}
+
+.cellHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs-size);
+  color: var(--text-secondary);
+}
+
+.cellName {
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellState {
+  flex-shrink: 0;
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+}
+
+.amount {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm-size);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.amountMuted {
+  composes: amount;
+  color: var(--text-tertiary);
+}
+
+/* Meter — same track/fill treatment as the account window meters. */
+.track {
+  position: relative;
+  height: 4px;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--meter-track);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-500);
+  transition: width var(--duration-base, 180ms) var(--ease-decelerate);
+}
+
+.track[data-tone='warn'] .fill {
+  background: var(--status-warning-solid);
+}
+
+.track[data-tone='danger'] .fill {
+  background: var(--status-danger-solid);
+}
+
+/* The unknown row's rule: absence, not an empty bar (an empty track reads
+   "plenty left" — a lie when nothing was measured). */
+.unknownRule {
+  border: 0;
+  border-top: 1px dashed var(--border-subtle);
+  margin: var(--space-2) 0 0;
+}
+
+.meta {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  color: var(--text-tertiary);
+}
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.metaKey {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.metaValue {
+  color: var(--text-secondary);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

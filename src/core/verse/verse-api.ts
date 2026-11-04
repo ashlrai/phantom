@@ -2042,6 +2042,12 @@ export async function handleVerseApi(
       if (path !== `${VERSE_API_PREFIX}/resources/credit-pools`) { sendJson(res, 404, { error: 'Credit pool route not found.' }); return true; }
       return (await import('./credit-pools-api.js')).handleCreditPoolsApi(ctx, req, res, path, method);
     }
+    if (path === `${VERSE_API_PREFIX}/usage-resources` || path.startsWith(`${VERSE_API_PREFIX}/usage-resources/`)) {
+      // Read-only resource-usage aggregate; unknown children 404 here rather
+      // than evaluating the mounted modules.
+      if (path !== `${VERSE_API_PREFIX}/usage-resources`) { sendJson(res, 404, { error: 'Usage resources route not found.' }); return true; }
+      return (await import('./usage-resources-api.js')).handleUsageResourcesApi(ctx, req, res, path, method);
+    }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {
       const engine = await getVerseEngine();
