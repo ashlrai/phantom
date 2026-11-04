@@ -59,6 +59,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Mac dispatcher: `contrib/mac/dispatchd.py` is the single source for the live `~/.ashlr-runs/bin/dispatchd.py`. Change it here, never on the host. `contrib/mac/install.sh` diffs and installs it (plus `install-gate.py` and `launch-gate.sh`) with timestamped backups, but only after Security has reviewed and re-pinned the files; agents preview with `contrib/mac/install.sh --dry-run --json` and never run it against the live directory. Copy-paste install, once pinned: `contrib/mac/install.sh --json`. See [contrib/mac/README.md](contrib/mac/README.md#installing-the-dispatcher).
 - Learned skills: `phm skills list --json` shows skills written from merged PR outcomes (metadata only, scrubbed, capped; counts real or `"unknown"`). See [docs/SKILLS.md](docs/SKILLS.md).
 - Channels: `phm channels add <kind>` writes config only (credentials stay in existing custody, never printed); `phm channels status --json` reports real counts or `"unknown"`. See [docs/CHANNELS.md](docs/CHANNELS.md).
+- Briefs: the fleet brief-send verb (dry run by default, `--json` for the plan) plans the morning (7:30 ET) or overnight (22:30 ET) brief with a needs-you list of at most 5 items; `--apply` sends to your own channels, one per slot per local day. See [docs/BRIEF-SEND.md](docs/BRIEF-SEND.md).
 - Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/CONSOLE-LAYOUT.md](docs/CONSOLE-LAYOUT.md) (web console width breakpoints).
 - Resident daemon ticks are phased and bounded: every awaited stage has a deadline, an AbortSignal and a status record; `phm daemon status --json | jq .tick.phases` shows the last tick's ledger. See [docs/daemon-tick-phases.md](docs/daemon-tick-phases.md).
 
@@ -127,6 +128,10 @@ phm fleet parked --json
 
 `unmetDeps` lists parked rows whose gate ids are still unmet. Restock.py changes
 need a Security re-pin before live `bin/` install; do not install yourself.
+
+Durable memory: `phm memory add|list|search|forget --json` stores Mason's
+preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
+[memory](docs/MEMORY.md). Secret-shaped text is refused, never store values.
 
 Connector profiles: `phm connectors add|list|remove|show|import --json` manages
 `~/.phantom/connectors/profile.toml`; see [connector profiles](docs/CONNECTORS.md).
