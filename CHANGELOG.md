@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.29.17 |
-| Latest dated changelog release (2026-11-03) | 3.29.17 |
+| Source package | 3.30.0 |
+| Latest dated changelog release (2026-11-04) | 3.30.0 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.0] — Unreleased
+## [Unreleased]
+
+## [3.30.0] — 2026-11-04
 
 ### Added
 - `phm autopilot` drives Phantom's own pull requests toward green: it fixes CI,
@@ -56,11 +58,17 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - The self-improvement gate and PR autopilot become Tier-1 owned paths, and
   the promote gate's metric runs in the verification sandbox under a standing
   grant.
+- Fleet job drafts get a stdin-capable draft check with header validation,
+  collision output and snapshot-aware prechecks (CLI and MCP), `fleet trim`
+  joins the verb registry, and idle lanes report how long they have been idle.
 
 ### Removed
 - Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Several symbols were already cleaned by intervening PRs (the original sweep targeted 150; 7 were superseded). No CLI command, flag or config key changes.
 
 ### Fixed
+- The Verse update panel lists the local changes that block self-update and
+  holds on a failed update commit, and lane capacity without a meter shows as
+  unknown instead of a guessed allowance.
 - Resolve MCP gateway TS2300 duplicate-identifier error by deriving the
   JSON-RPC message type from `serializeMessage` rather than importing from
   a conflicting SDK module path.
