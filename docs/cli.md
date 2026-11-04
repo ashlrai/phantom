@@ -23,8 +23,8 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (recall, learn, genome, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (enroll, …)
-    observability   Observability - cost, telemetry, audit (router-calibration, queue, pulse, …)
-    integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, …)
+    observability   Observability - cost, telemetry, audit (router-calibration, queue, signals, …)
+    integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, sessions, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
     scaffold        Scaffold - new projects + shipping (new, ship, …)
@@ -69,7 +69,7 @@ Every command, grouped by topic.
     completions zsh|bash                                                                                           Print a shell completion script to stdout.
     plugins init|list|info|enable|disable                                                                          Scaffold + manage plugins (~/.ashlr/plugins/) - default-off, integrity-pinned, audited (see docs/PLUGINS.md).
     x <name> [args...]                                                                                             Run an enabled plugin's command.
-    help [<topic>] [--all]                                                                                         Topic-grouped help; --all prints every command; --search <term> filters.
+    help [<topic>|--all|--search <term>]                                                                           Topic-grouped help; --all prints every command; --search <term> filters.
     version                                                                                                        Print the installed ashlr version (aliases: --version, -v).
     setup                                                                                                          Temporarily unavailable: refuses before config or wizard effects; use owner-invoked run/swarm or daemon dry-run while compiled runtime roots are empty.
 
@@ -118,6 +118,7 @@ Every command, grouped by topic.
     enroll remove <repo>                                                                                                                                          Remove a repo from the enrollment registry.
     enroll kill on|off                                                                                                                                            Toggle the global autonomous kill switch.
     backlog                                                                                                                                                       Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention).
+    select [--json] [--dry-run] [--top <n>]                                                                                                                       Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
@@ -196,6 +197,7 @@ Every command, grouped by topic.
     manager [--apply-rejects]                                                                                                                                     Frontier judge scorecard over pending proposals (shadow mode by default; never merges).
     best-of-n [--repo --title -n]                                                                                                                                 Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).
     comms <status|cycle|digest>                                                                                                                                   Operator comms channel (Telegram/iMessage): digests, approve-by-text.
+    connectors add|list|remove|show|import [--json]                                                                                                               Manage credential-free connector profiles and import safe client metadata; vault references only.
     channels add <kind> | status [--json]                                                                                                                         Bring a channel up (config only, credentials stay in custody) or read the per-channel rollup.
     director                                                                                                                                                      Retired - the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.
     invent                                                                                                                                                        Generative backlog invention - propose novel high-value work items.
@@ -230,12 +232,15 @@ Every command, grouped by topic.
     sweep report [--repo <dir>]                                                                                                                                   Write a local weekly deletion review report from a Phantom checkout.
     digest                                                                                                                                                        Write an ORG-LEVEL portfolio digest (health, goals, costs, today) to ~/.ashlr/digests/ (LOCAL-FIRST; reads only).
     digest --notify                                                                                                                                               Also deliver the digest via a configured Slack/Discord webhook (OPT-IN; no-op when unconfigured).
-    queue add|claim|done|block|list|import|export                                                                                                                 Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.
+    queue add|claim|done|block|replay|list|import|export                                                                                                          Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.
+    issues [--retry] [--dir <queue-directory>] [--json]                                                                                                           Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.
+    route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
 
   Observability - cost, telemetry, audit
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]             Compare recorded router predictions with outcomes and usage.
     queue report --events <file> [--json]                                               Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
+    signals [--json]                                                                    Read real repository adoption signals.
     pulse [--window 1d|7d|30d]                                                          Local observability dashboard: tokens, cost, sessions, commits.
     pulse --json                                                                        Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
     pulse --project <name>                                                              Restrict pulse rollup to a single project.
@@ -243,6 +248,7 @@ Every command, grouped by topic.
     pulse-test                                                                          Fleet→pulse connectivity + auth probe (read-only).
     resource [--json] [--directory <fleet-directory>]                                   Refresh the shared resource.v1 view in fleet.json from recorded inputs.
     resources [--json] [--watch]                                                        Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
+    capacity publish [--json]                                                           Refresh local subscription usage metadata once with this node’s local authentication.
     budget <show|add> [--json]                                                          Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
     usage                                                                               Frontier usage table: per-engine calls/tokens/cost + window state.
     queue stats [--json] [--window <seconds>]                                           Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
@@ -250,9 +256,11 @@ Every command, grouped by topic.
     telemetry test                                                                      Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]  Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                 Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
+    lanes health [--json]                                                               Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
 
   Integrations - MCP, GitHub, Vercel, editors
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
+    sessions list|revoke <id> [--json]                                               See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.
     mcp list                                                                         List native ashlr tools + discovered MCP servers with per-server tool counts.
     mcp doctor                                                                       Per-server MCP health: does it start? how many tools?
     autopilot <pr> [--apply] [--watch]                                               Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR.
@@ -267,7 +275,7 @@ Every command, grouped by topic.
     gh pr create                                                                     Create a PR via gh CLI - explicit + confirm-gated (the only gh mutation).
     vercel <ls|logs>                                                                 Read recent Vercel deployments or latest build logs (read-only).
     wire [claude|codex|cursor|all]                                                   Wire ashlr MCP gateway into editor config(s); defaults to detected editors.
-    wire status [claude|codex|cursor|all]                                            Read-only report of whether each editor is wired to the ashlr gateway.
+    wire status [claude|codex|cursor|gemini|all]                                     Read-only report of whether each editor is wired to the ashlr gateway.
     wire --claude-md                                                                 Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
     notify test                                                                      Send a test ping to the configured webhook(s); no-op if none are set.
     stack [status|list|providers|recommend|scan|doctor|add|apply]                    Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
