@@ -20,12 +20,17 @@ async function connect(readers: FleetReaders = { status: async () => ({ pending:
 }
 
 describe('fleet MCP protocol', () => {
-  it('negotiates a tools-only server and advertises exactly three read-only tools', async () => {
+  it('negotiates a tools-only server and advertises only read-only tools', async () => {
     const client = await connect();
     expect(client.getServerCapabilities()).toEqual({ tools: {} });
     expect(client.getServerVersion()?.name).toBe('phantom-fleet');
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name)).toEqual(['fleet_status', 'fleet_loop', 'fleet_bus_hops']);
+    expect(tools.map(t => t.name)).toEqual([
+      'fleet_status', 'fleet_loop', 'fleet_bus_hops', 'fleet_host_runs', 'fleet_bus_inbox',
+      'fleet_lanes', 'fleet_usage_resets', 'fleet_reset_await', 'fleet_reset_group_await',
+      'fleet_reset_release_await', 'fleet_reset_history', 'fleet_reset_follow', 'fleet_job_history',
+      'fleet_path_history', 'fleet_job_precheck', 'fleet_job_precheck_batch', 'fleet_main_health',
+    ]);
     for (const tool of tools) {
       expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       expect(tool.inputSchema.additionalProperties).toBe(false);
