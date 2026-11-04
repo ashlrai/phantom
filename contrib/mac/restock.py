@@ -4,7 +4,7 @@
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
 import os, re, sys, json, time, fcntl, subprocess
-from launch_precheck import precheck
+from launch_precheck import precheck, park, parked as precheck_parked, park_key
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
@@ -44,7 +44,13 @@ def load_noops():
     try: raw = json.loads(rd(NOOPF, "{}") or "{}")
     except Exception: return {}
     return {j: e for j, e in raw.items() if isinstance(e, dict) and isinstance(e.get("n"), int) and isinstance(e.get("at"), int)} if isinstance(raw, dict) else {}
-def noop_parked(noops, j, now): e = noops.get(j); return bool(e and e["n"] >= NOOP_STREAK and now - e["at"] < NOOP_WINDOW)
+def noop_parked(noops, j, key, now): e = noops.get(j); return bool(e and e.get("key") == key and e["n"] >= NOOP_STREAK and now - e["at"] < NOOP_WINDOW)
+PARKF = Q + "/restock-precheck-parked.json"
+try: park_state = json.loads(rd(PARKF, "{}"))
+except Exception: park_state = {}
+park_state = {j: e for j, e in park_state.items() if isinstance(e, dict)
+              and isinstance(e.get("key"), str) and isinstance(e.get("count"), int) and 1 <= e["count"] <= 7
+              and isinstance(e.get("retry_at"), int) and e["retry_at"] >= 0} if isinstance(park_state, dict) else {}
 st = json.loads(rd(Q + "/status.json", "{}") or "{}"); lanes = st.get("lanes", {})
 slots = json.loads(rd(Q + "/slots.json", "{}") or "{}")
 hold = set(rd(R + "/HOLD").split())
@@ -85,11 +91,17 @@ def ready_job_id(line):
     if PARK_DEP.match(f[0]): return f[1] if len(f) > 1 else None
     return f[0]
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
-merged = set()
+merged = set(); completed = set()
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
     except Exception: continue
-    if d.get("event") == "outcome" and d.get("state") == "MERGED" and d.get("job"): merged.add(d.get("job"))
+    if not isinstance(d, dict): continue
+    if d.get("event") == "outcome" and d.get("state") == "MERGED" and isinstance(d.get("job"), str):
+        merged.add(d["job"])
+        repo = d.get("repo")
+        if repo is None or isinstance(repo, str):
+            # Legacy outcomes omit repo; job IDs are fleet-wide identities.
+            completed.add((repo.removeprefix("ashlrai/") if repo is not None else None, d["job"]))
 try: ps = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True).stdout
 except Exception: ps = ""   # sandboxed callers may refuse ps; the worktree-dir check in busy() still applies
 def landed(dep): return dep in merged or status.get(dep, "") in ("DONE", "MERGED", "LANDED")
@@ -122,8 +134,19 @@ def parse_parked_dep(line):
         return f[0], f[1], lane, f[3], f[4], line
     return None
 def prio(a): m = re.search(r"\bP(\d)\b", a); return int(m.group(1)) if m else 3
+def prompt_body(j, repo, l, tier, attrs, text, gate=None):
+    gate_line = ("DEPENDENCY GATE: %s\n\n" % ", ".join(gate)) if gate else ""
+    pin_line = ("\n%s\n" % PIN_MERGE) if PIN_MERGE in (attrs + " " + text) else ""
+    return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
+            f"{gate_line}{j} ({attrs}): {text}\n\n"
+            "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
+            "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
+            "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
+            f"{pin_line}")
 noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
-skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []   # after-unlanded -> PARKED-DEP rows this pass
+skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked = set(); task_keys = {}; ts = int(time.time())   # after-unlanded -> PARKED-DEP rows this pass
+# Bound network prechecks while allowing skipped rows to backfill lane demand.
+pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
 # RQ-QUEUE-AUTOUNPARK-1: each tick, unpark PARKED-DEP rows whose DEPENDENCY GATE ids are all MERGED in jobs.jsonl.
 # Unpark rewrites the ready.tsv row only — the prompt body (including "no merge without Security pin") is untouched.
@@ -171,6 +194,7 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
     prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
+    if (rm.group(1), j) in completed or (None, j) in completed: skip(j, "already-merged"); continue
     deps = []
     for a in re.findall(r"after ([^,]+)", attrs):
         for d in re.split(r"\s+and\s+|,\s*", a.strip()):
@@ -192,35 +216,34 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
         skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue
-    if noop_parked(noops, j, time.time()): skip(j, "noop-streak"); continue
+    key = park_key(raw, ""); task_keys[j] = key
+    if noop_parked(noops, j, key, ts): skip(j, "noop-streak"); continue
+    if precheck_parked(park_state, j, key, ts): skip(j, "precheck-parked"); continue
     # dedupe by target PR and target file: sibling lines for the same PR or file would retire as NOOP together
     fm = re.search(r"\bfile=(\S+)", attrs + " " + text); fkey = (rm.group(1), fm.group(1)) if fm else None
     if prp & seen_pr: skip(j, "dup-pr"); continue
     if fkey and fkey in seen_file: skip(j, "dup-file"); continue
-    if any(j == x[0] for l2 in CODEX for x in picks[l2]): skip(j, "dup-line"); continue
+    if j in checked: skip(j, "dup-line"); continue
     # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
     lane = pool if len(picks[pool]) < need[pool] or pool == "codex-local" else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     if len(picks[lane]) >= need[lane]: continue
+    if pc_left <= 0: break
+    checked.add(j); pc_left -= 1
+    pc = precheck(j, rm.group(1), prompt_body(j, rm.group(1), lane, tier, attrs, text), H, R)
+    if pc and pc[0] in (11, 12, 13):
+        # Open PRs and legacy existence heuristics are not acceptance evidence.
+        # Keep the author row READY; unchanged retries share dispatch's backoff.
+        park(park_state, j, key, ts); skip(j, "precheck-parked"); continue
+    park_state.pop(j, None)
+    if pc:
+        done.append((i, j, pc)); skip(j, "done-noop"); continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
     seen_pr |= prp
     if fkey: seen_file.add(fkey)
-out = []; done = []; ts = int(time.time())
-def prompt_body(j, repo, l, tier, attrs, text, gate=None):
-    gate_line = ("DEPENDENCY GATE: %s\n\n" % ", ".join(gate)) if gate else ""
-    pin_line = ("\n%s\n" % PIN_MERGE) if PIN_MERGE in (attrs + " " + text) else ""
-    return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
-            f"{gate_line}{j} ({attrs}): {text}\n\n"
-            "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
-            "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
-            "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
-            f"{pin_line}")
+out = []
 for lane in CODEX:
     for j, repo, l, tier, attrs, text, i in picks[lane]:
         p = prompt_body(j, repo, l, tier, attrs, text)
-        pc = precheck(j, repo, p, H, R)
-        if pc:
-            done.append((i, j, pc)); skip(j, "done-noop")
-            continue
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
 dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
@@ -241,6 +264,11 @@ if "--json" in sys.argv:
     print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
                       "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
                       "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
+if not DRY:
+    # A separate state file avoids racing dispatch's launch retry ledger.
+    ready_ids = {r[1] for r in recs}
+    park_state = {j: e for j, e in park_state.items() if j in ready_ids}
+    open(PARKF + ".tmp", "w").write(json.dumps(park_state)); os.replace(PARKF + ".tmp", PARKF)
 if DRY or (not out and not seclist and not done and not unparks and not dep_out): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
 for j, repo, l, tier, pf, p, i, deps in dep_out: open(pf, "w").write(p)
@@ -288,7 +316,10 @@ for j, ids, _old, _new in unparks:
 for j, repo, l, tier, pf, p, i, deps in dep_out:
     ev("PARKED-DEP %s deps=%s" % (j, ",".join(deps)))
 if not DRY:   # NOOP streaks: +1 per retirement, cleared when the job really queues, expired entries dropped
-    for _, j, _pc in done: e = noops.get(j) or {"n": 0}; noops[j] = {"n": e["n"] + 1, "at": ts}
+    for _, j, _pc in done:
+        e = noops.get(j, {})
+        n = e.get("n", 0) if e.get("key") == task_keys[j] else 0
+        noops[j] = {"n": n + 1, "at": ts, "key": task_keys[j]}
     for j, *_r in out: noops.pop(j, None)
     noops = {j: e for j, e in noops.items() if ts - e["at"] < NOOP_WINDOW}
     open(NOOPF + ".tmp", "w").write(json.dumps(noops)); os.replace(NOOPF + ".tmp", NOOPF)
