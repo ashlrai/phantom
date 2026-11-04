@@ -2609,6 +2609,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'connectors': {
+        const { cmdConnectors } = await import('./connectors.js');
+        process.exitCode = await cmdConnectors(rest);
+        break;
+      }
+
       case 'channels': {
         const cmdChannels = await loadChannelsCmd();
         process.exitCode = await cmdChannels(rest);

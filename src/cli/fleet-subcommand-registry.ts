@@ -170,6 +170,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'reset-release': () => import('./fleet-reset-release.js'),
   'running': () => import('./fleet-running.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
+  'safari-import': () => import('./fleet-safari-import.js'),
   'self-loop': () => import('./fleet-self-loop.js'),
   'self-loop-await': () => import('./fleet-self-loop-await.js'),
   'self-loop-record': () => import('./fleet-self-loop-record.js'),
