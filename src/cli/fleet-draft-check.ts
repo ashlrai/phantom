@@ -1,4 +1,5 @@
 /** Read-only: is an in-memory batch of draft jobs already on origin/master? */
+import { parseJobHeader } from '../core/fleet/job-header.js';
 import {
   JOB_PRECHECK_BATCH_MAX,
   precheckJobBatch,
@@ -45,6 +46,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Line 1 is everything before the first LF; the CR of a CRLF terminator is
+ * consumed by the ending, not the line — the same split job-precheck.ts and
+ * the re-issue path (`\r?\n`) apply. A lone CR stays in the line and fails the
+ * anchored header parse. Nothing else is trimmed: a leading blank line or
+ * space can never be normalized into acceptance.
+ */
+function firstLine(markdown: string): string {
+  return markdown.split(/\r?\n/, 1)[0] ?? '';
+}
+
 /** Strict shape check: every violation throws before any git probe runs. */
 function parseDrafts(input: string): Draft[] {
   let value: unknown;
@@ -78,6 +90,11 @@ function parseDrafts(input: string): Draft[] {
     if (Buffer.byteLength(markdown, 'utf8') > MARKDOWN_MAX_BYTES) {
       throw new Error(`${where}.markdown exceeds ${MARKDOWN_MAX_BYTES} bytes`);
     }
+    const header = parseJobHeader(firstLine(markdown), name);
+    if (!header.ok) throw new Error(`draft ${name}: ${header.error}`);
+    if (header.repo !== 'phantom') {
+      throw new Error(`draft ${name}: repo must be phantom (got "${header.repo.slice(0, 40)}")`);
+    }
     return { name, markdown };
   });
 }
@@ -96,6 +113,7 @@ export async function cmdFleetDraftCheck(args: string[], deps: DraftCheckCliDeps
     log(`${usage}\n` +
       `Reads one JSON object on stdin: {"drafts":[{"name":"RQ-PHX-ID.md","markdown":"..."}]} with 1-${JOB_PRECHECK_BATCH_MAX} drafts.\n` +
       `Each name must be a unique RQ-PHX-[A-Z0-9]{3,40}.md basename; each markdown must be nonempty UTF-8 of at most ${MARKDOWN_MAX_BYTES} bytes.\n` +
+      `Each markdown's first line must be the dispatch header \`#job repo=phantom lane=<lane> tier=<tier>\` — single spaces, lowercase fields, repo literally phantom, tier one of fast, mid, work, frontier. A CRLF ending is accepted; a leading blank line or space is never trimmed into acceptance.\n` +
       `The whole input is limited to ${STDIN_MAX_BYTES} bytes. Unknown fields, duplicate names and malformed input are rejected before any git probe.\n` +
       `There are no file, ref, cwd or executable arguments: the batch is always checked against origin/master, resolved once to an immutable commit.\n` +
       `Each draft's named src, test, docs, schema and scripts paths are probed over a shared fact cache, so a path several drafts name is probed once; paths named by two or more drafts are reported as collisions.\n` +
