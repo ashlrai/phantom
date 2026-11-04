@@ -2621,6 +2621,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'memory': {
+        const { cmdMemory } = await import('./memory.js');
+        process.exitCode = await cmdMemory(rest);
+        break;
+      }
+
       case 'connectors': {
         const { cmdConnectors } = await import('./connectors.js');
         process.exitCode = await cmdConnectors(rest);
