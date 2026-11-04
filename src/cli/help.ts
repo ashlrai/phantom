@@ -50,6 +50,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: '{schemaVersion:1, command, status:"ready", nodes|edges|counts} | {schemaVersion:1, command, status:"unavailable"|"error", error:{code,message}}',
   },
+  { usage: 'phm route explain [--json]', description: 'Read persisted dispatcher pools and accepted route moves in the trailing hour.', safety: 'read', jsonShape: '{available, route-moves-per-hour: number|null, lines}' },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
   {
     usage: 'phm budget show [--json]',
@@ -755,6 +756,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'capacity publish [--json]', desc: 'Refresh local subscription usage metadata once with this node’s local authentication.', topic: 'observability' },
   { cmd: 'budget <show|add> [--json]', desc: 'Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
+  { cmd: 'route explain [--json]', desc: 'Read dispatcher pools and route-moves-per-hour.', topic: 'autonomy' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
