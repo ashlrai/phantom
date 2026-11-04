@@ -2368,6 +2368,17 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/app/fleet-usage (fleet-usage.v1, read-only, numbers only) ──
+    if (path === '/api/app/fleet-usage') {
+      if (method !== 'GET') {
+        sendJson(res, 405, { error: `method not allowed: ${method} ${path}` });
+        return true;
+      }
+      const { readFleetUsage } = await import('../resources/fleet-usage.js');
+      sendJson(res, 200, await readFleetUsage());
+      return true;
+    }
+
     // ── GET /api/wb/v1/{snapshot,gh,budget} (desktop native shell reads) ────
     // Versioned loopback read surface for desktop/src-tauri fleet ops.
     // GET-only; already behind the read-session boundary like every /api/* GET.
