@@ -1,3 +1,4 @@
+/* global process, console */
 // Tag -> draft GitHub release, the leg of the release train that never ran.
 // Called from auto-tag.yml only after every required check is green on the
 // exact candidate commit and only ever with the ashlr-release App token.
