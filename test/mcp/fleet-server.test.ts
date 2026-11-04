@@ -20,12 +20,12 @@ async function connect(readers: FleetReaders = { status: async () => ({ pending:
 }
 
 describe('fleet MCP protocol', () => {
-  it('negotiates a tools-only server and advertises exactly three read-only tools', async () => {
+  it('negotiates a tools-only server and advertises all read-only tools', async () => {
     const client = await connect();
     expect(client.getServerCapabilities()).toEqual({ tools: {} });
     expect(client.getServerVersion()?.name).toBe('phantom-fleet');
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name)).toEqual(['fleet_status', 'fleet_loop', 'fleet_bus_hops']);
+    expect(tools.map(t => t.name)).toEqual(['fleet_status', 'fleet_loop', 'fleet_bus_hops', 'fleet_host_runs', 'fleet_bus_inbox', 'fleet_lanes', 'fleet_self_tick_last']);
     for (const tool of tools) {
       expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       expect(tool.inputSchema.additionalProperties).toBe(false);
@@ -50,6 +50,11 @@ describe('fleet MCP protocol', () => {
     await expect(client.callTool({ name, arguments: args })).rejects.toMatchObject({ code: -32602 });
     expect(status).not.toHaveBeenCalled();
     expect(loop).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown arguments for fleet_self_tick_last', async () => {
+    const client = await connect();
+    await expect(client.callTool({ name: 'fleet_self_tick_last', arguments: { bogus: 'value' } })).rejects.toMatchObject({ code: -32602 });
   });
 
   it('scrubs persisted secret-shaped prose and home paths before returning JSON', async () => {
