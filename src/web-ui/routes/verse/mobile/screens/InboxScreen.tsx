@@ -23,6 +23,7 @@ import { dedupeInboxEntries } from '../inbox-dedupe.js';
 import { inboxSeen, type InboxSeen } from '../inbox-seen-model.js';
 import { inboxPending } from '../inbox-pending-model.js';
 import { INBOX_NOT_IN_THIS_BUILD, INBOX_READ_LIMIT, inboxReadQuery, type FleetInboxReadEntry } from '../inbox-read-query.js';
+import { MobileInterject } from '../MobileInterject.js';
 import { useMobile } from '../mobile-context.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
 import { Badge, Banner, EmptyState, ErrorState, ui, type Tone } from '../ui-parts.js';
@@ -154,6 +155,7 @@ export function InboxScreen() {
 
   return (
     <Screen title="Inbox" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshInboxScreen} label="Inbox">
+      <MobileInterject title="Chat with the leaders" />
       {body}
     </Screen>
   );
