@@ -2,8 +2,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'tests'))
+from queue_capacity_fixture import install_capacity_gh
 
 
 class RestockPrecheck(unittest.TestCase):
@@ -20,7 +25,9 @@ class RestockPrecheck(unittest.TestCase):
                 (binary / 'precheck.sh').write_text(f'echo SKIP RQ-TEST code={code} reason=id_merged_pr_7\nexit {code}\n')
                 source = '- READY RQ-TEST (P0, pool=codex-cmp, repo=phantom): test task\n'
                 (queue / 'router-queue.md').write_text(source)
-                env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE='1')
+                fakebin = root / 'capacity-bin'
+                install_capacity_gh(fakebin)
+                env = dict(os.environ, HOME=home, PYTHONDONTWRITEBYTECODE='1', PATH=str(fakebin) + ':' + os.environ.get('PATH', '/usr/bin:/bin'))
                 def run(*args):
                     return json.loads(subprocess.check_output(['python3', str(script), '--json', *args], env=env, text=True))
                 dry = run('--dry-run')

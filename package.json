@@ -34,6 +34,7 @@
   },
   "files": [
     "radar/sources.json",
+    "contrib/mac/queue_autounpark.py",
     "dist",
     "bin",
     "scripts/run-verify-command.mjs",

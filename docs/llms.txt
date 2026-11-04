@@ -326,3 +326,8 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 - [Chief-of-staff intake](COS.md): Durable channel jobs, JSON command contracts and approved result delivery.
+
+Mac queue parking: QUEUE.md#parking
+phm queue parked --json
+phm queue unpark --dry-run --json
+Read-only dependency evidence and next-pass promotion preview. Restock and its shared helper require Security re-pin before live install.

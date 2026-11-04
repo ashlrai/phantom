@@ -183,3 +183,49 @@ job ids. It never writes unless you add `--retry`, which queues one READY retry 
 failed job using the same lineage as `queue replay` (repeats do not duplicate).
 Add `--json` for `{ v, failed, groups: [{ error, count, samples, jobs }] }`, or
 `{ v, retried: [{ id, retry }] }` with `--retry`. Use `--dir` to pick a queue directory.
+
+## Parking
+
+The Mac restocker checks `~/.ashlr-runs/queue/parked.tsv` on every pass,
+including when `router-queue.md` is absent. Rows use the same five fields as
+`ready.tsv`: id, repo, lane, tier, prompt path, plus optional sixth `pin=1`.
+Supported tiers are `frontier`, `work`, `mid`, and `fast`. Invalid rows remain
+parked and are recorded as `REJECT` in `queue/unpark.log`.
+
+Each prompt can contain multiple `DEPENDENCY GATE: RQ-FIRST, RQ-SECOND MERGED`
+lines. Every dependency must have a merged PR in that row's AshlrAI repository,
+with head `codex-bridge/<id>` or a title containing the id. Missing prompts,
+malformed gates, and unavailable evidence keep rows parked. Prompts without a
+gate can represent work parked for merge capacity. Prompt text and `pin=1`
+are preserved; promotion is queue admission and grants no Security pin.
+
+```sh
+phm queue parked --json
+phm queue unpark --dry-run --json
+```
+
+Both commands are read-only and use the same implementation as restock.
+`parked` reports each dependency's merged state; `unpark --dry-run` also reports
+promotion candidates and capacity. GitHub lookups use local `gh` authentication
+and never print credentials.
+
+Promotion acquires `ready.lock`, re-reads the queues, creates
+`ready.tsv.bak-autounpark-YYYYMMDD-HHMMSS`, appends eligible rows in parked order,
+and logs each `UNPARK` in `queue/unpark.log`. The existing ready order is retained.
+A duplicate job already in ready is not appended again. Backup name collisions
+fail without changing either queue. Legacy `PARKED-DEP` rows in ready continue
+to use their existing local merged-outcome handling.
+
+Open bridge admission uses `max(2, idle online CI runners - merge queue depth)`.
+The depth comes from the repository's default-branch merge queue, and runner availability
+from its Actions runners endpoint. Unknown or incomplete runner/queue evidence
+uses the floor of two. Unknown or truncated open PR evidence holds admission.
+Open bridge PRs and ready rows consume capacity. Overflow stays in its original
+queue order for a later pass. Hosted runner capacity that the runners endpoint
+does not expose is not estimated. No fixed merge-rate cap existed in the source
+restocker; this adaptive admission applies to newly selected author rows and
+parked promotions.
+
+The shared helper is `contrib/mac/queue_autounpark.py`; install previews include
+it alongside restock. Changes require Security re-pin before any live Mac install.
+Do not install a candidate over the live pinned files.

@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/queue-autounpark.test.ts', // Runs real Python/gh fixtures and contends on a real flock.
   'test/changelog-sync-bridge-04.test.ts', // Runs the changelog script in real child processes.
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.

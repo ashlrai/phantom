@@ -4,6 +4,8 @@ import { readQueueVisits } from '../core/queue/journal.js';
 import { estimateQueueStats } from '../core/queue/stats.js';
 
 const HELP = `Usage: phm queue stats [--json] [--window <seconds>]
+       phm queue parked [--json]
+       phm queue unpark --dry-run [--json]
        phm queue report --events <file> [--json]
        phm queue add|claim|done|block|replay|list|import|export [options]
 
@@ -90,6 +92,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
     return (await import('./job-queue.js')).cmdJobQueue(args);
   }
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
+  if (args[0] === 'parked' || args[0] === 'unpark') return (await import('./queue-parked.js')).cmdQueueParked(args);
   if (args[0] === 'stats') return cmdQueueStats(args);
   if (args[0] === 'report') return cmdQueueReport(args);
   console.error(HELP);

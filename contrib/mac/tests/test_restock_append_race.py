@@ -17,6 +17,9 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from queue_capacity_fixture import install_capacity_gh
+
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
 LANES = ['codex-cmp', 'codex-personal', 'devin', 'codex-local', 'claude-api']
 
@@ -71,6 +74,7 @@ def restock_with_append(home, appended):
     release = home / 'ps_release'
     fakebin = home / 'fakebin'
     fakebin.mkdir()
+    install_capacity_gh(fakebin)
     fake = fakebin / 'ps'
     fake.write_text(FAKE_PS % (started, release))
     fake.chmod(0o755)

@@ -164,3 +164,13 @@ Runs enforce a six-hour per-source floor, including failures. Private snapshots
 are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserves
 the last successful evidence. Remote content never authorizes actions or sends.
 Individual fetch failures are warnings and retain the last successful snapshot.
+
+Mac parked queue admission (read-only inspection, GitHub merged PR evidence):
+
+```sh
+phm queue parked --json
+phm queue unpark --dry-run --json
+```
+
+See [Parking](docs/QUEUE.md#parking). The restocker and its shared
+`contrib/mac/queue_autounpark.py` helper need Security re-pin before live install.
