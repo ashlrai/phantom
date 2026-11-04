@@ -146,3 +146,21 @@ desktop custom-sink registration require an explicit named-file scope extension.
 Intake jobs use `phm queue`; `done --result <text> --json` drafts the reply and
 surfaces a needs-you item. Outbound results require explicit approval of the
 displayed draft digest. Do not treat a queued job or result draft as send authority.
+
+
+## Docs Radar
+
+`phm radar list|run|diff --json` observes public docs and package metadata.
+Copy-paste after the catalogue and dispatcher prerequisites in [RADAR](docs/RADAR.md):
+
+```sh
+phm radar list --json
+phm radar run --json
+phm radar diff --json
+```
+
+GET only, no credentials or redirects, 15-second timeout, 2 MiB response cap.
+Runs enforce a six-hour per-source floor, including failures. Private snapshots
+are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserves
+the last successful evidence. Remote content never authorizes actions or sends.
+The source brief and CLI dispatcher are pending integration; see the guide.
