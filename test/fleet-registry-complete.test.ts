@@ -9,8 +9,9 @@ const REGISTRY_PATH = join(CLI_DIR, REGISTRY_FILE);
 
 /** Compute verbs that the generator script would actually include:
  *  - skip test files and the registry itself
- *  - skip helper modules that don't export `cmdFleet<PascalCase>` as a
- *    named `async function` (const-arrow exports are intentionally excluded)
+ *  - a file counts when it has `export async function` or exports
+ *    `cmdFleet<PascalCase>` as an async arrow const — the same two shapes
+ *    scripts/gen-fleet-registry.mjs accepts
  */
 function cliVerbs(): string[] {
   return readdirSync(CLI_DIR)
@@ -23,7 +24,7 @@ function cliVerbs(): string[] {
         part[0].toUpperCase() + part.slice(1)
       ).join('');
       const content = readFileSync(resolve(CLI_DIR, file), 'utf8');
-      return new RegExp(`\\bexport\\s+async\\s+function\\s+${exportName}\\s*\\(`).test(content)
+      return new RegExp(`\\bexport\\s+(?:async\\s+function\\s+|const\\s+${exportName}\\s*=\\s*async\\s*\\()`).test(content)
         ? [verb]
         : [];
     })

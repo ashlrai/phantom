@@ -341,6 +341,11 @@ const loadDesktopCmd = lazyCmd(
   'desktop command requires the installed compiled consumer installer.',
 );
 
+const loadAppsCmd = lazyCmd(
+  () => import('./apps-control.js'), (m) => m.cmdApps as Cmd,
+  'apps command requires src/cli/apps-control.ts.',
+);
+
 const loadDesktopUpdateCmd = lazyCmd(
   () => import('./desktop-update.js'), (m) => m.cmdDesktopUpdate as Cmd,
   'desktop-update command requires the installed compiled update consumer.',
@@ -2240,6 +2245,10 @@ async function main(): Promise<void> {
 
       case 'desktop': {
         process.exitCode = await (await loadDesktopCmd())(rest);
+        break;
+      }
+      case 'apps': {
+        process.exitCode = await (await loadAppsCmd())(rest);
         break;
       }
       case 'desktop-update': {
