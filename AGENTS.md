@@ -108,3 +108,9 @@ Tier-1 import closure checks on every PR and merge queue candidate, including
 docs-only changes. A new Tier-1 test needs its generated CODEOWNERS entry in the
 same PR; changed Tier-1 imports need a reviewed closure snapshot update. Drift
 fails the existing Merge Gate even when the full authority shards do not run.
+
+Route hysteresis: ready.tsv pool proposals pass through dispatchd's persisted
+60-minute residency, immutable launch pool and two-moves/six-hours cap. Only
+explicit auth failure or zero quota permits early movement. See
+[route hysteresis](docs/ROUTE-HYSTERESIS.md) for replay, `phm route explain --json`
+and the Security pin handoff. Never install a candidate over the live pinned file.
