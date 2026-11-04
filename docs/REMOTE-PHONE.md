@@ -89,3 +89,29 @@ The Mac must be awake and online, and the installed Phantom app must remain runn
 Explicit remote-config startup generates a private VAPID key once and retains it across restarts; the private key stays on the Mac. The code alone does not establish a Cloudflare account, Access policy, Tunnel, DNS, resident services, or iOS push permission. Treat the phone URL and notifications as live only after those external steps and the real-phone checks pass.
 
 For `remote.ashlr.ai`, `_acme-challenge.ashlr.ai` is NS-delegated to Vercel. Cloudflare's initial Universal SSL validation required two current TXT values in that delegated Vercel zone alongside the existing TXT records. Keep the existing values and verify the authoritative answers and Cloudflare certificate status before using the hostname. Universal certificates have a 90-day lifetime; Cloudflare starts renewal 30 days before expiry and may fall back from HTTP validation to TXT. Monitor issuance and renewal, and update the delegated TXT values if a future challenge rotates.
+
+### Running build parity
+
+The phone gateway serves `/verse/m/`, its service worker, and the allowlisted
+assets from the running desktop Hub. It does not use a second installed copy
+of the console. If the Hub cannot serve an asset, the gateway fails closed
+instead of falling back to a different build. The shared inbox and fleet,
+usage, and decision APIs continue to use that same Hub and state.
+
+Authenticated desktop and paired-phone clients can read `GET /api/verse/version`.
+Both return the Hub's build manifest unchanged: `packageVersion`, `revision`
+(the full source SHA), `dirty`, and `provenance`. The phone footer shows the
+running version and master revision, with the full SHA available on the revision
+text. Unpackaged development builds without a manifest report unavailable
+metadata explicitly. The endpoint requires the existing read authority; remote
+requests still require Cloudflare Access and a paired device session.
+
+The phone's Inbox includes the guarded message composer used on Live runs.
+Phone messages retain the mobile channel through the gateway, so leader replies
+use the existing same-channel delivery path.
+
+Approval cards also offer **Hold** for their repository. Confirmation explains
+that this places an owner hold on all fleet production and merges for that
+repository while keeping the approval pending. Remote holds require action
+scope and fresh device step-up, like approval and resume; they use the Hub's
+existing audited `pause-repo` operation.
