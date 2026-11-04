@@ -6,6 +6,7 @@
 |------|------|---------------|------------------|
 | admission | `src/cli/fleet-admission.ts` | Read-only global cap, running, load and admit reason from queue/status.json, plus each lane's running, target, queued, held and a plain reason (held, at target, blocked by the global cap, or ok). Red, exit 1, when any lane is blocked by the global cap with 5 or more queued | no |
 | backlog | `src/cli/fleet-backlog.ts` | Read-only triage of the open-PR merge backlog | no |
+| bets | `src/cli/fleet-bets.ts` | Read-only status of every `- READY RQ-` bet in leader/VISION.md from the last 3000 jobs.jsonl lines: not seen, launched, skipped, PR open, merged, empty or closed; first line is merged n of m | no |
 | bet-trace | `src/cli/fleet-bet-trace.ts` | Offline supervisor-command reconciliation; no dispatch or mutation authority | no |
 | brains | `src/cli/fleet-brains.ts` | Read-only last-action view of each fleet brain from the dispatch-events tail; stale past 90 minutes, missing log is unknown | no |
 | bus-thread | `src/cli/fleet-bus-thread.ts` | Reads retained live local context only; routing labels are not authenticated identities | no |

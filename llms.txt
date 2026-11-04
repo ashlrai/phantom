@@ -11,3 +11,5 @@ Read the dispatcher starvation signals and admission decision (read-only):
 ```sh
 phm pool admission --json
 ```
+
+- [Connector profiles](docs/CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; declarative metadata and Phantom Secrets names, with explicit lane selectors and credential-safe import reports.
