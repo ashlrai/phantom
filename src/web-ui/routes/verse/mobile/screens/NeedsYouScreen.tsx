@@ -63,7 +63,7 @@ import { FleetAttentionCards } from '../FleetAttentionCards.js';
 import { sinceText } from '../connectivity.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { fleetAttention } from '../needs-fleet-model.js';
-import { releaseLaneHold, refreshFleetReads } from '../fleet-actions.js';
+import { holdApprovalRepo, releaseLaneHold, refreshFleetReads } from '../fleet-actions.js';
 import { heldLaneItems, needsHoldsQuery } from '../needs-holds-model.js';
 import { ciNeedsItem } from '../needs-ci-model.js';
 import { needsCiQuery } from '../needs-ci-query.js';
@@ -463,6 +463,21 @@ function NeedsCard({ item, canAct, offline, reduced, onAction, onOpen, onHide }:
               );
             })
             : null}
+          {canAct && item.kind === 'approval' && item.subject.repo ? (
+            <Button variant="secondary" disabled={offline} aria-label={`Hold repo: ${item.subject.repo}`}
+              onClick={() => {
+                const repo = item.subject.repo!;
+                runMobileAction({
+                  title: `Hold ${repo}?`,
+                  consequences: 'The fleet will produce and merge nothing in this repository until you resume it. The approval stays pending.',
+                  confirmLabel: 'Hold repo',
+                  run: () => holdApprovalRepo(repo),
+                  success: `${repo} held for review.`,
+                });
+              }}>
+              Hold
+            </Button>
+          ) : null}
           {showOpen ? (
             <Button variant="secondary" aria-label={`${open}: ${row.title}`} onClick={() => onOpen(item)}>
               {open}
