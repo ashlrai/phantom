@@ -28,7 +28,7 @@ const bus: FleetBusFeedV1 = {
 };
 const queue: FleetQueueV1 = {
   v: 1, generatedAt, sources: { ready: 'healthy', skips: 'healthy' }, total: 1, ready: 1, parked: 0,
-  malformed: 0, byLane: [{ lane: 'default', ready: 1, parked: 0 }], groups: [], skips: [], skipsLast24h: 0,
+  malformed: 0, byLane: [{ lane: 'default', ready: 1, parked: 0 }], groups: [], unmetDeps: [], skips: [], skipsLast24h: 0,
 };
 
 class GatewayError extends Error {
