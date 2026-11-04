@@ -361,6 +361,94 @@ class DevinDefaultTests(unittest.TestCase):
         self.assertEqual(need_of(out)['devin'], 30)
 
 
+class AutoUnparkTests(unittest.TestCase):
+    """RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP rows unpark when DEPENDENCY GATE ids are MERGED."""
+
+    def seed_parked(self, home, job, deps, lane='devin', pin_text=False, merged=()):
+        q = home / '.ashlr-runs' / 'queue'
+        pf = q / 'prompts' / f'{job}.md'
+        body = (f'DEPENDENCY GATE: {", ".join(deps)}\n\n{job}: wait for deps\n')
+        if pin_text:
+            body += 'no merge without Security pin\n'
+        pf.write_text(body)
+        row = '\t'.join([f'PARKED-DEP.{lane}', job, lane, 'work', 'phantom', str(pf)])
+        (q / 'ready.tsv').write_text(row + '\n')
+        (home / '.ashlr-runs' / 'metrics' / 'jobs.jsonl').write_text(''.join(
+            json.dumps({'event': 'outcome', 'state': 'MERGED', 'job': d}) + '\n' for d in merged))
+        return pf
+
+    def test_unparks_when_every_gate_id_is_merged(self):
+        tmp = build(line('RQ-OK', P=3, pool='devin', repo='phantom', text='filler') + '\n',
+                    slots={**{l: {'held': True} for l in LANES}, 'devin': {'target': 0}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        # Hold every lane so restock does not claim the filler; only the unpark path runs.
+        pf = self.seed_parked(home, 'RQ-WAIT', ['RQ-DEP-A', 'RQ-DEP-B'],
+                              merged=('RQ-DEP-A', 'RQ-DEP-B'))
+        before = pf.read_text()
+        r = restock(home, '--per-lane', '0', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out['unpark'], [{'job': 'RQ-WAIT', 'deps': ['RQ-DEP-A', 'RQ-DEP-B']}])
+        ready = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        self.assertIn('RQ-WAIT\tphantom\tdevin\twork\t', ready)
+        self.assertNotIn('PARKED-DEP.', ready)
+        self.assertEqual(pf.read_text(), before)  # prompt (incl. pin prose) untouched
+        ev = (home / '.ashlr-runs' / 'dispatch-events.log').read_text()
+        self.assertIn('UNPARK RQ-WAIT deps=RQ-DEP-A,RQ-DEP-B', ev)
+
+    def test_keeps_parked_when_a_gate_id_is_unmerged(self):
+        tmp = build('# empty\n', slots={**{l: {'held': True} for l in LANES}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        row = self.seed_parked(home, 'RQ-WAIT', ['RQ-DEP-A', 'RQ-DEP-B'], merged=('RQ-DEP-A',))
+        ready_before = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        r = restock(home, '--per-lane', '0', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)['unpark'], [])
+        self.assertEqual((home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text(), ready_before)
+        self.assertTrue(row.exists())
+
+    def test_preserves_no_merge_without_security_pin(self):
+        tmp = build('# empty\n', slots={**{l: {'held': True} for l in LANES}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        pf = self.seed_parked(home, 'RQ-PIN', ['RQ-DEP-A'], merged=('RQ-DEP-A',), pin_text=True)
+        restock(home, '--per-lane', '0')
+        self.assertIn('no merge without Security pin', pf.read_text())
+        self.assertNotIn('PARKED-DEP.', (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text())
+
+    def test_dry_run_does_not_unpark(self):
+        tmp = build('# empty\n', slots={**{l: {'held': True} for l in LANES}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        self.seed_parked(home, 'RQ-WAIT', ['RQ-DEP-A'], merged=('RQ-DEP-A',))
+        before = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        r = restock(home, '--dry-run', '--per-lane', '0', '--json')
+        self.assertEqual(json.loads(r.stdout)['unpark'][0]['job'], 'RQ-WAIT')
+        self.assertEqual((home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text(), before)
+
+    def test_after_unlanded_parks_with_dependency_gate(self):
+        rows = [line('RQ-NEED', P=1, pool='devin', tier='work', repo='phantom',
+                     text='after RQ-UPSTREAM: do the follow-up')]
+        # Put after= in attrs the way router lines do.
+        rows = ['- READY RQ-NEED (P1, pool=devin, tier=work, repo=phantom, after RQ-UPSTREAM): do the follow-up']
+        tmp = build('\n'.join(rows) + '\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        r = restock(home, '--per-lane', '4', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out['parked_dep'], [{'job': 'RQ-NEED', 'deps': ['RQ-UPSTREAM']}])
+        ready = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        self.assertIn('PARKED-DEP.devin\tRQ-NEED\t', ready)
+        prompt = (home / '.ashlr-runs' / 'queue' / 'prompts' / 'RQ-NEED.md').read_text()
+        self.assertIn('DEPENDENCY GATE: RQ-UPSTREAM', prompt)
+        md = (home / '.ashlr-runs' / 'queue' / 'router-queue.md').read_text()
+        self.assertIn('CLAIMED', md)
+        self.assertIn('RQ-NEED', md)
+
+
 class NoopCutTests(unittest.TestCase):
     """RQ-PSEL-4-NOOPCUT: PR/file dedupe and the 2-NOOPs-in-24h park."""
 

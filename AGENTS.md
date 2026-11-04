@@ -116,6 +116,19 @@ explicit auth failure or zero quota permits early movement. See
 [route hysteresis](docs/ROUTE-HYSTERESIS.md) for replay, `phm route explain --json`
 and the Security pin handoff. Never install a candidate over the live pinned file.
 
+Parked dependency gates (RQ-QUEUE-AUTOUNPARK-1): `contrib/mac/restock.py` parks
+`after=` lines as `PARKED-DEP.<lane>` with a `DEPENDENCY GATE:` id list, then
+auto-unparks when `metrics/jobs.jsonl` shows every id `MERGED` (log
+`UNPARK <job> deps=<ids>`; prompt text including `no merge without Security pin`
+is preserved). Copy-paste:
+
+```sh
+phm fleet parked --json
+```
+
+`unmetDeps` lists parked rows whose gate ids are still unmet. Restock.py changes
+need a Security re-pin before live `bin/` install; do not install yourself.
+
 Connector profiles: `phm connectors add|list|remove|show|import --json` manages
 `~/.phantom/connectors/profile.toml`; see [connector profiles](docs/CONNECTORS.md).
 Use vault names only. Import withholds inline credentials; Codex requires a

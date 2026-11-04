@@ -4,7 +4,8 @@
  * deadline, the stop file appears or the caller aborts. No service, no new
  * hold policy — each pass runs the same guarded path, so the healthy-source
  * gate and releaseLaneHold's held_by recheck still decide. Cancellation lands
- * between passes; an in-flight pass finishes. The stop file is an lstat-only
+ * while waiting; an already started release may still finish after return.
+ * Only completed passes contribute counts. The stop file is an lstat-only
  * sentinel. One 'pass' record per completed pass, one 'end' record closes it.
  */
 import { lstatSync } from 'node:fs';
@@ -28,10 +29,10 @@ export type ResetWatchRecord =
   | { v: 1; type: 'pass'; at: string; checked: number; released: number;
       lanes: string[]; errors: { lane: string; message: string }[] }
   | { v: 1; type: 'end'; outcome: ResetWatchOutcome;
-      passes: number; released: number; errors: number; lastError: string | null };
+      passes: number; released: number; errors: number; lastError: string | null; inFlight?: true };
 export interface ResetWatchResult {
   outcome: ResetWatchOutcome | 'invalid';
-  passes: number; released: number; errors: number; lastError: string | null;
+  passes: number; released: number; errors: number; lastError: string | null; inFlight?: true;
 }
 export interface ResetWatchOptions {
   /** 1..RESET_WATCH_MAX_TIMEOUT_MS. */ timeoutMs: number;
@@ -80,7 +81,7 @@ export async function watchResetReleases(options: ResetWatchOptions,
   process.on('SIGINT', abort); process.on('SIGTERM', abort);
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
-  // 'cancelled' before the next pass, 'failed' on a probe error — never mid-pass.
+  // The stop-file sentinel is checked between stages; signals interrupt awaits.
   const gate = (): ResetWatchOutcome | undefined => {
     if (controller.signal.aborted) return 'cancelled';
     if (stopFile === undefined) return undefined;
@@ -89,27 +90,57 @@ export async function watchResetReleases(options: ResetWatchOptions,
     return state === 'go' ? undefined : state === 'stop' ? 'cancelled' : 'failed';
   };
   const deadline = now() + timeoutMs;
+  let inFlight = false;
+  let wake!: (reason: 'deadline' | 'cancelled') => void;
+  const stopped = new Promise<'deadline' | 'cancelled'>(resolve => { wake = resolve; });
+  const onAbort = (): void => wake('cancelled');
+  controller.signal.addEventListener('abort', onAbort, { once: true });
+  if (controller.signal.aborted) onAbort();
+  const timer = setTimeout(() => wake('deadline'), timeoutMs);
+  // Promise.race observes both late fulfillment and rejection without processing them.
+  const wait = async <T>(work: Promise<T>): Promise<
+    { value: T } | { stopped: 'deadline' | 'cancelled' }
+  > => {
+    if (controller.signal.aborted || now() >= deadline) {
+      void work.catch(() => undefined);
+      return { stopped: controller.signal.aborted ? 'cancelled' : 'deadline' };
+    }
+    const result = await Promise.race([work.then(value => ({ value })), stopped.then(reason => ({ stopped: reason }))]);
+    if ('stopped' in result) return result;
+    if (controller.signal.aborted) return { stopped: 'cancelled' };
+    if (now() >= deadline) return { stopped: 'deadline' };
+    return result;
+  };
   try {
     for (;;) {
       const end = gate();
       if (end || now() >= deadline) { if (end) outcome = end; break; }
       let pass: ResetReleaseResult;
-      try { pass = await run({ runsDir }); }
-      catch (error) { fail(message(error)); break; }
+      try {
+        inFlight = true;
+        const pending = await wait(Promise.resolve().then(() => run({ runsDir })));
+        if ('stopped' in pending) { outcome = pending.stopped; break; }
+        inFlight = false;
+        pass = pending.value;
+      } catch (error) { inFlight = false; fail(message(error)); break; }
       passes += 1;
       released += pass.released.length;
       errors += pass.errors.length;
-      if (!(await emit({ v: 1, type: 'pass', at: pass.at, checked: pass.checked,
+      const emitted = await wait(emit({ v: 1, type: 'pass', at: pass.at, checked: pass.checked,
         released: pass.released.length, lanes: pass.released.map((row) => row.lane),
-        errors: pass.errors }))) { fail('emit failed'); break; }
+        errors: pass.errors }));
+      if ('stopped' in emitted) { outcome = emitted.stopped; break; }
+      if (!emitted.value) { fail('emit failed'); break; }
       const mid = gate();
       if (mid) { outcome = mid; break; }
       // Slices only when a stop file is watched; a stalled clock cannot spin.
       let left = Math.min(pollMs, deadline - now());
       while (left > 0) {
         const slice = stopFile === undefined ? left : Math.min(left, STOP_SLICE_MS);
-        try { await sleep(slice, controller.signal); }
-        catch (error) {
+        try {
+          const slept = await wait(sleep(slice, controller.signal));
+          if ('stopped' in slept) { outcome = slept.stopped; break; }
+        } catch (error) {
           if (controller.signal.aborted) outcome = 'cancelled'; else fail(message(error));
           break;
         }
@@ -119,10 +150,15 @@ export async function watchResetReleases(options: ResetWatchOptions,
       }
       if (outcome !== 'deadline') break;
     }
-    await emit({ v: 1, type: 'end', outcome, passes, released, errors, lastError });
+    const summary = { outcome, passes, released, errors, lastError, ...(inFlight ? { inFlight: true as const } : {}) };
+    // Start terminal output even at the deadline, but never wait beyond the budget.
+    await wait(emit({ v: 1, type: 'end', ...summary }));
   } finally {
+    clearTimeout(timer);
+    controller.signal.removeEventListener('abort', onAbort);
+    controller.abort(); // dispose an owned abortable sleep if it is still pending
     process.off('SIGINT', abort); process.off('SIGTERM', abort);
     signal?.removeEventListener('abort', abort);
   }
-  return { outcome, passes, released, errors, lastError };
+  return { outcome, passes, released, errors, lastError, ...(inFlight ? { inFlight: true } : {}) };
 }
