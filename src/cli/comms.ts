@@ -297,6 +297,8 @@ async function cmdSendTest(): Promise<number> {
 }
 
 async function cmdCycle(): Promise<number> {
+  // Email remains available even when another transport is misconfigured.
+  await cmdEmailCycle();
   const cfg = await loadConfig();
   if (cfg.comms?.channel === 'telegram' && cfg.comms.enabled && !telegramEnabled(cfg)) {
     console.error(readTelegramHealth(cfg).tokenPresent
@@ -351,11 +353,19 @@ async function cmdCycle(): Promise<number> {
   const result = await runCommsCycle(cfg);
   logMigration(result.migration);
   console.log(`cycle complete: sent=${result.sent} resolved=${result.resolved}`);
+  return 0;
+}
+
+/** Shared configured email pass, also used by the scheduled comms cycle. */
+async function cmdEmailCycle(): Promise<number> {
   try {
     const runsDir = join(homedir(), '.ashlr-runs');
     const email = await readEmailDropConfig(runsDir);
-    if (email.state === 'invalid') console.error(`cycle: email-drop config invalid at ${email.path}`);
-    else if (email.state === 'ok' && email.config) {
+    if (email.state === 'invalid') {
+      console.error(`cycle: email-drop config invalid at ${email.path}`);
+      return 1;
+    }
+    else if (email.state === 'ok' && email.config && email.config.enabled !== false) {
       const { runEmailDropOnce } = await import('../core/comms/email-drop-bridge.js');
       const { inboxDir, outboxDir, processedDir, from } = email.config;
       const outDir = outboxDir ?? join(inboxDir, '..', 'outbox');
@@ -378,10 +388,39 @@ async function cmdCycle(): Promise<number> {
           console.error('cycle: email-outbox send failed');
         }
       }
+      return counts.unsafeFolder || counts.failed > 0 ? 1 : 0;
     }
   } catch {
     console.error('cycle: email-drop failed');
+    return 1;
   }
+  return 0;
+}
+
+async function cmdSetupEmail(): Promise<number> {
+  const runsDir = join(homedir(), '.ashlr-runs');
+  const saved = await readEmailDropConfig(runsDir);
+  if (saved.state === 'invalid') {
+    console.error(`email-drop config invalid at ${saved.path}`);
+    return 1;
+  }
+  const inbox = saved.config?.inboxDir ?? join(runsDir, 'email-drop', 'inbox');
+  console.log('Phantom email drop setup');
+  console.log(`Config: ${saved.path}`);
+  console.log(`Inbound: ${inbox}`);
+  console.log(`Outbound: ${saved.config?.outboxDir ?? join(inbox, '..', 'outbox')}`);
+  console.log(`Processed (including refused senders): ${saved.config?.processedDir ?? join(inbox, '..', 'processed')}`);
+  console.log('1. Create private drop directories (mode 0700). Use only Mason’s independently verified addresses for --from.');
+  console.log(`2. Save configuration: phm comms email-drop ${JSON.stringify(inbox)} --from <verified-address> --save-config`);
+  console.log('   A saved config enables polling; set "enabled": false in that file to pause it.');
+  console.log('3. Mail.app → Settings → Rules → Add Rule: match From to a verified address; Run AppleScript.');
+  console.log('   The rule script must save each message’s raw source as a unique *.eml in Inbound.');
+  console.log('   Alternatively, have a trusted local forwarder write raw RFC 822 to a temporary file there, then rename to *.eml atomically.');
+  console.log('   Preserve Message-ID and original From. Only trust Authentication-Results written by your receiving mail server; strip sender-supplied copies.');
+  console.log('4. Existing operator pairing and exact-domain DKIM checks remain required. Pair through the established operator-secret flow before sending orders.');
+  console.log('5. Run phm comms email-cycle to test; the existing phm comms cycle schedule polls the same config.');
+  console.log('6. A local forwarder can send Outbound/*.reply.eml once, then archive sent files. For Mail.app delivery, opt in with --send-replies --save-config.');
+  console.log('   Replies preserve In-Reply-To. Unknown senders are archived without an inbox entry or reply.');
   return 0;
 }
 
@@ -542,12 +581,14 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <inbox|bus|email-drop|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
+  console.log('    email-cycle                  process the enabled saved email drop configuration');
+  console.log('    setup-email                  print drop paths and Mail.app / forwarder setup');
   console.log('    status                       config + pending/outstanding + watermark');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
@@ -573,6 +614,8 @@ const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> 
   health:           { allowed: { flags: ['--json'] }, usage: 'usage: phm comms health [--json]' },
   status:           { allowed: {}, usage: 'usage: phm comms status' },
   'send-test':      { allowed: {}, usage: 'usage: phm comms send-test' },
+  'email-cycle':    { allowed: {}, usage: 'usage: phm comms email-cycle' },
+  'setup-email':    { allowed: {}, usage: 'usage: phm comms setup-email' },
   cycle:            { allowed: {}, usage: 'usage: phm comms cycle' },
   ask:              { allowed: { values: ['-o', '--option'] }, usage: 'usage: phm comms ask "<text>" -o <option> [-o <option> ...]' },
   digest:           { allowed: { flags: ['--force'] }, usage: 'usage: phm comms digest [--force]' },
@@ -614,6 +657,10 @@ export async function cmdComms(args: string[]): Promise<number> {
       return cmdStatus();
     case 'send-test':
       return cmdSendTest();
+    case 'email-cycle':
+      return cmdEmailCycle();
+    case 'setup-email':
+      return cmdSetupEmail();
     case 'cycle':
       return cmdCycle();
     case 'ask':
