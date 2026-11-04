@@ -27,6 +27,9 @@ import { MAX_FLEET_JOB_HISTORY, parseFleetJobHistoryArgs, readFleetJobHistory,
   type FleetJobHistoryArgs } from './fleet-job-history.js';
 import { parseFleetJobPrecheckArgs, readFleetJobPrecheck, type FleetJobPrecheckArgs } from './fleet-job-precheck.js';
 
+import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
+import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
+
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
 export interface FleetReaders {
@@ -44,6 +47,7 @@ export interface FleetReaders {
   resetFollow?: (input: FleetResetFollowArgs) => Promise<unknown>;
   jobHistory?: (input: FleetJobHistoryArgs) => Promise<unknown>;
   jobPrecheck?: (input: FleetJobPrecheckArgs) => Promise<unknown>;
+  jobPrecheckBatch?: (input: FleetJobPrecheckBatchArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -202,11 +206,24 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_job_precheck_batch',
+      description: 'Check inline drafts together against one resolved origin/master commit, sharing path probes and reporting collisions and landed-work evidence. Advisory only; never queue, dispatch or merge authorization. No fetch or caller paths; markdown is never echoed.',
+      inputSchema: { type: 'object', properties: {
+        drafts: { type: 'array', minItems: 1, maxItems: JOB_PRECHECK_BATCH_MAX, items: {
+          type: 'object', properties: {
+            label: { type: 'string', pattern: FLEET_BATCH_LABEL_PATTERN, description: 'Unique opaque label.' },
+            markdown: { type: 'string', minLength: 1, description: 'Nonblank draft, at most 8000 UTF-8 bytes.' },
+          }, required: ['label', 'markdown'], additionalProperties: false,
+        } },
+      }, required: ['drafts'], additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_precheck') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -223,7 +240,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const resetFollow = name === 'fleet_reset_follow' ? parseFleetResetFollowArgs(args) : null;
     const jobHistory = name === 'fleet_job_history' ? parseFleetJobHistoryArgs(args) : null;
     const jobPrecheck = name === 'fleet_job_precheck' ? parseFleetJobPrecheckArgs(args) : null;
-    if (name === 'fleet_job_precheck' ? jobPrecheck === null :
+    const jobPrecheckBatch = name === 'fleet_job_precheck_batch' ? parseFleetJobPrecheckBatchArgs(args) : null;
+    if (name === 'fleet_job_precheck_batch' ? jobPrecheckBatch === null :
+        name === 'fleet_job_precheck' ? jobPrecheck === null :
         name === 'fleet_job_history' ? jobHistory === null :
         name === 'fleet_reset_group_await' ? resetGroupAwait === null :
         name === 'fleet_reset_await' ? resetAwait === null :
@@ -249,6 +268,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_reset_follow' ? await (readers.resetFollow ?? readFleetResetFollow)(resetFollow as FleetResetFollowArgs)
         : name === 'fleet_reset_history' ? await (readers.resetHistory ?? readFleetResetHistory)(history as FleetResetHistoryArgs)
         : name === 'fleet_job_history' ? await (readers.jobHistory ?? readFleetJobHistory)(jobHistory as FleetJobHistoryArgs)
+        : name === 'fleet_job_precheck_batch' ? await (readers.jobPrecheckBatch ?? readFleetJobPrecheckBatch)(jobPrecheckBatch as FleetJobPrecheckBatchArgs)
         : name === 'fleet_job_precheck' ? await (readers.jobPrecheck ?? readFleetJobPrecheck)(jobPrecheck as FleetJobPrecheckArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
