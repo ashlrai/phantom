@@ -403,9 +403,14 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         let command: { status: string; reply: string } | undefined;
         if (isJobCommand(body.text)) {
           const outcome = await runTelegramJobCommand(body.text.trim(), {
-            stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, opts ?? {}),
-            reassignQueuedJobs: deps.reassign ?? (async (...args) => (await import('../fleet/runs-reassign.js')).reassignQueuedJobs(...args)),
-            changedBy: 'desktop',
+            stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+            reassignQueuedJobs: async (input, opts) => (deps.reassign ?? (await import('../fleet/runs-reassign.js')).reassignQueuedJobs)(
+              input, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+            // The gateway stamps this header from its live paired session;
+            // neither inbox text nor source can assert a device identity.
+            changedBy: mobile && typeof req.headers['x-ashlr-remote-device'] === 'string'
+              && /^[0-9a-f-]{36}$/.test(req.headers['x-ashlr-remote-device'])
+              ? `mobile-device:${req.headers['x-ashlr-remote-device']}` : mobile ? 'mobile' : 'desktop',
           });
           if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
           command = { status: outcome.status, reply: renderJobCommandReply(outcome) };
