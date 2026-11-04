@@ -19,6 +19,7 @@ const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 
 export interface JobPrecheckCliDeps {
   git?: JobPrecheckGit;
+  resolveRef?: (ref: string, cwd?: string) => Promise<string>;
   readFile?: (path: string) => Promise<string>;
   cwd?: string;
   log?: (line: string) => void;
@@ -32,6 +33,16 @@ function isSafeRef(ref: string): boolean {
 function gitStderr(err: unknown): string {
   if (!err || typeof err !== 'object' || !('stderr' in err)) return '';
   return String((err as { stderr?: unknown }).stderr ?? '');
+}
+
+/** Resolve a ref to one immutable commit before any path probes. */
+export async function resolveJobPrecheckRef(ref: string, cwd?: string): Promise<string> {
+  const { stdout } = await execFileAsync('git', ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`], {
+    encoding: 'utf8', timeout: 15_000, maxBuffer: 1_048_576, ...(cwd ? { cwd } : {}),
+  });
+  const oid = stdout.trim();
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid)) throw new Error('invalid resolved commit');
+  return oid;
 }
 
 /** `git cat-file -e <ref>:<path>` and `git log -1` via execFile. Never a shell string. */
@@ -73,21 +84,24 @@ async function runPrecheckBatch(
   files: readonly string[],
   ref: string,
   json: boolean,
+  resolvedRef: string | null,
+  git: JobPrecheckGit,
   deps: JobPrecheckCliDeps,
   log: (line: string) => void,
 ): Promise<number> {
   const result = await precheckJobBatch(files, {
     readFile: deps.readFile ?? ((path: string) => readFile(path, 'utf8')),
-    git: deps.git ?? gitJobProbe(ref, deps.cwd),
+    git,
   });
   const results = result.entries.map((entry) =>
     entry.report ? { file: entry.file, ...entry.report } : { file: entry.file, error: entry.error });
-  const safe = sanitizePublicJson({ schema: 'fleet.job-precheck-batch.v1', results, counts: result.counts }) as {
+  const safe = sanitizePublicJson({ schema: 'fleet.job-precheck-batch.v1', ref, resolvedRef, results, counts: result.counts }) as {
     results: Array<{ file: string; error?: string } & Partial<JobPrecheckReport>>;
     counts: JobPrecheckBatchCounts;
   };
   if (json) log(JSON.stringify(safe));
   else {
+    log(`snapshot: ${ref} -> ${resolvedRef ?? 'unavailable'}`);
     for (const entry of safe.results) {
       log(`== ${entry.file}`);
       if (entry.error !== undefined) log(`error: ${entry.error}`);
@@ -150,10 +164,22 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
   if (batch) {
     if (jobId !== undefined) { error(usage); return 2; }
     if (files.length === 0 || files.length > JOB_PRECHECK_BATCH_MAX) { error(usage); return 2; }
-    return runPrecheckBatch(files, ref, json, deps, log);
+
   }
   const file = files[0];
   if (!file) { error(usage); return 2; }
+  let resolvedRef: string | null = null;
+  try {
+    if (deps.resolveRef || !deps.git) {
+      resolvedRef = await (deps.resolveRef ?? resolveJobPrecheckRef)(ref, deps.cwd);
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(resolvedRef)) throw new Error('invalid resolved commit');
+    }
+  } catch {
+    error(`error: cannot resolve ref ${ref} to a commit`);
+    return 2;
+  }
+  const git = deps.git ?? gitJobProbe(resolvedRef!, deps.cwd);
+  if (batch) return runPrecheckBatch(files, ref, json, resolvedRef, git, deps, log);
   let markdown: string;
   try {
     markdown = await (deps.readFile ?? ((path: string) => readFile(path, 'utf8')))(file);
@@ -162,10 +188,11 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     return 2;
   }
   try {
-    const report = await precheckJob(markdown, deps.git ?? gitJobProbe(ref, deps.cwd), { jobId });
+    const report = await precheckJob(markdown, git, { jobId });
     const safe = sanitizePublicJson(report) as typeof report;
-    if (json) log(JSON.stringify(sanitizePublicJson({ schema: 'fleet.job-precheck.v1', ...safe })));
+    if (json) log(JSON.stringify(sanitizePublicJson({ schema: 'fleet.job-precheck.v1', ref, resolvedRef, ...safe })));
     else {
+      log(`snapshot: ${ref} -> ${resolvedRef ?? 'unavailable'}`);
       if (safe.jobId !== undefined) log(`job-id: ${safe.jobId} (last-commit evidence only; a match does not establish correctness)`);
       for (const fact of safe.facts) log(factLine(fact));
       log(`verdict: ${safe.verdict}`);
