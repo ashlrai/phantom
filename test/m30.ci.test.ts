@@ -152,12 +152,12 @@ describe('M30 CI workflow', () => {
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
-    const execute = (event: string, lane: string, outcomes: Record<string, string>, drop?: string) => {
+    const execute = (event: string, lane: string, outcomes: Record<string, string>, drop?: string, ref = '') => {
       const dependencies = Object.fromEntries(keys.filter((k) => k !== drop).map((name) => [name, {
         result: outcomes[name] ?? 'skipped', ...(name === 'classify' ? { outputs: { lane } } : {}),
       }]));
       return () => runInNewContext(source!, {
-        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), EVENT_NAME: event } }, console: { log: () => {} },
+        process: { env: { GATE_NEEDS: JSON.stringify(dependencies), EVENT_NAME: event, REF: ref } }, console: { log: () => {} },
       });
     };
     const ok = { 'secret-shape': 'success', classify: 'success' };
@@ -194,6 +194,18 @@ describe('M30 CI workflow', () => {
     expect(execute('push', 'full', { ...ok, ci: 'success' })).not.toThrow();
     expect(execute('push', 'full', { ...ok, ci: 'failure' })).toThrow();
     expect(execute('push', 'full', { ...ok, ci: 'success', 'windows-service-authority': 'failure' })).toThrow();
+    // A direct master push takes the seconds-fast gate so auto-tag gets its
+    // required check: quick must succeed and every full lane must be skipped.
+    const master = 'refs/heads/master';
+    expect(execute('push', 'full', { ...ok, quick: 'success' }, undefined, master)).not.toThrow();
+    expect(execute('push', 'full', { ...ok, quick: 'success', site: 'success' }, undefined, master)).toThrow();
+    expect(execute('push', 'full', { ...ok, quick: 'success', ci: 'success' }, undefined, master)).toThrow();
+    expect(execute('push', 'full', { ...ok }, undefined, master)).toThrow();
+    expect(execute('push', 'docs', { ...ok, quick: 'success' }, undefined, master)).not.toThrow();
+    for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+      expect(execute('push', 'full', { ...ok, quick: outcome }, undefined, master), `push quick ${outcome}`).toThrow();
+      expect(execute('push', 'full', { ...ok, quick: 'success', 'secret-shape': outcome }, undefined, master), `push secret ${outcome}`).toThrow();
+    }
   });
 
   it('is reusable as the canonical release verification authority', () => {
@@ -204,8 +216,9 @@ describe('M30 CI workflow', () => {
     );
     expect(ciYml.match(/^\s{2,}permissions:/gm) ?? []).toHaveLength(0);
     expect(ciYml).toContain("concurrency:\n  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
-    // Full suites run daily on master, not on every push.
-    expect(ciYml).not.toMatch(/^ {2}push:/m);
+    // Master pushes run the seconds-fast gate only so the required Merge Gate
+    // exists on the exact commit for auto-tag; full suites stay daily.
+    expect(ciYml).toMatch(/^ {2}push:\n {4}branches: \[master\]$/m);
     // The required Merge Gate must also report on merge-queue commits.
     expect(ciYml).toMatch(/^ {2}merge_group:$/m);
   });
@@ -226,18 +239,19 @@ describe('M30 CI workflow', () => {
       job['runs-on'] === '${{ matrix.os }}'
         ? (job.strategy?.matrix?.include ?? []).map((row) => row.os)
         : [job['runs-on']];
-    const evaluateIf = (condition: string | undefined, event: string, lane: string): boolean => {
+    const evaluateIf = (condition: string | undefined, event: string, lane: string, ref = ''): boolean => {
       if (condition === undefined) return true;
       const expression = condition
         .replace(/^\$\{\{\s*/, '').replace(/\s*\}\}$/, '')
         .replace(/\balways\(\)/g, 'true')
         .replace(/\bgithub\.event_name\b/g, 'event')
+        .replace(/\bgithub\.ref\b/g, 'ref')
         .replace(/\bgithub\.event\.pull_request\.draft\b/g, 'draft')
         .replace(/\bneeds\.classify\.outputs\.lane\b/g, 'lane');
       // A condition form this evaluator does not know must fail loudly rather
       // than fall through to a guessed result.
       expect(expression).not.toMatch(/\$\{\{|\}\}|github\.|needs\.|always|contains|fromJSON/);
-      return Boolean(runInNewContext(`(${expression})`, { event, lane, draft: false }));
+      return Boolean(runInNewContext(`(${expression})`, { event, lane, draft: false, ref }));
     };
     const fastEvents = ['pull_request', 'merge_group'];
     const lanes = ['full', 'site', 'docs'];
@@ -269,14 +283,25 @@ describe('M30 CI workflow', () => {
         expect(evaluateIf(jobs.quick!.if, event, lane)).toBe(true);
       }
     }
-    // The reusable release call arrives under the caller's push event: `ci`
+    // The reusable release call arrives under the caller's TAG push event: `ci`
     // keeps the full native matrix (its Windows portability legs included)
     // while the Mac and Windows-service legs stay deferred to the daily run.
+    const tagRef = 'refs/tags/v3.3.2';
     for (const id of ['ci', 'secret-shape', 'classify', 'merge-gate']) {
-      expect(evaluateIf(jobs[id]!.if, 'push', 'full'), `push ${id}`).toBe(true);
+      expect(evaluateIf(jobs[id]!.if, 'push', 'full', tagRef), `push ${id}`).toBe(true);
     }
     for (const id of ['quick', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
-      expect(evaluateIf(jobs[id]!.if, 'push', 'full'), `push ${id}`).toBe(false);
+      expect(evaluateIf(jobs[id]!.if, 'push', 'full', tagRef), `push ${id}`).toBe(false);
+    }
+    // A direct push to master is the opposite shape: the seconds-fast gate
+    // runs so the required Merge Gate exists on the exact commit for auto-tag,
+    // and every paid or full lane stays deferred to the daily run.
+    const masterRef = 'refs/heads/master';
+    for (const id of ['secret-shape', 'classify', 'quick', 'merge-gate']) {
+      expect(evaluateIf(jobs[id]!.if, 'push', 'full', masterRef), `master push ${id}`).toBe(true);
+    }
+    for (const id of ['site', 'docs', 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
+      expect(evaluateIf(jobs[id]!.if, 'push', 'full', masterRef), `master push ${id}`).toBe(false);
     }
     // The daily scheduled run and manual dispatch still own the complete matrix.
     for (const event of ['schedule', 'workflow_dispatch']) {
@@ -493,10 +518,11 @@ describe('M30 CI workflow', () => {
     }
     // Every full lane runs only in the daily, dispatch and reusable runs: never
     // on a PR or merge-queue commit. Mac and Windows service lanes also skip the
-    // caller's push event (reusable call from a tag push).
+    // caller's push event (reusable call from a tag push); `ci` keeps running on
+    // that call but skips direct master pushes, which take the fast gate only.
     for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
-      const push = id === 'ci' ? '' : " && github.event_name != 'push'";
+      const push = id === 'ci' ? " && !(github.event_name == 'push' && github.ref == 'refs/heads/master')" : " && github.event_name != 'push'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group'`);
     }
     expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '3 9 * * *' }]);
