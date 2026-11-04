@@ -108,11 +108,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_reset_await',
-      description: 'Wait for newly observed reset evidence from the configured default root. Observed is evidence only, not a release, lane health or successful launch. No provider probes or lane changes.',
+      description: 'Wait for newly observed reset evidence from the configured default root. Observed is evidence only, not a release, lane health or successful launch. No provider probes or lane changes. Pass a saved after watermark to also count evidence recorded after it while the supervisor was offline.',
       inputSchema: { type: 'object', properties: {
         lane: { type: 'string', pattern: '\\S', description: 'Exact case-sensitive nonblank lane.' },
         timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS },
         pollMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RESET_AWAIT_MS, description: 'Must not exceed timeoutMs; defaults to timeoutMs.' },
+        after: { type: 'string', format: 'date-time', description: 'Optional RFC 3339 watermark with explicit offset (Z or ±HH:MM). Evidence must be strictly after it and no later than now; equal, older or future evidence never counts. Omitted means evidence after invocation time.' },
       }, required: ['lane', 'timeoutMs'], additionalProperties: false },
       annotations,
     },
