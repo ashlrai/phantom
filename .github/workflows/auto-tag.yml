@@ -73,6 +73,10 @@ jobs:
           # to leave the tag stranded forever). The release leg is owed too: a
           # tag whose GitHub release was never created (or whose creation step
           # failed) still owes the draft, so "nothing to do" requires BOTH.
+          # releases/tags/<tag> returns published releases only — drafts 404
+          # here, and this read-only token could not list them anyway. A lone
+          # draft falls through to the tag step, whose script finds it through
+          # the write-scoped list endpoint and reuses it.
           if git ls-remote --exit-code --tags "https://github.com/$REPO.git" "refs/tags/v$new" >/dev/null && \
              gh api "repos/$REPO/releases/tags/v$new" >/dev/null 2>&1; then
             echo "Tag v$new and its release already exist; nothing to do."
