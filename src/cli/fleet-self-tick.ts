@@ -1,8 +1,9 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the six
+ * a host timer or an agent with no desktop app open. It calls the eight
  * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → planner-tick → inbox-acks → order-notices → meter-incident →
+ * waste-incident → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -13,7 +14,10 @@ import { cmdFleetLaneAutohold } from './fleet-lane-autohold.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import { cmdFleetInboxAcks, type FleetInboxAcksDeps } from './fleet-inbox-acks.js';
 import { cmdFleetOrderNotices, type FleetOrderNoticesDeps } from './fleet-order-notices.js';
+import { cmdFleetMeterIncident } from './fleet-meter-incident.js';
+import { cmdFleetWasteIncident } from './fleet-waste-incident.js';
 import { cmdFleetLandedSweep } from './fleet-landed-sweep.js';
+import type { readWasteRiskInputs } from '../core/resources/waste-risk-read.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
@@ -24,8 +28,11 @@ const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply
 One locked pass of Phantom's self-management: reset-release first (a lane it
 frees counts as a free slot for the planner step), then lane-autohold, then
 planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
-(tells Mason when a merged job served one of his orders), then landed-sweep (closes DIRTY PRs whose work already landed;
-last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged or notified — the
+(tells Mason when a merged job served one of his orders), then meter-incident
+(posts a 'meter-flat' P1 envelope per provider whose meter stayed flat while
+jobs ran), then waste-incident (posts a 'waste-high' P1 envelope per high-waste
+lane), then landed-sweep (closes DIRTY PRs whose work already landed;
+last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged, notified or posted — the
 planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
 a held queue/self-tick.lock reports 'busy' and exits 0. A step that fails or
@@ -52,6 +59,8 @@ interface Dependencies {
   senders?: FleetInboxAcksDeps['senders'];
   /** Order-merge notice senders for tests; production defaults are unchanged. */
   noticeSenders?: FleetOrderNoticesDeps['senders'];
+  /** waste-incident evidence reader for tests; production defaults are unchanged. */
+  wasteRead?: typeof readWasteRiskInputs;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -79,6 +88,13 @@ function summary(step: string, report: unknown): string {
   if (step === 'order-notices') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
     return `sent=${n(row['sent'])} planned=${count(row['notices'])}`;
+  }
+  // Both incident verbs report { planned, posted }; 'posted' counts only rows
+  // the bus stored new — a 'duplicate' rerun is not a fresh incident.
+  if (step === 'meter-incident' || step === 'waste-incident') {
+    const posts = Array.isArray(row['posted']) ? row['posted'] : [];
+    const stored = posts.filter((post) => (post as Record<string, unknown>)['status'] === 'posted').length;
+    return `planned=${count(row['planned'])} posted=${stored}`;
   }
   if (step === 'landed-sweep') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
@@ -108,7 +124,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all six steps: the verbs' own fallbacks
+  // One root for the lock and all eight steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -150,6 +166,8 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     'planner-tick': bind(cmdFleetPlannerTick, { now, spawn: deps.spawn }),
     'inbox-acks': bind(cmdFleetInboxAcks, { now: () => new Date(now()), senders: deps.senders }),
     'order-notices': bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders }),
+    'meter-incident': bind(cmdFleetMeterIncident, { now }),
+    'waste-incident': bind(cmdFleetWasteIncident, { now, read: deps.wasteRead }),
     'landed-sweep': bind(cmdFleetLandedSweep, { now }),
   };
   const steps = { ...defaults, ...deps.steps };

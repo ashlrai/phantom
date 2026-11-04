@@ -32,6 +32,8 @@ const steps: SelfTickSteps = {
   'planner-tick': stub('planner-tick'),
   'inbox-acks': stub('inbox-acks'),
   'order-notices': stub('order-notices'),
+  'meter-incident': stub('meter-incident'),
+  'waste-incident': stub('waste-incident'),
   'landed-sweep': stub('landed-sweep'),
 };
 

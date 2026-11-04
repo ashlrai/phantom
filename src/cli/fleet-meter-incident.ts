@@ -27,11 +27,15 @@ interface Dependencies {
   readers?: LaneTruthReaders;
   now?: () => number;
   post?: typeof appendBusInbox;
+  output?: (text: string) => void;
+  error?: (text: string) => void;
 }
 
 export async function cmdFleetMeterIncident(args: string[], deps: Dependencies = {}): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
-  const invalid = (): number => { console.error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
+  const output = deps.output ?? ((text: string) => console.log(text));
+  const error = deps.error ?? ((text: string) => console.error(text));
+  if (args.includes('--help') || args.includes('-h')) { output(usage); return 0; }
+  const invalid = (): number => { error(`Invalid arguments. ${usage.split('\n')[0]}`); return 2; };
   let json = false, apply = false, runsDir: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -49,7 +53,7 @@ export async function cmdFleetMeterIncident(args: string[], deps: Dependencies =
   try {
     report = await readMeterDrop(deps.readers ?? defaultLaneTruthReaders(), nowMs);
   } catch {
-    console.error('fleet meter-incident: meter evidence unavailable');
+    error('fleet meter-incident: meter evidence unavailable');
     return 1;
   }
   const planned = planMeterIncidents(report).map(provider => {
@@ -63,13 +67,13 @@ export async function cmdFleetMeterIncident(args: string[], deps: Dependencies =
       { now: () => nowMs, ...(runsDir === undefined ? {} : { root: runsDir }) })
     : null;
   if (json) {
-    console.log(JSON.stringify({ schema: 'fleet.meter-incident.v1', planned, posted }));
+    output(JSON.stringify({ schema: 'fleet.meter-incident.v1', planned, posted }));
   } else {
     const lines = [`fleet meter-incident: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'}`];
     if (planned.length === 0) lines.push('  no flat meters with running jobs');
     if (posted === null) for (const row of planned) lines.push(`  ${row.text}`);
     else for (const post of posted) lines.push(`  ${post.provider}: ${post.status}`);
-    console.log(lines.join('\n'));
+    output(lines.join('\n'));
   }
   return 0;
 }
