@@ -104,6 +104,7 @@ function printWireHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    ashlr wire ${cyan('[claude|codex|cursor|all]')} [options]`);
+  console.log(`    ashlr wire status ${cyan('[claude|codex|cursor|gemini|all]')} [options]`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');
@@ -112,7 +113,7 @@ function printWireHelp(): void {
     ['[target]',          'Editor to wire: claude, codex, cursor, or all. Defaults to detected editors.'],
     ['--config <path>',   'Override the target config path; Codex requires a config.toml path.'],
     ['--json',            'Emit results as JSON on stdout.'],
-    ['status',            'Read-only report of whether each client is wired, incl. Gemini CLI (no writes, no vendor CLI).'],
+    ['status',            'Read-only wiring report; also supports the status-only gemini target.'],
     ['--claude-md',       'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).'],
   ];
   const w = Math.max(...opts.map(([o]) => o.length));

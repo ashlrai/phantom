@@ -32,6 +32,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 ## Fleet
 
+- Parked dependency gates: `phm fleet parked --json` lists `PARKED-DEP` rows and `unmetDeps` (gate ids not yet `MERGED` in `jobs.jsonl`). Restock auto-unparks when every gate id is merged; unpark does not merge. See [Mac queue scripts](../contrib/mac/README.md).
 - [Channel guide](CHANNELS.md): Six inbound channels — `phm channels add <kind>` writes config only; `phm channels status --json` reads the rollup.
 - [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
@@ -316,3 +317,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Router eval harness](router/eval.md): phm eval router --dataset jobs.jsonl [--policy NAME] [--decisions] [--json] [--write report.json] [--check baseline.json] replays a router or prompt policy over a frozen set of...
 - [Changed-files verification (scripts/verify-changed.mjs)](verify-changed.md): Run the local pre-merge check from the repository root:
 <!-- docs-index:end -->
+- [Route hysteresis](ROUTE-HYSTERESIS.md): 60-minute pool residency, immutable launched jobs, two moves per six hours, ROUTE_HOLD and phm route explain --json.
+
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
