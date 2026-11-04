@@ -320,4 +320,6 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 <!-- docs-index:end -->
 - [Route hysteresis](ROUTE-HYSTERESIS.md): 60-minute pool residency, immutable launched jobs, two moves per six hours, ROUTE_HOLD and phm route explain --json.
 
+- [Durable memory](MEMORY.md): `phm memory add|list|search|forget --json`; preferences, doctrine and facts as markdown under `~/.phantom/memory/`, secret-shaped text refused.
+
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
