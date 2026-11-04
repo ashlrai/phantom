@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -22,6 +23,7 @@ import {
 import { desktopPublisherGithub } from './finalize-desktop-update.mjs';
 import { getDesktopReleaseToolchain } from './desktop-release-policy.mjs';
 import { requireRepositoryMetadata } from '../.github/scripts/github-repository-binding.mjs';
+import { releaseForTag } from '../.github/scripts/tag-github-release.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const admissions = new WeakMap();
@@ -134,7 +136,9 @@ export async function inspectDesktopReleasePublication(input, dependencies) {
   requireRepositoryMetadata(repository, dependencies.transport.githubRead(base));
   const tagSha = resolveTagCommit(dependencies.transport.githubRead, base, m.version);
   assert.equal(tagSha, m.source.revision, 'release tag differs from the signed candidate');
-  const release = await dependencies.transport.githubReadOrNull(`${base}/releases/tags/v${m.version}`);
+  // The by-tag endpoint only returns published releases — drafts 404 there, so
+  // an existing draft must be found through the list (see releaseForTag).
+  const release = await releaseForTag(dependencies.transport.githubReadOrNull, base, `v${m.version}`);
   const assets = release === null ? [] : pagedRead(dependencies.transport.githubRead, `${base}/releases/${release.id}/assets`);
   const expected = expectedAssets(observed);
   const plan = planDesktopReleasePublication({ version: m.version, revision: m.source.revision, release, assets, expected });
@@ -155,7 +159,16 @@ export async function applyDesktopReleasePublication(result, dependencies) {
     const latest = await transport.githubReadOrNull(`${base}/releases/latest`);
     const fields = { tag_name: tag, target_commitish: m.source.revision, name: `Phantom ${m.version}`, draft: true, prerelease: false, generate_notes: true };
     if (object(latest) && TAG.test(latest.tag_name ?? '')) fields.notes_start_tag = latest.tag_name;
-    const created = await transport.githubWrite('POST', `${base}/releases`, fields);
+    let created = null;
+    try { created = await transport.githubWrite('POST', `${base}/releases`, fields); }
+    catch (error) {
+      // The local lock serializes publishers on this account, but a CI leg
+      // can share the tag — or our own release may have landed while the
+      // response was lost. Adopt the release that exists now; a published row
+      // still fails the draft assertion below rather than touching a live feed.
+      created = await releaseForTag(transport.githubReadOrNull, base, tag);
+      if (created === null) throw error;
+    }
     assert.equal(object(created)?.draft, true, 'release did not land as a draft');
     releaseId = created.id;
   }
@@ -184,6 +197,39 @@ export async function applyDesktopReleasePublication(result, dependencies) {
     githubRead: transport.githubRead, downloadRead: transport.downloadRead,
   });
   return Object.freeze({ state: 'published', version: m.version, tag, releaseId });
+}
+
+const PUBLISH_LOCK_STALE_MS = 30 * 60 * 1000;
+
+/** Stale only when the recorded owner is gone or the lock outlived a run. A
+ * fresh lock dir whose pid line is not written yet is held, not stale. */
+function stalePublishLock(dir) {
+  try {
+    const pid = Number(fs.readFileSync(join(dir, 'pid'), 'utf8').trim());
+    if (Number.isSafeInteger(pid) && pid > 0) {
+      try { process.kill(pid, 0); return false; }
+      catch (error) { if (error.code === 'ESRCH') return true; if (error.code !== 'EPERM') throw error; return false; }
+    }
+  } catch { /* owner line not readable yet — fall through to the age check */ }
+  try { return Date.now() - fs.statSync(dir).mtimeMs > PUBLISH_LOCK_STALE_MS; }
+  catch { return false; }
+}
+
+/** One publisher per account: parallel --publish invocations used to pass the
+ * same empty lookup together and each mint a draft for the tag. mkdir is the
+ * atomic claim; a dead owner or a lock older than a full run loses it. */
+export function acquirePublishLock(dir) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { fs.mkdirSync(dir, { mode: 0o700 }); }
+    catch (error) {
+      assert.equal(error.code, 'EEXIST', 'publish lock claim failed');
+      if (attempt === 0 && stalePublishLock(dir)) { fs.rmSync(dir, { recursive: true, force: true }); continue; }
+      throw new Error(`another release publication is already running (lock: ${dir})`);
+    }
+    fs.writeFileSync(join(dir, 'pid'), `${process.pid}\n`, { mode: 0o600 });
+    let held = true;
+    return Object.freeze({ release: () => { if (held) { held = false; fs.rmSync(dir, { recursive: true, force: true }); } } });
+  }
 }
 
 /** Own code/build closure is qualified separately from the release being shipped. */
@@ -229,9 +275,17 @@ async function main() {
     const input = parseReleasePublishArguments(process.argv.slice(2));
     if (input.help) { console.log(USAGE); console.log('Dry run by default: every check runs, nothing is written. --publish performs the upload and flips the draft to latest.'); return; }
     const dependencies = await productionPublisherDependencies();
-    const inspected = await inspectDesktopReleasePublication(input, dependencies);
-    const outcome = input.publish ? await applyDesktopReleasePublication(inspected, dependencies) : inspected;
-    console.log(JSON.stringify(outcome));
+    if (!input.publish) {
+      console.log(JSON.stringify(await inspectDesktopReleasePublication(input, dependencies)));
+      return;
+    }
+    // The lock spans inspection and apply so a sibling publisher cannot mint
+    // its own draft between this run's "no release yet" plan and the create.
+    const lock = acquirePublishLock(join(tmpdir(), 'ashlr-phantom-release-publish.lock'));
+    try {
+      const inspected = await inspectDesktopReleasePublication(input, dependencies);
+      console.log(JSON.stringify(await applyDesktopReleasePublication(inspected, dependencies)));
+    } finally { lock.release(); }
   } catch (error) {
     console.error(JSON.stringify({ state: 'held', error: String(error?.message ?? error).slice(0, 300) }));
     process.exitCode = 1;
