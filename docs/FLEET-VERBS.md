@@ -23,6 +23,7 @@
 | job-read | `src/cli/fleet-job-read.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |
 | lane-models | `src/cli/fleet-lane-models.ts` | The effective model per lane and tier from models.json, cross-checked against the newest launch row in metrics/jobs.jsonl; read-only | no |
 | lane-truth | `src/cli/fleet-lane-truth.ts` | Offline advisory only; never changes a hold or grants dispatch authority | no |
+| filler-yield | `src/cli/fleet-filler-yield.ts` | Read-only per-repo yield of author-filler jobs (`RQ-…A…Q8`) from metrics/jobs.jsonl: launches, code-13 precheck skips, empty finishes, MERGED outcomes; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
 | memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |

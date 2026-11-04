@@ -5,8 +5,11 @@ import { listNeedsMason, resolveNeedsMason, type NeedsMasonOptions, type NeedsMa
 
 export type NeedsMasonRelayResult = NeedsMasonResolveResult & { inbox: 'appended' | 'skipped' | 'failed' };
 
-// Labels chosen so inboxChannelSlug yields src:desktop/telegram/cli/phone.
-const INBOX_SOURCE = { desktop: 'Phantom desktop', telegram: 'Telegram', cli: 'CLI', phone: 'Phantom phone' } as const;
+// Keyed by string so it compiles whether or not 'email' is in NeedsMasonOptions['source'].
+const INBOX_SOURCE: Readonly<Record<string, string>> = {
+  desktop: 'Phantom desktop', cli: 'ashlr CLI', telegram: 'Telegram', phone: 'Phantom phone', email: 'Email',
+};
+const DEFAULT_INBOX_SOURCE = 'Phantom desktop';
 
 /** Relay answers to the planner after the durable resolution succeeds. */
 export async function resolveNeedsMasonWithInbox(
@@ -24,7 +27,7 @@ export async function resolveNeedsMasonWithInbox(
   try {
     const appended = await (options.appendInbox ?? appendInboxEntry)(
       `Re needs-you ${result.itemId} ("${(item?.text ?? '').slice(0, 160)}"): ${reply}`,
-      { runsDir, source: INBOX_SOURCE[options.source ?? 'desktop'], ...(options.now ? { now: () => new Date(options.now!()) } : {}) },
+      { runsDir, source: (options.source && INBOX_SOURCE[options.source]) || DEFAULT_INBOX_SOURCE, ...(options.now ? { now: () => new Date(options.now!()) } : {}) },
     );
     return { ...result, inbox: appended.ok ? 'appended' : 'failed' };
   } catch {
