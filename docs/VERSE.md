@@ -1275,9 +1275,38 @@ ashlr automations list [--json]
 ashlr automations templates
 ashlr automations add --template <id> [--name "…"] [--repos o/n,o/n|*] [--lane <lane>] [--enable]
 ashlr automations add --file <automation.json> [--enable]
+ashlr automations import --from <routines.json> [--dry-run] [--json]
 ashlr automations enable <id> | disable <id> | remove <id>
 ashlr automations fire <id> [--dry-run] [--repo o/n] [--text "…"] [--title "…"]
 ```
+
+Import scheduled routines from a JSON array. For example, create `routines.json`
+with the local machine's IANA timezone:
+
+```json
+[
+  {
+    "name": "Daily review",
+    "schedule": "0 9 * * 1-5",
+    "timezone": "America/New_York",
+    "prompt": "Review the open work.",
+    "limits": []
+  }
+]
+```
+
+```sh
+ashlr automations import --from routines.json --dry-run --json
+ashlr automations import --from routines.json --json
+```
+
+The dry run validates and previews without writing. Imported automations start
+disabled; names already present are skipped. The prompt is preserved as written,
+and secret-shaped content is rejected. Schedules use the machine's local time,
+so the supplied timezone must match it. The importer accepts the supported RRULE
+subset and five-field cron with numeric lists, ranges and steps where the schedule
+can be represented faithfully. Unsupported forms are rejected. `limits` must be
+an empty array; imports use the fleet lane, all granted repositories, a zero spend cap, and the other standard automation defaults. Do not run imports concurrently: name deduplication is not atomic across processes.
 
 ## The Jev decision layer (3.15)
 

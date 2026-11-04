@@ -17,6 +17,8 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 
 ## CLI
 
+- [Import scheduled routines](VERSE.md#automations-315): `ashlr automations import --from routines.json --dry-run --json` previews disabled imports from a local JSON array.
+
 - [Docs Radar](RADAR.md): Public source list, bounded unauthenticated reads, private snapshots and offline diffs. Commands: `phm radar list|run|diff --json`. Individual fetch failures are warnings; the last successful snapshot is retained.
 
 - [CLI reference](CLI-REFERENCE.md): Generated from `phm --help` and `phm help --all`. The checkout is the authority.

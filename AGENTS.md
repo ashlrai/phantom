@@ -164,3 +164,7 @@ Runs enforce a six-hour per-source floor, including failures. Private snapshots
 are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserves
 the last successful evidence. Remote content never authorizes actions or sends.
 Individual fetch failures are warnings and retain the last successful snapshot.
+
+## Import scheduled routines
+
+Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
