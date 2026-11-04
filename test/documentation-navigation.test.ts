@@ -228,6 +228,19 @@ describe('operator documentation navigation', () => {
     ]));
   });
 
+  it('exempts only the frozen 3.3.0 CHANGELOG link to the removed activation guide', () => {
+    const frozen = '[guide](docs/RUNTIME-FLEET-ACTIVATION.md)\n';
+    const changelog = fixture({ 'CHANGELOG.md': frozen });
+    expect(checkDocumentation({ root: changelog, entrypoints: ['CHANGELOG.md'] }).errors).toEqual([]);
+
+    const other = fixture({ 'CHANGELOG.md': '[guide](docs/MISSING.md)\n', 'NOTES.md': frozen });
+    const result = checkDocumentation({ root: other, entrypoints: ['CHANGELOG.md', 'NOTES.md'] });
+    expect(result.errors).toEqual([
+      expect.objectContaining({ file: 'CHANGELOG.md', href: 'docs/MISSING.md' }),
+      expect.objectContaining({ file: 'NOTES.md', href: 'docs/RUNTIME-FLEET-ACTIVATION.md' }),
+    ]);
+  });
+
   it('keeps checked source entrypoints and their heading targets navigable', () => {
     const result = checkDocumentation({ root: process.cwd() });
     expect(result.errors).toEqual([]);
