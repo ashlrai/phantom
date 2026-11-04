@@ -24,6 +24,7 @@
 | grok-usage | `src/cli/fleet-grok-usage.ts` | Reads Grok usage metrics from a configured source | no |
 | job-class-share | `src/cli/fleet-job-class-share.ts` | Offline accounting only; share of finished-job tokens by class per lane | no |
 | job-read | `src/cli/fleet-job-read.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |
+| kept | `src/cli/fleet-kept.ts` | Read-only why worktrees were kept: one line per reason (`abort_push`, `abort_pr`, `empty`, `other`, `unknown`) with its count and the 3 oldest job IDs, from `kept_worktrees` in `~/.ashlr-runs/queue/status.json` and the last 3000 lines of `~/.ashlr-runs/metrics/jobs.jsonl` | no |
 | lane-models | `src/cli/fleet-lane-models.ts` | The effective model per lane and tier from models.json, cross-checked against the newest launch row in metrics/jobs.jsonl; read-only | no |
 | lane-yield | `src/cli/fleet-lane-yield.ts` | Read-only per-lane yield from metrics/jobs.jsonl over `--hours` (default 2): launches, precheck skips by code, empty finishes, MERGED outcomes joined to the lane through the job's launch row; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | lane-truth | `src/cli/fleet-lane-truth.ts` | Offline advisory only; never changes a hold or grants dispatch authority | no |
@@ -38,6 +39,7 @@
 | stray-slots | `src/cli/fleet-stray-slots.ts` | Read-only host evidence: one lost slot per finished job with leftover processes | no |
 | supply | `src/cli/fleet-supply.ts` | Read-only per-batch, per-hour 24 h counts of launch, skipped_empty, precheck_skip, PR-opened and MERGED outcome rows from metrics/jobs.jsonl; unread file prints unknown | no |
 | task-check | `src/cli/fleet-task-check.ts` | Read-only: says whether a job's batch had 3 or more skipped_empty or precheck_skip rows in 24 h (`likely_empty`); unreadable metrics print `known:false` | no |
+| trim | `src/cli/fleet-trim.ts` | Read-only lane trim report from queue/status.json: flags STARVED lanes (queued, none running, target above 0, not held, global running at the cap) and lanes that WASTE slots (10 or more jobs in 24 h with merge rate under 0.3 or empty rate over 0.5), then prints `SLOTS <lane> <from> -> <to>` suggestions. Applies nothing | no |
 | wait-jobs | `src/cli/fleet-wait-jobs.ts` | Waits for fleet jobs by ID, monitors publication status | no |
 | workers | `src/cli/fleet-workers.ts` | Lists live workers, filterable by lane, repo and age; watch mode | no |
 
