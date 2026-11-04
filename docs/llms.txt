@@ -323,3 +323,4 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Durable memory](MEMORY.md): `phm memory add|list|search|forget --json`; preferences, doctrine and facts as markdown under `~/.phantom/memory/`, secret-shaped text refused.
 
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+- [Chief-of-staff intake](COS.md): Durable channel jobs, JSON command contracts and approved result delivery.
