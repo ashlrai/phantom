@@ -24,6 +24,7 @@
 | grok-usage | `src/cli/fleet-grok-usage.ts` | Reads Grok usage metrics from a configured source | no |
 | job-class-share | `src/cli/fleet-job-class-share.ts` | Offline accounting only; share of finished-job tokens by class per lane | no |
 | job-read | `src/cli/fleet-job-read.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |
+| kept | `src/cli/fleet-kept.ts` | Read-only why worktrees were kept: one line per reason (`abort_push`, `abort_pr`, `empty`, `other`, `unknown`) with its count and the 3 oldest job IDs, from `kept_worktrees` in `~/.ashlr-runs/queue/status.json` and the last 3000 lines of `~/.ashlr-runs/metrics/jobs.jsonl` | no |
 | lane-models | `src/cli/fleet-lane-models.ts` | The effective model per lane and tier from models.json, cross-checked against the newest launch row in metrics/jobs.jsonl; read-only | no |
 | lane-yield | `src/cli/fleet-lane-yield.ts` | Read-only per-lane yield from metrics/jobs.jsonl over `--hours` (default 2): launches, precheck skips by code, empty finishes, MERGED outcomes joined to the lane through the job's launch row; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | lane-truth | `src/cli/fleet-lane-truth.ts` | Offline advisory only; never changes a hold or grants dispatch authority | no |
