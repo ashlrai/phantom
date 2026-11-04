@@ -291,3 +291,5 @@ canonical release guide for required hosted qualification and publication.
 - [Standing lane freshness](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.
 
 - [Dispatcher route hysteresis](ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
+
+- [App restart](APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.

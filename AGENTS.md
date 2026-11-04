@@ -114,3 +114,5 @@ Route hysteresis: ready.tsv pool proposals pass through dispatchd's persisted
 explicit auth failure or zero quota permits early movement. See
 [route hysteresis](docs/ROUTE-HYSTERESIS.md) for replay, `phm route explain --json`
 and the Security pin handoff. Never install a candidate over the live pinned file.
+
+App restart: `phm app restart --json` currently exits 1 with a held result and performs no restart. See [ownership audit and acceptance work](docs/APP-RESTART.md). Do not infer session survival from an app relaunch.
