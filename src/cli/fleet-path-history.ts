@@ -28,7 +28,7 @@ export async function cmdFleetPathHistory(args: string[]): Promise<number> {
     else { console.error(usage); return 2; }
     seen.add(arg);
   }
-  if ((!path && !job) || (path && job) || (job && (!validJobId(job) || !validJobRef(ref) || limit > JOB_LIMIT_MAX))) { console.error(usage); return 2; }
+  if ((!path && !job) || (path && job) || (job && (!validJobId(job) || !validJobRef(ref) || limit > JOB_LIMIT_MAX)) || (path && (limit > JOB_LIMIT_MAX))) { console.error(usage); return 2; }
   try {
     if (job) {
       const result = await jobPathHistory(job, ref, limit);
@@ -43,7 +43,7 @@ export async function cmdFleetPathHistory(args: string[]): Promise<number> {
       return 0;
     }
     const rows = await pathJobHistory(path!, { log: async (file, count) => {
-      const { stdout } = await exec('git', ['log', `-n${count * 3}`, '--format=%h%x09%cI%x09%s', ref, '--', file],
+      const { stdout } = await exec('git', ['--literal-pathspecs', 'log', `-n${count * 3}`, '--format=%h%x09%cI%x09%s', ref, '--', file],
         { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
       return stdout.split('\n').filter(Boolean).map(line => {
         const [sha = '', date = '', ...subject] = line.split('\t');
