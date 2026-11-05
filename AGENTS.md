@@ -134,6 +134,8 @@ Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
 [memory](docs/MEMORY.md). Secret-shaped text is refused, never store values.
 
+Connector run: `phm connectors run github --scope repo-read --tool codex --lane work --json -- repo list --json name` is denied pending Security review; no process or credential resolution.
+
 Connector profiles: `phm connectors add|list|remove|show|import --json` manages
 `~/.phantom/connectors/profile.toml`; see [connector profiles](docs/CONNECTORS.md).
 Use vault names only. Import withholds inline credentials; Codex requires a
