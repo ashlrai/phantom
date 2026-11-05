@@ -208,7 +208,7 @@ describe('desktop nightly pipeline shape', () => {
     expect(bundle?.command).toEqual([
       'tauri', ['build', '--debug', '--no-sign', '--bundles', 'app', '--', '--locked'],
     ]);
-    expect(bundle?.env).toEqual({ CI: '1' });
+    expect(bundle?.env).toEqual({ CI: 'true' });
     expect(bundle?.cwd).toContain('desktop');
     for (const step of steps) expect(step.timeoutMs).toBeGreaterThan(0);
   });
