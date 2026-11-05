@@ -3,14 +3,8 @@ import { DESKTOP_UPDATE_REASONS } from '../../../app/desktop-update-reasons.js';
 import { setDesktopPreference } from '../../../app/desktop-state.js';
 import { refreshDesktopUpdates, useDesktopUpdates, type DesktopUpdateState } from '../../../app/desktop-updates.js';
 import { formatMetric } from '../../../components/charts/format-metric.js';
+import { updateStatusText } from './update-status-text.js';
 import styles from './PowerStatus.module.css';
-const labels: Record<DesktopUpdateState['phase'], string> = {
-  uncommissioned: 'Updates unavailable', disabled: 'Automatic updates off', checking: 'Checking updates',
-  idle: 'No update found', available: 'Update available', downloading: 'Downloading update', staged: 'Update prepared',
-  'waiting-for-idle': 'Update waits for idle', 'waiting-for-app-quit': 'Update ready on quit',
-  'adoption-held': 'Update needs attention', installing: 'Installing update', installed: 'Update installed',
-  current: 'Up to date', failed: 'Update check failed',
-};
 const notes: Partial<Record<DesktopUpdateState['phase'], string>> = {
   uncommissioned: 'Signed updates are not available for this build.',
   disabled: 'Automatic downloads and installation are off.',
@@ -33,13 +27,14 @@ export function UpdateStatus() {
     return () => { window.clearTimeout(timer); };
   }, [pending]);
   if (!state) return null;
-  const label = labels[state.phase];
+  const { badge, detail } = updateStatusText(state);
   const downloading = state.phase === 'downloading';
   return <details className={styles.status}>
-    <summary aria-label={`Desktop updates: ${label}`}>{label}</summary>
+    <summary aria-label={`Desktop updates: ${badge}`}>{badge}</summary>
     <div className={styles.panel}>
       <strong>Phantom updates</strong>
-      <p role="status">{state.version ? `Version ${state.version} · ` : ''}{label}</p>
+      <p role="status">{badge}</p>
+      {detail && <p>{detail}</p>}
       {downloading && <>
         <progress className={styles.progress} aria-label="Update download" value={state.bytesTotal === null ? undefined : state.bytesReceived} max={state.bytesTotal ?? undefined} />
         <p>{formatMetric(state.bytesReceived / 1024 / 1024)} MB{state.bytesTotal !== null ? ` of ${formatMetric(state.bytesTotal / 1024 / 1024)} MB · ${formatMetric(state.bytesReceived / state.bytesTotal * 100)}%` : ' downloaded'}</p>

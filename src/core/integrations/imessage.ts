@@ -72,7 +72,7 @@ export function commsEnabled(cfg: AshlrConfig): boolean {
  * osascript process receives the literal string; no shell expansion occurs.
  */
 function escapeAppleScript(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ');
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]/g, ' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,22 @@ function escapeAppleScript(s: string): string {
  * double-quoted string with escapeAppleScript() applied. execFile passes the
  * entire -e script as a single argv element — no shell tokenisation occurs.
  */
-export function sendIMessage(text: string, cfg: AshlrConfig): Promise<{ ok: boolean }> {
+/** Only the configured owner handle is a self destination. The intake allowlist is not send authority. */
+export function isSelfIMessageHandle(to: string, cfg: AshlrConfig): boolean {
+  const self = cfg.comms?.imessageHandle;
+  return typeof self === 'string' && self.trim().length > 0
+    && to.trim().toLowerCase() === self.trim().toLowerCase();
+}
+
+/** Only the configured owner handle is verified Mason operator input. */
+export function isVerifiedMasonHandle(handle: string, cfg: AshlrConfig): boolean {
+  return isSelfIMessageHandle(handle, cfg);
+}
+
+export function sendIMessage(
+  text: string, cfg: AshlrConfig, to: string = cfg.comms?.imessageHandle ?? '',
+): Promise<{ ok: boolean; reason?: 'not_self' }> {
+  if (!isSelfIMessageHandle(to, cfg)) return Promise.resolve({ ok: false, reason: 'not_self' });
   if (!commsEnabled(cfg)) return Promise.resolve({ ok: false });
   if (process.platform !== 'darwin') return Promise.resolve({ ok: false });
 
@@ -107,7 +122,7 @@ export function sendIMessage(text: string, cfg: AshlrConfig): Promise<{ ok: bool
     ? 'of (1st service whose service type = iMessage)'
     : `of service "${safeService}"`;
   const script =
-    `tell application "Messages" to send "${safeText}" to buddy "${safeHandle}" ` +
+    `tell application "Messages" to send "${safeText}" to participant "${safeHandle}" ` +
     serviceClause;
 
   return new Promise<{ ok: boolean }>((resolve) => {

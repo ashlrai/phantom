@@ -17,11 +17,22 @@ export function durationText(ms: number): string {
   return `${Math.round(h / 24)} d`;
 }
 
-/** The three stat chips on a lane row: `live N` (good while jobs run), `queued N`, `merges/h X.X`. */
-export function laneChipText(lane: FleetLaneView): { text: string; tone?: 'good' }[] {
+/** A ready queue deeper than this many times the lane's slot target is over-deep. */
+export const QUEUE_OVERDEEP_FACTOR = 3;
+
+/** 'warn' when the ready queue is over QUEUE_OVERDEEP_FACTOR x the slot target (or any queue on a 0-slot lane); null otherwise or when unknown. */
+export function queueDepthTone(lane: FleetLaneView): 'warn' | null {
+  const { slotTarget, queueDepth } = lane;
+  if (typeof slotTarget !== 'number' || queueDepth === null) return null;
+  return slotTarget > 0 ? (queueDepth > QUEUE_OVERDEEP_FACTOR * slotTarget ? 'warn' : null) : queueDepth > 0 ? 'warn' : null;
+}
+
+/** The three stat chips on a lane row: `live N` (good while jobs run), `queued N[ / T slots]` (warn when over-deep), `merges/h X.X`. */
+export function laneChipText(lane: FleetLaneView): { text: string; tone?: 'good' | 'warn' }[] {
+  const queued = `queued ${lane.queueDepth ?? '—'}`;
   return [
     { text: `live ${lane.liveJobs ?? '—'}`, tone: (lane.liveJobs ?? 0) > 0 ? 'good' : undefined },
-    { text: `queued ${lane.queueDepth ?? '—'}` },
+    { text: typeof lane.slotTarget === 'number' ? `${queued} / ${lane.slotTarget} slots` : queued, tone: queueDepthTone(lane) ?? undefined },
     { text: `merges/h ${lane.mergesPerHour === null ? '—' : lane.mergesPerHour.toFixed(1)}` },
   ];
 }

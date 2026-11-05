@@ -28,6 +28,7 @@
 .rowMeta { margin: var(--space-1) 0 0; font-size: var(--text-xs-size); color: var(--text-secondary); overflow-wrap: anywhere; }
 .chip { font-size: var(--text-2xs-size); color: var(--text-secondary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
 .chip[data-tone="good"] { color: var(--status-success-fg); }
+.chip[data-tone="warn"] { color: var(--status-warning-fg); }
 .chip[data-tone="bad"] { color: var(--status-danger-fg); }
 
 /* Lanes */

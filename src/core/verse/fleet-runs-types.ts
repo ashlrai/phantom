@@ -16,6 +16,7 @@ export interface FleetRunsV1 {
   events: Array<{ at: string; kind: string; text: string }>;
   codexPersonal: { usedPct: number|null; resetsAt: string|null; asOf: string|null } | null;
   inbox: Array<{ at: string; source: string; text: string }>;
+  outbox?: Array<{ at: string; text: string }>;
   drop: { pending: Array<{ lane: string; file: string }>; done: number } | null;
 }
 export interface FleetRunsInboxBody { text: string; source?: string }
