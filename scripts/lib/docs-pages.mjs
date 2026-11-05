@@ -160,7 +160,10 @@ export function renderLlmsTxt(llmsText, pages) {
     '',
   ];
   for (const p of missing) lines.push(`- [${p.title}](${p.slug}.md)${p.description ? `: ${p.description}` : ''}`);
-  lines.push(INDEX_END, '');
+  lines.push(INDEX_END);
+  const tailBody = tail.replace(/^\s+/, '').replace(/\s+$/, '');
+  if (tailBody) lines.push('', tailBody);
+  lines.push('');
   return lines.join('\n');
 }
 
