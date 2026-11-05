@@ -20,6 +20,7 @@
  * scrubbed, capped and flagged `untrusted: true` for the caller to frame.
  */
 import { scrubSecrets } from '../util/scrub.js';
+import { computerAppPolicy } from './computer-types.js';
 import type { VerseMcpToolResult } from './verse-mcp-computer.js';
 
 export type DesktopAppId = 'devin' | 'claude' | 'codex';
@@ -173,6 +174,25 @@ export interface DesktopAppAdapterOptions {
   maxDepth?: number;
 }
 
+export type TreeRead = { ok: true; entries: AxEntry[] } | { ok: false; error: string };
+
+async function readTree(call: ToolCall, bundle: string, maxDepth: number): Promise<TreeRead> {
+  const res = await call('computer_ax_tree', { app: bundle, max_depth: maxDepth });
+  if (res.isError) return { ok: false, error: toText(res).slice(0, 300) };
+  return { ok: true, entries: parseAxTree(toText(res)) };
+}
+
+/** Read the tree, asking the operator for access once if the chat holds none. */
+async function readTreeWithAccess(call: ToolCall, bundle: string, maxDepth: number, reason: string): Promise<TreeRead> {
+  let read = await readTree(call, bundle, maxDepth);
+  if (!read.ok && /not granted|no desktop access/i.test(read.error)) {
+    const asked = await call('computer_request_access', { apps: [bundle], reason });
+    if (asked.isError) return { ok: false, error: toText(asked).slice(0, 300) };
+    read = await readTree(call, bundle, maxDepth);
+  }
+  return read;
+}
+
 const NOT_RUNNING = (name: string): string => `${name} is not running (or is not granted to this chat). Open it, then ask the operator for access.`;
 
 /** Handle of an app task: the app's bundle id, since each app shows one live conversation. */
@@ -194,22 +214,8 @@ export function createDesktopAppAdapter(profile: DesktopAppProfile, call: ToolCa
     return null;
   }
 
-  async function tree(bundle: string): Promise<{ ok: true; entries: AxEntry[] } | { ok: false; error: string }> {
-    const res = await call('computer_ax_tree', { app: bundle, max_depth: maxDepth });
-    if (res.isError) return { ok: false, error: toText(res).slice(0, 300) };
-    return { ok: true, entries: parseAxTree(toText(res)) };
-  }
-
-  /** Read the tree, asking the operator for access once if the chat holds none. */
-  async function treeWithAccess(bundle: string): Promise<{ ok: true; entries: AxEntry[] } | { ok: false; error: string }> {
-    let read = await tree(bundle);
-    if (!read.ok && /not granted|no desktop access/i.test(read.error)) {
-      const asked = await call('computer_request_access', { apps: [bundle], reason: `Drive the ${name} app for a Phantom task` });
-      if (asked.isError) return { ok: false, error: toText(asked).slice(0, 300) };
-      read = await tree(bundle);
-    }
-    return read;
-  }
+  const tree = (bundle: string): Promise<TreeRead> => readTree(call, bundle, maxDepth);
+  const treeWithAccess = (bundle: string): Promise<TreeRead> => readTreeWithAccess(call, bundle, maxDepth, `Drive the ${name} app for a Phantom task`);
 
   return {
     id: profile.id,
@@ -256,6 +262,149 @@ export function createDesktopAdapters(call: ToolCall, opts: Partial<Record<Deskt
     claude: createDesktopAppAdapter(DESKTOP_APP_PROFILES.claude, call, opts.claude),
     codex: createDesktopAppAdapter(DESKTOP_APP_PROFILES.codex, call, opts.codex),
     devin: createDesktopAppAdapter(DESKTOP_APP_PROFILES.devin, call, opts.devin),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// App control (RQ-MACCU-APPS-1): list / status / open / focus / quit
+// ---------------------------------------------------------------------------
+//
+// Same rules as the task adapters: every step is a `computer_*` call, so the
+// grant, tier ceiling, probe + confirmation card, denylist, takeover and KILL
+// all stay in force. Nothing here types, sends keys, reads window text (control
+// labels and window titles only) or touches TCC grants or the MACCU helper.
+// There is no `computer_*` tool that launches or activates an app, so open and
+// focus go through an injected `AppLauncher`; without one they refuse.
+
+export type AppControlAction = 'open' | 'quit' | 'focus' | 'status';
+export type AppControlCode = 'not-running' | 'unsupported' | 'denied' | 'unsaved-state' | 'unreadable' | 'failed';
+
+export interface RunningApp {
+  name: string;
+  bundleId: string | null;
+  frontmost: boolean;
+}
+
+export type AppControlResult =
+  | { ok: true; action: AppControlAction; running: boolean; frontmost: boolean; detail: string }
+  | { ok: false; action: AppControlAction; code: AppControlCode; error: string };
+
+/** The only way to start or raise an app. Not a `computer_*` tool, so a host must supply it. */
+export interface AppLauncher {
+  open(bundleId: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  activate(bundleId: string): Promise<{ ok: true } | { ok: false; error: string }>;
+}
+
+export interface AppControl {
+  list(): Promise<{ ok: true; apps: RunningApp[] } | { ok: false; error: string }>;
+  status(target: string): Promise<AppControlResult>;
+  open(target: string): Promise<AppControlResult>;
+  focus(target: string): Promise<AppControlResult>;
+  quit(target: string): Promise<AppControlResult>;
+}
+
+export interface AppControlOptions {
+  launcher?: AppLauncher;
+  maxDepth?: number;
+}
+
+/** Parse `computer_list_apps` lines: `- Name (bundle.id): ...[; this chat holds X] [frontmost]`. */
+export function parseRunningApps(text: string): RunningApp[] {
+  const apps: RunningApp[] = [];
+  for (const line of text.split('\n')) {
+    const m = /^- (.+?) \(([^)]*)\): (.*)$/.exec(line);
+    if (!m) continue;
+    apps.push({ name: m[1]!, bundleId: m[2] && m[2] !== 'no bundle id' ? m[2] : null, frontmost: m[3]!.includes('[frontmost]') });
+  }
+  return apps;
+}
+
+const SAVE_CONTROL = /^(save( all)?|don.?t save|review changes|discard( changes)?)$/i;
+const EDITED_TITLE = /\b(edited|unsaved|modified)\b|^\s*[*\u2022\u25cf]|[*\u2022\u25cf]\s*$/i;
+
+/**
+ * Whether the app shows signs of unsaved state. Labels and window titles only,
+ * never field values. Over-reports on purpose: a false positive routes the quit
+ * to needs-you, a false negative could lose someone's work.
+ */
+export function detectUnsavedState(entries: readonly AxEntry[]): string[] {
+  const signals: string[] = [];
+  if (entries.some((e) => e.role === 'AXButton' && e.enabled && SAVE_CONTROL.test(label(e).trim()))) signals.push('save-control');
+  if (entries.some((e) => e.role === 'AXWindow' && (EDITED_TITLE.test(e.title) || EDITED_TITLE.test(e.description)))) signals.push('edited-window');
+  if (entries.some((e) => e.role === 'AXSheet')) signals.push('open-sheet');
+  return signals;
+}
+
+export function createAppControl(call: ToolCall, opts: AppControlOptions = {}): AppControl {
+  const maxDepth = opts.maxDepth ?? 6;
+  const fail = (action: AppControlAction, code: AppControlCode, error: string): AppControlResult => ({ ok: false, action, code, error });
+
+  async function list(): Promise<{ ok: true; apps: RunningApp[] } | { ok: false; error: string }> {
+    const res = await call('computer_list_apps', {});
+    if (res.isError) return { ok: false, error: toText(res).slice(0, 300) };
+    return { ok: true, apps: parseRunningApps(toText(res)) };
+  }
+
+  /** Bundle id, then exact name (case-insensitive). */
+  async function find(target: string): Promise<{ ok: true; app: RunningApp | null } | { ok: false; error: string }> {
+    const listed = await list();
+    if (!listed.ok) return listed;
+    const needle = target.trim().toLowerCase();
+    const app = listed.apps.find((a) => a.bundleId?.toLowerCase() === needle) ?? listed.apps.find((a) => a.name.toLowerCase() === needle) ?? null;
+    return { ok: true, app };
+  }
+
+  const bundleOf = (target: string, app: RunningApp | null): string | null =>
+    app?.bundleId ?? (/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(target.trim()) ? target.trim() : null);
+
+  return {
+    list,
+    async status(target) {
+      const found = await find(target);
+      if (!found.ok) return fail('status', 'failed', found.error);
+      const app = found.app;
+      return { ok: true, action: 'status', running: app !== null, frontmost: app?.frontmost ?? false, detail: app ? `${app.name} is running${app.frontmost ? ' (frontmost)' : ''}.` : 'not running.' };
+    },
+    async open(target) {
+      const found = await find(target);
+      if (!found.ok) return fail('open', 'failed', found.error);
+      const bundle = bundleOf(target, found.app);
+      if (found.app && !bundle) return fail('open', 'denied', 'that app is never available to agents.');
+      if (bundle && computerAppPolicy(bundle).ceiling === null) return fail('open', 'denied', 'that app is never available to agents.');
+      if (found.app) return { ok: true, action: 'open', running: true, frontmost: found.app.frontmost, detail: `${found.app.name} is already running.` };
+      if (!bundle) return fail('open', 'unsupported', 'open needs the app\'s bundle id when it is not running.');
+      if (!opts.launcher) return fail('open', 'unsupported', 'no launcher is connected: the computer_* tools cannot start an app.');
+      const started = await opts.launcher.open(bundle);
+      return started.ok ? { ok: true, action: 'open', running: true, frontmost: false, detail: `asked macOS to open ${bundle}.` } : fail('open', 'failed', started.error.slice(0, 300));
+    },
+    async focus(target) {
+      const found = await find(target);
+      if (!found.ok) return fail('focus', 'failed', found.error);
+      if (!found.app) return fail('focus', 'not-running', `${target.trim().slice(0, 80)} is not running.`);
+      const bundle = bundleOf(target, found.app);
+      if (!bundle || computerAppPolicy(bundle).ceiling === null) return fail('focus', 'denied', 'that app is never available to agents.');
+      if (found.app.frontmost) return { ok: true, action: 'focus', running: true, frontmost: true, detail: `${found.app.name} is already frontmost.` };
+      if (!opts.launcher) return fail('focus', 'unsupported', 'no launcher is connected: the computer_* tools cannot raise an app.');
+      const raised = await opts.launcher.activate(bundle);
+      return raised.ok ? { ok: true, action: 'focus', running: true, frontmost: true, detail: `raised ${found.app.name}.` } : fail('focus', 'failed', raised.error.slice(0, 300));
+    },
+    async quit(target) {
+      const found = await find(target);
+      if (!found.ok) return fail('quit', 'failed', found.error);
+      if (!found.app) return { ok: true, action: 'quit', running: false, frontmost: false, detail: 'not running; nothing to quit.' };
+      const bundle = found.app.bundleId;
+      if (!bundle || computerAppPolicy(bundle).ceiling === null) return fail('quit', 'denied', 'that app is never available to agents.');
+      const read = await readTreeWithAccess(call, bundle, maxDepth, `Quit the ${found.app.name} app`);
+      // Unreadable means unsaved state cannot be ruled out, so it is treated as unsaved.
+      if (!read.ok) return fail('quit', 'unreadable', `cannot confirm ${found.app.name} has nothing unsaved: ${read.error}`);
+      const unsaved = detectUnsavedState(read.entries);
+      if (unsaved.length > 0) return fail('quit', 'unsaved-state', `${found.app.name} may have unsaved work (${unsaved.join(', ')}).`);
+      const quitItem = read.entries.find((e) => e.role === 'AXMenuItem' && e.enabled && /^quit\b/i.test(label(e).trim()));
+      if (!quitItem) return fail('quit', 'failed', `${found.app.name}: no Quit menu item in its accessibility tree.`);
+      const pressed = await call('computer_ax_press', { app: bundle, ref: quitItem.ref });
+      if (pressed.isError) return fail('quit', 'failed', toText(pressed).slice(0, 300));
+      return { ok: true, action: 'quit', running: false, frontmost: false, detail: `pressed Quit in ${found.app.name}.` };
+    },
   };
 }
 
