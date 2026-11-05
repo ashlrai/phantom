@@ -15,7 +15,7 @@ import { queueCosEnvelope } from '../cos/intake.js';
 
 export type { ChannelPublishState } from './channel-bus-publish.js';
 
-export const INBOUND_CHANNELS = ['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'] as const;
+export const INBOUND_CHANNELS = ['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'] as const;
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
 export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 export const CHANNEL_ACK_TIMEOUT_MS = 2_000;
@@ -202,7 +202,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
       let entryId: string | undefined;
       if (previous && !options.write) {
         // The receipt proves sender+text; pinning to the receipt time identifies its exact entry.
-        const runsDir = options.runsDir ?? join(homedir(), '.ashlr-runs');
+        const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
         const decision = decideCrossChannelMerge(
           { text: body, channel: inboxChannelSlug(envelope.channel), senderId: senderKey, receivedAt: now },
           readRecentChannelEntries(runsDir, now, CROSS_CHANNEL_WINDOW_MS)
