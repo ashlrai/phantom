@@ -76,7 +76,9 @@ function fitLine(render: (text: string, truncated: boolean) => string, text: str
   if (bytes(render('', true)) > limit) return '';
   const points = Array.from(text);
   let low = 0;
-  let high = points.length;
+  // The shorter `true` envelope can fit the entire text even when the
+  // truthful `false` envelope does not. Only consider proper prefixes here.
+  let high = Math.max(0, points.length - 1);
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
     if (bytes(render(points.slice(0, mid).join(''), true)) <= limit) low = mid;
