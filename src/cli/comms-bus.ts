@@ -32,7 +32,7 @@ ID filters match envelope IDs exactly and case-sensitively; IDs are transport da
 This is an application convention, not an envelope field or authenticated identity.
 All supplied filters must match. Limit applies before filtering; it counts scanned live records, not matches.
 Expired records advance the cursor but do not count toward the limit.
-Priority is a routing attribute; it does not establish identity or authority.
+Priority is a routing attribute, not authority; it does not establish identity.
 Example: phm comms bus watch --to worker --from coordinator --priority P0
 Request/reply example: a reply body {"inReplyTo":"request-1"} matches phm comms bus read --in-reply-to request-1
 Use --id=<id>, --in-reply-to=<id>, --to=<address>, --from=<address> or --exclude-from=<address> for values that look like command flags.
