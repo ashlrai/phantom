@@ -66,17 +66,23 @@ describe('evaluateAdmission gates', () => {
 });
 
 describe('globalCap', () => {
-  it('is min(sum of unheld targets, ncpu, hard_cap)', () => {
+  it('is min(sum of unheld targets, ncpu, hard_cap) on hosts without the adaptive controller', () => {
     expect(globalCap({ a: lane(10), b: lane(10) }, 18).cap).toBe(18);
     expect(globalCap({ a: lane(10), b: lane(10) }, 4).cap).toBe(4);
     expect(globalCap({ a: lane(3), b: lane(2) }, 18).cap).toBe(5);
     expect(globalCap({ a: lane(10), b: lane(10), hard_cap: 7 }, 18)).toEqual({ cap: 7, hardCap: 7 });
   });
-  it('skips held lanes, bounds each lane by its own hard_cap, and defaults the global hard_cap to 18', () => {
+  it('skips held lanes, bounds each lane by its own hard_cap, and has no fixed global hard_cap', () => {
     expect(globalCap({ a: lane(10, { held: true }), b: lane(4) }, 18).cap).toBe(4);
     expect(globalCap({ a: lane(10, { hard_cap: 3 }), b: lane(4) }, 18).cap).toBe(7);
-    expect(globalCap({ a: lane(30, { ceiling: 32 }) }, 64)).toEqual({ cap: 18, hardCap: 18 });
-    expect(globalCap({ a: lane(5), hard_cap: -1 }, 18).hardCap).toBe(18);
+    expect(globalCap({ a: lane(30, { ceiling: 32 }) }, 64)).toEqual({ cap: 30, hardCap: null });
+    expect(globalCap({ a: lane(5), hard_cap: -1 }, 18).hardCap).toBe(18);   // malformed fails closed to the legacy 18
+    expect(globalCap({ a: lane(5), hard_cap: null }, 18).hardCap).toBe(18);
+  });
+  it('uses the adaptive cap in place of ncpu, still under an operator hard_cap', () => {
+    expect(globalCap({ a: lane(30, { ceiling: 32 }) }, 8, 24)).toEqual({ cap: 24, hardCap: null });
+    expect(globalCap({ a: lane(30, { ceiling: 32 }), hard_cap: 20 }, 8, 24)).toEqual({ cap: 20, hardCap: 20 });
+    expect(globalCap({ a: lane(3) }, 8, 24).cap).toBe(3);
   });
 });
 
@@ -106,9 +112,21 @@ describe('readAdmission and phm pool admission', () => {
 
   it('reports load, ncpu, cap, running and an admit verdict from the runs dir', async () => {
     const r = await readAdmission(probes());
-    expect(r).toMatchObject({ admit: true, cap: 6, running: 4, ncpu: 18, procs: 120, load: { load1: 2, max: 36 } });
+    expect(r).toMatchObject({ admit: true, cap: 6, adaptiveCap: null, running: 4, ncpu: 18, procs: 120, load: { load1: 2, max: 36 } });
     expect(r.daemon.tickAgeSeconds).toBe(60);
     expect(r.installLock.holder).toBeNull();
+  });
+  it('legacy probes bound the cap by the adaptive controller state, not ncpu', async () => {
+    await writeFile(join(queue, 'slots.json'), JSON.stringify({ devin: lane(30, { ceiling: 32 }) }));
+    await writeFile(join(queue, 'concurrency.json'), JSON.stringify({ schema: 'dispatchd.concurrency.v1', cap: 24 }));
+    expect(await readAdmission(probes())).toMatchObject({ cap: 24, adaptiveCap: 24, hardCap: null, ncpu: 18 });
+    await writeFile(join(queue, 'concurrency.json'), JSON.stringify({ schema: 'other', cap: 24 }));
+    expect(await readAdmission(probes())).toMatchObject({ cap: 18, adaptiveCap: null });
+  });
+  it('maps the v2 adaptive cap and an absent operator hard_cap', async () => {
+    await writeFile(join(queue, 'admission.json'), JSON.stringify({ schema: 'dispatchd.admission.v2', admit: true,
+      cap: 22, hard_cap: null, concurrency_cap: 22, running: 3 }));
+    expect(await readAdmission(probes())).toMatchObject({ cap: 22, hardCap: null, adaptiveCap: 22 });
   });
   it('counts only .base files whose worktree directory exists', async () => {
     const wt = join(dir, 'wt-1'); await mkdir(wt);
