@@ -16,11 +16,14 @@ export interface AckEvidence {
   rows: AckRow[];
   malformedRows: number;
   deliveryProof: false;
+  rowid?: number;
+  match?: 'matched' | 'no-match' | 'unknown';
 }
 
 /** Read at most 256 KiB, discarding a partial leading line and rejecting a torn final line. */
-export async function readImessageAckEvidence(limit: number, runsDir?: string): Promise<AckEvidence> {
-  const empty = (sourceState: SourceState): AckEvidence => ({ sourceState, rows: [], malformedRows: 0, deliveryProof: false });
+export async function readImessageAckEvidence(limit: number, runsDir?: string, rowid?: number): Promise<AckEvidence> {
+  const empty = (sourceState: SourceState): AckEvidence => ({ sourceState, rows: [], malformedRows: 0, deliveryProof: false,
+    ...(rowid === undefined ? {} : { rowid, match: sourceState === 'ok' ? 'no-match' : 'unknown' }) });
   let file;
   try {
     file = await open(join(imessageStateDir(runsDir), 'acks.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -56,11 +59,14 @@ export async function readImessageAckEvidence(limit: number, runsDir?: string): 
           || !Number.isFinite(Date.parse(row.at)) || new Date(row.at).toISOString() !== row.at
           || typeof row.rowid !== 'number' || !Number.isSafeInteger(row.rowid) || row.rowid <= 0
           || (row.status !== 'accepted' && row.status !== 'duplicate')) throw new Error();
-        report.rows.push({ timestamp: row.at, rowid: row.rowid, status: row.status,
-          delivery: row.delivery === 'recorded-not-sent' ? 'recorded-not-sent' : 'unknown' });
+        if (rowid === undefined || row.rowid === rowid) {
+          report.rows.push({ timestamp: row.at, rowid: row.rowid, status: row.status,
+            delivery: row.delivery === 'recorded-not-sent' ? 'recorded-not-sent' : 'unknown' });
+        }
       } catch { report.malformedRows++; }
     }
     report.rows = report.rows.slice(-limit);
+    if (rowid !== undefined && report.rows.length) report.match = 'matched';
     return report;
   } catch { return empty('unreadable'); } finally { await file.close().catch(() => {}); }
 }
