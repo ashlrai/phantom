@@ -20,12 +20,13 @@ const capture = () => {
   const cap = { out: '', err: '' };
   return { cap, io: { stdout: sink(s => { cap.out += s; }), stderr: sink(s => { cap.err += s; }) } };
 };
-// The child drains stdin so the runner payload never EPIPEs, echoes it, records
-// the launch in a counter file, then exits with the requested code after a delay.
+// The child records the launch in a counter file at startup (an aborted child
+// must still count), drains stdin so the runner payload never EPIPEs, echoes
+// it, then exits with the requested code after a delay.
 const worker = (exit: number, wait = 0) => [process.execPath, '-e',
+  `require('node:fs').appendFileSync(${JSON.stringify(spawned)},'spawn\\n');` +
   `let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{` +
-  `require('node:fs').appendFileSync(${JSON.stringify(spawned)},'spawn\\n');console.log(s);` +
-  `setTimeout(()=>process.exit(${exit}),${wait})})`];
+  `console.log(s);setTimeout(()=>process.exit(${exit}),${wait})})`];
 const claimsFile = () => join(busRoot, 'bus-work-claims', 'claims.json');
 const spawnCount = () => { try { return readFileSync(spawned, 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } };
 
@@ -148,15 +149,19 @@ describe('fleet bus-claimed-run through the exported CLI, real inbox and claim s
     expect(spawnCount()).toBe(2);
   });
 
-  it('reports ownership loss distinctly without settling or undoing the child', async () => {
+  it('reports ownership loss distinctly, stops the child and never settles', async () => {
     const running = run({ leaseMs: 600, argv: worker(0, 700) });
-    await delay(20);
+    // Corrupt the store only after the child is provably live: a fixed delay
+    // races node startup, and an early SIGTERM could beat the marker write.
+    // Claim + staging run durable fsyncs first, so allow spawn a real budget.
+    await vi.waitFor(() => expect(spawnCount()).toBe(1), { timeout: 15_000 });
     writeFileSync(claimsFile(), '{broken', { mode: 0o600 });
     const result = await running;
-    // The argv could not be undone once launched; the corrupted store is left alone.
+    // Since #2700 a proven lease loss aborts the child promptly (128+SIGTERM)
+    // while the corrupted store is left alone and the claim is never settled.
     expect(result.claim.status).toBe('ownership-lost');
     expect(['unavailable', 'expired']).toContain(result.claim.detail);
-    expect(result).toMatchObject({ code: 1, workerExit: { status: 'returned', exitCode: 0 }, replyReceipt: { status: 'posted' } });
+    expect(result).toMatchObject({ code: 143, workerExit: { status: 'returned', exitCode: 143 }, replyReceipt: { status: 'posted' } });
     expect(spawnCount()).toBe(1);
     expect(readFileSync(claimsFile(), 'utf8')).toBe('{broken');
   });
