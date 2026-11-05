@@ -1,8 +1,8 @@
 # Connector profile
 
 `phm connectors` manages `~/.phantom/connectors/profile.toml`. This is declarative
-metadata, the only connector state suitable for plaintext sync. It never starts
-connectors, resolves credentials, grants scopes, or activates a tool or lane.
+metadata, the only connector state suitable for plaintext sync. Profile operations never resolve credentials or grant scopes. The run surface
+is currently denied pending the separate Security review described below.
 Empty tools/lanes select no consumers; selectors are explicit names, not wildcards.
 
 ```sh
@@ -73,3 +73,73 @@ I/O failure. List returns `{version:1,connectors:[...]}`, show `{connector}`,
 add `{ok:true,connector}`, remove `{ok:true,removed}`, and import
 `{imported:[id],skipped:[{source,reason}]}`. Plain output is readable JSON;
 `phm connectors --help` prints usage.
+
+
+## Run a CLI connector
+
+```sh
+phm connectors run github --scope repo-read --tool codex --lane work --json -- repo list --json name
+```
+
+Place Phantom's `--json` before `--`; everything after it belongs to the CLI,
+including its own JSON flags. Run returns `{ok:false,error}` and exit 2 while
+Security review is pending. It starts no process, including for entries with no
+credentials. Matching selectors are necessary but are not Locus authorization.
+Empty selectors deny access. MCP and plugin kinds cannot run through this verb.
+
+The separate `codex-bridge/RQ-COS-CONNRUN-1-sec` change must authorize the exact
+scope, tool and lane through Locus and inject Phantom Secrets bindings directly
+into the child environment without exposing values to argv, files, logs or
+returned output. No feature flag or environment variable enables this stub.
+Third-party sends must remain draft-then-approve, with a needs-you item and
+explicit approval before sending. Arbitrary CLI execution must not bypass that
+rule. This worktree contains no credential injection implementation.
+
+Seed CLI entries below use binding names only. They are not executable until
+the Security change lands. Choose JSON output in the child invocation, for
+example `gh repo list --json name`, `vercel list --format json`, or
+`supabase projects list --output json`. Install official CLIs separately.
+
+```toml
+[[connectors]]
+id = "vercel"
+kind = "cli"
+command = "vercel"
+scopes = ["projects-read"]
+tools = ["codex"]
+lanes = ["work"]
+credentials = [{ binding = "VERCEL_TOKEN", name = "vercel-access" }]
+
+[[connectors]]
+id = "supabase"
+kind = "cli"
+command = "supabase"
+scopes = ["projects-read"]
+tools = ["codex"]
+lanes = ["work"]
+credentials = [{ binding = "SUPABASE_ACCESS_TOKEN", name = "supabase-access" }]
+```
+
+Use the GitHub entry above with `tools = ["codex"]` for the run example. These
+blocks append to the version 1 profile. CLI authentication support must be
+verified during Security review; no token argument adapter is provided here.
+
+Reserve Gmail, Calendar, Drive, Brex, X and Stacksync as MCP entries for a later
+line, only for capabilities without an official CLI. Their endpoints and
+credentials are intentionally unconfigured; do not invent executable profiles.
+
+
+| Deferred entry id | Kind | Capability |
+| --- | --- | --- |
+| gmail | mcp-http | Gmail |
+| calendar | mcp-http | Calendar |
+| drive | mcp-http | Drive |
+| brex | mcp-http | Brex |
+| x | mcp-http | X |
+| stacksync | mcp-http | Stacksync |
+
+These are planning entries, not importable TOML. Endpoint selection and the
+absence of a suitable official CLI require verification in the later line.
+Official JSON-output references: [GitHub](https://cli.github.com/manual/gh_repo_list),
+[Vercel](https://github.com/vercel/vercel/blob/main/skills/vercel-cli/references/monitoring-and-debugging.md),
+and [Supabase](https://supabase.com/docs/reference/cli/global-flags).
