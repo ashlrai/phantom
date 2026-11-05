@@ -17,7 +17,7 @@ import {
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { gitJobProbe, resolveJobPrecheckRef } from './fleet-job-precheck.js';
 
-const usage = 'Usage: ashlr fleet draft-check --stdin [--json] [--queued]';
+const usage = 'Usage: ashlr fleet draft-check --stdin [--json] [--queued] [--fail-on-collision]';
 const REF = 'origin/master';
 const STDIN_MAX_BYTES = 180_000;
 const MARKDOWN_MAX_BYTES = 8_000;
@@ -125,17 +125,20 @@ export async function cmdFleetDraftCheck(args: string[], deps: DraftCheckCliDeps
       `There are no file, ref, cwd or executable arguments: the batch is always checked against origin/master, resolved once to an immutable commit.\n` +
       `Each draft's named src, test, docs, schema and scripts paths are probed over a shared fact cache, so a path several drafts name is probed once; paths named by two or more drafts are reported as collisions.\n` +
       `--queued also reads only the queue prompts directory (<runs>/queue/prompts under ASHLR_RUNS_DIR, default ~/.ashlr-runs) and reports queued-collision lines when a draft names a path a still-waiting RQ-PHX job names; the queue source prints as queued: healthy|missing|degraded. A queued prompt with the draft's own id is a re-issue, not a collision. Advisory only: it never changes the exit code.\n` +
+      `--fail-on-collision is a planner check only: it exits 4 when successful drafts share an implementation path (test/spec paths never count), letting a planner stop an overlapping pipeline before submitting. Reports, schemas and text output are unchanged; no queue writes and no authorization effect.\n` +
       `Read-only: never writes files, deletes, launches jobs or mutates queue state.\n` +
-      `Exits 2 on malformed input, an unresolvable ref or any per-draft error; else 3 when any draft is likely-done; else 0.`);
+      `Exits 2 on malformed input, an unresolvable ref or any per-draft error; else 3 when any draft is likely-done; else 4 when --fail-on-collision is set and collisions are present; else 0.`);
     return 0;
   }
   let json = false;
   let stdin = false;
   let queued = false;
+  let failOnCollision = false;
   for (const arg of args) {
     if (arg === '--json' && !json) { json = true; continue; }
     if (arg === '--stdin' && !stdin) { stdin = true; continue; }
     if (arg === '--queued' && !queued) { queued = true; continue; }
+    if (arg === '--fail-on-collision' && !failOnCollision) { failOnCollision = true; continue; }
     error(usage);
     return 2;
   }
@@ -214,5 +217,6 @@ export async function cmdFleetDraftCheck(args: string[], deps: DraftCheckCliDeps
     if (queued) log(`queued: ${safe.queuedSource}`);
   }
   if (safe.counts.errors > 0) return 2;
-  return safe.counts['likely-done'] > 0 ? 3 : 0;
+  if (safe.counts['likely-done'] > 0) return 3;
+  return failOnCollision && safe.collisions.length > 0 ? 4 : 0;
 }
