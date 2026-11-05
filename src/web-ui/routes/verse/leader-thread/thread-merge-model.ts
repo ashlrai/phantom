@@ -5,6 +5,7 @@
  * leader's own MASON-OUTBOX.md answers, so an answer sits under the words it
  * answered. Pure; the tests feed the shapes.
  */
+import { classifyOutboxText, type OutboxKind } from '../../../../core/fleet/outbox-kind.js';
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
 import { annotateAck } from '../fleet-inbox/inbox-ack-model.js';
 import { parseInboxAt, sourceChip } from '../fleet/interject-ack-model.js';
@@ -18,6 +19,7 @@ export interface MergedLine {
   /** Epoch ms, or NaN when the timestamp could not be read. */
   at: number;
   who: 'mason' | 'leader';
+  kind?: OutboxKind;
   /** The post's channel, or the inbox entry's declared source. */
   source: string;
   text: string;
@@ -62,7 +64,7 @@ export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRuns
   // The leader's file answers read like its posts: same clock parsing, and on
   // a shared timestamp they still land after Mason's own words.
   outbox.forEach((entry, index) => {
-    push({ at: inboxMs(entry.at, nowMs), who: 'leader', source: 'outbox', text: entry.text, id: `outbox-${index}`, ack: null });
+    push({ at: inboxMs(entry.at, nowMs), who: 'leader', source: 'outbox', text: entry.text, id: `outbox-${index}`, ack: null, kind: classifyOutboxText(entry.text) });
   });
   for (const message of thread) {
     // Only attribute a relayed entry when its text identifies exactly one inbox row.

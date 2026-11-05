@@ -42,6 +42,8 @@ import { readFleetMainHealthTool } from './fleet-main-health.js';
 import { readFleetWasteRiskTool } from './fleet-waste-risk.js';
 import { readFleetKeptTool } from './fleet-kept.js';
 import { readFleetTrimTool } from './fleet-trim.js';
+import { MAX_FLEET_EMAIL_OUTBOX_ENTRIES, parseFleetEmailOutboxArgs, readFleetEmailOutbox,
+  type FleetEmailOutboxArgs } from './fleet-email-outbox.js';
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
@@ -73,6 +75,7 @@ export interface FleetReaders {
   wasteRisk?: () => Promise<unknown>;
   kept?: () => Promise<unknown>;
   trim?: () => Promise<unknown>;
+  emailOutbox?: (input: FleetEmailOutboxArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -336,11 +339,21 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_email_outbox',
+      description: 'Read the local email reply outbox as metadata evidence: per-state counts (queued, drafted, sent, stuck) plus a bounded list of artifact names, states and fixed stuck reasons — never recipients, subjects, bodies, absolute paths or transport errors. The saved email-drop config is resolved at the server-owned runs dir exactly like `phm fleet email-outbox` (outboxDir, else the sibling of inboxDir); a missing or invalid config and a missing or unreadable outbox directory each report their own sourceState and never invent a healthy empty outbox. The returned entry list clips at limit while counts and total describe the full listing. No caller directory, root, cwd or send option is accepted, and the tool never creates directories, sends, drafts, archives, retries or alters comms configuration.',
+      inputSchema: {
+        type: 'object',
+        properties: { limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_EMAIL_OUTBOX_ENTRIES, default: 50 } },
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -363,7 +376,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const pathHistory = name === 'fleet_path_history' ? parseFleetPathHistoryArgs(args) : null;
     const jobPrecheck = name === 'fleet_job_precheck' ? parseFleetJobPrecheckArgs(args) : null;
     const jobPrecheckBatch = name === 'fleet_job_precheck_batch' ? parseFleetJobPrecheckBatchArgs(args) : null;
-    if (name === 'fleet_job_precheck_batch' ? jobPrecheckBatch === null :
+    const emailOutbox = name === 'fleet_email_outbox' ? parseFleetEmailOutboxArgs(args) : null;
+    if (name === 'fleet_email_outbox' ? emailOutbox === null :
+        name === 'fleet_job_precheck_batch' ? jobPrecheckBatch === null :
         name === 'fleet_job_precheck' ? jobPrecheck === null :
         name === 'fleet_path_history' ? pathHistory === null :
         name === 'fleet_job_history_batch' ? jobHistoryBatch === null :
@@ -406,6 +421,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_waste_risk' ? await (readers.wasteRisk ?? readFleetWasteRiskTool)()
         : name === 'fleet_kept' ? await (readers.kept ?? readFleetKeptTool)()
         : name === 'fleet_trim' ? await (readers.trim ?? readFleetTrimTool)()
+        : name === 'fleet_email_outbox' ? await (readers.emailOutbox ?? readFleetEmailOutbox)(emailOutbox as FleetEmailOutboxArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
