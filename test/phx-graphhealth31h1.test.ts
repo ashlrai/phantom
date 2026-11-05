@@ -75,6 +75,6 @@ describe('graph completeness in the CLI', () => {
     expect(await cmdGraph(['neighbors', 'fleet:root'])).toBe(0);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toEqual({ schemaVersion: 1, command: 'neighbors',
       status: 'ready', nodeId: 'fleet:root', direction: 'both', depth: 1, truncated: false,
-      nodes: seed.nodes, edges: [] });
+      nodes: seed.nodes, edges: [], traversal: [{ id: 'fleet:root', distance: 0, predecessor: null }] });
   });
 });
