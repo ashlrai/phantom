@@ -124,7 +124,8 @@ describe('shared native readback', () => {
 
 describe('automatic control polling', () => {
   function stubControlFetch(fetcher: (path: string, init: RequestInit) => Promise<Response>): void {
-    vi.stubGlobal('fetch', (path: string, init: RequestInit) => path === '/api/verse/fleet/control/switches'
+    vi.stubGlobal('fetch', (path: string, init: RequestInit) => path === '/api/verse/fleet/runs'
+      ? Promise.resolve(json(null, 404)) : path === '/api/verse/fleet/control/switches'
       ? Promise.resolve(json({ v: 1, switches: [], sourceState: 'missing' })) : fetcher(path, init));
   }
 
