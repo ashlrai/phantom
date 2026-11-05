@@ -82,6 +82,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'drip': () => import('./fleet-drip.js'),
   'edit-collisions': () => import('./fleet-edit-collisions.js'),
   'email-outbox': () => import('./fleet-email-outbox.js'),
+  'email-outbox-await': () => import('./fleet-email-outbox-await.js'),
   'filler': () => import('./fleet-filler.js'),
   'filler-yield': () => import('./fleet-filler-yield.js'),
   'gate-run': () => import('./fleet-gate-run.js'),
