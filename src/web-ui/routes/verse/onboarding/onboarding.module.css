@@ -481,3 +481,17 @@
     max-width: calc(100vw - var(--rail-width) - var(--space-3) * 2);
   }
 }
+
+.teamMuted, .teamResult {
+  color: var(--text-secondary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line-relaxed);
+}
+.teamList { list-style: none; padding: 0; margin: 0; }
+.teamRow { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px solid var(--border-subtle); }
+.teamDot { display: inline-block; width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--text-tertiary); }
+.teamDot[data-online='true'] { background: var(--status-success-fg); }
+.teamRole { color: var(--text-secondary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-full); padding: var(--space-1) var(--space-2); }
+.teamInvite { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.teamInvite input { font: inherit; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-xs); padding: var(--space-2); }
+.teamResult { overflow-wrap: anywhere; }
