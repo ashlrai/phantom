@@ -8,7 +8,9 @@
  * --apply it is a dry-run over readUsageResets + planResetReleases: no slots
  * write, no audit append, no timers, no HTTP or desktop initialization.
  */
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
+import { refreshHeldClaudeQuota, type ClaudeProbeOutcome } from '../core/fleet/claude-quota-refresh.js';
 import {
   planResetReleases, runResetReleaseOnce, type ResetReleaseResult, type RunResetReleaseOptions,
 } from '../core/fleet/usage-reset-release.js';
@@ -24,6 +26,7 @@ healthy releases nothing; a manual hold is never released.`;
 interface Dependencies {
   read?: RunResetReleaseOptions['read'];
   now?: () => number;
+  refreshClaude?: (opts: { runsDir: string; now: () => number }) => Promise<ClaudeProbeOutcome>;
   output?: (text: string) => void;
   error?: (text: string) => void;
 }
@@ -56,7 +59,13 @@ export async function cmdFleetResetRelease(args: string[], deps: Dependencies = 
   const now = deps.now ?? Date.now;
   let resets: UsageResetsV1;
   let result: ResetReleaseResult | null = null;
+  let claudeProbe: ClaudeProbeOutcome | 'skipped-dry-run' = 'skipped-dry-run';
   try {
+    // Before the snapshot, so a fresh reading is what gets planned and released.
+    if (apply) {
+      const root = runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+      claudeProbe = await (deps.refreshClaude ?? refreshHeldClaudeQuota)({ runsDir: root, now });
+    }
     resets = await (deps.read ?? readUsageResets)({ runsDir, now });
     // One pass only, on the same snapshot the report shows: the source state
     // cannot drift between what the operator saw and what the run released.
@@ -71,6 +80,7 @@ export async function cmdFleetResetRelease(args: string[], deps: Dependencies = 
     mode: apply ? 'apply' : 'dry-run',
     at: result?.at ?? resets.generatedAt,
     sourceState: resets.sourceState,
+    claudeProbe,
     checked: result?.checked ?? resets.rows.length,
     planned: planned.map(publicRow),
     released: result?.released ?? [],
@@ -78,7 +88,7 @@ export async function cmdFleetResetRelease(args: string[], deps: Dependencies = 
   };
   if (json) output(JSON.stringify(sanitizePublicJson(payload)));
   else {
-    const lines = [`fleet reset-release: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'} · evidence ${payload.sourceState} · checked ${payload.checked} lane(s)`];
+    const lines = [`fleet reset-release: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'} · evidence ${payload.sourceState} · claude probe: ${claudeProbe} · checked ${payload.checked} lane(s)`];
     if (!apply) {
       for (const row of planned) lines.push(`  ${safe(row.tell)}`);
       lines.push(planned.length ? `Run with --apply to release ${planned.length} lane(s).` : 'No releasable autobackoff holds.');

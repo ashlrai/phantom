@@ -1,22 +1,11 @@
 /** Records Claude's native weekly usage for the resource ledger; writes only with --write. */
-import { accessSync, constants, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { toClaudeQuotaReading, writeClaudeQuotaReading, type ClaudeQuotaReadingV1 } from '../core/fleet/claude-quota-reading.js';
-import { probeClaudeAccountUsage, type ClaudeAccountUsageResult } from '../core/resources/claude-account-usage.js';
-import type { ClaudeAccountStatusOptions } from '../core/resources/claude-account-status.js';
+import { findClaude, type Probe } from '../core/fleet/claude-quota-refresh.js';
+import { probeClaudeAccountUsage } from '../core/resources/claude-account-usage.js';
 
 const usage = 'Usage: ashlr fleet claude-quota [--root <dir>] [--write] [--json]';
-type Probe = (options: ClaudeAccountStatusOptions) => Promise<ClaudeAccountUsageResult>;
-
-function findClaude(pathEnv = process.env.PATH ?? ''): string | null {
-  for (const dir of pathEnv.split(delimiter)) {
-    if (!dir || !isAbsolute(dir)) continue;
-    const candidate = join(dir, 'claude');
-    try { if (statSync(candidate).isFile()) { accessSync(candidate, constants.X_OK); return candidate; } } catch { /* next */ }
-  }
-  return null;
-}
 
 export function formatClaudeQuota(reading: ClaudeQuotaReadingV1): string {
   if (!reading.windows.length) return `claude quota unavailable: ${reading.reason}`;
