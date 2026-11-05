@@ -7,12 +7,13 @@
  *  2. Each tool's handler returns the expected top-level shape from empty stores.
  *  3. None of the tools throw on empty/missing data.
  *  4. GET /api/fleet-state returns the combined JSON envelope.
- *  5. Contract count: total native tools is now 35.
+ *  5. Contract count: total native tools matches the catalog.
  *
  * Hermetic: every test runs under an isolated tmp HOME (h1-fixture); no real
  * ~/.ashlr is ever touched, no network, no downstream MCP servers.
  */
 
+import { contractedNativeToolNames } from './helpers/native-tool-contract.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -54,8 +55,8 @@ function resultJson(r: { content: { type: 'text'; text: string }[] }): unknown {
 // ---------------------------------------------------------------------------
 
 describe('M129 native tool registration', () => {
-  it('total native tool count is now 35', () => {
-    expect(nativeToolDefs()).toHaveLength(35);
+  it('total native tool count matches the catalog', () => {
+    expect(nativeToolDefs()).toHaveLength(contractedNativeToolNames.length);
   });
 
   const newTools = ['ashlr_fleet_status', 'ashlr_scorecard', 'ashlr_oversight', 'ashlr_routing'];

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { ApiError } from '../../../data/client.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { approveCosTask, cosTaskLine, isCosRouteAbsent, readCosTask, type CosStatus } from './cos-task-client.js';
+import { approveCosTask, cosTaskLine, isCosRouteAbsent, readCosTask, reconcileCosTask, type CosReconcileVerdict, type CosStatus } from './cos-task-client.js';
 
 export const COS_LAST_KEY = 'phantom.cosTask.last';
 const POLL_MS = 15_000;
@@ -18,9 +18,12 @@ export function CosTaskCard({ id }: { id: string }) {
   const [status, setStatus] = useState<CosStatus | null>(null);
   const [note, setNote] = useState('');
   const [approving, setApproving] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
+  // A reconcile attempt that found a fresh 'sending' claim: the reply may still be in flight.
+  const [stillSending, setStillSending] = useState(false);
   const busy = useRef(false);
   const sent = status?.delivery === 'sent';
-  useEffect(() => { rememberCosTask(id); setStatus(null); setNote(''); }, [id]);
+  useEffect(() => { rememberCosTask(id); setStatus(null); setNote(''); setStillSending(false); }, [id]);
   const refetch = useCallback(async () => {
     try { setStatus(await readCosTask(id)); }
     catch (error) {
@@ -52,12 +55,39 @@ export function CosTaskCard({ id }: { id: string }) {
     }
   }
 
+  async function reconcile(verdict: CosReconcileVerdict) {
+    if (busy.current) return;
+    busy.current = true;
+    setReconciling(true);
+    setNote('');
+    try {
+      const result = await reconcileCosTask(id, verdict);
+      setStillSending(false);
+      if (result.delivery === 'sent') setStatus(status ? { ...status, delivery: 'sent' } : status);
+      else await refetch(); // retry cleared the claim; the Approve button returns for one more approval
+    } catch (error) {
+      const code = error instanceof ApiError ? error.code : null;
+      if (code === 'COS_STILL_SENDING') { setStillSending(true); setNote('Still sending; try again in a few minutes'); }
+      else if (code === 'COS_NOTHING_TO_RECONCILE') { setNote('Nothing to reconcile; the delivery has moved on.'); await refetch(); }
+      else setNote(error instanceof ApiError ? error.detail ?? error.message : 'The answer could not be recorded.');
+    } finally {
+      busy.current = false;
+      setReconciling(false);
+    }
+  }
+  const canReconcile = status?.delivery === 'uncertain' || (status?.delivery === 'sending' && stillSending);
+
   return <section aria-label="Task">
     <p role="status" aria-live="polite">{cosTaskLine(status)}</p>
     {status?.draft && status.delivery === null ? <>
       <p>Reply for {status.channel}</p>
       <pre style={{ whiteSpace: 'pre-wrap', maxHeight: '16rem', overflow: 'auto' }}>{status.draft.text}</pre>
       <Button variant="primary" size="sm" disabled={approving} onClick={() => void approve()}>{approving ? 'Approving…' : 'Approve'}</Button>
+    </> : null}
+    {canReconcile ? <>
+      <p>The send may not have arrived. Check {status?.channel}, then:</p>
+      <Button variant="subtle" size="sm" disabled={reconciling} onClick={() => void reconcile('delivered')}>It arrived</Button>
+      <Button variant="subtle" size="sm" disabled={reconciling} onClick={() => void reconcile('retry')}>Send again</Button>
     </> : null}
     {note ? <p role="alert">{note}</p> : null}
   </section>;

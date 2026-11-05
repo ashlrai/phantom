@@ -41,7 +41,12 @@ describe('resource ledger', () => {
   });
   it('summarizes local days and Monday-start weeks, including errors and observed costs', async () => {
     const lines = await readFile(join(fixture, 'api-spend.jsonl'), 'utf8');
-    expect(summarizeApiSpend(lines, now, 0)).toEqual({ rowsToday: 2, errorsToday: 1, tokensInToday: 130, tokensOutToday: 25, usdToday: 1.25, usdWeek: 2, lastAt: '2026-10-31T10:00:00Z', models: ['claude-test-a', 'claude-test-b'] });
+    // Per-model usage rows joined the summary in #2150 (modelUsageToday).
+    expect(summarizeApiSpend(lines, now, 0)).toEqual({ rowsToday: 2, errorsToday: 1, tokensInToday: 130, tokensOutToday: 25, usdToday: 1.25, usdWeek: 2, lastAt: '2026-10-31T10:00:00Z', models: ['claude-test-a', 'claude-test-b'],
+      modelUsageToday: [
+        { model: 'claude-test-a', rows: 1, errors: 0, inputTokens: 100, outputTokens: 20, usd: 1.25, lastAt: '2026-10-31T08:00:00Z' },
+        { model: 'claude-test-b', rows: 1, errors: 1, inputTokens: 30, outputTokens: 5, usd: null, lastAt: '2026-10-31T10:00:00Z' },
+      ], modelUsageTodayOmitted: 0 });
     expect(summarizeApiSpend(lines, now, 300).rowsToday).toBe(2);
     expect(summarizeApiSpend('{"ts":"2026-10-31T03:00:00Z","cost":2}', now, 300)).toMatchObject({ rowsToday: 0, usdToday: null, usdWeek: 2 });
     expect(summarizeApiSpend('{"ts":"2026-10-31T10:00:00Z","cost_estimated":true}', now, 0)).toMatchObject({ usdToday: null, usdWeek: null });

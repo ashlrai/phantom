@@ -1,15 +1,25 @@
 /** Read-only local evidence. Explicit projections prevent identities/config/errors escaping. */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { readTelegramHealth, telegramEnabled } from '../core/integrations/telegram.js';
 import { commsEnabled } from '../core/integrations/imessage.js';
 import { listRequests } from '../core/comms/requests.js';
 import { inspectBusInbox } from '../core/fleet/bus-inbox.js';
 import { readInboxEntries } from '../core/fleet/mason-inbox.js';
+import { diagnoseEmailDrop, type EmailDiagnosis } from '../core/comms/email-diagnosis.js';
 
 type State = 'ok' | 'blocked' | 'unavailable' | 'unsupported';
 interface Check { id: string; state: State; reason: string; nextStep: string }
 
-export async function cmdCommsDiagnose(json: boolean): Promise<number> {
+export interface CommsDiagnoseDeps {
+  /** Email-drop runs root; default ~/.ashlr-runs (test seam). */
+  runsDir?: string;
+  /** Email evidence collector; default diagnoseEmailDrop (test seam). */
+  diagnoseEmail?: (runsDir: string) => Promise<EmailDiagnosis>;
+}
+
+export async function cmdCommsDiagnose(json: boolean, deps: CommsDiagnoseDeps = {}): Promise<number> {
   const checks: Check[] = [];
   const add = (id: string, state: State, reason: string, nextStep = 'phm comms diagnose --json'): void => {
     checks.push({ id, state, reason, nextStep });
@@ -55,13 +65,33 @@ export async function cmdCommsDiagnose(json: boolean): Promise<number> {
   const inbox = await readInboxEntries();
   add('local-receiver', inbox.sourceState === 'healthy' ? 'ok' : 'unavailable',
     `receiver-inbox-source-${inbox.sourceState}`, 'phm comms inbox read --json');
+  // Email leg (RQ-PHX-EMAILDIAGNOSE04SQU1): saved email-drop config + reply
+  // outbox, projected as the same fixed-code checks. counts/config are local
+  // evidence — not Gmail triage coverage or proof of delivery.
+  let email: Omit<EmailDiagnosis, 'checks'>;
+  try {
+    const { checks: emailChecks, ...evidence } =
+      await (deps.diagnoseEmail ?? diagnoseEmailDrop)(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
+    email = evidence;
+    for (const check of emailChecks) checks.push(check);
+  } catch {
+    // A collector failure must never take down the rest of the report.
+    email = {
+      config: 'invalid', polling: 'unknown', sendReplies: 'unknown',
+      outbox: 'not-established', counts: null, replies: 'not-configured',
+      coverage: 'local-evidence-only-not-gmail-triage-or-proof-of-delivery',
+    };
+    add('email-config', 'unavailable', 'email-evidence-unreadable');
+  }
   add('delivery', 'unsupported', 'local-evidence-cannot-verify-end-to-end-delivery');
   const result = { schemaVersion: 1, readOnly: true, transport, enabled, configured, credential,
-    requests: { pending, outstanding, availability: 'not-established' }, checks };
+    requests: { pending, outstanding, availability: 'not-established' }, email, checks };
   if (json) console.log(JSON.stringify(result));
   else {
     console.log('Channel diagnostics (local evidence only; delivery unverified)');
     for (const check of checks) console.log(`${check.id}: ${check.state} (${check.reason}); next: ${check.nextStep}`);
+    if (email.counts) console.log(`email-outbox-counts: queued=${email.counts.queued} drafted=${email.counts.drafted} sent=${email.counts.sent} stuck=${email.counts.stuck} (local evidence only)`);
+    console.log('email: config and counts are local evidence only; not Gmail triage coverage or proof of delivery');
   }
   return checks.some(check => check.state === 'blocked' || check.state === 'unavailable') ? 1 : 0;
 }
