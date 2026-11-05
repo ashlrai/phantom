@@ -116,5 +116,5 @@ it('continues to post through the existing receiver and read the result', async 
   expect(await run('post', '--file', '-', '--json')).toEqual({
     code: 0, body: { ok: true, ack: { channel: 'cli', status: 'accepted', dedupeKey: expect.stringMatching(/^[a-f0-9]{64}$/) } },
   });
-  expect((await run('read')).body.entries).toMatchObject([{ source: 'cli', text: 'fake posted message' }]);
+  expect((await run('read')).body.entries).toMatchObject([{ source: expect.stringMatching(/^cli \(cli-[a-f0-9]{16}\)$/), text: 'fake posted message' }]);
 });

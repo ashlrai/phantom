@@ -22,6 +22,13 @@ describe('canonical npm publication admission', () => {
     expect(bindAttestedArtifact(input, run, artifact)).toEqual(artifact);
     expect(acceptPackageIdentity(input, pkg, receipt, bytes).sha256).toBe(hash(bytes));
   });
+  it('transports scheduled master attestations without enabling scheduled publishing', () => {
+    expect(bindAttestedArtifact(input, {...run, event: 'schedule', head_branch: 'master'}, artifact)).toEqual(artifact);
+    expect(() => publisherInput({...env, GITHUB_EVENT_NAME: 'schedule'})).toThrow();
+  });
+  it.each([{event: 'push'}, {event: 'pull_request'}, {event: 'schedule'}, {event: 'schedule', head_branch: 'worker'}])('refuses untrusted attestor event or branch %j', patch => {
+    expect(() => bindAttestedArtifact(input, {...run, ...patch}, artifact)).toThrow();
+  });
   it.each([{GITHUB_REF: 'refs/heads/worker'}, {GITHUB_REPOSITORY: 'attacker/phantom'}, {GITHUB_REPOSITORY_ID: '1'}, {VERSION: '3.27.0;echo bad'}, {CI_RUN_ATTEMPT: '0'}, {GITHUB_EVENT_NAME: 'pull_request'}, {AUDIT_RUN_ID: ''}])('refuses invalid caller inputs %j', patch => {
     expect(() => publisherInput({...env, ...patch})).toThrow();
   });

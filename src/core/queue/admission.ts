@@ -13,7 +13,12 @@ export const LOAD_MAX = 36;
 export const PROCS_MAX = 800;
 export const WORKTREES_MAX = 40;
 export const DAEMON_TICK_MAX_S = 15 * 60;
-export const DEFAULT_GLOBAL_HARD_CAP = 18;
+/**
+ * RQ-QUEUE-BATCH-1: dispatchd adapts the fleet cap every tick (contrib/mac/concurrency.py, queue/concurrency.json);
+ * the fixed 18 is gone. A top-level slots.json hard_cap is an optional operator ceiling; a malformed one fails
+ * closed to this legacy value, as dispatchd does.
+ */
+export const LEGACY_GLOBAL_HARD_CAP = 18;
 const STATUS_TIMEOUT_MS = 30_000;
 
 export interface InstallLockHolder { pid: number; job?: string; command?: string; since?: number }
@@ -22,20 +27,25 @@ export interface AdmissionInput {
   /** Seconds since the ashlr daemon's lastTickAt, or null when unknown. */
   daemonTickAgeS: number | null; daemonWhy?: string | null;
   slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null; disabled?: boolean;
+  /** dispatchd's adaptive cap from queue/concurrency.json, or null on hosts that have not run the controller. */
+  adaptiveCap?: number | null;
 }
 export interface AdmissionReport {
   snapshot?: Record<string, unknown>;
   admit: boolean; reason: string | null; reasons: string[]; disabled: boolean;
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
-  cap: number; hardCap: number; running: number; installLock: { holder: InstallLockHolder | null };
+  cap: number; hardCap: number | null; adaptiveCap: number | null; running: number; installLock: { holder: InstallLockHolder | null };
 }
 
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
-/** min(sum of unheld lane targets, ncpu, global hard_cap); a lane target is itself bounded by that lane's hard_cap. */
-export function globalCap(slots: Record<string, unknown>, ncpu: number): { cap: number; hardCap: number } {
-  const hardCap = isCount(slots.hard_cap) ? slots.hard_cap : DEFAULT_GLOBAL_HARD_CAP;
+/**
+ * min(sum of unheld lane targets, adaptive cap, operator hard_cap); a lane target is itself bounded by that lane's
+ * hard_cap. Hosts without controller state keep the legacy ncpu bound in place of the adaptive cap.
+ */
+export function globalCap(slots: Record<string, unknown>, ncpu: number, adaptiveCap: number | null = null): { cap: number; hardCap: number | null } {
+  const hardCap = !('hard_cap' in slots) ? null : isCount(slots.hard_cap) ? slots.hard_cap : LEGACY_GLOBAL_HARD_CAP;
   let sum = 0;
   for (const [lane, value] of Object.entries(slots)) {
     if (GLOBAL_SLOT_KEYS.has(lane) || typeof value !== 'object' || value === null) continue;
@@ -43,7 +53,7 @@ export function globalCap(slots: Record<string, unknown>, ncpu: number): { cap: 
     if (row.held === true || !isCount(row.target)) continue;
     sum += isCount(row.hard_cap) ? Math.min(row.target, row.hard_cap) : row.target;
   }
-  return { cap: Math.max(0, Math.min(sum, ncpu, hardCap)), hardCap };
+  return { cap: Math.max(0, Math.min(sum, adaptiveCap ?? ncpu, hardCap ?? Infinity)), hardCap };
 }
 
 export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
@@ -54,7 +64,8 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
   if (input.worktrees > WORKTREES_MAX) reasons.push(`worktrees ${input.worktrees} > ${WORKTREES_MAX}`);
   if (input.daemonTickAgeS === null) reasons.push(`daemon_status_unavailable (${input.daemonWhy ?? 'unknown'})`);
   else if (input.daemonTickAgeS > DAEMON_TICK_MAX_S) reasons.push(`daemon_tick_stale ${Math.floor(input.daemonTickAgeS)}s > ${DAEMON_TICK_MAX_S}s`);
-  const { cap, hardCap } = globalCap(input.slots, input.ncpu);
+  const adaptiveCap = input.adaptiveCap ?? null;
+  const { cap, hardCap } = globalCap(input.slots, input.ncpu, adaptiveCap);
   const disabled = input.disabled === true;
   const tripped = reasons.length > 0 && !disabled;
   const blockers = tripped ? [...reasons] : [];
@@ -64,7 +75,7 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
     admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled,
     load: { load1: input.load1, max: loadMax }, ncpu: input.ncpu, procs: input.procs, worktrees: input.worktrees,
     daemon: { tickAgeSeconds: input.daemonTickAgeS, maxAgeSeconds: DAEMON_TICK_MAX_S, error: input.daemonWhy ?? null },
-    cap, hardCap, running: input.running, installLock: { holder: input.holder },
+    cap, hardCap, adaptiveCap, running: input.running, installLock: { holder: input.holder },
   };
 }
 
@@ -111,7 +122,8 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
       procs: Number(a.procs), worktrees: Number(a.worktrees),
       daemon: { tickAgeSeconds: typeof a.daemon_tick_age_s === 'number' ? a.daemon_tick_age_s : null,
         maxAgeSeconds: Number(a.tick_max_s), error: null },
-      cap: Number(a.cap), hardCap: Number(a.hard_cap), running: Number(a.running),
+      cap: Number(a.cap), hardCap: isCount(a.hard_cap) ? a.hard_cap : null,
+      adaptiveCap: isCount(a.concurrency_cap) ? a.concurrency_cap : null, running: Number(a.running),
       installLock: { holder: a.install_lock_holder as InstallLockHolder | null }, snapshot: a,
     };
   } catch { /* Older hosts use the legacy probes below. */ }
@@ -120,6 +132,12 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
 
   let slots: Record<string, unknown> = {};
   try { const raw = JSON.parse(await text(join(queue, 'slots.json')) ?? '{}'); if (raw && typeof raw === 'object' && !Array.isArray(raw)) slots = raw; } catch { /* unreadable: cap 0 */ }
+
+  let adaptiveCap: number | null = null;
+  try {
+    const c = JSON.parse(await text(join(queue, 'concurrency.json')) ?? '{}') as Record<string, unknown>;
+    if (c.schema === 'dispatchd.concurrency.v1' && isCount(c.cap)) adaptiveCap = c.cap;
+  } catch { /* no controller state: legacy ncpu bound */ }
 
   let running = 0;
   try {
@@ -153,6 +171,6 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
 
   return evaluateAdmission({
     load1: (opts.load1 ?? (() => loadavg()[0]!))(), ncpu: (opts.ncpu ?? availableParallelism)(),
-    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, disabled: await exists(join(queue, 'LOADGATE_OFF')),
+    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap, disabled: await exists(join(queue, 'LOADGATE_OFF')),
   });
 }

@@ -139,7 +139,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'windows-service-authority'];
-    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full];
+    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build', 'release-smoke'];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
@@ -152,9 +152,9 @@ describe('M30 CI workflow', () => {
     expect(steps[0]!.env.GATE_NEEDS).toBe('${{ toJSON(needs) }}');
     const source = steps[0]!.run.match(/node <<'NODE'\n([\s\S]*?)\nNODE(?:\n|$)/)?.[1];
     expect(source).toBeTruthy();
-    const execute = (event: string, lane: string, outcomes: Record<string, string>, drop?: string, ref = '') => {
+    const execute = (event: string, lane: string, outcomes: Record<string, string>, drop?: string, ref = '', release = false, ready = true) => {
       const dependencies = Object.fromEntries(keys.filter((k) => k !== drop).map((name) => [name, {
-        result: outcomes[name] ?? 'skipped', ...(name === 'classify' ? { outputs: { lane } } : {}),
+        result: outcomes[name] ?? 'skipped', ...(name === 'classify' ? { outputs: { lane, release_gate: String(release) } } : name === 'release-build' ? { outputs: { ready: String(ready) } } : {}),
       }]));
       return () => runInNewContext(source!, {
         process: { env: { GATE_NEEDS: JSON.stringify(dependencies), EVENT_NAME: event, REF: ref } }, console: { log: () => {} },
@@ -190,6 +190,20 @@ describe('M30 CI workflow', () => {
         }
       }
     }
+    // Release mode reuses prior push CI, but still requires preparation and smoke.
+    const releaseOk = { ...ok, 'release-build': 'success', 'release-smoke': 'success' };
+    for (const event of ['schedule', 'workflow_dispatch']) {
+      expect(execute(event, 'full', releaseOk, undefined, 'refs/heads/master', true)).not.toThrow();
+      for (const job of ['release-build', 'release-smoke']) {
+        for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+          expect(execute(event, 'full', { ...releaseOk, [job]: outcome }, undefined, 'refs/heads/master', true)).toThrow();
+        }
+      }
+      expect(execute(event, 'full', { ...releaseOk, ci: 'success' }, undefined, 'refs/heads/master', true)).toThrow();
+      expect(execute(event, 'full', { ...ok, 'release-build': 'success' }, undefined, 'refs/heads/master', true, false)).not.toThrow();
+      expect(execute(event, 'full', releaseOk, undefined, 'refs/heads/worker', true)).toThrow();
+    }
+    expect(execute('pull_request', 'full', releaseOk, undefined, 'refs/heads/master', true)).toThrow();
     // Reusable call from a tag push: Windows service authority is deferred.
     expect(execute('push', 'full', { ...ok, ci: 'success' })).not.toThrow();
     expect(execute('push', 'full', { ...ok, ci: 'failure' })).toThrow();
@@ -214,7 +228,13 @@ describe('M30 CI workflow', () => {
     expect(ciYml.match(/^permissions:\n(?: {2}[^\n]*\n)+/m)?.[0].trim()).toBe(
       'permissions:\n  contents: read',
     );
-    expect(ciYml.match(/^\s{2,}permissions:/gm) ?? []).toHaveLength(0);
+    const permissionJobs = Object.entries(parse(ciYml).jobs)
+      .filter(([, job]) => (job as { permissions?: unknown }).permissions !== undefined)
+      .map(([name, job]) => [name, (job as { permissions: unknown }).permissions]);
+    expect(permissionJobs).toEqual([
+      ['release-build', { contents: 'read', actions: 'read' }],
+      ['release-smoke', { contents: 'read', actions: 'read' }],
+    ]);
     expect(ciYml).toContain("concurrency:\n  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     // Master pushes run the seconds-fast gate only so the required Merge Gate
     // exists on the exact commit for auto-tag; full suites stay daily.
@@ -239,7 +259,7 @@ describe('M30 CI workflow', () => {
       job['runs-on'] === '${{ matrix.os }}'
         ? (job.strategy?.matrix?.include ?? []).map((row) => row.os)
         : [job['runs-on']];
-    const evaluateIf = (condition: string | undefined, event: string, lane: string, ref = ''): boolean => {
+    const evaluateIf = (condition: string | undefined, event: string, lane: string, ref = '', release = 'false', ready = 'false'): boolean => {
       if (condition === undefined) return true;
       const expression = condition
         .replace(/^\$\{\{\s*/, '').replace(/\s*\}\}$/, '')
@@ -247,11 +267,13 @@ describe('M30 CI workflow', () => {
         .replace(/\bgithub\.event_name\b/g, 'event')
         .replace(/\bgithub\.ref\b/g, 'ref')
         .replace(/\bgithub\.event\.pull_request\.draft\b/g, 'draft')
-        .replace(/\bneeds\.classify\.outputs\.lane\b/g, 'lane');
+        .replace(/\bneeds\.classify\.outputs\.lane\b/g, 'lane')
+        .replace(/\bneeds\.classify\.outputs\.release_gate\b/g, 'release')
+        .replace(/\bneeds\.release-build\.outputs\.ready\b/g, 'ready');
       // A condition form this evaluator does not know must fail loudly rather
       // than fall through to a guessed result.
       expect(expression).not.toMatch(/\$\{\{|\}\}|github\.|needs\.|always|contains|fromJSON/);
-      return Boolean(runInNewContext(`(${expression})`, { event, lane, draft: false, ref }));
+      return Boolean(runInNewContext(`(${expression})`, { event, lane, draft: false, ref, release, ready }));
     };
     const fastEvents = ['pull_request', 'merge_group'];
     const lanes = ['full', 'site', 'docs'];
@@ -309,6 +331,12 @@ describe('M30 CI workflow', () => {
         expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(true);
       }
       expect(evaluateIf(jobs.quick!.if, event, 'full'), `${event} quick`).toBe(false);
+      // The timer's explicit release mode must never run the nightly suites.
+      for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
+        expect(evaluateIf(jobs[id]!.if, event, 'full', masterRef, 'true'), `release ${id}`).toBe(false);
+      }
+      expect(evaluateIf(jobs['release-build']!.if, event, 'full', masterRef, 'true')).toBe(true);
+      expect(evaluateIf(jobs['release-smoke']!.if, event, 'full', masterRef, 'true', 'true')).toBe(true);
     }
   });
 
@@ -317,6 +345,10 @@ describe('M30 CI workflow', () => {
     const quick = workflow.jobs.quick;
     expect(quick.name).toBe('Quick typecheck');
     expect(quick['continue-on-error']).toBeUndefined();
+    for (const name of ['Restore protected-branch compiler state', 'Save protected-branch compiler state']) {
+      const cache = quick.steps.find((step: { name?: string }) => step.name === name);
+      expect(cache.if).toContain("github.event_name == 'push' && github.ref == 'refs/heads/master'");
+    }
     const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
     expect(drift.if).toBeUndefined();
@@ -503,13 +535,14 @@ describe('M30 CI workflow', () => {
     const shared = jobs['ci-shared-macos']!;
     expect(jobs.classify?.outputs).toEqual({
       lane: '${{ steps.lane.outputs.lane }}',
+      release_gate: "${{ (github.event_name == 'schedule' && github.event.schedule == '0,30 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.release_gate == true) }}",
       mac_slice: '${{ steps.mac.outputs.mac_slice }}',
       mac_general_exclude: '${{ steps.mac.outputs.mac_general_exclude }}',
     });
     expect(jobs.classify?.needs).toBeUndefined();
     expect(jobs.classify?.if).toBeUndefined();
     expect(jobs.site?.needs).toBe('classify');
-    expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group'");
+    expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'");
     expect(shared, 'shared Mac still requires its own complete named gate').toBeDefined();
     // Each Mac gate queues straight after classify: chaining one Mac job behind
     // another adds a whole Mac queue wait to the PR's wall clock.
@@ -523,9 +556,9 @@ describe('M30 CI workflow', () => {
     for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       const push = id === 'ci' ? " && !(github.event_name == 'push' && github.ref == 'refs/heads/master')" : " && github.event_name != 'push'";
-      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group'`);
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'`);
     }
-    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '3 9 * * *' }]);
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '3 9 * * *' }, { cron: '0,30 * * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
@@ -554,8 +587,10 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(22);
-    expect(new Set(names).size).toBe(22);
+    expect(names).toHaveLength(24);
+    expect(new Set(names).size).toBe(24);
+    expect(names).toContain('Prepare unsigned desktop release');
+    expect(names).toContain('Desktop release smoke');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
     expect(names).toContain('CI (Node 22, macos, shared queue authority)');
@@ -600,13 +635,13 @@ describe('M30 CI workflow', () => {
       expect(signing).toContain(`steps.inputs.outputs.directory }}/bundle/${file}`);
     }
     expect(signing).not.toMatch(/npm (?:ci|install|run build|publish)|node "?\$DIRECTORY\/(?:candidate|bundle)\//);
-    expect(inputs).toContain("assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch')");
+    expect(inputs).toContain("assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME))");
     expect(inputs).toContain("assert.equal(env.GITHUB_REF, 'refs/heads/master')");
     expect(inputs).toContain('const { repository } = requireProducerEnvironment(env)');
     expect(inputs).toContain('requireRepositoryMetadata(repository, read(base))');
     expect(inputs).toContain('requireRepositoryReference(repository, ci.repository)');
     expect(inputs).toContain("assert.equal(trusted.tree.sha, candidate.tree.sha");
-    expect(inputs).toContain("assert.equal(ci.path, '.github/workflows/ci.yml')");
+    expect(inputs).toContain("assert.equal(ci.path, '.github/workflows/ci.yml'");
   });
 
   it('runs on Node 22.15 or newer only (install.sh enforces the synchronous-hook floor)', () => {
@@ -1137,8 +1172,11 @@ describe('M30 CI workflow', () => {
       nativePathFiles.map((file) => [file, declaredTestTitles(file)]),
     );
     const declaredNativeTitles = [...titlesByFile.values()].flat();
+    // Compile each static selector once; constructing it for every file/title
+    // pair made this source-only assertion depend on host scheduling pressure.
+    const patterns = new Map(selectorAlternatives.map((alternative) => [alternative, new RegExp(alternative)]));
     for (const alternative of selectorAlternatives) {
-      const pattern = new RegExp(alternative);
+      const pattern = patterns.get(alternative)!;
       const matchingTitles = declaredNativeTitles.filter((title) => pattern.test(title));
       expect(
         matchingTitles,
@@ -1150,14 +1188,14 @@ describe('M30 CI workflow', () => {
       expect(titles, `native manifest omits expected test file: ${expectedCase.file}`)
         .toContain(expectedCase.title);
       const matchingAlternatives = selectorAlternatives.filter((alternative) =>
-        new RegExp(alternative).test(expectedCase.title));
+        patterns.get(alternative)!.test(expectedCase.title));
       expect(
         matchingAlternatives,
         `expected native case must have exactly one dedicated selector: ${expectedCase.file} :: ${expectedCase.title}`,
       ).toEqual([expectedCase.selector]);
       const dedicatedMatches = [...titlesByFile].flatMap(([file, declaredTitles]) =>
         declaredTitles
-          .filter((title) => new RegExp(expectedCase.selector).test(title))
+          .filter((title) => patterns.get(expectedCase.selector)!.test(title))
           .map((title) => `${file} :: ${title}`));
       expect(
         dedicatedMatches,
@@ -1166,7 +1204,7 @@ describe('M30 CI workflow', () => {
     }
     for (const alternative of selectorAlternatives) {
       const expectedMatches = expectedNativeCases.filter(({ title }) =>
-        new RegExp(alternative).test(title));
+        patterns.get(alternative)!.test(title));
       expect(
         expectedMatches.length,
         `native selector alternative satisfies multiple expected cases: ${alternative}`,
@@ -1179,14 +1217,22 @@ describe('M30 CI workflow', () => {
     expect(ciYml).toContain('npm ci');
   });
 
-  it('adds NO deploy / publish / release step (nothing public)', () => {
+  it('prepares release data without any deploy, publication or signing authority', () => {
     // Expand the pinned read-only preflight before checking executable effects;
     // test module paths name contracts, not public operations.
     const effectText = ciYml.replaceAll('npm run check:release', pkg.scripts?.['check:release'] ?? '').replace(
       /test\/(?:[\w.-]+\/)*[\w.-]+\.test\.ts/g,
       'test/source-contract.test.ts',
     );
-    expect(effectText).not.toMatch(/\b(npm\s+publish|deploy|release)\b/i);
+    // Release preparation now has that word in names/paths. Assert public
+    // effects and credentials rather than banning descriptive text.
+    expect(effectText).not.toMatch(/\b(npm\s+publish|gh\s+release|git\s+(?:push|tag)|(?:vercel|netlify)\s+deploy)\b/i);
+    expect(ciYml).not.toMatch(/(?:contents|attestations|id-token):\s*write|secrets\./);
+    const workflow = parse(ciYml);
+    expect(workflow.jobs['release-smoke']['timeout-minutes']).toBe(1);
+    expect(workflow.jobs['release-smoke'].steps.some((step: { run?: string }) => /npm (ci|install|run build)/.test(step.run ?? ''))).toBe(false);
+    expect(workflow.jobs['release-build'].steps.find((step: { id?: string }) => step.id === 'build').run).toContain('npm run build:desktop:nightly');
+    expect(readFileSync(resolve(repoRoot, 'scripts/build-desktop-nightly.mjs'), 'utf8')).toContain("'--no-sign'");
     expect(ciYml).not.toMatch(/vercel|netlify|gh-pages|pages-deploy/i);
   });
 

@@ -93,7 +93,7 @@ describe('reconcileCosDelivery', () => {
   it('matches the approval line intake writes', async () => {
     const { id } = await prepare();
     expect(readNeedsMason({ runsDir }).items[0]!.text)
-      .toBe(`Approve chief-of-staff reply ${id}; inspect with phm cos status ${id} --json`);
+      .toBe(`Approve chief-of-staff reply ${id}; inspect with phm fleet cos status ${id} --json`);
   });
 });
 
