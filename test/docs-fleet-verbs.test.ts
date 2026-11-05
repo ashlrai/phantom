@@ -7,7 +7,7 @@ the doc is updated. That is intentional: doc lags source, source never breaks.
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
+import { describe, it } from 'vitest';
 import * as assert from 'node:assert';
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli');
@@ -37,6 +37,7 @@ const VERBS = [
   'real-supply',
   'runs-read',
   'ship-gap',
+  'starved',
   'stray-slots',
   'trim',
   'wait-jobs',
