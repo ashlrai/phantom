@@ -72,10 +72,11 @@ describe('harness digest actionable selection', () => {
     expect(JSON.parse(selected.out)).toEqual({ v: 1, sources: [full.sources[3]], issues: [{ id: 'S4', code: 'missing_urls' }] });
   });
 
-  it('checks the selection before display filtering, even when output is empty', async () => {
+  it('checks the takeaway selection before refresh filtering, even when output is empty', async () => {
+    // PR #2031 makes an empty takeaway selection fail --check.
     const args = ['--file', fixture(), '--json', '--with-takeaways', '--check'];
     for (const [id, code, issues] of [
-      ['S2', 1, []], ['S5', 0, []], ['S6', 1, [{ id: 'S6', code: 'missing_urls' }]], ['S999', 1, []],
+      ['S2', 1, []], ['S5', 1, []], ['S6', 1, [{ id: 'S6', code: 'missing_urls' }]], ['S999', 1, []],
     ] as const) {
       const result = await run([...args, '--source', id]);
       expect(result.code).toBe(code);
@@ -93,9 +94,9 @@ describe('harness digest actionable selection', () => {
     const help = await run(['--help']);
     expect(help.code).toBe(0);
     expect(help.out).toContain('--with-takeaways');
-    expect(help.out).toContain('nonempty takeaway arrays');
-    expect(help.out).toContain('selection before --needs-refresh and --with-takeaways');
-    expect(help.out).toContain('check always evaluates the full digest');
+    expect(help.out).toContain('select only sources with at least one nonblank takeaway');
+    expect(help.out).toContain('The check evaluates the selection before --needs-refresh, after --source,');
+    expect(help.out).toContain('--with-takeaways and --query.');
   });
 
   it('exposes the filter and health status through the executable CLI', () => {
