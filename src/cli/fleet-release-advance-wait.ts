@@ -38,7 +38,8 @@ export async function cmdFleetReleaseAdvanceWait(args: string[], deps: WaitOptio
   if (deps.signal?.aborted) abort();
   try {
     const report = await waitForReleaseAdvance(repo, tag, { ...deps, runner: deps.gh ?? deps.runner, apply, timeoutMs, pollMs, signal: controller.signal });
-    console.log(json ? JSON.stringify(report) : `Release advance wait ${repo} ${tag}: ${report.stopReason} (${report.observations} observations)\n${JSON.stringify(report.latest, null, 2)}`);
+    const serialized = report.serialization === null ? '' : `\nserialization ${JSON.stringify(report.serialization)}`;
+    console.log(json ? JSON.stringify(report) : `Release advance wait ${repo} ${tag}: ${report.stopReason} (${report.observations} observations)\n${JSON.stringify(report.latest, null, 2)}${serialized}`);
     return report.stopReason === 'unavailable' ? 3 : report.stopReason === 'aborted' ? 130
       : ['blocked', 'refused', 'timeout'].includes(report.stopReason) ? 1 : 0;
   } finally {
