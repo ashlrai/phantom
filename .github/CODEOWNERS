@@ -245,6 +245,7 @@
 /test/activation-readiness-package.test.ts @masonwyatt23
 /test/activation-readiness-windows.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
+/test/agent-network-policy.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23
 /test/authority-api-310b.test.ts @masonwyatt23
@@ -863,6 +864,7 @@
 /test/m520.runtime-activation-stopped-consumer.test.ts @masonwyatt23
 /test/m521.runtime-activation-resident-start.test.ts @masonwyatt23
 /test/m522.best-of-n-real-judge.test.ts @masonwyatt23
+/test/m523.github-stable-release-finalization.test.ts @masonwyatt23
 /test/m53.intel.test.ts @masonwyatt23
 /test/m532.standing-permit-shadow.test.ts @masonwyatt23
 /test/m537.daemon-tick-authority-capability.test.ts @masonwyatt23
