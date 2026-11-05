@@ -49,10 +49,10 @@ export async function cosStatus(id: string, runsDir?: string) {
   let draft: CosDraft | undefined;
   try { draft = JSON.parse(await readFile(join(root(runsDir), 'cos', `${id}.json`), 'utf8')) as CosDraft; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  let delivery: 'sending' | 'sent' | 'uncertain' | undefined;
+  let delivery: 'sending' | 'sent' | 'uncertain' | 'declined' | undefined;
   try { delivery = JSON.parse(await readFile(join(root(runsDir), 'cos', `${id}.delivery.json`), 'utf8')).state; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  return { job, draft, delivery, needsYou: draft !== undefined && delivery !== 'sent' };
+  return { job, draft, delivery, needsYou: draft !== undefined && delivery !== 'sent' && delivery !== 'declined' };
 }
 
 export interface CosDraft { id: string; origin: CosOrigin; text: string; digest: string }
