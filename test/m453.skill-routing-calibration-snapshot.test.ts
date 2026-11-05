@@ -368,8 +368,10 @@ describe('M453 privacy-safe skill calibration snapshot projection', () => {
   it('has no runtime consumer or public API export', () => {
     const sourceRoot = resolve(process.cwd(), 'src');
     const modulePath = join('core', 'fleet', 'skill-routing-calibration-snapshot.ts');
+    // The read-only `fleet skill-calibration` report (#2500) is the one sanctioned consumer.
+    const sanctioned = new Set([modulePath, join('cli', 'fleet-skill-calibration.ts')]);
     const sourceFiles = readdirSync(sourceRoot, { recursive: true, encoding: 'utf8' })
-      .filter((path) => path.endsWith('.ts') && path !== modulePath);
+      .filter((path) => path.endsWith('.ts') && !sanctioned.has(path));
     for (const path of sourceFiles) {
       expect(readFileSync(join(sourceRoot, path), 'utf8')).not.toContain('skill-routing-calibration-snapshot');
     }

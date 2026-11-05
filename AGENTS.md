@@ -144,8 +144,7 @@ lane-owned CODEX_HOME under `~/.ashlr-runs`, never `~/.codex`.
 
 ## Chief-of-staff intake
 
-See [docs/COS.md](docs/COS.md) for `phm cos ask "Prepare a weekly project brief" --channel cli --json`
-and `phm cos status <id> --json`. The handler is implemented; top-level CLI and
+See [docs/COS.md](docs/COS.md) for the `cos ask` and `cos status` verbs (both take `--json`). The handler is implemented; top-level CLI and
 desktop custom-sink registration require an explicit named-file scope extension.
 Intake jobs use `phm queue`; `done --result <text> --json` drafts the reply and
 surfaces a needs-you item. Outbound results require explicit approval of the
@@ -203,7 +202,7 @@ Individual fetch failures are warnings and retain the last successful snapshot.
 
 ## Release autonomy audit
 
-The release autonomy command is awaiting top-level CLI wiring. Once wired, `phm release autonomy --json` reads the enrolled repositories' release gates and the local publish switch. Use `phm release autonomy --repo locus --md` for a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
+The release autonomy command is awaiting top-level CLI wiring. Once wired, the `release autonomy` verb with `--json` reads the enrolled repositories' release gates and the local publish switch. Use `--repo locus --md` for a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
 
 Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
 

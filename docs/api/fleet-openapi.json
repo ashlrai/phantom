@@ -447,6 +447,48 @@
         "responses": { "200": { "$ref": "#/components/responses/FleetLiveActionResult" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/verse/version": {
+      "get": {
+        "operationId": "getVerseVersion", "tags": ["fleet"],
+        "summary": "Running build identity (packageVersion).",
+        "responses": { "200": { "description": "Build identity.", "content": { "application/json": { "schema": { "type": "object" } } } }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/runs/glance": {
+      "get": {
+        "operationId": "getFleetRunsGlance", "tags": ["fleet"],
+        "summary": "Operator glance: one-screen fleet runs summary (read-only).",
+        "responses": { "200": { "description": "Operator glance projection.", "content": { "application/json": { "schema": { "type": "object" } } } }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/ci-runs": {
+      "get": {
+        "operationId": "getFleetCiRuns", "tags": ["fleet"],
+        "summary": "GitHub Actions run facts (CiRunFactsV1); available=false with a reason when GitHub cannot be read.",
+        "parameters": [
+          { "name": "hours", "in": "query", "schema": { "type": "integer" }, "description": "Window in hours; hub clamps 1-168 (default 24). The remote gateway admits one value in 1-168." }
+        ],
+        "responses": { "200": { "description": "CI run facts.", "content": { "application/json": { "schema": { "type": "object" } } } }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/live/drop-jobs": {
+      "get": {
+        "operationId": "getFleetDropJobs", "tags": ["fleet"],
+        "summary": "Drop-job list: {v:1, items: DropJobListItem[]}.",
+        "responses": { "200": { "description": "Drop jobs.", "content": { "application/json": { "schema": { "type": "object" } } } }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/agent-bus": {
+      "get": {
+        "operationId": "getAgentBus", "tags": ["fleet"],
+        "summary": "Agent bus cursor page of BusEnvelope records (read-only).",
+        "parameters": [
+          { "name": "after", "in": "query", "schema": { "type": "integer" }, "description": "Cursor: return records after this sequence number." },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Page size; the remote gateway admits 1-200 (hub caps lower)." }
+        ],
+        "responses": { "200": { "description": "Cursor page of envelopes.", "content": { "application/json": { "schema": { "type": "object" } } } }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/verse/fleet/live/bus": {
       "get": {
         "operationId": "getFleetBusFeed", "tags": ["fleet"],

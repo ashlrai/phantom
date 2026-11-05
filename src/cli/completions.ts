@@ -34,7 +34,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
-  'verse', 'local-runtime',
+  'verse', 'local-runtime', 'drafts',
   // V3.10 Track B: standing authority, the Leader, fleet mirrors.
   'authority', 'leader', 'mirror',
   // 3.11 cloud lane.

@@ -75,6 +75,8 @@ const REMOTE_QUERY_PROBES: Record<string, string> = {
   '/api/verse/checkpoints/diff': 'chatId=chat01&turnId=turn01&rootId=abcdef12&mode=turn',
   '/api/events': 'topics=verse-sessions',
   '/api/fleet/job': 'id=RQ-PHX-JOB1',
+  '/api/verse/agent-bus': 'limit=5',
+  '/api/verse/fleet/ci-runs': 'hours=24',
   '/api/verse/fleet/live/bus': 'limit=5',
   '/api/verse/fleet/live/queue': 'limit=5',
   '/api/verse/fleet/runs/inbox': 'limit=5',
