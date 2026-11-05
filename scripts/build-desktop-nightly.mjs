@@ -180,7 +180,7 @@ export function buildStepPlan({ existingIcons = false } = {}) {
       name: 'bundle',
       cwd: DESKTOP_DIR,
       command: ['tauri', ['build', '--debug', '--no-sign', '--bundles', 'app', '--', '--locked']],
-      env: { CI: '1' },
+      env: { CI: 'true' },
       timeoutMs: STEP_TIMEOUT_MS.bundle,
     },
     { name: 'package', cwd: REPO_ROOT, inProcess: true, timeoutMs: STEP_TIMEOUT_MS.package },
