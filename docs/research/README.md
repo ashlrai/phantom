@@ -8,3 +8,4 @@ scanning commit history.
 - **[agent-swarms-rsi.md](agent-swarms-rsi.md)** — Research and experiment specifications on agent swarms and recursive self-improvement, dated 2026-10-26.
 - **[harness-digest-2026-10-31.md](harness-digest-2026-10-31.md)** — What the leading agent harnesses shipped in late October 2026, checked on 2026-10-31 UTC against public changelogs.
 - **[speculative-parallel-memory.md](speculative-parallel-memory.md)** — Research on speculative execution, bounded parallelism and agent memory from the `a6f3c323` repository.
+- **[AGENT-NETWORK-RESEARCH.md](AGENT-NETWORK-RESEARCH.md)**: Cross-vendor agent identity, native bus integration, Slack, Telegram, local iMessage, Gmail drafts, threat models and proposed interfaces. Handoff reconciliation remains blocked by host access permissions.
