@@ -137,7 +137,7 @@ describe('phm memory CLI', () => {
   it('prints plain output without --json', async () => {
     const added = await run('add', 'Plain text', '--kind', 'fact');
     expect(added.out).toMatch(/^Remembered fact-/);
-    expect((await run('list')).out).toMatch(/\[fact\]  Plain text/);
+    expect((await run('list')).out).toMatch(/\[fact\] {2}Plain text/);
   });
   it('refuses secret-shaped text and never echoes it', async () => {
     const value = planted()[0]!;

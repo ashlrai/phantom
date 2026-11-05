@@ -586,6 +586,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
+  { cmd: 'radar list|run|diff [--json]', desc: 'Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.', topic: 'observability' },
   { cmd: 'router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', desc: 'Compare recorded router predictions with outcomes and usage.', topic: 'observability' },
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
@@ -602,6 +603,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
   { cmd: 'apps list|open|quit|focus|status [<app>] [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
+  { cmd: 'app update status [--json]', desc: 'Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.', topic: 'core' },
   { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
   { cmd: 'self-swap [--plan | --apply --supervised] [--json]', desc: 'Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process.', topic: 'core' },
   { cmd: 'upgrade [--check] [--json]',   desc: 'Same as update.', topic: 'core' },
@@ -634,6 +636,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'swarm show <id>',              desc: 'Print a past swarm run in detail.', topic: 'swarm' },
   { cmd: 'swarms [--json]',              desc: 'List past swarm runs (newest first).', topic: 'swarm' },
 
+  { cmd: 'memory add|list|search|forget [--json]', desc: 'Persistent agent memory: add, list, search, and forget entries (preference|doctrine|fact). Refuses secret-shaped text. See docs/MEMORY.md.', topic: 'memory' },
   { cmd: 'recall "<query>"',             desc: 'Search shared genome memory; return top relevant entries with scores.', topic: 'memory' },
   { cmd: 'learn "<text>" [opts]',        desc: 'Append a note to shared genome memory (local-first, append-only).', topic: 'memory' },
   { cmd: 'genome',                       desc: 'Genome status/health: entry count, projects covered, store size.', topic: 'memory' },
