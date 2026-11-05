@@ -6,11 +6,13 @@
  * loop invoke this verb once per tick; the pass itself is never recurring.
  */
 import { runCosWorkOnce, type CosWorkResult } from '../core/cos/worker.js';
+import { postCosBusNotice } from '../core/cos/bus-notice.js';
 
 const usage = `Usage: ashlr fleet cos-work [--json]
 One bounded chief-of-staff pass: claim the oldest READY cos-* intake job, run
 one headless model turn on the declared planner slate, and record the reply
 as a draft awaiting Mason's approval in NEEDS-MASON.md. Sends nothing.
+A drafted or blocked pass also posts one notice to the bus (best effort).
 Exit 0 for idle, paused or drafted; 1 for blocked; 2 for usage errors.`;
 
 const line = (result: CosWorkResult): string =>
@@ -28,7 +30,8 @@ export async function cmdFleetCosWork(args: string[]): Promise<number> {
   }
   try {
     const result = await runCosWorkOnce();
-    console.log(json ? JSON.stringify(result) : line(result));
+    const bus = postCosBusNotice(result);
+    console.log(json ? JSON.stringify(bus === 'skipped' ? result : { ...result, bus }) : line(result));
     return result.outcome === 'blocked' ? 1 : 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'cos-work failed';
