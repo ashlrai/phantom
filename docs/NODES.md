@@ -48,6 +48,33 @@ surfaces, not a second admission authority. No message sending is introduced.
 No new log paths are created; child diagnostics and provider output are discarded,
 and only references and bounded metadata enter private node state.
 
+## Small Mac enrollment and admission
+
+After installing the reviewed Phantom build, enroll each additional Mac with
+`phm node join --owner mason --primary primary-mac --backup backup-mac --json`.
+The node ID defaults to a sanitized hostname. Subsequent `phm node join --json`
+uses the saved identity and preserves primary/backup roles. SSH trust and each
+provider's local sign-in remain prerequisites; join does not discover devices or
+install a runner.
+
+The 16 GiB Air has a two-slot RAM ceiling; the 8 GiB Pro has one. Reserve at least
+4 GiB or 30% of RAM, whichever is larger, and budget 4 GiB per job. Memory below
+30% available, swap in use, disk below 20 GB free or unknown telemetry holds
+admission; runtime pressure stops the worker. A worker launches one bounded batch
+of up to its RAM slot ceiling concurrently under one session, waits for every
+started slot, then leaves. No permanent supervisor is installed. Disk telemetry
+covers the home filesystem; the runner's existing DISKGUARD must also cover
+checkout and artifact volumes. Pressure checks target three seconds, subject to
+bounded synchronous telemetry and SSH delays. These checks add to DISKGUARD.
+Use independent per-node lanes; no sharded-inference speedup has been measured.
+iPad Pro and phone are mobile control surfaces, not compute nodes.
+
+Share reviewed project MCP and skill files with the same checkout revision, and
+credential-free Phantom connector profiles with local vault bindings. There is no
+automatic profile sync or Cursor credential copy. The
+[agent-network guide](AGENT-NETWORK.md) and
+[example](../examples/node-pool/README.md) describe the boundaries.
+
 ## Earlier hosting decision
 
 The historical decision below describes the original single-Mac deployment and
