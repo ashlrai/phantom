@@ -11,15 +11,16 @@ const roots: string[] = [];
 const root = () => { const dir = mkdtempSync(join(tmpdir(), 'follow-')); roots.push(dir); return dir; };
 afterEach(() => { vi.restoreAllMocks(); for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const args = ['--duration-ms', '100', '--jsonl'];
-function output() { const log = vi.spyOn(console, 'log').mockImplementation(() => {}); return () => log.mock.calls.map(([line]) => JSON.parse(line as string)); }
+// Delivery goes through the injected emit seam since RQ-PHX-RECOVERYFOLLOWDELIVERY03SOOH1 (#3173); console.log is no longer used.
+function output() { const rows: string[] = []; return { emit: (line: string) => { rows.push(line); }, rows: () => rows.map(line => JSON.parse(line)) }; }
 const summary = { kind: 'apps-watch.summary.v1' as const, apps: ['Phantom'], outcome: 'completed' as const, cycles: 1, recoveries: 0, consecutiveFailures: 0, totalFailedCycles: 0, lastObservedState: null };
 
 it('follows real published pages once and resumes after unrelated messages', async () => {
   const dir = root(), publish = createAppsWatchPublisher(dir);
   expect(createAppsWatchPublisher(dir)(summary)).toBe(true);
   expect(publish(summary)).toBe(true);
-  const rows = output(); let time = 0;
-  expect(await cmdFleetAppsFollow([...args, '--root', dir], { reader: (r, a, _l, id) => readAppsRecoveryHistory(r, a, 1, id), now: () => time, sleep: async ms => { time += ms; } })).toBe(0);
+  const { rows, emit } = output(); let time = 0;
+  expect(await cmdFleetAppsFollow([...args, '--root', dir], { reader: (r, a, _l, id) => readAppsRecoveryHistory(r, a, 1, id), now: () => time, sleep: async ms => { time += ms; }, emit })).toBe(0);
   const lines = rows(), events = lines.filter(row => row.type === 'event');
   expect(events).toHaveLength(2);
   expect(new Set(events.map(row => row.event.cursor)).size).toBe(2);
@@ -29,31 +30,31 @@ it('follows real published pages once and resumes after unrelated messages', asy
   const filtered = readAppsRecoveryHistory(dir, 0, 100, id);
   expect(filtered.events).toHaveLength(1);
   time = 0;
-  await cmdFleetAppsFollow([...args, '--root', dir, '--after', '2', '--invocation-id', id], { now: () => time, sleep: async ms => { time += ms; } });
+  await cmdFleetAppsFollow([...args, '--root', dir, '--after', '2', '--invocation-id', id], { now: () => time, sleep: async ms => { time += ms; }, emit });
   expect(rows().at(-1)).toMatchObject({ delivered: 0, nextCursor: 3 });
 });
 
 it('caps events before draining and sleeps on empty history', async () => {
   const dir = root(); for (let i = 0; i < 3; i++) createAppsWatchPublisher(dir)(summary);
-  const rows = output();
-  await cmdFleetAppsFollow([...args, '--root', dir, '--max-events', '2']);
+  const { rows, emit } = output();
+  await cmdFleetAppsFollow([...args, '--root', dir, '--max-events', '2'], { emit });
   expect(rows().at(-1)).toMatchObject({ reason: 'event_limit', delivered: 2, nextCursor: 2 });
   let time = 0; const sleep = vi.fn(async (ms: number) => { time += ms; });
-  await cmdFleetAppsFollow([...args, '--root', dir, '--after', '3'], { now: () => time, sleep });
+  await cmdFleetAppsFollow([...args, '--root', dir, '--after', '3'], { now: () => time, sleep, emit });
   expect(sleep).toHaveBeenCalledTimes(1);
   expect(rows().at(-1)).toMatchObject({ reason: 'deadline', nextCursor: 3 });
 });
 
 it('wakes on abort and reports unavailable and invalid cursor', async () => {
-  const dir = root(), rows = output(), controller = new AbortController();
-  const pending = cmdFleetAppsFollow(['--duration-ms', '300000', '--root', dir, '--jsonl'], { signal: controller.signal });
+  const dir = root(), { rows, emit } = output(), controller = new AbortController();
+  const pending = cmdFleetAppsFollow(['--duration-ms', '300000', '--root', dir, '--jsonl'], { signal: controller.signal, emit });
   controller.abort(); expect(await pending).toBe(0);
   expect(rows().at(-1).reason).toBe('cancelled');
   chmodSync(dir, 0o755);
-  expect(await cmdFleetAppsFollow([...args, '--root', dir])).toBe(1);
+  expect(await cmdFleetAppsFollow([...args, '--root', dir], { emit })).toBe(1);
   expect(rows().at(-1).reason).toBe('unavailable');
   chmodSync(dir, 0o700);
-  expect(await cmdFleetAppsFollow([...args, '--root', dir, '--after', '999'])).toBe(2);
+  expect(await cmdFleetAppsFollow([...args, '--root', dir, '--after', '999'], { emit })).toBe(2);
   expect(rows().at(-1).reason).toBe('invalid_cursor');
 });
 

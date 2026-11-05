@@ -184,7 +184,7 @@ function official() {
     read: (endpoint) => endpoint === `repos/${hub.legacyName}` ? metadata() : endpoint.includes('/jobs?') ? { total_count: 1, jobs: [job] } : endpoint.includes('/git/commits/') ? { sha: endpoint.split('/').at(-1), tree: { sha: tree } } : endpoint.includes('/artifacts/') ? artifact : run };
   return { input, job, run, artifact };
 }
-test('overlapping short Mac gates cannot qualify a release before all fifteen source-owned gates succeed', () => {
+test('legacy exhaustive qualification still requires all fifteen source-owned gates', () => {
   const root = new URL('../../', import.meta.url);
   const { jobs: workflowJobs } = parse(fs.readFileSync(new URL('.github/workflows/ci.yml', root), 'utf8'));
   const names = Object.values(workflowJobs).flatMap((job) => {
@@ -196,10 +196,11 @@ test('overlapping short Mac gates cannot qualify a release before all fifteen so
   const required = requiredJobPolicy(fileURLToPath(root));
   assert.equal(required.length, 15);
   // Lane selection and the stable merge result are ancillary to release
-  // authority. All fifteen source-owned qualification jobs remain required.
-  const laneNames = ['Secret-shape scan', 'Quick typecheck', 'Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Merge Gate', 'Daily fixup queue'];
-  assert.equal(names.length, 22);
-  assert.equal(new Set(names).size, 22);
+  // authority. The separate fast profile has two dedicated jobs; all fifteen
+  // source-owned qualification jobs remain required by the legacy profile.
+  const laneNames = ['Secret-shape scan', 'Quick typecheck', 'Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Merge Gate', 'Daily fixup queue', 'Prepare unsigned desktop release', 'Desktop release smoke'];
+  assert.equal(names.length, 24);
+  assert.equal(new Set(names).size, 24);
   assert.deepEqual([...required.map((job) => job.name), ...laneNames].sort(), names.sort());
   const f = official();
   const completed = required.map((job, index) => ({ ...f.job, id: index + 10, name: job.name, labels: job.labels,
