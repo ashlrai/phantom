@@ -2,7 +2,7 @@
 #[cfg(target_os = "macos")]
 mod platform {
     use ashlr_desktop::{
-        native_update_client::{allowed_url, client},
+        native_update_client::{allowed_url, check_due, client, POLL_INTERVAL},
         native_updates as policy,
     };
     use futures_util::StreamExt;
@@ -533,6 +533,31 @@ mod platform {
             }
         });
         refresh(app);
+        let handle = app.clone();
+        thread::spawn(move || {
+            let wall = || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+            };
+            let mut checked = wall();
+            let mut polled = checked;
+            loop {
+                thread::sleep(POLL_INTERVAL);
+                if handle
+                    .try_state::<crate::AppState>()
+                    .is_some_and(|s| s.exiting.load(std::sync::atomic::Ordering::SeqCst))
+                {
+                    break;
+                }
+                let now = wall();
+                if check_due(checked, polled, now) {
+                    refresh(&handle);
+                    checked = now;
+                }
+                polled = now;
+            }
+        });
     }
     fn preference_transition(i: &mut Inner, enabled: bool) {
         if i.state.enabled != enabled {

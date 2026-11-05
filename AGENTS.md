@@ -149,6 +149,22 @@ surfaces a needs-you item. Outbound results require explicit approval of the
 displayed draft digest. Do not treat a queued job or result draft as send authority.
 
 
+## Apps control
+
+`phm apps list|open|quit|focus|status [--json]` manages desktop apps named in
+`~/.ashlr/apps-allow.json` (empty by default). Copy and paste these commands;
+see [APPS-CONTROL](docs/APPS-CONTROL.md):
+
+```sh
+phm apps list --json
+phm apps status Notes --json
+phm apps quit Notes --json
+```
+
+Allowlisted apps only, through the desktop adapter, every action logged to the
+feed. A quit with unsaved work goes to needs-you (exit 3). No keystrokes, no
+reading app contents, no TCC changes.
+
 ## Docs Radar
 
 `phm radar list|run|diff --json` observes public docs and package metadata.
@@ -169,3 +185,5 @@ Individual fetch failures are warnings and retain the last successful snapshot.
 ## Release autonomy audit
 
 The release autonomy command is awaiting top-level CLI wiring. Once wired, `phm release autonomy --json` reads the enrolled repositories' release gates and the local publish switch. Use `phm release autonomy --repo locus --md` for a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
+
+Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
