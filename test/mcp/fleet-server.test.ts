@@ -31,6 +31,7 @@ describe('fleet MCP protocol', () => {
       'fleet_reset_release_await', 'fleet_reset_history', 'fleet_reset_follow', 'fleet_job_history',
       'fleet_job_history_batch', 'fleet_job_overlap', 'fleet_job_current', 'fleet_job_patch', 'fleet_path_history', 'fleet_job_precheck', 'fleet_job_precheck_batch', 'fleet_main_health',
       'fleet_waste_risk', 'fleet_kept', 'fleet_trim', 'fleet_email_outbox', 'fleet_email_outbox_await', 'fleet_email_diagnosis',
+      'fleet_imessage_path', 'fleet_imessage_acks',
     ]);
     for (const tool of tools) {
       expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
