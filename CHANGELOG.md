@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.1 |
-| Latest dated changelog release (2026-11-05) | 3.30.1 |
+| Source package | 3.30.8 |
+| Latest dated changelog release (2026-11-05) | 3.30.8 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,42 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.8] — 2026-11-05
+
+
+### Changes
+
+* **RQ-PHX-CANDIDATESHA05SRK2:** Candidate SHA inspection handoff ([#3629](https://github.com/ashlrai/phantom/issues/3629)) ([3e214cf](https://github.com/ashlrai/phantom/commit/3e214cfec1c5796f6b2d07eaa6cfb5dd14c6f899))
+* **RQ-PHX-CIDISCOVERYPIPE05SRS1:** RQ-PHX-CIDISCOVERYPIPE05SRS1 ([#3642](https://github.com/ashlrai/phantom/issues/3642)) ([25da983](https://github.com/ashlrai/phantom/commit/25da9835a67dd9af39909f3ea2f49caa58e8b2ba))
+* **RQ-PHX-CIFAILEDRETRY05SRG1:** BRIDGE_NOTES — RQ-PHX-CIFAILEDRETRY05SRG1 ([#3624](https://github.com/ashlrai/phantom/issues/3624)) ([947fd9c](https://github.com/ashlrai/phantom/commit/947fd9c48b95d78971e09a5d72c2605287a2db76))
+* **RQ-PHX-CIRECEIPTAWAIT05SRU1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTAWAIT05SRU1 ([#3646](https://github.com/ashlrai/phantom/issues/3646)) ([115c825](https://github.com/ashlrai/phantom/commit/115c8257d52abe6bf8e906786cb7c1742e568255))
+* **RQ-PHX-CIRECEIPTDISCOVER05SRQ1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTDISCOVER05SRQ1 ([#3641](https://github.com/ashlrai/phantom/issues/3641)) ([b658b74](https://github.com/ashlrai/phantom/commit/b658b742c987774f0d1e056d919256dea9501021))
+* **RQ-PHX-CIRECEIPTFETCH05SRK1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTFETCH05SRK1 ([#3635](https://github.com/ashlrai/phantom/issues/3635)) ([fa00f95](https://github.com/ashlrai/phantom/commit/fa00f95d44fe81ed94c87edbc608fb1837e0d022))
+* **RQ-PHX-CIRECEIPTSEED05SRM2:** CI input digest seeds handoff ([#3634](https://github.com/ashlrai/phantom/issues/3634)) ([b4645b5](https://github.com/ashlrai/phantom/commit/b4645b595c0bf484fffe674178d22b2061de1b3b))
+* **RQ-PHX-CIRESUMEBYNAME05SRV1:** CI resume plan by artifact name ([#3649](https://github.com/ashlrai/phantom/issues/3649)) ([7ae51de](https://github.com/ashlrai/phantom/commit/7ae51ded5174eba69a3fa3fe5bbbaf21e9e163c3))
+* **RQ-PHX-CIRESUMEFETCHPLAN05SRR2:** CI resume plan handoff ([#3643](https://github.com/ashlrai/phantom/issues/3643)) ([a06f7dc](https://github.com/ashlrai/phantom/commit/a06f7dc840617e7ce617352ff47ae06d2820e242))
+* **RQ-PHX-CIRESUMEINPUTS05SRF1:** BRIDGE_NOTES — RQ-PHX-CIRESUMEINPUTS05SRF1 (resume-from-fail ([#3625](https://github.com/ashlrai/phantom/issues/3625)) ([b5560b2](https://github.com/ashlrai/phantom/commit/b5560b2e49d376eef9e64fa9600ca28367cb8b3b))
+* **RQ-PHX-CIRESUMESTDIN05SRL2:** BRIDGE_NOTES — RQ-PHX-CIRESUMESTDIN05SRL2 (Nov 5 01:47 P0 RE ([#3633](https://github.com/ashlrai/phantom/issues/3633)) ([1bd2c48](https://github.com/ashlrai/phantom/commit/1bd2c48c7f5951b8319181a143efc8af19fd1983))
+* **RQ-PHX-CISTDINREALPIPE05SRN1:** Bridge notes — real stdin pipe ([#3637](https://github.com/ashlrai/phantom/issues/3637)) ([da180c9](https://github.com/ashlrai/phantom/commit/da180c91635465d6faf80d030483739a03688c2f))
+* **RQ-PHX-COMMSCUTOVER05SRB1:** BRIDGE_NOTES — RQ-PHX-COMMSCUTOVER05SRB1 ([#3618](https://github.com/ashlrai/phantom/issues/3618)) ([8d6faef](https://github.com/ashlrai/phantom/commit/8d6faef826eccf0833808832c90d10262ffeb5eb))
+* **RQ-PHX-MCPCIAWAIT05SRX2:** BRIDGE_NOTES — RQ-PHX-MCPCIAWAIT05SRX2 ([#3652](https://github.com/ashlrai/phantom/issues/3652)) ([4198328](https://github.com/ashlrai/phantom/commit/419832842580698f6d6a63de7e60921904850698))
+* **RQ-PHX-MCPCIRESUME05SRJ1:** RQ-PHX-MCPCIRESUME05SRJ1 — fleet_ci_resume_inputs MCP tool ([#3632](https://github.com/ashlrai/phantom/issues/3632)) ([e77fb46](https://github.com/ashlrai/phantom/commit/e77fb46332374b1f64877633c473ab9743313c71))
+* **RQ-PHX-MCPCOMMSREADINESS05SRG2:** Comms readiness MCP bridge ([#3622](https://github.com/ashlrai/phantom/issues/3622)) ([b8a2116](https://github.com/ashlrai/phantom/commit/b8a21168ba6967f7738e28a0a2265a40d21a04e3))
+* **RQ-PHX-MCPEMAILWAITTRUTH05SRE2:** BRIDGE_NOTES.md — RQ-PHX-MCPEMAILWAITTRUTH05SRE2 ([#3623](https://github.com/ashlrai/phantom/issues/3623)) ([233cddf](https://github.com/ashlrai/phantom/commit/233cddfce981962986dce74a93458ecdccba0320))
+* **RQ-PHX-MCPIMESSAGEEVIDENCE05SRC2:** BRIDGE_NOTES — RQ-PHX-MCPIMESSAGEEVIDENCE05SRC2 ([#3619](https://github.com/ashlrai/phantom/issues/3619)) ([9d6fed7](https://github.com/ashlrai/phantom/commit/9d6fed70b7c126d5620551925a2286670312ca32))
+* **RQ-PHX-RELEASEADVANCE05SRL1:** BRIDGE_NOTES — RQ-PHX-RELEASEADVANCE05SRL1 ([#3631](https://github.com/ashlrai/phantom/issues/3631)) ([3532222](https://github.com/ashlrai/phantom/commit/353222298d79f5f26c4ee1f272d4b73f0229b521))
+* **RQ-PHX-RELEASEADVANCEONCE05SRP2:** BRIDGE_NOTES — RQ-PHX-RELEASEADVANCEONCE05SRP2 ([#3639](https://github.com/ashlrai/phantom/issues/3639)) ([cb96dd6](https://github.com/ashlrai/phantom/commit/cb96dd6a350800f46cbec3606ed28496622999d1))
+* **RQ-PHX-RELEASEADVANCEWAIT05SRN2:** Release advance wait handoff ([#3638](https://github.com/ashlrai/phantom/issues/3638)) ([b05dc4e](https://github.com/ashlrai/phantom/commit/b05dc4e222f2fb2b2eacd139ee8c3bcdd5bd9354))
+* **RQ-PHX-RELEASEASSETTRUTH05SRH2:** Release asset truth handoff ([#3626](https://github.com/ashlrai/phantom/issues/3626)) ([9d26ba7](https://github.com/ashlrai/phantom/commit/9d26ba704fc90460256e28cbe96f530ac067d312))
+* **RQ-PHX-RELEASEBATCH05SRS2:** BRIDGE_NOTES — RQ-PHX-RELEASEBATCH05SRS2 ([#3644](https://github.com/ashlrai/phantom/issues/3644)) ([e8f3184](https://github.com/ashlrai/phantom/commit/e8f3184a9b2327557760db46c25b0cf915d3787f))
+* **RQ-PHX-RELEASEBATCHRETRY05SRW2:** BRIDGE_NOTES — RQ-PHX-RELEASEBATCHRETRY05SRW2 ([#3653](https://github.com/ashlrai/phantom/issues/3653)) ([02e9478](https://github.com/ashlrai/phantom/commit/02e947830ee5746e3a3a0a317293d47cb57100bb))
+* **RQ-PHX-RELEASECANDIDATEPLAN05SRH1:** BRIDGE_NOTES — RQ-PHX-RELEASECANDIDATEPLAN05SRH1 ([#3627](https://github.com/ashlrai/phantom/issues/3627)) ([72367cc](https://github.com/ashlrai/phantom/commit/72367cc7da4816eaca2ba1eac8ebdeab65b9143d))
+* **RQ-PHX-RELEASEMILESTONES05SRF2:** Release milestone bridge ([#3621](https://github.com/ashlrai/phantom/issues/3621)) ([73664a2](https://github.com/ashlrai/phantom/commit/73664a2b0efde6de5d09b03e78d71c2706e0ec0e))
+* **RQ-PHX-RELEASEMILESTONEWAIT05SRJ2:** Release milestone await handoff ([#3628](https://github.com/ashlrai/phantom/issues/3628)) ([7f4fcc8](https://github.com/ashlrai/phantom/commit/7f4fcc8d61e7dc1653ae2d06ee53da3945a0bced))
+* **RQ-PHX-RELEASEONCEREALPIPE05SRV2:** BRIDGE_NOTES — RQ-PHX-RELEASEONCEREALPIPE05SRV2 ([#3651](https://github.com/ashlrai/phantom/issues/3651)) ([9acbeca](https://github.com/ashlrai/phantom/commit/9acbeca930412f4067e330b0cf50fe25a82de9b4))
+* **RQ-PHX-RELEASEONCERETRY05SRT1:** BRIDGE_NOTES — RQ-PHX-RELEASEONCERETRY05SRT1 ([#3647](https://github.com/ashlrai/phantom/issues/3647)) ([13aa5cf](https://github.com/ashlrai/phantom/commit/13aa5cf486be1e7de32fb6e86e26b43830f02471))
+* **RQ-PHX-RELEASEWAITSERIAL05SRR1:** BRIDGE_NOTES — RQ-PHX-RELEASEWAITSERIAL05SRR1 ([#3645](https://github.com/ashlrai/phantom/issues/3645)) ([50ff472](https://github.com/ashlrai/phantom/commit/50ff4724f172913477e9c22edc17496f630ca6c4))
 
 ## [3.30.1] — 2026-11-05
 
