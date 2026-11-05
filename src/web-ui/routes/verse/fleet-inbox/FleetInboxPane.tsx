@@ -17,6 +17,7 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { filterEntries, groupByDay, quoteForMessage, readInboxEntries } from './fleet-inbox-model.js';
 import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox-queries.js';
 import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } from './order-trace-model.js';
+import { CosDraftsCard } from './CosDraftsCard.js';
 import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
 import { sourceChip } from '../fleet/interject-ack-model.js';
@@ -86,6 +87,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   }
   return <div className={styles.pane}>
     {draftStatus && <p role="status">{draftStatus}</p>}
+    <CosDraftsCard visible={visible} />
     <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {
       setSource(''); setChannel(null); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
       void refetchQuery(fleetInboxQuery.key, () => fleetInboxQuery.fetch(), true);

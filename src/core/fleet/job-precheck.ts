@@ -1,4 +1,5 @@
 /** Draft-job paths compared with a git ref. No process spawn lives here. */
+import { isBulkCommit } from './bulk-commit.js';
 import { parseBridgeSubject } from './path-job-history.js';
 import { validJobId } from './job-path-history.js';
 
@@ -12,12 +13,13 @@ export interface PrecheckFact {
   path: string;
   onMaster: boolean;
   lastCommit?: { sha: string; subject: string };
+  bulk?: boolean;
   jobIdMatch?: boolean | null;
 }
 
 export interface JobPrecheckGit {
   exists(path: string): Promise<boolean>;
-  lastCommit(path: string): Promise<{ sha: string; subject: string } | null>;
+  lastCommit(path: string): Promise<{ sha: string; subject: string; filesChanged?: number | null } | null>;
 }
 
 export function extractJobPaths(markdown: string): string[] {
@@ -41,7 +43,7 @@ function isTestPath(path: string): boolean {
 }
 
 function bridgeLanded(fact: PrecheckFact): boolean {
-  return fact.onMaster && !!fact.lastCommit && BRIDGE_SUBJECT.test(fact.lastCommit.subject);
+  return !fact.bulk && fact.onMaster && !!fact.lastCommit && BRIDGE_SUBJECT.test(fact.lastCommit.subject);
 }
 
 export async function precheckJob(
@@ -55,9 +57,12 @@ export async function precheckJob(
     const onMaster = await git.exists(path);
     const commit = onMaster ? await git.lastCommit(path) : null;
     const fact: PrecheckFact = { path, onMaster };
-    if (commit) fact.lastCommit = commit;
+    if (commit) {
+      fact.lastCommit = commit;
+      fact.bulk = isBulkCommit(commit.filesChanged ?? null);
+    }
     if (options?.jobId !== undefined) {
-      const bridge = commit ? parseBridgeSubject(commit.subject) : null;
+      const bridge = commit && !fact.bulk ? parseBridgeSubject(commit.subject) : null;
       fact.jobIdMatch = bridge ? bridge.jobId === options.jobId : null;
     }
     facts.push(fact);

@@ -22,27 +22,33 @@ export function validJobRef(ref: string): boolean {
     && ref.split('/').every(part => !part.startsWith('.') && !part.endsWith('.lock')));
 }
 
+export function validCommitSha(sha: string): boolean {
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha);
+}
+
 /**
  * Scan at most 1000 commits, newest first; a full scan may have older history.
  * The caller's ref is resolved once to an immutable commit OID first, so the
  * log scan and every diff-tree path read describe the same tree even if the
  * ref moves mid-read — the same snapshot semantics as the batch reader.
  */
-export async function jobPathHistory(job: string, ref: string, limit: number, run: Git = git) {
-  if (!validJobId(job) || !validJobRef(ref) || !Number.isInteger(limit) || limit < 1 || limit > JOB_LIMIT_MAX) {
+export async function jobPathHistory(job: string, ref: string, limit: number, run: Git = git, options: { before?: string } = {}) {
+  if (!validJobId(job) || !validJobRef(ref) || !Number.isInteger(limit) || limit < 1 || limit > JOB_LIMIT_MAX
+    || (options.before !== undefined && !validCommitSha(options.before))) {
     throw new Error('invalid job history arguments');
   }
   const resolvedRef = (await run(['rev-parse', '--verify', `${ref}^{commit}`])).trim();
   if (!/^[0-9a-f]{40,64}$/.test(resolvedRef)) throw new Error(`unable to resolve ${ref}`);
-  const output = await run(['log', `-n${JOB_SCAN_BOUND}`, '--format=%H%x00%cI%x00%s%x00', resolvedRef, '--']);
+  const output = await run(['log', `-n${JOB_SCAN_BOUND}`, '--first-parent', '--format=%H%x00%cI%x00%s%x00', options.before ?? resolvedRef, '--']);
   const fields = output.split('\0');
   const commits: Array<{ sha: string; date: string; pr: number | null; paths: string[] }> = [];
   const paths = new Set<string>();
-  let scanned = 0, matches = 0;
+  let scanned = 0, matches = 0, oldest = '';
   for (let i = 0; i + 2 < fields.length; i += 3) {
     const sha = fields[i]!.trim();
     if (!sha) continue;
     scanned++;
+    oldest = sha;
     const bridge = parseBridgeSubject(fields[i + 2]!);
     if (bridge?.jobId !== job) continue;
     matches++;
@@ -52,6 +58,12 @@ export async function jobPathHistory(job: string, ref: string, limit: number, ru
     for (const path of commitPaths) paths.add(path);
     commits.push({ sha, date: fields[i + 1]!, pr: bridge.pr, paths: commitPaths });
   }
-  return { jobId: job, ref, resolvedRef, scanBound: JOB_SCAN_BOUND, scanned, scanMayBeTruncated: scanned === JOB_SCAN_BOUND,
+  let nextBefore: string | null = null;
+  if (scanned === JOB_SCAN_BOUND) {
+    const parents = (await run(['rev-list', '--parents', '-n', '1', oldest, '--'])).trim().split(/\s+/);
+    if (parents[0] !== oldest || (parents[1] && !validCommitSha(parents[1]))) throw new Error('unable to resolve history boundary');
+    nextBefore = parents[1] ?? null;
+  }
+  return { jobId: job, ref, resolvedRef, nextBefore, scanBound: JOB_SCAN_BOUND, scanned, scanMayBeTruncated: nextBefore !== null,
     limit, matchesTruncated: matches > limit, commits, paths: [...paths].sort() };
 }
