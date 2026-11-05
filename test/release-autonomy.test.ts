@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { auditAutonomy, formatAutonomy, GitHubNotFoundError } from '../src/core/release/autonomy-audit.js';
 import { cmdReleaseAutonomy } from '../src/cli/release-autonomy.js';
