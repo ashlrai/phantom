@@ -18,7 +18,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { tmpdir } from 'node:os';
 import { defaultGitRunner, type GitRunner } from '../verse/git-ops.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { planReleaseCandidate, type ReleaseCandidatePlan } from './release-candidate-plan.js';
+import { planReleaseCandidate, type ReleaseCandidatePlan, type RunFact } from './release-candidate-plan.js';
 
 const TIMEOUT_MS = 30_000;
 const DISPATCH_MAX_BYTES = 256 * 1024;
@@ -53,6 +53,10 @@ export interface ReleaseAdvanceReport {
   attestedRun: { id: number; attempt: number | null } | null;
   /** Attest run still in flight on this exact candidate, if any. */
   inFlightRun: { id: number; attempt: number | null; status: string } | null;
+  /** Bounded attest run inventory on this exact candidate, newest first;
+   *  includes terminal non-success runs the distilled fields above drop.
+   *  Absent only in reports built by older callers. */
+  attestOnCandidate?: RunFact[];
   release: { state: ReleaseCandidatePlan['release']['state']; id: number | null };
   blockers: ReleaseCandidatePlan['blockers'];
   /** attest-ci-build.yml inputs — proposed on a dry run, submitted under --apply. */
@@ -123,7 +127,7 @@ export async function advanceReleaseCandidate(repo: string, tag: string, opts: {
     planOutcome: 'unavailable',
     candidate: { sha: null, tree: null }, master: { branch: null, sha: null, tree: null },
     masterMoved: null, treeMatch: null, gateRun: null, producerArtifact: null,
-    attestedRun: null, inFlightRun: null, release: { state: 'unknown', id: null },
+    attestedRun: null, inFlightRun: null, attestOnCandidate: [], release: { state: 'unknown', id: null },
     blockers: [], dispatch: { ref: null, inputs: null, invoked: false, accepted: false, detail: null },
     truncated: false,
   };
@@ -141,6 +145,7 @@ export async function advanceReleaseCandidate(repo: string, tag: string, opts: {
     const inFlight = plan.attestOnCandidate.find(r => r.status !== 'completed');
     report.attestedRun = attested ? { id: attested.id, attempt: attested.attempt } : null;
     report.inFlightRun = inFlight ? { id: inFlight.id, attempt: inFlight.attempt, status: inFlight.status } : null;
+    report.attestOnCandidate = plan.attestOnCandidate.map(r => ({ ...r }));
     report.release = { state: plan.release.state, id: plan.release.id };
     report.blockers = plan.blockers;
     report.truncated = plan.truncated;
