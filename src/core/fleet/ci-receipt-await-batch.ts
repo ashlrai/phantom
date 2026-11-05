@@ -14,10 +14,14 @@
  *
  * One deadline covers the batch, never refreshed per target: each wait is
  * handed only the time that remains, so a slow target cannot manufacture
- * budget for the next. A terminal failure on one target is recorded beside
- * its exact identity and the batch moves on while time remains; targets the
- * deadline never reached get explicit not-started entries — a prior is
- * never fabricated. Every call is the same GET metadata/listing read plus
+ * budget for the next. An optional per-target bound caps each wait at
+ * min(targetTimeoutMs, the remaining shared deadline) — never more — so one
+ * still-running attempt cannot hold the whole batch while a later
+ * repository's receipts are already available. A terminal failure on one
+ * target, including its local bound expiring, is recorded beside its exact
+ * identity and the batch moves on while time remains; targets the deadline
+ * never reached get explicit not-started entries — a prior is never
+ * fabricated. Every call is the same GET metadata/listing read plus
  * bounded archive download the single await makes: no POSTs, no workflow
  * dispatch, no check mutation.
  */
@@ -142,6 +146,8 @@ export function parseCiReceiptAwaitBatchInput(text: string): CiReceiptAwaitBatch
 export interface CiReceiptAwaitBatchOptions {
   /** Total batch bound shared by every target; at most one hour. */
   timeoutMs: number;
+  /** Optional per-target cap; each wait gets min(this, the remaining shared deadline). */
+  targetTimeoutMs?: number;
   pollMs?: number;
   signal?: AbortSignal;
 }
@@ -174,7 +180,8 @@ export async function awaitCiReceiptBatch(
   }
   const pollMs = opts.pollMs ?? CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
   if (!isAwaitMs(opts.timeoutMs, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS)
-    || !isAwaitMs(pollMs, CI_RECEIPT_AWAIT_MAX_POLL_MS) || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS) {
+    || !isAwaitMs(pollMs, CI_RECEIPT_AWAIT_MAX_POLL_MS) || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS
+    || (opts.targetTimeoutMs !== undefined && !isAwaitMs(opts.targetTimeoutMs, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS))) {
     throw new RangeError('invalid await parameters');
   }
   const now = deps.now ?? (() => performance.now());
@@ -188,10 +195,11 @@ export async function awaitCiReceiptBatch(
     if (opts.signal?.aborted) { stoppedBy = 'aborted'; break; }
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) { stoppedBy = 'deadline'; break; }
+    const bound = opts.targetTimeoutMs === undefined ? remaining : Math.min(opts.targetTimeoutMs, remaining);
     try {
       const found = await wait(
         { repo: target.repo, run: target.run, attempt: target.attempt,
-          artifactName: target.artifactName, timeoutMs: remaining, pollMs, signal: opts.signal },
+          artifactName: target.artifactName, timeoutMs: bound, pollMs, signal: opts.signal },
         { gh: deps.gh, now, sleep });
       entries.push({ ...target, outcome: 'bound', prior: found.prior, reason: null });
       const tag = `${target.repo} run ${target.run} attempt ${target.attempt}`;

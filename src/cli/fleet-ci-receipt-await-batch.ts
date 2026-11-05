@@ -13,7 +13,7 @@ import {
 import { isAwaitMs } from '../core/fleet/needs-mason-answer-await.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
-const USAGE = 'usage: ashlr fleet ci-receipt-await-batch --stdin --timeout-ms N [--poll-ms N] [--json]';
+const USAGE = 'usage: ashlr fleet ci-receipt-await-batch --stdin --timeout-ms N [--poll-ms N] [--target-timeout-ms N] [--json]';
 const HELP = `${USAGE}
 \`ci-receipt-await-batch\` waits for a bounded batch of explicitly named
 receipts artifacts — the RESUME-FROM-FAILURE and t1626u batching orders — so
@@ -32,6 +32,11 @@ the batch moves on while time remains; targets the deadline never reached
 get explicit "not-started" entries and a prior is never fabricated.
 --timeout-ms is required and bounded at one hour; --poll-ms is a positive
 interval of at least ${CI_RECEIPT_AWAIT_MIN_POLL_MS}ms (default ${CI_RECEIPT_AWAIT_DEFAULT_POLL_MS}).
+Optional --target-timeout-ms (same one-hour bound) caps each single target's
+wait at min(itself, the remaining shared deadline), so one still-running
+attempt cannot hold the whole batch; a target that exhausts its local share
+is a failed entry, never a fabricated prior, and later targets still start
+while batch time remains.
 
 stdout is one JSON report: per-entry identities, outcomes, the validated
 CiResumePrior documents and bounded sanitized failure reasons. Diagnostics
@@ -78,7 +83,7 @@ export async function cmdFleetCiReceiptAwaitBatch(
     const arg = args[i]!;
     if (arg === '--stdin' && !stdin) { stdin = true; continue; }
     if (arg === '--json' && !json) { json = true; continue; }
-    if (!['--timeout-ms', '--poll-ms'].includes(arg) || values.has(arg)
+    if (!['--timeout-ms', '--poll-ms', '--target-timeout-ms'].includes(arg) || values.has(arg)
       || !args[i + 1] || args[i + 1]!.startsWith('--')) {
       return invalid('unexpected_argument');
     }
@@ -88,8 +93,12 @@ export async function cmdFleetCiReceiptAwaitBatch(
   const pollMs = values.has('--poll-ms')
     ? boundedMs(values.get('--poll-ms'), CI_RECEIPT_AWAIT_MAX_POLL_MS)
     : CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
+  const targetTimeoutMs = values.has('--target-timeout-ms')
+    ? boundedMs(values.get('--target-timeout-ms'), CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS)
+    : undefined;
   if (!stdin) return invalid('missing_stdin_flag');
-  if (timeoutMs === null || pollMs === null || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS) {
+  if (timeoutMs === null || pollMs === null || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS
+    || targetTimeoutMs === null) {
     return invalid('invalid_flags');
   }
   const input = deps.input ?? process.stdin;
@@ -105,7 +114,7 @@ export async function cmdFleetCiReceiptAwaitBatch(
   const parsed = parseCiReceiptAwaitBatchInput(text);
   if (!parsed.ok) return invalid(parsed.reason);
   const { report, diagnostics } = await awaitCiReceiptBatch(parsed.targets,
-    { timeoutMs, pollMs, signal: deps.signal },
+    { timeoutMs, pollMs, targetTimeoutMs, signal: deps.signal },
     { gh: deps.gh, now: deps.now, sleep: deps.sleep });
   for (const line of diagnostics) process.stderr.write(`ci-receipt-await-batch: ${line}\n`);
   console.log(json ? JSON.stringify(report) : JSON.stringify(report, null, 2));
