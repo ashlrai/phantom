@@ -58,7 +58,7 @@ describe('fleet app action reservations', () => {
     const pending = call(api, restart);
     await vi.waitFor(() => expect(exec).toHaveBeenCalledTimes(1));
     expect((await call(api, restart, { token: '' })).status).toBe(401);
-    expect((await call(api, { ...restart, action: 'quit' })).status).toBe(400);
+    expect((await call(api, { ...restart, action: 'shutdown' })).status).toBe(400);
     first.resolve(ok);
     expect((await pending).status).toBe(202);
   });
