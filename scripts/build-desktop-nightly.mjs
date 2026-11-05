@@ -41,9 +41,11 @@ import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -167,7 +169,7 @@ export function probeTools(pins, env = process.env) {
  * 'sidecar-smoke' and 'package' run in-process. Build mode executes exactly
  * this list, so --check reports the real pipeline.
  */
-export function buildStepPlan() {
+export function buildStepPlan({ existingIcons = false } = {}) {
   return [
     { name: 'install', cwd: REPO_ROOT, command: ['npm', ['ci']], timeoutMs: STEP_TIMEOUT_MS.install },
     { name: 'sidecar-build', cwd: REPO_ROOT, command: [process.execPath, ['scripts/build-sea.mjs']], timeoutMs: STEP_TIMEOUT_MS['sidecar-build'] },
@@ -178,11 +180,38 @@ export function buildStepPlan() {
       name: 'bundle',
       cwd: DESKTOP_DIR,
       command: ['tauri', ['build', '--debug', '--no-sign', '--bundles', 'app', '--', '--locked']],
-      env: { CI: '1' },
+      env: { CI: 'true' },
       timeoutMs: STEP_TIMEOUT_MS.bundle,
     },
     { name: 'package', cwd: REPO_ROOT, inProcess: true, timeoutMs: STEP_TIMEOUT_MS.package },
-  ];
+  ].filter((step) => !existingIcons || step.name !== 'icons');
+}
+
+/** Reuse only source-owned icon bytes; generation would dirty the qualified tree. */
+export function verifyExistingIcons(root = REPO_ROOT, { readHead = (path) => {
+  const result = spawnSync('git', ['show', `HEAD:${path}`], { cwd: root, timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+  if (result.error || result.status !== 0) throw new Error(`icon input is not tracked at HEAD: ${path}`);
+  return result.stdout;
+} } = {}) {
+  root = realpathSync(root);
+  const unchanged = (path) => {
+    const full = join(root, path);
+    const stat = lstatSync(full);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size < 1 || stat.size > 16 * 1024 * 1024 || realpathSync(full) !== full) {
+      throw new Error(`invalid tracked icon input: ${path}`);
+    }
+    const bytes = readFileSync(full);
+    if (!bytes.equals(readHead(path))) throw new Error(`tracked icon input differs from HEAD: ${path}`);
+    return bytes;
+  };
+  const config = JSON.parse(unchanged('desktop/src-tauri/tauri.conf.json'));
+  const paths = [...(Array.isArray(config.bundle?.icon) ? config.bundle.icon : []), config.app?.trayIcon?.iconPath];
+  if (paths.length < 2 || paths.length > 16 || new Set(paths).size !== paths.length ||
+      paths.some(path => typeof path !== 'string' || !/^icons\/[a-zA-Z0-9@._-]+\.(png|icns|ico)$/.test(path))) {
+    throw new Error('invalid tracked icon inventory');
+  }
+  for (const path of paths) unchanged(`desktop/src-tauri/${path}`);
+  return paths;
 }
 
 export function sidecarTriple(env = process.env) {
@@ -211,13 +240,17 @@ export function desktopVersion() {
   return version;
 }
 
-export function preflight({ env = process.env, platform = process.platform, outDir = DEFAULT_OUT_DIR } = {}) {
+export function preflight({ env = process.env, platform = process.platform, outDir = DEFAULT_OUT_DIR, existingIcons = false } = {}) {
   let pins = null;
   let pinsError = null;
   try {
     pins = loadToolchainPins();
   } catch (error) {
     pinsError = error.message;
+  }
+  let iconsError = null;
+  if (existingIcons) {
+    try { verifyExistingIcons(); } catch (error) { iconsError = error.message; }
   }
   const target = resolveDesktopNightlyTarget(env, platform);
   const missingFiles = REQUIRED_FILES.filter((rel) => !existsSync(join(REPO_ROOT, rel)));
@@ -233,14 +266,14 @@ export function preflight({ env = process.env, platform = process.platform, outD
     triple,
     profile: 'debug',
     artifactName: version && triple ? nightlyArtifactName({ version, triple, profile: 'debug' }) : null,
-    steps: buildStepPlan().map((step) => {
+    steps: buildStepPlan({ existingIcons }).map((step) => {
       const entry = { ...step };
       delete entry.timeoutMs;
       return entry;
     }),
   };
-  const ok = !pinsError && target.admitted && missingFiles.length === 0 && toolchain.every((row) => row.ok);
-  return { ok, target, host: platform, pinsError, toolchain, missingFiles, plan };
+  const ok = !pinsError && !iconsError && target.admitted && missingFiles.length === 0 && toolchain.every((row) => row.ok);
+  return { ok, target, host: platform, pinsError, iconsError, toolchain, missingFiles, plan };
 }
 
 function refusalText(report) {
@@ -251,6 +284,7 @@ function refusalText(report) {
     return `ASHLR_DESKTOP_NIGHTLY_ADMISSION_REFUSED: target '${report.target.raw}' is not admitted; the nightly dev build is macOS-only`;
   }
   const problems = [];
+  if (report.iconsError) problems.push(report.iconsError);
   if (report.pinsError) problems.push(`desktop/toolchain.json: ${report.pinsError}`);
   for (const row of report.toolchain.filter((t) => !t.ok)) {
     problems.push(`tool ${row.tool} is ${row.actual ?? 'missing'} but desktop/toolchain.json pins ${row.expected}`);
@@ -383,6 +417,7 @@ function usage() {
 
 Reproducible unsigned Phantom desktop dev build for the scheduled master CI run.
 
+  --existing-icons  require unchanged tracked icons instead of regenerating them
   --check      preflight only: print the admission report and step plan as JSON
   --out <dir>  artifact output directory (default: desktop/dist-nightly/)
   -h, --help   this help
@@ -394,11 +429,12 @@ provenance manifest. It never signs, tags, publishes or creates a release.`);
 }
 
 function parseArgs(argv) {
-  const args = { check: false, outDir: DEFAULT_OUT_DIR };
+  const args = { check: false, outDir: DEFAULT_OUT_DIR, existingIcons: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '-h' || arg === '--help') return { help: true };
     if (READ_ONLY_MODES.includes(arg)) { args.check = true; continue; }
+    if (arg === '--existing-icons') { args.existingIcons = true; continue; }
     if (arg === '--out') {
       if (!argv[i + 1]) throw Object.assign(new Error('--out requires a directory'), { usage: true });
       args.outDir = resolve(argv[++i]);
@@ -420,7 +456,7 @@ async function main() {
   }
   if (args.help) { usage(); return; }
 
-  const report = preflight({ outDir: args.outDir });
+  const report = preflight({ outDir: args.outDir, existingIcons: args.existingIcons });
   if (args.check) {
     if (!report.ok) console.error(refusalText(report));
     process.stdout.write(`${JSON.stringify({ schemaVersion: 1, mode: 'check', ...report }, null, 2)}\n`);
@@ -445,10 +481,11 @@ async function main() {
     process.exit(1);
   }
   const records = [];
-  for (const step of buildStepPlan()) {
+  for (const step of buildStepPlan({ existingIcons: args.existingIcons })) {
     if (step.name === 'package') continue;
     console.log(`[desktop-nightly] step ${step.name} …`);
     try {
+      if (args.existingIcons && step.name === 'bundle') verifyExistingIcons();
       records.push(runStep(step, env));
     } catch (error) {
       console.error(`[desktop-nightly] ${error.message}`);

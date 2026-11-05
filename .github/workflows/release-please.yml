@@ -13,6 +13,9 @@ name: Release PR
 on:
   push:
     branches: [master]
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
 
 permissions: {}
 
@@ -29,8 +32,24 @@ jobs:
       pull-requests: write
     outputs:
       branch: ${{ steps.rp.outputs.pr && fromJSON(steps.rp.outputs.pr).headBranchName || '' }}
+      version: ${{ steps.cadence.outputs.version }}
     steps:
+      - name: Checkout scheduling policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require new green master work and release cadence
+        id: cadence
+        env:
+          RELEASE_CADENCE_MINUTES: ${{ vars.RELEASE_CADENCE_MINUTES || '30' }}
+        run: node .github/scripts/release-cadence.mjs
+      - name: Reconcile tags created by auto-tag with pending release PRs
+        if: steps.cadence.outputs.due == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-pr-labels.mjs
       - id: rp
+        if: steps.cadence.outputs.due == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ github.token }}
@@ -47,6 +66,7 @@ jobs:
       contents: read
     env:
       BRANCH: ${{ needs.release-please.outputs.branch }}
+      EXPECTED_VERSION: ${{ needs.release-please.outputs.version }}
     steps:
       - name: Require the release-please branch head to be the bot's own commit
         id: head
@@ -89,8 +109,10 @@ jobs:
         run: |
           set -euo pipefail
           version=$(node -p 'require("./package.json").version')
-          node scripts/sync-candidate-version.mjs "$version"
+          [ "$version" = "$EXPECTED_VERSION" ] || { echo "::error::release-please did not produce the expected patch"; exit 1; }
+          node scripts/sync-release-notes.mjs "$version"
           node scripts/sync-candidate-version.mjs --check "$version"
+          node scripts/extract-changelog.mjs "$version" >/dev/null
           git config user.name "ashlr-release[bot]"
           git config user.email "ashlr-release[bot]@users.noreply.github.com"
           git add -A
