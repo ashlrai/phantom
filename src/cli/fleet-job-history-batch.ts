@@ -2,11 +2,12 @@ import { JOB_LIMIT_MAX, validJobId } from '../core/fleet/job-path-history.js';
 import { JOB_BATCH_MAX, jobHistoryBatch } from '../core/fleet/job-history-batch.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet job-history-batch RQ-ID... [--limit N] [--json]\n'
-  + '       ashlr fleet job-history-batch --stdin [--limit N] [--json]\n'
+const usage = 'Usage: ashlr fleet job-history-batch RQ-ID... [--limit N] [--at OID] [--json]\n'
+  + '       ashlr fleet job-history-batch --stdin [--limit N] [--at OID] [--json]\n'
   + `1–${JOB_BATCH_MAX} distinct exact job ids; --limit is 1–${JOB_LIMIT_MAX} matching commits per id (default 20). `
   + '--stdin reads one JSON array of those ids (at most 64 KiB) instead of positional ids. '
-  + 'One bounded origin/master scan serves every id; empty evidence does not prove a job never landed.';
+  + 'By default scans current origin/master; --at selects a full commit OID reachable from origin/master. '
+  + 'One bounded snapshot scan serves every id; empty evidence does not prove a job never landed.';
 
 /** Stdin is read at most this far; past it the input is rejected without buffering the rest. */
 export const JOB_STDIN_MAX_BYTES = 64 * 1024;
@@ -55,10 +56,17 @@ export async function cmdFleetJobHistoryBatch(args: string[], stdin: JobIdStdin 
   const seenIds = new Set<string>();
   const seenFlags = new Set<string>();
   let limit = 20, json = false, fromStdin = false;
+  let at: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !seenFlags.has(arg)) { json = true; seenFlags.add(arg); continue; }
     if (arg === '--stdin' && !seenFlags.has(arg)) { fromStdin = true; seenFlags.add(arg); continue; }
+    if (arg === '--at' && !seenFlags.has(arg)) {
+      seenFlags.add(arg);
+      at = args[++i];
+      if (!at || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(at)) { console.error(usage); return 2; }
+      continue;
+    }
     if (arg === '--limit' && !seenFlags.has(arg)) {
       seenFlags.add(arg);
       const value = args[++i];
@@ -85,10 +93,10 @@ export async function cmdFleetJobHistoryBatch(args: string[], stdin: JobIdStdin 
     ids.push(...piped);
   }
   try {
-    const result = await jobHistoryBatch(ids, limit);
+    const result = at === undefined ? await jobHistoryBatch(ids, limit) : await jobHistoryBatch(ids, limit, undefined, { at });
     const safe = sanitizePublicJson(result) as typeof result;
     if (json) { console.log(JSON.stringify(safe)); return 0; }
-    console.log(`Resolved origin/master to ${safe.resolvedRef}; scanned ${safe.scanned} commits`
+    console.log(`${at === undefined ? 'Resolved origin/master' : 'Resolved requested snapshot'} to ${safe.resolvedRef}; scanned ${safe.scanned} commits`
       + ` (bound ${safe.scanBound}; ${safe.scanMayBeTruncated ? 'older history may remain' : 'history exhausted'}).`);
     for (const job of safe.jobs) {
       if (!job.commits.length) {
