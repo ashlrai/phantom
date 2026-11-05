@@ -86,6 +86,7 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
       dir: outboxDir,
       allowedRecipients: new Set(allowed),
       transport: deps.transport ?? macMailTransport(),
+      draftsRunsDir: deps.runsDir ?? join(homedir(), '.ashlr-runs'),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -94,6 +95,6 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
     return 1;
   }
   if (json) console.log(JSON.stringify({ dir: outboxDir, ...result }));
-  else console.log(`email-outbox: queued=${result.queued} sent=${result.sent} refused=${result.refused} failed=${result.failed} stuck=${result.stuck}`);
+  else console.log(`email-outbox: queued=${result.queued} sent=${result.sent} refused=${result.refused} failed=${result.failed} stuck=${result.stuck}${result.drafted ? ` drafted=${result.drafted}` : ''}`);
   return 0;
 }
