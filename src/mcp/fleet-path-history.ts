@@ -40,7 +40,9 @@ export interface FleetPathHistoryArgs {
 
 export interface FleetPathHistoryDeps {
   /** Newest-first commits touching `path`, at most `maxCommits` rows. */
-  log?: (path: string, maxCommits: number) => Promise<Array<{ sha: string; date: string; subject: string }>>;
+  log?: (path: string, maxCommits: number, resolvedRef?: string) => Promise<Array<{ sha: string; date: string; subject: string }>>;
+  /** Explicit snapshot evidence for an injected log; the log must scan this OID. */
+  resolve?: () => Promise<string>;
   /** Internal command seam for testing the production reader. */
   git?: (args: string[]) => Promise<string>;
 }
@@ -115,10 +117,14 @@ const runGit = async (args: string[]): Promise<string> => {
 export async function readFleetPathHistory(input: FleetPathHistoryArgs, deps: FleetPathHistoryDeps = {}): Promise<FleetPathHistoryV1> {
   let resolvedRef: string | null = null;
   let log = deps.log;
+  if (!log || deps.resolve) {
+    const git = deps.git ?? runGit;
+    resolvedRef = (await (deps.resolve ?? (() => git(['rev-parse', '--verify', `${FLEET_PATH_HISTORY_REF}^{commit}`])))()).trim();
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(resolvedRef)) throw new Error('Invalid resolved commit OID');
+  }
   if (!log) {
     const git = deps.git ?? runGit;
-    resolvedRef = (await git(['rev-parse', '--verify', `${FLEET_PATH_HISTORY_REF}^{commit}`])).trim();
-    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(resolvedRef)) throw new Error('Invalid resolved commit OID');
+    if (resolvedRef === null) throw new Error('Missing resolved commit OID');
     const oid = resolvedRef;
     log = async (path, maxCommits) => {
       const stdout = await git([
@@ -136,7 +142,9 @@ export async function readFleetPathHistory(input: FleetPathHistoryArgs, deps: Fl
   let scanned = 0;
   const jobs = await pathJobHistory(input.path, {
     log: async (path, limit) => {
-      const commits = await readLog(path, limit * FLEET_PATH_HISTORY_SCAN_FACTOR);
+      const commits = resolvedRef && deps.log
+        ? await readLog(path, limit * FLEET_PATH_HISTORY_SCAN_FACTOR, resolvedRef)
+        : await readLog(path, limit * FLEET_PATH_HISTORY_SCAN_FACTOR);
       scanned = commits.length;
       return commits;
     },
