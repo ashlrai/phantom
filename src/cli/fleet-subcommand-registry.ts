@@ -211,6 +211,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'red-blame': () => import('./fleet-red-blame.js'),
   'red-fix': () => import('./fleet-red-fix.js'),
   'red-merges': () => import('./fleet-red-merges.js'),
+  'release-live': () => import('./fleet-release-live.js'),
   'repo-rate': () => import('./fleet-repo-rate.js'),
   'reset-await': () => import('./fleet-reset-await.js'),
   'reset-follow': () => import('./fleet-reset-follow.js'),
