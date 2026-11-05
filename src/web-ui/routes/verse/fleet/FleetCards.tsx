@@ -15,17 +15,21 @@ import type { ChartStatus } from '../../../components/charts/ChartFrame.js';
 import { Funnel } from '../../../components/charts/Funnel.js';
 import { Swimlane } from '../../../components/charts/Swimlane.js';
 import { EngineMarker } from '../../../components/primitives/Tag.js';
+import { useQuery } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import type { OptionalFleetRead } from '../autonomy/fleet-contract.js';
 import type { OvernightStatus } from '../autonomy/overnight-contract.js';
 import { describeStopRule } from '../autonomy/overnight-model.js';
+import { useNow } from '../autonomy/use-ticker.js';
 import { CloudLaneChip } from '../cloud/CloudLaneChip.js';
 import { Card, CardNote, MicroLabel } from '../command/Surface.js';
 import type { OptionalRead } from '../command/surface-data.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge, type LaneHealthV1 } from '../../../../core/fleet/lane-health.js';
 import { fleetDarkStatus } from './dark-since.js';
+import { laneFallback, STALE_STANDING_LANES, type FallbackRunsLane } from './lane-runsdir-fallback.js';
 import { LaneSparkline } from './LaneSparkline.js';
 import { recordLaneSamples } from './lane-history-store.js';
+import { runsLanesQuery } from './runs-lanes-queries.js';
 import { LANE_ENGINE, LANE_LABEL, funnelStages, laneChipText, laneNotes, laneReason, laneRows, latestDecision, parkedGantt, refusalStack, runTone } from './live-model.js';
 import { asSentence, decisionSummary, describeEligibleAgain, eligibleAgain, heldBackText } from './why-seat-model.js';
 import styles from './fleet.module.css';
@@ -52,17 +56,16 @@ export function fleetStatus(read: OptionalRead<FleetLiveSnapshotV1> | undefined,
 // ---------------------------------------------------------------------------
 
 /** "Local · off" — the chip is the lane and its slots; its why is one line below the strip (and its title). */
-const STALE_STANDING_LANES = 'No standing tick has reported lanes in the last 10 minutes.';
-
-function LaneChip({ lane, children }: { lane: FleetLaneState; children?: ReactNode }) {
+function LaneChip({ lane, runs, readAt, now, children }: { lane: FleetLaneState; runs: readonly FallbackRunsLane[] | null; readAt: string | null; now: number; children?: ReactNode }) {
   const text = laneChipText(lane);
   // The server uses zero slots when the last standing lane observation is
   // stale. That is unknown capacity, not an observed disabled lane. Keep the
-  // independently observed active producer count visible in that case.
+  // independently observed active producer count visible in that case —
+  // unless dispatchd's fresher figures can stand in for the missing tick.
   const capacityUnknown = lane.slots === 0 && lane.capReason === STALE_STANDING_LANES;
-  const slots = capacityUnknown
+  const slots = laneFallback(lane, runs, readAt, now)?.slots ?? (capacityUnknown
     ? `${lane.busy > 0 ? `${lane.busy} working · ` : ''}capacity unknown`
-    : text.slots;
+    : text.slots);
   return (
     <li className={styles.lane} data-off={lane.slots === 0 && !capacityUnknown || undefined} title={laneReason(lane) ?? undefined}>
       <EngineMarker engine={LANE_ENGINE[lane.lane]} />
@@ -100,14 +103,19 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
   useEffect(() => {
     if (live) recordLaneSamples(live);
   }, [live, timestamp]);
+  const runs = useQuery(runsLanesQuery);
+  const now = useNow();
   if (!live || live.lanes.length === 0) return null;
   const notes = laneNotes(live.lanes);
   const health = computeLaneHealth(live);
+  const runsLanes = runs.data?.lanes ?? null;
+  const runsReadAt = runs.data?.lastTick ?? null;
+  const fallback = live.lanes.map((l) => laneFallback(l, runsLanes, runsReadAt, now)).find((f) => f !== null) ?? null;
   return (
     <div className={styles.laneStrip}>
       <ul className={styles.lanes} aria-label="Lanes: busy of slots">
         {live.lanes.map((l) => (
-          <LaneChip key={l.lane} lane={l}>
+          <LaneChip key={l.lane} lane={l} runs={runsLanes} readAt={runsReadAt} now={now}>
             <LaneSparkline lane={l.lane} />
           </LaneChip>
         ))}
@@ -120,7 +128,9 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
             <li key={n.lanes.join(',')}>
               {n.all ? null : <span className={styles.laneNoteLanes}>{n.lanes.map((l) => LANE_LABEL[l]).join(', ')}: </span>}
               {asSentence(n.reason === STALE_STANDING_LANES
-                ? 'Lane capacity is unobserved because no standing lane observation has arrived in the last 10 minutes. Active producer counts are shown when known.'
+                ? fallback !== null
+                  ? `Lane counts come ${fallback.note}`
+                  : 'Lane capacity is unobserved because no standing lane observation has arrived in the last 10 minutes. Active producer counts are shown when known.'
                 : n.reason)}
             </li>
           ))}

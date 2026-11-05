@@ -38,6 +38,7 @@ function fixture(repositoryName = hub.legacyName) {
       id: 101, run_attempt: 2, head_sha: candidate, path: '.github/workflows/ci.yml',
       repository: { ...repository }, status: 'completed', conclusion: 'success',
     }],
+    [`repos/${repositoryName}/actions/runs/101/attempts/2/jobs?per_page=100&page=1`, { total_count: 0, jobs: [] }],
     [`repos/${repositoryName}/actions/runs/101/artifacts?per_page=100&page=1`, { total_count: artifacts.length, artifacts }],
   ]);
   const inputs = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/master', GITHUB_REPOSITORY: repositoryName, GITHUB_REPOSITORY_ID: String(hub.repositoryId), GITHUB_REPOSITORY_OWNER_ID: String(hub.ownerId),
@@ -208,3 +209,69 @@ for (const kind of ['repository ID', 'owner ID', 'current namespace', 'minimal r
     assert.equal(existsSync(join(f.temporary, 'candidate')), false);
   }));
 }
+
+test('fast producer preparation takes only its immutable artifact and permits scheduled attestation', { skip: process.platform === 'win32' }, () => withFixture(f => {
+  Object.assign(runRecord(f), { event: 'schedule', head_branch: 'master' });
+  fastJobs(f);
+  const list = listRecord(f); list.artifacts = [list.artifacts[0]]; list.total_count = 1;
+  f.inputs.GITHUB_EVENT_NAME = 'schedule';
+  const result = prepare({ env: f.inputs, read: f.read });
+  assert.equal(result.map.profile, 'fast-release-v1'); assert.deepEqual(result.map.lanes, []);
+  assert.equal(result.map.producer.id, 301);
+}));
+
+test('scheduled attestation cannot downgrade a legacy exhaustive producer', { skip: process.platform === 'win32' }, () => withFixture(f => {
+  f.inputs.GITHUB_EVENT_NAME = 'schedule'; assert.throws(() => prepare({ env: f.inputs, read: f.read }));
+}));
+
+for (const [key, value] of [['event', 'pull_request'], ['head_branch', 'feature']]) {
+  test(`fast producer refuses ${key} outside trusted master`, { skip: process.platform === 'win32' }, () => withFixture(f => {
+    Object.assign(runRecord(f), { event: 'workflow_dispatch', head_branch: 'master', [key]: value });
+    fastJobs(f);
+    assert.throws(() => prepare({ env: f.inputs, read: f.read }));
+  }));
+}
+
+test('assembles fast producer as inert data without manufacturing exhaustive coverage', () => withData(root => {
+  const map = { profile: 'fast-release-v1', producer: { name: 'ashlr-build-101-2' }, lanes: [] };
+  writeFileSync(join(root, 'artifact-map.json'), JSON.stringify(map)); mkdirSync(join(root, 'download'));
+  const producer = join(root, 'download', map.producer.name); mkdirSync(producer);
+  writeFileSync(join(producer, 'fast-release.json'), '{}'); writeFileSync(join(producer, 'desktop-smoke-bin'), 'inert');
+  const bundle = assemble(root); assert.deepEqual(readdirSync(bundle).sort(), ['desktop-smoke-bin', 'fast-release.json']);
+  assert.equal(lstatSync(join(bundle, 'desktop-smoke-bin')).mode & 0o111, 0);
+}));
+
+function fastJobs(f) {
+  const job = { name: 'Desktop release smoke', run_id: 101, head_sha: f.candidate,
+    labels: ['macos-15'], status: 'completed', conclusion: 'success',
+    steps: ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff']
+      .map(name => ({ name, status: 'completed', conclusion: 'success' })) };
+  f.answers.set(`repos/${f.inputs.GITHUB_REPOSITORY}/actions/runs/101/attempts/2/jobs?per_page=100&page=1`, { total_count: 1, jobs: [job] });
+  return job;
+}
+
+for (const mutation of ['missing', 'skipped', 'failed', 'ambiguous', 'wrong sha', 'wrong run', 'missing step', 'skipped step', 'self-hosted']) {
+  test(`fast profile discriminator refuses ${mutation} smoke evidence`, { skip: process.platform === 'win32' }, () => withFixture(f => {
+    Object.assign(runRecord(f), { event: 'workflow_dispatch', head_branch: 'master' });
+    const job = fastJobs(f);
+    const jobs = f.answers.get(`repos/${f.inputs.GITHUB_REPOSITORY}/actions/runs/101/attempts/2/jobs?per_page=100&page=1`);
+    if (mutation === 'missing') { jobs.jobs = []; jobs.total_count = 0; }
+    if (mutation === 'skipped') job.conclusion = 'skipped';
+    if (mutation === 'failed') job.conclusion = 'failure';
+    if (mutation === 'ambiguous') { jobs.jobs.push({ ...job }); jobs.total_count++; }
+    if (mutation === 'wrong sha') job.head_sha = 'e'.repeat(40);
+    if (mutation === 'wrong run') job.run_id++;
+    if (mutation === 'missing step') job.steps.pop();
+    if (mutation === 'skipped step') job.steps[0].conclusion = 'skipped';
+    if (mutation === 'self-hosted') job.labels.push('self-hosted');
+    const list = listRecord(f); list.artifacts = [list.artifacts[0]]; list.total_count = 1;
+    assert.throws(() => prepare({ env: f.inputs, read: f.read }));
+    assert.deepEqual(readdirSync(f.temporary), []);
+  }));
+}
+
+test('skipped nightly smoke preserves the exhaustive artifact contract', { skip: process.platform === 'win32' }, () => withFixture(f => {
+  fastJobs(f).conclusion = 'skipped';
+  const result = prepare({ env: f.inputs, read: f.read });
+  assert.equal(result.map.profile, undefined); assert.equal(result.map.lanes.length, 5);
+}));
