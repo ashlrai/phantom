@@ -43,7 +43,7 @@ describe('channel bus mirror deadline', () => {
     // The durable inbox entry and receipt commit landed before the mirror wait began.
     const inbox = readFileSync(inboxPath(root), 'utf8');
     expect(inbox).toContain(message.body);
-    expect(inbox.match(/^## /gm)).toHaveLength(1);
+    expect(inbox.match(/^\d{4}-.* \[src:/gm)).toHaveLength(1);
     let settled = false;
     void first.then(() => { settled = true; });
     await vi.advanceTimersByTimeAsync(99);
@@ -104,7 +104,7 @@ describe('channel bus mirror deadline', () => {
     if (!first.ok || !duplicate.ok) throw new Error('expected successful receipts');
     expect(duplicate.ack.dedupeKey).toBe(first.ack.dedupeKey);
     const inbox = readFileSync(inboxPath(root), 'utf8');
-    expect(inbox.match(/^## /gm)).toHaveLength(1);
+    expect(inbox.match(/^\d{4}-.* \[src:/gm)).toHaveLength(1);
     expect(publish).toHaveBeenCalledTimes(1);
   });
 

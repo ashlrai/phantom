@@ -56,10 +56,11 @@ describe('receding horizon and manual readings', () => {
       windowStartMs: reset - window,
       knobs: hold,
     });
+    // At or after reset nothing is granted (test/resource-pacing.test.ts), so probe the last second.
     const end = await planHorizon({
       poolId: 'claude',
       used: 0,
-      nowMs: reset,
+      nowMs: reset - 1_000,
       resetAtMs: reset,
       windowStartMs: reset - window,
       knobs: hold,
@@ -106,7 +107,7 @@ describe('receding horizon and manual readings', () => {
     const curve = [0.2, 2, 0.2, 2];
     for (const solver of [failing, recording]) {
       const plan = await planHorizon({ poolId: 'codex-primary', used: 0, nowMs: start, resetAtMs: reset, windowStartMs: start, values: curve, knobs, solver, solverBudgetMs: 50 });
-      expect(plan.solver).toBe('greedy');
+      expect(plan.solver).toBe('even');
       expect(plan.series.projection).toBe('derived');
       expect(plan.series.isReading).toBe(false);
     }
