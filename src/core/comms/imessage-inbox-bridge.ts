@@ -9,7 +9,12 @@
  *   imessageChannelMessage(msg)   - pure mapping to channel `imessage`.
  *   ingestIMessages(cfg, deps)    - poll, receipt, advance the cursor.
  *   senderIdFor(handle)           - `imessage:<hash>`; the raw handle never
- *     reaches the inbox, bus or queue.
+ *     reaches the inbox, bus or queue (re-exported from imessage-teammate-inbox).
+ *
+ * An allowlisted sender that is not the verified Mason handle is still counted
+ * (`notMason`) and is now also kept in the local teammate inbox
+ * (imessage-teammate-inbox.ts; `ashlr fleet teammate-texts` lists it). Teammate
+ * texts never reach MASON-INBOX.md, the queue or the bus.
  *
  * What the receiver does for us: dedupe inside CHANNEL_DEDUPE_WINDOW_MS,
  * attribution (source `imessage`), the MASON-INBOX.md entry, and the
@@ -30,7 +35,7 @@
  */
 
 import { sendIMessageOutbox } from './imessage-outbox.js';
-import { createHash } from 'node:crypto';
+import { recordTeammateText, senderIdFor } from './imessage-teammate-inbox.js';
 import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -59,6 +64,8 @@ export interface IMessageIngestResult {
   scanned: number;
   accepted: number;
   notMason: number;
+  /** Allowlisted non-Mason texts recorded to the local teammate inbox. */
+  teammate: number;
   duplicate: number;
   refused: number;
   /** Stopped early on a transient failure; the rest is retried next poll. */
@@ -66,10 +73,7 @@ export interface IMessageIngestResult {
   cursor: number | null;
 }
 
-/** Stable, non-reversible-at-a-glance sender id so handles stay out of stored envelopes. */
-export function senderIdFor(handle: string): string {
-  return `imessage:${createHash('sha256').update(handle.trim().toLowerCase()).digest('hex').slice(0, 16)}`;
-}
+export { senderIdFor };
 
 /** Map one allowlisted chat.db row to a canonical channel message. */
 export function imessageChannelMessage(msg: IntakeMsg): ChannelMessage | null {
@@ -91,7 +95,7 @@ function recordAck(ack: ChannelAck, rowid: number, runsDir: string | undefined, 
 }
 
 export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps = {}): Promise<IMessageIngestResult> {
-  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, duplicate: 0, refused: 0, deferred: false, cursor: null };
+  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, teammate: 0, duplicate: 0, refused: 0, deferred: false, cursor: null };
   try {
     if (cfg.comms?.enabled !== true || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
     if (process.platform !== 'darwin') return { ...result, state: 'unsupported' };
@@ -128,6 +132,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       const message = imessageChannelMessage(msg);
       if (!isVerifiedMasonHandle(msg.handle, cfg)) {
         result.notMason++;
+        if (recordTeammateText(msg, deps.runsDir, now())) result.teammate++;
       } else if (message) {
         current = msg.rowid;
         currentHandle = msg.handle;

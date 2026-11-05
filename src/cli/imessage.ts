@@ -40,7 +40,7 @@ export async function cmdIMessage(args: string[]): Promise<number> {
       if (!cfg) throw new Error('config unreadable');
       if (values.apply) {
         const r = await ingestIMessages(cfg);
-        out({ dryRun: false, ...r }, `iMessage poll: ${r.state}; scanned ${r.scanned}, accepted ${r.accepted}, duplicate ${r.duplicate}, refused ${r.refused}${r.deferred ? ', deferred' : ''}${r.notMason > 0 ? `, not Mason ${r.notMason}` : ''}`);
+        out({ dryRun: false, ...r }, `iMessage poll: ${r.state}; scanned ${r.scanned}, accepted ${r.accepted}, duplicate ${r.duplicate}, refused ${r.refused}${r.deferred ? ', deferred' : ''}${r.notMason > 0 ? `, not Mason ${r.notMason}` : ''}${r.teammate > 0 ? `, teammate ${r.teammate}` : ''}`);
         return r.ok ? 0 : 1;
       }
       // Dry run: read only, cursor untouched, counts only.
