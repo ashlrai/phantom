@@ -1,4 +1,3 @@
-import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { CiResumeInputsError, planCiResumeInputs, type CiResumePlan } from '../core/fleet/ci-resume-inputs.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
@@ -65,7 +64,7 @@ export async function cmdFleetCiResumeInputs(args: string[], deps: { git?: GitRu
 }
 
 async function runStdin(json: boolean, deps: { git?: GitRunner; cwd?: string; getInput?: () => AsyncIterable<Uint8Array> }): Promise<number> {
-  const stream = deps.getInput ?? (() => stdinStream());
+  const stream = deps.getInput ?? (() => process.stdin.iterator({ destroyOnReturn: false }));
   const chunks: Uint8Array[] = [];
   let total = 0;
   for await (const chunk of stream()) {
@@ -80,8 +79,7 @@ async function runStdin(json: boolean, deps: { git?: GitRunner; cwd?: string; ge
     process.stderr.write('ci-resume-inputs: stdin is empty\n');
     return 2;
   }
-  let raw = '';
-  for (const c of chunks) raw += String.fromCharCode(...c);
+  const raw = Buffer.concat(chunks, total).toString('utf8');
   let envelope: unknown;
   try { envelope = JSON.parse(raw); } catch {
     process.stderr.write('ci-resume-inputs: stdin is not valid JSON\n');
@@ -126,15 +124,6 @@ async function runStdin(json: boolean, deps: { git?: GitRunner; cwd?: string; ge
     }
     throw error;
   }
-}
-
-function stdinStream(): AsyncIterable<Uint8Array> {
-  return {
-    async *[Symbol.asyncIterator]() {
-      const rs = createReadStream('stdin');
-      for await (const chunk of rs) yield chunk as Uint8Array;
-    },
-  };
 }
 
 function printText(plan: CiResumePlan): void {
