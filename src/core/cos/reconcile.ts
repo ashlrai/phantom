@@ -7,16 +7,13 @@ import { appendFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readNeedsMason, resolveNeedsMason } from '../fleet/needs-mason-resolve.js';
-import { cosStatus } from './intake.js';
+import { cosApprovalTexts, cosStatus } from './intake.js';
 
 export type CosReconcileVerdict = 'delivered' | 'retry';
 export interface CosReconcileOptions { runsDir?: string; now?: () => number; staleSendingMs?: number }
 export interface CosReconcileResult { id: string; from: 'uncertain' | 'sending'; to: 'sent' | 'cleared' }
 
 const STALE_SENDING_MS = 10 * 60 * 1000;
-// Must equal intake.ts's private approvalText; test/cos-reconcile.test.ts proves it.
-const approvalText = (id: string): string =>
-  `Approve chief-of-staff reply ${id}; inspect with phm cos status ${id} --json`;
 
 export async function reconcileCosDelivery(id: string, verdict: CosReconcileVerdict,
   opts: CosReconcileOptions = {}): Promise<CosReconcileResult> {
@@ -35,7 +32,7 @@ export async function reconcileCosDelivery(id: string, verdict: CosReconcileVerd
   if (verdict === 'delivered') {
     await writeFile(path, JSON.stringify({ state: 'sent' }), { mode: 0o600 });
     try {
-      const item = readNeedsMason({ runsDir }).items.find(item => item.text === approvalText(id));
+      const item = readNeedsMason({ runsDir }).items.find(item => cosApprovalTexts(id).some(text => item.text === text));
       if (item) resolveNeedsMason({ itemId: item.id }, { runsDir, source: 'cli' });
     } catch { /* Delivery is already recorded; needs-you cleanup must never change it. */ }
   } else {

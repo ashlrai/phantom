@@ -168,6 +168,22 @@ Allowlisted apps only, through the desktop adapter, every action logged to the
 feed. A quit with unsaved work goes to needs-you (exit 3). No keystrokes, no
 reading app contents, no TCC changes.
 
+## Drafts
+
+`phm drafts list|show|approve|reject --json` handles outbound mail waiting for
+the owner. Copy and paste these commands; see [DRAFTS](docs/DRAFTS.md):
+
+```sh
+phm drafts list --status pending --json
+phm drafts show d-0123456789abcdef --json
+phm drafts reject d-0123456789abcdef --json
+```
+
+Anything addressed to someone other than the owner's verified channel is a
+draft first. Approve records the decision and does not send; an agent never
+treats an approved draft as send authority. Drafts live in
+`~/.ashlr-runs/drafts/drafts.jsonl` with mode 0600 and never hold credentials.
+
 ## Docs Radar
 
 `phm radar list|run|diff --json` observes public docs and package metadata.
