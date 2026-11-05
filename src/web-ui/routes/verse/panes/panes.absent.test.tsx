@@ -86,10 +86,6 @@ const KNOWN_FAILURES = new Map<string, string>([
   // prefers ApiError.detail, which is the gate's bare { error: 'not found' }).
   ['checks/all-404', 'pane renders only the raw server string "not found" (9 visible chars) — BRIDGE_NOTES.md'],
   ['checks/missing-runs-dir', 'pane renders only the raw server string "not found" (9 visible chars) — BRIDGE_NOTES.md'],
-  // FleetBriefPane interpolates mergesLastHour.count verbatim, printing the
-  // literal "null" in "Merged last hour: null" when the runs payload reports
-  // null (its honest missing-fleet shape).
-  ['fleet-brief/missing-runs-dir', 'shows literal "null" in "Merged last hour: null" — BRIDGE_NOTES.md'],
 ]);
 
 /** Visible text, skipping anything hidden by attribute or computed style (every-pane-sweep's measure). */

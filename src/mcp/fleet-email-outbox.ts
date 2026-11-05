@@ -11,10 +11,10 @@
  * empty outbox. The tool never creates directories, sends, drafts, archives,
  * retries or alters comms configuration.
  */
-import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readEmailDropConfig } from '../core/comms/email-drop-config.js';
+import { probeOutboxDir } from '../core/comms/email-diagnosis.js';
 import { readEmailOutbox, type EmailOutboxEntry, type EmailOutboxListing } from '../core/comms/email-outbox.js';
 
 export const MAX_FLEET_EMAIL_OUTBOX_ENTRIES = 200;
@@ -54,6 +54,7 @@ export interface FleetEmailOutboxDeps {
   /** Email-drop config root; default ~/.ashlr-runs (test seam). */
   runsDir?: string;
   readConfig?: typeof readEmailDropConfig;
+  probeDir?: typeof probeOutboxDir;
   list?: typeof readEmailOutbox;
 }
 
@@ -101,17 +102,24 @@ export async function readFleetEmailOutbox(
   const unavailable = (sourceState: FleetEmailOutboxSourceState, flags: { configEnabled: boolean | null; sendReplies: boolean | null }): FleetEmailOutboxReport =>
     ({ ...base, sourceState, ...flags, counts: null, total: null, returned: null, truncated: null, entries: null });
 
-  const config = await readConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
+  let config: Awaited<ReturnType<typeof readEmailDropConfig>>;
+  try {
+    config = await readConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
+  } catch {
+    return unavailable('invalid-config', { configEnabled: null, sendReplies: null });
+  }
   if (config.state !== 'ok' || !config.config) {
     return unavailable(config.state === 'missing' ? 'missing-config' : 'invalid-config', { configEnabled: null, sendReplies: null });
   }
   const flags = { configEnabled: config.config.enabled ?? true, sendReplies: config.config.sendReplies ?? false };
   const outboxDir = config.config.outboxDir ?? join(config.config.inboxDir, '..', 'outbox');
+  let availability: ReturnType<typeof probeOutboxDir>;
   try {
-    if (!statSync(outboxDir).isDirectory()) return unavailable('unreadable-outbox', flags);
-  } catch (error) {
-    return unavailable((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing-outbox' : 'unreadable-outbox', flags);
+    availability = (deps.probeDir ?? probeOutboxDir)(outboxDir);
+  } catch {
+    return unavailable('unreadable-outbox', flags);
   }
+  if (availability !== 'ok') return unavailable(availability === 'missing' ? 'missing-outbox' : 'unreadable-outbox', flags);
 
   let listing: EmailOutboxListing;
   try {

@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { COMMAND_KEYS, SYSTEM_RESERVED_CHORDS, chordId, chordMatches, parseChord, type KeyChord, type KeyPlatform } from '../shell/command-keys.js';
 
-const ids = ['fleet-inbox', 'fleet-bus', 'fleet-events', 'fleet-host', 'fleet-timeline', 'fleet-brief', 'fleet-supply', 'leader-thread', 'leader-journal'];
+const ids = ['fleet-inbox', 'fleet-bus', 'fleet-events', 'fleet-host', 'fleet-timeline', 'fleet-supply', 'leader-thread', 'leader-journal'];
 
 function eventFor(chord: KeyChord, platform: KeyPlatform) {
   return {
@@ -13,14 +13,13 @@ function eventFor(chord: KeyChord, platform: KeyPlatform) {
   };
 }
 
-it('registers nine distinct, valid shortcuts without conflicts or warnings', async () => {
+it('registers eight distinct, valid shortcuts without conflicts or warnings', async () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   await import('../fleet-inbox/fleet-inbox.pane.js');
   await import('../fleet-bus/fleet-bus.pane.js');
   await import('../fleet-events/fleet-events.pane.js');
   await import('../fleet-host/fleet-host.pane.js');
   await import('../fleet-timeline/fleet-timeline.pane.js');
-  await import('../fleet-brief/fleet-brief.pane.js');
   await import('../fleet-supply/fleet-supply.pane.js');
   await import('../leader-thread/leader-thread.pane.js');
   await import('../leader-journal/leader-journal.pane.js');
