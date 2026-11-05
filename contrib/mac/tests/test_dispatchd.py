@@ -56,6 +56,7 @@ def build(slots=None, lanes_status=None, finishes=(), publishes=(), ready=(), qu
     (q / 'RETIRED').write_text('')
     (q / 'router-queue.md').write_text(queue_md)
     (r / 'HOLD').write_text('')
+    (q / 'BATCH_OFF').write_text('')   # one job per session here; test_batching.py covers RQ-QUEUE-BATCH-1 batches
     return tmp
 
 
