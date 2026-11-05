@@ -11,7 +11,7 @@ import os, re, json, time, fcntl, subprocess, glob, math
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 NOW = time.time(); TS = time.strftime("%F %T")
-MAX_LAUNCH_PER_TICK = 4; MAX_REAPS = 6; GRACE = 120; RAISE_GAP = 120
+MAX_LAUNCH_PER_TICK = 4; GRACE = 120; RAISE_GAP = 120
 LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"]   # tie-break order: cmp first
 # hard_cap (RQ-LOADGATE-1): per-pool absolute bound, seeded to the ceiling so nothing changes until an operator lowers it in
 # slots.json. Neither the floor, the autopilot overrides, the +2 ramp nor a stored target may exceed it. GLOBAL_HARD_CAP is the
@@ -415,7 +415,8 @@ pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
-ps = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+ps_result = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True)
+ps = ps_result.stdout
 for line in ps.splitlines():
     if "dispatchd.py" in line: continue
     m = pat_pb.search(line)
@@ -436,6 +437,7 @@ for j in cwdjobs:
     b = rd("%s/%s.base" % (R, j)).split()
     if len(b) >= 4 and b[3] in ("claude", "claude-api"): alive.add(j)
 reaping = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
+publish_processes = set(publishing)   # a publisher may remove .base before its final auto-merge call
 publishing = {j for j in publishing if os.path.exists("%s/%s.base" % (R, j))}
 alive -= (reaping | publishing)   # publish.sh children run inside the worktree
 for p in glob.glob(RUN + "/*.dispatched"):   # launch grace (fetch/worktree add before agent starts)
@@ -456,6 +458,9 @@ for p in glob.glob(RUN + "/*.dispatched"):
     j = os.path.basename(p)[:-11]
     if j in alive: continue
     out = rd("%s/%s.launch" % (R, j))
+    if (ps_result.returncode and j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j)
+            and not re.search(r"^(PAUSED|HELD|SKIPPED):", out, re.M)):
+        alive.add(j); continue   # unknown liveness during a long fetch, even before .base exists
     if "launched " in out: os.remove(p); continue
     if re.search(r"^(PAUSED|HELD)", out, re.M):
         ln = rd(RUN + "/" + j + ".line").strip()
@@ -469,6 +474,12 @@ for p in glob.glob(RUN + "/*.dispatched"):
 
 # ---- (a) reap
 running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
+# A new marker covers the spawn-to-ps race. Old orphan markers still protect
+# their own job, but must not stop every other publisher forever.
+def _reap_starting(j):
+    try: return NOW - os.path.getmtime(RUN + "/" + j + ".reaping") < GRACE
+    except FileNotFoundError: return False   # the publisher completed after the process snapshot
+publish_busy = bool(publish_processes) or any(_reap_starting(j) for j in reaping) or bool(reaping and ps_result.returncode)
 def _is_local_mid(j): return (rd(RUN + "/" + j + ".line").split("\t") + ["", "", "", ""])[3].strip() == "mid"
 # PUBLISH_DRIP (Masbot 22:30 Oct 26): pace pushes after the Actions stall; LAND/FIXUP first, <=10 per 5 min, none while queued runs >= 150
 DRIP = os.path.exists(R + "/PUBLISH_DRIP"); DRIPLOG = RUN + "/publish-drip.tsv"; drip_budget = 10**6
@@ -478,9 +489,46 @@ if DRIP:
     try: drecent = [float(x) for x in rd(DRIPLOG).split() if NOW - float(x) < 300]
     except Exception: drecent = []
     drip_budget = 0 if dq >= 150 else max(0, 10 - len(drecent))
-def _prio(bp):   # 11.1-DESK: REL 0, DESK 1, LAND/FIXUP/RECUT 2, rest 3
+REPO_RANK = {r: i for i, r in enumerate(("phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-stack", "ashlr-plugin"))}
+PRIORITY_QUEUE = rd(Q + "/router-queue.md"); _sizes = {}
+def _bucket(j):
+    return (0 if j.startswith("RQ-FIX-MAIN-") else 1 if j.startswith("RQ-REL-") else
+            2 if j.startswith("RQ-DESK-") else 3 if _kind(j, ("LAND", "FIXUP", "RECUT")) else 4)
+def _job_repo(j):
+    f = rd(RUN + "/" + j + ".line").strip().split("\t")
+    b = base(j)
+    return f[1] if len(f) >= 2 and f[1] else b[1] if b else ""
+def _size_hint(j, prompt=None):
+    key = (j, prompt)
+    if key not in _sizes:
+        # Only the task envelope supplies size, never a number mentioned in task prose.
+        envelope = re.escape(j) + r"(?: r\d+)? \(([^)\n]*)\):"
+        m = re.search(r"(?m)^- [A-Z][A-Z-]* (?:[A-Za-z0-9._:@/-]+ )*?" + envelope, PRIORITY_QUEUE)
+        if not m:
+            # Saved .line paths are metadata, so keep reads inside the prompt directory.
+            if not prompt or not os.path.realpath(prompt).startswith(Q + "/prompts/"):
+                prompt = Q + "/prompts/" + j + ".md"
+            m = re.search(r"(?m)^" + envelope, rd(prompt) or rd(R + "/" + j + ".prompt"))
+        hint = re.search(r"(?:^|[,;\s])size<=([0-9]+)(?=[,;\s]|$)", m.group(1)) if m else None
+        try: _sizes[key] = int(hint.group(1)) if hint else math.inf
+        except ValueError: _sizes[key] = math.inf
+    return _sizes[key]
+def _job_priority(j, repo, path, prompt=None): return (_bucket(j), REPO_RANK.get(repo, 9), _size_hint(j, prompt), path)
+def _prio(bp):
     j = os.path.basename(bp)[:-5]
-    return (0 if j.startswith("RQ-REL-") else 1 if j.startswith("RQ-DESK-") else 2 if re.match(r"(LAND|FIXUP|RECUT|RQ-FIXUP|RQ-LAND)", j) else 3, bp)
+    f = rd(RUN + "/" + j + ".line").strip().split("\t")
+    return _job_priority(j, _job_repo(j), bp, f[4] if len(f) >= 5 else None)
+
+# A launch can still be fetching before its .base exists. Include the grace set,
+# but release the repo as soon as the worker has an explicit terminal outcome.
+fix_main_repos = {_job_repo(j) for j in alive if j.startswith("RQ-FIX-MAIN-")
+                  and _rc(j) is None and not result(j)}
+if ps_result.returncode:
+    # An unavailable process snapshot is not proof that a worker finished.
+    # Hold only sibling fixes until liveness recovers or completion is explicit.
+    for bp in glob.glob(R + "/RQ-FIX-MAIN-*.base"):
+        j = os.path.basename(bp)[:-5]
+        if _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
 LANDONLY_PREFIXES = ("RQ-DESK-",)   # fixed strings in code; never read from the file
 def _landonly_ids():   # exact tokens only (whitespace-split, as before); tokens that are not valid job ids are ignored
     return {t for t in rd(R + "/PUBLISH_LANDONLY").split() if JID.match(t)}
@@ -497,6 +545,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
     if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+        if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
@@ -510,8 +559,12 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
                 else "KEPT %s worktree kept for supervisor") % j)
         continue
     if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
-    if os.path.exists(R + "/PUBLISH_LANDONLY") and _prio(bp)[0] > 2 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # Masbot 23:45 Oct 26: merge-rate first; only REL/LAND/FIXUP/RECUT, G1-passed and listed jobs publish
-    if nreap >= MAX_REAPS or over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
+    if os.path.exists(R + "/PUBLISH_LANDONLY") and _bucket(j) > 3 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # merge-rate first; only priority buckets, G1-passed and listed jobs publish
+    # reap-one.sh owns publish.sh and must wait through auto-merge enablement.
+    # Wait for its complete handoff before starting the next publisher;
+    # concurrent children can reorder merge-queue entry regardless of spawn order.
+    if publish_busy: continue
+    if over_budget(): continue   # RQ-TICK-BUDGET: later reaps wait one tick
     if _ph_drip_hold(j):
         mk = RUN + "/" + j + ".phdrip"
         if not os.path.exists(mk): open(mk, "w").close(); ev("PHANTOM_DRIP hold %s open_prs=%s" % (j, _ph_open_prs()))
@@ -519,7 +572,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
     if DRIP:
         if drip_budget <= 0: continue
         drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
-    os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1
+    os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
     try:
         lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
         st_ = _run(["git", "-C", wt, "diff", "--shortstat", b[0]], 30).stdout
@@ -803,12 +856,7 @@ _pw = jload(Q + "/admission.json", {}).get("warnings") or []
 if GATE["warnings"] and _pw != GATE["warnings"]: ev("LOADGATE warn (non-tripping): " + "; ".join(GATE["warnings"]))
 if disk_hard_stop: ev("DISKGUARD hard_stop %.0fG < %.0fG, no launches" % (disk_free_gb, DISK_HARD_STOP_GB))
 if not pause and not disk_hard_stop and not GATE["tripped"]:
-    # Continue round-robin across ticks too: the claim cap can be smaller than
-    # the number of eligible lanes. A fixed starting lane starves the tail.
-    cursor = jload(Q + "/claim-cursor.json", {}).get("lane")
-    start = (LANES.index(cursor) + 1) % len(LANES) if cursor in LANES else 0
-    lane_order = LANES[start:] + LANES[:start]
-    cand = {l: [] for l in LANES}
+    cand = []
     for l in lines:
         f = l.split("\t")
         ok = (len(f) >= 5 and JID.match(f[0]) and f[2] in LANES and f[3] in TIERS
@@ -816,15 +864,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
               and os.path.realpath(f[4]).startswith(Q + "/prompts/") and os.path.isfile(f[4]))
         if not ok:
             rest.append(l); bad += 1; continue
-        cand[f[2]].append(f)
-    def candidates():
-        while any(cand.values()):
-            for ln in lane_order:
-                while cand[ln]:
-                    before = len(launched)
-                    yield cand[ln].pop(0)
-                    # A blocked head must not consume this lane's turn.
-                    if len(launched) > before: break
+        cand.append(f)
+    # The key is global across pools; blocked jobs are retained below while
+    # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
+    cand.sort(key=lambda f: _job_priority(f[0], f[1], f[4], f[4]))
     seen = set(); pc_n = 0; local_ok = None
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -842,7 +885,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if j in retired_ids: return "listed in queue/RETIRED"
         if re.search(r"^- RETIRED (?:\S+ )*?%s[ \[(]" % re.escape(j), rq, re.M): return "RETIRED in router-queue.md"
         return None
-    for f in candidates():
+    for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         s = slots[lane]; res = result(j)
         if j in seen: continue  # duplicate line
@@ -855,6 +898,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if disk_reuse_only and not _kind(j, REUSE_KINDS):
             mk = RUN + "/" + j + ".diskguard"
             if not os.path.exists(mk): open(mk, "w").close(); ev("DISKGUARD defer %s %dG" % (j, disk_free_gb))
+            rest.append(line); seen.add(j); continue
+        if j.startswith("RQ-FIX-MAIN-") and repo in fix_main_repos:
             rest.append(line); seen.add(j); continue
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
@@ -908,7 +953,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         subprocess.Popen(launch_cmd + [j, repo, lane, tier], stdin=open(pf),
                          stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
                          env=env, start_new_session=True, cwd=H)
-        jsave(Q + "/claim-cursor.json", {"lane": lane})
+        if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
         mj = jload(R + "/models.json", {}); model = mj.get(fam + "." + tier) or mj.get(fam)
         metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap})
