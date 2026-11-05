@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { OUTBOX_KIND_LABEL } from '../../../../core/fleet/outbox-kind.js';
 import { VERSE_FLEET_RUNS_PATH } from '../../../../core/verse/fleet-runs-types.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { hasMutationHold } from '../../../data/auth-store.js';
@@ -55,6 +56,7 @@ function LineView({ line }: { line: MergedLine }) {
         <span className={leaderStyles.avatar} data-from={line.who} aria-hidden="true">{leader ? 'L' : 'M'}</span>
         <span className={leaderStyles.who}>{leader ? 'Leader' : 'You'}</span>
         {leader && channel ? <ChannelBadge channel={channel} /> : <span className={leaderStyles.channel} data-channel={channel ?? undefined} title={`Sent via ${label}`}>{label}</span>}
+        {line.kind ? <span className={leaderStyles.channel}>{OUTBOX_KIND_LABEL[line.kind]}</span> : null}
         {!leader && line.ack ? <span className={leaderStyles.channel} data-ack={line.ack.state}>{line.ack.text}</span> : null}
         <time className={leaderStyles.time} dateTime={iso ?? undefined} title={iso ? new Date(line.at).toLocaleString('en-US') : 'Time unknown'}>{clock}</time>
       </header>
@@ -104,6 +106,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const logRef = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
   const inFlight = useRef(false);
+  const [needsYouOnly, setNeedsYouOnly] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -131,6 +134,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     const out: ({ type: 'day'; key: string; label: string } | { type: 'line'; key: string; line: MergedLine } | { type: 'bus'; key: string; row: BusReply })[] = [];
     let day = '';
     for (const item of mergeByTime([...merged.lines, ...merged.undated], busRows)) {
+      if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && item.line.ack?.state === 'waiting')))) continue;
       const at = item.type === 'line' ? item.line.at : Date.parse(item.row.at);
       if (Number.isFinite(at)) {
         const d = new Date(at);
@@ -143,7 +147,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       out.push(item.type === 'line' ? { ...item, key: item.line.id } : { ...item, key: item.row.key });
     }
     return out;
-  }, [merged, busRows, now]);
+  }, [merged, busRows, now, needsYouOnly]);
 
   const lastKey = items.length ? items[items.length - 1]!.key : null;
   const forcedAt = useRef(scrollVersion);
@@ -209,7 +213,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     body = <p className={leaderStyles.placeholder} aria-busy="true">Reading the conversation…</p>;
   } else if (empty) {
     body = <p className={leaderStyles.placeholder} data-tone={threadMissing ? 'unknown' : undefined}>
-      {threadMissing ? (read!.reason ?? 'The Leader conversation did not answer.') : 'No conversation or interjections yet — reply below or post to the inbox from any channel.'}
+      {needsYouOnly ? 'Nothing needs you right now.' : threadMissing ? (read!.reason ?? 'The Leader conversation did not answer.') : 'No conversation or interjections yet — reply below or post to the inbox from any channel.'}
     </p>;
   } else {
     body = items.map(item => item.type === 'day'
@@ -220,6 +224,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   return <div className={styles.root}>
     <ActionStatus actions={actions} />
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
+    <header><button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button></header>
     <p className={styles.note}>{busRows.length} bus replies</p>
     {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
