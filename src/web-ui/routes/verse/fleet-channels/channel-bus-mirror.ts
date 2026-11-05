@@ -12,6 +12,9 @@ const busChannels: Record<string, ChannelKey | undefined> = {
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
+// imessage texts stay local per src/core/comms/imessage-inbox-bridge.ts (RQ-IMSGBUSLOCAL20).
+const LOCAL_ONLY: ReadonlySet<ChannelKey> = new Set(['imessage']);
+
 export function mirrorByChannel(inboxEntries: readonly unknown[], receipts: readonly AgentBusReceipt[], nowMs: number, windowMs = 3_600_000): Map<ChannelKey, ChannelMirror> {
   const counts = new Map<ChannelKey, { inbox: number; mirrored: number }>(KNOWN_CHANNELS.map(key => [key, { inbox: 0, mirrored: 0 }]));
   const withinWindow = (at: number) => Number.isFinite(at) && at <= nowMs && at >= nowMs - windowMs;
@@ -29,9 +32,13 @@ export function mirrorByChannel(inboxEntries: readonly unknown[], receipts: read
   for (const receipt of receipts) {
     const body = record(receipt.envelope.body);
     const key = typeof body.channel === 'string' && Object.hasOwn(busChannels, body.channel) ? busChannels[body.channel] : undefined;
+    if (key && LOCAL_ONLY.has(key)) continue;
     if (receipt.envelope.from === 'mason' && body.kind === 'interjection' && key && withinWindow(receipt.receivedAt)) countFor(key).mirrored++;
   }
   return new Map([...counts].map(([key, { inbox, mirrored }]) => {
+    if (LOCAL_ONLY.has(key)) {
+      return [key, { inbox, mirrored: 0, tone: 'none', text: `kept local: ${inbox} in the last hour, not mirrored to the bus` }];
+    }
     const tone: MirrorTone = inbox === 0 && mirrored === 0 ? 'none' : inbox > 0 && mirrored === 0 ? 'warn' : 'ok';
     return [key, { inbox, mirrored, tone, text: `mirrored ${mirrored} of ${inbox} in the last hour` }];
   }));
