@@ -43,6 +43,11 @@ import { HARNESS_CONFIG_BOUNDS } from '../src/core/learn/harness-registry.js';
 import { buildOpenAICompatibleClient } from '../src/core/run/provider-client.js';
 import type { AshlrConfig, EngineCommand, EngineId } from '../src/core/types.js';
 
+// Host admission is covered separately; these tests exercise the spawned argv.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: () => ({ allowed: true, reading: null, reason: null }),
+}));
+
 const CFG = { foundry: {} } as unknown as AshlrConfig;
 
 function harness(over: Partial<DispatchHarness> = {}): DispatchHarness {

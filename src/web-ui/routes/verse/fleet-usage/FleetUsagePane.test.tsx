@@ -73,7 +73,8 @@ it('renders meters per reported window, flags limits, shows reasons, codex perso
   expect(await screen.findByText('Claude Max')).toBeInTheDocument();
 
   // Provider order — Claude, Codex, Grok — then the fleet snapshot's own figure.
-  const text = container.textContent ?? '';
+  // Scoped to the rows: the spend-down strip above them also names accounts.
+  const text = screen.getByRole('list', { name: 'Provider usage' }).textContent ?? '';
   for (const [a, b] of [['Claude Max', 'Codex Team'], ['Codex Team', 'Grok'], ['Grok', 'Codex personal']]) {
     expect(text.indexOf(a), `${a} before ${b}`).toBeLessThan(text.indexOf(b));
   }
