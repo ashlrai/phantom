@@ -41,7 +41,9 @@ export interface JobHistoryBatchResult {
  * (missing git, missing ref, unreadable object store) propagate as errors,
  * never as fabricated empty history.
  */
-export async function jobHistoryBatch(jobIds: string[], limit: number, run: Git = git): Promise<JobHistoryBatchResult> {
+export async function jobHistoryBatch(
+  jobIds: string[], limit: number, run: Git = git, options: { at?: string } = {},
+): Promise<JobHistoryBatchResult> {
   if (!Array.isArray(jobIds) || jobIds.length < 1 || jobIds.length > JOB_BATCH_MAX
     || !Number.isInteger(limit) || limit < 1 || limit > JOB_LIMIT_MAX) {
     throw new Error('invalid job history batch arguments');
@@ -50,8 +52,16 @@ export async function jobHistoryBatch(jobIds: string[], limit: number, run: Git 
   if (wanted.size !== jobIds.length || !jobIds.every(id => typeof id === 'string' && validJobId(id))) {
     throw new Error('invalid job history batch arguments');
   }
-  const resolvedRef = (await run(['rev-parse', '--verify', `${JOB_HISTORY_REF}^{commit}`])).trim();
-  if (!/^[0-9a-f]{40,64}$/.test(resolvedRef)) throw new Error(`unable to resolve ${JOB_HISTORY_REF}`);
+  const at = options.at;
+  if (at !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(at)) throw new Error('invalid snapshot OID');
+  const master = (await run(['rev-parse', '--verify', `${JOB_HISTORY_REF}^{commit}`])).trim();
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(master)) throw new Error(`unable to resolve ${JOB_HISTORY_REF}`);
+  let resolvedRef = master;
+  if (at !== undefined) {
+    resolvedRef = (await run(['rev-parse', '--verify', `${at}^{commit}`])).trim();
+    if (resolvedRef !== at.toLowerCase()) throw new Error('snapshot must identify a commit');
+    await run(['merge-base', '--is-ancestor', resolvedRef, master]);
+  }
   const output = await run(['log', `-n${JOB_SCAN_BOUND}`, '--format=%H%x00%cI%x00%s%x00', resolvedRef, '--']);
   const fields = output.split('\0');
   const matches = new Map<string, number>(jobIds.map(id => [id, 0]));
