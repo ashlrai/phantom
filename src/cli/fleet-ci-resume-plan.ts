@@ -1,9 +1,10 @@
 import { open } from 'node:fs/promises';
 import { CiResumeInputsError, parseCiResumeManifest, planCiResumeInputs } from '../core/fleet/ci-resume-inputs.js';
+import { artifactNameField, discoverCiReceiptPrior } from '../core/fleet/ci-receipt-discovery.js';
 import { fetchCiResumeReceipts } from '../core/fleet/ci-resume-receipts.js';
 import type { GitRunner } from '../core/verse/git-ops.js';
 
-const USAGE = 'usage: ashlr fleet ci-resume-plan --repo owner/name --run ID --attempt N --artifact-id ID --manifest file.json --base HEX --head HEX [--archive file.zip] [--json]';
+const USAGE = 'usage: ashlr fleet ci-resume-plan --repo owner/name --run ID --attempt N (--artifact-id ID | --artifact-name NAME) --manifest file.json --base HEX --head HEX [--archive file.zip] [--json]';
 const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const REV = /^[0-9a-f]{4,64}$/i;
 const MAX_BYTES = 1024 * 1024;
@@ -12,25 +13,31 @@ const id = (v: string | undefined): number | null =>
 
 /** Fetch bound evidence and produce an advisory plan; never acts on CI. */
 export async function cmdFleetCiResumePlan(args: string[], deps: { gh?: GitRunner; git?: GitRunner; cwd?: string } = {}): Promise<number> {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(`${USAGE}\nAdvisory only; this does not authorize CI reuse.`); return 0; }
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(`${USAGE}\nExactly one artifact selector is required; --archive requires --artifact-id.\nAdvisory only; this does not authorize CI reuse.`); return 0; }
   const values = new Map<string, string>();
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) { json = true; continue; }
-    if (!['--repo', '--run', '--attempt', '--artifact-id', '--manifest', '--base', '--head', '--archive'].includes(arg)
+    if (!['--repo', '--run', '--attempt', '--artifact-id', '--artifact-name', '--manifest', '--base', '--head', '--archive'].includes(arg)
       || values.has(arg) || !args[i + 1] || args[i + 1]!.startsWith('-')) {
       process.stderr.write(`${USAGE}\n`); return 2;
     }
     values.set(arg, args[++i]!);
   }
   const repo = values.get('--repo') ?? ''; const run = id(values.get('--run')); const attempt = id(values.get('--attempt'));
-  const artifactId = id(values.get('--artifact-id')); const manifestFile = values.get('--manifest');
+  const artifactId = id(values.get('--artifact-id')); const artifactName = artifactNameField(values.get('--artifact-name'));
+  const manifestFile = values.get('--manifest');
   const base = values.get('--base') ?? ''; const head = values.get('--head') ?? ''; const archive = values.get('--archive');
   if (!REPO.test(repo) || repo.split('/')[0]!.endsWith('-') || repo.split('/')[0]!.includes('--')
-    || repo.endsWith('/.') || repo.endsWith('/..') || run === null || attempt === null || artifactId === null
+    || repo.endsWith('/.') || repo.endsWith('/..') || run === null || attempt === null
+    || values.has('--artifact-id') === values.has('--artifact-name')
+    || (values.has('--artifact-id') && artifactId === null) || (values.has('--artifact-name') && artifactName === null)
     || !manifestFile || !REV.test(base) || !REV.test(head)) {
     process.stderr.write(`Invalid arguments. ${USAGE}\n`); return 2;
+  }
+  if (artifactName !== null && archive !== undefined) {
+    process.stderr.write('ci-resume-plan: --archive requires --artifact-id; it cannot be used with --artifact-name\n'); return 2;
   }
   try {
     // Read at most one byte beyond the limit even if the file grows during the read.
@@ -52,7 +59,9 @@ export async function cmdFleetCiResumePlan(args: string[], deps: { gh?: GitRunne
     try { value = JSON.parse(raw.toString('utf8')); } catch { throw new CiResumeInputsError('manifest file cannot be read as JSON'); }
     const manifest = parseCiResumeManifest(value);
     if (manifest.repo.toLowerCase() !== repo.toLowerCase()) throw new CiResumeInputsError('manifest repo does not match the requested repository');
-    const { prior, diagnostics } = await fetchCiResumeReceipts({ repo, run, attempt, artifactId, ...(archive !== undefined ? { archive } : {}), gh: deps.gh });
+    const { prior, diagnostics } = artifactName !== null
+      ? await discoverCiReceiptPrior({ repo, run, attempt, artifactName, gh: deps.gh })
+      : await fetchCiResumeReceipts({ repo, run, attempt, artifactId: artifactId!, ...(archive !== undefined ? { archive } : {}), gh: deps.gh });
     if (prior.repo.toLowerCase() !== manifest.repo.toLowerCase()) throw new CiResumeInputsError('receipts repo does not match manifest');
     const plan = await planCiResumeInputs({ manifest: value, prior, base, head, cwd: deps.cwd ?? process.cwd(), git: deps.git });
     for (const line of diagnostics) process.stderr.write(`ci-resume-plan: ${line}\n`);
