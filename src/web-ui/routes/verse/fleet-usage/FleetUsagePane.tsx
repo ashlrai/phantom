@@ -40,6 +40,7 @@ import {
   type UsageRow,
   type UsageWindowRow,
 } from './usage-pane-model.js';
+import { spendDown, type SpendDownItem } from './spend-down-model.js';
 import styles from './fleet-usage.module.css';
 
 const ACCOUNTS_POLL_MS = 60_000;
@@ -51,6 +52,20 @@ const STATE_FALLBACK: Record<UsageRow['state'], string> = {
   'signed-out': 'signed out',
   unavailable: 'unavailable',
 };
+
+const SPEND_DOWN_MAX_SHOWN = 4;
+
+/** One strip above the account rows: windows that will reset with usage unspent, or one muted all-clear line. */
+function SpendDownStrip({ items, nowMs }: { items: SpendDownItem[]; nowMs: number }) {
+  if (items.length === 0) return null;
+  const risks = items.filter((item) => item.level === 'waste-risk');
+  if (risks.length === 0) return <p className={styles.message}>All measured windows are on track to be used.</p>;
+  const shown = risks.slice(0, SPEND_DOWN_MAX_SHOWN).map(
+    (item) => `${item.accountLabel} (${item.windowLabel}) ${usedPercentText(item.leftPercent)} left, ${formatReset(item.resetsAt, nowMs)}`,
+  );
+  if (risks.length > shown.length) shown.push(`+${risks.length - shown.length} more`);
+  return <p className={styles.spendDown} role="status">Spend before reset: {shown.join(' · ')}</p>;
+}
 
 const toneFor = (pct: number | null): 'ok' | 'warn' | 'danger' =>
   pct !== null && pct >= 90 ? 'danger' : pct !== null && pct >= 70 ? 'warn' : 'ok';
@@ -206,10 +221,11 @@ export function FleetUsagePane({ visible }: PaneProps) {
   const read = accountsRead.data;
   const snapshot = useMemo(() => (read?.available ? projectAccountsSnapshot(read.raw) : null), [read]);
   const rows = useMemo(() => rowsFromAccounts(snapshot), [snapshot]);
+  const nowMs = Date.now();
+  const spend = useMemo(() => spendDown(rows, nowMs), [rows, nowMs]);
   const personal = useMemo(() => codexPersonalRow(runsRead.data ?? null), [runsRead.data]);
   const lanes = useMemo(() => laneTokens(runsRead.data ?? null), [runsRead.data]);
   const degraded = useMemo(() => degradedSources(runsRead.data ?? null), [runsRead.data]);
-  const nowMs = Date.now();
   const runs = runsRead.data && typeof runsRead.data === 'object' && !Array.isArray(runsRead.data)
     ? runsRead.data as Record<string, unknown> : null;
   const disagreement = personalDisagreement(rows, personal, personalCodexAccount(snapshot?.accounts ?? [])?.observedAt ?? null, nowMs);
@@ -234,6 +250,8 @@ export function FleetUsagePane({ visible }: PaneProps) {
       {read?.available && snapshot === null && (
         <p className={styles.notice} role="status">Provider accounts answered in a shape this build cannot read.</p>
       )}
+
+      <SpendDownStrip items={spend} nowMs={nowMs} />
 
       {(rows.length > 0 || personal !== null) && (
         <ul className={styles.rows} aria-label="Provider usage">

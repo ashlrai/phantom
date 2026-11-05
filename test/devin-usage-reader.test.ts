@@ -118,7 +118,7 @@ describe('Devin usage cache and fleet resource integration', () => {
       callback(null, reading, token());
     });
     const log = vi.spyOn(console, 'log'); const warn = vi.spyOn(console, 'warn');
-    const result = await createDevinUsageReader()();
+    const result = await createDevinUsageReader({ now: () => NOW })();
     expect('pool' in result && result.pool).toBe('devin');
     const [command, args, options] = exec.mock.calls.at(-1)!;
     expect(command).toBe('phantom');

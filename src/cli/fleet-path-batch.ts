@@ -28,6 +28,15 @@ async function readInput(input: AsyncIterable<string | Uint8Array>): Promise<str
   return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
 }
 
+// True for C0 controls, DEL and backslash. Written as a char-code scan so no control-character regex is needed.
+function hasControlOrBackslash(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code === 0x5c) return true;
+  }
+  return false;
+}
+
 function parsePaths(input: string): string[] {
   // A single-member object also rejects duplicate keys, which JSON.parse discards.
   const string = '"(?:[^"\\\\\\x00-\\x1f]|\\\\(?:["\\\\/bfnrt]|u[0-9a-fA-F]{4}))*"';
@@ -38,7 +47,7 @@ function parsePaths(input: string): string[] {
   const paths = (value as { paths: string[] }).paths;
   if (!paths.length || paths.length > 20 || new Set(paths).size !== paths.length) throw new Error('invalid paths');
   for (const path of paths) {
-    if (!path || /[\x00-\x1f\x7f\\]/.test(path) || path.startsWith('/') || /^[A-Za-z]:/.test(path) || path.split('/').some(part => part === '..' || part === '.' || !part)) throw new Error('invalid path');
+    if (!path || hasControlOrBackslash(path) || path.startsWith('/') || /^[A-Za-z]:/.test(path) || path.split('/').some(part => part === '..' || part === '.' || !part)) throw new Error('invalid path');
   }
   return paths;
 }

@@ -343,6 +343,7 @@ export function ThreadRows({ rows, ctx }: { rows: readonly ThreadRow[]; ctx: Thr
               <time className={styles.time} dateTime={row.at} title={new Date(row.at).toLocaleString('en-US')}>
                 {clockTime(row.at)}
               </time>
+              {!leader && row.channel !== 'verse' ? <span className={styles.time}>via {CHANNEL_LABEL[row.channel]}</span> : null}
             </header>
             <div className={styles.groupBody}>
               {row.entries.map((e) => (

@@ -51,6 +51,9 @@ export interface NodeView {
   caps: string[];
   usage: number;
   auth: NodeAuth;
+  heartbeatAt: number;
+  expiresAt: number;
+  lanes: string[];
 }
 
 export interface Pulled {
@@ -226,7 +229,8 @@ export class DriveNodes implements QueueV1 {
       owners: [...scope],
       nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
         .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], usage: n.usage ?? 0, auth: n.auth ?? 'unknown' }))
+          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c)),
+          heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? 0, auth: n.auth ?? 'unknown' }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
       jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => this.jobView(j)),
       routes: planRoutes(state, now).filter(a => scope.has(a.owner)),

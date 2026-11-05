@@ -144,8 +144,8 @@ lane-owned CODEX_HOME under `~/.ashlr-runs`, never `~/.codex`.
 
 ## Chief-of-staff intake
 
-See [docs/COS.md](docs/COS.md) for `phm cos ask "Prepare a weekly project brief" --channel cli --json`
-and `phm cos status <id> --json`. The handler is implemented; top-level CLI and
+See [docs/COS.md](docs/COS.md) for the planned chief-of-staff ask and status commands.
+The handler is implemented; top-level CLI and
 desktop custom-sink registration require an explicit named-file scope extension.
 Intake jobs use `phm queue`; `done --result <text> --json` drafts the reply and
 surfaces a needs-you item. Outbound results require explicit approval of the
@@ -168,6 +168,22 @@ Allowlisted apps only, through the desktop adapter, every action logged to the
 feed. A quit with unsaved work goes to needs-you (exit 3). No keystrokes, no
 reading app contents, no TCC changes.
 
+## Drafts
+
+`phm drafts list|show|approve|reject --json` handles outbound mail waiting for
+the owner. Copy and paste these commands; see [DRAFTS](docs/DRAFTS.md):
+
+```sh
+phm drafts list --status pending --json
+phm drafts show d-0123456789abcdef --json
+phm drafts reject d-0123456789abcdef --json
+```
+
+Anything addressed to someone other than the owner's verified channel is a
+draft first. Approve records the decision and does not send; an agent never
+treats an approved draft as send authority. Drafts live in
+`~/.ashlr-runs/drafts/drafts.jsonl` with mode 0600 and never hold credentials.
+
 ## Docs Radar
 
 `phm radar list|run|diff --json` observes public docs and package metadata.
@@ -187,6 +203,20 @@ Individual fetch failures are warnings and retain the last successful snapshot.
 
 ## Release autonomy audit
 
-The release autonomy command is awaiting top-level CLI wiring. Once wired, `phm release autonomy --json` reads the enrolled repositories' release gates and the local publish switch. Use `phm release autonomy --repo locus --md` for a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
+The release autonomy command is awaiting top-level CLI wiring. Once wired, it will read the enrolled repositories' release gates and the local publish switch and offer a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
 
 Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
+
+## Multi-Mac node pool
+
+Use explicit team SSH aliases and local provider sign-in, never copied auth.
+`phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json`
+configures the roles; `phm node join --node secondary --owner mason --primary primary-mac --backup backup-mac --json`
+registers a worker. `phm node watch [--once] --json` maintains primary heartbeat or
+checks backup promotion. `phm node worker --runner /absolute/host-owned-runner --json`
+runs one claimed job. `phm node list --json` and `phm node status --json` expose
+lanes, load and heartbeat. `phm node rpc --json` is the fixed SSH stdin endpoint.
+The backup witnesses every admission; after 15 minutes without heartbeat it takes
+over and fences the returning primary. Publication remains primary-only. No
+production dispatchd cutover or runner installation is performed. See
+[Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
