@@ -29,7 +29,7 @@ const parseArgs = (args: string[]): { dir: string; rest: string[] } | null => {
 export async function cmdFriction(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const emit = (v: unknown) => console.log(JSON.stringify(v, null, json ? 2 : undefined));
-  if (args.length === 1 && ['--help', '-h', 'help'].includes(args[0]!)) { console.log(USAGE); return 0; }
+  if (args.includes('--help') || args.includes('-h') || (args.length === 1 && args[0] === 'help')) { console.log(USAGE); return 0; }
   const parsed = parseArgs(args);
   if (!parsed) { console.error(USAGE); return 2; }
   const { dir, rest } = parsed;
