@@ -144,6 +144,82 @@ activation are separate verified operations. Neither this guide nor a version
 bump claims `phm.dev` was deployed. The legacy static site at `verse.ashlr.ai`
 is a separate surface.
 
+## Finalize a stocked Phantom draft
+
+The [stable finalizer](../.github/workflows/finalize-github-release.yml) accepts
+an exact Phantom version and a successful canonical npm run/attempt. It only
+publishes an existing draft after checking nonempty notes, the complete signed
+seven-asset desktop set, source identity and provenance. It neither creates a
+release nor uploads assets or changes npm. The normal sanctioned
+[`publish-desktop-release.mjs`](../scripts/publish-desktop-release.mjs) procedure
+already uploads and publishes; use this workflow for a complete draft left
+before that publisher's publication step. A public release is refused.
+
+[CONTRACT-M523](contracts/CONTRACT-M523.md) defines the evidence and authority.
+The inputs are `version`, `publish_run_id`, `publish_run_attempt`,
+`candidate_sha`, `candidate_integrity` and `confirm_stable_finalization`.
+The protected `github-stable-release-finalization` environment remains required.
+The preflight receipt expires after one hour; redispatch for fresh verification
+if approval is delayed beyond that window.
+For a reviewed, complete draft, set these shell variables to its actual
+verified evidence, then dispatch from the repository root:
+
+```sh
+jq -n --arg version "$version" \
+  --arg run "$publish_run_id" --arg attempt "$publish_run_attempt" \
+  --arg sha "$candidate_sha" --arg integrity "$candidate_integrity" \
+  '{version:$version, publish_run_id:$run, publish_run_attempt:$attempt,
+    candidate_sha:$sha, candidate_integrity:$integrity,
+    confirm_stable_finalization:true}' |
+  gh workflow run finalize-github-release.yml --repo ashlrai/phantom \
+    --ref master --json
+```
+
+The dispatch mutates the release only through the protected finalization job.
+Inspect the created run's JSON evidence receipts and postchecks before claiming
+publication. A failed postcheck requires reconciliation; do not replay a hand
+PATCH or change a tag. Never publish an empty draft with `gh release edit`, and
+never upload assets outside the sanctioned publisher. The publisher's refusal
+to touch a live feed must remain intact.
+
+The verified November 5, 2026 incident handoff records `v3.30.8` as already public
+and empty (release ID `435347257`), with the configured updater feed redirecting
+to a 404. Leave that release and tag as-is: no unpublish, reversal, tag move or
+hand asset upload. Recover on the next free patch; prefer `3.30.9` only after
+fresh npm, GitHub tag and release checks establish that it is available.
+Coordinate with `RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; this finalizer does not build
+or release desktop binaries and must not bypass signing or quarantine guards.
+The read-only Linux verifier checks signed metadata, archive bytes, trust and
+qualification identities, but does not reconstruct the hosted desktop bundle or
+run Apple `codesign` or launch checks. Desktop quarantine root-cause closure is
+an external prerequisite; this finalizer cannot certify it.
+
+This workflow replacement requires one `[SECURITY REVIEW]` PR with no
+auto-merge and Security pin review of the workflow/permissions diff. Workflow
+state is a separate GitHub setting. Only after the reviewed fixed YAML is on
+`master`, an authorized operator enables ID `350636007` and confirms `active`:
+
+```sh
+gh api repos/ashlrai/phantom/actions/workflows/350636007 \
+  --jq '{id,path,state}'
+gh workflow enable 350636007 --repo ashlrai/phantom
+gh api repos/ashlrai/phantom/actions/workflows/350636007 \
+  --jq '{id,path,state}'
+```
+
+These `gh api` reads return JSON; enable changes workflow state and must not run
+against the old disabled YAML. An uncommitted worktree handoff does not satisfy
+the merge or enable step.
+
+Updater recovery additionally requires actual fleet job ID/lane/start timestamp
+from sanctioned Mac read surfaces, sanctioned signed seven-asset publication
+after quarantine repair, and HTTP 200 after redirects from the configured
+`releases/latest/download/latest.json` with publisher-equivalent signature and
+provenance verification. File handoff, inbox messages, npm `latest` and GitHub
+release metadata are insufficient. Installed-app version/update and successful
+launch remain unverified until supported tooling is used with authorized Mac
+access. See the [complete evidence checklist](contracts/CONTRACT-M523.md#recovery-evidence).
+
 ## Supplemental and historical references
 
 The [archive](RELEASING-HISTORICAL.md) retains immutable quarantine, publication,

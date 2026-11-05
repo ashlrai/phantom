@@ -144,6 +144,12 @@ describe('ashlr agents bus contract', () => {
     expect(j).toEqual(JSON.parse(JSON.stringify(busV2ContractSummary())));
     expect(j.bodyKinds).toEqual([...BODY_KINDS]);
   });
+  it('lists and tests channels without a network or adapter', async () => {
+    const listed = JSON.parse((await run(['bus', 'channels', 'list', '--json'])).out);
+    expect(listed.channels.map((c: { id: string }) => c.id)).toEqual(['bus', 'slack', 'imessage', 'email', 'telegram', 'handoff']);
+    expect(JSON.parse((await run(['bus', 'channels', 'test', 'email', '--json'])).out)).toMatchObject({ dryRun: true, status: 'refused' });
+    expect((await run(['bus', 'channels', 'test', 'unknown', '--json'])).code).toBe(2);
+  });
   it('prints plain text and help, and rejects bad usage', async () => {
     expect((await run(['bus', 'contract'])).out).toContain(AGENT_BUS_V2_VERSION);
     expect((await run([])).code).toBe(0);
