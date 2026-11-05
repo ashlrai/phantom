@@ -14,7 +14,7 @@ describe('debug status', () => {
     process.env.ASHLR_RUNS_DIR = runsDir;
 
     const mod = await import('../src/cli/cos.js');
-    const exit1 = await mod.cmdCos('ask', 'Prepare a project brief', '--channel', 'cli', '--json');
+    const exit1 = await mod.cmdCos(['ask', 'Prepare a project brief', '--channel', 'cli', '--json']);
     const response = JSON.parse(output.mock.calls.at(-1)![0] as string);
     console.error('=== ASK response:', JSON.stringify(response));
     console.error('=== ASK response.id:', response.id);
@@ -28,7 +28,7 @@ describe('debug status', () => {
     console.error('=== ASHLR_RUNS_DIR:', process.env.ASHLR_RUNS_DIR);
 
     // Now try status
-    const exit2 = await mod.cmdCos('status', response.id, '--json');
+    const exit2 = await mod.cmdCos(['status', response.id, '--json']);
     const statusOutput = JSON.parse(output.mock.calls.at(-1)![0] as string);
     console.error('=== STATUS result:', JSON.stringify(statusOutput));
     console.error('=== STATUS exit:', exit2);
