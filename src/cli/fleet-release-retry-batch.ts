@@ -10,7 +10,7 @@ import type { GitRunner } from '../core/verse/git-ops.js';
 const USAGE = 'usage: ashlr fleet release-retry-batch --stdin [--apply] [--json]';
 const HELP = `${USAGE}
 
-Feed a previous release-advance-batch report back through the serialized
+Feed a previous release-advance-batch or release-retry-batch report through the serialized
 advance, retrying only its unsuccessful entries. --stdin reads one UTF-8
 JSON document (max 1 MiB) through EOF: the version-1 report's busy,
 blocked, refused and unavailable entries become the retry batch in their
@@ -18,6 +18,13 @@ original order while planned, submitted, no-op and already-submitted
 entries stay out. Malformed documents, unknown fields or outcomes,
 tally/completed mismatches, invalid or duplicate repo/tag identities and
 extra flags are all rejected before any candidate runs.
+
+A retry report contains exactly one batch (never another wrapper). Only
+that latest batch's unsuccessful entries run again; earlier skips stay out.
+A valid report with batch: null is a no-op. For two recovery iterations:
+  ashlr fleet release-retry-batch --stdin --apply --json < batch.json > retry-1.json
+  ashlr fleet release-retry-batch --stdin --apply --json < retry-1.json > retry-2.json
+Pass --apply explicitly on each invocation to submit.
 
 The supplied report only selects; it never proves current eligibility.
 Every retried identity re-plans against fresh evidence, so an old blocked
