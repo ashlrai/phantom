@@ -35,6 +35,7 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { constants as osConstants, homedir, hostname } from 'node:os';
 import { join } from 'node:path';
+import { refuseCloudForImessage } from '../agents/content-taint.js';
 import { readPlannerCandidates } from '../fleet/planner-candidates.js';
 import { readPlannerHealth, selectPlannerRunner, type PlannerCandidate } from '../fleet/planner-failover.js';
 import type { SpawnedPlannerProcess, SpawnLike } from '../fleet/planner-run.js';
@@ -201,6 +202,12 @@ export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWork
   const health = await readPlannerHealth(runsDir, now);
   const choice = selectPlannerRunner(candidates, { [lastProvider]: health }, now);
   if (!choice.ok) return { outcome: 'blocked', ...ids, reason: choice.reason };
+
+  // CLI runners choose their own backend; neither argv nor a provider label
+  // proves a loopback endpoint. Refuse before claiming or exposing any prompt.
+  const route = JSON.parse(job.acceptance) as { origin: { channel: string } };
+  try { refuseCloudForImessage(route.origin.channel, undefined); }
+  catch { return { outcome: 'blocked', ...ids, reason: 'imessage-requires-loopback-endpoint' }; }
 
   const owner = opts.owner ?? `cos-worker:${hostname()}:${process.pid}`;
   try { await store.claim(job.id, owner); }
