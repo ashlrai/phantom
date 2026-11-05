@@ -560,9 +560,12 @@ describe('M454 pinned upstream routing challenge', () => {
     // canary scan above covers every script here. Any further addition must be
     // reviewed against that scan, not appended to make this pass.
     expect(packageManifest.files).toEqual([
+      'radar/sources.json', // PR #3438
       'dist',
       'bin',
       'scripts/run-verify-command.mjs',
+      'scripts/lib/docs-pages.mjs', // PR #3060
+      'scripts/lib/docs-pages.d.mts', // PR #3060
       // Reviewed host-only install helper; the script-wide canary scan covers it.
       'scripts/local-app-transaction.mjs',
       'scripts/scorecard-history-worker.mjs',
@@ -574,8 +577,12 @@ describe('M454 pinned upstream routing challenge', () => {
       'schema',
       'CHANGELOG.md',
       'docs/README.md',
+      'docs/SIGNALS.md', // PR #3076
+      'docs/FLEET-API.md', // PR #2899
       'docs/PHANTOM-BRAND.md',
       'docs/COMPANIONS.md',
+      'docs/CONNECTORS.md', // PR #3290
+      'docs/lanes/zai.md', // PR #3290
       'docs/MEMORY-FOUNDATION.md',
       'docs/MEMORY-EVALUATION.md',
       'docs/QUICKSTART.md',
@@ -611,7 +618,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/AGENT-HARNESS-EVOLUTION.md',
       'docs/RESET-AWARE-SCHEDULING.md',
       'docs/EXECUTION-FEEDBACK.md',
-    'docs/RESOURCE-EVIDENCE.md',
+      'docs/RESOURCE-EVIDENCE.md',
       'docs/RUNTIME_ACTIVATION_AUTHORITY.md',
       'docs/REMOTE-PHONE.md',
       'docs/contracts/CONTRACT-M515.md',
