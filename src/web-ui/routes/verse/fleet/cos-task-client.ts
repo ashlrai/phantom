@@ -6,6 +6,7 @@ import { VerseMutationLockedError } from '../verse-queries.js';
 export const COS_ASK_PATH = '/api/verse/fleet/cos/ask';
 export const COS_STATUS_PATH = '/api/verse/fleet/cos/status';
 export const COS_APPROVE_PATH = '/api/verse/fleet/cos/approve';
+export const COS_RECONCILE_PATH = '/api/verse/fleet/cos/reconcile';
 
 export type CosDelivery = null | 'sending' | 'sent' | 'uncertain';
 
@@ -16,6 +17,8 @@ export interface CosStatus {
   delivery: CosDelivery; needsYou: boolean;
 }
 export interface CosApproved { v: 1; id: string; delivery: 'sent' }
+export type CosReconcileVerdict = 'delivered' | 'retry';
+export interface CosReconciled { v: 1; id: string; delivery: 'sent' | null }
 
 const isId = (value: unknown): value is string => typeof value === 'string' && /^cos-[0-9a-f]{32}$/.test(value);
 
@@ -44,6 +47,15 @@ export async function approveCosTask(id: string, digest: string): Promise<CosApp
   const token = getMutationToken();
   if (!token) throw new VerseMutationLockedError();
   const result = await apiPost<CosApproved>(COS_APPROVE_PATH, { id, digest }, token);
+  touchMutationHold();
+  return result;
+}
+
+/** Records what Mason found after an uncertain send; it never sends anything. */
+export async function reconcileCosTask(id: string, verdict: CosReconcileVerdict): Promise<CosReconciled> {
+  const token = getMutationToken();
+  if (!token) throw new VerseMutationLockedError();
+  const result = await apiPost<CosReconciled>(COS_RECONCILE_PATH, { id, verdict }, token);
   touchMutationHold();
   return result;
 }

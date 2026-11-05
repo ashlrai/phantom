@@ -1,8 +1,9 @@
 # Chief-of-staff desktop API
 
-Local Hub routes that let the desktop app queue a chief-of-staff task, read its
-status and approve the drafted reply. Intake itself is described in
-[COS.md](COS.md). Implementation: `src/core/verse/fleet-cos-api.ts`.
+Local Hub routes that let the desktop app queue a chief-of-staff task, list
+recent tasks, read a task's status and approve the drafted reply. Intake
+itself is described in [COS.md](COS.md). Implementation:
+`src/core/verse/fleet-cos-api.ts`.
 
 All routes require `ctx.allowDispatch` (404 otherwise). `POST` routes also
 require the mutation token and a JSON content type (`passesMutationGate`: 401
@@ -37,6 +38,18 @@ is `null` or `{ text, digest }`, `delivery` is `null`, `'sending'`, `'sent'` or
 `'uncertain'`, and `needsYou` is true while a draft awaits approval. Sender and
 thread ids are never returned. 400 `VERSE_INVALID` (bad id), 404
 `{ code: 'COS_UNKNOWN' }`, 503 `COS_UNAVAILABLE`.
+
+## GET /api/verse/fleet/cos/list?limit=<1..50>
+
+Read-only, like `status`: no mutation token. 200 `{ v: 1, tasks: [...] }` with
+recent intake jobs newest first, at most `limit` (default 20, maximum 50).
+Each task is `{ id, jobStatus, channel, needsYou, delivery, hasDraft, request
+}` where `delivery` is `null`, `'sending'`, `'sent'` or `'uncertain'`,
+`needsYou` is true while a draft awaits approval, `hasDraft` reports whether a
+reply draft exists, and `request` is the task text scrubbed, on one line and
+at most 140 characters (empty when it carries a private path). Sender and
+thread ids, draft text and digests are never returned. 400 `VERSE_INVALID`
+(bad `limit`), 503 `COS_UNAVAILABLE` (queue unreadable).
 
 ## POST /api/verse/fleet/cos/approve
 

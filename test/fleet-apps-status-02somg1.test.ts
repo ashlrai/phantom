@@ -79,7 +79,9 @@ describe('fleet apps-status CLI', () => {
   it('prints only allowlisted fields in --json, never raw script output or stderr', async () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
     const exec = vi.fn(async () => ({
-      stdout: JSON.stringify({ running: true, code: 'ok', rawSecret: 'hidden' }),
+      // The status contract requires ok:true since #3085; rawSecret proves
+      // only allowlisted fields are printed, never raw script output.
+      stdout: JSON.stringify({ ok: true, running: true, code: 'ok', rawSecret: 'hidden' }),
       stderr: 'error trace never shown',
     }));
     await cmdFleetAppsStatus(['--json'], { exec, locateScript: LOCATE });
