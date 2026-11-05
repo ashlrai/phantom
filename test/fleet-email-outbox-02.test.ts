@@ -66,7 +66,7 @@ describe('email outbox sender', () => {
     const second = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: allowedSenders, transport: okTransport(calls) });
     expect(second).toMatchObject({ queued: 0, sent: 0, refused: 0, failed: 0, stuck: 0 });
     expect(calls).toHaveLength(1);
-    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 1, stuck: 0 });
+    expect(readEmailOutbox(outboxDir).counts).toEqual({ drafted: 0, queued: 0, sent: 1, stuck: 0 });
   });
 
   it('sends each file once under two concurrent passes', async () => {
@@ -129,7 +129,7 @@ describe('email outbox sender', () => {
     expect(calls).toHaveLength(0);
     expect(result.stuck).toBe(1);
     expect(result.details[0]).toMatchObject({ name: 'orphan.reply.eml', outcome: 'stuck', reason: 'interrupted-send' });
-    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 0, stuck: 1 });
+    expect(readEmailOutbox(outboxDir).counts).toEqual({ drafted: 0, queued: 0, sent: 0, stuck: 1 });
     expect(readEmailOutbox(outboxDir).entries[0]).toMatchObject({ state: 'stuck', reason: 'interrupted-send' });
   });
 });
@@ -187,11 +187,11 @@ describe('fleet email-outbox verb', () => {
     await dropReply('order-1');
     expect(await cmdFleetEmailOutbox(['--json'], { runsDir })).toBe(0);
     const listed = JSON.parse(logs[0]!);
-    expect(listed.counts).toEqual({ queued: 1, sent: 0, stuck: 0 });
+    expect(listed.counts).toEqual({ drafted: 0, queued: 1, sent: 0, stuck: 0 });
     expect(listed.entries[0]).toMatchObject({ state: 'queued', to: sender });
     expect(logs[0]).not.toContain('Please check the fleet');
     expect(await cmdFleetEmailOutbox([], { runsDir })).toBe(0);
-    expect(logs[1]).toContain('email-outbox: queued=1 sent=0 stuck=0');
+    expect(logs[1]).toContain('email-outbox: queued=1 drafted=0 sent=0 stuck=0');
     expect(errors).toEqual([]);
   });
 

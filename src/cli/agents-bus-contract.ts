@@ -1,17 +1,22 @@
+import { cmdAgents } from './agents.js';
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
 
-const HELP = `ashlr agents bus contract [--json]
+const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
+ashlr agents bus contract [--json]
+
+Profile verbs read ~/.phantom/agents (docs/AGENT-PROFILES.md).
 
 Print the Agent Bus v2 contract version, providers, body kinds, work statuses and
 claim key forms. Read-only: no network, no store access. Spec: docs/AGENT-BUS.md ("v2").`;
 
-/** `ashlr agents ...`. Only `bus contract` exists; help and bad usage never touch the bus. */
+/** `ashlr agents ...`: profile verbs and `bus contract`; help and bad usage never touch the bus. */
 export async function runAgentsCli(
   args: string[],
   out: (text: string) => void = console.log,
   err: (text: string) => void = console.error,
 ): Promise<number> {
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
+  if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args);
   const json = args.includes('--json');
   const rest = args.filter((a) => a !== '--json');
   if (rest.length !== 2 || rest[0] !== 'bus' || rest[1] !== 'contract' || args.length - rest.length > 1) {
