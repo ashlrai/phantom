@@ -1217,7 +1217,7 @@ jobs:
     runs-on: macos-15
     # Execution budget includes checkout, download, smoke and upload; queued
     # runner time is measured separately by GitHub, never reported as smoke.
-    timeout-minutes: 1
+    timeout-minutes: 5
     steps:
       - name: Checkout exact master
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
