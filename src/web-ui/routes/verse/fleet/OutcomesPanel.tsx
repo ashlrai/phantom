@@ -4,6 +4,7 @@ import { Button } from '../../../components/primitives/Button.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { SurfaceActions } from '../command/actions.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { describeOutcomeFailure } from './outcome-failure-model.js';
 import { outcomesQuery, writeOutcome } from './outcomes-queries.js';
 import type { OutcomeScope, OutcomeStatus, OutcomeView } from './outcomes-types.js';
 import { ENGINE_LABEL, isVerseEngine } from '../verse-model.js';
@@ -32,6 +33,22 @@ function managerStatus(outcome: OutcomeView): string {
   if (manager.latest?.state === 'aborted') return `${mode} stage stopped`;
   if (manager.latest?.state === 'stale') return `${mode} result no longer current`;
   return `${mode} idle`;
+}
+
+function FailureSummary({ outcome }: { outcome: OutcomeView }) {
+  const failure = describeOutcomeFailure(outcome);
+  return <div role="group" aria-label="Why this outcome failed">
+    <p className={styles.note}><strong>{failure.headline}</strong></p>
+    {failure.failedTasks.length ? <ul aria-label="Failed tasks">
+      {failure.failedTasks.map(task => <li key={task.id}>
+        <strong>{formatProductDisplayText(task.title)}</strong>{task.state === 'aborted' ? <span>Stopped</span> : null}
+        {task.repo ? <small>{task.repo}</small> : null}
+        {task.runId ? <small>Run {task.runId}</small> : null}
+      </li>)}
+      {failure.moreFailed ? <li>+{failure.moreFailed} more</li> : null}
+    </ul> : null}
+    <p className={styles.note}>{failure.nextStep}</p>
+  </div>;
 }
 
 export function OutcomesPanel({ actions }: { actions: SurfaceActions }) {
@@ -123,6 +140,7 @@ export function OutcomesPanel({ actions }: { actions: SurfaceActions }) {
       <div className={styles.detail}>
         {outcome.status === 'waiting-plan' && !outcome.manager ? <p className={styles.note}>The desired result is saved. Waiting for the Leader to refine a plan.</p> : null}
         {outcome.status === 'plan-verified' ? <p className={styles.note}>All active plan tasks have verification or explicit gate evidence. Check the desired result against your acceptance criteria.</p> : null}
+        {outcome.status === 'failed' ? <FailureSummary outcome={outcome} /> : null}
         {outcome.manager ? <p className={styles.note} role="status">{managerStatus(outcome)}</p> : null}
         {outcome.manager?.sourceState === 'healthy' && (outcome.manager.running ?? outcome.manager.latest) ? <p className={styles.note}>
           Recorded route: {managerEngine((outcome.manager.running ?? outcome.manager.latest)!.route.engine)} · {(outcome.manager.running ?? outcome.manager.latest)!.route.model}

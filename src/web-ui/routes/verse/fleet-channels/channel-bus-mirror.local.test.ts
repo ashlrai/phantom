@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentBusReceipt } from '../fleet-bus/agent-bus-queries.js';
 import { mirrorByChannel, mirrorHint } from './channel-bus-mirror.js';
 
 const now = Date.parse('2026-10-31T05:00:00Z');
 const entry = (source: string, at = now) => ({ source, at: new Date(at).toISOString(), text: 'fake message' });
-const receipt = (channel: string, at = now, from = 'mason', kind = 'interjection'): AgentBusReceipt => ({
-  cursor: 1, receivedAt: at, envelope: { id: 'fake-id', from, to: 'leaders', priority: 'P0', ttl: 1000, body: { kind, channel } },
-});
 
 describe('channel bus mirrors — local-only channels', () => {
   it('iMessage inbox rows within the hour count inbox but never mirror', () => {
