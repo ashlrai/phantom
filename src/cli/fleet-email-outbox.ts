@@ -15,14 +15,14 @@ export interface FleetEmailOutboxDeps {
 
 /**
  * `ashlr fleet email-outbox` — the reply outbox `phm comms email-drop` fills.
- * The default is a read-only listing of queued / sent / stuck `*.reply.eml`
+ * The default is a read-only listing of queued / drafted / sent / stuck `*.reply.eml`
  * files; `--send` drains the queue through Mail.app, gated on the saved
  * email-drop config's `from` senders. Missing allowlist or invalid config
  * exits 2 and sends nothing. A reply body is never printed.
  */
 export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutboxDeps = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${USAGE}\nLists *.reply.eml in the email-drop outbox (queued, sent, stuck). --send delivers\nqueued replies via Mail.app when To is exactly one --from sender in the saved\nemail-drop config. A claim left by a crashed pass stays stuck, never resent.`);
+    console.log(`${USAGE}\nLists *.reply.eml in the email-drop outbox (queued, drafted, sent, stuck). --send delivers\nqueued replies via Mail.app when To is exactly one --from sender in the saved\nemail-drop config. A claim left by a crashed pass stays stuck, never resent.`);
     return 0;
   }
   const badUsage = (message?: string): number => {
@@ -72,7 +72,7 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
     const listing = readEmailOutbox(outboxDir);
     if (json) console.log(JSON.stringify(listing));
     else {
-      console.log(`email-outbox: queued=${listing.counts.queued} sent=${listing.counts.sent} stuck=${listing.counts.stuck}`);
+      console.log(`email-outbox: queued=${listing.counts.queued} drafted=${listing.counts.drafted} sent=${listing.counts.sent} stuck=${listing.counts.stuck}`);
       for (const entry of listing.entries) {
         console.log(`  ${entry.state} ${entry.name}${entry.to ? ` -> ${entry.to}` : ''}${entry.reason ? ` (${entry.reason})` : ''}`);
       }
@@ -86,6 +86,7 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
       dir: outboxDir,
       allowedRecipients: new Set(allowed),
       transport: deps.transport ?? macMailTransport(),
+      draftsRunsDir: deps.runsDir ?? join(homedir(), '.ashlr-runs'),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -94,6 +95,6 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
     return 1;
   }
   if (json) console.log(JSON.stringify({ dir: outboxDir, ...result }));
-  else console.log(`email-outbox: queued=${result.queued} sent=${result.sent} refused=${result.refused} failed=${result.failed} stuck=${result.stuck}`);
-  return 0;
+  else console.log(`email-outbox: queued=${result.queued} sent=${result.sent} refused=${result.refused} failed=${result.failed} stuck=${result.stuck}${result.drafted ? ` drafted=${result.drafted}` : ''}`);
+  return result.failed > 0 || result.stuck > 0 || result.refused > 0 ? 1 : 0;
 }
