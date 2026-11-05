@@ -1,0 +1,12 @@
+{
+  "date": "2026-11-04",
+  "repos": [
+    {"name":"phantom","branch":"master","mergeQueue":true,"tagRulesets":["Release tags require Mason"],"autoTag":true,"finalize":true},
+    {"name":"phantom-secrets","branch":"main","mergeQueue":true,"tagRulesets":["Protect release tags","Restrict release tag creation"],"autoTag":true},
+    {"name":"locus","branch":"main","mergeQueue":false,"tagRulesets":["Release tags require Mason"],"autoTag":false,"manualCi":true},
+    {"name":"lexicon","branch":"main","mergeQueue":true,"tagRulesets":["Release tags require Mason"],"autoTag":true},
+    {"name":"ashlr-plugin","branch":"main","mergeQueue":false,"tagRulesets":["Release tags require Mason"],"autoTag":true},
+    {"name":"ashlr-stack","branch":"main","mergeQueue":false,"tagRulesets":["Release tags require Mason"],"autoTag":true},
+    {"name":"ashlr-md","branch":"main","mergeQueue":false,"tagRulesets":["Release tags require Mason"],"autoTag":true}
+  ]
+}
