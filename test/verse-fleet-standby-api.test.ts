@@ -42,7 +42,7 @@ it('projects readiness with bounded execution and a 30 second cache', async () =
   expect(first).toEqual(second);
   expect(first.body).toEqual({ v: 1, generatedAt: new Date(100_000).toISOString(), configured: true, available: true, ready: true, blocker: null, leaseHolder: 'primary-fake', snapshotAgeSec: 240 });
   expect(exec).toHaveBeenCalledTimes(1);
-  expect(exec).toHaveBeenCalledWith('python3', ['-I', '/fake-script', '--db', config.db, '--snapshot-store', config.snapshotStore, '--primary', config.primary, '--role', config.role, '--host', config.host, '--max-age', '300', '--json'], { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
+  expect(exec).toHaveBeenCalledWith('python3', ['-B', '/fake-script', '--db', config.db, '--snapshot-store', config.snapshotStore, '--primary', config.primary, '--role', config.role, '--host', config.host, '--max-age', '300'], { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
   advance(); await call(api); expect(exec).toHaveBeenCalledTimes(2);
 });
 it('projects the first blocker', async () => {

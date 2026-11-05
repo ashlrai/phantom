@@ -156,10 +156,13 @@ it('rejects malformed --total-timeout-ms flags on the CLI with zero effects', as
   expect(launches()).toHaveLength(0);
   expect(existsSync(claimFile())).toBe(false);
   expect(inbox()).toBe(before);
-  // A valid flag parses and bounds the real loop end to end.
+  // A valid flag parses and bounds the real loop end to end. The budget must
+  // expire inside the synchronous claim on every host: claim+staging latency
+  // is machine-dependent, so only a 1 ms budget provably lands mid-claim
+  // (600 ms races ahead of CI's faster claim path and lets the child launch).
   output = '';
   const started = Date.now();
-  expect(await cmdFleetBusWorkLoop(args(['--total-timeout-ms', '600']), io)).toBe(0);
+  expect(await cmdFleetBusWorkLoop(args(['--total-timeout-ms', '1']), io)).toBe(0);
   expect(JSON.parse(output)).toEqual({ status: 'timeout', completed: 0 });
   expect(Date.now() - started).toBeLessThan(15000);
   expect(launches()).toHaveLength(0);

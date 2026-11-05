@@ -96,7 +96,13 @@ export async function watchResetReleases(options: ResetWatchOptions,
   const onAbort = (): void => wake('cancelled');
   controller.signal.addEventListener('abort', onAbort, { once: true });
   if (controller.signal.aborted) onAbort();
-  const timer = setTimeout(() => wake('deadline'), timeoutMs);
+  // With the default real clock the timer is the in-flight deadline bound.
+  // An injected clock owns the deadline: the loop's now() >= deadline checks
+  // enforce it between stages, and real elapsed time must never cut a pass
+  // (the caller's clock may stall or run slower than real time).
+  const timer = deps.now === undefined
+    ? setTimeout(() => wake('deadline'), timeoutMs)
+    : undefined;
   // Promise.race observes both late fulfillment and rejection without processing them.
   const wait = async <T>(work: Promise<T>): Promise<
     { value: T } | { stopped: 'deadline' | 'cancelled' }

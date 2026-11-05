@@ -1,0 +1,10 @@
+[
+  { "id": "gpt-6-astra", "provider": "openai", "docs_url": "https://learn.chatgpt.com/docs/models", "verified": "2026-11-05" },
+  { "id": "gpt-6.1-sol", "provider": "openai", "docs_url": "https://learn.chatgpt.com/docs/models", "verified": "2026-11-05" },
+  { "id": "gpt-6.1-terra", "provider": "openai", "docs_url": "https://learn.chatgpt.com/docs/models", "verified": "2026-11-05" },
+  { "id": "gpt-6-luna", "provider": "openai", "docs_url": "https://learn.chatgpt.com/docs/models", "verified": "2026-11-05" },
+  { "id": "claude-fable-5-1", "provider": "anthropic", "docs_url": "https://platform.claude.com/docs/en/models/overview", "verified": "2026-11-05" },
+  { "id": "claude-opus-5-5", "provider": "anthropic", "docs_url": "https://platform.claude.com/docs/en/models/overview", "verified": "2026-11-05" },
+  { "id": "claude-sonnet-5-5", "provider": "anthropic", "docs_url": "https://platform.claude.com/docs/en/models/overview", "verified": "2026-11-05" },
+  { "id": "claude-haiku-5-5", "provider": "anthropic", "docs_url": "https://platform.claude.com/docs/en/models/overview", "verified": "2026-11-05" }
+]
