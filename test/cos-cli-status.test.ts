@@ -34,7 +34,7 @@ describe('cos CLI status (with ASHLR_RUNS_DIR override)', () => {
     expect(docs.jobs[0]!.id).toBe(directId);
 
     process.env.ASHLR_RUNS_DIR = runsDir;
-    const cliExit = await mod.cmdCos('status', directId, '--json');
+    const cliExit = await mod.cmdCos(['status', directId, '--json']);
     expect(cliExit).toBe(0);
     const cliStatus = JSON.parse(output.mock.calls.at(-1)![0] as string);
     expect(cliStatus.job.id).toBe(directId);

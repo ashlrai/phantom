@@ -27,6 +27,15 @@ import {
   signLocalRealizedMergeReceipt,
 } from '../src/core/foundry/provenance.js';
 
+// Cold-transform the heavy module graphs at collection time. The cases below
+// import them dynamically (some after vi.doMock, where importOriginal pulls in
+// inbox/merge.js), and a cold transform alone can exceed the 5s per-case budget. resetModules drops the
+// evaluated modules so later doMock calls still apply; the transform cache stays.
+await import('../src/core/fleet/judge-trace.js');
+await import('../src/core/fleet/manager.js');
+await import('../src/core/inbox/merge.js');
+vi.resetModules();
+
 // ---------------------------------------------------------------------------
 // HOME isolation
 // ---------------------------------------------------------------------------
