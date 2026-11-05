@@ -48,6 +48,8 @@ import { MAX_FLEET_EMAIL_OUTBOX_AWAIT_MS, MIN_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, 
   DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, parseFleetEmailOutboxAwaitArgs, readFleetEmailOutboxAwait,
   type FleetEmailOutboxAwaitArgs } from './fleet-email-outbox-await.js';
 import { parseFleetEmailDiagnosisArgs, readFleetEmailDiagnosis } from './fleet-email-diagnosis.js';
+import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
+  readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
@@ -82,6 +84,8 @@ export interface FleetReaders {
   emailOutbox?: (input: FleetEmailOutboxArgs) => Promise<unknown>;
   emailOutboxAwait?: (input: FleetEmailOutboxAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   emailDiagnosis?: () => Promise<unknown>;
+  imessagePath?: () => Promise<unknown>;
+  imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -376,11 +380,27 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_imessage_path',
+      description: 'Diagnose the local iMessage path through the same shared checkIMessagePath collector as `ashlr fleet imessage-path` — never a second classifier: the fixed-code platform, configuration, chat.db and cursor states with reason and next step, plus the fixed transport, owner-reply, collaborator-intake and collaborator-delivery states — never handles, message text, absolute paths or raw exception text. Transport stays owner-only and collaborator intake and delivery stay unsupported exactly as the path evidence reports; configuration alone is never delivery proof. Reads the server-owned runs root only, and a collector failure is fixed unavailable evidence. Takes no arguments: no caller directory, root, cwd, path, config, probe or send option is accepted, and the tool never sends, polls, writes a cursor, runs AppleScript or alters comms configuration.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_imessage_acks',
+      description: 'Read the bounded tail of recorded iMessage intake acknowledgements through the same readImessageAckEvidence collector as `phm fleet imessage-acks` — never a second reader: the acks.jsonl sourceState (ok, missing, unreadable), at most `limit` newest rows projected to timestamp, rowid, status and delivery, the malformedRows count and deliveryProof:false — never handles, message text, absolute paths or raw exception text. An accepted or duplicate acknowledgement is only a recorded intake receipt and never means a message was sent or delivered. Reads the server-owned runs root only, and a collector failure is fixed unavailable evidence. No caller directory, root, cwd, path or send option is accepted, and the tool never sends, polls, writes a cursor, runs AppleScript or alters comms configuration.',
+      inputSchema: {
+        type: 'object',
+        properties: { limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_IMESSAGE_ACKS, default: 20 } },
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -406,7 +426,11 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const emailOutbox = name === 'fleet_email_outbox' ? parseFleetEmailOutboxArgs(args) : null;
     const emailOutboxAwait = name === 'fleet_email_outbox_await' ? parseFleetEmailOutboxAwaitArgs(args) : null;
     const emailDiagnosisArgs = name === 'fleet_email_diagnosis' ? parseFleetEmailDiagnosisArgs(args) : null;
-    if (name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
+    const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
+    const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
+    if (name === 'fleet_imessage_path' ? imessagePathArgs === null :
+        name === 'fleet_imessage_acks' ? imessageAcks === null :
+        name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
         name === 'fleet_email_outbox_await' ? emailOutboxAwait === null :
         name === 'fleet_email_outbox' ? emailOutbox === null :
         name === 'fleet_job_precheck_batch' ? jobPrecheckBatch === null :
@@ -455,6 +479,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_email_outbox_await' ? await (readers.emailOutboxAwait ?? readFleetEmailOutboxAwait)(emailOutboxAwait as FleetEmailOutboxAwaitArgs, extra.signal)
         : name === 'fleet_email_outbox' ? await (readers.emailOutbox ?? readFleetEmailOutbox)(emailOutbox as FleetEmailOutboxArgs)
         : name === 'fleet_email_diagnosis' ? await (readers.emailDiagnosis ?? readFleetEmailDiagnosis)()
+        : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
+        : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
