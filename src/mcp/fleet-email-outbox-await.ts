@@ -45,7 +45,8 @@ export interface FleetEmailOutboxAwaitDeps {
   await?: typeof awaitEmailOutbox;
 }
 
-/** Bounded exactly like the CLI; unknown keys (dir/root/cwd/send) rejected. */
+/** Parse and validate fleet email outbox await arguments; rejects unknown
+ * keys and out-of-range numeric bounds. */
 export function parseFleetEmailOutboxAwaitArgs(args: Record<string, unknown>): FleetEmailOutboxAwaitArgs | null {
   const { name, timeoutMs, pollMs } = args;
   if (Object.keys(args).some(key => !['name', 'timeoutMs', 'pollMs'].includes(key)) ||
@@ -79,7 +80,12 @@ export async function readFleetEmailOutboxAwait(
     ({ ...base, sourceState, state: null, reason: null, timedOut: false, cancelled: false, ...extra });
 
   if (signal?.aborted) return report('unobserved', { cancelled: true });
-  const config = await readConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
+  let config: Awaited<ReturnType<typeof readEmailDropConfig>>;
+  try {
+    config = await readConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
+  } catch {
+    return report('invalid-config', { reason: 'source-failure' });
+  }
   if (signal?.aborted) return report('unobserved', { cancelled: true });
   if (config.state !== 'ok' || !config.config) {
     return report(config.state === 'missing' ? 'missing-config' : 'invalid-config', { reason: 'source-failure' });
@@ -100,6 +106,7 @@ export async function readFleetEmailOutboxAwait(
     pollMs: input.pollMs ?? DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS,
     signal: signal ?? new AbortController().signal,
   });
+  if (result.reason === 'source-failure') return report(sourceState, { reason: 'source-failure' });
   return report('ok', {
     state: result.state ?? null,
     reason: result.reason ?? null,
