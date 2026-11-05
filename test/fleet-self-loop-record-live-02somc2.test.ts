@@ -69,9 +69,13 @@ describe('live self-loop receipts', () => {
   it('keeps the default final-summary format', async () => {
     const { dir, file } = setup();
     try {
+      let interrupt: (() => void) | undefined;
       const code = await cmdFleetSelfLoopRecord(['--result-file', file, '--duration-ms', '1000'], {
         output: () => {}, now: () => 0,
-        loopDeps: { now: () => 0, tick: async () => ({ exitCode: 0, report: null }), sleep: async () => {}, onSignal: handler => { handler(); return () => {}; } },
+        // Since #3005 a pre-aborted signal admits no passes at all; firing the
+        // handler inside the first idle wait keeps one completed tick.
+        loopDeps: { now: () => 0, tick: async () => ({ exitCode: 0, report: null }),
+          sleep: async () => { interrupt?.(); }, onSignal: handler => { interrupt = handler; return () => {}; } },
       });
       expect(code).toBe(0);
       expect(Object.keys(read(file)).sort()).toEqual(['finishedAt', 'startedAt', 'summary', 'v']);

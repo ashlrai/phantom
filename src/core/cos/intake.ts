@@ -12,8 +12,10 @@ export interface CosOrigin { channel: InboundChannel; senderId: string; threadId
 export interface CosRoute { kind: 'cos-intake'; origin: CosOrigin }
 const root = (runsDir?: string): string => runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 const store = (runsDir?: string): QueueStore => new QueueStore(join(root(runsDir), 'queue'), 250);
-const approvalText = (id: string): string =>
-  `Approve chief-of-staff reply ${id}; inspect with phm cos status ${id} --json`;
+export const cosApprovalTexts = (id: string): readonly [string, string] => [
+  `Approve chief-of-staff reply ${id}; inspect with phm fleet cos status ${id} --json`,
+  `Approve chief-of-staff reply ${id}; inspect with phm cos status ${id} --json`,
+];
 export const cosJobId = (dedupeKey: string): string => `cos-${dedupeKey.slice(0, 32)}`;
 
 /** Receiver-validated envelopes only. A duplicate receipt retries a failed queue write. */
@@ -73,7 +75,7 @@ export async function draftCosResult(id: string, text: string, runsDir?: string)
     if (existing?.digest !== draft.digest) throw new Error('Result already drafted; retain the original approval binding');
   }
   await appendFile(join(root(runsDir), 'NEEDS-MASON.md'),
-    `- [ ] ${approvalText(id)}\n`, { mode: 0o600 });
+    `- [ ] ${cosApprovalTexts(id)[0]}\n`, { mode: 0o600 });
   return draft;
 }
 
@@ -97,7 +99,7 @@ export async function deliverCosResult(id: string, approvedDigest: string,
     throw error;
   }
   try {
-    const item = readNeedsMason({ runsDir: root(runsDir) }).items.find(item => item.text === approvalText(id));
+    const item = readNeedsMason({ runsDir: root(runsDir) }).items.find(item => cosApprovalTexts(id).some(text => item.text === text));
     if (item) resolveNeedsMason({ itemId: item.id }, { runsDir: root(runsDir), source: 'desktop' });
   } catch { /* The send succeeded; needs-you cleanup must never change its delivery state. */ }
 }
