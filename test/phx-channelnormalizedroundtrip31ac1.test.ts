@@ -1,9 +1,14 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createCommsInboxCommand } from '../src/cli/comms-inbox.js';
 import { createChannelReceiver, type ChannelAck } from '../src/core/fleet/channel-envelope.js';
+
+// Channel-line and acknowledgement contracts: merged PRs #3004, #3040, #3044, #3211.
+const entryId = (channel: string, text: string) => `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update('2026-10-31T04:13:00.000Z' + text).digest('hex').slice(0, 16)}`;
+const entry = (channel: string, text: string) => ({ at: '2026-10-31 00:13', source: `${channel} (${entryId(channel, text)})`, priority: null, text });
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -23,7 +28,7 @@ it('persists a normalized desktop order for the CLI and deduplicates its mobile 
   const desktopAcks: ChannelAck[] = [];
   const mobileAcks: ChannelAck[] = [];
   const normalized = 'Prepare café notes.\nShare the next steps.';
-  const desktopEntry = { at: '2026-10-31 00:13', source: 'desktop', priority: 'P0', text: normalized };
+  const desktopEntry = entry('desktop', normalized);
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const read = createCommsInboxCommand({ runsDir });
   const readInbox = async () => {
@@ -46,7 +51,7 @@ it('persists a normalized desktop order for the CLI and deduplicates its mobile 
   const replay = await receiveMobile({ channel: 'mobile', verifiedSenderId: sender, body: normalized });
   expect(replay.ok).toBe(true);
   if (!replay.ok) throw new Error('mobile replay was not acknowledged');
-  expect(replay.ack).toEqual({ channel: 'mobile', status: 'duplicate', dedupeKey: first.ack.dedupeKey });
+  expect(replay.ack).toEqual({ channel: 'mobile', status: 'duplicate', dedupeKey: first.ack.dedupeKey, entryId: entryId('desktop', normalized) });
   expect(mobileAcks).toEqual([replay.ack]);
   expect(await readInbox()).toEqual({ sourceState: 'healthy', entries: [desktopEntry] });
 
@@ -59,8 +64,8 @@ it('persists a normalized desktop order for the CLI and deduplicates its mobile 
   expect(await readInbox()).toEqual({
     sourceState: 'healthy',
     entries: [
-      { at: '2026-10-31 00:13', source: 'mobile', priority: 'P0', text: 'Review the next milestone.' },
       desktopEntry,
+      entry('phone', 'Review the next milestone.'),
     ],
   });
 });
