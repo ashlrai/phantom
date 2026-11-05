@@ -7,6 +7,7 @@
  * so assertMayMutate's allowAnyRepo seam is honored against tmp worktrees.
  */
 
+import { contractedNativeToolNames } from './helpers/native-tool-contract.js';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync, writeFileSync, symlinkSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
@@ -663,9 +664,9 @@ describe('buildEngineerToolSpecs', () => {
 });
 
 describe('buildNativeToolSpecsWithFn', () => {
-  it('returns 35 specs each with a callable fn', () => {
+  it('returns the contracted specs each with a callable fn', () => {
     const specs = buildNativeToolSpecsWithFn();
-    expect(specs).toHaveLength(35);
+    expect(specs).toHaveLength(contractedNativeToolNames.length);
     for (const s of specs) {
       expect(typeof s.fn).toBe('function');
       expect(s.type).toBe('function');
