@@ -16,7 +16,7 @@ export async function cmdConnectors(args: string[]): Promise<number> {
   try {
     const a = options.filter(v => v !== '--json');
     const verb = a.shift();
-    if (!verb || ['--help', '-h', 'help'].includes(verb)) { if (json) emit({ usage: USAGE }); else console.log(USAGE); return 0; }
+    if (!verb || ['--help', '-h', 'help'].includes(verb) || a.includes('--help') || a.includes('-h')) { if (json) emit({ usage: USAGE }); else console.log(USAGE); return 0; }
     if (verb === 'run') {
       const id = a.shift();
       const selectors: Record<string, string> = {};
