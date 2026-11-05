@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { collectFrictionTop, frictionLedgerPath } from '../core/fleet/friction-ledger.js';
 import { buildPlannerBrief, writePlannerBrief } from '../core/fleet/planner-brief.js';
 import { readOrderTrace } from '../core/fleet/order-trace.js';
 import { projectWasteRisk } from '../core/resources/waste-risk.js';
@@ -24,7 +25,7 @@ export async function cmdFleetPlannerBrief(args: string[], io: IO = {}): Promise
   }
   const runsRoot = values.get('--runs-dir') ?? join(homedir(), '.ashlr-runs');
   try {
-    const brief = await buildPlannerBrief({ runsRoot, repoRoot: values.get('--repo'), note: values.get('--note'), realSupply: readLiveRealSupply, orderCoverage: () => readOrderTrace({ runsDir: runsRoot }), wasteRisk: async () => (await readWasteRiskInputs(runsRoot)).map(projectWasteRisk) });
+    const brief = await buildPlannerBrief({ runsRoot, repoRoot: values.get('--repo'), note: values.get('--note'), realSupply: readLiveRealSupply, orderCoverage: () => readOrderTrace({ runsDir: runsRoot }), wasteRisk: async () => (await readWasteRiskInputs(runsRoot)).map(projectWasteRisk), frictionTop: async () => collectFrictionTop(frictionLedgerPath(homedir()), join(runsRoot, 'queue', 'noop-streak.json'), 10) });
     const written = flags.has('--write') ? writePlannerBrief(runsRoot, brief.text) : undefined;
     const report = { v: brief.v, sections: brief.sections, missing: brief.missing, ...(written ?? {}) };
     output.write(flags.has('--json') ? `${JSON.stringify(report)}\n` :
