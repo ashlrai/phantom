@@ -4,6 +4,12 @@ import { readEmailOutbox, type EmailOutboxListing, type EmailOutboxStuckReason }
 
 export interface AwaitResult {
   name: string;
+  /**
+   * Current evidence only: the artifact's state at the latest successful
+   * observation. Absent on `source-failure` — a failed read proves nothing
+   * about the artifact, so the previous poll's state is never replayed as
+   * if it were still true.
+   */
   state?: 'queued' | 'drafted' | 'sent' | 'stuck';
   reason?: EmailOutboxStuckReason | 'source-failure';
   timedOut: boolean;
@@ -47,6 +53,7 @@ export async function awaitEmailOutbox(options: AwaitOptions): Promise<AwaitResu
   const now = options.now ?? Date.now;
   const deadline = now() + options.timeoutMs;
   const result = (extra: Partial<AwaitResult>): AwaitResult => ({ name, timedOut: false, cancelled: false, ...extra });
+  // Last observed state; it is current evidence only while reads succeed.
   let state: AwaitResult['state'];
   while (true) {
     if (signal.aborted) return result({ state, cancelled: true });
@@ -59,7 +66,9 @@ export async function awaitEmailOutbox(options: AwaitOptions): Promise<AwaitResu
       state = entry?.state;
       if (entry && entry.state !== 'queued') return result({ state, reason: entry.reason });
     } catch {
-      return result({ state, reason: 'source-failure' });
+      // A failed read is no evidence: report the failure with no state —
+      // replaying the last observed 'queued' could be mistaken for delivery.
+      return result({ reason: 'source-failure' });
     }
     const remaining = deadline - now();
     if (remaining <= 0) return result({ state, timedOut: true });
