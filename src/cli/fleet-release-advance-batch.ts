@@ -25,8 +25,14 @@ flight; a blocked, refused, unavailable or busy entry does not stop the
 batch, so an unrelated repo can still advance. An accepted dispatch is a
 submission only: no release is published, installed or notified.
 
+When the batch is running, SIGINT or SIGTERM abort it without interrupting
+an in-flight dispatch: the command awaits its result, emits a partial JSON
+report with cancelled:true and remaining identities, and exits 1.  A
+cancelled batch still preserves accepted dispatches — nothing is rolled
+back.  Listeners are per-invocation and cleaned up in finally.
+
 exit: 0 every candidate planned|submitted|no-op|already-submitted,
-      1 any candidate blocked|refused|unavailable|busy,
+      1 any candidate blocked|refused|unavailable|busy OR cancelled,
       2 invalid arguments or input`;
 
 interface BatchDeps {
@@ -36,6 +42,8 @@ interface BatchDeps {
   advance?: ReleaseAdvanceOnceOptions['advance'];
   once?: (repo: string, tag: string, opts: ReleaseAdvanceOnceOptions) => Promise<ReleaseAdvanceOnceReport>;
   now?: () => number;
+  /** Test seam: when provided, used instead of a process-created AbortController. */
+  signal?: AbortSignal;
 }
 
 async function readStdin(input: AsyncIterable<string | Uint8Array>): Promise<string> {
@@ -54,8 +62,13 @@ const human = (report: ReleaseAdvanceBatchReport): string => {
   const lines = [
     `Release advance batch${report.apply ? ' --apply' : ' (dry run)'}: ${report.total} candidate(s), `
     + `${report.succeeded} successful, ${report.unsuccessful} unsuccessful`,
-    ...report.entries.map(entry => `  ${entry.repo}@${entry.tag}: ${entry.outcome} (${entry.reason})`),
   ];
+  if (report.cancelled) {
+    lines.push('  CANCELLED: batch was interrupted before all candidates ran.');
+  }
+  lines.push(
+    ...report.entries.map(entry => `  ${entry.repo}@${entry.tag}: ${entry.outcome} (${entry.reason})`),
+  );
   if (report.remaining.length) lines.push(`  Not reached: ${report.remaining.join(', ')}`);
   if (report.entries.some(entry => entry.outcome === 'submitted')) {
     lines.push('  Accepted dispatches are submissions only; nothing is published, installed or notified.');
@@ -66,11 +79,50 @@ const human = (report: ReleaseAdvanceBatchReport): string => {
   return lines.join('\n');
 };
 
+// Per-invocation signal handling.  Returns AbortController and cleanup
+// function so the caller can remove listeners in finally, avoiding global
+// listener leaks.  The optional `signal` parameter lets tests inject a
+// pre-created AbortController whose abort signal is used instead of
+// OS signals.
+const setupSignalHandling = (
+  testSignal?: AbortSignal,
+): { ac: AbortController; cleanup: () => void } => {
+  if (testSignal) {
+    // Test seam: use the injected signal directly, no process.on needed.
+    return {
+      ac: { signal: testSignal } as AbortController,
+      cleanup: () => {},
+    };
+  }
+  const ac = new AbortController();
+  let handled = false;
+  const handler = (): void => {
+    if (!handled) {
+      handled = true;
+      ac.abort();
+    }
+  };
+  process.on('SIGINT', handler);
+  process.on('SIGTERM', handler);
+  return {
+    ac,
+    cleanup: () => {
+      process.off('SIGINT', handler);
+      process.off('SIGTERM', handler);
+    },
+  };
+};
+
 /**
  * Bounded batch driver over the serialized release advance. One JSON
  * document on stdin nominates 1..16 candidates; every rejection happens
  * before the first evidence call, and the aggregated report keeps each
  * candidate's own outcome and reason.
+ *
+ * Handles SIGINT/SIGTERM per-invocation via AbortController so a supervisor
+ * can cancel the batch mid-flight.  Listeners are scoped to this command
+ * invocation and cleaned up in finally, avoiding global listener leaks.
+ * A cancelled batch writes a partial JSON report (cancelled:true) and exits 1.
  */
 export async function cmdFleetReleaseAdvanceBatch(args: string[], deps: BatchDeps = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
@@ -92,19 +144,25 @@ export async function cmdFleetReleaseAdvanceBatch(args: string[], deps: BatchDep
   if (!stdin) return invalid('missing_stdin_flag');
   const input = deps.input ?? process.stdin;
   if (deps.input === undefined && (input as { isTTY?: boolean }).isTTY === true) return invalid('stdin_must_be_a_pipe');
-  let text: string;
-  try { text = await readStdin(input); }
-  catch (error) { return invalid(error instanceof Error && error.message === 'input too large' ? 'input_too_large' : 'input_unreadable'); }
-  const parsed = parseReleaseAdvanceBatchInput(text);
-  if (!parsed.ok) return invalid(parsed.reason);
-  let report: ReleaseAdvanceBatchReport;
+  const { ac, cleanup } = setupSignalHandling(deps.signal);
   try {
-    report = await runReleaseAdvanceBatch(parsed.candidates, {
-      apply, runner: deps.gh, stateDir: deps.stateDir, advance: deps.advance, once: deps.once, now: deps.now,
-    });
-  } catch {
-    return invalid('candidate_list');
+    let text: string;
+    try { text = await readStdin(input); }
+    catch (error) { return invalid(error instanceof Error && error.message === 'input too large' ? 'input_too_large' : 'input_unreadable'); }
+    const parsed = parseReleaseAdvanceBatchInput(text);
+    if (!parsed.ok) return invalid(parsed.reason);
+    let report: ReleaseAdvanceBatchReport;
+    try {
+      report = await runReleaseAdvanceBatch(parsed.candidates, {
+        apply, runner: deps.gh, stateDir: deps.stateDir, advance: deps.advance,
+        once: deps.once, now: deps.now, signal: ac.signal,
+      });
+    } catch {
+      return invalid('candidate_list');
+    }
+    console.log(json ? JSON.stringify(report) : human(report));
+    return report.unsuccessful === 0 && !report.cancelled ? 0 : 1;
+  } finally {
+    cleanup();
   }
-  console.log(json ? JSON.stringify(report) : human(report));
-  return report.unsuccessful === 0 ? 0 : 1;
 }
