@@ -144,6 +144,8 @@ export interface CiReceiptAwaitBatchOptions {
   timeoutMs: number;
   pollMs?: number;
   signal?: AbortSignal;
+  /** Awaited after each settled entry; failures propagate to the caller. */
+  onEntry?: (entry: CiReceiptAwaitBatchEntry) => void | Promise<void>;
 }
 export interface CiReceiptAwaitBatchDeps {
   gh?: GitRunner;
@@ -200,10 +202,12 @@ export async function awaitCiReceiptBatch(
       entries.push({ ...target, outcome: 'failed', prior: null,
         reason: clean(error instanceof Error ? error.message : String(error)) });
     }
+    await opts.onEntry?.(entries[entries.length - 1]!);
   }
   for (const target of targets.slice(entries.length)) {
     entries.push({ ...target, outcome: 'not-started', prior: null,
       reason: stoppedBy === 'aborted' ? 'batch aborted' : 'batch deadline expired' });
+    await opts.onEntry?.(entries[entries.length - 1]!);
   }
   if (diagnostics.length > CI_RECEIPT_AWAIT_BATCH_MAX_DIAGNOSTICS) {
     diagnostics.splice(0, diagnostics.length - CI_RECEIPT_AWAIT_BATCH_MAX_DIAGNOSTICS,
