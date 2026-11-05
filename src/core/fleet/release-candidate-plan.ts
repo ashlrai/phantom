@@ -48,7 +48,7 @@ export interface ReleaseCandidatePlan {
   attestOnCandidate: RunFact[];
   attestRecent: RunFact[];
   producerArtifact: { id: number; name: string; digest: string | null; expired: boolean } | 'unknown' | null;
-  release: { state: 'published' | 'draft' | 'missing' | 'unknown'; id: number | null; draft: boolean | null; prerelease: boolean | null; assets: number | null; targetCommitish: string | null };
+  release: { state: 'published' | 'draft' | 'missing' | 'unknown' | 'not_selected'; id: number | null; draft: boolean | null; prerelease: boolean | null; assets: number | null; targetCommitish: string | null };
   blockers: Blocker[];
   nextActions: NextAction[];
   truncated: boolean;
@@ -123,7 +123,7 @@ function scanRelease(json: unknown, tag: string): ReleaseCandidatePlan['release'
   };
 }
 
-export async function planReleaseCandidate(repo: string, tag: string, opts: { runner?: GitRunner } = {}): Promise<ReleaseCandidatePlan> {
+export async function planReleaseCandidate(repo: string, tag: string, opts: { runner?: GitRunner; candidateSha?: string } = {}): Promise<ReleaseCandidatePlan> {
   const runner = opts.runner ?? defaultGitRunner;
   const flags = { truncated: false };
   const base = `repos/${repo}`;
@@ -147,10 +147,14 @@ export async function planReleaseCandidate(repo: string, tag: string, opts: { ru
     plan.master.branch = repoRow['default_branch'];
   } else requiredFailed = true;
 
+  // SHA mode inspects the exact requested commit without selecting a release.
+  if (opts.candidateSha !== undefined && !SHA.test(opts.candidateSha)) throw new Error('Invalid candidate SHA');
+  if (opts.candidateSha) plan.candidate.sha = opts.candidateSha;
   // Tag -> commit; annotated tags get exactly one dereference hop.
-  const ref = await api(runner, `${base}/git/ref/tags/${tag}`, META_MAX, flags);
+  const ref = opts.candidateSha ? null : await api(runner, `${base}/git/ref/tags/${tag}`, META_MAX, flags);
   let tagMissing = false;
-  if (ref.state === 'notfound') tagMissing = true;
+  if (!ref) { /* SHA selected directly. */ }
+  else if (ref.state === 'notfound') tagMissing = true;
   else if (ref.state !== 'ok') requiredFailed = true;
   else {
     let obj = rec(rec(ref.json)?.['object']);
@@ -181,10 +185,13 @@ export async function planReleaseCandidate(repo: string, tag: string, opts: { ru
   plan.masterMoved = plan.candidate.sha !== null && plan.master.sha !== null ? plan.candidate.sha !== plan.master.sha : null;
   plan.treeMatch = plan.candidate.tree !== null && plan.master.tree !== null ? plan.candidate.tree === plan.master.tree : null;
 
-  const releases = await api(runner, `${base}/releases?per_page=100&page=1`, LIST_MAX, flags);
-  const release = releases.state === 'ok' ? scanRelease(releases.json, tag) : 'unknown';
-  if (release === 'unknown') { plan.release.state = 'unknown'; unknowns.push('release'); }
-  else plan.release = release;
+  if (opts.candidateSha) plan.release.state = 'not_selected';
+  else {
+    const releases = await api(runner, `${base}/releases?per_page=100&page=1`, LIST_MAX, flags);
+    const release = releases.state === 'ok' ? scanRelease(releases.json, tag) : 'unknown';
+    if (release === 'unknown') { plan.release.state = 'unknown'; unknowns.push('release'); }
+    else plan.release = release;
+  }
 
   const cand = plan.candidate.sha;
   if (cand) {
@@ -198,7 +205,7 @@ export async function planReleaseCandidate(repo: string, tag: string, opts: { ru
   }
   // One bounded attest inventory serves both views: runs while master head WAS
   // the candidate (head_sha = cand) and the recent runs on any master sha.
-  const attRuns = await fetchRuns(runner, `${base}/actions/workflows/attest-ci-build.yml/runs?branch=master&per_page=100`, ATTEST_PATH, null, true, flags);
+  const attRuns = await fetchRuns(runner, `${base}/actions/workflows/attest-ci-build.yml/runs?${opts.candidateSha ? `head_sha=${opts.candidateSha}&` : ''}branch=master&per_page=100`, ATTEST_PATH, opts.candidateSha ?? null, true, flags);
   if (attRuns === 'invalid') unknowns.push('attest_runs');
   else {
     plan.attestOnCandidate = (cand ? attRuns.filter(r => r.headSha === cand) : []).slice(0, MAX_REPORTED);
@@ -223,6 +230,23 @@ export async function planReleaseCandidate(repo: string, tag: string, opts: { ru
     if (plan.producerArtifact === 'unknown') unknowns.push('producer_artifact');
   }
 
+  // Re-read master after evidence collection: the protected attestation checks
+  // the current tree, and an earlier snapshot can go stale during those reads.
+  if (opts.candidateSha && plan.master.branch) {
+    const branch = await api(runner, `${base}/branches/${plan.master.branch}`, META_MAX, flags);
+    const commit = rec(rec(branch.json)?.['commit']);
+    const sha = hex(commit?.['sha']);
+    const tree = hex(rec(rec(commit?.['commit'])?.['tree'])?.['sha']);
+    if (branch.state === 'ok' && sha && tree) {
+      plan.master.sha = sha; plan.master.tree = tree;
+      plan.masterMoved = cand !== null ? cand !== sha : null;
+      plan.treeMatch = plan.candidate.tree !== null ? plan.candidate.tree === tree : null;
+    } else {
+      plan.master.sha = null; plan.master.tree = null;
+      plan.masterMoved = null; plan.treeMatch = null; requiredFailed = true;
+    }
+  }
+
   // ---- Correlation -------------------------------------------------------
   const block = (id: string, detail: string, when: unknown): void => { if (when) blockers.push({ id, detail }); };
   const attested = plan.attestOnCandidate.find(r => r.conclusion === 'success');
@@ -244,7 +268,7 @@ export async function planReleaseCandidate(repo: string, tag: string, opts: { ru
     plan.release.targetCommitish !== null && cand !== null && SHA.test(plan.release.targetCommitish) && plan.release.targetCommitish !== cand);
 
   // ---- Next actions ------------------------------------------------------
-  const dispatchable = cand !== null && plan.treeMatch === true && plan.gateRun?.conclusion === 'success' && !attested && artifact !== null && !artifact.expired;
+  const dispatchable = !requiredFailed && cand !== null && plan.treeMatch === true && plan.gateRun?.conclusion === 'success' && !attested && artifact !== null && !artifact.expired;
   if (blockers.length) {
     plan.nextActions.push({ kind: 'owner', summary: 'the release owner must bind the gate and attestation to one immutable candidate under the existing signing policy; this planner offers no bypass and never mutates queues, tags, workflows or checks' });
   } else if (dispatchable && artifact) {
@@ -260,7 +284,7 @@ export async function planReleaseCandidate(repo: string, tag: string, opts: { ru
   const rerun = plan.gateRun?.id ?? plan.attestRecent[0]?.id;
   const reads: NextAction[] = [{ kind: 'read', summary: 'recent attestation runs on master', command: `gh api ${base}/actions/workflows/attest-ci-build.yml/runs?branch=master&per_page=10` }];
   if (blockers.length && rerun) reads.push({ kind: 'read', summary: `re-read run ${rerun} metadata`, command: `gh api ${base}/actions/runs/${rerun}` });
-  reads.push({ kind: 'read', summary: 'release rows for this tag (drafts included)', command: `gh api ${base}/releases?per_page=10` });
+  if (!opts.candidateSha) reads.push({ kind: 'read', summary: 'release rows for this tag (drafts included)', command: `gh api ${base}/releases?per_page=10` });
   plan.nextActions.push(...reads);
 
   plan.truncated = flags.truncated;
