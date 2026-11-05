@@ -40,6 +40,10 @@ const REPLY_SUFFIX = '.reply.eml';
 const SENDING_DIR = 'sending';
 const SENT_DIR = 'sent';
 const MAIL_TIMEOUT_MS = 30_000;
+/** Main-PR stub: no dependency on the separately reviewed send-policy module. */
+function checkSend(): { decision: 'allow' | 'draft' | 'deny'; reason: string } {
+  return { decision: 'draft', reason: 'agent-profile-policy-review-required' };
+}
 const ADDRESS = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/g;
 
 export interface EmailOutboxMessage {
@@ -232,6 +236,13 @@ export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<Ema
         to: reply.to ?? undefined,
         reason: reply.toCount > 1 ? 'multiple-recipients' : reply.to === null ? 'no-recipient' : 'recipient-not-allowed',
       });
+      continue;
+    }
+    // RQ-AGENTPROFILE-1: fail closed until the separately reviewed policy
+    // integration binds a pinned profile and trusted recipient identity.
+    const policy = checkSend();
+    if (policy.decision !== 'allow') {
+      record(entry.name, 'refused', { reason: policy.reason });
       continue;
     }
     const claim = join(sending, entry.name);
