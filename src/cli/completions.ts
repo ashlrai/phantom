@@ -31,7 +31,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
   'channels', 'connectors', 'imessage', 'memory', 'route',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime',
+  'skills', 'universe', 'runtime', 'radar', 'app',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'local-runtime',
@@ -120,7 +120,9 @@ const SUBCOMMANDS: Record<string, string[]> = {
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand'],
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
-  connectors: ['add', 'list', 'remove', 'show', 'import', '--json', '--help'],
+  connectors: ['add', 'list', 'remove', 'show', 'import', 'run', '--json', '--help'],
+  radar: ['list', 'run', 'diff', '--json'],
+  app: ['update'],
   channels: ['add', 'status', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
   ecosystem: ['doctor'],

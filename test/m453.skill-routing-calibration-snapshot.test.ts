@@ -365,11 +365,13 @@ describe('M453 privacy-safe skill calibration snapshot projection', () => {
     expect(key).toEqual(keyBefore);
   });
 
-  it('has no runtime consumer or public API export', () => {
+  it('has no runtime consumer or public API export beyond the read-only metadata CLI', () => {
     const sourceRoot = resolve(process.cwd(), 'src');
     const modulePath = join('core', 'fleet', 'skill-routing-calibration-snapshot.ts');
     const sourceFiles = readdirSync(sourceRoot, { recursive: true, encoding: 'utf8' })
-      .filter((path) => path.endsWith('.ts') && path !== modulePath);
+      // RQ-PHX-CALIBRATIONSNAPSHOTCLI31 (merged in #2500) added the one intended
+      // consumer: the read-only metadata report `ashlr fleet skill-calibration`.
+      .filter((path) => path.endsWith('.ts') && path !== modulePath && path !== join('cli', 'fleet-skill-calibration.ts'));
     for (const path of sourceFiles) {
       expect(readFileSync(join(sourceRoot, path), 'utf8')).not.toContain('skill-routing-calibration-snapshot');
     }

@@ -72,6 +72,36 @@
         "responses": { "200": { "$ref": "#/components/responses/VerseSessionMeta" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/verse/agent-bus": {
+      "get": {
+        "operationId": "readAgentBus", "tags": ["fleet"],
+        "summary": "Durable local agent bus: one cursor page of envelopes (AgentBusPage).",
+        "parameters": [
+          { "name": "after", "in": "query", "schema": { "type": "integer", "minimum": 0 }, "description": "Cursor to resume from; use the previous nextCursor." },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 }, "description": "Hub clamps 1-100 (default 50); remote gateway admits 1-200 and the hub rejects values above 100." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/AgentBusPage" }, "default": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "postAgentBus", "tags": ["fleet"],
+        "summary": "Append exactly one bus envelope. Address labels are routing data, not authenticated identity.",
+        "x-phantom-step-up": false,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "from", "to", "priority", "ttl", "body"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "from": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "to": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+            "ttl": { "type": "integer", "minimum": 1, "description": "Milliseconds from receipt." },
+            "body": { "description": "Any JSON value; untrusted data." }
+          }
+        } } } },
+        "responses": { "200": { "$ref": "#/components/responses/AgentBusPostResult" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/verse/agents/{agentId}/plan": {
       "post": {
         "operationId": "decideAgentPlan", "tags": ["agents"],
@@ -304,6 +334,16 @@
         "responses": { "200": { "$ref": "#/components/responses/FleetSnapshot" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/verse/fleet/ci-runs": {
+      "get": {
+        "operationId": "getFleetCiRuns", "tags": ["fleet"],
+        "summary": "GitHub Actions run facts for the current repository (CiRunFactsV1).",
+        "parameters": [
+          { "name": "hours", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 168, "default": 24 }, "description": "Look-back window in hours." }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/FleetCiRunsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/verse/fleet/control": {
       "get": {
         "operationId": "getFleetControlState", "tags": ["fleet-control"],
@@ -457,6 +497,13 @@
         "responses": { "200": { "$ref": "#/components/responses/FleetBusFeedV1" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/verse/fleet/live/drop-jobs": {
+      "get": {
+        "operationId": "getFleetDropJobs", "tags": ["fleet"],
+        "summary": "Drop lane status for jobs handed to the fleet. POST (step-up) writes one job file and is not described here.",
+        "responses": { "200": { "$ref": "#/components/responses/FleetDropJobsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/verse/fleet/live/feedback": {
       "get": {
         "operationId": "getExecutionFeedback", "tags": ["fleet"],
@@ -489,6 +536,13 @@
         "operationId": "getFleetRuns", "tags": ["fleet"],
         "summary": "FleetRunsV1 composite snapshot (docs/api/FLEET-RUNS-V1.md).",
         "responses": { "200": { "$ref": "#/components/responses/FleetRunsV1" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/runs/glance": {
+      "get": {
+        "operationId": "getFleetRunsGlance", "tags": ["fleet"],
+        "summary": "One-screen operator glance: running count, target, usage, merges today, main health, incidents (v: 1).",
+        "responses": { "200": { "$ref": "#/components/responses/FleetRunsGlanceV1" }, "default": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/verse/fleet/runs/inbox": {
@@ -785,6 +839,13 @@
         },
         "responses": { "202": { "$ref": "#/components/responses/VerseTurnResponse" }, "default": { "$ref": "#/components/responses/Error" } }
       }
+    },
+    "/api/verse/version": {
+      "get": {
+        "operationId": "getVerseVersion", "tags": ["verse"],
+        "summary": "Build identity of the running hub.",
+        "responses": { "200": { "$ref": "#/components/responses/VerseVersion" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
     }
   },
   "components": {
@@ -841,6 +902,12 @@
       "Error": { "description": "Error envelope.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }},
       "ExecutionFeedbackCaseRead": { "description": "ExecutionFeedbackCaseRead — see src/core/verse/execution-feedback-api-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "ExecutionFeedbackRead": { "description": "ExecutionFeedbackRead — see src/core/verse/execution-feedback-api-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "AgentBusPage": { "description": "{ v: 1, status, messages: [{ cursor, receivedAt, envelope }], nextCursor } from src/core/fleet/bus-inbox.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "AgentBusPostResult": { "description": "{ v: 1, status, id, cursor } from the bus append.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetCiRunsV1": { "description": "CiRunFactsV1 (available, reason when unavailable) from src/core/fleet/ci-run-facts.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetDropJobsV1": { "description": "Drop lane status from src/core/verse/fleet-live-api.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "FleetRunsGlanceV1": { "description": "Operator glance from src/core/fleet/operator-glance-read.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
+      "VerseVersion": { "description": "Build identity from readBuildIdentity().", "content": { "application/json": { "schema": { "type": "object" } } }},
       "FleetBusFeedV1": { "description": "FleetBusFeedV1 — see src/core/fleet/bus-feed.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "FleetControlActionResultV1": { "description": "FleetControlActionResultV1 { ok, action, did, needs, mode?, state } — see src/core/fleet/fleet-control-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
       "FleetControlQueueV1": { "description": "FleetControlQueueV1 — see src/core/fleet/fleet-control-types.ts.", "content": { "application/json": { "schema": { "type": "object" } } }},
