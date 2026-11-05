@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.1 |
-| Latest dated changelog release (2026-11-05) | 3.30.1 |
+| Source package | 3.30.8 |
+| Latest dated changelog release (2026-11-05) | 3.30.8 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.8](https://github.com/ashlrai/phantom/compare/v3.30.7...v3.30.8) (2026-11-05)
+## [Unreleased]
+
+## [3.30.8] — 2026-11-05
 
 
 ### Changes
@@ -51,8 +53,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-PHX-RELEASEONCEREALPIPE05SRV2:** BRIDGE_NOTES — RQ-PHX-RELEASEONCEREALPIPE05SRV2 ([#3651](https://github.com/ashlrai/phantom/issues/3651)) ([9acbeca](https://github.com/ashlrai/phantom/commit/9acbeca930412f4067e330b0cf50fe25a82de9b4))
 * **RQ-PHX-RELEASEONCERETRY05SRT1:** BRIDGE_NOTES — RQ-PHX-RELEASEONCERETRY05SRT1 ([#3647](https://github.com/ashlrai/phantom/issues/3647)) ([13aa5cf](https://github.com/ashlrai/phantom/commit/13aa5cf486be1e7de32fb6e86e26b43830f02471))
 * **RQ-PHX-RELEASEWAITSERIAL05SRR1:** BRIDGE_NOTES — RQ-PHX-RELEASEWAITSERIAL05SRR1 ([#3645](https://github.com/ashlrai/phantom/issues/3645)) ([50ff472](https://github.com/ashlrai/phantom/commit/50ff4724f172913477e9c22edc17496f630ca6c4))
-
-## [Unreleased]
 
 ## [3.30.1] — 2026-11-05
 
