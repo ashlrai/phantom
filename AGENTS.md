@@ -206,3 +206,17 @@ Individual fetch failures are warnings and retain the last successful snapshot.
 The release autonomy command is awaiting top-level CLI wiring. Once wired, `phm release autonomy --json` reads the enrolled repositories' release gates and the local publish switch. Use `phm release autonomy --repo locus --md` for a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
 
 Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
+
+## Multi-Mac node pool
+
+Use explicit team SSH aliases and local provider sign-in, never copied auth.
+`phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json`
+configures the roles; `phm node join --node secondary --owner mason --primary primary-mac --backup backup-mac --json`
+registers a worker. `phm node watch [--once] --json` maintains primary heartbeat or
+checks backup promotion. `phm node worker --runner /absolute/host-owned-runner --json`
+runs one claimed job. `phm node list --json` and `phm node status --json` expose
+lanes, load and heartbeat. `phm node rpc --json` is the fixed SSH stdin endpoint.
+The backup witnesses every admission; after 15 minutes without heartbeat it takes
+over and fences the returning primary. Publication remains primary-only. No
+production dispatchd cutover or runner installation is performed. See
+[Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
