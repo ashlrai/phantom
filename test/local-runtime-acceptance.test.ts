@@ -290,7 +290,7 @@ describe('independent pinned local runtime archive acceptance', () => {
     expect(fs.lstatSync(join(destination, 'bin/ashlr')).mode & 0o111).not.toBe(0);
   });
 
-  it.each([20_000, 20_001])('enforces the finite entry boundary at %i inert regular files', async (entryCount) => {
+  it.each([50_000, 50_001])('enforces the finite entry boundary at %i inert regular files', async (entryCount) => {
     const value = await fixture();
     const initial = await readPinnedRuntimeArchive(value.pins);
     const expanded = gunzipSync(fs.readFileSync(value.pins.artifactPath));
@@ -313,7 +313,7 @@ describe('independent pinned local runtime archive acceptance', () => {
     const bytes = gzipSync(Buffer.concat([expanded.subarray(0, end), ...extra, Buffer.alloc(1024)]));
     fs.writeFileSync(value.pins.artifactPath, bytes);
     const pins = { ...value.pins, sha256: hash(bytes) };
-    if (entryCount === 20_000) {
+    if (entryCount === 50_000) {
       const archive = await readPinnedRuntimeArchive(pins);
       expect(archive.entries).toHaveLength(entryCount);
       expect(archive.entries.slice(0, initial.entries.length)).toEqual(initial.entries);
@@ -401,7 +401,7 @@ describe('independent pinned local runtime archive acceptance', () => {
         malformed = Buffer.from(expanded);
         const header = new Header(malformed.subarray(0, 512));
         if (kind === 'directory') header.type = 'Directory';
-        else header.size = 16 * 1024 * 1024 + 1;
+        else header.size = 64 * 1024 * 1024 + 1;
         header.encode(malformed.subarray(0, 512));
       }
       const bytes = gzipSync(malformed); fs.writeFileSync(value.pins.artifactPath, bytes);
