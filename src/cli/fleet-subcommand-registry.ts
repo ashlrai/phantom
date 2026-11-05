@@ -50,6 +50,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ci-duplicate-runs': () => import('./fleet-ci-duplicate-runs.js'),
   'ci-evidence': () => import('./fleet-ci-evidence.js'),
   'ci-failures': () => import('./fleet-ci-failures.js'),
+  'ci-input-digests': () => import('./fleet-ci-input-digests.js'),
   'ci-nightly': () => import('./fleet-ci-nightly.js'),
   'ci-packet': () => import('./fleet-ci-packet.js'),
   'ci-plan': () => import('./fleet-ci-plan.js'),
