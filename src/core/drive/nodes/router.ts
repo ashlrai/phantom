@@ -44,6 +44,7 @@ function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
 export function planRoutes(state: NodesState, now: number, owner?: string): RouteAssignment[] {
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n.nodeId, now)]));
+  const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n.nodeId, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
@@ -52,15 +53,19 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
     for (const node of nodes) {
       const why = shortfall(node, job);
       if (why) { reasons.set(why.split(':')[0]!, 1); continue; }
+      if (node.slots !== undefined && claims.get(node.nodeId)! >= node.slots) { reasons.set('capacity', 1); continue; }
       if (!best || load.get(node.nodeId)! < load.get(best.nodeId)!) best = node;
     }
     if (best) {
       load.set(best.nodeId, load.get(best.nodeId)! + CLAIM_LOAD);
+      claims.set(best.nodeId, claims.get(best.nodeId)! + 1);
       plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
     }
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --node <id> --owner ${job.owner} --caps <caps>`
+      : reasons.has('capacity')
+        ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
