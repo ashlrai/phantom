@@ -8,7 +8,7 @@
 > releases do not require repeated Touch ID or browser approvals. Initial or
 > changed publisher bindings still require npm owner authentication.
 >
-> Complete exact-source hosted CI, independent Audit and trusted attestation
+> Both qualification profiles require exact-source hosted CI, independent Audit and trusted attestation
 > remain prerequisites. Native desktop finalization, signed asset publication,
 > installation and resident activation are separate steps. The frozen
 > `release.yml` and `promote.yml` procedures in the archive describe the historical
@@ -46,21 +46,60 @@ registry or installed-app status.
 
 ## Qualified CI build handoff
 
-Canonical admission requires complete successful exact-source hosted CI,
-independent Dependency Audit and trusted attestation. Local feedback and
-`prepublishOnly` do not replace those gates. The handoff reuses the original
-qualified JavaScript build and npm archive; it does not skip native signing,
-installation, Stop/drain, rollback or live acceptance.
+Canonical admission requires exact-source hosted qualification, independent
+Dependency Audit and trusted attestation. Local feedback and
+`prepublishOnly` do not replace those gates. Native signing, installation, Stop/drain, rollback
+and live acceptance remain separate.
 
-CI binds the candidate tree, runs every required whole-module partition and
-captures its actual report closure. Advisory impact-shadow artifacts are
-excluded from release evidence; unchanged inputs never inherit a passing result.
-After merging an identical default-branch tree, dispatch
-[Attest qualified CI build](../.github/workflows/attest-ci-build.yml) on `master`
-with the exact CI run, attempt, candidate SHA and producer artifact ID. The
-workflow checks fresh official job and artifact metadata, complete module
-coverage and original bytes before signing the handoff. It never executes
-downloaded candidate code.
+The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
+
+- Nightly at `3 9 * * *`, or manual dispatch with `release_gate=false`: retain
+  the exhaustive platform suites and the existing seven-day Mac rotation.
+  Failed jobs stay red and emit scrubbed `tier=work` repair lines in the
+  `phantom-fixup-queue` artifact. Router ingestion is a separate operation.
+- At `0,30 * * * *`, or manual dispatch with `release_gate=true`: reuse a
+  completed successful **push** CI run for the exact master SHA. The unsigned
+  preparation job reuses an immutable artifact for that source when available,
+  otherwise builds once with cached compiler inputs. The following one-minute
+  smoke job downloads that artifact, checks source/version/package identity,
+  parses the current signed updater manifest and launches the native binary
+  with `--release-smoke` in an isolated home. It never installs dependencies
+  or rebuilds. No current per-PR desktop producer exists; cold preparation,
+  hosted queueing, attestation and signing are outside the smoke budget.
+
+The fast handoff uses profile `fast-release-v1`. A successful hosted smoke job
+and its required steps select this profile; an artifact's own claim cannot.
+Qualification rechecks exact repository/run/attempt/SHA identities, artifact
+IDs and digests, the green push CI steps, and the hashed native smoke receipt
+and binary. The legacy exhaustive profile still requires every whole-module
+partition and report. Tests are neither skipped nor reclassified as passing.
+
+[Attest qualified CI build](../.github/workflows/attest-ci-build.yml) polls at
+`15,45 * * * *`. It selects a completed fast CI run for its exact source, or
+accepts manual exact CI run/attempt/candidate SHA/artifact ID inputs. Its
+trusted checkout verifies original bytes before signing the same `dist.tar`,
+`manifest.json` and `qualification.json` subjects. Downloaded candidate code
+never executes in the attestor.
+
+**Current limits:** the trusted tree must still equal the candidate tree, and
+finalization still requires the attestor revision to equal live master. Merges
+between preparation, attestation and signing can therefore defer a release.
+The host `release-autorun` consumer and published signed updater acceptance
+must be verified separately before claiming continuous release operation.
+The one-minute smoke timeout is a budget, not a measured hosted runtime.
+No test has been newly quarantined by this change; individual quarantine needs
+reproducible evidence and a linked issue in the existing ledger.
+
+### Patch cadence and notes
+
+The existing Release PR workflow evaluates new green master commits every
+30 minutes. `RELEASE_CADENCE_MINUTES` sets the minimum interval (5–1440 minutes;
+values below 30 are bounded by the timer's polling interval). It requests a
+patch bump, then synchronizes README, desktop and registry version carriers
+and the dated changelog in that release PR. Its existing guarded merge route
+remains required. Auto-tag retries every 30 minutes and only creates the tag
+and draft after the exact commit's required checks succeed. Signed publication
+then makes the complete updater feed visible; a draft is not an update.
 
 Keep all contents of the original `ashlr-attested-…` artifact together in a
 private directory. In a clean checkout at the exact candidate commit, verify:

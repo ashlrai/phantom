@@ -14,6 +14,11 @@
  *     itself: the shared ack text plus a one-line inbox preview, sent as a
  *     reply to the original message.
  *
+ *   Owner-only command texts are answered ahead of the receiver and never
+ *   reach the inbox or the queue: /fleet-status reports the fleet, /ship
+ *   merges the release PR, /cos lists waiting chief-of-staff reply drafts
+ *   and /approve <id> <code> sends one (telegram-cos-approve.ts).
+ *
  * Identity: integrations/telegram.ts only emits `senderUserId`/`privateChat`
  * after `verifiedPrivateSender` has matched the private chat, sender id and
  * non-bot flag to the configured chat. The canonical sender is
@@ -35,6 +40,10 @@ import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
 import { telegramFleetStatus, type TelegramFleetStatusDeps } from './telegram-fleet-status.js';
 import { shipCommandReply, TELEGRAM_SHIP_RE, type ShipCommandDeps } from './telegram-ship-command.js';
+import {
+  approveTelegramCos, formatTelegramCosList, listTelegramCosDrafts,
+  TELEGRAM_COS_APPROVE_RE, TELEGRAM_COS_LIST_RE,
+} from './telegram-cos-approve.js';
 import { deliverCosResult } from '../cos/intake.js';
 import { recordTelegramMessages } from './telegram-thread-map.js';
 
@@ -106,6 +115,26 @@ export async function recordTelegramToInbox(
     if (!configuredOwnerIds(cfg).includes(event.senderUserId!)) return { ok: false, reason: 'sender-not-allowed' };
     try {
       const reply = await telegramFleetStatus(deps);
+      const sent = await send(reply, typeof event.messageId === 'number' ? { replyToMessageId: event.messageId } : undefined, cfg);
+      return { ok: false, reason: sent.ok ? 'status-replied' : 'status-send-failed' };
+    } catch {
+      return { ok: false, reason: 'status-send-failed' };
+    }
+  }
+  if (TELEGRAM_COS_LIST_RE.test(text)) {
+    if (!configuredOwnerIds(cfg).includes(event.senderUserId!)) return { ok: false, reason: 'sender-not-allowed' };
+    try {
+      const reply = formatTelegramCosList(await listTelegramCosDrafts(deps.runsDir));
+      const sent = await send(reply, typeof event.messageId === 'number' ? { replyToMessageId: event.messageId } : undefined, cfg);
+      return { ok: false, reason: sent.ok ? 'status-replied' : 'status-send-failed' };
+    } catch {
+      return { ok: false, reason: 'status-send-failed' };
+    }
+  }
+  if (TELEGRAM_COS_APPROVE_RE.test(text)) {
+    if (!configuredOwnerIds(cfg).includes(event.senderUserId!)) return { ok: false, reason: 'sender-not-allowed' };
+    try {
+      const reply = await approveTelegramCos(text, cfg, deps);
       const sent = await send(reply, typeof event.messageId === 'number' ? { replyToMessageId: event.messageId } : undefined, cfg);
       return { ok: false, reason: sent.ok ? 'status-replied' : 'status-send-failed' };
     } catch {
