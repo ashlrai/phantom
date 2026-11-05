@@ -44,7 +44,7 @@ describe('GET /api/verse/runs-history', () => {
     const result = await call('GET');
     expect(result.handled).toBe(true);
     expect(result.status).toBe(200);
-    expect(result.json).toEqual(series);
+    expect(result.json).toEqual({ ...series, stallWindows: { sourceState: 'healthy', dropped: 0, maxSampleGapMs: 150_000, intervals: [] } });
     expect(result.deps.sample).toHaveBeenCalledOnce();
     expect(result.deps.readHistory).toHaveBeenCalledWith(24);
   });
@@ -80,7 +80,7 @@ describe('GET /api/verse/runs-history', () => {
     d.sample.mockRejectedValue(new Error('sampler broke'));
     const result = await call('GET', PATH, d);
     expect(result.status).toBe(200);
-    expect(result.json).toEqual(series);
+    expect(result.json).toEqual({ ...series, stallWindows: { sourceState: 'healthy', dropped: 0, maxSampleGapMs: 150_000, intervals: [] } });
   });
 
   it('reports a reader failure as a fixed-message 500', async () => {

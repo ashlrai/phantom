@@ -1,5 +1,5 @@
 /**
- * RQ-IMSG-BRIDGE-1: iMessage → MASON-INBOX.md / agent bus / chief-of-staff queue.
+ * RQ-IMSG-BRIDGE-1: iMessage → MASON-INBOX.md / chief-of-staff queue (never the agent bus).
  *
  * Third intake channel beside email and Telegram. integrations/imessage.ts reads
  * chat.db read-only and hands back allowlisted messages past a persisted
@@ -12,10 +12,11 @@
  *     reaches the inbox, bus or queue.
  *
  * What the receiver does for us: dedupe inside CHANNEL_DEDUPE_WINDOW_MS,
- * attribution (source `imessage`), the MASON-INBOX.md entry, the agent-bus
- * mirror, and the chief-of-staff queue job for commands (createChannelReceiver
- * queues every accepted envelope through cos/intake.ts). Secret-shaped, empty
- * and oversize bodies are refused there, not stored.
+ * attribution (source `imessage`), the MASON-INBOX.md entry, and the
+ * chief-of-staff queue job for commands (createChannelReceiver queues every
+ * accepted envelope through cos/intake.ts). Secret-shaped, empty and oversize
+ * bodies are refused there, not stored. iMessage opts out of the agent-bus
+ * mirror (`publish: null`): texts stay in local inbox/queue files.
  *
  * Acknowledgement: the shared ack text (channel-ack-text.ts) is RECORDED to
  * <runs>/imessage/acks.jsonl. Nonduplicate acknowledgements pass through the
@@ -114,6 +115,9 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       allowedSenderIds: new Set(imessageAllowlist(cfg).map(senderIdFor)),
       runsDir: deps.runsDir,
       now: deps.now,
+      // iMessage bodies are personal texts: they stay in local inbox/queue files and are
+      // never mirrored to the shared agent bus (Textbot handoff #3472).
+      publish: null,
       acknowledge: async (ack) => {
         recordAck(ack, current, deps.runsDir, now());
         if (ack.status !== 'duplicate') await sendIMessageOutbox(formatChannelAck(ack), cfg, currentHandle);
