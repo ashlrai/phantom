@@ -143,6 +143,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{readOnly:true, executionQualified:false, result:metadata|page}; page={data,hasMore,nextCursor}',
   },
   {
+    usage: 'ashlr agents bus contract [--json]',
+    description: 'Print the Agent Bus v2 contract version, providers, body kinds, work statuses and claim key forms. Read-only; claims coordinate and grant no execution authority.',
+    safety: 'read',
+    jsonShape: '{schemaVersion, providers[], wakeKinds[], bodyKinds[], workStatuses[], claimKeyForms[], claimLeaseMs:{min,max}, claimsGrantExecutionAuthority:false}',
+  },
+  {
     usage: 'ashlr runtime status --store <absolute> --json',
     description: 'Verify the explicitly selected local candidate and rollback slot without installing, publishing, or starting services.',
     safety: 'read',
@@ -594,6 +600,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'doctor',                       desc: 'One-glance health check: config, phantom, providers, ecosystem.', topic: 'core' },
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'desktop install [--apply]', desc: 'Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.', topic: 'core' },
+  { cmd: 'apps list|open|quit|focus|status [<app>] [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'update [--check] [--json]',    desc: 'Self-update; mutation requires service registration proven absent and not running. --check remains read-only.', topic: 'core' },
   { cmd: 'self-swap [--plan | --apply --supervised] [--json]', desc: 'Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process.', topic: 'core' },
@@ -711,6 +718,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'cloud launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder\'s GitHub origin.', topic: 'autonomy' },
   { cmd: 'playbook list|show|new|edit|run <id>', desc: 'Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud|devin`).', topic: 'autonomy' },
   { cmd: 'openai-agents sessions|inspect|turns [session-id] [--json]', desc: 'Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.', topic: 'autonomy' },
+  { cmd: 'agents bus contract [--json]', desc: 'Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.', topic: 'autonomy' },
   { cmd: 'metrics ingest --jobs <file> --status <file>', desc: 'Read local lane and tier merge metrics and advisory routing priors; always JSON.', topic: 'autonomy' },
   { cmd: 'benchmark run|--compare-reports', desc: 'Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.', topic: 'autonomy' },
   { cmd: 'devin connect [--org org-…]',   desc: 'Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.', topic: 'autonomy' },
