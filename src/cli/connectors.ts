@@ -1,17 +1,36 @@
 import { ConnectorError, importClients, readProfile, updateProfile, validateProfile } from '../core/connectors/profile.js';
 
+import { runConnector } from '../core/connectors/run.js';
+
 const USAGE = `phm connectors list|show <id>|remove <id> [--json]
 phm connectors add <id> --kind mcp-stdio|mcp-http|cli|plugin [--command <executable> | --url <https-url>] [--arg <argument>] [--scope <scope>] [--tool <tool>] [--lane <lane>] [--credential <binding=vault-name>] [--json]
 phm connectors import [--json]
-Metadata only; credentials are Phantom Secrets names. See docs/CONNECTORS.md.`;
+phm connectors run <id> --scope <scope> --tool <tool> --lane <lane> [--json] -- <args>
+Run is denied pending Security review; credentials are Phantom Secrets names. See docs/CONNECTORS.md.`;
 
 export async function cmdConnectors(args: string[]): Promise<number> {
-  const json = args.includes('--json');
+  const separator = args.indexOf('--');
+  const options = separator < 0 ? args : args.slice(0, separator);
+  const json = options.includes('--json');
   const emit = (v: unknown): void => { console.log(JSON.stringify(v, null, json ? 2 : undefined)); };
   try {
-    const a = args.filter(v => v !== '--json');
+    const a = options.filter(v => v !== '--json');
     const verb = a.shift();
     if (!verb || ['--help', '-h', 'help'].includes(verb)) { if (json) emit({ usage: USAGE }); else console.log(USAGE); return 0; }
+    if (verb === 'run') {
+      const id = a.shift();
+      const selectors: Record<string, string> = {};
+      while (a.length) {
+        const flag = a.shift()!;
+        const value = a.shift();
+        if (!['--scope', '--tool', '--lane'].includes(flag) || !value || selectors[flag.slice(2)] !== undefined) throw new ConnectorError('Run requires unique scope, tool and lane selectors before --.');
+        selectors[flag.slice(2)] = value;
+      }
+      if (separator < 0 || !id) throw new ConnectorError('Use phm connectors run <id> --scope <scope> --tool <tool> --lane <lane> --json -- <args>.');
+      await runConnector(id, { scope: selectors.scope ?? '', tool: selectors.tool ?? '', lane: selectors.lane ?? '' }, args.slice(separator + 1));
+      return 0;
+    }
+    if (separator >= 0) throw new ConnectorError('Argument separator is supported only for run.');
     if (verb === 'list' || verb === 'import') {
       if (a.length) throw new ConnectorError('Unexpected arguments. Run phm connectors --help.');
       if (verb === 'list') { emit(await readProfile()); return 0; }
