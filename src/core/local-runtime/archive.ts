@@ -11,10 +11,10 @@ import { parseBuildIdentity } from '../build-identity.js';
 import { fsyncDirectory } from '../util/durability.js';
 import {desktopUpdateProfileForPackage, getDesktopUpdateProfile, type DesktopUpdateProfile, type DesktopUpdateProfileName} from '../desktop/update-manifest.js';
 
-const MAX_COMPRESSED = 64 * 1024 * 1024;
-const MAX_EXPANDED = 128 * 1024 * 1024;
-const MAX_FILE = 16 * 1024 * 1024;
-const MAX_ENTRIES = 20_000;
+const MAX_COMPRESSED = 128 * 1024 * 1024;
+const MAX_EXPANDED = 512 * 1024 * 1024;
+const MAX_FILE = 64 * 1024 * 1024;
+const MAX_ENTRIES = 50_000;
 const SHA256 = /^[0-9a-f]{64}$/;
 const REVISION = /^[0-9a-f]{40}$/;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
