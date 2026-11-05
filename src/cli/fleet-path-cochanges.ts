@@ -1,12 +1,26 @@
-import { pathCochanges } from '../core/fleet/path-cochanges.js';
+import { pathCochanges, validCochangesPath } from '../core/fleet/path-cochanges.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet path-cochanges <literal-relative-path> [--limit N] [--json]';
+const usage = 'Usage: ashlr fleet path-cochanges (<literal-relative-path> | --stdin) [--limit N] [--json]\n--stdin reads one JSON string (up to 16 KiB).' ;
 type Dependencies = {
   read?: typeof pathCochanges;
+  stdin?: AsyncIterable<Uint8Array>;
   output?: (text: string) => void;
   error?: (text: string) => void;
 };
+
+const STDIN_LIMIT = 16 * 1024;
+
+async function readStdinPath(input: AsyncIterable<Uint8Array>): Promise<unknown> {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of input) {
+    size += chunk.byteLength;
+    if (size > STDIN_LIMIT) throw new Error();
+    chunks.push(chunk);
+  }
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+}
 
 /** Report bounded cochange evidence without treating it as an editing permission. */
 export async function cmdFleetPathCochanges(args: string[], deps: Dependencies = {}): Promise<number> {
@@ -18,9 +32,11 @@ export async function cmdFleetPathCochanges(args: string[], deps: Dependencies =
   let json = false;
   let sawLimit = false;
   let positionalOnly = false;
+  let stdin = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (!positionalOnly && arg === '--') { positionalOnly = true; continue; }
+    if (!positionalOnly && arg === '--stdin' && !stdin) { stdin = true; continue; }
     if (!positionalOnly && arg === '--json' && !json) { json = true; continue; }
     if (!positionalOnly && arg === '--limit' && !sawLimit) {
       sawLimit = true;
@@ -33,8 +49,15 @@ export async function cmdFleetPathCochanges(args: string[], deps: Dependencies =
     if ((!positionalOnly && arg.startsWith('-')) || path !== undefined) { error(usage); return 2; }
     path = arg;
   }
-  if (!path || /[\x00-\x1f\x7f\\]/.test(path) || path.startsWith('/') || /^[A-Za-z]:/.test(path)
-    || path.split('/').some(part => !part || part === '.' || part === '..')) { error(usage); return 2; }
+  if (stdin && path !== undefined) { error(usage); return 2; }
+  if (stdin) {
+    try {
+      const value = await readStdinPath(deps.stdin ?? process.stdin);
+      if (typeof value !== 'string') { error(usage); return 2; }
+      path = value;
+    } catch { error(usage); return 2; }
+  }
+  if (path === undefined || !validCochangesPath(path)) { error(usage); return 2; }
   try {
     const safe = sanitizePublicJson(await (deps.read ?? pathCochanges)(path, { limit })) as Awaited<ReturnType<typeof pathCochanges>>;
     if (json) { output(JSON.stringify(safe)); return 0; }
