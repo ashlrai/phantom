@@ -17,7 +17,7 @@
  *   8. existingWorktree provided → transient abort does NOT create new sandbox.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +28,11 @@ import {
   runEngineSandboxed,
 } from '../src/core/run/sandboxed-engine.js';
 import { agentDiagnosticRunRef, agentDiagnosticsDir } from '../src/core/run/agent-diagnostics.js';
+
+// Host admission is covered separately; these tests exercise retry and logging.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: () => ({ allowed: true, reading: null, reason: null }),
+}));
 
 const processStartInspectionAvailable = (() => {
   if (process.platform === 'win32') return false;

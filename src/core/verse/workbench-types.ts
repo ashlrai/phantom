@@ -1598,6 +1598,7 @@ export const WORKBENCH_ROUTE_FAMILIES = [
   },
   { id: 'fleet-runs', owner: 'desktop-command', module: 'src/core/verse/fleet-runs-api.ts', handler: 'handleFleetRunsApi', prefixes: ['/api/verse/fleet/runs'] },
   { id: 'fleet-cos', owner: 'desktop-command', module: 'src/core/verse/fleet-cos-api.ts', handler: 'handleFleetCosApi', prefixes: ['/api/verse/fleet/cos'] },
+  { id: 'cos-memory', owner: 'desktop-command', module: 'src/core/verse/cos-memory-api.ts', handler: 'handleCosMemoryApi', prefixes: ['/api/verse/cos/memory'] },
   {
     // 3.15: the Fleet tab's control surface (Start / Pause / Resume / Stop,
     // per-run stop and interject, task and goal edits). Its own prefix, so it
