@@ -293,6 +293,7 @@ async function fetchWithTimeout(
   init: RequestInit,
   timeoutMs = FETCH_TIMEOUT_MS,
   signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<{ response: Response; cleanup: () => void }> {
   throwIfAborted(signal);
   const controller = new AbortController();
@@ -306,7 +307,7 @@ async function fetchWithTimeout(
     removeAbortListener();
   };
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetchImpl(url, { ...init, signal: controller.signal });
     return { response, cleanup };
   } catch (err) {
     cleanup();
@@ -1171,6 +1172,7 @@ export function buildOpenAICompatibleClient(
      */
     promptCacheRetention?: 'in_memory' | '12h';
     onRequestStart?: () => void;
+    fetchImpl?: typeof fetch;
     /**
      * Optional config for the local-only gate below. Callers that hold an
      * AshlrConfig should pass it so a PERSISTED local-only is honoured exactly;
@@ -1250,7 +1252,7 @@ export function buildOpenAICompatibleClient(
           headers: buildHeaders(),
           body: requestBody,
           ...(transport?.redirect ? { redirect: transport.redirect } : {}),
-        }, transport?.timeoutMs ?? FETCH_TIMEOUT_MS, requestSignal);
+        }, transport?.timeoutMs ?? FETCH_TIMEOUT_MS, requestSignal, transport?.fetchImpl);
         response = opened.response;
         cleanupResponse = opened.cleanup;
       } catch (err: unknown) {
