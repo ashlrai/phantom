@@ -88,29 +88,58 @@ describe('harness digest takeaway CLI selection', () => {
     expect(JSON.parse(issues.out).issues).toEqual([{ id: 'Sx', code: 'malformed_id' }]);
   });
 
+  // Help extensions landed in PRs #2079, #2161, #2272, #2327 and #2623.
   it('prints the exact help contract', async () => {
     const result = await run(['--help']);
-    expect(result).toEqual({ code: 0, err: '', out: `Usage: phm reflect harness-digest --file <markdown> --json [--source <id>] [--stale-days <n>] [--needs-refresh] [--with-takeaways] [--check]
+    expect(result).toEqual({ code: 0, err: '', out: `Usage: phm reflect harness-digest --file <markdown> (--json | --text) [--source <id>]... [--query <text>] [--stale-days <n>] [--needs-refresh] [--with-takeaways] [--refresh-plan] [--check]
 Read a local digest (maximum 1 MiB) and emit dated HTTPS citations as JSON.
 Dates are UTC calendar days; older than N days is stale (default 7, boundary is fresh).
 Missing, invalid, or future dates have null checkedAt and stale, with an issue.
 Malformed IDs are issues; duplicate IDs remain in sources with an issue.
 Issue codes: malformed_id, duplicate_id, missing_checked, invalid_checked,
 future_checked, missing_urls. Only links on Source lines are included.
-With --source, select all records and issues matching an exact ID (S followed by digits).
+Repeat --source to select records and issues matching any exact ID (S followed by digits).
+For multiple distinct IDs, requestedSourceIds lists the requested IDs in request order.
 With --needs-refresh, include only stale or undated selected sources and sources whose
 IDs are referenced by selected issues; v and selected issues are preserved.
 With --with-takeaways, select only sources with at least one nonblank takeaway;
 this composes with --needs-refresh and preserves v and selected issues.
+With --query, select sources whose title or retained takeaway contains the nonblank
+text as a case-insensitive literal substring. Whitespace is significant. Issues are
+scoped to matching source IDs, including all issues for a matching duplicate ID.
+This searches the local digest only; no semantic or code index or network is used.
+With --refresh-plan (requires --json), add refreshPlan entries for selected sources
+needing attention: {sourceId, url, reasons}. URLs are existing Source citations;
+null means no citation is available. Reasons are stale, undated, or
+invalid_or_duplicate_metadata. Duplicate source/URL pairs merge their reasons.
+Entries follow source and citation order; issues without a source follow in issue order.
+Issues remain unchanged; duplicate-ID issues apply to every selected matching record.
 With --check, exit 0 for a non-empty selection with all sources fresh and no issues;
-exit 1 for an empty selection, stale or undated sources, issues, or read failure.
-The check evaluates the selection before --needs-refresh, after --source and
---with-takeaways. Issues remain scoped by --source and are not filtered by takeaways.
+exit 1 for an empty selection, an ID absent from the digest, stale or undated sources,
+issues, or read failure. Requested IDs are checked before takeaway filtering.
+The check evaluates the selection before --needs-refresh, after --source,
+--with-takeaways and --query. Without --query, issues remain scoped by --source
+and are not filtered by takeaways.
+With --text, print one line per selected takeaway \u2014 source ID, checked date (or
+undated), text \u2014 capped at 200 lines with a trailing count of any elided
+takeaways. Displayed fields are stripped of terminal control characters, and
+the date is colored by freshness only when stdout is a TTY.
+With --compare-file <previous.md>, require --file and --json; reject --text,
+--check, --source, --query, --needs-refresh, --with-takeaways and --refresh-plan. Both files use
+bounded stable reads. Compare retained parser content by exact source ID and text;
+ordering alone and computed staleness do not count as changes. Date-only changes
+are citation_date changes, never new takeaways. Added/removed sources include their
+respective added/removed takeaways. Duplicate or malformed IDs are ambiguous:
+retain all their records separately and exclude them from inferred changes.
+Both inputs' parser issues and takeaway truncation flags are preserved. Differences
+beyond the reader's takeaway limits cannot be detected. No URLs are fetched.
 Invalid arguments exit 2. Without --check, a successfully read digest exits 0.
-Options: --file <markdown>  Input file; --json  Required JSON output;
-         --source <id>  Exact source ID; --stale-days <n>  Non-negative integer;
+Options: --file <markdown>  Input file; --json | --text  Required output mode;
+         --source <id>  Exact source ID (repeatable); --stale-days <n>  Non-negative integer;
+         --query <text>  Literal title or takeaway substring (case-insensitive);
          --needs-refresh  Filter sources;
          --with-takeaways  Filter sources to those with takeaways;
+         --refresh-plan  Add a local citation revisit list (JSON only);
          --check  Check freshness;
          --help, -h  Show help.\n` });
   });

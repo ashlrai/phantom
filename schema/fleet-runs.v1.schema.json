@@ -30,6 +30,18 @@
       "items": {"type": "string"}
     },
     "claudeLane": {"type": ["string", "null"]},
+    "host": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["load1", "load5", "load15", "cores", "ratio"],
+      "properties": {
+        "load1": {"type": ["number", "null"]},
+        "load5": {"type": ["number", "null"]},
+        "load15": {"type": ["number", "null"]},
+        "cores": {"type": ["number", "null"]},
+        "ratio": {"type": ["number", "null"]}
+      }
+    },
     "lanes": {
       "type": "array",
       "items": {
@@ -111,6 +123,9 @@
       "required": ["count", "items"],
       "properties": {
         "count": {"type": ["number", "null"]},
+        "perHour": {"type": ["number", "null"]},
+        "medianOpenToMergeMs": {"type": ["number", "null"]},
+        "complete": {"type": "boolean"},
         "items": {
           "type": "array",
           "items": {
@@ -120,7 +135,10 @@
             "properties": {
               "repo": {"type": "string"},
               "number": {"type": "number"},
-              "title": {"type": "string"}
+              "title": {"type": "string"},
+              "openedAt": {"type": ["string", "null"]},
+              "mergedAt": {"type": ["string", "null"]},
+              "openToMergeMs": {"type": ["number", "null"]}
             }
           }
         }
@@ -158,6 +176,21 @@
         "properties": {
           "at": {"type": "string"},
           "source": {"type": "string"},
+          "text": {"type": "string"},
+          "id": {"type": "string"},
+          "channel": {"type": "string"},
+          "ack": {"type": "string", "enum": ["acked", "skipped", "pending"]}
+        }
+      }
+    },
+    "outbox": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "text"],
+        "properties": {
+          "at": {"type": "string"},
           "text": {"type": "string"}
         }
       }
