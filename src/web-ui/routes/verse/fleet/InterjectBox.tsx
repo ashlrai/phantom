@@ -11,6 +11,8 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { inboxTailQuery, postInterjection, readInboxAck } from './interject-queries.js';
 import { ackState, ackText, loadDraft, loadPendingAck, newestLeaderPassMs, parseInboxAt, saveDraft, savePendingAck, sourceChip } from './interject-ack-model.js';
 import { loadHistory, pushHistory, recall } from './interject-history.js';
+import { askCosTask, isCosRouteAbsent } from './cos-task-client.js';
+import { CosTaskCard, lastCosTask } from './CosTaskCard.js';
 import styles from './InterjectBox.module.css';
 
 const UNAVAILABLE = 'The inbox API is not in this build yet.';
@@ -41,6 +43,9 @@ export function InterjectBox() {
   const [unavailable, setUnavailable] = useState(false);
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState<string | null>(null);
+  const [asTask, setAsTask] = useState(false);
+  const [taskId, setTaskId] = useState<string | null>(lastCosTask);
+  const [taskAck, setTaskAck] = useState('');
   function updateDraft(text: string) {
     setDraft(text);
     try { saveDraft(window.sessionStorage, text); } catch { /* Storage can be unavailable. */ }
@@ -95,6 +100,16 @@ export function InterjectBox() {
     setAckWait(null);
     try { savePendingAck(window.localStorage, null); } catch { /* Storage can be unavailable. */ }
     try {
+      if (asTask) {
+        const task = await askCosTask(draft.trim());
+        try { pushHistory(window.localStorage, draft.trim()); } catch { /* Storage can be unavailable. */ }
+        cursor.current = null;
+        updateDraft('');
+        setTaskAck(task.ack);
+        setTaskId(task.id);
+        return;
+      }
+      setTaskAck('');
       const result = await postInterjection(draft.trim());
       try { pushHistory(window.localStorage, draft.trim()); } catch { /* Storage can be unavailable. */ }
       cursor.current = null;
@@ -107,7 +122,8 @@ export function InterjectBox() {
       }
       refresh();
     } catch (error) {
-      if (absent(error)) setUnavailable(true);
+      if (asTask && isCosRouteAbsent(error)) setMessage('Tasks are not in this build yet');
+      else if (absent(error)) setUnavailable(true);
       else setMessage(error instanceof ApiError ? error.detail ?? error.message
         : error instanceof Error ? error.message : 'The message could not be sent.');
     } finally {
@@ -153,6 +169,7 @@ export function InterjectBox() {
             } catch { /* Storage can be unavailable. */ }
           }
         }} />
+      <label><input type="checkbox" checked={asTask} disabled={sending} onChange={event => setAsTask(event.target.checked)} /> Run as task</label>
       <div className={styles.row}>
         <span>⌘↵ or Ctrl↵ send · ↑ history · Esc clear</span>
         <span aria-live="polite">{draft.length > 5_000 ? `${draft.length.toLocaleString('en-US')} / 6,000` : ''}</span>
@@ -160,6 +177,8 @@ export function InterjectBox() {
       </div>
     </form>
     <p role="status" aria-live="polite">{missing ? UNAVAILABLE : message || (sent ? `Sent · ${new Date(sent).toLocaleTimeString()}` : '')}</p>
+    {taskAck && !message ? <p role="status" aria-live="polite">{taskAck}</p> : null}
+    {taskId ? <CosTaskCard id={taskId} /> : null}
     {ackWait && !missing && !message ? <p role="status" aria-live="polite">{ACK_TEXT[ackWait.state]}</p> : null}
     <h3>Recent inbox entries</h3>
     {entries.length ? <ol className={styles.tail}>{entries.map((entry, index) => <li key={`${entry.at}-${index}`}>
