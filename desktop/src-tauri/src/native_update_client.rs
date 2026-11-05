@@ -2,6 +2,16 @@
 
 use std::time::Duration;
 
+/// Background discovery cadence. A long polling gap also triggers a resume check.
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
+pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+pub fn check_due(last_check: Duration, last_poll: Duration, now: Duration) -> bool {
+    now < last_poll
+        || now.saturating_sub(last_check) >= CHECK_INTERVAL
+        || now.saturating_sub(last_poll) > Duration::from_secs(30)
+}
+
 pub fn allowed_url(url: &reqwest::Url) -> bool {
     url.scheme() == "https"
         && url.port_or_known_default() == Some(443)
@@ -77,6 +87,35 @@ mod tests {
                 .contains("test result: ok. 1 passed; 0 failed;"),
             "fresh-process filter must execute the actual constructor case"
         );
+    }
+
+    #[test]
+    fn native_update_schedule_checks_on_interval_and_resume_without_catchup_storms() {
+        assert!(!check_due(
+            Duration::ZERO,
+            Duration::from_secs(890),
+            Duration::from_secs(895)
+        ));
+        assert!(check_due(
+            Duration::ZERO,
+            Duration::from_secs(895),
+            Duration::from_secs(900)
+        ));
+        assert!(check_due(
+            Duration::from_secs(100),
+            Duration::from_secs(105),
+            Duration::from_secs(150)
+        ));
+        assert!(!check_due(
+            Duration::from_secs(150),
+            Duration::from_secs(150),
+            Duration::from_secs(155)
+        ));
+        assert!(check_due(
+            Duration::from_secs(100),
+            Duration::from_secs(105),
+            Duration::from_secs(90)
+        ));
     }
 
     #[test]
