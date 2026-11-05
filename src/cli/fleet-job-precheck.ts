@@ -15,8 +15,10 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const execFileAsync = promisify(execFile);
 const usage = 'Usage: ashlr fleet job-precheck <file.md|-> [--ref origin/master] [--job-id RQ-ID] [--json]\n' +
-  '       ashlr fleet job-precheck --batch <file.md>... [--ref origin/master] [--json]';
+  '       ashlr fleet job-precheck --batch <file.md>...|- [--ref origin/master] [--json]';
 const STDIN_MAX_BYTES = 8000;
+const BATCH_STDIN_MAX_BYTES = 200_000;
+const LABEL_MAX_BYTES = 200;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 
 export interface JobPrecheckCliDeps {
@@ -29,17 +31,36 @@ export interface JobPrecheckCliDeps {
   error?: (line: string) => void;
 }
 
-async function readDraftStdin(source: AsyncIterable<Uint8Array>): Promise<string> {
+async function readStdinText(source: AsyncIterable<Uint8Array>, limit: number): Promise<string> {
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of source) {
     size += chunk.byteLength;
-    if (size > STDIN_MAX_BYTES) throw new Error('stdin too large');
+    if (size > limit) throw new Error('stdin too large');
     chunks.push(chunk);
   }
-  const markdown = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+}
+
+async function readDraftStdin(source: AsyncIterable<Uint8Array>): Promise<string> {
+  const markdown = await readStdinText(source, STDIN_MAX_BYTES);
   if (!markdown.trim()) throw new Error('empty stdin');
   return markdown;
+}
+
+async function readBatchStdin(source: AsyncIterable<Uint8Array>): Promise<Map<string, string>> {
+  const value: unknown = JSON.parse(await readStdinText(source, BATCH_STDIN_MAX_BYTES));
+  if (!Array.isArray(value) || value.length < 1 || value.length > JOB_PRECHECK_BATCH_MAX) throw new Error('invalid batch');
+  const drafts = new Map<string, string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item) ||
+        Object.keys(item).length !== 2 || !Object.hasOwn(item, 'label') || !Object.hasOwn(item, 'markdown')) throw new Error('invalid entry');
+    const { label, markdown } = item as Record<string, unknown>;
+    if (typeof label !== 'string' || !label.trim() || Buffer.byteLength(label, 'utf8') > LABEL_MAX_BYTES || drafts.has(label) ||
+        typeof markdown !== 'string' || !markdown.trim() || Buffer.byteLength(markdown, 'utf8') > STDIN_MAX_BYTES) throw new Error('invalid draft');
+    drafts.set(label, markdown);
+  }
+  return drafts;
 }
 
 function isSafeRef(ref: string): boolean {
@@ -143,7 +164,7 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
   const error = deps.error ?? ((line: string) => console.error(line));
   if (args.includes('--help') || args.includes('-h')) {
     log(`${usage}\nNames src, test, docs, schema and scripts files in the draft, skipping Do not edit and Never touch lines. Exit 3 when every non-test src file is already on the ref and its last commit subject contains bridge(RQ-...). Exit 0 when the draft is fresh or only partly on the ref. Exit 2 on a read or git failure.\n` +
-      `Use - for one UTF-8 draft on stdin (maximum 8000 bytes; nonempty). Cannot combine with --batch.\n` +
+      `Use - for one UTF-8 draft on stdin (maximum 8000 bytes; nonempty). With --batch -, stdin is a UTF-8 JSON array of 1-20 objects {"label": string, "markdown": string}; labels must be unique, nonempty and at most 200 UTF-8 bytes, markdown nonempty and at most 8000 UTF-8 bytes per draft, and the entire input at most 200000 bytes. Do not mix - with paths.\n` +
       `--job-id requires an exact parsed identity in each non-test source path’s last commit. Unknown or unmatched evidence does not rule out earlier commits; a match does not establish semantic correctness. Cannot combine with --batch.\n` +
       `--batch takes 1-${JOB_PRECHECK_BATCH_MAX} draft paths and reports each in input order over a shared fact cache, so a path several drafts name is probed once. A draft that cannot be read or whose git probe fails is reported as an error for that draft and the batch continues; errors are never called fresh. Collisions list paths shared by successful drafts and their filenames as evidence only; JSON includes a collisions array. Collisions do not change the exit status. After the per-draft reports a count line tallies fresh, partly-on-master, likely-done and errors. Batch exits 2 when any draft errored, else 3 when any draft is likely-done, else 0. Read-only: never deletes files, launches jobs or writes queue state.`);
     return 0;
@@ -183,12 +204,21 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     files.push(arg);
   }
   if (batch) {
-    if (jobId !== undefined || files.includes('-')) { error(usage); return 2; }
+    if (jobId !== undefined || (files.includes('-') && files.length !== 1)) { error(usage); return 2; }
     if (files.length === 0 || files.length > JOB_PRECHECK_BATCH_MAX) { error(usage); return 2; }
 
   }
   const file = files[0];
   if (!file) { error(usage); return 2; }
+  let batchDrafts: Map<string, string> | undefined;
+  if (batch && file === '-') {
+    try {
+      batchDrafts = await readBatchStdin((deps.readStdin ?? (() => process.stdin))());
+    } catch {
+      error('error: invalid or unreadable batch stdin');
+      return 2;
+    }
+  }
   let resolvedRef: string | null = null;
   try {
     if (deps.resolveRef || !deps.git) {
@@ -200,7 +230,10 @@ export async function cmdFleetJobPrecheck(args: string[], deps: JobPrecheckCliDe
     return 2;
   }
   const git = deps.git ?? gitJobProbe(resolvedRef!, deps.cwd);
-  if (batch) return runPrecheckBatch(files, ref, json, resolvedRef, git, deps, log);
+  if (batch) {
+    const batchDeps = batchDrafts ? { ...deps, readFile: async (label: string) => batchDrafts!.get(label)! } : deps;
+    return runPrecheckBatch(batchDrafts ? [...batchDrafts.keys()] : files, ref, json, resolvedRef, git, batchDeps, log);
+  }
   let markdown: string;
   try {
     markdown = file === '-'
