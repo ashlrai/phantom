@@ -29,7 +29,7 @@ describe('fleet MCP protocol', () => {
       'fleet_status', 'fleet_loop', 'fleet_bus_hops', 'fleet_host_runs', 'fleet_bus_inbox',
       'fleet_lanes', 'fleet_usage_resets', 'fleet_reset_await', 'fleet_reset_group_await',
       'fleet_reset_release_await', 'fleet_reset_history', 'fleet_reset_follow', 'fleet_job_history',
-      'fleet_job_history_batch', 'fleet_path_history', 'fleet_job_precheck', 'fleet_job_precheck_batch', 'fleet_main_health',
+      'fleet_job_history_batch', 'fleet_job_current', 'fleet_path_history', 'fleet_job_precheck', 'fleet_job_precheck_batch', 'fleet_main_health',
       'fleet_waste_risk', 'fleet_kept', 'fleet_trim',
     ]);
     for (const tool of tools) {
