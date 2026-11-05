@@ -230,11 +230,15 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     // https://openai.com/index/introducing-gpt-6-1-terra/
     // API prices are published. Speed is workload-dependent; allowance is a
     // conservative policy prior, never a replacement for subscriptionAllows.
+    // Single merged entry: the API transport fields (apiContextWindow, toolApi)
+    // used to live on a second 'codex:gpt-6.1-terra' literal that every id
+    // lookup shadowed. Terra stays implicitly pickable — catalogFor, pickModel
+    // preferCheap, banditCandidateArms and codexArmPriors all rely on that.
     id: `codex:${CODEX_TERRA_MODEL_ID}`, engine: 'codex', tier: 'mid',
     costPerMTokIn: 1, costPerMTokOut: 5,
     capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
     minEffort: 1, apiModelId: CODEX_TERRA_MODEL_ID,
-    contextWindowTokens: 1_050_000,
+    contextWindowTokens: 1_050_000, apiContextWindow: 1_050_000, toolApi: 'responses',
     reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
     relativeSpeed: 3, planAllowanceWeight: 0.5,
   },
@@ -254,11 +258,19 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     capabilities: ['fast', 'general', 'long-context'],
     minEffort: 1, apiModelId: 'claude-haiku-5-5', qualityRank: 1,
   },
+  // Sonnet 5.5: current Sonnet generation — $2/$10 per MTok, verified against
+  // platform.claude.com/docs/en/models/overview on 2026-11-04. Listed in
+  // CLAUDE5_CATALOG_IDS like the other Claude 5 ids, and explicitOnly on top:
+  // claude5ExcludeIds returns the empty set by default, so a cheaper large
+  // sonnet would otherwise silently replace claude:sonnet-5 as every flag-on
+  // static pick (m320/m323 pin sonnet-5). Explicit config/model pins still
+  // dispatch 'claude-sonnet-5-5' today; the fast-tier wiring flips the flag.
   {
-    id: 'codex:gpt-6.1-terra', engine: 'codex', tier: 'mid',
-    costPerMTokIn: 1, costPerMTokOut: 5,
-    capabilities: ['fast', 'general', 'coder', 'long-context'], minEffort: 1,
-    apiModelId: 'gpt-6.1-terra', apiContextWindow: 1_050_000, toolApi: 'responses', explicitOnly: true,
+    id: 'claude:claude-sonnet-5-5', engine: 'claude', tier: 'large',
+    costPerMTokIn: 2, costPerMTokOut: 10,
+    capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 2, apiModelId: 'claude-sonnet-5-5', qualityRank: 3,
+    explicitOnly: true,
   },
   // -- Claude (subscription / token-billed via API) -------------------------
   {
@@ -656,6 +668,7 @@ export const CLAUDE5_CATALOG_IDS: ReadonlySet<string> = new Set([
   'claude:sonnet-5',
   'claude:fable-5',
   `claude:${DEFAULT_FABLE_MODEL_ID}`,
+  'claude:claude-sonnet-5-5',
 ]);
 
 const EMPTY_EXCLUDES: ReadonlySet<string> = new Set();
