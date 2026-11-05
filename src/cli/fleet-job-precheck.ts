@@ -96,7 +96,7 @@ export function gitJobProbe(ref: string, cwd?: string): JobPrecheckGit {
         throw err;
       }
     },
-    async lastCommit(path: string): Promise<{ sha: string; subject: string } | null> {
+    async lastCommit(path: string): Promise<{ sha: string; subject: string; filesChanged: number | null } | null> {
       const { stdout } = await execFileAsync('git', ['log', '-1', '--format=%h%x09%s', ref, '--', path], opts);
       const line = String(stdout).split(/\r?\n/, 1)[0] ?? '';
       const tab = line.indexOf('\t');
@@ -104,7 +104,14 @@ export function gitJobProbe(ref: string, cwd?: string): JobPrecheckGit {
       const sha = line.slice(0, tab);
       const subject = line.slice(tab + 1);
       if (!/^[0-9a-f]{4,40}$/i.test(sha) || subject.length === 0) return null;
-      return { sha, subject };
+      let filesChanged: number | null = null;
+      try {
+        const { stdout: names } = await execFileAsync('git', ['show', '--format=', '--name-only', '-z', sha], {
+          ...opts, maxBuffer: 8 * 1024 * 1024,
+        });
+        filesChanged = names.split('\0').filter(Boolean).length;
+      } catch { /* Unknown counts preserve existing behavior. */ }
+      return { sha, subject, filesChanged };
     },
   };
 }
@@ -113,7 +120,7 @@ function factLine(fact: PrecheckFact): string {
   const state = fact.onMaster ? 'on-master' : 'missing';
   const evidence = fact.jobIdMatch === undefined ? '' : ` job-id-match=${fact.jobIdMatch === null ? 'unknown' : fact.jobIdMatch}`;
   if (!fact.lastCommit) return `${fact.path} ${state}${evidence}`;
-  return `${fact.path} ${state} ${fact.lastCommit.sha} ${fact.lastCommit.subject.replace(/[\r\n]+/g, ' ')}${evidence}`;
+  return `${fact.path} ${state} ${fact.lastCommit.sha} ${fact.lastCommit.subject.replace(/[\r\n]+/g, ' ')}${fact.bulk ? ' bulk-commit' : ''}${evidence}`;
 }
 
 /** One report per input in input order, then a batch count line. Never deletes, launches or queues. */
