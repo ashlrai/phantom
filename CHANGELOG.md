@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.0 |
-| Latest dated changelog release (2026-11-04) | 3.30.0 |
+| Source package | 3.30.1 |
+| Latest dated changelog release (2026-11-05) | 3.30.1 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,16 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.1] — 2026-11-05
+
+### Changed
+- Prepare continuous patch releases from green master commits on a configurable
+  30-minute cadence, with the README, desktop version carriers and generated
+  release notes updated together in the release PR.
+- Reuse the exact commit's green push CI evidence for desktop release
+  qualification while keeping exhaustive platform suites in their nightly lane.
+  Existing signing, artifact digests and release provenance remain required.
 
 ## [3.30.0] — 2026-11-04
 
