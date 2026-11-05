@@ -1,10 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createCommsInboxCommand } from '../src/cli/comms-inbox.js';
-import { appendInboxEntry } from '../src/core/fleet/mason-inbox.js';
+import { appendInboxEntry, formatInboxEntry } from '../src/core/fleet/mason-inbox.js';
 
 const roots: string[] = [];
 function setup(wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>) {
@@ -24,13 +25,21 @@ afterEach(() => {
 
 it('emits sequential full filtered snapshots including a newly appended instruction', async () => {
   let runsDir = '';
+  // PRs #3004 and #3040 write channel lines without priority. Seed headings
+  // explicitly so this test continues exercising source and P0 filtering.
+  const appendInstruction = async (text: string, source: string, at: string) => {
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), formatInboxEntry(text, source, new Date(at)));
+  };
   const wait = vi.fn(async (ms: number) => {
     expect(ms).toBe(2000);
-    expect(await appendInboxEntry('second instruction', { runsDir, source: 'Mobile', now: () => new Date('2026-10-31T04:15:00Z') })).toMatchObject({ ok: true });
+    await appendInstruction('second instruction', 'Mobile', '2026-10-31T04:15:00Z');
   });
   const ctx = setup(wait); runsDir = ctx.runsDir;
-  await appendInboxEntry('first instruction', { runsDir, source: 'Mobile', now: () => new Date('2026-10-31T04:14:00Z') });
-  await appendInboxEntry('other source', { runsDir, source: 'Desktop', now: () => new Date('2026-10-31T04:14:00Z') });
+  await appendInstruction('first instruction', 'Mobile', '2026-10-31T04:14:00Z');
+  await appendInstruction('other source', 'Desktop', '2026-10-31T04:14:00Z');
+  await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), formatInboxEntry('other priority', 'Mobile', new Date('2026-10-31T04:14:00Z')).replace('PRIORITY P0', 'PRIORITY P1'));
+  expect(await appendInboxEntry('unprioritized channel entry', { runsDir, source: 'Mobile', now: () => new Date('2026-10-31T04:14:00Z') })).toMatchObject({ ok: true });
   const args = ['read', '--watch', '--interval-ms', '2000', '--max-samples', '2', '--source', 'mobile', '--priority', 'P0', '--after', '2026-10-31T04:13:00Z', '--limit', '2'];
   expect(await ctx.command(args)).toBe(0);
   expect(wait).toHaveBeenCalledTimes(1);
