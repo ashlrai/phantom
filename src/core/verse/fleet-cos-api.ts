@@ -11,12 +11,16 @@ import { createLocalChannelDedupeStore } from '../fleet/channel-dedupe-store.js'
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import { appendInboxEntry } from '../fleet/mason-inbox.js';
 import { cosJobId, cosStatus, deliverCosResult, type CosRoute } from '../cos/intake.js';
+import { listCosTasks } from '../cos/list.js';
+import { reconcileCosDelivery } from '../cos/reconcile.js';
 import type { deliverTelegramCosResult } from '../comms/telegram-inbox-bridge.js';
 import type { deliverEmailCosResult } from '../comms/email-drop-bridge.js';
 
 export const VERSE_FLEET_COS_ASK_PATH = '/api/verse/fleet/cos/ask';
 export const VERSE_FLEET_COS_STATUS_PATH = '/api/verse/fleet/cos/status';
 export const VERSE_FLEET_COS_APPROVE_PATH = '/api/verse/fleet/cos/approve';
+export const VERSE_FLEET_COS_LIST_PATH = '/api/verse/fleet/cos/list';
+export const VERSE_FLEET_COS_RECONCILE_PATH = '/api/verse/fleet/cos/reconcile';
 
 // passesMutationGate authenticates a single local operator (the x-ashlr-token
 // holder). The receiver's canonical sender is therefore this fixed server-side
@@ -53,6 +57,8 @@ function safeText(value: unknown): string {
   return scrubSecrets(value);
 }
 const code = (e: unknown): unknown => record(e) ? e.code : undefined;
+// A request line that cannot pass safeText (a private path shape) lists as empty.
+const listedText = (value: string): string => { try { return safeText(value); } catch { return ''; } };
 
 export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
   const now = deps.now ?? Date.now;
@@ -113,6 +119,21 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
     } catch { sendJson(res, 503, { code: 'COS_UNAVAILABLE' }); }
   }
 
+  async function list(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
+    let rawLimit: string | null;
+    try { rawLimit = new URL(req.url ?? '/', 'http://localhost').searchParams.get('limit'); } catch { rawLimit = null; }
+    const limit = rawLimit !== null && /^\d+$/.test(rawLimit) ? Number(rawLimit) : Number.NaN;
+    if (rawLimit !== null && (!Number.isInteger(limit) || limit < 1 || limit > 50)) {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid limit' }); return;
+    }
+    try {
+      const tasks = await listCosTasks(runsDir, rawLimit === null ? 20 : limit);
+      // Summaries only: senderId, threadId, draft text and digests never leave the server.
+      sendJson(res, 200, { v: 1, tasks: tasks.map(task => ({ ...task,
+        jobStatus: safeText(task.jobStatus), channel: safeText(task.channel), request: listedText(task.request) })) });
+    } catch { sendJson(res, 503, { code: 'COS_UNAVAILABLE' }); }
+  }
+
   async function approve(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
     let body: unknown;
     try { body = JSON.parse(await readBody(req)); } catch { body = null; }
@@ -164,14 +185,37 @@ export function createFleetCosApi(deps: FleetCosApiDeps = {}): ApiModule {
     } catch { sendJson(res, 503, { code: 'COS_UNAVAILABLE' }); }
   }
 
+  /** Mason's record of what he found after an uncertain send. Never sends; never echoes error text. */
+  async function reconcile(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
+    let body: unknown;
+    try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+    if (!record(body) || Object.keys(body).length !== 2 || typeof body.id !== 'string' || !JOB_ID.test(body.id) ||
+      (body.verdict !== 'delivered' && body.verdict !== 'retry')) {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid reconcile body' }); return;
+    }
+    const { id, verdict } = body as { id: string; verdict: 'delivered' | 'retry' };
+    try {
+      const result = await reconcileCosDelivery(id, verdict, { runsDir, now });
+      sendJson(res, 200, { v: 1, id, delivery: result.to === 'sent' ? 'sent' : null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message === 'Delivery is still sending') sendJson(res, 409, { code: 'COS_STILL_SENDING' });
+      else if (/nothing to reconcile$/.test(message)) sendJson(res, 409, { code: 'COS_NOTHING_TO_RECONCILE' });
+      else if (message === 'Unknown chief-of-staff job') sendJson(res, 404, { code: 'COS_UNKNOWN' });
+      else sendJson(res, 503, { code: 'COS_UNAVAILABLE' });
+    }
+  }
+
   return async (ctx, req, res, path, method) => {
     const route = path === VERSE_FLEET_COS_ASK_PATH ? 'ask' : path === VERSE_FLEET_COS_STATUS_PATH ? 'status'
-      : path === VERSE_FLEET_COS_APPROVE_PATH ? 'approve' : null;
+      : path === VERSE_FLEET_COS_APPROVE_PATH ? 'approve' : path === VERSE_FLEET_COS_LIST_PATH ? 'list'
+      : path === VERSE_FLEET_COS_RECONCILE_PATH ? 'reconcile' : null;
     if (route === null) return false;
-    if (method !== (route === 'status' ? 'GET' : 'POST')) { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    const readOnly = route === 'status' || route === 'list';
+    if (method !== (readOnly ? 'GET' : 'POST')) { sendJson(res, 405, { error: 'method not allowed' }); return true; }
     if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
-    if (route !== 'status' && !passesMutationGate(req, res, ctx.token)) return true;
-    await (route === 'ask' ? ask : route === 'status' ? status : approve)(req, res);
+    if (!readOnly && !passesMutationGate(req, res, ctx.token)) return true;
+    await (route === 'ask' ? ask : route === 'status' ? status : route === 'list' ? list : route === 'reconcile' ? reconcile : approve)(req, res);
     return true;
   };
 }

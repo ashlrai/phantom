@@ -6,7 +6,7 @@ import type { AshlrConfig, WebServerHandle } from '../src/core/types.js';
 import type { UniverseOverview } from '../src/core/universe/types.js';
 
 const reader = vi.hoisted(() => ({ read: vi.fn() }));
-vi.mock('../src/core/universe/index.js', () => ({ readUniverseOverview: reader.read }));
+vi.mock('../src/core/universe/overview.js', () => ({ readUniverseOverview: reader.read }));
 
 import { handleApi } from '../src/core/web/api.js';
 import { startServer } from '../src/core/web/server.js';

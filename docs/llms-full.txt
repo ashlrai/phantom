@@ -151,3 +151,5 @@ Launched jobs never move. At most two moves per six hours; blocked moves log
 ROUTE_HOLD. Read accepted trailing-hour moves with phm route explain --json.
 
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+
+Multi-Mac node pool: see docs/AGENT-NETWORK.md and docs/NODES.md. Configure explicit team SSH aliases with phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json. Join with phm node join --node secondary --owner mason --primary primary-mac --backup backup-mac --json. Use phm node watch [--once] --json, phm node worker --runner /absolute/host-owned-runner --json and phm node list|status --json. phm node rpc --json is the SSH stdin endpoint. The backup witnesses every admission and promotes after fifteen minutes; returning primary is demoted. No copied auth, new paid service, message sends or worker publication.
