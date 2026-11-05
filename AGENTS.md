@@ -206,3 +206,12 @@ Individual fetch failures are warnings and retain the last successful snapshot.
 The release autonomy command is awaiting top-level CLI wiring. Once wired, `phm release autonomy --json` reads the enrolled repositories' release gates and the local publish switch. Use `phm release autonomy --repo locus --md` for a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
 
 Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
+
+## Portable agent profiles
+
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version
+pins, doctrine paths and restrictive send policy. Command contract:
+`phm agents list --json`, `phm agents show helper --json`,
+`phm agents validate helper --json`, `phm agents versions helper --json`.
+The new CLI implementation awaits top-level registration; email sending is held by a drafts-only stub pending
+Security integration. Profiles never grant transport or spending authority.
