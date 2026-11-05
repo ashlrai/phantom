@@ -20,6 +20,11 @@
  *     outbox (`failed`) for the next pass; a claim found in `sending/` is
  *     `stuck` and never resent. A lost reply is better than a duplicate
  *     email.
+ *     With `draftsRunsDir` set, a reply to a single address that is NOT on the
+ *     allowlist is written as a pending draft (src/core/cos/drafts.ts) and its
+ *     file moves to `dir/drafted/`: someone else's mail is never sent from
+ *     here, it waits for the owner's Approve / Reject. Without it such a
+ *     reply is `refused` and stays put, as before.
  *   macMailTransport(run)  — darwin-only Mail.app send through osascript.
  *     The script is a fixed literal and To/subject/body travel as argv items
  *     read by its `on run argv` handler — no value is ever interpolated into
@@ -33,12 +38,14 @@
 import { execFile } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { createDraft } from '../cos/drafts.js';
 
 /** Replies larger than this are stuck, not sent — a reply is ack text, not a payload. */
 export const EMAIL_OUTBOX_MAX_BYTES = 64 * 1024;
 const REPLY_SUFFIX = '.reply.eml';
 const SENDING_DIR = 'sending';
 const SENT_DIR = 'sent';
+const DRAFTED_DIR = 'drafted';
 const MAIL_TIMEOUT_MS = 30_000;
 const ADDRESS = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/g;
 
@@ -56,11 +63,11 @@ export interface EmailTransportResult {
 /** Injected send path — tests substitute a fake; production uses macMailTransport. */
 export type EmailTransport = (message: EmailOutboxMessage) => Promise<EmailTransportResult>;
 
-export type EmailOutboxStuckReason = 'symlink' | 'not-regular' | 'oversized' | 'unreadable' | 'interrupted-send';
+export type EmailOutboxStuckReason = 'symlink' | 'not-regular' | 'oversized' | 'unreadable' | 'interrupted-send' | 'malformed';
 
 export interface EmailOutboxEntry {
   name: string;
-  state: 'queued' | 'sent' | 'stuck';
+  state: 'queued' | 'sent' | 'stuck' | 'drafted';
   /** Parsed single To address when present; absent when missing or multi-recipient. */
   to?: string;
   subject?: string;
@@ -69,7 +76,7 @@ export interface EmailOutboxEntry {
 
 export interface EmailOutboxListing {
   dir: string;
-  counts: { queued: number; sent: number; stuck: number };
+  counts: { queued: number; sent: number; stuck: number; drafted: number };
   entries: EmailOutboxEntry[];
 }
 
@@ -77,14 +84,18 @@ export interface EmailOutboxSendOptions {
   dir: string;
   allowedRecipients: ReadonlySet<string>;
   transport: EmailTransport;
+  /** Runs dir holding `drafts/`; when set, non-allowlisted single recipients become drafts. */
+  draftsRunsDir?: string;
   /** Clock seam for tests; stamps `at` on sent details. */
   now?: () => Date;
 }
 
 export interface EmailOutboxSendDetail {
   name: string;
-  outcome: 'queued' | 'sent' | 'refused' | 'failed' | 'stuck';
+  outcome: 'queued' | 'sent' | 'drafted' | 'refused' | 'failed' | 'stuck';
   to?: string;
+  /** Set on `drafted`: the id to approve with `phm drafts approve`. */
+  draftId?: string;
   reason?: string;
   at?: string;
 }
@@ -93,6 +104,8 @@ export interface EmailOutboxSendResult {
   /** Still pending after this pass — claimed by a concurrent run. */
   queued: number;
   sent: number;
+  /** Addressed to someone else: written as a pending draft, file moved to drafted/. */
+  drafted: number;
   /** To failed the allowlist gate; the file stays in the outbox. */
   refused: number;
   /** Transport failure; the file was returned to the outbox. */
@@ -181,7 +194,7 @@ function scanOutbox(dir: string): ScannedEntry[] {
   return entries;
 }
 
-/** Read-only view of the outbox: queued replies, sent history, stuck files. */
+/** Read-only view of queued, drafted, sent and stuck reply artifacts. */
 export function readEmailOutbox(dir: string): EmailOutboxListing {
   const entries: EmailOutboxEntry[] = [];
   for (const entry of scanOutbox(dir)) {
@@ -196,7 +209,13 @@ export function readEmailOutbox(dir: string): EmailOutboxListing {
   for (const name of replyNames(join(dir, SENT_DIR))) {
     entries.push({ name, state: 'sent' });
   }
-  const counts = { queued: 0, sent: 0, stuck: 0 };
+  for (const entry of scanOutbox(join(dir, DRAFTED_DIR))) {
+    if (entry.stuck === 'vanished') continue;
+    if (entry.stuck) entries.push({ name: entry.name, state: 'stuck', reason: entry.stuck });
+    else if (!entry.reply?.to) entries.push({ name: entry.name, state: 'stuck', reason: 'malformed' });
+    else entries.push({ name: entry.name, state: 'drafted', to: entry.reply.to, subject: entry.reply.subject });
+  }
+  const counts = { queued: 0, sent: 0, stuck: 0, drafted: 0 };
   for (const entry of entries) counts[entry.state] += 1;
   return { dir, counts, entries };
 }
@@ -205,7 +224,7 @@ export function readEmailOutbox(dir: string): EmailOutboxListing {
  * One send pass. Each discovered reply ends in exactly one outcome: `sent`
  * (claim moved to sent/), `refused` (To gate, left in the outbox), `failed`
  * (transport error, renamed back), `stuck` (unsendable or orphaned claim) or
- * `queued` (claimed by a concurrent run — still pending, never double-sent).
+ * `drafted` (someone else's address, awaiting approval), `queued` (claimed by a concurrent run, still pending, never double-sent).
  */
 export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<EmailOutboxSendResult> {
   const sending = join(opts.dir, SENDING_DIR);
@@ -213,7 +232,7 @@ export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<Ema
   mkdirSync(sending, { recursive: true });
   mkdirSync(sentDir, { recursive: true });
   const now = opts.now ?? (() => new Date());
-  const result: EmailOutboxSendResult = { queued: 0, sent: 0, refused: 0, failed: 0, stuck: 0, details: [] };
+  const result: EmailOutboxSendResult = { queued: 0, sent: 0, drafted: 0, refused: 0, failed: 0, stuck: 0, details: [] };
   const record = (name: string, outcome: EmailOutboxSendDetail['outcome'], extra?: Partial<EmailOutboxSendDetail>): void => {
     result[outcome] += 1;
     result.details.push({ name, outcome, ...extra });
@@ -227,6 +246,22 @@ export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<Ema
     if (entry.stuck === 'vanished') { record(entry.name, 'queued'); continue; }
     if (entry.stuck) { record(entry.name, 'stuck', { reason: entry.stuck }); continue; }
     const reply = entry.reply!;
+    if (reply.to !== null && !opts.allowedRecipients.has(reply.to) && opts.draftsRunsDir !== undefined) {
+      try {
+        const draft = await createDraft({ to: reply.to, subject: reply.subject, body: reply.body, source: entry.name }, opts.draftsRunsDir, now);
+        try {
+          mkdirSync(join(opts.dir, DRAFTED_DIR), { recursive: true });
+          renameSync(join(opts.dir, entry.name), join(opts.dir, DRAFTED_DIR, entry.name));
+        } catch {
+          // Left in place: the draft id is content-derived, so the next pass
+          // finds the same draft and retries the move instead of duplicating.
+        }
+        record(entry.name, 'drafted', { to: reply.to, draftId: draft.id });
+      } catch {
+        record(entry.name, 'refused', { to: reply.to, reason: 'draft-refused' });
+      }
+      continue;
+    }
     if (reply.to === null || !opts.allowedRecipients.has(reply.to)) {
       record(entry.name, 'refused', {
         to: reply.to ?? undefined,

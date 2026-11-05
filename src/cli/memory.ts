@@ -13,7 +13,7 @@ export async function cmdMemory(args: string[]): Promise<number> {
   try {
     const a = args.filter(v => v !== '--json');
     const verb = a.shift();
-    if (!verb || ['--help', '-h', 'help'].includes(verb)) { if (json) emit({ usage: USAGE }); else console.log(USAGE); return 0; }
+    if (!verb || ['--help', '-h', 'help'].includes(verb) || a.includes('--help') || a.includes('-h')) { if (json) emit({ usage: USAGE }); else console.log(USAGE); return 0; }
     const flags: Record<string, string> = {};
     const rest: string[] = [];
     while (a.length) {

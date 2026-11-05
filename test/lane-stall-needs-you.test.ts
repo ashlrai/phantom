@@ -20,7 +20,7 @@ function runs(lane: Partial<FleetRuns['lanes'][number]> = {}, claimedAt?: string
 describe('deriveLaneStallNeedsYou', () => {
   it('stalled lane gives a row with the counts and opens Lanes', () => {
     expect(deriveLaneStallNeedsYou(runs({}, minAgo(40)), NOW)).toEqual([expect.objectContaining({
-      id: 'lane-stall:fake-lane', open: { kind: 'pane', paneId: 'fleet-lanes' }, severity: 'urgent',
+      id: 'lane-stall:fake-lane', open: { kind: 'pane', paneId: 'fleet-lanes', lane: 'fake-lane' }, severity: 'urgent',
       title: 'fake-lane stalled: 13 queued, 0 of 4 running, not held, no launch for 40 min',
     })]);
   });

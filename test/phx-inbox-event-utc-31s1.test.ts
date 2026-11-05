@@ -28,11 +28,11 @@ describe('inbox dispatch event timestamps', () => {
     const [firstLine, ...restLines] = text.split('\n');
     const entry = `\n${[`${iso} [src:desktop id:${id}] ${firstLine}`, ...restLines].join('\n')}\n`;
     expect(await appendInboxEntry(text, { runsDir, source, now: () => new Date(instant) })).toEqual({
-      ok: true, at: eastern, bytes: Buffer.byteLength(entry),
+      ok: true, at: eastern, id, bytes: Buffer.byteLength(entry),
     });
     expect(await readFile(join(runsDir, 'leader', 'MASON-INBOX.md'), 'utf8')).toBe(entry);
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'healthy', entries: [
-      { at: eastern, source: `desktop (${id})`, priority: null, text },
+      { at: eastern, id, channel: 'desktop', source: `desktop (${id})`, priority: null, text },
     ] });
 
     const log = await readFile(join(runsDir, 'dispatch-events.log'), 'utf8');

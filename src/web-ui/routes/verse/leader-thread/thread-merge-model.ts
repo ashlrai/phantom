@@ -1,9 +1,11 @@
 /**
  * routes/verse/leader-thread/thread-merge-model.ts — the Leaders dock pane's
  * ONE conversation: the leaders' thread posts interleaved in time with the
- * entries of MASON-INBOX.md, whatever channel they arrived on, so a leader's
- * answer sits under the words it answered. Pure; the tests feed the shapes.
+ * entries of MASON-INBOX.md, whatever channel they arrived on, and the
+ * leader's own MASON-OUTBOX.md answers, so an answer sits under the words it
+ * answered. Pure; the tests feed the shapes.
  */
+import { classifyOutboxText, type OutboxKind } from '../../../../core/fleet/outbox-kind.js';
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
 import { annotateAck } from '../fleet-inbox/inbox-ack-model.js';
 import { parseInboxAt, sourceChip } from '../fleet/interject-ack-model.js';
@@ -17,6 +19,7 @@ export interface MergedLine {
   /** Epoch ms, or NaN when the timestamp could not be read. */
   at: number;
   who: 'mason' | 'leader';
+  kind?: OutboxKind;
   /** The post's channel, or the inbox entry's declared source. */
   source: string;
   text: string;
@@ -36,7 +39,7 @@ function inboxMs(at: string, nowMs: number): number {
   return parseInboxAt(at, nowMs) ?? Date.parse(at);
 }
 
-export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number, runs?: unknown): MergedThread {
+export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRunsV1['inbox'], nowMs: number, runs?: unknown, outbox: readonly { at: string; text: string }[] = []): MergedThread {
   // An interjection relayed into the thread lands there verbatim; the inbox
   // copy is dropped so the message shows once, still attributed to Mason.
   const relayed = new Set(thread.filter(m => m.from === 'mason').map(m => m.text.trim()));
@@ -58,6 +61,11 @@ export function mergeThread(thread: readonly ThreadPostShape[], inbox: FleetRuns
     if (relayed.has(entry.text.trim())) return;
     push({ at: inboxMs(entry.at, nowMs), who: 'mason', source: entry.source, text: entry.text, id: `inbox-${index}`, ack: entry.source === 'system' ? null : ackFor(index) });
   });
+  // The leader's file answers read like its posts: same clock parsing, and on
+  // a shared timestamp they still land after Mason's own words.
+  outbox.forEach((entry, index) => {
+    push({ at: inboxMs(entry.at, nowMs), who: 'leader', source: 'outbox', text: entry.text, id: `outbox-${index}`, ack: null, kind: classifyOutboxText(entry.text) });
+  });
   for (const message of thread) {
     // Only attribute a relayed entry when its text identifies exactly one inbox row.
     const matches = message.from === 'mason' && message.channel !== 'system'
@@ -77,6 +85,7 @@ export function lineChannel(source: string): LeaderThreadChannel | null {
 
 /** What the source chip says: the channel's own label when there is one, else the inbox's normalised source. */
 export function lineSourceLabel(source: string): string {
+  if (source === 'outbox') return 'Leader outbox';
   const channel = lineChannel(source);
   return channel ? CHANNEL_LABEL[channel] : sourceChip(source);
 }
@@ -85,4 +94,10 @@ export function lineSourceLabel(source: string): string {
 export function fleetInbox(data: unknown): FleetRunsV1['inbox'] {
   const rows = data !== null && typeof data === 'object' && !Array.isArray(data) ? (data as FleetRunsV1).inbox : undefined;
   return Array.isArray(rows) && rows.every(row => row && typeof row.at === 'string' && typeof row.source === 'string' && typeof row.text === 'string') ? rows : [];
+}
+
+/** The outbox array inside the same read — [] when the build served none. */
+export function fleetOutbox(data: unknown): NonNullable<FleetRunsV1['outbox']> {
+  const rows = data !== null && typeof data === 'object' && !Array.isArray(data) ? (data as FleetRunsV1).outbox : undefined;
+  return Array.isArray(rows) && rows.every(row => row && typeof row.at === 'string' && typeof row.text === 'string') ? rows : [];
 }

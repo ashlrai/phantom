@@ -14,10 +14,12 @@
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
  *   radar [list|run|diff]      Observe public documentation and package changes.
+ *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
  *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
+ *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
  *   skills audit <path>        Quarantine-audit an external skill pack (read-only).
@@ -2611,6 +2613,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'drafts': {
+        // Outbound drafts awaiting approval (src/core/cos/drafts.ts); approve records, never sends.
+        process.exitCode = await (await import('./drafts.js')).cmdDrafts(rest);
+        break;
+      }
+
       case 'radar': {
         process.exitCode = await (await import('./radar.js')).cmdRadar(rest);
         break;
@@ -2821,6 +2829,12 @@ async function main(): Promise<void> {
       case 'signals': {
         const { cmdSignals } = await import('./signals.js');
         process.exitCode = await cmdSignals(rest);
+        break;
+      }
+
+      case 'friction': {
+        const { cmdFriction } = await import('./friction.js');
+        process.exitCode = await cmdFriction(rest);
         break;
       }
 
