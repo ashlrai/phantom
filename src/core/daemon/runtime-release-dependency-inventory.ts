@@ -496,6 +496,7 @@ function rootPackageIsPortable(
     'CHANGELOG.md',
     'bin',
     'dist',
+    'radar/sources.json',
     'docs/README.md',
     'docs/SIGNALS.md',
     'docs/FLEET-API.md',

@@ -22,14 +22,14 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
-  'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'apps', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
+  'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router-calibration', 'node', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
-  'conductor-permit', 'signals',
+  'conductor-permit', 'signals', 'friction',
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms',
-  'channels', 'connectors', 'imessage', 'memory', 'route',
+  'channels', 'connectors', 'imessage', 'memory', 'route', 'radar',
   'director', 'best-of-n', 'invent', 'resource', 'resources', 'usage', 'version', 'help',
   'skills', 'universe', 'runtime',
   // Dispatched by index.ts but previously missing here, so completion and
@@ -57,7 +57,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
-  'disk',
+  'disk', 'app', 'radar',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -68,6 +68,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
+  app: ['update', 'status', '--json', '--help'],
+  radar: ['list', 'run', 'diff', '--json', '--help'],
   apps: ['list', 'open', 'quit', 'focus', 'status', '--json', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   agents: ['bus', 'help'],
@@ -87,7 +89,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   wire: ['claude', 'codex', 'cursor', 'gemini', 'all', 'status'],
   notify: ['test', 'session'],
   telemetry: ['status', 'test'],
-  node: ['bootstrap', 'join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'status', 'leave'],
+  node: ['bootstrap', 'join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'list', 'status', 'leave', 'pool', 'watch', 'worker', 'rpc'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
   backlog: ['refresh', 'plan', 'lint'],
@@ -120,7 +122,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand'],
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
-  connectors: ['add', 'list', 'remove', 'show', 'import', '--json', '--help'],
+  friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
+  connectors: ['add', 'list', 'remove', 'show', 'import', 'run', '--json', '--help'],
   channels: ['add', 'status', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
   ecosystem: ['doctor'],
