@@ -1,7 +1,7 @@
 /* global process, console */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -93,7 +93,9 @@ export function assemble(directory) {
   assert.match(map.producer.name, /^ashlr-build-[1-9][0-9]*-[1-9][0-9]*$/);
   assert.ok(map.profile === undefined || map.profile === 'fast-release-v1', 'unknown qualification profile');
   assert.deepEqual(map.lanes.map((row) => row.role).sort(), map.profile === 'fast-release-v1' ? [] : [...roles].sort());
-  const bundle = join(directory, 'bundle'); copyDataTree(join(directory, 'download', map.producer.name), bundle);
+  const bundle = join(directory, 'bundle'); const producerDir = join(directory, 'download', map.producer.name);
+  // download-artifact writes a lone artifact (fast-release-v1 has no lanes) directly into the path, without a per-artifact folder.
+  copyDataTree(map.lanes.length === 0 && !existsSync(producerDir) ? join(directory, 'download') : producerDir, bundle);
   if (map.profile === 'fast-release-v1') return bundle;
   const coverage = join(bundle, 'coverage'); const current = lstatSync(coverage); assert.ok(current.isDirectory() && !current.isSymbolicLink());
   for (const { role, name } of map.lanes) {
