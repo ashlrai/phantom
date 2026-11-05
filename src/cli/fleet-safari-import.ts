@@ -8,7 +8,7 @@ import {
 const usage = 'Usage: ashlr fleet safari-import [--json] [--apply | --done] [--runs-dir <dir>]';
 
 /** Appends one open `- [ ]` item to NEEDS-MASON.md, the same file the glance and resolve paths read. */
-function appendNeedsMasonLine(runsDir: string, text: string): void {
+export function appendNeedsMasonLine(runsDir: string, text: string): void {
   mkdirSync(runsDir, { recursive: true });
   const fd = openSync(join(runsDir, 'NEEDS-MASON.md'), constants.O_RDWR | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
   try {
