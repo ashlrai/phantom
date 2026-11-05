@@ -395,6 +395,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'Repository signals (schemaVersion 1)',
   },
   {
+    usage: 'phm friction [--runs-dir <dir>] [--no-record] [--json] | phm friction note <item-id> --status <s> [--owner <o>] [--json]',
+    description: 'Mine ~/.ashlr-runs for recurring dispatch->merge friction; appends a scan row to friction/ledger.jsonl when counts change. note records an operator status/owner. Exit 0, 1 unreadable ledger, 2 usage.',
+    safety: 'append',
+    jsonShape: 'FrictionReport (phm.friction.v1) | {ok, appended}',
+  },
+  {
     usage: 'ashlr pulse [--window 1d|7d|30d] --json',
     description: 'Token/cost/activity roll-up (sessions, tokens, est. cost, commits).',
     safety: 'read',
@@ -782,6 +788,10 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'queue add|claim|done|block|replay|list|import|export', desc: 'Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.', topic: 'autonomy' },
   { cmd: 'issues [--retry] [--dir <queue-directory>] [--json]', desc: 'Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.', topic: 'autonomy' },
   { cmd: 'signals [--json]', desc: 'Read real repository adoption signals.', topic: 'observability' },
+  { cmd: 'radar list|run|diff [--json]', desc: 'Observe public docs and package metadata; GET only, six-hour per-source floor.', topic: 'observability' },
+  { cmd: 'friction [--json]', desc: 'Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.', topic: 'observability' },
+  { cmd: 'memory add|list|search|forget [--json]', desc: 'Durable markdown memory under ~/.phantom/memory; secret-shaped text refused.', topic: 'memory' },
+  { cmd: 'app update status [--json]', desc: 'Read the local signed desktop-update stage and deferral counts; never downloads or installs.', topic: 'core' },
   { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
   { cmd: 'pulse --json',                 desc: 'Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).', topic: 'observability' },
   { cmd: 'pulse --project <name>',       desc: 'Restrict pulse rollup to a single project.', topic: 'observability' },
