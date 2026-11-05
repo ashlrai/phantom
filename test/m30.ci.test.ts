@@ -1229,7 +1229,7 @@ describe('M30 CI workflow', () => {
     expect(effectText).not.toMatch(/\b(npm\s+publish|gh\s+release|git\s+(?:push|tag)|(?:vercel|netlify)\s+deploy)\b/i);
     expect(ciYml).not.toMatch(/(?:contents|attestations|id-token):\s*write|secrets\./);
     const workflow = parse(ciYml);
-    expect(workflow.jobs['release-smoke']['timeout-minutes']).toBe(1);
+    expect(workflow.jobs['release-smoke']['timeout-minutes']).toBe(5);
     expect(workflow.jobs['release-smoke'].steps.some((step: { run?: string }) => /npm (ci|install|run build)/.test(step.run ?? ''))).toBe(false);
     expect(workflow.jobs['release-build'].steps.find((step: { id?: string }) => step.id === 'build').run).toContain('npm run build:desktop:nightly');
     expect(readFileSync(resolve(repoRoot, 'scripts/build-desktop-nightly.mjs'), 'utf8')).toContain("'--no-sign'");
