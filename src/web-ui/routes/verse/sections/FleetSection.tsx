@@ -39,6 +39,7 @@ import { anchorId } from '../command/nav.js';
 import { RunsLanesCard } from '../fleet/RunsLanesCard.js';
 import { WorkersCard } from '../fleet/WorkersCard.js';
 import { InterjectBox } from '../fleet/InterjectBox.js';
+import { CosTaskList } from '../fleet/CosTaskList.js';
 import { FleetControl } from '../fleet/FleetControl.js';
 import { SteerPanel } from '../fleet/SteerPanel.js';
 import { Cell, Surface, lazyPanel } from '../command/Surface.js';
@@ -142,6 +143,7 @@ export function FleetSection() {
             <FleetControl actions={actions} grantFlow={grantFlow} darkSince={fleetDarkSince(live)} setupShownBelow={off?.kind === 'setup'} />
           </div>
           <InterjectBox />
+          <CosTaskList />
           <WorkersCard />
           <RunsLanesCard />
           {/* The one-time setup checklist (the only step list left); every other
