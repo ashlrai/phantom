@@ -57,7 +57,7 @@ export function createLocalChannelDedupeStore(runsDir = process.env.ASHLR_RUNS_D
                 receipts.has(row[0])) throw new Error('Invalid channel receipt');
             const mirror = row[3];
             if (row.length === 4 && (!mirror || typeof mirror !== 'object' ||
-                !['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'].includes(mirror.channel) ||
+                !['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'].includes(mirror.channel) ||
                 typeof mirror.pending !== 'boolean' || Object.keys(mirror).sort().join() !== 'channel,pending')) {
               throw new Error('Invalid channel mirror receipt');
             }

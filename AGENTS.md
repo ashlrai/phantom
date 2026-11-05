@@ -60,6 +60,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Agent Bus v2: the provider contract (participants, body kinds, claim keys and overlap rules, work feed) is in [docs/AGENT-BUS.md](docs/AGENT-BUS.md#v2); `ashlr agents bus contract --json` prints its schema version and kinds. Claims coordinate and grant no execution authority. Schemas: `src/core/agents/bus-v2-schema.ts`.
 - Learned skills: `phm skills list --json` shows skills written from merged PR outcomes (metadata only, scrubbed, capped; counts real or `"unknown"`). See [docs/SKILLS.md](docs/SKILLS.md).
 - Channels: `phm channels add <kind>` writes config only (credentials stay in existing custody, never printed); `phm channels status --json` reports real counts or `"unknown"`. See [docs/CHANNELS.md](docs/CHANNELS.md).
+- iMessage intake: `phm imessage doctor --json` reports permission and config state (no handles printed); `phm imessage poll --json` is a counts-only dry run and `--apply` receipts allowlisted messages as channel `imessage`. Acks are recorded, never sent, until RQ-IMSG-REPLY-1 lands. Never read or print message text or handles. See [docs/IMESSAGE.md](docs/IMESSAGE.md).
 - Briefs: the fleet brief-send verb (dry run by default, `--json` for the plan) plans the morning (7:30 ET) or overnight (22:30 ET) brief with a needs-you list of at most 5 items; `--apply` sends to your own channels, one per slot per local day. See [docs/BRIEF-SEND.md](docs/BRIEF-SEND.md).
 - Read next: [docs/AGENT-OPERATIONS.md](docs/AGENT-OPERATIONS.md) (setup and operation), [CONSTITUTION.md](CONSTITUTION.md), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/CONSOLE-LAYOUT.md](docs/CONSOLE-LAYOUT.md) (web console width breakpoints).
 - Resident daemon ticks are phased and bounded: every awaited stage has a deadline, an AbortSignal and a status record; `phm daemon status --json | jq .tick.phases` shows the last tick's ledger. See [docs/daemon-tick-phases.md](docs/daemon-tick-phases.md).
@@ -133,6 +134,8 @@ need a Security re-pin before live `bin/` install; do not install yourself.
 Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
 [memory](docs/MEMORY.md). Secret-shaped text is refused, never store values.
+
+Connector run: `phm connectors run github --scope repo-read --tool codex --lane work --json -- repo list --json name` is denied pending Security review; no process or credential resolution.
 
 Connector profiles: `phm connectors add|list|remove|show|import --json` manages
 `~/.phantom/connectors/profile.toml`; see [connector profiles](docs/CONNECTORS.md).
