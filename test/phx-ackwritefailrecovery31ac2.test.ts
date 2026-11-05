@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +8,10 @@ import { createChannelReceiver, type ChannelAck, type ChannelEnvelope } from '..
 import { appendInboxEntry, readInboxEntries } from '../src/core/fleet/mason-inbox.js';
 
 let runsDir: string;
+// Channel-line and acknowledgement contracts: merged PRs #3004, #3040, #3044, #3211.
+const entryId = (channel: string, text: string) => `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update('2026-10-31T04:13:00.000Z' + text).digest('hex').slice(0, 16)}`;
+const entry = (channel: string, text: string) => ({ at: '2026-10-31 00:13', channel, id: entryId(channel, text), source: `${channel} (${entryId(channel, text)})`, priority: null, text });
+
 const sender = 'fake-mason';
 const body = 'Please prioritize the recovery workflow.';
 const now = (): Date => new Date('2026-10-31T04:13:00.000Z');
@@ -44,7 +49,7 @@ describe('channel acknowledgement after an inbox write failure', () => {
     expect(acknowledgements).toEqual([retry.ack]);
     const persisted = {
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'telegram', priority: 'P0', text: body }],
+      entries: [entry('telegram', body)],
     };
     expect(inboxAtAcknowledgement).toEqual([persisted]);
     expect(await store.transaction(async (receipts) => receipts.size)).toBe(1);
