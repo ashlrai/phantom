@@ -96,5 +96,5 @@ export async function cmdFleetEmailOutbox(args: string[], deps: FleetEmailOutbox
   }
   if (json) console.log(JSON.stringify({ dir: outboxDir, ...result }));
   else console.log(`email-outbox: queued=${result.queued} sent=${result.sent} refused=${result.refused} failed=${result.failed} stuck=${result.stuck}${result.drafted ? ` drafted=${result.drafted}` : ''}`);
-  return 0;
+  return result.failed > 0 || result.stuck > 0 || result.refused > 0 ? 1 : 0;
 }
