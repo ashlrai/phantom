@@ -863,6 +863,7 @@
 /test/m520.runtime-activation-stopped-consumer.test.ts @masonwyatt23
 /test/m521.runtime-activation-resident-start.test.ts @masonwyatt23
 /test/m522.best-of-n-real-judge.test.ts @masonwyatt23
+/test/m523.github-stable-release-finalization.test.ts @masonwyatt23
 /test/m53.intel.test.ts @masonwyatt23
 /test/m532.standing-permit-shadow.test.ts @masonwyatt23
 /test/m537.daemon-tick-authority-capability.test.ts @masonwyatt23
