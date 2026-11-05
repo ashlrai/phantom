@@ -18,8 +18,8 @@
  * and oversize bodies are refused there, not stored.
  *
  * Acknowledgement: the shared ack text (channel-ack-text.ts) is RECORDED to
- * <runs>/imessage/acks.jsonl and never sent. Sending a reply is the job of
- * RQ-IMSG-REPLY-1; until then this module has no send path at all.
+ * <runs>/imessage/acks.jsonl. Nonduplicate acknowledgements pass through the
+ * self-only outbox; third-party delivery remains denied pending Security review.
  *
  * Cursor rules: first run baselines to the current max ROWID (history is never
  * replayed). A message advances the cursor once it is receipted or permanently
@@ -28,6 +28,7 @@
  * retry safe. Never throws.
  */
 
+import { sendIMessageOutbox } from './imessage-outbox.js';
 import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -107,17 +108,22 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
     if (!polled.ok) return { ...result, state: polled.state, cursor };
 
     let current = 0;
+    let currentHandle = '';
     const receive = createChannelReceiver({
       allowedSenderIds: new Set(imessageAllowlist(cfg).map(senderIdFor)),
       runsDir: deps.runsDir,
       now: deps.now,
-      acknowledge: async (ack) => recordAck(ack, current, deps.runsDir, now()),
+      acknowledge: async (ack) => {
+        recordAck(ack, current, deps.runsDir, now());
+        if (ack.status !== 'duplicate') await sendIMessageOutbox(formatChannelAck(ack), cfg, currentHandle);
+      },
     });
     for (const msg of polled.messages) {
       result.scanned++;
       const message = imessageChannelMessage(msg);
       if (message) {
         current = msg.rowid;
+        currentHandle = msg.handle;
         const got = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
         if (got.ok) {
           if (got.ack.status === 'duplicate') result.duplicate++; else result.accepted++;
