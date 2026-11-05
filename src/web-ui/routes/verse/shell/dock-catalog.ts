@@ -31,12 +31,12 @@ export interface DockPaneCatalogEntry {
 
 /** Groups for panes registered outside the built-in catalog. */
 export const REGISTERED_DOCK_PANE_GROUPS: Readonly<Record<string, DockPaneGroup>> = {
-  'fleet-hub': 'fleet', 'fleet-runs': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
-  'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet', 'fleet-workers': 'fleet',
+  'fleet-hub': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
+  'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet',
   'worker-log': 'fleet',
   'fleet-merges': 'shipping', 'fleet-outcomes': 'shipping', 'fleet-releases': 'shipping', 'fleet-timeline': 'shipping',
   'fleet-bus': 'talk', 'fleet-inbox': 'talk', 'fleet-channels': 'talk', 'fleet-steering': 'talk',
-  'leader-journal': 'talk', 'fleet-decisions': 'talk', 'fleet-brief': 'talk', 'leader-thread': 'talk',
+  'leader-journal': 'talk', 'leader-thread': 'talk',
 };
 
 /**
