@@ -43,6 +43,8 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
+  'test/fleet-path-batch-04-spm2.test.ts', // Runs real subprocesses for batched Git path history.
   'test/changelog-sync-bridge-04.test.ts', // Runs the changelog script in real child processes.
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
