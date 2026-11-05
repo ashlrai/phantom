@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readEnvironmentCredential } from '../integrations/secrets.js';
 
 export type OperatorSecretState = 'absent' | 'invalid' | 'ready';
 
@@ -49,7 +50,7 @@ export function dkimPasses(authenticationResults: string | null | undefined, fro
  * The value is never logged. An unreadable or wrong-mode file is invalid, not absent.
  */
 export function readOperatorSecret(): { state: OperatorSecretState; secret?: string } {
-  const fromEnv = process.env['PHANTOM_OPERATOR_SECRET'];
+  const fromEnv = readEnvironmentCredential('PHANTOM_OPERATOR_SECRET');
   if (fromEnv !== undefined) {
     const state = operatorSecretState(fromEnv);
     return state === 'ready' ? { state, secret: fromEnv } : { state };
