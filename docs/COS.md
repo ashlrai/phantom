@@ -36,6 +36,13 @@ phm queue claim cos-0123456789abcdef0123456789abcdef --owner brief-worker --json
 phm queue done cos-0123456789abcdef0123456789abcdef --owner brief-worker --result "The project brief is ready for review." --json
 ```
 
+`ashlr fleet cos-work` runs one bounded worker pass: it claims the oldest
+READY cos-* job, runs one headless model turn and records the reply as a
+draft. `ashlr fleet cos-loop --duration-ms 3600000 --json` repeats that pass
+for a bounded window — a host timer (for example launchd) or an agent can
+start it once and queued tasks get drafted without a person; the loop only
+drafts, and sending still needs digest approval.
+
 Completion writes a private result draft under `<runsDir>/cos/` and adds a
 needs-you item to `NEEDS-MASON.md`. It sends nothing. Inspect the entire draft,
 including recipient, thread and text, before approving its digest through a
