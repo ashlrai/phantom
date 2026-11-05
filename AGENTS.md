@@ -206,3 +206,146 @@ Individual fetch failures are warnings and retain the last successful snapshot.
 The release autonomy command is awaiting top-level CLI wiring. Once wired, `phm release autonomy --json` reads the enrolled repositories' release gates and the local publish switch. Use `phm release autonomy --repo locus --md` for a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
 
 Desktop update status: `phm app update status [--json]` inspects the local signed stage and reports host deferral and lease counts. Unknown app and job identities are null. See [desktop updates](DESKTOP.md#background-update-discovery-and-local-status).
+
+<!-- docs-sync:commands:start -->
+## CLI commands
+
+| Command | Description |
+| --- | --- |
+| `agents` | Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only. |
+| `app` | Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage. |
+| `apps` | Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you. |
+| `ask` | Local RAG across the indexed portfolio; cites repo/file:line. --allow-cloud opt-in. `ask status` prints the ask.status.v1 stream from the metrics jobs ledger. |
+| `audit` | Tail the append-only audit trail; --team lists workspace actions (read-only). |
+| `authority` | Standing authority: grant state, autonomy switch, Stop, rollout stage, ledger chain and custody (read-only). |
+| `automations` | Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits. |
+| `autopilot` | Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR. |
+| `backlog` | Scored work queue across enrolled repos (issues, TODOs, tests, deps, docs, security, plugins, goals, hygiene, invention). |
+| `benchmark` | Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces. |
+| `best-of-n` | Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333). |
+| `budget` | Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored. |
+| `capacity` | Refresh local subscription usage metadata once with this node’s local authentication. |
+| `channels` | Bring a channel up (config only, credentials stay in custody) or read the per-channel rollup. |
+| `cloud` | Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder's GitHub origin. |
+| `comms` | Operator comms channel (Telegram/iMessage): digests, approve-by-text. |
+| `companions` | Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation. |
+| `completions` | Print a shell completion script to stdout. |
+| `conductor-permit` | Dormant signed one-shot goal-conductor permit operator; fail-closed while source trust roots are empty. |
+| `config` | Read/write a config value. `list` prints a summary; no args prints the path. |
+| `connectors` | Manage credential-free connector profiles and import safe client metadata; vault references only. |
+| `daemon` | Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form. |
+| `dash` | Alias of `tui` - interactive terminal dashboard. |
+| `dashboard` | Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld). |
+| `demo` | Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything. |
+| `desktop` | Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority. |
+| `desktop-update` | Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident. |
+| `devin` | Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file. |
+| `digest` | Write an ORG-LEVEL portfolio digest (health, goals, costs, today) to ~/.ashlr/digests/ (LOCAL-FIRST; reads only). |
+| `director` | Retired - the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing. |
+| `disk` | Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim. |
+| `docs` | Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes). |
+| `doctor` | One-glance health check: config, phantom, providers, ecosystem. |
+| `drafts` | Inspect and record decisions on outbound drafts. |
+| `drive` | Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md. |
+| `ecosystem` | Read-only sibling-repository health scan across the ecosystem. |
+| `enroll` | List enrolled repos + kill switch state. |
+| `eval` | Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44). |
+| `fleet` | Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state. |
+| `genome` | Genome status/health: entry count, projects covered, store size. |
+| `gh` | Read GitHub open PRs, issues, or CI status for the current repo (read-only). |
+| `go` | Find a repo or item; open in editor (--open) or print path for cd (--cd). |
+| `goal` | Live owner-invoked objective → plan → one sandboxed proposal-only advance; never resident or unattended authority. |
+| `goals` | Register a high-level OBJECTIVE (goal); decomposed into ordered milestones (local, no LLM by default). |
+| `graph` | Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help. |
+| `health` | Score every ENROLLED repo on quality (tests/docs/deps/security/debt/CI/conventions); ranked, read-only. |
+| `help` | Topic-grouped help; --all prints every command; --search <term> filters. |
+| `imessage` | iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text. |
+| `improve` | Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree. |
+| `inbox` | Approval inbox: list pending proposals (the outward-action gate). |
+| `index` | Build or refresh the desktop index; show counts by category. |
+| `init` | Idempotent onboarding: ensure config, detect phantom + models, set editor. |
+| `invent` | Generative backlog invention - propose novel high-value work items. |
+| `issues` | Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates. |
+| `jev` | Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only. |
+| `knowledge` | Index enrolled repos locally (read-only, secret-scrubbed) for portfolio RAG. |
+| `lanes` | Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout. |
+| `leader` | The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo). |
+| `learn` | Append a note to shared genome memory (local-first, append-only). |
+| `local-runtime` | Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended. |
+| `loop` | Dormant non-dry conductor loop: compiled conductor trust roots are empty; use loop --dry-run. |
+| `ls` | List all indexed items, optionally filtered by category. |
+| `manager` | Frontier judge scorecard over pending proposals (shadow mode by default; never merges). |
+| `mcp` | Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list). |
+| `memory` | Persistent agent memory: add, list, search, and forget entries (preference\|doctrine\|fact). Refuses secret-shaped text. See docs/MEMORY.md. |
+| `metrics` | Read local lane and tier merge metrics and advisory routing priors; always JSON. |
+| `mirror` | The fleet's own mirror clones under ~/.ashlr/fleet/mirrors (your checkouts are never touched); reconcile plans enrollment from the grant (--apply). |
+| `models` | List local models (Ollama/LM Studio); marks the active one. |
+| `new` | Scaffold a project from a template (next-app, node-cli, mcp-server, minimal). |
+| `node` | Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases. |
+| `notify` | Send a test ping to the configured webhook(s); no-op if none are set. |
+| `onboard` | Guided first safe activation: preflight → enroll ONE repo → optional Locus firm soft-offer → dry-run PLAN → point at `ashlr inbox`. TTY-aware; --yes/non-TTY prints steps (firm only with --locus-firm or ASHLR_LOCUS_FIRM=1). NEVER auto-applies. |
+| `open` | Open the best match in your editor; no query opens an interactive picker. |
+| `openai-agents` | Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations. |
+| `orient` | Session-start context: genome hits, health, backlog, pending proposals, attention (read-only). |
+| `playbook` | Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud\|devin`). |
+| `plugins` | Scaffold + manage plugins (~/.ashlr/plugins/) - default-off, integrity-pinned, audited (see docs/PLUGINS.md). |
+| `pool` | Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason. |
+| `preflight` | Read-only first-activation readiness check: ready=true\|false + blockers/warnings (model/enrollment/kill/daemon/writeable/sandbox/git/phantom/locus); mutates nothing. |
+| `pulse` | Local observability dashboard: tokens, cost, sessions, commits. |
+| `pulse-export` | Fleet→pulse OTLP backfill/manual export. |
+| `pulse-test` | Fleet→pulse connectivity + auth probe (read-only). |
+| `queue` | Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input. |
+| `radar` | Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md. |
+| `recall` | Search shared genome memory; return top relevant entries with scores. |
+| `receipt` | Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only). |
+| `recovery` | Inspect bounded metadata-only prepared/committed tool-effect evidence. |
+| `reflect` | Score your OWN past runs/swarms locally; report effectiveness/cost deltas (read-only). |
+| `release-articles` | Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly. |
+| `resource` | Refresh the shared resource.v1 view in fleet.json from recorded inputs. |
+| `resources` | Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view). |
+| `roadmap` | Goal Loop: run a roadmap of milestone files, one FRESH agent process per milestone; resumable from state.json (LOCAL-FIRST; --allow-cloud for API engines). |
+| `route` | Read dispatcher pools and route-moves-per-hour. |
+| `router-calibration` | Compare recorded router predictions with outcomes and usage. |
+| `run` | Decompose goal into tasks; execute via local model (Ollama/LM Studio). |
+| `runs` | List past runs (newest first). |
+| `runtime` | Install exact offline candidate bytes into a private store; not production qualification or service activation. |
+| `sandbox` | List active git-worktree sandboxes (M21 safety foundation). |
+| `seams` | Cloud-ready seam diagnostic: every v2 store, active=local, cloud=gated (read-only). |
+| `select` | Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value. |
+| `self-swap` | Plan a versioned install swap; apply builds, probes, flips current and drains the old supervised process. |
+| `serve` | Start local web dashboard + JSON API on 127.0.0.1 (default port 7777). |
+| `sessions` | See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days. |
+| `setup` | Temporarily unavailable: refuses before config or wizard effects; use owner-invoked run/swarm or daemon dry-run while compiled runtime roots are empty. |
+| `ship` | Pre-ship gate (lint/test/build) + optional confirm-gated deploy. |
+| `signals` | Read real repository adoption signals. |
+| `skills` | List skills learned from merged PRs (newest revision each; counts are real or "unknown"). |
+| `spec` | Author a versioned end-state spec artifact (local-first model). |
+| `stack` | Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning). |
+| `status` | Attention board: dirty, off-sync, and stale repos; ecosystem summary. |
+| `steward` | Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only). |
+| `swarm` | Decompose goal into a contracts-first DAG; run a fleet of agents. |
+| `swarms` | List past swarm runs (newest first). |
+| `sweep` | Write a local weekly deletion review report from a Phantom checkout. |
+| `team` | Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions. |
+| `telemetry` | M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance. |
+| `tidy` | Show (or apply) tidy moves for loose Desktop files. |
+| `top` | Read-only per-pool capacity and reset pressure snapshot. |
+| `tui` | Interactive terminal dashboard (alias: dash). --once renders one frame and exits. |
+| `universe` | Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts. |
+| `update` | Self-update; mutation requires service registration proven absent and not running. --check remains read-only. |
+| `upgrade` | Same as update. |
+| `usage` | Frontier usage table: per-engine calls/tokens/cost + window state. |
+| `vercel` | Read recent Vercel deployments or latest build logs (read-only). |
+| `verify` | Run trusted worktree checks; JSON verdict and ten-line handoff. |
+| `verify-pr` | Verify an explicitly reviewed maintainer PR through the host-owned App check; no merge or deploy. |
+| `verify-safety` | Read-only self-check of the hard safety invariants (enrollment/kill-switch/daemon/scrub/cloud-gate); mutates nothing. |
+| `verse` | Open the Phantom console at /verse/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens. |
+| `version` | Print the installed ashlr version (aliases: --version, -v). |
+| `vision` | Mission OS: inspect strategy, preview a bounded DAG, record observation-only shadow evidence, or explicitly adopt planning state. |
+| `website` | Inspect or pause automatic phm.dev publication; Auto resumes within its existing signed website scope. |
+| `wiki` | Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild. |
+| `wire` | Wire ashlr MCP gateway into editor config(s); defaults to detected editors. |
+| `worker` | Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation. |
+| `worktrees` | Report worktree age, size, last log time and job state. |
+| `x` | Run an enabled plugin's command. |
+<!-- docs-sync:commands:end -->

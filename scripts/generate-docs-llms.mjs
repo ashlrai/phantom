@@ -58,7 +58,7 @@ if (outArg) {
   const target = join(outRoot, 'docs');
   for (const page of pages) write(join(target, ...`${page.slug}.md`.split('/')), readFileSync(join(docsDir, ...`${page.slug}.md`.split('/'))));
   write(join(target, 'llms.txt'), next);
-  const reference = existsSync(join(docsDir, 'llms-full.txt')) ? readFileSync(join(docsDir, 'llms-full.txt'), 'utf8') : '# Phantom';
+  const reference = existsSync(join(docsDir, 'llms-reference.txt')) ? readFileSync(join(docsDir, 'llms-reference.txt'), 'utf8') : '# Phantom';
   write(join(target, 'llms-full.txt'), renderLlmsFull(docsDir, pages, reference));
   console.log(`wrote ${pages.length} pages under ${relative(root, target) || '.'}`);
 }
