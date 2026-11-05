@@ -3,7 +3,7 @@ import { appendFileSync, closeSync, constants, mkdirSync, openSync, readFileSync
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-export type ReleaseFact = { repo: string; tag: string; publishedAt: string; url: string; draft: boolean; prerelease: boolean };
+export type ReleaseFact = { repo: string; tag: string; publishedAt: string; url: string; draft: boolean; prerelease: boolean; desktopAssetReason?: string | null };
 export type ReleaseRunner = (argv: string[]) => Promise<{ code: number; stdout: string }>;
 export const validReleaseRepo = (repo: string): boolean => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo);
 const execFileAsync = promisify(execFile);
@@ -27,8 +27,26 @@ export async function fetchLatestRelease(repo: string, run: ReleaseRunner = defa
       || typeof row.draft !== 'boolean' || typeof row.prerelease !== 'boolean') return null;
     const url = new URL(row.html_url);
     if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password) return null;
-    return { repo, tag: row.tag_name, publishedAt: row.published_at, url: row.html_url, draft: row.draft, prerelease: row.prerelease };
+    const fact: ReleaseFact = { repo, tag: row.tag_name, publishedAt: row.published_at, url: row.html_url, draft: row.draft, prerelease: row.prerelease };
+    if (repo.toLowerCase() === 'ashlrai/phantom' && tag) fact.desktopAssetReason = desktopAssetReason(row.assets, row.tag_name);
+    return fact;
   } catch { return null; }
+}
+
+// Match the assets declared by the desktop publisher, not merely the asset count.
+function desktopAssetReason(assets: unknown, tag: string): string | null {
+  if (!Array.isArray(assets)) return 'desktop asset evidence missing or malformed; retry';
+  const version = tag.replace(/^v/, '');
+  const expected = [`ashlr-phantom-${version}.tgz`, `ashlr-phantom-${version}.tgz.sig`,
+    `Phantom_${version}_aarch64.app.tar.gz`, `Phantom_${version}_aarch64.app.tar.gz.sig`,
+    'manifest.json', 'manifest.json.sig', 'latest.json'];
+  const missing = expected.filter(name => !assets.some((asset: unknown) => {
+    if (!asset || typeof asset !== 'object') return false;
+    const row = asset as Record<string, unknown>;
+    return row.name === name && row.state === 'uploaded' && typeof row.size === 'number' && Number.isSafeInteger(row.size) && row.size > 0
+      && row.browser_download_url === `https://github.com/ashlrai/phantom/releases/download/${encodeURIComponent(tag)}/${name}`;
+  }));
+  return missing.length ? `desktop asset evidence incomplete; retry; missing or invalid: ${missing.join(', ')}` : null;
 }
 
 export const releaseKey = (fact: ReleaseFact): string => `${fact.repo}@${fact.tag}`;
@@ -118,7 +136,10 @@ export async function observeMilestones(repo: string, tag: string, fact: Release
   feed: MilestoneReader = readPublicReleaseFeed, installed?: MilestoneReader): Promise<MilestoneObservation[]> {
   const publication: MilestoneObservation = { stage: 'published', status: 'unknown', repo, tag, version: null, source: 'github-release', observedAt: null, reason: 'release unavailable or mismatched' };
   if (fact && !fact.draft && fact.repo.toLowerCase() === repo.toLowerCase() && fact.tag === tag && Date.parse(fact.publishedAt) <= now.getTime()) {
-    Object.assign(publication, { status: 'observed', version: fact.tag, observedAt: fact.publishedAt, reason: null });
+    Object.assign(publication, { version: fact.tag, observedAt: fact.publishedAt });
+    const reason = repo.toLowerCase() === 'ashlrai/phantom' ? (fact.desktopAssetReason ?? (fact.desktopAssetReason === null ? null : 'desktop asset evidence missing or malformed; retry')) : null;
+    if (reason) publication.reason = reason;
+    else Object.assign(publication, { status: 'observed', reason: null });
   }
   const inspect = async (stage: 'feed-ready' | 'installed', reader: MilestoneReader | undefined, source: string, missing: string): Promise<MilestoneObservation> => {
     const result: MilestoneObservation = { stage, status: 'unknown', repo, tag, version: null, source, observedAt: null, reason: missing };
@@ -128,7 +149,7 @@ export async function observeMilestones(repo: string, tag: string, fact: Release
     if (!evidence) return result;
     const timestamp = Date.parse(evidence.observedAt);
     if (evidence.repo.toLowerCase() !== repo.toLowerCase() || !validMilestoneTag(evidence.version) || !atLeast(evidence.version, tag)) result.reason = 'repository or version mismatch';
-    else if (!Number.isFinite(timestamp) || timestamp > now.getTime() || now.getTime() - timestamp > 5 * 60 * 1000 || (publication.status === 'observed' && timestamp < Date.parse(fact!.publishedAt))) result.reason = 'stale or invalid observation timestamp';
+    else if (!Number.isFinite(timestamp) || timestamp > now.getTime() || now.getTime() - timestamp > 5 * 60 * 1000 || (publication.observedAt !== null && timestamp < Date.parse(publication.observedAt))) result.reason = 'stale or invalid observation timestamp';
     else Object.assign(result, { status: 'observed', version: evidence.version, observedAt: evidence.observedAt, reason: null });
     return result;
   };
