@@ -1,6 +1,6 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Six one-shot verbs run
+ * agent or a host timer with no desktop app open. Seven one-shot verbs run
  * together, including same-channel inbox acknowledgements and merged-order notices.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
  *
@@ -11,6 +11,7 @@
  *   4. inbox-acks     — send pending same-channel acknowledgements.
  *   5. order-notices  — tell Mason when a merged job served one of his orders.
  *   6. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *   7. cos-work       — draft at most one pending chief-of-staff reply.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -29,16 +30,17 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep';
-/** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep' | 'cos-work';
+/** Fixed execution order — release first so the planner sees freed slots; cos-work last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
   'lane-autohold',
   'planner-tick',
   'inbox-acks',
   'order-notices',
-  // Last: the slowest step (gh + git reads) must never delay release or the planner.
   'landed-sweep',
+  // A model turn must never delay release, planner, acks, notices or the sweep.
+  'cos-work',
 ];
 /** Lock path relative to the runs dir, under the queue/ directory. */
 export const SELF_TICK_LOCK = 'queue/self-tick.lock';
