@@ -56,9 +56,12 @@ import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJob
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
 import { parseFleetCiResumeInputsArgs, readFleetCiResumeInputs, type FleetCiResumeInputsArgs } from './fleet-ci-resume-inputs.js';
 import { parseFleetCiReceiptAwaitArgs, readFleetCiReceiptAwait, type FleetCiReceiptAwaitArgs } from './fleet-ci-receipt-await.js';
+import { parseFleetCiReceiptAwaitBatchArgs, readFleetCiReceiptAwaitBatch,
+  type FleetCiReceiptAwaitBatchArgs } from './fleet-ci-receipt-await-batch.js';
 import { CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MAX_POLL_MS, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MIN_POLL_MS } from '../core/fleet/ci-receipt-await.js';
+import { CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS } from '../core/fleet/ci-receipt-await-batch.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -95,6 +98,7 @@ export interface FleetReaders {
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
   ciResumeInputs?: (input: FleetCiResumeInputsArgs) => Promise<unknown>;
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
+  ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -445,11 +449,40 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_ci_receipt_await_batch',
+      description: 'Wait for a bounded batch of explicitly named receipts artifacts — the RESUME-FROM-FAILURE and t1626u batching orders — in one call through the same shared awaitCiReceiptBatch waiter as `phm fleet ci-receipt-await-batch`, never a second poller or artifact binder. The whole targets document and the timeout/poll timings are validated before anything touches the network: unknown keys, malformed fields, an out-of-range or duplicate exact identity list and a serialized document over 64 KiB are all refused up front. Targets then wait strictly in input order with at most one read in flight under one shared deadline that is never refreshed per target. Each bound entry returns its exact repo/run/attempt/artifact identity and validated CiResumePrior document in the `prior` field for `fleet_ci_resume_inputs`, with producer inputsDigests preserved verbatim; a terminal failure is recorded beside its exact identity and the batch moves on while time remains; targets the deadline or cancellation never reached get explicit not-started entries — a prior is never fabricated or substituted from another entry. Read-only GitHub evidence: every call is a GET metadata/listing read plus a bounded archive download; the tool never reruns CI, posts a status or check, dispatches a workflow, writes a receipt or authorizes reuse. No caller executable, cwd, environment, filesystem path or API route is accepted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          targets: {
+            type: 'array', minItems: 1, maxItems: CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS,
+            description: 'Exact run/attempt/artifact identities waited on in input order, serialized and validated as the CLI\'s version-1 targets document; duplicate exact identities are refused.',
+            items: {
+              type: 'object',
+              properties: {
+                repo: { type: 'string', pattern: '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$', description: 'GitHub owner/name the run belongs to; never a path, URL or remote.' },
+                run: { type: 'integer', minimum: 1, description: 'Exact workflow run id.' },
+                attempt: { type: 'integer', minimum: 1, description: 'Exact run attempt number; another attempt is never substituted.' },
+                artifactName: { type: 'string', minLength: 1, maxLength: 200, description: 'Exact artifact name such as ci-resume-receipts; never guessed or substituted.' },
+              },
+              required: ['repo', 'run', 'attempt', 'artifactName'],
+              additionalProperties: false,
+            },
+          },
+          timeoutMs: { type: 'integer', minimum: 1, maximum: CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS, default: CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS, description: 'One shared deadline covering the whole batch, at most one hour and never refreshed per target; defaults to 600000.' },
+          pollMs: { type: 'integer', minimum: CI_RECEIPT_AWAIT_MIN_POLL_MS, maximum: CI_RECEIPT_AWAIT_MAX_POLL_MS, default: CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, description: 'Poll interval; defaults to 5000.' },
+        },
+        required: ['targets'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -480,7 +513,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
-    if (name === 'fleet_ci_receipt_await' ? ciReceiptAwait === null :
+    const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    if (name === 'fleet_ci_receipt_await_batch' ? ciReceiptAwaitBatch === null :
+        name === 'fleet_ci_receipt_await' ? ciReceiptAwait === null :
         name === 'fleet_ci_resume_inputs' ? ciResumeInputs === null :
         name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
@@ -539,6 +574,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
+        : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
