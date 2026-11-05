@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { GLOBAL_SLOT_KEYS, LANE_ID_RE } from './runs-lane-targets.js';
 
 export interface FleetRunsLane {
   lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
@@ -23,7 +24,7 @@ export interface FleetRunsDirState {
   drop: { pending: Array<{ lane: string; file: string }>; done: number };
 }
 export interface ReadFleetRunsDirOptions { runsDir?: string; now?: () => number }
-const LANES = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']);
+const validLane = (lane: string): boolean => LANE_ID_RE.test(lane) && !GLOBAL_SLOT_KEYS.has(lane);
 const ID = /^[A-Za-z0-9._-]{1,80}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const MAX = 8 * 1024 * 1024;
@@ -42,7 +43,7 @@ function clean(text: string, max = 500): string {
 export function parseClaimedTsv(text: string): FleetRunsClaim[] {
   return text.split(/\r?\n/).flatMap(line => {
     const [job, lane, tier, clock, epoch, ...extra] = line.split('\t');
-    if (!safeId(job) || !LANES.has(lane) || !safeId(tier) || extra.length ||
+    if (!safeId(job) || !validLane(lane) || !safeId(tier) || extra.length ||
         !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(clock) || !/^\d{1,12}$/.test(epoch)) return [];
     const ms = Number(epoch) * 1000;
     return Number.isFinite(ms) && ms <= 8.64e15 ? [{ job, lane, tier, at: new Date(ms).toISOString() }] : [];
@@ -65,7 +66,7 @@ function metrics(text: string, nowMs: number) {
   for (const line of text.split(/\r?\n/).filter(Boolean)) {
     let row: Record<string, unknown>;
     try { row = object(JSON.parse(line)); } catch { corrupt = true; continue; }
-    if (!safeId(row.job) || !timestamp(row.ts) || (row.lane != null && !LANES.has(String(row.lane)))) { corrupt = true; continue; }
+    if (!safeId(row.job) || !timestamp(row.ts) || (row.lane != null && !validLane(String(row.lane)))) { corrupt = true; continue; }
     const age = nowMs - Date.parse(row.ts);
     if (age < 0 || age > 3600000) continue;
     const lane = typeof row.lane === 'string' ? row.lane : null;
@@ -128,8 +129,9 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
       state.lastTick = s.last_tick; state.paused = s.paused; state.memFreePct = number(s.mem_free_pct);
       state.diskFreeGb = number(object(object(s.autopilot).disk).free_gb);
       for (const [lane, raw] of Object.entries(object(s.lanes))) {
+        if (GLOBAL_SLOT_KEYS.has(lane)) continue;
         const l = object(raw);
-        if (!LANES.has(lane) || !['running', 'target', 'queued'].every(k => number(l[k]) !== null && Number.isSafeInteger(l[k])) || !['floor', 'ceiling'].every(k => l[k] == null || (number(l[k]) !== null && Number.isSafeInteger(l[k]))) || typeof l.held !== 'boolean') {
+        if (!validLane(lane) || !['running', 'target', 'queued'].every(k => number(l[k]) !== null && Number.isSafeInteger(l[k])) || !['floor', 'ceiling'].every(k => l[k] == null || (number(l[k]) !== null && Number.isSafeInteger(l[k]))) || typeof l.held !== 'boolean') {
           state.sources.status = 'degraded'; continue;
         }
         const rollup = object(object(object(s.rollup_24h).by_lane)[lane]);
@@ -166,7 +168,7 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
     guarded('drop', async () => {
       const base = join(root, 'leader/drop');
       for (const entry of (await readdir(base, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-        if (!entry.isDirectory() || (entry.name !== 'done' && !LANES.has(entry.name))) continue;
+        if (!entry.isDirectory() || (entry.name !== 'done' && !validLane(entry.name))) continue;
         for (const file of (await readdir(join(base, entry.name), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
           if (!file.isFile() || !file.name.endsWith('.md') || !safeId(file.name)) continue;
           if (entry.name === 'done') state.drop.done++;
