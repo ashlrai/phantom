@@ -76,7 +76,10 @@ collected from prose (`deps=`, `depends on`, `after`, `waits for`, `blocked by`,
 `needs`, `requires`) anywhere on the line. On the Mac restocker, unmet `after=`
 deps become `PARKED-DEP.<lane>` rows whose prompts carry `DEPENDENCY GATE: <ids>`;
 restock unparks them when every id has a `MERGED` outcome in `jobs.jsonl` (see
-[Mac queue scripts](../contrib/mac/README.md)). `children=`/`parent=` tokens mark
+[Mac queue scripts](../contrib/mac/README.md)). `phm fleet dep-gate --json` is the
+read-only gate over the same evidence: it scans non-PARKED `ready.tsv` rows and
+exits 1 when a queued prompt's declared gate ids are not all MERGED.
+`children=`/`parent=` tokens mark
 related ids, never the job id or a dependency. `worker=`/`owner=` plus a
 `claimed=`/`claimedAt=` ISO timestamp import as a real claim; `reason=`,
 `blocked=`, `PR=` and `BASE_OVERRIDE=` text stays intact in `source`. Unknown

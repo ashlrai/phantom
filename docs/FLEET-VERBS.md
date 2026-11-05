@@ -17,6 +17,7 @@
 | ci-nightly | `src/cli/fleet-ci-nightly.ts` | Reads CI nightly hotspots for a repo, configurable repo flag | no |
 | class-share | `src/cli/fleet-class-share.ts` | Offline accounting only; never changes dispatch or merge authority | no |
 | dead-heads | `src/cli/fleet-dead-heads.ts` | Read-only report; never edits queue state or launches jobs | no |
+| dep-gate | `src/cli/fleet-dep-gate.ts` | Read-only gate over `queue/ready.tsv`: each non-PARKED row's prompt `DEPENDENCY GATE: <ids>` must be fully MERGED in `metrics/jobs.jsonl`; prints `UNMET-DEP` rows and exits 1 when any id lacks a MERGED outcome | no |
 | dispatch-summary | `src/cli/fleet-dispatch-summary.ts` | Read-only dispatch intent rollup; never writes and never contacts a provider | no |
 | dirty-landed | `src/cli/fleet-dirty-landed.ts` | Read-only landed / partly-landed / needs-recut / unknown class per open conflicting PR; scratch git objects in a temporary bare repo | no |
 | disk | `src/cli/fleet-disk.ts` | Read-only disk-pressure view: free-GB trend from LEADER rows in the last 12 hours projected against the lane freeze and halve lines from queue/budget-overrides.json, plus the ten largest folders under the runs dir; unread sources print unknown | no |

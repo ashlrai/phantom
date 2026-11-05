@@ -162,7 +162,7 @@ const LANE_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,127}$/;
 
 /** Statuses that make the first bare cell of a positional row a status column. */
-const KNOWN_STATUSES = new Set([
+export const KNOWN_STATUSES = new Set([
   'READY', 'CLAIMED', 'PR-OPEN', 'BLOCKED', 'HOLD', 'DONE', 'PROPOSED', 'LAND',
   'LANDED', 'MERGED', 'RUNNING', 'STARTING', 'QUEUED', 'WAITING', 'FAILED',
   'CANCELLED', 'SPLIT-PARENT', 'HELD', 'PUBLISHING', 'PUBLISHED', 'FINISHED',
