@@ -39,6 +39,7 @@
 | resources | `src/cli/fleet-resources.ts` | Read-only per-lane resource window from queue/slots.json and queue/resources.json: one line per lane with target, used_frac (or "unset, router assumes 0.5") and reset time; marks `skipped` at used_frac 1 or more and `unseen` when a lane with target above 0 has no entry; exit 1 on any unseen lane | no |
 | runs-read | `src/cli/fleet-runs-read.ts` | Reads runs dir state, leader journal and parked queue | no |
 | ship-gap | `src/cli/fleet-ship-gap.ts` | Read-only ship-gap report for the seven approved repos; drift past newest version tag | no |
+| starved | `src/cli/fleet-starved.ts` | Read-only starvation view from `~/.ashlr-runs/queue/status.json`: one line per lane with queued work showing running of target and queued, marked `starved` when running is below target while the admission reason starts with `at_cap`, then admission running, cap and reason; red (exit 1) when any lane has 10 or more queued and none running | no |
 | stray-slots | `src/cli/fleet-stray-slots.ts` | Read-only host evidence: one lost slot per finished job with leftover processes | no |
 | supply | `src/cli/fleet-supply.ts` | Read-only per-batch, per-hour 24 h counts of launch, skipped_empty, precheck_skip, PR-opened and MERGED outcome rows from metrics/jobs.jsonl; unread file prints unknown | no |
 | task-check | `src/cli/fleet-task-check.ts` | Read-only: says whether a job's batch had 3 or more skipped_empty or precheck_skip rows in 24 h (`likely_empty`); unreadable metrics print `known:false` | no |
