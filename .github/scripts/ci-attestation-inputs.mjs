@@ -1,10 +1,11 @@
 /* global process, console */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { releaseQualificationProfile } from '../../scripts/hosted-build-artifact.mjs';
 import { requireProducerEnvironment, requireRepositoryMetadata, requireRepositoryReference } from './github-repository-binding.mjs';
 const roles = ['mac-general-1', 'mac-general-2', 'mac-general-3', 'mac-general-4', 'mac-isolated'];
 const hash = /^[a-f0-9]{40}$/;
@@ -12,8 +13,9 @@ const integer = (value) => { assert.match(value ?? '', /^[1-9][0-9]*$/); const n
 const api = (path) => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim();
 
-export function artifactNames(run, attempt) {
-  return { producer: `ashlr-build-${run}-${attempt}`, lanes: roles.map((role) => ({ role, name: `ashlr-qualification-${role}-${run}-${attempt}` })) };
+export function artifactNames(run, attempt, profile) {
+  assert.ok(profile === undefined || profile === 'fast-release-v1', 'unknown qualification profile');
+  return { producer: `ashlr-build-${run}-${attempt}`, lanes: (profile === 'fast-release-v1' ? [] : roles).map((role) => ({ role, name: `ashlr-qualification-${role}-${run}-${attempt}` })) };
 }
 
 export function copyDataTree(source, destination, budget = { files: 0, bytes: 0, directories: 0 }, depth = 0) {
@@ -39,7 +41,7 @@ export function copyDataTree(source, destination, budget = { files: 0, bytes: 0,
 
 export function prepare({ env = process.env, read = api } = {}) {
   const { repository } = requireProducerEnvironment(env);
-  assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch'); assert.equal(env.GITHUB_REF, 'refs/heads/master');
+  assert.ok(['workflow_dispatch', 'schedule'].includes(env.GITHUB_EVENT_NAME)); assert.equal(env.GITHUB_REF, 'refs/heads/master');
   assert.match(env.CANDIDATE_SHA ?? '', hash); assert.match(env.GITHUB_SHA ?? '', hash);
   const run = integer(env.CI_RUN_ID); const attempt = integer(env.CI_RUN_ATTEMPT); const artifactId = integer(env.BUILD_ARTIFACT_ID);
   assert.equal(git('rev-parse', 'HEAD'), env.GITHUB_SHA); assert.equal(git('status', '--porcelain', '--untracked-files=normal'), '');
@@ -50,8 +52,12 @@ export function prepare({ env = process.env, read = api } = {}) {
   const ci = read(`${base}/actions/runs/${run}/attempts/${attempt}`);
   assert.equal(ci.id, run); assert.equal(ci.run_attempt, attempt); assert.equal(ci.head_sha, env.CANDIDATE_SHA);
   requireRepositoryReference(repository, ci.repository);
-  assert.equal(ci.path, '.github/workflows/ci.yml'); assert.equal(ci.status, 'completed'); assert.equal(ci.conclusion, 'success');
-  const names = artifactNames(run, attempt); const artifacts = []; let page = 1; let total = null;
+  assert.equal(ci.path, '.github/workflows/ci.yml', 'unexpected producer workflow');
+  const profile = releaseQualificationProfile({ repository, run: ci, read });
+  if (profile) { assert.ok(['workflow_dispatch', 'schedule'].includes(ci.event)); assert.equal(ci.head_branch, 'master'); }
+  else assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
+  assert.equal(ci.status, 'completed'); assert.equal(ci.conclusion, 'success');
+  const names = artifactNames(run, attempt, profile); const artifacts = []; let page = 1; let total = null;
   for (;;) {
     const result = read(`${base}/actions/runs/${run}/artifacts?per_page=100&page=${page++}`); assert.ok(Array.isArray(result.artifacts));
     assert.ok(Number.isSafeInteger(result.total_count) && result.total_count >= 0 && result.total_count <= 1000, 'invalid artifact enumeration');
@@ -67,7 +73,7 @@ export function prepare({ env = process.env, read = api } = {}) {
     assert.equal(item.workflow_run?.id, run); assert.equal(item.workflow_run?.head_sha, env.CANDIDATE_SHA);
     return { id: item.id, name, digest: item.digest };
   };
-  const map = { producer: select(names.producer), lanes: names.lanes.map(({ role, name }) => ({ role, ...select(name) })) };
+  const map = { ...(profile ? { profile } : {}), producer: select(names.producer), lanes: names.lanes.map(({ role, name }) => ({ role, ...select(name) })) };
   assert.equal(map.producer.id, artifactId);
   const parent = realpathSync(env.RUNNER_TEMP); const directory = realpathSync(mkdtempSync(join(parent, 'ashlr-attestation-'))); chmodSync(directory, 0o700);
   mkdirSync(join(directory, 'download'), { mode: 0o700 });
@@ -85,8 +91,12 @@ export function assemble(directory) {
   assert.ok(info.isFile() && !info.isSymbolicLink() && info.nlink === 1 && info.size < 1024 * 1024);
   const map = JSON.parse(readFileSync(mapPath, 'utf8'));
   assert.match(map.producer.name, /^ashlr-build-[1-9][0-9]*-[1-9][0-9]*$/);
-  assert.deepEqual(map.lanes.map((row) => row.role).sort(), [...roles].sort());
-  const bundle = join(directory, 'bundle'); copyDataTree(join(directory, 'download', map.producer.name), bundle);
+  assert.ok(map.profile === undefined || map.profile === 'fast-release-v1', 'unknown qualification profile');
+  assert.deepEqual(map.lanes.map((row) => row.role).sort(), map.profile === 'fast-release-v1' ? [] : [...roles].sort());
+  const bundle = join(directory, 'bundle'); const producerDir = join(directory, 'download', map.producer.name);
+  // download-artifact writes a lone artifact (fast-release-v1 has no lanes) directly into the path, without a per-artifact folder.
+  copyDataTree(map.lanes.length === 0 && !existsSync(producerDir) ? join(directory, 'download') : producerDir, bundle);
+  if (map.profile === 'fast-release-v1') return bundle;
   const coverage = join(bundle, 'coverage'); const current = lstatSync(coverage); assert.ok(current.isDirectory() && !current.isSymbolicLink());
   for (const { role, name } of map.lanes) {
     assert.ok(roles.includes(role) && /^ashlr-qualification-[a-z0-9-]+$/.test(name));

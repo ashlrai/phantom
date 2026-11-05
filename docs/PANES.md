@@ -6,15 +6,11 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | --- | --- | --- | --- |
 | `checks` | Checks | — | `src/web-ui/routes/verse/agents/checks.pane.tsx` |
 | `computer` | Computer use | — | `src/web-ui/routes/verse/computer/computer.pane.tsx` |
-| `fleet-brief` | Fleet brief | `mod+alt+f` | `src/web-ui/routes/verse/fleet-brief/fleet-brief.pane.tsx` |
 | `fleet-bus` | Bus | `mod+alt+b` | `src/web-ui/routes/verse/fleet-bus/fleet-bus.pane.tsx` |
-| `fleet-bus-map` | Bus map | — | `src/web-ui/routes/verse/fleet-bus-map/fleet-bus-map.pane.tsx` |
 | `fleet-capacity` | Capacity | — | `src/web-ui/routes/verse/fleet-capacity/fleet-capacity.pane.tsx` |
 | `fleet-channels` | Channels | — | `src/web-ui/routes/verse/fleet-channels/fleet-channels.pane.tsx` |
-| `fleet-decisions` | Decisions | — | `src/web-ui/routes/verse/fleet-decisions/fleet-decisions.pane.tsx` |
 | `fleet-dispatch` | Dispatch | — | `src/web-ui/routes/verse/fleet-dispatch/fleet-dispatch.pane.tsx` |
 | `fleet-events` | Fleet events | `mod+alt+e` | `src/web-ui/routes/verse/fleet-events/fleet-events.pane.tsx` |
-| `fleet-experiments` | Experiments | — | `src/web-ui/routes/verse/fleet-experiments/fleet-experiments.pane.tsx` |
 | `fleet-graph` | Graph | — | `src/web-ui/routes/verse/fleet-graph/fleet-graph.pane.tsx` |
 | `fleet-host` | Mac host | `mod+alt+h` | `src/web-ui/routes/verse/fleet-host/fleet-host.pane.tsx` |
 | `fleet-hub` | Fleet | `mod+alt+g` | `src/web-ui/routes/verse/fleet-hub/fleet-hub.pane.tsx` |

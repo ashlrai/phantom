@@ -1,4 +1,4 @@
-export type AppAction = 'launch' | 'focus' | 'restart';
+export type AppAction = 'launch' | 'focus' | 'restart' | 'quit';
 export interface FleetApp { app: string; running: boolean | null; checkedAt: string }
 export interface FleetAppsResponse { v: 1; generatedAt: string; available: boolean; apps: FleetApp[] }
 export interface AppActionResult { app: string; action: AppAction; code: string; at: string }
@@ -17,7 +17,9 @@ export function appRows(resp: FleetAppsResponse): AppRow[] {
     .sort((a, b) => Number(b.running === true) - Number(a.running === true) || a.app.localeCompare(b.app));
 }
 export function appActionsFor(row: FleetApp): AppAction[] {
-  return row.running === true ? ['focus', 'restart'] : ['launch'];
+  if (row.running !== true) return ['launch'];
+  // Phantom hosts the server this card talks to; the API refuses to quit it.
+  return row.app === 'Phantom' ? ['focus', 'restart'] : ['focus', 'restart', 'quit'];
 }
 export function appActionConfirmLabel(app: string, action: AppAction, armed: boolean): string {
   const label = action[0].toUpperCase() + action.slice(1);
