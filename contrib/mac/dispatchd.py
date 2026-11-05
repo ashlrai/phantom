@@ -14,18 +14,18 @@ NOW = time.time(); TS = time.strftime("%F %T")
 MAX_LAUNCH_PER_TICK = 4; GRACE = 120; RAISE_GAP = 120
 LANES = ["codex-cmp", "codex-personal", "claude", "devin", "claude-api", "codex-local"]   # tie-break order: cmp first
 # hard_cap (RQ-LOADGATE-1): per-pool absolute bound, seeded to the ceiling so nothing changes until an operator lowers it in
-# slots.json. Neither the floor, the autopilot overrides, the +2 ramp nor a stored target may exceed it. GLOBAL_HARD_CAP is the
-# top-level slots.json "hard_cap" bound on the whole fleet (seeded to the 18-core Mac this was sized for).
+# slots.json. Neither the floor, the autopilot overrides, the +2 ramp nor a stored target may exceed it.
+# RQ-QUEUE-BATCH-1: the fleet-wide cap adapts every tick (concurrency.py); a top-level slots.json "hard_cap" is an
+# optional operator ceiling over it. Related ready tasks launch together as one RQ-BATCH-* session (batcher.py).
 DEFAULT = {"codex-cmp": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
            "codex-personal": {"target": 10, "floor": 10, "ceiling": 32, "hard_cap": 32},
            "claude": {"target": 0, "floor": 0, "ceiling": 8, "hard_cap": 8},
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-GLOBAL_HARD_CAP = 18
+import concurrency, batcher
 # Starvation thresholds; load, process count and live worktree count only warn.
 def gate_limit(name, default):
-    import math
     try:
         value = float(os.environ.get(name, default))
         return value if math.isfinite(value) and value > 0 else default
@@ -60,6 +60,10 @@ def _run(cmd, timeout, **kw):
     if time.time() - t0 > 5: log("SLOW %s %.0fs" % (name, time.time() - t0))
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 JID = re.compile(r"^[A-Za-z0-9._-]+$")
+# A launcher that could not fork (EAGAIN/ENOMEM, the per-user process limit) is the concurrency controller's
+# strongest backoff signal: it means the host is already past its limit.
+FORK_RX = re.compile(r"(?i)(fork: (retry: )?resource temporarily unavailable|cannot fork|cannot allocate memory|"
+                     r"BlockingIOError|\[Errno (11|12|35)\]|too many processes)")
 RL = re.compile(r"(?i)(429 too many requests|status(code)?[\s:=\"]+429\b|rate[ _-]?limit (reached|exceeded|hit)|exceeded (your|the) .{0,20}rate limit|usage limit|you've hit your|quota exceeded)")
 
 MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
@@ -108,7 +112,12 @@ for k, v in DEFAULT.items():
     s = slots.setdefault(k, dict(v)); [s.setdefault(a, b) for a, b in v.items()]; s.setdefault("last_change", 0)
 def _cap(v, d):   # a hard_cap is a non-negative int; anything else (missing, bool, garbage) falls back to the default
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else d
-slots["hard_cap"] = _cap(slots.get("hard_cap"), GLOBAL_HARD_CAP)
+# The retired fixed cap was seeded into slots.json as hard_cap 18; drop that seed once, when the controller first
+# starts. Any other value is the operator's ceiling. A malformed value fails closed to the legacy 18.
+CONC_PATH = Q + "/concurrency.json"
+if not os.path.exists(CONC_PATH) and slots.get("hard_cap") == concurrency.LEGACY_CAP:
+    slots.pop("hard_cap"); ev("CONCURRENCY legacy hard_cap %d seed retired; the adaptive controller owns the fleet cap" % concurrency.LEGACY_CAP)
+elif "hard_cap" in slots: slots["hard_cap"] = _cap(slots["hard_cap"], concurrency.LEGACY_CAP)
 def clamp_lane(lane):   # hard_cap wins over floor, ceiling and target, whoever last wrote them (overrides reload included)
     s_ = slots[lane]; hc = s_["hard_cap"] = _cap(s_.get("hard_cap"), DEFAULT[lane]["hard_cap"])
     s_["ceiling"] = min(s_["ceiling"], hc); s_["floor"] = min(s_["floor"], s_["ceiling"]); s_["target"] = min(s_["target"], hc)
@@ -452,8 +461,66 @@ def base(j):
     b = rd("%s/%s.base" % (R, j)).split()
     return b if len(b) >= 4 else None
 
+# ---- batching (RQ-QUEUE-BATCH-1): related ready tasks share one session; queue/BATCH_OFF is the off switch
+BATCHING = not os.path.exists(Q + "/BATCH_OFF")
+os.makedirs(Q + "/batches", exist_ok=True)
+BATCH_TUNING_PATH = Q + "/batch-tuning.json"; batch_tuning = batcher.load_tuning(BATCH_TUNING_PATH)
+_bstats = None
+def batch_stats():   # throughput per lane and mode from jobs.jsonl, read once per tick and only when needed
+    global _bstats
+    if _bstats is None: _bstats = batcher.throughput(batcher.read_rows(MD + "/jobs.jsonl"), NOW)
+    return _bstats
+def batch_attempts(j):
+    try: return int(rd(RUN + "/" + j + ".batch-attempts", "0").strip() or 0)
+    except ValueError: return batcher.MAX_ATTEMPTS
+def batch_manifest(j):
+    if not j.startswith(batcher.BATCH_PREFIX) or not JID.fullmatch(j): return None
+    m = jload(Q + "/batches/" + j + ".json", None)
+    return m if isinstance(m, dict) and m.get("schema") == batcher.SCHEMA and isinstance(m.get("members"), list) else None
+
+def requeue_member(x):   # the member's original ready line; its prompt may have been cleaned up since the claim
+    try: os.remove(RUN + "/" + x["job"] + ".batched")
+    except FileNotFoundError: pass
+    if not isinstance(x.get("line"), str): return False
+    pf = x["line"].split("\t")[4:5]
+    if pf and not os.path.isfile(pf[0]) and os.path.realpath(pf[0]).startswith(Q + "/prompts/") and isinstance(x.get("prompt"), str):
+        open(pf[0], "w").write(x["prompt"])
+    requeue.append(x["line"]); return True
+def release_batch(j, why):   # a batch that never started: every member goes back as it was, attempt refunded
+    m = batch_manifest(j)
+    if not m or m.get("reaped"): return
+    for x in m["members"]:
+        if not (isinstance(x, dict) and JID.fullmatch(str(x.get("job", "")))): continue
+        open(RUN + "/" + x["job"] + ".batch-attempts", "w").write(str(max(0, batch_attempts(x["job"]) - 1)))
+        requeue_member(x)
+    m.update(reaped=NOW, released=why); jsave(Q + "/batches/" + j + ".json", m)
+    ev("BATCH_RELEASED %s %d tasks requeued (%s)" % (j, len(m["members"]), why))
+def reap_batch(j, wt, lane, wall_s):
+    """Per-task outcomes from the session's BRIDGE_NOTES.md checklist; tasks not done go back to ready.tsv."""
+    m = batch_manifest(j)
+    if not m or m.get("reaped"): return None
+    members = [x for x in m["members"] if isinstance(x, dict) and JID.fullmatch(str(x.get("job", "")))]
+    notes = rd(wt + "/BRIDGE_NOTES.md")
+    outcomes = batcher.parse_outcomes(notes, [x["job"] for x in members])
+    retry = 0
+    for x in members:
+        o = outcomes[x["job"]]
+        metric({"event": "task_outcome", "job": x["job"], "batch": j, "lane": lane, "repo": m.get("repo"), "outcome": o})
+        if o in batcher.RETRY: retry += requeue_member(x)
+        else:
+            try: os.remove(RUN + "/" + x["job"] + ".batched")
+            except FileNotFoundError: pass
+    old, new, why = batcher.tune(batch_tuning, lane, outcomes, wall_s, os.path.exists(RUN + "/" + j + ".timeout"), batch_stats(), NOW)
+    batcher.save_json(BATCH_TUNING_PATH, batch_tuning)
+    m.update(reaped=NOW, outcomes=outcomes); jsave(Q + "/batches/" + j + ".json", m)
+    n = {o: sum(1 for v in outcomes.values() if v == o) for o in batcher.OUTCOMES}
+    ev("BATCH_REAPED %s done=%d skipped=%d failed=%d deferred=%d unreported=%d requeued=%d size[%s] %d->%d (%s)" % (
+        j, n["done"], n["skipped"], n["failed"], n["deferred"], n["unreported"], retry, lane, old, new, why))
+    return len(members)
+
+
 # ---- per-job launch outcome (requeue PAUSED/HELD launches)
-requeue = []
+requeue = []; fork_seen = []; rl_seen = []
 for p in glob.glob(RUN + "/*.dispatched"):
     j = os.path.basename(p)[:-11]
     if j in alive: continue
@@ -468,8 +535,11 @@ for p in glob.glob(RUN + "/*.dispatched"):
         ev("LAUNCH_DEFERRED %s %s (requeued)" % (j, out.split(":")[0].strip()))
     elif re.search(r"^SKIPPED: BRANCH_IN_WORKTREE", out, re.M):
         ev("LAUNCH_SKIPPED %s BRANCH_IN_WORKTREE (not a failure, not requeued; see %s.launch)" % (j, j))
+        release_batch(j, "launch skipped")
     else:
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
+        if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
+        release_batch(j, "launch failed")
     os.remove(p)
 
 # ---- (a) reap
@@ -578,8 +648,11 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         st_ = _run(["git", "-C", wt, "diff", "--shortstat", b[0]], 30).stdout
         nf = len([x for x in _run(["git", "-C", wt, "status", "--porcelain", "-uall"], 30).stdout.splitlines() if not x.endswith("BRIDGE_NOTES.md")])
         ins = re.search(r"(\d+) insertion", st_); dele = re.search(r"(\d+) deletion", st_)
+        wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
+        try: bsize = reap_batch(j, wt, pool, wall_s)
+        except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
         if not os.path.exists(RUN + "/" + j + ".timeout"):
-            metric({"event": "finish", "job": j, "lane": pool, "wall_s": int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None,
+            metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
                 "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
                 "diff_files": nf, "diff_lines": (int(ins.group(1)) if ins else 0) + (int(dele.group(1)) if dele else 0), "empty": nf == 0,
                 "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
@@ -654,9 +727,10 @@ GATE = admission_gate()
 try: LOCAL_MID_CAP = max(0, int(os.environ["LOCAL_MID_CAP"])) if "LOCAL_MID_CAP" in os.environ else None
 except ValueError: LOCAL_MID_CAP = None
 if LOCAL_MID_CAP is None: LOCAL_MID_CAP = 1 if GATE["tripped"] else (4 if GATE["load1"] < GATE["ncpu"] else 2)
-def global_cap():   # min(sum of unheld lane targets, ncpu, global hard_cap); held lanes launch nothing so they add nothing
-    live = [l for l in LANES if not (slots[l].get("held") or l in hold)]
-    return max(0, min(sum(slots[l]["target"] for l in live), GATE["ncpu"], slots["hard_cap"]))
+def lane_target_sum():   # held lanes launch nothing so they add nothing
+    return sum(slots[l]["target"] for l in LANES if not (slots[l].get("held") or l in hold))
+def global_cap():   # min(sum of unheld lane targets, adaptive cap, operator hard_cap)
+    return max(0, min([lane_target_sum(), CONC["cap"]] + ([slots["hard_cap"]] if "hard_cap" in slots else [])))
 
 # ---- (c) adapt
 def ratelimited(lane, since):
@@ -802,12 +876,14 @@ for lane in LANES:
         s["target"] = nt; s["api_pool"] = ap.get("pool"); s["api_reason"] = ap.get("reason")
         if s.get("held") or lane in hold: continue
         hit = ratelimited(lane, s["last_change"])
+        if hit and hit[1] in ("rate_limit", "model_capacity"): rl_seen.append(NOW)
         if hit and hit[1] == "credits_exhausted":
             s["held"] = True; s["held_reason"] = "credits exhausted (%s %s)" % (hit[0], TS); s["last_change"] = NOW
             ev("LANE_HOLD %s credits exhausted (%s); supervisor clears held in slots.json" % (lane, hit[0]))
         continue
     if s.get("held") or lane in hold: continue
     hit = ratelimited(lane, s["last_change"])
+    if hit and hit[1] in ("rate_limit", "model_capacity"): rl_seen.append(NOW)
     if hit:
         metric({"event": "pool", "lane": lane, "job": hit[0], "kind": hit[1], "mem_free_pct": free, "swap_gb": swap})
     if hit and hit[1] == "credits_exhausted":
@@ -846,8 +922,23 @@ try:   # atomic; a failed write never breaks the tick (rev2 A4)
     _dl = R + "/.autopilot-disk-gate.tmp"; open(_dl, "w").write(DISK_GATE + "\n"); os.replace(_dl, R + "/.autopilot-disk-gate")
 except Exception as e: log("autopilot disk-level write failed %s" % type(e).__name__)
 
+# ---- adaptive concurrency (RQ-QUEUE-BATCH-1): one AIMD decision per tick, logged on every change
+CONC_FLOOR, CONC_CEILING = concurrency.bounds(slots.get("hard_cap"))
+CONC, _ = concurrency.load(CONC_PATH, max(CONC_FLOOR, min(concurrency.LEGACY_CAP, GATE["ncpu"], CONC_CEILING)), NOW)
+CONC["fork_failures"] += fork_seen; CONC["rate_limits"] += rl_seen
+def conc_adjusted(adj):
+    if not adj: return
+    ev(concurrency.describe(adj))
+    metric({"event": "concurrency", "from": adj["from"], "to": adj["to"], "reason": adj["reason"], "zones": adj["zones"]})
+_demand = sum(running.values()) >= CONC["cap"] and bool(lines) and lane_target_sum() > CONC["cap"]
+conc_adjusted(concurrency.decide(CONC, {
+    "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_per_cpu_max": GATE_LOAD_PER_CPU, "memory_pressure": GATE["memory_pressure"],
+    "mem_free_pct": free, "swap_gb": GATE["swap_gb"], "swap_growth_gb": GATE["swap_growth_gb"], "swap_growth_max_gb": GATE_SWAP_GROWTH_GB,
+    "disk_free_gb": disk_free_gb, "disk_hard_stop_gb": DISK_HARD_STOP_GB, "procs": GATE["procs"], "procs_max": GATE_PROCS_MAX},
+    NOW, _demand, CONC_FLOOR, CONC_CEILING))
+
 # ---- (b) fill
-launched = []; rest = []; bad = 0
+launched = []; rest = []; bad = 0; batches = []
 GCAP = global_cap()
 _prev = jload(Q + "/admission.json", {}).get("gate_reason"); _now_reason = "; ".join(GATE["reasons"]) if GATE["tripped"] else None
 if _now_reason and _prev != _now_reason: ev("LOADGATE tripped: " + _now_reason)
@@ -885,6 +976,29 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if j in retired_ids: return "listed in queue/RETIRED"
         if re.search(r"^- RETIRED (?:\S+ )*?%s[ \[(]" % re.escape(j), rq, re.M): return "RETIRED in router-queue.md"
         return None
+    def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
+        m = f[0]
+        return (batcher.batchable_id(m) and f[2] in batcher.BATCH_LANES and (lead or m not in seen) and not retired(m)
+                and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
+                and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
+                and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
+                and batch_attempts(m) < batcher.MAX_ATTEMPTS)
+    _tasks = {}
+    def task_info(f):   # prompts are read only for same-repo, same-tier candidates of a lead that can launch now
+        if f[0] not in _tasks:
+            text = rd(f[4])
+            _tasks[f[0]] = {"job": f[0], "repo": f[1], "lane": f[2], "tier": f[3], "area": batcher.area_of(f[0], text),
+                            "chars": len(text), "f": f, "prompt": text}
+        return _tasks[f[0]]
+    def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
+        if not (BATCHING and member_ok(f, lead=True)): return None
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[3] == f[3] and c[0] != f[0] and member_ok(c)]
+        size = batcher.size_for(batch_tuning, f[2])
+        picked = batcher.pick_members(task_info(f), pool, size)
+        if not picked: return None
+        has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < slots[l]["target"]
+        lane_ = batcher.choose_lane({c["lane"] for c in picked}, batcher.lane_scores(batch_stats()), has_capacity, f[2])
+        return (picked, lane_, size) if lane_ else None
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         s = slots[lane]; res = result(j)
@@ -895,6 +1009,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
         if res and res.startswith("RESULT PR"):
             ev("SKIP_DONE %s already has a PR" % j); seen.add(j); continue
+        if os.path.exists(RUN + "/" + j + ".batched"):   # a running batch owns it and re-queues it unless done
+            ev("SKIP_BATCHED %s owned by %s" % (j, rd(RUN + "/" + j + ".batched").strip())); seen.add(j); continue
         if disk_reuse_only and not _kind(j, REUSE_KINDS):
             mk = RUN + "/" + j + ".diskguard"
             if not os.path.exists(mk): open(mk, "w").close(); ev("DISKGUARD defer %s %dG" % (j, disk_free_gb))
@@ -921,7 +1037,23 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
-        if pc_n < PC_MAX and not over_budget():   # empty-run precheck (contrib/precheck.sh): no model call, fail open
+        batch = form_batch(f)
+        if batch:   # the batch session runs each member's own checks, so the per-job precheck is skipped
+            picked, lane, size = batch; area = picked[0]["area"]
+            bid = batcher.batch_id(repo, area, [c["job"] for c in picked])
+            pf = Q + "/prompts/" + bid + ".md"
+            open(pf, "w").write(batcher.render(bid, repo, area, [(c["job"], c["prompt"]) for c in picked]))
+            jsave(Q + "/batches/" + bid + ".json", {"schema": batcher.SCHEMA, "id": bid, "repo": repo, "tier": tier, "lane": lane,
+                  "area": area, "created_at": NOW, "size_target": size,
+                  "members": [{"job": c["job"], "lane": c["lane"], "line": "\t".join(c["f"]), "prompt": c["prompt"]} for c in picked]})
+            for c in picked:
+                seen.add(c["job"])
+                open(RUN + "/" + c["job"] + ".batch-attempts", "w").write(str(batch_attempts(c["job"]) + 1))
+                open(RUN + "/" + c["job"] + ".batched", "w").write(bid)
+                metric({"event": "batch_claim", "job": c["job"], "batch": bid, "repo": repo, "lane": lane, "tier": tier, "area": area})
+            ev("BATCH %s %d tasks repo=%s area=%s lane=%s size_target=%d" % (bid, len(picked), repo, area, lane, size))
+            j = bid; s = slots[lane]; line = "\t".join([bid, repo, lane, tier, pf]); batches.append({"job": bid, "tasks": len(picked)})
+        elif pc_n < PC_MAX and not over_budget():   # empty-run precheck (contrib/precheck.sh): no model call, fail open
             pc_n += 1; pc = precheck(j, repo, pf)
             if pc and pc[0] == 13:
                 first = park(park_state, j, key, NOW)
@@ -950,13 +1082,20 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane == "codex-local"
                       else ["/bin/bash", R + "/bin/launch.sh"])
-        subprocess.Popen(launch_cmd + [j, repo, lane, tier], stdin=open(pf),
-                         stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
-                         env=env, start_new_session=True, cwd=H)
+        try:
+            subprocess.Popen(launch_cmd + [j, repo, lane, tier], stdin=open(pf),
+                             stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
+                             env=env, start_new_session=True, cwd=H)
+        except OSError as e:   # EAGAIN/ENOMEM: the host is past its process or memory limit. Back off now, retry later.
+            os.remove(RUN + "/" + j + ".dispatched"); rest.append(line)
+            CONC["fork_failures"].append(NOW); ev("FORK_FAILED %s %s (concurrency backoff)" % (j, type(e).__name__))
+            conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
+            GCAP = min(GCAP, global_cap()); continue
         if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
         mj = jload(R + "/models.json", {}); model = mj.get(fam + "." + tier) or mj.get(fam)
-        metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap})
+        metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap,
+                "batch_size": len(batch[0]) if batch else None})
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
 else:
     rest = lines
@@ -968,6 +1107,7 @@ rest = rest + [l for l in rd(Q + "/ready.tsv").splitlines()[len(_raw):] if l.str
 t = Q + "/ready.tsv.tmp"; open(t, "w").write("".join(l + "\n" for l in rest)); os.replace(t, Q + "/ready.tsv")
 lk.close()
 jsave(Q + "/slots.json", slots)
+concurrency.save(CONC_PATH, CONC)
 
 # ---- restock trigger: a codex lane's queue below 3x its free slots -> Mac-side deterministic restocker (no LLM)
 for lane in ("codex-cmp", "codex-personal", "devin", "claude-api", "codex-local"):
@@ -999,7 +1139,12 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
       "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],
-      "recent_events": evs}
+      "recent_events": evs,
+      "concurrency": {"cap": CONC["cap"], "floor": CONC_FLOOR, "ceiling": CONC_CEILING, "zones": CONC.get("zones"),
+                      "trouble_cap": CONC.get("trouble_cap"), "settled_6h": concurrency.settled(CONC, NOW),
+                      "last_adjustment": (CONC["history"] or [None])[-1]},
+      "batching": {"enabled": BATCHING, "launched_this_tick": batches,
+                   "size_target": {l: batcher.size_for(batch_tuning, l) for l in batcher.BATCH_LANES}}}
 # budget per lane: overrides file (Grok Bot writes Mason's readings) + log-derived token burn
 ov = jload(Q + "/budget-overrides.json", {}); budget = {}
 mets = []
@@ -1057,7 +1202,8 @@ _at_cap = "at_cap running %d >= cap %d" % (sum(running.values()), GCAP) if sum(r
 _block = [x for x in (_now_reason, "paused" if pause else None, _at_cap) if x]   # same verdict `phm pool admission` computes
 adm = {"schema": "dispatchd.admission.v2", "ts": st["last_tick"], "admit": not _block, "gate_reason": _now_reason, "warnings": GATE["warnings"], "reason": "; ".join(_block) or None,
        "disabled": GATE["disabled"], "load1": GATE["load1"], "ncpu": GATE["ncpu"], "load_max": GATE["load_max"], "procs": GATE["procs"], "worktrees": GATE["worktrees"],
-       "daemon_tick_age_s": GATE["daemon_tick_age_s"], "local_mid_cap": LOCAL_MID_CAP, "cap": GCAP, "running": sum(running.values()), "hard_cap": slots["hard_cap"], "install_lock_holder": _install_holder()}
+       "daemon_tick_age_s": GATE["daemon_tick_age_s"], "local_mid_cap": LOCAL_MID_CAP, "cap": GCAP, "running": sum(running.values()), "hard_cap": slots.get("hard_cap"), "install_lock_holder": _install_holder(),
+       "concurrency_cap": CONC["cap"], "concurrency_floor": CONC_FLOOR, "concurrency_ceiling": CONC_CEILING, "concurrency_zones": CONC.get("zones")}
 adm.update({k: v for k, v in GATE.items() if k != "tripped"})
 adm["decision"] = "stop" if _block else ("halve_claims" if GATE["soft_load"] else "admit")
 jsave(Q + "/admission.json", adm); st["admission"] = adm
