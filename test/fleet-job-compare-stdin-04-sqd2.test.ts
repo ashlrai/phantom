@@ -23,8 +23,7 @@ describe('fleet job-compare stdin', () => {
     expect(log.mock.calls[1]).toEqual(output);
   });
 
-  it.each(['invalid', '["RQ-A", "RQ-A"]', '["RQ-A", "RQ-B", "RQ-C"]', '["RQ-A", 2]', '["bad", "RQ-B"]', '["RQ-A", "RQ-B"'])
-  ('rejects invalid input %s without comparison', async input => {
+  it.each(['invalid', '["RQ-A", "RQ-A"]', '["RQ-A", "RQ-B", "RQ-C"]', '["RQ-A", 2]', '["bad", "RQ-B"]', '["RQ-A", "RQ-B"'])('rejects invalid input %s without comparison', async input => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const compare = vi.fn();
     expect(await cmdFleetJobCompare(['--stdin'], { stdin: chunks(bytes(input)), compare })).toBe(2);
@@ -53,8 +52,7 @@ describe('fleet job-compare stdin', () => {
     expect(continued).toBe(false);
   });
 
-  it.each([['--stdin', 'RQ-A', 'RQ-B'], ['--stdin', '--stdin'], ['--stdin', '--json', '--json']])
-  ('rejects conflicting arguments %j before reading', async (...args) => {
+  it.each([['--stdin', 'RQ-A', 'RQ-B'], ['--stdin', '--stdin'], ['--stdin', '--json', '--json']])('rejects conflicting arguments %j before reading', async (...args) => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const compare = vi.fn();
     async function* fail() { throw new Error('must not read'); yield bytes(''); }

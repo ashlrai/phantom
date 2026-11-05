@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,10 @@ import { createChannelReceiver, type ChannelAck } from '../src/core/fleet/channe
 import { readInboxEntries } from '../src/core/fleet/mason-inbox.js';
 
 let runsDir: string;
+// Channel-line and acknowledgement contracts: merged PRs #3004, #3040, #3044, #3211.
+const entryId = (channel: string, text: string) => `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update('2026-10-31T04:13:00.000Z' + text).digest('hex').slice(0, 16)}`;
+const entry = (channel: string, text: string) => ({ at: '2026-10-31 00:13', channel, id: entryId(channel, text), source: `${channel} (${entryId(channel, text)})`, priority: null, text });
+
 const sender = 'fake-canonical-mason';
 const when = new Date('2026-10-31T04:13:00.000Z');
 const now = (): Date => when;
@@ -41,14 +46,14 @@ describe('persisted channel acknowledgements', () => {
     expect(first.envelope.body).toBe(telegram.body);
     expect(second.envelope.body).toBe(telegram.body);
     expect(first.ack).toEqual({ channel: 'email', status: 'accepted', dedupeKey: first.envelope.dedupeKey });
-    expect(second.ack).toEqual({ channel: 'telegram', status: 'duplicate', dedupeKey: first.ack.dedupeKey });
+    expect(second.ack).toEqual({ channel: 'telegram', status: 'duplicate', dedupeKey: first.ack.dedupeKey, entryId: entryId('email', telegram.body) });
     expect(emailAcks).toEqual([first.ack]);
     expect(telegramAcks).toEqual([second.ack]);
     const persisted = {
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'email', priority: 'P0', text: telegram.body }],
+      entries: [{ ...entry('email', telegram.body), alsoChannels: ['telegram'] }],
     };
-    expect(observedInbox).toEqual([persisted, persisted]);
+    expect(observedInbox).toEqual([{ ...persisted, entries: [entry('email', telegram.body)] }, persisted]);
     expect(await readInboxEntries({ runsDir })).toEqual(persisted);
   });
 
@@ -75,7 +80,7 @@ describe('persisted channel acknowledgements', () => {
     expect(telegramAcks).toEqual([retry.ack]);
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'telegram', priority: 'P0', text: telegram.body }],
+      entries: [entry('telegram', telegram.body)],
     });
   });
 
@@ -100,11 +105,11 @@ describe('persisted channel acknowledgements', () => {
     if (!first.ok || !second.ok) throw new Error('expected successful receipts');
     expect(first.ack).toEqual({ channel: 'email', status: 'accepted', dedupeKey: first.envelope.dedupeKey });
     expect(attemptedEmailAcks).toEqual([first.ack]);
-    expect(second.ack).toEqual({ channel: 'telegram', status: 'duplicate', dedupeKey: first.ack.dedupeKey });
+    expect(second.ack).toEqual({ channel: 'telegram', status: 'duplicate', dedupeKey: first.ack.dedupeKey, entryId: entryId('email', telegram.body) });
     expect(telegramAcks).toEqual([second.ack]);
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'email', priority: 'P0', text: telegram.body }],
+      entries: [{ ...entry('email', telegram.body), alsoChannels: ['telegram'] }],
     });
   });
 });

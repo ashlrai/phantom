@@ -57,6 +57,13 @@ export type ParsedClaimKey =
 
 const REPO = '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+';
 
+function hasControl(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) < 0x20) return true;
+  }
+  return false;
+}
+
 /** Parse a resource claim key; undefined when malformed. Repo names compare case-insensitively. */
 export function parseClaimKey(key: string): ParsedClaimKey | undefined {
   let m = new RegExp(`^repo:(${REPO})$`).exec(key);
@@ -64,7 +71,7 @@ export function parseClaimKey(key: string): ParsedClaimKey | undefined {
   m = new RegExp(`^path:(${REPO}):([^\\0]{1,256})$`).exec(key);
   if (m) {
     const glob = m[2]!;
-    if (glob.startsWith('/') || glob.split('/').includes('..') || /[\x00-\x1f]/.test(glob)) return undefined;
+    if (glob.startsWith('/') || glob.split('/').includes('..') || hasControl(glob)) return undefined;
     return { kind: 'path', repo: m[1]!.toLowerCase(), glob };
   }
   m = /^queue:([\x21-\x7e]{1,128})$/.exec(key);
