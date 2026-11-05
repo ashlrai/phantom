@@ -220,3 +220,5 @@ The backup witnesses every admission; after 15 minutes without heartbeat it take
 over and fences the returning primary. Publication remains primary-only. No
 production dispatchd cutover or runner installation is performed. See
 [Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
+
+Agent network channels: `phm agents bus channels list --json` and `phm agents bus channels test email --json` are offline dry runs. See [agent network channels](docs/AGENT-NETWORK-CHANNELS.md) for the default-deny policy and adapter contract.
