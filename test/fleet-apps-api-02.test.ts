@@ -19,7 +19,7 @@ async function call(api: ApiModule, body?: unknown, address = '127.0.0.1', token
 }
 function setup() {
   let time = 100_000;
-  const exec = vi.fn(async () => ({ stdout: JSON.stringify({ running: true, code: 'launch_requested' }), stderr: 'never echo' }));
+  const exec = vi.fn(async () => ({ stdout: JSON.stringify({ ok: true, running: true, code: 'launch_requested' }), stderr: 'never echo' }));
   const api = createFleetAppsApi({ exec, locateScript: () => '/script', runsDir: '/root', now: () => time });
   return { api, exec, advance: () => { time += 30_000; } };
 }
@@ -51,7 +51,7 @@ describe('fleet apps console API', () => {
     expect(exec).toHaveBeenLastCalledWith('python3', ['-I', '/script', 'launch', 'Codex', '--output-dir', '/root'], expect.objectContaining({ timeout: 30_000 }));
     await call(api); expect(exec).toHaveBeenCalledTimes(17);
   });
-  it.each([{ app: 'Codex', action: 'quit' }, { app: 'unknown', action: 'launch' }, { app: 'Codex', action: 'launch', extra: true }])('rejects bad input %j', async body => {
+  it.each([{ app: 'Codex', action: 'shutdown' }, { app: 'unknown', action: 'launch' }, { app: 'Codex', action: 'launch', extra: true }])('rejects bad input %j', async body => {
     const { api, exec } = setup(); expect((await call(api, body)).status).toBe(400); expect(exec).not.toHaveBeenCalled();
   });
   it('requires token and local desktop origin', async () => {
