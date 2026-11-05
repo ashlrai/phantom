@@ -114,7 +114,11 @@ export type { PublicDaemonObservation, DaemonSourceQuality } from '../../core/da
 export type { FleetStatus, FleetNextAction, FleetNextActionCommand, FleetAutonomousShipReadinessStatus } from '../../core/fleet/status.js';
 export type { AgentWorkspaceRecentAction } from '../../core/fleet/agent-action-ledger.js';
 /** RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection behind GET /api/fleet/lanes. */
-export type { FleetLaneSnapshot, FleetLaneView, FleetLaneCreditView } from '../../core/fleet/lane-console.js';
+import type { FleetLaneSnapshot as CoreFleetLaneSnapshot, FleetLaneView as CoreFleetLaneView } from '../../core/fleet/lane-console.js';
+export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';
+/** `slotTarget` is optional here so a response from an older server still type-checks. */
+export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget?: number | null };
+export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes'> & { lanes: FleetLaneView[] };
 
 /**
  * Structural shape shared by every "we might not actually know this"

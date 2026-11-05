@@ -382,8 +382,8 @@ async function cmdEmailCycle(): Promise<number> {
       if (email.config.sendReplies === true) {
         try {
           const { macMailTransport, sendEmailOutbox } = await import('../core/comms/email-outbox.js');
-          const outbox = await sendEmailOutbox({ dir: outDir, allowedRecipients: new Set(from), transport: macMailTransport() });
-          console.log(`cycle: email-outbox queued=${outbox.queued} sent=${outbox.sent} refused=${outbox.refused} failed=${outbox.failed} stuck=${outbox.stuck}`);
+          const outbox = await sendEmailOutbox({ dir: outDir, allowedRecipients: new Set(from), transport: macMailTransport(), draftsRunsDir: runsDir });
+          console.log(`cycle: email-outbox queued=${outbox.queued} sent=${outbox.sent} refused=${outbox.refused} failed=${outbox.failed} stuck=${outbox.stuck}${outbox.drafted ? ` drafted=${outbox.drafted}` : ''}`);
         } catch {
           console.error('cycle: email-outbox send failed');
         }
