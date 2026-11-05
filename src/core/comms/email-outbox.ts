@@ -63,11 +63,11 @@ export interface EmailTransportResult {
 /** Injected send path — tests substitute a fake; production uses macMailTransport. */
 export type EmailTransport = (message: EmailOutboxMessage) => Promise<EmailTransportResult>;
 
-export type EmailOutboxStuckReason = 'symlink' | 'not-regular' | 'oversized' | 'unreadable' | 'interrupted-send';
+export type EmailOutboxStuckReason = 'symlink' | 'not-regular' | 'oversized' | 'unreadable' | 'interrupted-send' | 'malformed';
 
 export interface EmailOutboxEntry {
   name: string;
-  state: 'queued' | 'sent' | 'stuck';
+  state: 'queued' | 'sent' | 'stuck' | 'drafted';
   /** Parsed single To address when present; absent when missing or multi-recipient. */
   to?: string;
   subject?: string;
@@ -76,7 +76,7 @@ export interface EmailOutboxEntry {
 
 export interface EmailOutboxListing {
   dir: string;
-  counts: { queued: number; sent: number; stuck: number };
+  counts: { queued: number; sent: number; stuck: number; drafted: number };
   entries: EmailOutboxEntry[];
 }
 
@@ -194,7 +194,7 @@ function scanOutbox(dir: string): ScannedEntry[] {
   return entries;
 }
 
-/** Read-only view of the outbox: queued replies, sent history, stuck files. */
+/** Read-only view of queued, drafted, sent and stuck reply artifacts. */
 export function readEmailOutbox(dir: string): EmailOutboxListing {
   const entries: EmailOutboxEntry[] = [];
   for (const entry of scanOutbox(dir)) {
@@ -209,7 +209,13 @@ export function readEmailOutbox(dir: string): EmailOutboxListing {
   for (const name of replyNames(join(dir, SENT_DIR))) {
     entries.push({ name, state: 'sent' });
   }
-  const counts = { queued: 0, sent: 0, stuck: 0 };
+  for (const entry of scanOutbox(join(dir, DRAFTED_DIR))) {
+    if (entry.stuck === 'vanished') continue;
+    if (entry.stuck) entries.push({ name: entry.name, state: 'stuck', reason: entry.stuck });
+    else if (!entry.reply?.to) entries.push({ name: entry.name, state: 'stuck', reason: 'malformed' });
+    else entries.push({ name: entry.name, state: 'drafted', to: entry.reply.to, subject: entry.reply.subject });
+  }
+  const counts = { queued: 0, sent: 0, stuck: 0, drafted: 0 };
   for (const entry of entries) counts[entry.state] += 1;
   return { dir, counts, entries };
 }

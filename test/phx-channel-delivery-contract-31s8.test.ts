@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,10 @@ import { createChannelReceiver, type ChannelAck } from '../src/core/fleet/channe
 import { readInboxEntries } from '../src/core/fleet/mason-inbox.js';
 
 let runsDir: string;
+// Channel-line and acknowledgement contracts: merged PRs #3004, #3040, #3044, #3211.
+const entryId = (channel: string, text: string) => `${channel === 'desktop' ? 'desk' : channel}-${createHash('sha256').update('2026-10-31T04:13:00.000Z' + text).digest('hex').slice(0, 16)}`;
+const entry = (channel: string, text: string) => ({ at: '2026-10-31 00:13', channel, id: entryId(channel, text), source: `${channel} (${entryId(channel, text)})`, priority: null, text });
+
 const sender = 'fake-verified-sender';
 const now = (): Date => new Date('2026-10-31T04:13:00Z');
 const email = { channel: 'email' as const, verifiedSenderId: sender, body: '  fake cafe\u0301\r\nhello  ' };
@@ -30,12 +35,12 @@ describe('channel delivery integration contract', () => {
     expect(first.envelope.verifiedSenderId).toBe(sender);
     expect(first.envelope.body).toBe(telegram.body);
     expect(first.ack).toEqual({ channel: 'email', status: 'accepted', dedupeKey: first.envelope.dedupeKey });
-    expect(duplicate.ack).toEqual({ channel: 'telegram', status: 'duplicate', dedupeKey: first.ack.dedupeKey });
+    expect(duplicate.ack).toEqual({ channel: 'telegram', status: 'duplicate', dedupeKey: first.ack.dedupeKey, entryId: entryId('email', telegram.body) });
     expect(emailAcks).toEqual([first.ack]);
     expect(telegramAcks).toEqual([duplicate.ack]);
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'email', priority: 'P0', text: telegram.body }],
+      entries: [{ ...entry('email', telegram.body), alsoChannels: ['telegram'] }],
     });
   });
 
@@ -60,7 +65,7 @@ describe('channel delivery integration contract', () => {
     expect(telegramAcks).toEqual([retry.ack]);
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'telegram', priority: 'P0', text: telegram.body }],
+      entries: [entry('telegram', telegram.body)],
     });
   });
 });

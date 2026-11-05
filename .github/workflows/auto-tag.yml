@@ -29,6 +29,9 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [master]
+  schedule:
+    - cron: "22,52 * * * *"
+  workflow_dispatch:
 
 permissions: {}
 
@@ -38,7 +41,7 @@ concurrency:
 
 jobs:
   tag:
-    if: github.event_name == 'push' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
