@@ -24,7 +24,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
-import { fleetInbox, lineChannel, lineSourceLabel, mergeThread, type MergedLine } from './thread-merge-model.js';
+import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread, type MergedLine } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { mentionedRefs } from './thread-refs.js';
 
@@ -122,7 +122,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const read = thread.data;
   const messages = read?.value?.messages ?? NO_MESSAGES;
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
-  const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data), [messages, inbox, now, runs.data]);
+  const outbox = useMemo(() => fleetOutbox(runs.data), [runs.data]);
+  const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox), [messages, inbox, outbox, now, runs.data]);
   const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now), [busPage.data, now]);
 
   // One row per line, keeping the conversation's day separators; undated lines go last.
