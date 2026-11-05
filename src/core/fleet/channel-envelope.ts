@@ -15,7 +15,7 @@ import { queueCosEnvelope } from '../cos/intake.js';
 
 export type { ChannelPublishState } from './channel-bus-publish.js';
 
-export const INBOUND_CHANNELS = ['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'] as const;
+export const INBOUND_CHANNELS = ['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'] as const;
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
 export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 export const CHANNEL_ACK_TIMEOUT_MS = 2_000;
