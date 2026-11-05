@@ -23,6 +23,14 @@
  *             failure marks the job BLOCKED with a short fixed reason —
  *             never the model output — replayable via `phm queue replay
  *             --failed`.
+ *
+ * Replays: `phm queue replay` re-queues a BLOCKED job under a new id
+ * (`<id>.replay.<uuid>`, replayOf: <id>), possibly several times over. The
+ * worker picks those up too: it claims and finishes the attempt by its own
+ * id, but drafts against the root `cos-<32 hex>` id (cosRootId) so the draft,
+ * its approval binding and the NEEDS-MASON line stay keyed to the id Mason,
+ * the desktop and the channel bridges already know. Results carry that root
+ * as `id` and the replay job as `attemptId`.
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import { constants as osConstants, homedir, hostname } from 'node:os';
@@ -59,13 +67,14 @@ export interface CosWorkOptions {
 export type CosWorkResult =
   | { outcome: 'paused' }
   | { outcome: 'idle' }
-  | { outcome: 'drafted'; id: string; provider: string }
-  | { outcome: 'blocked'; id: string; reason: string };
+  | { outcome: 'drafted'; id: string; attemptId?: string; provider: string }
+  | { outcome: 'blocked'; id: string; attemptId?: string; reason: string };
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_STDOUT_CHARS = 64 * 1024;
 const MAX_DRAFT_CHARS = 16_000;
 const COS_JOB_ID = /^cos-[a-f0-9]{32}$/;
+const MAX_REPLAY_HOPS = 8;
 const UNTRUSTED_OPEN = '--- BEGIN UNTRUSTED USER REQUEST ---';
 const UNTRUSTED_CLOSE = '--- END UNTRUSTED USER REQUEST ---';
 
@@ -85,11 +94,33 @@ function isCosIntake(acceptance: string): boolean {
   } catch { return false; }
 }
 
-/** The oldest READY cos job in queue order whose deps are all DONE. */
-function pickCosJob(jobs: readonly QueueJob[]): QueueJob | undefined {
+/**
+ * The root `cos-<32 hex>` id behind a job: its own id, or the first id that
+ * matches along its replayOf chain. Every hop must exist in `jobs`; the walk
+ * stops after MAX_REPLAY_HOPS or on a cycle and then returns undefined.
+ */
+export function cosRootId(job: QueueJob, jobs: readonly QueueJob[]): string | undefined {
+  const byId = new Map(jobs.map((row) => [row.id, row]));
+  const seen = new Set<string>();
+  let current: QueueJob | undefined = job;
+  for (let hop = 0; current && hop <= MAX_REPLAY_HOPS; hop += 1) {
+    if (COS_JOB_ID.test(current.id)) return current.id;
+    if (seen.has(current.id) || current.replayOf === undefined) return undefined;
+    seen.add(current.id);
+    current = byId.get(current.replayOf);
+  }
+  return undefined;
+}
+
+/** The oldest READY cos job (or replay of one) in queue order whose deps are all DONE. */
+function pickCosJob(jobs: readonly QueueJob[]): { job: QueueJob; rootId: string } | undefined {
   const done = new Set(jobs.filter((job) => job.status === 'DONE').map((job) => job.id));
-  return jobs.find((job) => job.status === 'READY' && COS_JOB_ID.test(job.id)
-    && isCosIntake(job.acceptance) && job.deps.every((dep) => done.has(dep)));
+  for (const job of jobs) {
+    if (job.status !== 'READY' || !isCosIntake(job.acceptance) || !job.deps.every((dep) => done.has(dep))) continue;
+    const rootId = cosRootId(job, jobs);
+    if (rootId) return { job, rootId };
+  }
+  return undefined;
 }
 
 function cosWorkerPrompt(scope: string, memory: string, facts: string | null = null, now = Date.now()): string {
@@ -153,8 +184,10 @@ export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWork
   if (switches.switches.some((row) => row.id === 'PAUSE' && row.on)) return { outcome: 'paused' };
 
   const store = new QueueStore(join(runsDir, 'queue'), 250);
-  const job = pickCosJob((await store.read()).jobs);
-  if (!job) return { outcome: 'idle' };
+  const picked = pickCosJob((await store.read()).jobs);
+  if (!picked) return { outcome: 'idle' };
+  const { job, rootId } = picked;
+  const ids = rootId === job.id ? { id: rootId } : { id: rootId, attemptId: job.id };
 
   // Runner choice precedes the claim: no usable login leaves the job READY
   // for the next pass instead of permanently blocked on a transient limit.
@@ -167,7 +200,7 @@ export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWork
   }
   const health = await readPlannerHealth(runsDir, now);
   const choice = selectPlannerRunner(candidates, { [lastProvider]: health }, now);
-  if (!choice.ok) return { outcome: 'blocked', id: job.id, reason: choice.reason };
+  if (!choice.ok) return { outcome: 'blocked', ...ids, reason: choice.reason };
 
   const owner = opts.owner ?? `cos-worker:${hostname()}:${process.pid}`;
   try { await store.claim(job.id, owner); }
@@ -177,7 +210,7 @@ export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWork
   const block = async (reason: string): Promise<CosWorkResult> => {
     try { await store.finish(job.id, owner, { reason }); }
     catch { /* a finish failure never masks the original one */ }
-    return { outcome: 'blocked', id: job.id, reason };
+    return { outcome: 'blocked', ...ids, reason };
   };
 
   let memory = '';
@@ -211,9 +244,9 @@ export async function runCosWorkOnce(opts: CosWorkOptions = {}): Promise<CosWork
   const text = scrubSecrets(terminal.stdout.trim()).slice(0, MAX_DRAFT_CHARS);
   if (!text.trim()) return block('runner-empty-output');
   try {
-    await draftCosResult(job.id, text, runsDir);
+    await draftCosResult(rootId, text, runsDir);
   } catch { return block('draft-refused'); }
   try { await store.finish(job.id, owner, {}); }
-  catch { return { outcome: 'blocked', id: job.id, reason: 'finish-failed' }; }
-  return { outcome: 'drafted', id: job.id, provider: choice.provider };
+  catch { return { outcome: 'blocked', ...ids, reason: 'finish-failed' }; }
+  return { outcome: 'drafted', ...ids, provider: choice.provider };
 }
