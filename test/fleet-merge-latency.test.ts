@@ -48,7 +48,7 @@ it('says unknown when events cannot be read, and an empty file is known', async 
   for (const read of [async () => null, async (): Promise<string> => { throw new Error('private'); }]) {
     expect(await fleetMergeLatency(read, now)).toMatchObject({ known: false, total: null, retryable_conflicts: null });
   }
-  expect(await fleetMergeLatency(reader(), now)).toMatchObject({ known: true, merged: 0, retryable_conflicts: [] });
+  expect(await fleetMergeLatency(reader(), now)).toMatchObject({ known: true, merged: 0, retryable_conflicts: [], pending_auto_merge: [] });
 });
 
 it('finds conflicts the recut loop can retry, longest waiting first', async () => {
@@ -111,4 +111,69 @@ it('prints plain words, typed JSON, and rejects bad options', async () => {
 it('is reachable as `ashlr fleet merge-latency`', async () => {
   const mod = await FLEET_SUBCOMMAND_LOADERS['merge-latency']!();
   expect(typeof mod.cmdFleetMergeLatency).toBe('function');
+});
+
+it('finds stalled auto-merges of any age without inferring enablement from queue entry', async () => {
+  const rows = [ev(1, 'auto_merge_enabled', 3600), ev(2, 'auto_merge_enabled', 3599.9),
+    ev(3, 'auto_merge_enabled', 3 * 24 * 3600), ev(4, 'queued', 9000),
+    ev(5, 'auto_merge_enabled', 8000), ev(5, 'merged', 10), ev(6, 'auto_merge_enabled', 8000), ev(6, 'closed', 10),
+    ev(7, 'auto_merge_enabled', 8000), ev(7, 'auto_merge_disabled', 500),
+    ev(8, 'auto_merge_enabled', 8000), ev(8, 'auto_merge_disabled', 500), ev(8, 'auto_merge_enabled', 20),
+    { ...ev(1, 'auto_merge_enabled', 7200), repo: 'ashlrai/other' }];
+  const r = await fleetMergeLatency(reader(...rows.reverse()), now, 1);
+  expect(r.pending_auto_merge).toEqual([
+    { repo: 'ashlrai/phantom', pr: 3, auto_merge: 'enabled', waiting_s: 259200, stalled: true },
+    { repo: 'ashlrai/other', pr: 1, auto_merge: 'enabled', waiting_s: 7200, stalled: true },
+    { repo: 'ashlrai/phantom', pr: 1, auto_merge: 'enabled', waiting_s: 3600, stalled: true },
+    { repo: 'ashlrai/phantom', pr: 2, auto_merge: 'enabled', waiting_s: 3599, stalled: false },
+    { repo: 'ashlrai/phantom', pr: 8, auto_merge: 'enabled', waiting_s: 20, stalled: false },
+  ]);
+  expect(r.queue_to_merge).toMatchObject({ count: 0, missing: 1, p50_s: null });
+});
+
+it('keeps missing state times and contradictory auto-merge evidence unknown', async () => {
+  const r = await fleetMergeLatency(reader(
+    { ...ev(1, 'auto_merge_enabled', 100), at: undefined },
+    ev(2, 'auto_merge_enabled', 8000), { ...ev(2, 'auto_merge_disabled', 100), at: null },
+    ev(3, 'auto_merge_enabled', 8000), { ...ev(3, 'auto_merge_enabled', 100), at: 'bad' },
+    ev(4, 'auto_merge_enabled', 8000), ev(4, 'auto_merge_disabled', 8000),
+    ev(5, 'auto_merge_enabled', 8000), { ...ev(5, 'merged', 10), at: undefined },
+    ev(6, 'auto_merge_enabled', 8000), { ...ev(6, 'closed', 10), at: undefined },
+    ev(7, 'auto_merge_disabled', 8000), ev(7, 'auto_merge_enabled', 8000), // reversed simultaneous events
+  ), now);
+  expect(r.pending_auto_merge?.map(p => [p.pr, p.auto_merge, p.waiting_s, p.stalled])).toEqual([
+    [1, 'enabled', null, null], [2, 'unknown', null, null], [3, 'enabled', null, null], [4, 'unknown', null, null], [7, 'unknown', null, null],
+  ]);
+  expect(r).toMatchObject({ merged: 1, merged_time_unknown: 1, queue_to_merge: { count: 0, missing: 1, p50_s: null } });
+  expect(formatMergeLatency(r)).toContain('0 merged; 1 merged at an unknown time');
+  expect((await fleetMergeLatency(async () => null, now)).pending_auto_merge).toBeNull();
+});
+
+it('limits merged percentiles to merge time, retains first-enqueue wall latency, and excludes pending ages', async () => {
+  const r = await fleetMergeLatency(reader(ev(1, 'queued', 9000), ev(1, 'queued', 5000), ev(1, 'merged', 100),
+    ev(2, 'queued', 9000), ev(2, 'merged', 8000), ev(2, 'checks_passed', 10),
+    ev(3, 'auto_merge_enabled', 8000), ev(3, 'queued', 7000)), now, 1);
+  expect(r).toMatchObject({ merged: 1, queue_to_merge: { count: 1, missing: 0, p50_s: 8900, p90_s: 8900 } });
+});
+
+it('exposes configurable stall diagnostics in JSON, plain output and help, rejecting invalid flags before reads', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const read = vi.fn(reader(ev(1, 'auto_merge_enabled', 60), { ...ev(2, 'auto_merge_enabled', 10), at: undefined }));
+  expect(await cmdFleetMergeLatency(['--stalled-after', '60', '--json'], { read, now })).toBe(0);
+  expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ stalled_after_s: 60,
+    pending_auto_merge: [{ pr: 1, stalled: true }, { pr: 2, stalled: null }] });
+  expect(await cmdFleetMergeLatency(['--stalled-after', '60'], { read, now })).toBe(0);
+  expect(log.mock.calls.at(-1)![0]).toContain('ashlrai/phantom#1: stalled auto-merge, 60s waiting');
+  expect(log.mock.calls.at(-1)![0]).toContain('auto-merge wait unknown (missing timestamp)');
+  expect(log.mock.calls.at(-1)![0]).toContain('keep required checks in place');
+  read.mockClear();
+  for (const args of [['--stalled-after'], ['--stalled-after', '0'], ['--stalled-after', '-1'],
+    ['--stalled-after', '1.5'], ['--stalled-after', 'Infinity'], ['--stalled-after', '100000000'],
+    ['--stalled-after', '60', '--stalled-after', '60'], ['--events', '--json']]) {
+    expect(await cmdFleetMergeLatency(args, { read, now })).toBe(2);
+  }
+  expect(read).not.toHaveBeenCalled();
+  expect(await cmdFleetMergeLatency(['--help'])).toBe(0);
+  expect(log.mock.calls.at(-1)![0]).toContain('auto_merge_enabled');
 });
