@@ -151,4 +151,23 @@ describe('ashlr agents bus contract', () => {
     expect((await run(['bus', 'contract', '--json', '--json'])).code).toBe(2);
     expect(JSON.parse((await run(['x', '--json'])).err)).toEqual({ error: 'invalid-argument' });
   });
+  it('routes profile output and failures through the CLI callbacks', async () => {
+    const listed = await run(['list', '--json']);
+    expect(listed.code).toBe(0);
+    expect(JSON.parse(listed.out)).toEqual({ profiles: [] });
+    expect(listed.err).toBe('');
+
+    const invalid = await run(['show', '../outside', '--json']);
+    expect(invalid.code).toBe(2);
+    expect(invalid.out).toBe('');
+    expect(JSON.parse(invalid.err)).toMatchObject({ ok: false });
+  });
+  it.each(['list', 'show', 'validate', 'versions'])('shows %s help before reading profile metadata', async (verb) => {
+    for (const flag of ['--help', '-h']) {
+      const result = await run([verb, flag]);
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('phm agents list|show <id>');
+      expect(result.err).toBe('');
+    }
+  });
 });

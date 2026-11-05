@@ -220,3 +220,11 @@ The backup witnesses every admission; after 15 minutes without heartbeat it take
 over and fences the returning primary. Publication remains primary-only. No
 production dispatchd cutover or runner installation is performed. See
 [Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
+
+## Portable agent profiles
+
+See [agent profiles](docs/AGENT-PROFILES.md) for strict TOML metadata, version
+pins, doctrine paths and restrictive send policy. Command contract:
+`phm agents list --json`, `phm agents show helper --json`,
+`phm agents validate helper --json`, `phm agents versions helper --json`.
+Outside email recipients stay drafts while `limitsTodo` is true. Profiles never grant transport or spending authority.
