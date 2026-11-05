@@ -1,7 +1,7 @@
 /**
  * Retry selector over a previous release-advance-batch report
  * (RQ-PHX-RELEASEBATCHRETRY05SRW2). A release operator feeds one bounded
- * JSON document — a report earlier produced by runReleaseAdvanceBatch — and
+ * JSON document — a batch report or one previous retry report — and
  * only its unsuccessful entries ({busy,blocked,refused,unavailable}) are
  * handed, in original order, to a fresh bounded batch. Successful entries
  * ({planned,submitted,no-op,already-submitted}) are kept out of the retry.
@@ -48,6 +48,7 @@ const RECEIPT_STATES: ReadonlySet<string> = new Set([
 ]);
 
 const REPORT_KEYS = ['version', 'apply', 'total', 'succeeded', 'unsuccessful', 'counts', 'completed', 'remaining', 'entries'];
+const RETRY_KEYS = ['version', 'apply', 'input', 'retried', 'skipped', 'batch'];
 const ENTRY_KEYS = ['version', 'repo', 'tag', 'apply', 'outcome', 'reason', 'lock', 'receipt', 'advance'];
 
 export interface ReleaseRetryBatchEntry {
@@ -110,9 +111,56 @@ function validEntry(value: unknown): value is Record<string, unknown> & {
  * so a retry can never nominate a candidate the batch itself would refuse.
  */
 export function parseReleaseRetryBatchInput(text: string): ReleaseRetryBatchParse {
+  if (Buffer.byteLength(text, 'utf8') > MAX_RETRY_INPUT_BYTES) return { ok: false, reason: 'input_too_large' };
   let doc: unknown;
   try { doc = JSON.parse(text); } catch { return { ok: false, reason: 'not_json' }; }
   if (!isRecord(doc)) return { ok: false, reason: 'not_object' };
+  return Object.hasOwn(doc, 'batch') ? parseRetryReport(doc) : parseBatchReport(doc);
+}
+
+/** Deliberately non-recursive: a retry wrapper may contain only a batch. */
+function parseRetryReport(doc: Record<string, unknown>): ReleaseRetryBatchParse {
+  const invalid = (): ReleaseRetryBatchParse => ({ ok: false, reason: 'retry_wrapper_invalid' });
+  if (!keysExactly(doc, RETRY_KEYS)) return { ok: false, reason: 'unknown_or_missing_fields' };
+  if (doc.version !== 1) return { ok: false, reason: 'unsupported_version' };
+  const { apply, input, retried, skipped, batch } = doc;
+  if (typeof apply !== 'boolean' || !safeInt(input, 0) || input > MAX_BATCH_CANDIDATES
+    || !Array.isArray(retried) || !Array.isArray(skipped)
+    || retried.length + skipped.length !== input) return invalid();
+  const partitions: ReleaseRetryBatchEntry[][] = [[], []];
+  for (const [index, values] of [retried, skipped].entries()) {
+    for (const value of values) {
+      if (!isRecord(value) || !keysExactly(value, ['repo', 'tag', 'previousOutcome'])
+        || typeof value.repo !== 'string' || typeof value.tag !== 'string'
+        || typeof value.previousOutcome !== 'string' || !KNOWN_OUTCOMES.has(value.previousOutcome)
+        || SUCCESSFUL.has(value.previousOutcome) !== (index === 1)) return invalid();
+      partitions[index]!.push({ repo: value.repo, tag: value.tag,
+        previousOutcome: value.previousOutcome as ReleaseAdvanceOnceOutcome });
+    }
+  }
+  const selection = { input, retried: partitions[0]!, skipped: partitions[1]! };
+  // Validate the entire old partition, including skipped identities and overlap.
+  if (input > 0 && !parseReleaseAdvanceBatchInput(JSON.stringify({ version: 1,
+    candidates: [...selection.retried, ...selection.skipped].map(({ repo, tag }) => ({ repo, tag })),
+  })).ok) return invalid();
+  if (batch === null) {
+    return retried.length === 0 ? { ok: true, selection } : invalid();
+  }
+  if (!isRecord(batch) || batch.apply !== apply || batch.total !== retried.length) return invalid();
+  const parsed = parseBatchReport(batch);
+  if (!parsed.ok) return parsed;
+  const entries = batch.entries as { repo: string; tag: string; outcome: string }[];
+  const counts = batch.counts as Record<string, number>;
+  if ((batch.remaining as unknown[]).length !== 0
+    || entries.some((entry, i) => entry.repo !== selection.retried[i]?.repo || entry.tag !== selection.retried[i]?.tag)
+    || Object.entries(counts).some(([outcome, n]) => entries.filter(entry => entry.outcome === outcome).length !== n)) {
+    return invalid();
+  }
+  // Only the latest batch selects the next attempt; old skips never re-enter.
+  return parsed;
+}
+
+function parseBatchReport(doc: Record<string, unknown>): ReleaseRetryBatchParse {
   if (!keysExactly(doc, REPORT_KEYS)) return { ok: false, reason: 'unknown_or_missing_fields' };
   if (doc.version !== 1) return { ok: false, reason: 'unsupported_version' };
   const { apply, total, succeeded, unsuccessful, counts, completed, remaining, entries } = doc;
