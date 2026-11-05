@@ -34,6 +34,9 @@ import { JOB_OVERLAP_MIN_IDS } from '../core/fleet/job-overlap.js';
 import { parseFleetJobOverlapArgs, readFleetJobOverlap, type FleetJobOverlapArgs } from './fleet-job-overlap.js';
 import { parseFleetJobCurrentArgs, readFleetJobCurrent,
   type FleetJobCurrentArgs } from './fleet-job-current.js';
+import { MAX_FLEET_JOB_CURRENT_BATCH_IDS, parseFleetJobCurrentBatchArgs, readFleetJobCurrentBatch,
+  type FleetJobCurrentBatchArgs } from './fleet-job-current-batch.js';
+import { parseFleetJobPatchArgs, readFleetJobPatch, type FleetJobPatchArgs } from './fleet-job-patch.js';
 import { MAX_FLEET_PATH_HISTORY, parseFleetPathHistoryArgs, readFleetPathHistory,
   type FleetPathHistoryArgs } from './fleet-path-history.js';
 import { parseFleetJobPrecheckArgs, readFleetJobPrecheck, type FleetJobPrecheckArgs } from './fleet-job-precheck.js';
@@ -63,6 +66,8 @@ export interface FleetReaders {
   jobHistory?: (input: FleetJobHistoryArgs) => Promise<unknown>;
   jobHistoryBatch?: (input: FleetJobHistoryBatchArgs) => Promise<unknown>;
   jobCurrent?: (input: FleetJobCurrentArgs) => Promise<unknown>;
+  jobCurrentBatch?: (input: FleetJobCurrentBatchArgs) => Promise<unknown>;
+  jobPatch?: (input: FleetJobPatchArgs) => Promise<unknown>;
   jobOverlap?: (input: FleetJobOverlapArgs) => Promise<unknown>;
   pathHistory?: (input: FleetPathHistoryArgs) => Promise<unknown>;
   jobPrecheck?: (input: FleetJobPrecheckArgs) => Promise<unknown>;
@@ -256,6 +261,37 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_job_patch',
+      description: 'Read the exact bounded patch a fleet job landed: the newest bridge commit on origin/master whose subject id exactly equals the requested job, with its sha, pr, touched paths and unified diff, from the same reader as `phm fleet job-patch` — never a second scanner. Optionally narrow to one touched repository-relative path. Preserves status, resolvedRef, scan bounds and truncation flags, selectedPath and patchTruncated; the patch is capped, and outputClipped marks any further clipping to the response limit, so a clipped patch is never complete. not-found-in-bounded-scan proves only what the bounded scan saw. Read-only evidence of what landed, never a correctness verdict or permission to merge or dispatch. The ref is fixed at origin/master: no caller ref, root or cwd is accepted, and no tool mutates anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(…) commit subjects, never by prefix.' },
+          path: { type: 'string', description: 'Optional repository-relative literal path that the landed commit touched; no absolute, backslash, dot or empty segments.' },
+        },
+        required: ['jobId'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_job_current_batch',
+      description: 'Compare what multiple fleet jobs landed with what origin/master holds now: for up to 20 jobs, the git tree entry \u2014 mode, type and object id \u2014 each touched path held at the newest bridge commit on origin/master versus the pinned current origin/master tree, all resolved against one immutable snapshot, from the same shared reader as `phm fleet job-current-batch` \u2014 never a second scanner. At most the newest 1000 commits are scanned and at most 200 touched paths per job compared; empty or truncated evidence proves only what the bounded scan saw and does not prove a job never landed. Statuses are object identity only \u2014 unchanged, changed, absent-now and absent-at-both \u2014 and object identity is evidence, not proof of correct behavior or permission to recut. The ref is fixed at origin/master: no caller ref, path, root or cwd is accepted, and no tool mutates anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobIds: {
+            type: 'array', minItems: 1, maxItems: MAX_FLEET_JOB_CURRENT_BATCH_IDS, uniqueItems: true,
+            items: { type: 'string', description: 'Exact case-sensitive fleet job id such as RQ-EXAMPLE-1; matched only against bridge(\u2026) commit subjects, never by prefix.' },
+            description: 'Distinct exact job ids; results come back in this order.',
+          },
+        },
+        required: ['jobIds'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_path_history',
       description: 'Read which landed fleet jobs touched one repository path, newest first: bridge commits on origin/master whose literal-pathspec history includes the requested path, from the same bounded git scan as `phm fleet path-history` — never a second scanner. The scan covers at most the newest limit×3 commits touching the path and returns at most `limit` distinct job ids; an empty or capped result proves only what that bounded scan saw and does not prove no job landed work on the path. Recorded merge history, never a live lane, dispatch or merge-queue verdict. The ref is fixed at origin/master: no caller ref, repository root or cwd is accepted, and no tool mutates anything.',
       inputSchema: {
@@ -324,7 +360,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -343,6 +379,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const jobHistoryBatch = name === 'fleet_job_history_batch' ? parseFleetJobHistoryBatchArgs(args) : null;
     const jobOverlap = name === 'fleet_job_overlap' ? parseFleetJobOverlapArgs(args) : null;
     const jobCurrent = name === 'fleet_job_current' ? parseFleetJobCurrentArgs(args) : null;
+    const jobPatchArgs = name === 'fleet_job_patch' ? parseFleetJobPatchArgs(args) : null;
+    const jobCurrentBatch = name === 'fleet_job_current_batch' ? parseFleetJobCurrentBatchArgs(args) : null;
     const pathHistory = name === 'fleet_path_history' ? parseFleetPathHistoryArgs(args) : null;
     const jobPrecheck = name === 'fleet_job_precheck' ? parseFleetJobPrecheckArgs(args) : null;
     const jobPrecheckBatch = name === 'fleet_job_precheck_batch' ? parseFleetJobPrecheckBatchArgs(args) : null;
@@ -352,6 +390,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_job_history_batch' ? jobHistoryBatch === null :
         name === 'fleet_job_overlap' ? jobOverlap === null :
         name === 'fleet_job_current' ? jobCurrent === null :
+        name === 'fleet_job_patch' ? jobPatchArgs === null :
+        name === 'fleet_job_current_batch' ? jobCurrentBatch === null :
         name === 'fleet_job_history' ? jobHistory === null :
         name === 'fleet_reset_group_await' ? resetGroupAwait === null :
         name === 'fleet_reset_await' ? resetAwait === null :
@@ -381,6 +421,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_job_history_batch' ? await (readers.jobHistoryBatch ?? readFleetJobHistoryBatch)(jobHistoryBatch as FleetJobHistoryBatchArgs)
         : name === 'fleet_job_overlap' ? await (readers.jobOverlap ?? readFleetJobOverlap)(jobOverlap as FleetJobOverlapArgs)
         : name === 'fleet_job_current' ? await (readers.jobCurrent ?? readFleetJobCurrent)(jobCurrent as FleetJobCurrentArgs)
+        : name === 'fleet_job_patch' ? await (readers.jobPatch ?? readFleetJobPatch)(jobPatchArgs as FleetJobPatchArgs)
+        : name === 'fleet_job_current_batch' ? await (readers.jobCurrentBatch ?? readFleetJobCurrentBatch)(jobCurrentBatch as FleetJobCurrentBatchArgs)
         : name === 'fleet_job_precheck_batch' ? await (readers.jobPrecheckBatch ?? readFleetJobPrecheckBatch)(jobPrecheckBatch as FleetJobPrecheckBatchArgs)
         : name === 'fleet_job_precheck' ? await (readers.jobPrecheck ?? readFleetJobPrecheck)(jobPrecheck as FleetJobPrecheckArgs)
         : name === 'fleet_main_health' ? await (readers.mainHealth ?? readFleetMainHealthTool)()

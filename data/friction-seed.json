@@ -1,0 +1,15 @@
+{
+  "history": { "source": "~/.ashlr-runs/metrics/jobs.jsonl and dispatch logs", "window": "last 7 days", "status": "unavailable: Mac history directory absent", "countsRecomputed": false },
+  "items": [
+    { "id": "F1", "count7d": null, "issue": "Lane auth dies silently: Claude OAuth expired Nov 3 at 12:20 AM; jobs ended empty and empty_1x dropped IDs.", "fix": "Probe auth health per lane, reroute automatically, retry lane-caused empties as R2, and forecast expiry." },
+    { "id": "F2", "count7d": null, "issue": "Two queue copies: agents read or edit the stale box mirror.", "fix": "Use one authenticated phm queue --json read/write path; auto-sync or remove the box copy." },
+    { "id": "F3", "count7d": null, "issue": "Silent skips: invalid tiers standard, low and q8 never launched.", "fix": "Reject invalid tiers at write time and loudly in dispatchd; dispatchd changes require a Security pin." },
+    { "id": "F4", "count7d": null, "issue": "Red mains outlive fix lines: phantom master Oct 28-Nov 4; ashlr-plugin about seven days.", "fix": "Escalate red age, automatically fund a frontier slot and reroute after N hours unclaimed." },
+    { "id": "F5", "count7d": null, "issue": "Release chain stalls: phantom 3.29.17 unpublished while npm remains 3.29.15.", "fix": "Watch the release chain, name the blocking step and queue its fix." },
+    { "id": "F6", "count7d": null, "issue": "Orphans and overload: Mac load 199 versus 36, stale tick, 58 unpushed worktrees.", "fix": "Add orphan reaping and worktree salvage; route hysteresis changes require a Security pin." },
+    { "id": "F7", "count7d": null, "issue": "Spend is invisible: usage reader silent since Oct 28.", "fix": "Show spend by pool in phm status --json with pacing alerts." },
+    { "id": "F8", "count7d": null, "issue": "Oversized PRs slip through: +800 split rule did not fire for ashlr-md #986 (+11,378).", "fix": "Enforce MUSTSPLIT at publish time." },
+    { "id": "F9", "count7d": null, "issue": "Committed artifacts: lexicon added 81,840 lines of build output on main.", "fix": "Add an artifact-shape gate to PR checks." },
+    { "id": "F10", "count7d": null, "issue": "Manual human steps include re-logins, quota exhaustion and device approvals.", "fix": "Record ledger signals, warn before expiry and route around quota." }
+  ]
+}
