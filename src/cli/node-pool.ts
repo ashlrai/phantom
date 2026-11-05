@@ -1,5 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { hostname } from 'node:os';
+import { validId } from '../core/drive/nodes/state.js';
+import { readNodeCapacity } from '../core/drive/nodes/capacity.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { callPool, configurePool, readPoolConfig, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../core/drive/nodes/pool-host.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../core/drive/nodes/ssh.js';
@@ -36,20 +39,26 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
   const json = args.includes('--json');
   const emit = (value: unknown) => console.log(json ? JSON.stringify(value) : JSON.stringify(value, null, 2));
   try {
-    if (verb === 'pool' || (verb === 'join' && args.includes('--primary'))) {
-      const f = flags(args, ['--role', '--node', '--owner', '--primary', '--backup']);
+    if (verb === 'pool' || (verb === 'join' && !args.some(a => /^--(?:caps|slots)(?:=|$)/.test(a)))) {
+      const f = flags(args, [...(verb === 'pool' ? ['--role'] : []), '--node', '--owner', '--primary', '--backup']);
       const role = verb === 'join' ? 'worker' : f.get('--role') as PoolConfig['role'];
-      const config = configFrom(f, role);
+      const existing = verb === 'join' ? readPoolConfig() : null;
+      const config = existing ?? configFrom(f, role);
+      if (!existing && verb === 'join' && !f.has('--node')) config.node = hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
+      if (existing && ['--role', '--node', '--owner', '--primary', '--backup'].some(key => f.has(key) && f.get(key) !== existing[key.slice(2) as keyof PoolConfig])) throw new Error('Join cannot change pool identity');
       if (!validSshHost(config.primary) || !validSshHost(config.backup)) throw new Error('Use explicit team SSH config aliases for --primary and --backup');
-      if (role === 'worker') {
+      if (config.primary === config.backup || !validId(config.owner) || !validId(config.node)) throw new Error('Invalid node pool identity');
+      if (verb === 'join') {
+        const capacity = readNodeCapacity();
         const lanes = probeNodeLanes();
         try {
-          const result = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(',')]);
+          const result = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(','), '--slots', String(capacity.slots)]);
           if (result.demoted || !result.result['session']) throw new Error('Node registration held');
           // Registration proves the route, then release it so worker can establish its own session.
           callPool(config, 'leave', ['--node', config.node, '--session', String(result.result['session'])]);
-          configurePool(config);
-          emit({ schemaVersion: 1, registered: true, lanes, ...result.result });
+          if (!existing) configurePool(config);
+          emit({ schemaVersion: 1, registered: true, role: config.role, lanes, capacity, ready: !capacity.held && lanes.length > 0,
+            next: 'phm node worker --runner /absolute/host-owned-runner --json', ...result.result });
           return 0;
         } catch {
           emit({ schemaVersion: 1, registered: false, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
@@ -93,7 +102,7 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
     emit({ schemaVersion: 1, command: verb, active: result.active, epoch: result.epoch, demoted: result.demoted, ...result.result });
     return result.demoted ? 1 : 0;
   } catch {
-    emit({ schemaVersion: 1, error: 'Node pool operation refused or unavailable. Check configuration, local sign-in and SSH device approvals. Primary admission requires the backup witness.' });
+    emit({ schemaVersion: 1, error: 'Node pool operation refused or unavailable. First join requires --owner <scope> --primary <alias> --backup <alias>. On configured Macs use phm node join --json. Check local sign-in and SSH approvals; primary admission requires the backup witness.' });
     return 1;
   }
 }
