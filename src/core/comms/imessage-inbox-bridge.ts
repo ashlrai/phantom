@@ -1,10 +1,10 @@
 /**
- * RQ-IMSG-BRIDGE-1: iMessage → MASON-INBOX.md / agent bus / chief-of-staff queue.
+ * RQ-IMSG-BRIDGE-1: iMessage → MASON-INBOX.md / chief-of-staff queue (never the agent bus).
  *
  * Third intake channel beside email and Telegram. integrations/imessage.ts reads
  * chat.db read-only and hands back allowlisted messages past a persisted
- * message.ROWID cursor; this bridge gives each one the shared channel-receiver
- * treatment (fleet/channel-envelope.ts):
+ * message.ROWID cursor; only the verified Mason handle is receipted as operator
+ * input through the shared channel receiver (fleet/channel-envelope.ts):
  *
  *   imessageChannelMessage(msg)   - pure mapping to channel `imessage`.
  *   ingestIMessages(cfg, deps)    - poll, receipt, advance the cursor.
@@ -12,10 +12,11 @@
  *     reaches the inbox, bus or queue.
  *
  * What the receiver does for us: dedupe inside CHANNEL_DEDUPE_WINDOW_MS,
- * attribution (source `imessage`), the MASON-INBOX.md entry, the agent-bus
- * mirror, and the chief-of-staff queue job for commands (createChannelReceiver
- * queues every accepted envelope through cos/intake.ts). Secret-shaped, empty
- * and oversize bodies are refused there, not stored.
+ * attribution (source `imessage`), the MASON-INBOX.md entry, and the
+ * chief-of-staff queue job for commands (createChannelReceiver queues every
+ * accepted envelope through cos/intake.ts). Secret-shaped, empty and oversize
+ * bodies are refused there, not stored. iMessage opts out of the agent-bus
+ * mirror (`publish: null`): texts stay in local inbox/queue files.
  *
  * Acknowledgement: the shared ack text (channel-ack-text.ts) is RECORDED to
  * <runs>/imessage/acks.jsonl. Nonduplicate acknowledgements pass through the
@@ -33,7 +34,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  imessageAllowlist, imessageStateDir, pollInboundSince, readCursor, readMaxRowId, writeCursor, commsEnabled,
+  imessageAllowlist, isVerifiedMasonHandle, imessageStateDir, pollInboundSince, readCursor, readMaxRowId, writeCursor,
   type ChatDbState, type IntakeMsg, type IntakePoll,
 } from '../integrations/imessage.js';
 import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelMessage } from '../fleet/channel-envelope.js';
@@ -57,6 +58,7 @@ export interface IMessageIngestResult {
   state: IMessageIngestState;
   scanned: number;
   accepted: number;
+  notMason: number;
   duplicate: number;
   refused: number;
   /** Stopped early on a transient failure; the rest is retried next poll. */
@@ -89,9 +91,9 @@ function recordAck(ack: ChannelAck, rowid: number, runsDir: string | undefined, 
 }
 
 export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps = {}): Promise<IMessageIngestResult> {
-  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, duplicate: 0, refused: 0, deferred: false, cursor: null };
+  const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, duplicate: 0, refused: 0, deferred: false, cursor: null };
   try {
-    if (!commsEnabled(cfg) || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
+    if (cfg.comms?.enabled !== true || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
     if (process.platform !== 'darwin') return { ...result, state: 'unsupported' };
     const now = deps.now ?? (() => new Date());
 
@@ -113,6 +115,9 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       allowedSenderIds: new Set(imessageAllowlist(cfg).map(senderIdFor)),
       runsDir: deps.runsDir,
       now: deps.now,
+      // iMessage bodies are personal texts: they stay in local inbox/queue files and are
+      // never mirrored to the shared agent bus (Textbot handoff #3472).
+      publish: null,
       acknowledge: async (ack) => {
         recordAck(ack, current, deps.runsDir, now());
         if (ack.status !== 'duplicate') await sendIMessageOutbox(formatChannelAck(ack), cfg, currentHandle);
@@ -121,7 +126,9 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
     for (const msg of polled.messages) {
       result.scanned++;
       const message = imessageChannelMessage(msg);
-      if (message) {
+      if (!isVerifiedMasonHandle(msg.handle, cfg)) {
+        result.notMason++;
+      } else if (message) {
         current = msg.rowid;
         currentHandle = msg.handle;
         const got = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
