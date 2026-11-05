@@ -107,8 +107,9 @@ export async function cmdFleetAppsFollow(args: string[], deps: Deps = {}): Promi
   for (;;) {
     if (deps.signal?.aborted) { reason = 'cancelled'; break; }
     if (now() >= deadline) { reason = 'deadline'; break; }
-    const normalized = normalizeRoot(root);
-    const page = reader(normalized, after, Math.min(100, maxEvents - delivered), invocationId);
+    // normalizeRoot is a checkpoint-comparison fold, not a filesystem path:
+    // its lowercasing must never reach the reader on a case-sensitive host.
+    const page = reader(root, after, Math.min(100, maxEvents - delivered), invocationId);
     if (page.availability !== 'available') { reason = page.availability === 'invalid-cursor' ? 'invalid_cursor' : 'unavailable'; break; }
     let finished = false;
     for (const event of page.events) {
