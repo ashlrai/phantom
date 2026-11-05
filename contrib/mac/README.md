@@ -94,7 +94,7 @@ a tick: extra reaps and new empty-run prechecks. Disk guard: below
 `DISK_HARD_STOP_GB` (30) nothing launches (`DISKGUARD hard_stop` event) while reaps
 still run to free space.
 
-## Queue wait and claim fairness
+## Queue wait and dispatch priority
 
 The dispatcher writes `enqueue` on first observation of a ready job, including
 while admission is paused or its lane is held. `queue/run/<job>.enqueued`
@@ -106,10 +106,32 @@ and launch are separate phases. Observation starts at the dispatcher snapshot,
 so time between a writer appending and the next snapshot is not measured.
 Requeues of the same job retain their original enqueue observation.
 
-`queue/claim-cursor.json` remembers the last successfully spawned lane. The next
-tick starts round-robin after that lane, so backlogged early lanes cannot consume
-every tick's claim limit indefinitely. Held lanes and blocked jobs are still
-skipped, and all admission, disk, local health and capacity checks still apply.
+Ready jobs and finished worktrees use these priority buckets: `RQ-FIX-MAIN-*`
+first, then `RQ-REL-*`, `RQ-DESK-*`, LAND/FIXUP/RECUT (with or without `RQ-`),
+and all other jobs. Within each bucket the repo order is `phantom`,
+`phantom-secrets`, `locus`, `lexicon`, `ashlr-md`, `ashlr-stack`, `ashlr-plugin`,
+then unknown repos. Smaller numeric `size<=` hints in the task envelope sort
+first; absent or invalid hints sort last, followed by path as the final tie
+breaker. The repo comes from ready.tsv field 2 or the saved launch line when
+reaping. The full order applies across lanes and replaces the lane cursor.
+
+At most one launched, unfinished `RQ-FIX-MAIN-*` job per repo may run at a time,
+including launch grace before its worktree exists. Explicit worker exit or
+publish result releases that reservation. Sibling fixes remain in ready.tsv;
+the dispatcher continues scanning for eligible work. All admission, disk, local
+health and capacity checks still apply. If process enumeration fails, an
+unfinished fix keeps its repo reservation until liveness recovers or completion
+is explicit.
+
+Publish handoffs use the same key and run one at a time, including across ticks,
+so concurrent reapers cannot reverse entry into the publisher's auto-merge
+step. The external `reap-one.sh` remains responsible for the sanctioned
+`publish.sh` and auto-merge operation, and must wait through auto-merge
+enablement before exiting. Its process blocks new handoffs even if
+it has already removed its `.base` file. A new `.reaping` marker covers process
+startup for 120 seconds; with a successful process snapshot, an older orphan
+marker holds its own job but does not stop unrelated publishing. This changes
+throughput to one handoff per tick.
 
 ## Installing the dispatcher
 
@@ -451,3 +473,28 @@ require the host launcher's source and its sandbox review: emit readiness only
 after worktree preparation and an observed first model token, with the model
 endpoint restricted to loopback. A health GET alone is not readiness evidence.
 No production launch-to-ready or post-merge waste result is available locally.
+
+### Empty launch suppression
+
+`dispatchd.py` records `repo`, `base_sha`, and `prompt_hash` on each claim.
+The base is the local `refs/remotes/origin/HEAD` commit; this check does not
+fetch. Successful empty finishes suppress the same prompt and base for 24
+hours. `RQ-UPKEEP-*` jobs whose latest finish on that base was successfully
+empty are also excluded during restocking, until the base changes. Failed or
+unknown exits remain eligible, so authentication failures do not become cached
+no-ops. Missing refs, malformed metrics, and Git errors allow launch.
+
+Suppressed work records `event=skipped_empty`, with a reason, instead of a
+model launch or finish. Existing shell precheck skips use that event too.
+Committed changes count as work even when the worktree is clean. Claim metadata
+starts with this version; older finishes without a matching claim identity do
+not suppress work. Install through the dispatcher installation and Security
+pin process above; do not copy this code into the live dispatcher directly.
+
+Measure real progress from a 48-hour ledger window: count only `finish` rows
+with `empty=true`, sum their numeric `wall_s` divided by 60, and independently
+count `outcome` rows with `state=MERGED`. Do not count `skipped_empty` as an
+empty finish or a merge. The synthetic replay regression demonstrates this
+accounting, not a prediction of fleet savings. Recheck the live window after
+installation; the target is fewer than 100 empty finishes and 120 empty
+minutes, while preserving MERGED throughput.

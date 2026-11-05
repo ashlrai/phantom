@@ -55,9 +55,14 @@ export function cosTaskLine(status: Pick<CosStatus, 'jobStatus' | 'draft' | 'del
   if (status.delivery === 'uncertain') return 'Delivery uncertain; check the channel before any retry';
   if (status.delivery === 'sending') return 'Sending the approved reply…';
   if (status.draft) return 'Drafted · waiting for your approval';
-  switch (status.jobStatus) {
-    case 'queued': return 'Queued · waiting for a worker';
+  // The server relays the raw queue status (uppercase); the lowercase names are kept for older payloads.
+  switch (status.jobStatus.toLowerCase()) {
+    case 'ready': case 'queued': return 'Queued · waiting for a worker';
     case 'claimed': case 'running': return 'A worker is on it';
+    case 'blocked': return 'The worker could not answer · retry with phm queue replay --failed';
+    case 'done': return 'Done';
+    case 'hold': return 'On hold';
+    case 'retired': case 'dropped': return 'Closed without a reply';
     default: return 'Status unknown';
   }
 }
