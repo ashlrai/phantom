@@ -14,6 +14,13 @@
  * a sanitized per-entry `unavailable` and the next candidate still runs.
  * `submitted` means gh accepted the workflow_dispatch — never that a
  * release was published, installed or notified.
+ *
+ * Cancellation (RQ-PHX-RELEASEBATCHCANCEL05SRZ2): an optional
+ * AbortSignal aborts the batch without interrupting an in-flight once call;
+ * the batch awaits the in-flight result (if any) and then stops.  On
+ * cancellation the report carries a `cancelled` flag and a populated
+ * `remaining` array so a supervisor can act on partial results.  A normal
+ * (non-aborted) batch stays backwards-compatible.
  */
 import { stripVTControlCharacters } from 'node:util';
 import { scrubSecrets } from '../util/scrub.js';
@@ -42,6 +49,8 @@ export interface ReleaseAdvanceBatchReport {
   total: number;
   succeeded: number;
   unsuccessful: number;
+  /** Whether the batch was cancelled by an AbortSignal (not a normal exit). */
+  cancelled: boolean;
   /** Per-outcome tallies, only for outcomes that occurred. */
   counts: Partial<Record<ReleaseAdvanceOnceOutcome, number>>;
   /** "owner/name@vX.Y.Z" identities that produced an entry, in input order. */
@@ -53,6 +62,8 @@ export interface ReleaseAdvanceBatchReport {
 
 export interface ReleaseAdvanceBatchOptions extends Omit<ReleaseAdvanceOnceOptions, 'apply'> {
   apply?: boolean;
+  /** Optional AbortSignal to cancel the batch. */
+  signal?: AbortSignal;
   /** Test seam: defaults to advanceReleaseCandidateOnce. */
   once?: (repo: string, tag: string, opts: ReleaseAdvanceOnceOptions) => Promise<ReleaseAdvanceOnceReport>;
 }
@@ -121,6 +132,13 @@ export function parseReleaseAdvanceBatchInput(text: string): ReleaseAdvanceBatch
  * bound is re-enforced here so a caller that skipped the parser can never
  * queue an unbounded list. Sequential await: the next candidate is not
  * touched until the current report exists.
+ *
+ * Cancellation (RQ-PHX-RELEASEBATCHCANCEL05SRZ2): if `signal` is provided
+ * and `signal.aborted` is true before the first candidate, the function
+ * returns immediately with an empty report (no reads, no dispatches).  If
+ * the signal becomes aborted during execution, the batch awaits the
+ * currently in-flight once call to settle, then emits `cancelled` and
+ * populates `remaining` with untouched identities.  No retry on abort.
  */
 export async function runReleaseAdvanceBatch(
   candidates: readonly ReleaseAdvanceBatchCandidate[],
@@ -133,9 +151,25 @@ export async function runReleaseAdvanceBatch(
   }
   const once = opts.once ?? advanceReleaseCandidateOnce;
   const apply = opts.apply === true;
+  const signal = opts.signal;
   const entries: ReleaseAdvanceOnceReport[] = [];
   const counts: Partial<Record<ReleaseAdvanceOnceOutcome, number>> = {};
+
+  // Immediate exit: aborted before first candidate — zero side effects.
+  if (signal && signal.aborted) {
+    return {
+      version: 1, apply, total: candidates.length,
+      succeeded: 0, unsuccessful: 0, cancelled: true, counts,
+      completed: [], remaining: candidates.map(identity), entries: [],
+    };
+  }
+
   for (const { repo, tag } of candidates) {
+    // Check signal before each candidate (may have been aborted during a
+    // previous awaited once call).  No in-flight once call is ever
+    // interrupted; the batch simply stops after the next await settles.
+    if (signal && signal.aborted) break;
+
     let report: ReleaseAdvanceOnceReport;
     try {
       report = await once(repo, tag, {
@@ -151,10 +185,14 @@ export async function runReleaseAdvanceBatch(
     entries.push(report);
     counts[report.outcome] = (counts[report.outcome] ?? 0) + 1;
   }
+
+  // cancelled is true only when we exited early due to abort (not all
+  // candidates produced an entry).
+  const cancelled = entries.length < candidates.length && signal?.aborted === true;
   const succeeded = entries.filter(entry => SUCCESSFUL.has(entry.outcome)).length;
   return {
     version: 1, apply, total: candidates.length,
-    succeeded, unsuccessful: candidates.length - succeeded, counts,
+    succeeded, unsuccessful: entries.length - succeeded, cancelled, counts,
     completed: entries.map(entry => `${entry.repo}@${entry.tag}`),
     remaining: candidates.slice(entries.length).map(identity),
     entries,
