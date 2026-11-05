@@ -22,6 +22,8 @@ export interface NodesState {
   nodes: NodeRecord[];
   leader: LeaderLease | null;
   jobs: QueueJobV1[];
+  /** One designated backup serializes admission for both hosts. */
+  pool?: { primary: string; backup: string; active: 'primary' | 'backup'; epoch: number; heartbeatAt: number };
 }
 
 export function emptyState(): NodesState {
@@ -59,6 +61,10 @@ export function parseState(value: unknown): NodesState {
   if (!object(value) || value.version !== 'drive.nodes.v1' || !integer(value.sequence) ||
       !integer(value.observedAt) || !Array.isArray(value.nodes) || !Array.isArray(value.jobs)) return fail();
   const sequence = value.sequence;
+  if (value.pool !== undefined && (!object(value.pool) || !validId(value.pool.primary) ||
+      !validId(value.pool.backup) || value.pool.primary === value.pool.backup ||
+      !['primary', 'backup'].includes(String(value.pool.active)) || !integer(value.pool.epoch) ||
+      value.pool.epoch < 1 || value.pool.epoch > sequence || !integer(value.pool.heartbeatAt) || value.pool.heartbeatAt > value.observedAt)) return fail();
   const token = (v: unknown): boolean => integer(v) && v > 0 && v <= sequence;
   const session = (v: Record<string, unknown>): boolean => validId(v.nodeId) && token(v.session);
   const lease = (v: Record<string, unknown>): boolean => session(v) && token(v.token) && integer(v.expiresAt);

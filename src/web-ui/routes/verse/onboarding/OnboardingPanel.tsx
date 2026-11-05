@@ -20,6 +20,7 @@ import { replayOnboarding, replayWhatsNew, whatsNewPending, whatsNewSeen } from 
 import { useOnboarding } from './useOnboarding.js';
 import { FirstResultGuide } from './FirstResultGuide.js';
 import styles from './onboarding.module.css';
+import { TeamPanel } from './TeamPanel.js';
 
 /**
  * What the stored answer says, in the app's one relative wording ("5m ago",
@@ -41,6 +42,7 @@ export function OnboardingPanel() {
   const cardPending = whatsNewPending(onboarding, APP_VERSION);
 
   return (
+    <>
     <Panel title="Onboarding">
       <SettingRow
         label="Replay the first-run tour"
@@ -105,5 +107,7 @@ export function OnboardingPanel() {
         </a>
       </details>
     </Panel>
+    <TeamPanel />
+    </>
   );
 }
