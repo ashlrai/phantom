@@ -10,6 +10,7 @@ bodies.
 | [agents](agents) | Agent lifecycle examples: inbox, job, queue, graph, and harness patterns. |
 | [channel-host.ts](channel-host.ts) | Channel receiver host wiring across desktop, telegram, and email transports. |
 | [harness-refresh](harness-refresh) | Offline harness refresh worklist: turns a local harness digest into a review queue. |
+| [node-pool](node-pool) | Small-Mac join commands and credential-free shared Phantom connector metadata. |
 | [plugins](plugins) | Plugins example: backlog-scanner and org-scaffold. |
 | [quickstart.md](quickstart.md) | Quickstart — end-to-end walk-through (fresh clone to dry-run preview in five steps). |
 | [universe-site](universe-site) | Universe site showcase: the source repository's offline replica site data. |

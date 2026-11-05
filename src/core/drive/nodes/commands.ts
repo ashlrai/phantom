@@ -8,8 +8,8 @@ export class UsageError extends Error {
 const LEASE = ['--job', '--node', '--session', '--token', '--leader-token'];
 /** Flags each verb accepts; anything else is refused, never ignored. `--json` is always allowed. */
 const FLAGS: Record<string, { value: string[]; boolean?: string[] }> = {
-  join: { value: ['--node', '--owner', '--caps'] },
-  beat: { value: ['--node', '--session', '--usage', '--auth'], boolean: ['--probe-auth'] },
+  join: { value: ['--node', '--owner', '--caps', '--slots'] },
+  beat: { value: ['--node', '--session', '--usage', '--auth', '--slots'], boolean: ['--probe-auth'] },
   enqueue: { value: ['--job', '--owner', '--requires', '--pack', '--secrets'] },
   plan: { value: ['--owner'] },
   pull: { value: ['--node', '--session'] },
@@ -63,7 +63,8 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
     case 'join': {
       const owners = csv(need(flags, '--owner'));
       const caps = csv(flags.get('--caps'));
-      const joined = nodes.join(need(flags, '--node'), { owners, caps });
+      const joined = nodes.join(need(flags, '--node'), { owners, caps,
+        ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}) });
       if (!joined) throw new UsageError('node-live', 'A live node already uses that ID.',
         'Pick another --node, wait for its lease to expire, or run phm node leave from that node.', 1);
       return { nodeId: joined.nodeId, session: joined.session, owners: [...new Set(owners)].sort(), caps: [...new Set(caps)].sort() };
@@ -75,7 +76,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       }
       const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
       const s = session();
-      const beat = nodes.heartbeat(s, { ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
+      const beat = nodes.heartbeat(s, { ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
       if (!beat) throw stale;
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }
