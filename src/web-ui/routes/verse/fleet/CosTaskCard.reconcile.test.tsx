@@ -54,7 +54,7 @@ it('Send again posts retry, refetches and shows Approve', async () => {
 
 it('disables both buttons while busy and maps COS_STILL_SENDING to a note', async () => {
   let release: (r: Response) => void = () => {};
-  const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST'
+  const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST'
     ? new Promise<Response>(resolve => { release = resolve; })
     : Response.json({ ...drafted, delivery: 'uncertain' }));
   vi.stubGlobal('fetch', fetcher);
