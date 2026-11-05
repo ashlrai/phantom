@@ -15,7 +15,11 @@ export type BusJsonValue = null | boolean | number | string | BusJsonValue[] | {
   [key: string]: BusJsonValue;
 };
 
-/** Exactly six wire fields. Versioning belongs to the protocol/schema, not the body. */
+export const BUS_CHANNELS = ['bus', 'slack', 'imessage', 'email', 'telegram', 'handoff'] as const;
+export type BusChannel = typeof BUS_CHANNELS[number];
+export interface BusSender { agent_id: string; vendor: string; human: boolean; team: boolean }
+
+/** Legacy envelopes have six fields; channel-aware envelopes add a complete metadata group. */
 export interface BusEnvelope<Body = BusJsonValue> {
   /** Sender-assigned message identity; deduplication is a transport responsibility. */
   id: string;
@@ -31,6 +35,11 @@ export interface BusEnvelope<Body = BusJsonValue> {
   ttl: number;
   /** Opaque strict JSON data; no event-kind, command, or payload interpretation. */
   body: Body;
+  channel?: BusChannel;
+  channel_ref?: string;
+  sender?: BusSender;
+  external?: boolean;
+  origin_bridge?: string;
 }
 
 export type BusEnvelopeIssueCode =
@@ -48,6 +57,8 @@ export type BusEnvelopeValidationResult =
   | { ok: false; issues: BusEnvelopeIssue[] };
 
 const FIELDS = ['id', 'from', 'to', 'priority', 'ttl', 'body'] as const;
+const CHANNEL_FIELDS = ['channel', 'channel_ref', 'sender', 'external'] as const;
+const OPTIONAL_FIELDS = [...CHANNEL_FIELDS, 'origin_bridge'] as const;
 // Printable ASCII tokens allow pool/agent names, UUIDs, URIs and literal routing labels.
 // Unlike $, the final lookahead requires absolute end, even for a trailing newline.
 const TOKEN = /^[\x21-\x7e]+(?![\s\S])/;
@@ -147,8 +158,14 @@ export function validateBusEnvelope(input: unknown): BusEnvelopeValidationResult
   try {
     if (!plainRecord(input)) refuse('invalid-envelope', '$', 'Envelope must be a plain object.');
     const keys = Reflect.ownKeys(input);
-    if (keys.length !== FIELDS.length || keys.some((key) => !FIELDS.includes(key as typeof FIELDS[number]))) {
-      refuse('invalid-envelope', '$', 'Envelope requires exactly id, from, to, priority, ttl and body.');
+    if (keys.some((key) => typeof key !== 'string' ||
+      !([...FIELDS, ...OPTIONAL_FIELDS] as readonly string[]).includes(key)) ||
+      FIELDS.some((key) => !Object.hasOwn(input, key))) {
+      refuse('invalid-envelope', '$', 'Envelope requires id, from, to, priority, ttl and body with only recognized fields.');
+    }
+    const hasChannelMetadata = OPTIONAL_FIELDS.some((key) => Object.hasOwn(input, key));
+    if (hasChannelMetadata && CHANNEL_FIELDS.some((key) => !Object.hasOwn(input, key))) {
+      refuse('invalid-envelope', '$', 'Channel metadata must include channel, channel_ref, sender and external.');
     }
     const fields = FIELDS.map((key) => dataProperty(input, key, `$.${key}`));
     const [id, from, to, priority, ttl, body] = fields;
@@ -164,8 +181,36 @@ export function validateBusEnvelope(input: unknown): BusEnvelopeValidationResult
     if (typeof ttl !== 'number' || !Number.isSafeInteger(ttl) || ttl <= 0) {
       refuse('invalid-field', '$.ttl', 'TTL must be a positive safe integer in milliseconds.');
     }
-    const encoded = encode({ id, from, to, priority, ttl, body } as BusEnvelope<unknown>);
-    return { ok: true, value: JSON.parse(encoded.json) as BusEnvelope, ...encoded, issues: [] };
+    // Encode before inspecting nested metadata so getters, proxies and non-JSON
+    // values are rejected without invoking untrusted code.
+    const encoded = hasChannelMetadata
+      ? encode(input as unknown as BusEnvelope<unknown>)
+      : encode({ id, from, to, priority, ttl, body } as BusEnvelope<unknown>);
+    const value = JSON.parse(encoded.json) as BusEnvelope;
+    if (hasChannelMetadata) {
+      if (!BUS_CHANNELS.includes(value.channel as BusChannel)) {
+        refuse('invalid-field', '$.channel', 'Unknown channel.');
+      }
+      if (typeof value.channel_ref !== 'string' || value.channel_ref.length < 1 || value.channel_ref.length > 1024 || Array.from(value.channel_ref).some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) {
+        refuse('invalid-field', '$.channel_ref', 'Channel reference must be a nonempty bounded string without control characters.');
+      }
+      const sender = value.sender;
+      if (!sender || typeof sender !== 'object' || Array.isArray(sender) ||
+        Object.keys(sender).length !== 4 || !['agent_id', 'vendor', 'human', 'team'].every((key) => Object.hasOwn(sender, key)) ||
+        typeof sender.agent_id !== 'string' || sender.agent_id.length > MAX_BUS_ADDRESS_LENGTH || !TOKEN.test(sender.agent_id) ||
+        typeof sender.vendor !== 'string' || sender.vendor.length > MAX_BUS_ADDRESS_LENGTH || !TOKEN.test(sender.vendor) ||
+        typeof sender.human !== 'boolean' || typeof sender.team !== 'boolean') {
+        refuse('invalid-field', '$.sender', 'Sender must contain valid agent_id, vendor, human and team fields.');
+      }
+      if (typeof value.external !== 'boolean' || (!sender.team && !value.external)) {
+        refuse('invalid-field', '$.external', 'External must be true when the sender is outside the team.');
+      }
+      if (Object.hasOwn(value, 'origin_bridge') &&
+        (typeof value.origin_bridge !== 'string' || value.origin_bridge.length > MAX_BUS_ADDRESS_LENGTH || !TOKEN.test(value.origin_bridge))) {
+        refuse('invalid-field', '$.origin_bridge', 'Origin bridge must be a printable ASCII token of 1 to 128 characters.');
+      }
+    }
+    return { ok: true, value, ...encoded, issues: [] };
   } catch (error) {
     return { ok: false, issues: [error instanceof EnvelopeError ? error.issue : {
       code: 'invalid-json', path: '$', message: 'Envelope is not valid JSON data.',
