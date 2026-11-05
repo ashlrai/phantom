@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.8 |
-| Latest dated changelog release (2026-11-05) | 3.30.8 |
+| Source package | 3.30.9 |
+| Latest dated changelog release (2026-11-05) | 3.30.9 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,23 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.9] — 2026-11-05
+
+
+### Changes
+
+* **RQ-PHX-CIMCPRECOVERYPIPE05SSG2:** BRIDGE_NOTES — RQ-PHX-CIMCPRECOVERYPIPE05SSG2 ([#3660](https://github.com/ashlrai/phantom/issues/3660)) ([3c9e0df](https://github.com/ashlrai/phantom/commit/3c9e0dfd6fa1675f9f835151b882f99741e18723))
+* **RQ-PHX-CIRECEIPTAWAITBATCH05SRZ1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTAWAITBATCH05SRZ1 ([#3656](https://github.com/ashlrai/phantom/issues/3656)) ([89690c0](https://github.com/ashlrai/phantom/commit/89690c09bd1cac064d59719219edd8b3205bb445))
+* **RQ-PHX-CIRECEIPTPROGRESS05SSH2:** Batch receipt progress bridge ([#3662](https://github.com/ashlrai/phantom/issues/3662)) ([150f8c5](https://github.com/ashlrai/phantom/commit/150f8c5e08a958e7d75488b1245f6f9779a74481))
+* **RQ-PHX-CIRECEIPTSELECT05SSL1:** BRIDGE NOTES — RQ-PHX-CIRECEIPTSELECT05SSL1 ([#3665](https://github.com/ashlrai/phantom/issues/3665)) ([f69629a](https://github.com/ashlrai/phantom/commit/f69629a575303a81483df70bb1924a52e4504e2c))
+* **RQ-PHX-CIRESUMERENAME05SSC1:** BRIDGE_NOTES — RQ-PHX-CIRESUMERENAME05SSC1 ([#3659](https://github.com/ashlrai/phantom/issues/3659)) ([78cc2e0](https://github.com/ashlrai/phantom/commit/78cc2e065d03b549edb4313543e0ba42b24bb91b))
+* **RQ-PHX-MCPRECEIPTBATCH05SSJ1:** BRIDGE_NOTES — RQ-PHX-MCPRECEIPTBATCH05SSJ1 ([#3664](https://github.com/ashlrai/phantom/issues/3664)) ([c6a0296](https://github.com/ashlrai/phantom/commit/c6a0296af55034ca7b9b0c82a7eaa6d53a8108b6))
+* **RQ-PHX-RECEIPTBATCHREPLAN05SSK1:** BRIDGE_NOTES — RQ-PHX-RECEIPTBATCHREPLAN05SSK1 ([#3666](https://github.com/ashlrai/phantom/issues/3666)) ([1ec1c18](https://github.com/ashlrai/phantom/commit/1ec1c18bb327e5080bdd8837e0e3571d5bbff57b))
+* **RQ-PHX-RELEASEBATCHCANCEL05SRZ2:** RQ-PHX-RELEASEBATCHCANCEL05SRZ2 — Batch Cancellation ([#3657](https://github.com/ashlrai/phantom/issues/3657)) ([1d8a357](https://github.com/ashlrai/phantom/commit/1d8a357343260efaa057ce6e1e3957cd2242d045))
+* **RQ-PHX-RELEASEPACEDRETRY05SSN2:** BRIDGE_NOTES — RQ-PHX-RELEASEPACEDRETRY05SSN2 ([#3661](https://github.com/ashlrai/phantom/issues/3661)) ([5a64590](https://github.com/ashlrai/phantom/commit/5a645908f250eec14948492e18aa5793530c82e7))
+* **RQ-PHX-RELEASERETRYPIPE05SSA2:** BRIDGE_NOTES: RQ-PHX-RELEASERETRYPIPE05SSA2 ([#3655](https://github.com/ashlrai/phantom/issues/3655)) ([b7a43e7](https://github.com/ashlrai/phantom/commit/b7a43e79113fb218ed38ef03ffa08f6c3bcad1c9))
+* **RQ-PHX-RELEASERETRYREENTRANT05SSD1:** RQ-PHX-RELEASERETRYREENTRANT05SSD1 ([#3658](https://github.com/ashlrai/phantom/issues/3658)) ([d5a7a3a](https://github.com/ashlrai/phantom/commit/d5a7a3acb3c7361bbdf6a1934c0874a39bfd92b7))
 
 ## [3.30.8] — 2026-11-05
 
