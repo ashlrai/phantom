@@ -2646,6 +2646,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'imessage': {
+        const { cmdIMessage } = await import('./imessage.js');
+        process.exitCode = await cmdIMessage(rest);
+        break;
+      }
+
       case 'memory': {
         const { cmdMemory } = await import('./memory.js');
         process.exitCode = await cmdMemory(rest);
