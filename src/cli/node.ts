@@ -28,14 +28,15 @@ const USAGE = 'Usage: phm node bootstrap --dry-run [--json]';
 
 export async function cmdNode(args: string[]): Promise<number> {
   if (!args.includes('--help') && !args.includes('-h') &&
-      (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && args.includes('--primary')))) {
+      (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && (args.includes('--primary') || args.slice(1).every(a => a === '--json'))))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
   }
   const fleetVerb = NODE_FLEET_VERBS.find(verb => verb === args[0]);
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.\n\n${NODE_FLEET_USAGE}\n\nMulti-Mac pool (explicit team SSH aliases only):
 phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json
-phm node join --node <id> --owner <scope> --primary <alias> --backup <alias> --json
+phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> --json
+phm node join --json (repeat on an already configured Mac)
 phm node watch [--once] --json
 phm node worker --runner /absolute/host-owned-runner --json
 phm node rpc --json (SSH stdin endpoint)`);
