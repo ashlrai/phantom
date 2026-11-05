@@ -101,7 +101,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; dryRun=true, executable=false, registry.status=stub, steps',
   },
   {
-    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|status|leave [flags] [--json]',
+    usage: 'phm node join|beat|enqueue|plan|pull|renew|complete|list|status|leave|pool|watch|worker|rpc [flags] [--json]',
     description: 'Node router: nodes advertise caps and live usage, jobs carry an owner scope and a fenced lease so no job runs twice. A node only sees and pulls jobs of its own owner scopes; auth stays local to each node. Exit 0 ok, 1 lease/session lost or store unavailable, 2 bad usage; errors include a Fix.',
     safety: 'append',
     jsonShape: '{schemaVersion:1, command, ...result} | {schemaVersion:1, command, error:{code,message,fix}}',
