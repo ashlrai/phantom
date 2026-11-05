@@ -20,7 +20,8 @@ it('sorts running first then names without mutating the response; preserves unkn
   expect(resp.apps[0].app).toBe('Safari');
 });
 it('offers actions for running, stopped and unknown apps', () => {
-  expect(appActionsFor(row)).toEqual(['focus', 'restart']);
+  expect(appActionsFor(row)).toEqual(['focus', 'restart', 'quit']);
+  expect(appActionsFor({ ...row, app: 'Phantom' })).toEqual(['focus', 'restart']);
   expect(appActionsFor({ ...row, running: false })).toEqual(['launch']);
   expect(appActionsFor({ ...row, running: null })).toEqual(['launch']);
 });
