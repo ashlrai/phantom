@@ -41,7 +41,7 @@ import { useMutationHold, useQuery, useRefresh } from '../../../data/hooks.js';
 import type { NewChatRoutingOptions } from '../NewChatDialog.js';
 import type { DeleteChatDialog as DeleteChatDialogComponent } from '../chat/DeleteChatDialog.js';
 import { insertIntoComposer } from '../chat/composer-bridge.js';
-import { forgetComposerMemory } from '../chat/composer-memory.js';
+import { forgetComposerMemory } from '../chat/composer-forget.js';
 import type { ChatTask } from '../chat/tasks-model.js';
 import { requestTranscriptFind, requestTranscriptStep } from '../chat/transcript-jump.js';
 import { noteSessionSeen, useChatActivity } from '../chat/use-chat-activity.js';
@@ -96,9 +96,10 @@ const DevinStopDialog = lazy(() => import('../devin/DevinStopDialog.js').then((m
 // Panel widths are needed to paint the grid; drag/key handling can load in
 // parallel with its columns. Keep the resize gap while that control loads.
 const ResizerModule = preloadedModule(() => import('../ChatResizer.js').then((m) => m.ChatResizer));
-const WorkspaceModule = preloadedLazy<ComponentProps<typeof WorkspaceComponent>>(() => import('../Workspace.js').then((m) => m.Workspace));
+// Both columns come through chat/surface-loaders.ts, which keeps their preload lists off this chunk.
+const WorkspaceModule = preloadedLazy<ComponentProps<typeof WorkspaceComponent>>(() => import('../chat/surface-loaders.js').then((m) => m.loadWorkspace()));
 const Workspace = WorkspaceModule.Slot;
-const SidebarModule = preloadedLazy<ComponentProps<typeof SidebarComponent>>(() => import('../Sidebar.js').then((m) => m.Sidebar));
+const SidebarModule = preloadedLazy<ComponentProps<typeof SidebarComponent>>(() => import('../chat/surface-loaders.js').then((m) => m.loadSidebar()));
 const Sidebar = SidebarModule.Slot;
 /**
  * The delete confirmation and the token prompt draw nothing until an
