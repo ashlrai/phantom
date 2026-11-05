@@ -345,4 +345,4 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 
 - [Desktop update status](../DESKTOP.md#background-update-discovery-and-local-status): `phm app update status --json` reports the inspected local stage, host deferral and lease counts; unknown identities remain null.
 
-- [Agent network](AGENT-NETWORK.md): SSH multi-Mac node pool; node pool/join/watch/worker/list/status/rpc --json; split-brain fencing and primary-only publish custody.
+- [Agent network](AGENT-NETWORK.md): SSH multi-Mac node pool; first join needs explicit aliases and owner, repeat node join --json reuses config; RAM/disk pressure admission, local auth, mobile control only, split-brain fencing and primary-only publication.
