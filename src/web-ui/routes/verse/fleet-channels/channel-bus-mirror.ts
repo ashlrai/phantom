@@ -7,7 +7,7 @@ export interface ChannelMirror { inbox: number; mirrored: number; tone: MirrorTo
 
 // Wire names are defined by INBOUND_CHANNELS in channel-envelope.ts.
 const busChannels: Record<string, ChannelKey | undefined> = {
-  email: 'email', telegram: 'telegram', mobile: 'mobile', desktop: 'desktop', page: 'page', cli: 'terminal',
+  email: 'email', imessage: 'imessage', telegram: 'telegram', mobile: 'mobile', desktop: 'desktop', page: 'page', cli: 'terminal',
 };
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};

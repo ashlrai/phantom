@@ -95,6 +95,11 @@ export function isSelfIMessageHandle(to: string, cfg: AshlrConfig): boolean {
     && to.trim().toLowerCase() === self.trim().toLowerCase();
 }
 
+/** Only the configured owner handle is verified Mason operator input. */
+export function isVerifiedMasonHandle(handle: string, cfg: AshlrConfig): boolean {
+  return isSelfIMessageHandle(handle, cfg);
+}
+
 export function sendIMessage(
   text: string, cfg: AshlrConfig, to: string = cfg.comms?.imessageHandle ?? '',
 ): Promise<{ ok: boolean; reason?: 'not_self' }> {

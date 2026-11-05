@@ -1,16 +1,17 @@
 import { seenCounts } from '../fleet-inbox/inbox-ack-model.js';
 import type { AnnotatedEntry } from '../fleet-inbox/inbox-ack-model.js';
 
-export const KNOWN_CHANNELS = ['telegram', 'desktop', 'page', 'terminal', 'email', 'fleet-say', 'mobile'] as const;
+export const KNOWN_CHANNELS = ['telegram', 'desktop', 'page', 'terminal', 'email', 'imessage', 'fleet-say', 'mobile'] as const;
 export type ChannelKey = typeof KNOWN_CHANNELS[number] | 'other';
 
 const labels: Record<ChannelKey, string> = {
   telegram: 'Telegram', desktop: 'Desktop app', page: 'Phantom page', terminal: 'Terminal',
-  email: 'Email', 'fleet-say': 'Fleet-say', mobile: 'Mobile', other: 'Other',
+  email: 'Email', imessage: 'iMessage', 'fleet-say': 'Fleet-say', mobile: 'Mobile', other: 'Other',
 };
 
 export function channelKey(source: string): ChannelKey {
   const value = source.toLowerCase();
+  if (value.includes('imessage') || value.includes('sms')) return 'imessage';
   if (value.includes('telegram') || /\btg\b/.test(value)) return 'telegram';
   if (value.includes('page') || value.includes('7790')) return 'page';
   if (value.includes('mobile') || value.includes('remote') || value.includes('phone')) return 'mobile';
@@ -30,6 +31,8 @@ export function channelLabel(key: ChannelKey): string { return labels[key]; }
  */
 export const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--once | --watch <seconds>] [--json]';
 export const SETUP_TELEGRAM_USAGE = 'usage: phm comms setup-telegram';
+// Mirrors the doctor subcommand in src/cli/imessage.ts; the browser cannot import the CLI.
+export const IMESSAGE_DOCTOR_USAGE = 'usage: phm imessage doctor';
 
 export interface ChannelSetupHint {
   /** Verbatim CLI usage line shown under the row. */
@@ -50,6 +53,12 @@ export interface ChannelSetupHint {
  */
 export function channelSetupHint(channel: ChannelKey, row: ChannelRow): ChannelSetupHint | null {
   if (row.total > 0) return null;
+  if (channel === 'imessage') return {
+    command: IMESSAGE_DOCTOR_USAGE,
+    runCommand: IMESSAGE_DOCTOR_USAGE.replace(/^usage: /, ''),
+    detail: 'Checks Full Disk Access for Messages and the allowlist. Then `phm imessage poll --apply` baselines and starts taking texts from your own handle.',
+    copyWhat: 'the iMessage doctor command',
+  };
   if (channel === 'email') return {
     command: EMAIL_DROP_USAGE,
     runCommand: EMAIL_DROP_USAGE.replace(/^usage: /, ''),
