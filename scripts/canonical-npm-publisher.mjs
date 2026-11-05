@@ -37,7 +37,11 @@ export function publisherInput(env) {
 export function bindAttestedArtifact(input, run, artifact) {
   requireRepositoryReference(REPO, run.repository);
   assert.equal(run.id, input.attestorRun); assert.equal(run.run_attempt, input.attestorAttempt);
-  assert.equal(run.head_sha, input.attestorSha); assert.equal(run.event, 'workflow_dispatch');
+  assert.equal(run.head_sha, input.attestorSha);
+  // Transport admission only: scheduled artifacts still pass verifyArtifact,
+  // which permits schedule exclusively for the exact-source fast profile.
+  assert.ok(['workflow_dispatch', 'schedule'].includes(run.event), 'unexpected attestor event');
+  if (run.event === 'schedule') assert.equal(run.head_branch, 'master');
   assert.equal(run.path, '.github/workflows/attest-ci-build.yml');
   assert.equal(run.status, 'completed'); assert.equal(run.conclusion, 'success');
   assert.equal(artifact.id, input.artifactId); assert.equal(artifact.expired, false);

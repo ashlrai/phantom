@@ -104,7 +104,9 @@ export async function runBusWorkLoop(opts: BusWorkLoopOptions): Promise<BusWorkL
   const budget = budgetAt === undefined ? undefined : new AbortController();
   const deadline = budget === undefined ? undefined : setTimeout(() => { budget.abort(); }, opts.totalTimeoutMs!);
   deadline?.unref();
-  const expired = () => budgetAt !== undefined && performance.now() >= budgetAt;
+  // The timer can fire a hair before performance.now() reaches budgetAt (seen on
+  // Linux), so a fired budget signal counts as expiry rather than racing the clock.
+  const expired = () => budgetAt !== undefined && (budget?.signal.aborted === true || performance.now() >= budgetAt);
   const sources = [controller.signal];
   if (budget !== undefined) sources.push(budget.signal);
   if (opts.signal !== undefined) sources.push(opts.signal);

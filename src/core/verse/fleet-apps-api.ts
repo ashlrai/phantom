@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { awaitAppState } from '../fleet/app-await.js';
+import { awaitAppState, type AppAwaitTarget } from '../fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
@@ -224,8 +224,12 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     let body: unknown;
     try { body = JSON.parse(await readBody(req)); } catch { body = null; }
     if (!record(body) || Object.keys(body).some(k => k !== 'app' && k !== 'action' && k !== 'waitRunningMs') ||
-      !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart', 'ensure'].includes(body.action))) {
+      !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart', 'ensure', 'quit'].includes(body.action))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
+    }
+    // Phantom hosts this server: quitting it would drop the answer mid-request.
+    if (body.app === 'Phantom' && body.action === 'quit') {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'Phantom cannot quit itself from here' }); return true;
     }
     // Validated before anything runs; focus never has a running state to wait for.
     const wait = body.waitRunningMs;
@@ -254,17 +258,18 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
       if (!result) throw new Error('app control unavailable');
       if (result.ok === true && typeof result.code === 'string') {
         const accepted = { app, action: body.action, code: result.code };
-        let confirmation: { target: 'running'; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
+        let confirmation: { target: AppAwaitTarget; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
         if (typeof wait === 'number') {
-          // Observe only: sequential status probes, never a second launch or retry of the action.
+          // Observe only: sequential status probes, never a second action or retry of it.
+          const target: AppAwaitTarget = body.action === 'quit' ? 'stopped' : 'running';
           const seen = await awaitAppState({
-            target: 'running',
+            target,
             timeoutMs: Math.min(wait, Math.max(0, deadline - Date.now())),
             intervalMs: CONFIRM_INTERVAL_MS,
             probe: async budget => reading(await control(script, 'status', app, Math.min(budget, Math.max(0, deadline - Date.now())))),
           });
-          const confirmed = Date.now() < deadline && seen.outcome === 'reached' && seen.running === true;
-          confirmation = { target: 'running', outcome: seen.outcome === 'reached' && !confirmed ? 'timeout' : seen.outcome, attempts: seen.attempts, running: seen.running, confirmed };
+          const confirmed = Date.now() < deadline && seen.outcome === 'reached' && seen.running === (target === 'running');
+          confirmation = { target, outcome: seen.outcome === 'reached' && !confirmed ? 'timeout' : seen.outcome, attempts: seen.attempts, running: seen.running, confirmed };
         }
         sendJson(res, 202, { ...accepted, at: new Date(now()).toISOString(), ...(confirmation ? { confirmation } : {}) });
       } else if (result.ok === false && typeof result.code === 'string' && Object.hasOwn(REFUSALS, result.code)) {

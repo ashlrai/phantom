@@ -13,6 +13,7 @@
  */
 
 import { validateLocalBaseUrl } from '../run/local-inference.js';
+import { buildOpenAICompatibleClient } from '../run/provider-client.js';
 
 export const PR_TITLE_MAX_CHARS = 72;
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/;
@@ -190,28 +191,11 @@ export function createLoopbackCompleter(options: LoopbackCompleterOptions = {}):
   const timeoutMs = options.timeoutMs ?? 30_000;
   const fetchImpl = options.fetchImpl ?? fetch;
   return async (prompt: string): Promise<string> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetchImpl(`${checked.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          stream: false,
-          temperature: 0.2,
-          max_tokens: 48,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error('local model refused');
-      const body = await response.json() as { choices?: { message?: { content?: unknown } }[] };
-      const content = body.choices?.[0]?.message?.content;
-      if (typeof content !== 'string') throw new Error('local model returned no title');
-      return content;
-    } finally {
-      clearTimeout(timer);
-    }
+    const client = buildOpenAICompatibleClient(checked.baseUrl, '', model, false, 0.2, undefined, {
+      timeoutMs, maxOutputTokens: 48, fetchImpl, redirect: 'error',
+    });
+    const result = await client.chat([{ role: 'user', content: prompt }]);
+    if (typeof result.content !== 'string') throw new Error('local model returned no title');
+    return result.content;
   };
 }
