@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, vi } from 'vitest';
 
 let runsDir: string;
 beforeEach(async () => { runsDir = await mkdtemp(join(tmpdir(), 'cos-ask-debug-')); });
@@ -9,7 +9,7 @@ afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(runsD
 
 describe('debug ask path', () => {
   it('should reveal what error happens', async () => {
-    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.stubEnv('HOME', runsDir);
     process.env.ASHLR_RUNS_DIR = runsDir;
     console.error('=== ASHLR_RUNS_DIR:', process.env.ASHLR_RUNS_DIR);
@@ -17,7 +17,7 @@ describe('debug ask path', () => {
 
     // First, try the channel receiver directly
     const { createChannelReceiver } = await import('../src/core/fleet/channel-envelope.js');
-    const { queueCosEnvelope, cosJobId } = await import('../src/core/cos/intake.js');
+    const { cosJobId } = await import('../src/core/cos/intake.js');
     const { QueueStore } = await import('../src/core/queue/store.js');
 
     const receive = createChannelReceiver({ 

@@ -2345,6 +2345,9 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
 // ── entry point ──────────────────────────────────────────────────────────────
 
 fn main() {
+    if let Some(status) = ashlr_desktop::release_smoke::dispatch(&std::env::args().collect::<Vec<_>>()) {
+        std::process::exit(status);
+    }
     #[cfg(target_os = "macos")]
     if let Some(status) =
         ashlr_desktop::native_metadata_launch::dispatch(&std::env::args().collect::<Vec<_>>())

@@ -8,7 +8,6 @@ it('binds and displays a chord unique among commands, desktop commands, and pane
   await import('../fleet-events/fleet-events.pane.js');
   await import('../fleet-host/fleet-host.pane.js');
   await import('../fleet-timeline/fleet-timeline.pane.js');
-  await import('../fleet-brief/fleet-brief.pane.js');
   await import('../fleet-supply/fleet-supply.pane.js');
   await import('../leader-thread/leader-thread.pane.js');
   await import('../leader-journal/leader-journal.pane.js');

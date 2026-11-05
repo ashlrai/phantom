@@ -35,10 +35,12 @@ it('prints json and exits 3 when the fake adapter says the src work already land
   expect(log).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({
     schema: 'fleet.job-precheck.v1',
+    ref: 'origin/master',
+    resolvedRef: null,
     verdict: 'likely-done',
     newTestFiles: ['test/more.test.ts'],
     facts: [
-      { path: 'src/done.ts', onMaster: true, lastCommit: { sha: 'abc1234', subject: 'bridge(RQ-PHX-DONE1): landed' } },
+      { path: 'src/done.ts', onMaster: true, lastCommit: { sha: 'abc1234', subject: 'bridge(RQ-PHX-DONE1): landed' }, bulk: false },
       { path: 'test/more.test.ts', onMaster: false },
     ],
   });
@@ -85,6 +87,7 @@ it('prints one line per path and exits 0 for a fresh draft', async () => {
   });
   expect(code).toBe(0);
   expect(log.mock.calls.map(call => call[0])).toEqual([
+    'snapshot: origin/master -> unavailable',
     'src/new.ts missing',
     'test/new.test.ts missing',
     'verdict: fresh',
