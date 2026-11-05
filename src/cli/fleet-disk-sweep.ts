@@ -1,5 +1,5 @@
 /** One command a host timer can run: free disk below the lane freeze line (or --force) → wt-cache, then worktree-stale. */
-import { readFile, statfs } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, statfs } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetWorktreeStale } from './fleet-worktree-stale.js';
@@ -7,8 +7,8 @@ import { cmdFleetWtCache } from './fleet-wt-cache.js';
 import { FLEET_DISK_LANE_FREEZE_GB, parseLaneDiskLines } from './fleet-disk.js';
 
 const USAGE =
-  'Usage: ashlr fleet disk-sweep [--force] [--apply] [--json]\n' +
-  'When free disk is below the lane freeze line (compact.lanes.raise_freeze_below_gb in ~/.ashlr-runs/queue/budget-overrides.json, default 60 GB), or with --force, runs `fleet wt-cache` then `fleet worktree-stale` and prints one line per step with the GB freed. Dry run unless --apply, which is passed to both steps. Exits 0 ok, 1 when a step failed, 2 bad usage.';
+  'Usage: ashlr fleet disk-sweep [--force] [--apply] [--log] [--json] | --history [N] [--json]\n' +
+  'When free disk is below the lane freeze line (compact.lanes.raise_freeze_below_gb in ~/.ashlr-runs/queue/budget-overrides.json, default 60 GB), or with --force, runs `fleet wt-cache` then `fleet worktree-stale` and prints one line per step with the GB freed. Dry run unless --apply, which is passed to both steps. Add --log to save the result; use --history [N] to show the last N results (default 10). Exits 0 ok, 1 on failure, 2 bad usage.';
 
 const GB = 1024 ** 3;
 const round1 = (n: number): number => Math.round(n * 10) / 10;
@@ -50,9 +50,14 @@ async function defaultFreeGb(): Promise<number | null> {
   }
 }
 
+function runsDir(): string {
+  return process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+}
+
+function logPath(): string { return join(runsDir(), 'queue', 'disk-sweep.jsonl'); }
+
 async function defaultFreezeBelowGb(): Promise<number> {
-  const runs = process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
-  const text = await readFile(join(runs, 'queue', 'budget-overrides.json'), 'utf8').catch(() => '');
+  const text = await readFile(join(runsDir(), 'queue', 'budget-overrides.json'), 'utf8').catch(() => '');
   return text ? parseLaneDiskLines(text).freezeBelowGb : FLEET_DISK_LANE_FREEZE_GB;
 }
 
@@ -88,8 +93,10 @@ export async function cmdFleetDiskSweep(args: string[], deps: FleetDiskSweepDeps
     return 0;
   }
   const flags = new Set<string>();
-  for (const token of args) {
-    if (!['--force', '--apply', '--json'].includes(token)) {
+  let historyCount: number | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    if (!['--force', '--apply', '--json', '--log', '--history'].includes(token)) {
       console.error(`error: ${token.startsWith('-') ? 'unknown option' : 'unexpected argument'}: ${token}\n${USAGE}`);
       return 2;
     }
@@ -98,6 +105,37 @@ export async function cmdFleetDiskSweep(args: string[], deps: FleetDiskSweepDeps
       return 2;
     }
     flags.add(token);
+    if (token === '--history') {
+      historyCount = 10;
+      const next = args[i + 1];
+      if (next && !next.startsWith('--')) {
+        if (!/^[1-9]\d*$/.test(next) || !Number.isSafeInteger(Number(next))) {
+          console.error('error: history count must be a positive integer');
+          return 2;
+        }
+        historyCount = Number(next);
+        i++;
+      }
+    }
+  }
+  if (historyCount !== undefined) {
+    if (flags.has('--force') || flags.has('--apply') || flags.has('--log')) {
+      console.error('error: --history cannot be combined with --force, --apply or --log');
+      return 2;
+    }
+    try {
+      const text = await readFile(logPath(), 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return '';
+        throw error;
+      });
+      const lines = text.split('\n').filter(line => line.trim()).slice(-historyCount);
+      if (flags.has('--json')) process.stdout.write(JSON.stringify(lines.map(line => JSON.parse(line))) + '\n');
+      else if (lines.length) process.stdout.write(lines.join('\n') + '\n');
+      return 0;
+    } catch {
+      console.error('error: could not read disk sweep history');
+      return 1;
+    }
   }
   const apply = flags.has('--apply');
   const force = flags.has('--force');
@@ -135,6 +173,17 @@ export async function cmdFleetDiskSweep(args: string[], deps: FleetDiskSweepDeps
     v: 1, generatedAt: new Date((deps.now ?? Date.now)()).toISOString(), apply, force,
     freeGb: before === null ? null : round1(before), freezeBelowGb, swept, steps, freedGb,
   };
+  let logFailed = false;
+  if (flags.has('--log')) {
+    try {
+      await mkdir(join(runsDir(), 'queue'), { recursive: true });
+      const { generatedAt, apply: applied, freeGb: free, swept: didSweep, freedGb: freed, steps: results } = view;
+      await appendFile(logPath(), JSON.stringify({ generatedAt, apply: applied, freeGb: free, swept: didSweep, freedGb: freed, steps: results }) + '\n');
+    } catch {
+      console.error('error: could not write disk sweep log');
+      logFailed = true;
+    }
+  }
   if (flags.has('--json')) {
     process.stdout.write(JSON.stringify(view, null, 2) + '\n');
   } else if (!swept) {
@@ -143,5 +192,5 @@ export async function cmdFleetDiskSweep(args: string[], deps: FleetDiskSweepDeps
     for (const s of steps) console.log(`${s.name}: ${s.code === 0 ? 'ok' : `FAILED (exit ${s.code})`}, ${s.freedGb} GB ${apply ? 'freed' : 'can be freed'}`);
     console.log(`freed: ${freedGb} GB${apply ? '' : ' (dry run; add --apply to delete)'}`);
   }
-  return steps.some(s => s.ran && s.code !== 0) ? 1 : 0;
+  return logFailed || steps.some(s => s.ran && s.code !== 0) ? 1 : 0;
 }
