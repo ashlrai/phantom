@@ -320,6 +320,13 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('../cli/fleet-apps-status.js')).readFleetAppsStatus(),
   },
   {
+    name: 'phantom_fleet_doctor',
+    description: 'Read-only fleet health: one ok/warn/red check each for leader, heartbeat, stuck PRs, waste and worktrees, with the reason. Never writes or removes anything.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    safety: 'read',
+    handler: async () => (await import('../cli/fleet-doctor.js')).runFleetDoctor(),
+  },
+  {
     name: 'phantom_fleet_apps_await',
     description: 'Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart.',
     get inputSchema() { return { type: 'object', properties: {
@@ -1365,7 +1372,7 @@ function auditNativeCall(summary: string, result: 'ok' | 'refused' | 'error'): v
  * surface as isError text results. Every outcome is audited.
  */
 export async function callNativeTool(name: string, rawArgs: unknown): Promise<NativeToolResult> {
-  const fleetObservation = name === 'phantom_fleet_graph' || name === 'phantom_fleet_session' || name === 'phantom_fleet_apps_status' || name === 'phantom_fleet_apps_changes';
+  const fleetObservation = name === 'phantom_fleet_graph' || name === 'phantom_fleet_session' || name === 'phantom_fleet_apps_status' || name === 'phantom_fleet_apps_changes' || name === 'phantom_fleet_doctor';
   const tool = TOOLS.find((t) => t.name === name);
   const args: Record<string, unknown> =
     rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
