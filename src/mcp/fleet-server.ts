@@ -55,6 +55,10 @@ import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessage
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
 import { parseFleetCiResumeInputsArgs, readFleetCiResumeInputs, type FleetCiResumeInputsArgs } from './fleet-ci-resume-inputs.js';
+import { parseFleetCiReceiptAwaitArgs, readFleetCiReceiptAwait, type FleetCiReceiptAwaitArgs } from './fleet-ci-receipt-await.js';
+import { CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
+  CI_RECEIPT_AWAIT_MAX_POLL_MS, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
+  CI_RECEIPT_AWAIT_MIN_POLL_MS } from '../core/fleet/ci-receipt-await.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -90,6 +94,7 @@ export interface FleetReaders {
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
   ciResumeInputs?: (input: FleetCiResumeInputsArgs) => Promise<unknown>;
+  ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -422,11 +427,29 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_ci_receipt_await',
+      description: 'Wait for one explicitly named receipts artifact on one exact GitHub Actions run attempt — the RESUME-FROM-FAILURE order — through the same shared awaitCiReceipt evidence waiter as `phm fleet ci-receipt-await`, never a second poller or artifact binder, then return the validated CiResumePrior document in the `prior` field for `fleet_ci_resume_inputs`. Pending is proven by evidence only: each poll is a bounded GET of the exact attempt\'s metadata plus the run\'s artifact list; only a positively observed running/queued attempt whose named artifact is still absent sleeps and retries, and another attempt is never substituted. Once observed, the artifact is bound through the merged discover path with producer inputsDigests preserved verbatim. Timeout, cancellation, a completed attempt without the artifact, and duplicate, expired, malformed or mismatched evidence stay tool errors — never a fabricated prior. Read-only GitHub evidence: every call is a GET metadata/listing read plus a bounded archive download; the tool never reruns CI, posts a status or check, dispatches a workflow, writes a receipt or authorizes reuse. No caller executable, cwd, environment, filesystem path or API route is accepted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repo: { type: 'string', pattern: '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$', description: 'GitHub owner/name the run belongs to; never a path, URL or remote.' },
+          run: { type: 'integer', minimum: 1, description: 'Exact workflow run id.' },
+          attempt: { type: 'integer', minimum: 1, description: 'Exact run attempt number; another attempt is never substituted.' },
+          artifactName: { type: 'string', minLength: 1, maxLength: 200, description: 'Exact artifact name such as ci-resume-receipts; never guessed or substituted.' },
+          timeoutMs: { type: 'integer', minimum: 1, maximum: CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS, default: CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS, description: 'Total wait bound, at most one hour; defaults to 600000.' },
+          pollMs: { type: 'integer', minimum: CI_RECEIPT_AWAIT_MIN_POLL_MS, maximum: CI_RECEIPT_AWAIT_MAX_POLL_MS, default: CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, description: 'Poll interval; defaults to 5000.' },
+        },
+        required: ['repo', 'run', 'attempt', 'artifactName'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs') {
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -456,7 +479,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
     const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
-    if (name === 'fleet_ci_resume_inputs' ? ciResumeInputs === null :
+    const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
+    if (name === 'fleet_ci_receipt_await' ? ciReceiptAwait === null :
+        name === 'fleet_ci_resume_inputs' ? ciResumeInputs === null :
         name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
@@ -513,6 +538,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
+        : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
