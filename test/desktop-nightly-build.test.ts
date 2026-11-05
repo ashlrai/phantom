@@ -17,6 +17,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,6 +35,7 @@ import {
   packageArtifact,
   resolveDesktopNightlyTarget,
   scrubSigningEnv,
+  verifyExistingIcons,
 } from '../scripts/build-desktop-nightly.mjs';
 import { DESKTOP_RELEASE_TOOL_PINS } from '../scripts/desktop-release-policy.mjs';
 
@@ -209,6 +211,42 @@ describe('desktop nightly pipeline shape', () => {
     expect(bundle?.env).toEqual({ CI: '1' });
     expect(bundle?.cwd).toContain('desktop');
     for (const step of steps) expect(step.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it('preserves the default icon generation and opts into exact tracked icon reuse', () => {
+    expect(buildStepPlan().some(step => step.name === 'icons')).toBe(true);
+    expect(buildStepPlan({ existingIcons: true }).map(step => step.name)).toEqual([
+      'install', 'sidecar-build', 'sidecar-smoke', 'sidecar-stage', 'bundle', 'package',
+    ]);
+    const root = mkdtempSync(join(tmpdir(), 'desktop-tracked-icons-'));
+    const configPath = 'desktop/src-tauri/tauri.conf.json';
+    const iconPath = 'desktop/src-tauri/icons/icon.png';
+    const trayPath = 'desktop/src-tauri/icons/tray.png';
+    const config = Buffer.from(JSON.stringify({ bundle: { icon: ['icons/icon.png'] }, app: { trayIcon: { iconPath: 'icons/tray.png' } } }));
+    const originals = new Map([[configPath, config], [iconPath, Buffer.from('fixture-icon')], [trayPath, Buffer.from('fixture-tray')]]);
+    const readHead = (path: string) => {
+      const bytes = originals.get(path);
+      if (!bytes) throw new Error('not tracked');
+      return bytes;
+    };
+    mkdirSync(join(root, 'desktop/src-tauri/icons'), { recursive: true });
+    try {
+      for (const [path, bytes] of originals) writeFileSync(join(root, path), bytes);
+      expect(verifyExistingIcons(root, { readHead })).toEqual(['icons/icon.png', 'icons/tray.png']);
+      writeFileSync(join(root, iconPath), 'changed');
+      expect(() => verifyExistingIcons(root, { readHead })).toThrow(/differs from HEAD/);
+      rmSync(join(root, iconPath));
+      expect(() => verifyExistingIcons(root, { readHead })).toThrow();
+      symlinkSync(join(root, trayPath), join(root, iconPath));
+      expect(() => verifyExistingIcons(root, { readHead })).toThrow(/invalid tracked/);
+      rmSync(join(root, iconPath));
+      writeFileSync(join(root, iconPath), originals.get(iconPath)!);
+      expect(() => verifyExistingIcons(root, { readHead: () => { throw new Error('not tracked'); } })).toThrow(/not tracked/);
+      const traversal = Buffer.from(JSON.stringify({ bundle: { icon: ['../foreign.png'] }, app: { trayIcon: { iconPath: 'icons/tray.png' } } }));
+      writeFileSync(join(root, configPath), traversal);
+      expect(() => verifyExistingIcons(root, { readHead })).toThrow(/differs from HEAD/);
+      expect(() => verifyExistingIcons(root, { readHead: (path: string) => path === configPath ? traversal : readHead(path) })).toThrow(/inventory/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it('names artifacts on the release convention with an explicit nightly marker', () => {

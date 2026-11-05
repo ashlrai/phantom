@@ -1,6 +1,8 @@
 name: Attest qualified CI build
 
 on:
+  schedule:
+    - cron: '15,45 * * * *'
   workflow_dispatch:
     inputs:
       ci_run_id:
@@ -45,16 +47,24 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.22.3'
-      - name: Resolve immutable CI inputs
-        id: inputs
+      - name: Select prepared fast gate for this master revision
+        if: github.event_name == 'schedule'
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
-          CI_RUN_ID: ${{ inputs.ci_run_id }}
-          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          BUILD_ARTIFACT_ID: ${{ inputs.build_artifact_id }}
+        run: node .github/scripts/release-fast-smoke.mjs attest
+      - name: Resolve immutable CI inputs
+        id: inputs
+        if: github.event_name == 'workflow_dispatch' || steps.candidate.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ inputs.ci_run_id || steps.candidate.outputs.run }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt || steps.candidate.outputs.attempt }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || steps.candidate.outputs.sha }}
+          BUILD_ARTIFACT_ID: ${{ inputs.build_artifact_id || steps.candidate.outputs.artifact }}
         run: node .github/scripts/ci-attestation-inputs.mjs prepare
       - name: Download immutable qualification artifacts
+        if: steps.inputs.outputs.directory != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ steps.inputs.outputs.artifact_ids }}
@@ -62,15 +72,16 @@ jobs:
           merge-multiple: false
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.ci_run_id }}
+          run-id: ${{ inputs.ci_run_id || steps.candidate.outputs.run }}
           digest-mismatch: error
       - name: Verify complete qualification and assemble signed closure
+        if: steps.inputs.outputs.directory != ''
         env:
           GH_TOKEN: ${{ github.token }}
           DIRECTORY: ${{ steps.inputs.outputs.directory }}
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          CI_RUN_ID: ${{ inputs.ci_run_id }}
-          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha || steps.candidate.outputs.sha }}
+          CI_RUN_ID: ${{ inputs.ci_run_id || steps.candidate.outputs.run }}
+          CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt || steps.candidate.outputs.attempt }}
         shell: bash
         run: |
           set -euo pipefail
@@ -79,6 +90,7 @@ jobs:
       # Sign data verified by trusted policy. Downloaded source and compiled
       # bytes are never executed, rebuilt, repacked, or installed in this job.
       - name: Attest original build bytes and qualification
+        if: steps.inputs.outputs.directory != ''
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -86,9 +98,10 @@ jobs:
             ${{ steps.inputs.outputs.directory }}/bundle/manifest.json
             ${{ steps.inputs.outputs.directory }}/bundle/qualification.json
       - name: Upload attested handoff
+        if: steps.inputs.outputs.directory != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ashlr-attested-${{ inputs.ci_run_id }}-${{ inputs.ci_run_attempt }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ashlr-attested-${{ inputs.ci_run_id || steps.candidate.outputs.run }}-${{ inputs.ci_run_attempt || steps.candidate.outputs.attempt }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.inputs.outputs.directory }}/bundle
           if-no-files-found: error
           compression-level: 0
