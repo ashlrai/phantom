@@ -6,7 +6,8 @@
  * Phantom as the interface for all engineering: one read-only snapshot that
  * answers, for every router lane (pool), the four questions the operator
  * asks — how much credit is left, how deep the ready queue is, how many jobs
- * are live right now, and how many merges each lane landed in the last hour.
+ * are live right now, and how many merges each lane landed in the last hour
+ * (plus the lane's slot target, so queue depth reads against its scale).
  *
  * READ-ONLY GUARDRAILS:
  *  - Bounded fs reads only. Never writes, never spawns a child process,
@@ -109,6 +110,8 @@ export interface FleetLaneView {
   /** Unique merged PRs (or legacy job-level merges) in the trailing window per hour. */
   mergesPerHour: number | null;
   credit: FleetLaneCreditView;
+  /** The lane's slot target from a healthy lane-targets read; null when it has no row or holds were not healthy. */
+  slotTarget: number | null;
   /** Null when no trustworthy hold record is available for this lane. */
   hold: {
     held: boolean;
@@ -727,7 +730,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
     } : null;
-    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest), hold };
+    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest), slotTarget: row?.target ?? null, hold };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.
