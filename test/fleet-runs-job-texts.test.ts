@@ -12,7 +12,7 @@ it('reads notes and the brief', async () => {
   for (const kind of ['notes', 'prompt'] as const) {
     await writeFile(join(runsDir, `${job}.${kind === 'notes' ? 'notes.md' : 'prompt'}`), 'Finished the requested fix.');
     expect(await getFleetJobText(job, kind, { runsDir })).toEqual({
-      v: 1, job, kind, state: 'ok', bytes: 27, truncated: false, text: 'Finished the requested fix.',
+      v: 1, job, kind, state: 'ok', source: kind === 'notes' ? 'notes' : null, bytes: 27, truncated: false, text: 'Finished the requested fix.',
     });
   }
 });
