@@ -162,7 +162,7 @@ describe('ingestIMessages', () => {
     expect(jobs[0]!.acceptance).not.toContain(MASON);
   });
 
-  it('records the shared ack text and never sends it', async () => {
+  it('records the shared ack text and delivers it only through the self-only outbox', async () => {
     writeCursor(0, runsDir);
     stdoutFor = () => JSON.stringify([row(3, 'hello fleet')]);
     await ingestIMessages(cfg(), { runsDir });
@@ -171,7 +171,10 @@ describe('ingestIMessages', () => {
     expect(lines[0]).toMatchObject({ rowid: 3, status: 'accepted', delivery: 'recorded-not-sent' });
     expect(lines[0].text).toBe(formatChannelAck({ channel: 'imessage', dedupeKey: lines[0].receipt, status: 'accepted' }));
     expect(JSON.stringify(lines[0])).not.toContain('hello fleet');
-    expect(calls.filter((c) => c.file === 'osascript')).toHaveLength(0);
+    const osa = calls.filter((c) => c.file === 'osascript');
+    expect(osa).toHaveLength(1);
+    expect(osa[0]!.args[1]).toContain(`participant "${MASON}"`);
+    expect(osa[0]!.args[1]).toContain(lines[0].text);
   });
 
   it('a repeat of the same words is a duplicate, not a second entry', async () => {
