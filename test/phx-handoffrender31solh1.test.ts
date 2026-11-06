@@ -145,7 +145,7 @@ describe('knowledge handoff', () => {
 
   it.each([[], ['--json'], ['--file'], ['--file', '--json'], ['--bogus'],
     ['positional'], ['--file', 'x', '--file', 'y'], ['--json', '--json'],
-    ['--help', '--json'], ['-h', 'extra']])('rejects invalid arguments %j', async (...args) => {
+    ['--help', '--json'], ['-h', 'extra']])('rejects invalid arguments %j (%#)', async (...args) => {
     expect(await run(...args)).toBe(2);
   });
 

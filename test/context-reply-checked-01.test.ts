@@ -92,7 +92,7 @@ it('skips the gate on worker failure', async () => {
 
 it.each([['--budget-seconds', '1'], ['--check', '--budget-seconds', '0'], ['--check', '--budget-seconds', 'Infinity'],
   ['--check', '--budget-seconds', 'NaN'], ['--check', '--budget-seconds', '-1'], ['--check', '--check'],
-  ['--check', '--budget-seconds'], ['--check', '--budget-seconds', '1', '--budget-seconds', '2']])('rejects invalid flags %j before effects', async extra => {
+  ['--check', '--budget-seconds'], ['--check', '--budget-seconds', '1', '--budget-seconds', '2']])('rejects invalid flags %j before effects (%#)', async extra => {
   const g = gate();
   expect(await cmdFleetContextReply(args(extra), io(g.deps), { root: busRoot })).toBe(2);
   expect(g.counts()).toEqual({ calls: 0, gates: 0 });
