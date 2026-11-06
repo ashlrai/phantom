@@ -37,7 +37,7 @@ it('finds a prior order across desktop, mobile and cli sources in one command, c
   const result = await run('read', '--contains', 'SHARED CHANNEL-AGNOSTIC', '--json');
   expect(result.code).toBe(0);
   expect(result.body.sourceState).toBe('healthy');
-  expect(result.body.entries.map((entry: { source: string }) => entry.source)).toEqual(['desktop', 'mobile', 'cli']);
+  expect(result.body.entries.map((entry: { source: string }) => entry.source)).toEqual([expect.stringMatching(/^desktop \(desk-[a-f0-9]{16}\)$/), expect.stringMatching(/^phone \(phone-[a-f0-9]{16}\)$/), expect.stringMatching(/^cli \(cli-[a-f0-9]{16}\)$/)]);
   expect(texts(result.body)).toEqual([
     'Mason Oct 31 order: one shared channel-agnostic context',
     'Follow-up on the shared channel-agnostic context order',
@@ -67,9 +67,9 @@ it('combines with the source filter and applies the limit to the newest matches,
     ['mobile', 'fake order 1'], ['desktop', 'fake order 2'], ['mobile', 'fake order 3'],
     ['mobile', 'other note'], ['desktop', 'fake order 4'], ['mobile', 'fake order 5'],
   ]) expect((await appendInboxEntry(text!, { runsDir, source, now })).ok).toBe(true);
-  expect(texts((await run('read', '--contains', 'fake order', '--source', 'mobile')).body))
+  expect(texts((await run('read', '--contains', 'fake order', '--source', 'phone')).body))
     .toEqual(['fake order 1', 'fake order 3', 'fake order 5']);
-  expect(texts((await run('read', '--contains', 'fake order', '--source', 'mobile', '--limit', '1')).body))
+  expect(texts((await run('read', '--contains', 'fake order', '--source', 'phone', '--limit', '1')).body))
     .toEqual(['fake order 5']);
   expect(texts((await run('read', '--contains', 'fake order', '--limit', '2')).body))
     .toEqual(['fake order 4', 'fake order 5']);

@@ -8,6 +8,8 @@ import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 it('publishes changed normalized diagnostics, coalesces repeats, and reports recovery', async () => {
   const root = mkdtempSync(join(tmpdir(), 'watch-diagnostics-'));
   let output = '', clock = 0, calls = 0;
+  // Exercise diagnostics with one deterministic clock; production also enforces wall time.
+  const wallClock = vi.spyOn(performance, 'now').mockImplementation(() => clock);
   const write = vi.spyOn(process.stdout, 'write').mockImplementation(((s: string) => { output += s; return true; }) as never);
   const rows = [
     { outcome: 'unavailable', attempted: true, launched: false, observedRunning: false, reason: 'deadline' },
@@ -34,12 +36,14 @@ it('publishes changed normalized diagnostics, coalesces repeats, and reports rec
     ]);
     expect(local.at(-1).lastDiagnostics).toEqual((bus.at(-1) as { lastDiagnostics: unknown }).lastDiagnostics);
     expect(calls).toBe(4);
-  } finally { write.mockRestore(); rmSync(root, { recursive: true, force: true }); }
+  } finally { wallClock.mockRestore(); write.mockRestore(); rmSync(root, { recursive: true, force: true }); }
 });
 
 it('replaces malformed diagnostics with unknown and never forwards arbitrary text', async () => {
   const root = mkdtempSync(join(tmpdir(), 'watch-diagnostics-'));
   let output = '', clock = 0, calls = 0;
+  // Exercise diagnostics with one deterministic clock; production also enforces wall time.
+  const wallClock = vi.spyOn(performance, 'now').mockImplementation(() => clock);
   const write = vi.spyOn(process.stdout, 'write').mockImplementation(((s: string) => { output += s; return true; }) as never);
   try {
     await cmdFleetAppsWatch(['Phantom', '--duration-ms', '200', '--interval-ms', '100', '--max-consecutive-failures', '3', '--root', root, '--bus', '--jsonl'], {
@@ -51,5 +55,5 @@ it('replaces malformed diagnostics with unknown and never forwards arbitrary tex
     expect(output).not.toContain('arbitrary-marker');
     expect(JSON.stringify(page.messages)).not.toContain('arbitrary-marker');
     expect(JSON.parse(output.trim().split('\n').at(-1)!).lastDiagnostics).toEqual([{ app: 'Phantom', outcome: 'unknown', attempted: true, launched: false }]);
-  } finally { write.mockRestore(); rmSync(root, { recursive: true, force: true }); }
+  } finally { wallClock.mockRestore(); write.mockRestore(); rmSync(root, { recursive: true, force: true }); }
 });

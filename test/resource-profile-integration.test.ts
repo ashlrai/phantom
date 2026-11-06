@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /** Installed-style built CLI with temporary private profiles and inert native help. */
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -31,8 +32,7 @@ function fixture(provider: 'codex' | 'claude' | 'grok' = 'codex') {
   const executable = join(base, 'inert-native'); const marker = join(base, 'invocations.jsonl');
   const required = provider === 'codex' ? ['--model', '--cd', '--sandbox', '--json', '--ephemeral', '--ignore-user-config']
     : ['--print', '--model', '--output-format', '--verbose', '--no-session-persistence', '--safe-mode', '--restricted', '--strict-mcp-config', '--tools', '--permission-mode'];
-  writeFileSync(executable, `#!${process.execPath}
-const fs=require('node:fs');const raw=process.argv.slice(2);const args=[...raw];const provider=${JSON.stringify(provider)};
+  writeFileSync(executable, `${nodeFixtureHeader()}const fs=require('node:fs');const raw=process.argv.slice(2);const args=[...raw];const provider=${JSON.stringify(provider)};
 const marker=${JSON.stringify(marker)};const log=row=>fs.appendFileSync(marker,JSON.stringify(row)+'\\n',{mode:0o600});
 log({args:raw,env:process.env});process.stdin.on('data',()=>{log({unexpected:'stdin'});process.exitCode=71;});
 if(provider==='codex'){

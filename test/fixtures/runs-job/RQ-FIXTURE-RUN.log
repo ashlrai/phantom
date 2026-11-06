@@ -1,0 +1,5 @@
+worker boot RQ-FIXTURE-RUN lane=codex-cmp pid=4242
+model gpt-5-codex tier=work
+Authorization: Bearer fake-fixture-token-value
+cd /Users/fixture-user/wt/RQ-FIXTURE-RUN && npm run dev
+heartbeat tick 1

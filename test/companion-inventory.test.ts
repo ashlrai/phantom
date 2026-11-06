@@ -17,7 +17,7 @@ function executable(directory: string, name: string, version: string, options: {
   mkdirSync(directory, { recursive: true });
   const path = join(directory, name);
   const log = join(directory, `${name}.probes.jsonl`);
-  const body = `#!${process.execPath}\n` +
+  const body = `#!/usr/bin/env node\n` +
     `const fs = require('node:fs');\n` +
     `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args:process.argv.slice(2),env:process.env,cwd:process.cwd()})+'\\n');\n` +
     (options.code ?? `if(process.argv[2]==='--version') console.log(${JSON.stringify(version)});\nelse if(process.argv[2]==='--help') console.log(${JSON.stringify(options.help ?? `Usage: ${name} [OPTIONS] <COMMAND>\nCommands: help`)});\nelse process.exit(9);\n`);
@@ -83,7 +83,7 @@ describe('companion executable inventory', () => {
 
   it.skipIf(process.platform === 'win32')('deduplicates physical symlink targets and ignores relative PATH/current project entries', async () => {
     const directory = fixture(); const alias = fixture();
-    const path = executable(directory, 'locus', 'locus 0.5.0');
+    const path = executable(directory, 'locus', 'locus 0.7.0');
     symlinkSync(path, join(alias, 'locus'));
     vi.stubEnv('PATH', ['', '.', directory, alias].join(':'));
     const tool = (await inventoryCompanions()).companions[1]!;
@@ -102,7 +102,7 @@ describe('companion executable inventory', () => {
 
   it.skipIf(process.platform === 'win32')('never executes a recognized automatic installation wrapper, including explicit paths', async () => {
     const directory = fixture();
-    const binary = executable(directory, 'locus', '', { code: "// legacy wrapper: downloadReleaseBinary; cargo install --git\nconsole.log('locus 0.5.0');" });
+    const binary = executable(directory, 'locus', '', { code: "// legacy wrapper: downloadReleaseBinary; cargo install --git\nconsole.log('locus 0.7.0');" });
     for (const options of [{ searchPaths: [directory] }, { searchPaths: [], binaries: { locus: binary } }]) {
       const tool = (await inventoryCompanions(options)).companions[1]!;
       expect(tool).toMatchObject({ installed: false, status: 'unsupported-launcher' });
@@ -113,8 +113,8 @@ describe('companion executable inventory', () => {
   it.skipIf(process.platform === 'win32')('production refuses all Secrets/Locus scripts even when explicitly selected, while allowing the Lexicon Node CLI', async () => {
     const directory = fixture();
     const secrets = executable(directory, 'phantom', 'phantom 0.7.9');
-    const locus = executable(directory, 'locus', 'locus 0.5.0');
-    executable(directory, 'lexicon', '0.5.4');
+    const locus = executable(directory, 'locus', 'locus 0.7.0');
+    executable(directory, 'lexicon', '0.5.9');
     for (const options of [{ searchPaths: [directory] }, { searchPaths: [directory], binaries: { secrets, locus } }]) {
       const report = await productionInventory(options);
       expect(report.companions.slice(0, 2).map(tool => tool.status)).toEqual(['unsupported-launcher', 'unsupported-launcher']);
@@ -134,10 +134,10 @@ describe('companion executable inventory', () => {
 
   it.skipIf(process.platform === 'win32')('refuses unknown newer versions and help identity mismatches', async () => {
     const directory = fixture();
-    executable(directory, 'locus', 'locus 0.6.0');
-    executable(directory, 'lexicon', '0.5.4', { help: 'Usage: different-tool [options]' });
+    executable(directory, 'locus', 'locus 999.0.0');
+    executable(directory, 'lexicon', '0.5.9', { help: 'Usage: different-tool [options]' });
     const report = await inventoryCompanions({ searchPaths: [directory] });
-    expect(report.companions[1]).toMatchObject({ installed: true, version: '0.6.0',
+    expect(report.companions[1]).toMatchObject({ installed: true, version: '999.0.0',
       status: 'unsupported-version', compatibility: 'unknown' });
     expect(report.companions[2]).toMatchObject({ installed: false, status: 'wrong-product' });
   });
@@ -162,7 +162,7 @@ describe('companion executable inventory', () => {
 
   it.skipIf(process.platform === 'win32')('isolates concurrent project probes in distinct disposable roots without a cache', async () => {
     const projectA = fixture(); const projectB = fixture();
-    executable(projectA, 'lexicon', '0.5.4');
+    executable(projectA, 'lexicon', '0.5.9');
     executable(projectB, 'lexicon', '0.9.0');
     const [a, b] = await Promise.all([inventoryCompanions({ searchPaths: [projectA] }),
       inventoryCompanions({ searchPaths: [projectB] })]);

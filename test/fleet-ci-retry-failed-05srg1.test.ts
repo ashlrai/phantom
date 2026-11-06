@@ -158,7 +158,7 @@ describe('fleet ci-retry-failed', () => {
     [...args, '--bogus'],
     [...args, '--apply', '--apply', '--json'],
     ['--repo'],
-  ])('rejects bad arguments without gh: %j', async (...bad) => {
+  ])('rejects bad arguments without gh: %j (%#)', async (...bad) => {
     const f = fake([]);
     expect(await cmdFleetCiRetryFailed(bad, f)).toBe(2);
     expect(f.calls).toHaveLength(0);

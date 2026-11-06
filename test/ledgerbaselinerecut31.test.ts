@@ -54,7 +54,7 @@ it.each([
   ['counter-decreased', { usedPct: 1 }],
   ['unknown-or-changed-source', { source: 'another-source' }],
   ['unknown-meter', { window: 'credits', usedPct: null, creditsRemaining: 10 }],
-] as const)('reports %s without zero-filling or negative burn', async (reason, fields) => {
+] as const)('reports %s without zero-filling or negative burn (%#)', async (reason, fields) => {
   const prior = ledger();
   const current = ledger();
   Object.assign(current.lanes[0]!, fields);

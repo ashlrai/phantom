@@ -2,13 +2,16 @@
 import { readResourceLedger, type ResourceLedgerV1 } from '../core/fleet/runs-resource-ledger.js';
 import { resetWindowPlan } from '../core/fleet/reset-window-plan.js';
 
+const usage = `ashlr fleet window-plan [--json]
+Advisory only; changes no slot or hold. Missing evidence stays unknown.`;
+
 export async function cmdFleetWindowPlan(
   args: string[],
   read: () => Promise<ResourceLedgerV1> = readResourceLedger,
   now: () => number = Date.now,
 ): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet window-plan [--json]\nAdvisory only; changes no slot or hold. Missing evidence stays unknown.');
+    console.log(usage);
     return 0;
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;

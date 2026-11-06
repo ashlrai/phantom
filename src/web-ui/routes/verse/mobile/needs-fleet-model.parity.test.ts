@@ -6,7 +6,7 @@ import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { deriveFleetNeedsYou } from '../shell/fleet-needs-you.js';
 import { FleetAttentionCards } from './FleetAttentionCards.js';
 import { renderMobile, stubFetch } from './mobile.test-support.js';
-import { fleetAttention } from './needs-fleet-model.js';
+import { attentionAction, fleetAttention } from './needs-fleet-model.js';
 
 const now = Date.parse('2026-10-31T12:00:00Z');
 const snapshot: FleetRuns = {
@@ -14,7 +14,7 @@ const snapshot: FleetRuns = {
   sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: '2026-10-31T11:30:00Z', paused: false, memFreePct: 50, diskFreeGb: 4,
   switches: ['HOLD'], claudeLane: 'down: quota',
-  lanes: [{ lane: 'codex-personal', running: 0, target: 1, queued: 2, held: true, heldReason: 'operator hold', tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 }],
+  lanes: [{ lane: 'claude', running: 0, target: 1, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }, { lane: 'codex-personal', running: 0, target: 1, queued: 2, held: true, heldReason: 'operator hold', tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 }],
   workers: [], leaders: [{ label: 'leader', ageSeconds: 30 }], orchestratorAgents: 1,
   publishesLastHour: [], mergesLastHour: { count: 1, items: [] }, events: [],
   codexPersonal: { usedPct: 97, resetsAt: null, asOf: new Date(now).toISOString() }, inbox: [], drop: null,
@@ -27,13 +27,14 @@ describe('fleet attention parity', () => {
     const desktop = deriveFleetNeedsYou(snapshot, now).items;
     const cards = fleetAttention(snapshot, now);
     expect(desktop.map((item) => item.id)).toEqual(expect.arrayContaining([
-      'claude-lane-down', 'switches-on', 'lane-held:codex-personal', 'supply-personal-low', 'host-pressure',
+      'claude-lane-down', 'switches-on', 'lane-held:codex-personal', 'supply-personal-low', 'host-disk-low', 'host-pressure',
     ]));
     expect(cards.map((card) => card.id).sort()).toEqual([...desktop.map((item) => item.id), 'orchestrator-tick'].sort());
     for (const item of desktop) {
       expect(cards.find((card) => card.id === item.id)).toEqual({
         id: item.id, severity: item.severity === 'urgent' ? 'high' : 'medium',
         title: item.title, detail: item.detail, next: item.nextStep,
+        ...(attentionAction(item.open) ? { action: attentionAction(item.open) } : {}),
       });
     }
   });
@@ -49,7 +50,7 @@ describe('fleet attention parity', () => {
     }
   });
   it('deduplicates identical desktop item ids', () => {
-    const duplicate = { ...snapshot, lanes: [snapshot.lanes[0]!, snapshot.lanes[0]!] };
+    const duplicate = { ...snapshot, lanes: [snapshot.lanes[1]!, snapshot.lanes[1]!]  };
     expect(fleetAttention(duplicate, now).filter((card) => card.id === 'lane-held:codex-personal')).toHaveLength(1);
   });
   it('handles null and unknown snapshot shapes', () => {

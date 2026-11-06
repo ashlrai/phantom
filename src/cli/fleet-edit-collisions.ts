@@ -27,7 +27,7 @@ const MAX_STDIN_BYTES = 1024 * 1024;
 /** Same bound sanitizeFleetEdits applies to the edit set it admits. */
 const MAX_PATHS = 50_000;
 
-const HELP = `Usage: ashlr fleet edit-collisions [--json] [--paths] [<file>...] [-- <file>...]
+const USAGE = `Usage: ashlr fleet edit-collisions [--json] [--paths] [<file>...] [-- <file>...]
 
 READ-ONLY: would the bridge refuse any of these fleet edit paths?
 Paths are the positional arguments (optionally introduced by --paths) plus,
@@ -91,7 +91,7 @@ export async function cmdFleetEditCollisions(
     if (positional) { paths.push(arg); continue; }
     if (arg === '--') { positional = true; continue; }
     if (arg === '--json') { json = true; continue; }
-    if (arg === '--help' || arg === '-h') { out(HELP); return 0; }
+    if (arg === '--help' || arg === '-h') { out(USAGE); return 0; }
     if (arg === '--paths') continue; // marker only: positionals are paths either way
     if (looksLikeOption(arg)) return invalid(`unknown option: ${arg}`);
     paths.push(arg);

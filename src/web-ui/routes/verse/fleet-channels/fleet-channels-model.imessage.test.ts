@@ -31,8 +31,8 @@ describe('iMessage channel', () => {
     expect(channelSetupHint('imessage', { ...silent, total: 1 })).toBeNull();
   });
 
-  it('counts iMessage bus mirrors alongside inbox messages', () => {
+  it('keeps iMessage local even if a bus receipt claims a mirror', () => {
     const receipt: AgentBusReceipt = { cursor: 1, receivedAt: now, envelope: { id: 'test', from: 'mason', to: 'leaders', priority: 'P0', ttl: 1000, body: { kind: 'interjection', channel: 'imessage' } } };
-    expect(mirrorByChannel([entry('imessage')], [receipt], now).get('imessage')).toMatchObject({ inbox: 1, mirrored: 1, tone: 'ok' });
+    expect(mirrorByChannel([entry('imessage')], [receipt], now).get('imessage')).toMatchObject({ inbox: 1, mirrored: 0, tone: 'none', text: 'kept local: 1 in the last hour, not mirrored to the bus' });
   });
 });

@@ -15,6 +15,9 @@ import {
 
 /** Descriptor-bound tail read of the runs-dir event log, like runs-dir-state. */
 const DISPATCH_EVENTS_TAIL = 8 * 1024 * 1024;
+const usage = `ashlr fleet lane-streaks [--minutes N] [--json]
+Read-only; names lanes whose recent launches all end empty.
+Exit 2 when any lane is burning; detection only, never holds a lane.`;
 /** First readable candidate wins (queue first, root second); the logs are never merged. */
 export async function readDispatchEventsLog(runsDir?: string): Promise<string | null> {
   for (const path of dispatchEventsCandidates(runsDir ?? join(homedir(), '.ashlr-runs'))) {
@@ -63,9 +66,7 @@ export interface FleetLaneStreaksDeps {
 export async function cmdFleetLaneStreaks(args: string[], deps: FleetLaneStreaksDeps = {}): Promise<number> {
   const out = deps.out ?? console.log;
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    out('ashlr fleet lane-streaks [--minutes N] [--json]\n' +
-      'Read-only; names lanes whose recent launches all end empty.\n' +
-      'Exit 2 when any lane is burning; detection only, never holds a lane.');
+    out(usage);
     return 0;
   }
   let minutes = LANE_STREAKS_DEFAULT_MINUTES;

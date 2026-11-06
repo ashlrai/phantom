@@ -27,7 +27,7 @@ it('posts split UTF-8 and reads the normalized multiline message from the shared
   expect(await command(['post', '--file', '-', '--json'])).toBe(0);
   expect(output()).toEqual({ ok: true, ack: { channel: 'cli', status: 'accepted', dedupeKey: expect.stringMatching(/^[a-f0-9]{64}$/) } });
   expect(await command(['read'])).toBe(0);
-  expect(output()).toMatchObject({ sourceState: 'healthy', entries: [{ source: 'cli', text: 'Mason says: café 🌍\nPlease continue.' }] });
+  expect(output()).toMatchObject({ sourceState: 'healthy', entries: [{ source: expect.stringMatching(/^cli \(cli-[a-f0-9]{16}\)$/), text: 'Mason says: café 🌍\nPlease continue.' }] });
 });
 
 it.each([
@@ -73,5 +73,5 @@ it('retains file handling and validates arguments before consuming stdin', async
   expect(await command(['post', '--file', path])).toBe(0);
   expect(await command(['post', '--file', '-'])).toBe(0);
   expect(await command(['read'])).toBe(0);
-  expect(output().entries.map((entry: { text: string }) => entry.text)).toEqual(['stdin message', 'file message']);
+  expect(output().entries.map((entry: { text: string }) => entry.text)).toEqual(['file message', 'stdin message']);
 });
