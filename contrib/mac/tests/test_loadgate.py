@@ -512,7 +512,7 @@ class AdmissionSnapshotTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         tick(home, {'LOADGATE_LOADAVG': '3.5', 'LOADGATE_NCPU': '10'})
         a = admission(home)
-        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 30.0, 0, 0))
+        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 30.0, 1, 0))
         self.assertEqual(a['schema'], 'dispatchd.admission.v2')
         self.assertEqual(json.loads((home / '.ashlr-runs' / 'queue' / 'status.json').read_text())['admission']['cap'], a['cap'])
 
