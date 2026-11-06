@@ -46,8 +46,8 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 
 | Your task | Canonical guide |
 |-----------|-----------------|
-| Replay CI test feedback and order failures first | [CI test feedback](CI-TEST-FEEDBACK.md) |
-| Inspect changed-file and test dependency relationships | [PR impact map](CI-IMPACT-MAP.md) |
+| Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
+| Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
