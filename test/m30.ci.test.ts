@@ -1254,3 +1254,16 @@ describe('complete Mac job runtime envelope', () => {
     expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
   });
 });
+
+
+describe('combined Ubuntu authority runtime envelope', () => {
+  it('budgets the complete web and bounded backend producer without widening other roles', () => {
+    const workflow = parse(ciYml);
+    expect(workflow.jobs.ci['timeout-minutes']).toBe("${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}");
+    expect(workflow.jobs.ci.strategy['fail-fast']).toBe(false);
+    expect(workflowJob('ci')).toContain('node .github/scripts/ci-qualification-lane.mjs web');
+    expect(workflowJob('ci')).toContain('npm run test:ci -- ${{ matrix.test_args }}');
+    expect(readFileSync(resolve(repoRoot, 'scripts/test-ci.mjs'), 'utf8')).toContain('const DEFAULT_HARD_TIMEOUT_MS = 30 * 60_000;');
+    expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
+  });
+});
