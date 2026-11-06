@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 
 import { adapterFor, type VerseAdapter, type VerseAdapterTurnContext, type VerseParsedEvent } from '../src/core/verse/adapters/index.js';
 import { createVerseEngine, preflightLocalEndpoint, VerseError, buildTurnEnv, type VerseEngineHandle, type VerseEngineOptions, type VerseSeatLaunch } from '../src/core/verse/session-engine.js';
@@ -492,7 +493,7 @@ describe('sendTurn — local via plain claude on PATH', () => {
     mkdirSync(installDir, { recursive: true });
     const installed = join(installDir, 'claude');
     const fixture = join(binDir, 'claude');
-    writeFileSync(fixture, fakeCliSource(side).replace('#!/usr/bin/env node', `#!${process.execPath}`), { mode: 0o700 });
+    writeFileSync(fixture, fakeCliSource(side).replace('#!/usr/bin/env node', nodeFixtureHeader().trimEnd()), { mode: 0o700 });
     symlinkSync(fixture, installed);
     process.env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
     try {
