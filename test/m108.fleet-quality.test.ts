@@ -85,6 +85,9 @@ const mockListGoals = vi.fn();
 const mockLoadGoal = vi.fn();
 
 vi.mock('../src/core/goals/store.js', () => ({
+  // Mirrors the store's 6h stale-lane window (lane-lock derives its default from it).
+  // importOriginal would deadlock: the original store's import graph re-enters this mock.
+  DEFAULT_STALE_GOAL_MILESTONE_MS: 6 * 60 * 60 * 1000,
   listGoals: (...args: unknown[]) => mockListGoals(...args),
   listGoalsDetailed: (...args: unknown[]) => ({ goals: mockListGoals(...args), complete: true, sourceState: 'healthy', unreadableFiles: 0 }),
   loadGoal: (...args: unknown[]) => mockLoadGoal(...args),
@@ -153,6 +156,9 @@ vi.mock('../src/core/daemon/loop.js', () => ({
 
 import { scanTodos, isIgnoredPath } from '../src/core/portfolio/scanners.js';
 import { runConductor } from '../src/core/goals/conductor.js';
+// runConductor loads advance.js lazily; load its (large) graph at collection time so the
+// first case's own protocol is what its timeout measures, not a cold module transform.
+import '../src/core/goals/advance.js';
 import type { Goal, Milestone, SwarmRun } from '../src/core/types.js';
 import type { AshlrConfig } from '../src/core/types.js';
 

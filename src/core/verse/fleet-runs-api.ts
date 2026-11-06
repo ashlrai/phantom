@@ -250,7 +250,10 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         }
         if (key === 'codex') result.codexPersonal = value as FleetRunsV1['codexPersonal'];
         if (key === 'merges') result.mergesLastHour = value as FleetRunsV1['mergesLastHour'];
-        result.sources[key] = record(raw) && ['missing', 'degraded'].includes(String(raw.sourceState)) ? raw.sourceState as 'missing' | 'degraded' : 'healthy';
+        // The live-worker reader reports an unreadable process table as 'unavailable'; that is degraded, never healthy.
+        const reported = record(raw) ? String(raw.sourceState) : '';
+        result.sources[key] = reported === 'unavailable' ? 'degraded'
+          : reported === 'missing' || reported === 'degraded' ? reported : 'healthy';
       } catch (error) { result.sources[key] = unavailable(error) ? 'not-landed' : 'degraded'; }
     }));
     // The leader's answers file may not exist yet on a host, so it carries no

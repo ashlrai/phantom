@@ -95,7 +95,7 @@ describe('needs-wait-group --stop-file', () => {
   it('CLI wires --stop-file and rejects duplicate or valueless flags', async () => {
     const { dir, stop } = ledger(); writeFileSync(stop, '');
     const out: string[] = []; const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-    expect(await cmdFleetNeedsWaitGroup([idA, '--timeout-ms', '1000', '--runs-dir', dir, '--stop-file', stop, '--json'], { emit: l => out.push(l) })).toBe(1);
+    expect(await cmdFleetNeedsWaitGroup([idA, '--timeout-ms', '1000', '--runs-dir', dir, '--stop-file', stop, '--json'], { emit: l => out.push(l) })).toBe(130); // cancellation exits 130, as for SIGINT/SIGTERM
     expect(JSON.parse(out[0]!)).toEqual({ outcome: 'cancelled', items: [{ id: idA, status: 'cancelled' }] });
     const base = [idA, '--timeout-ms', '1000'];
     expect(await cmdFleetNeedsWaitGroup([...base, '--stop-file', stop, '--stop-file', stop])).toBe(2);

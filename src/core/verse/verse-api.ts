@@ -256,8 +256,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
-  // Exact path only, so it cannot claim /api/verse/fleet/graph/live. Last so the
-  // registry mount stays visible beside the modules already on master.
+  // Exact path only, so it cannot claim /api/verse/fleet/graph/live.
   { id: 'fleet-graph', load: async () => (await import('./fleet-graph-api.js')).handleFleetGraphApi },
   // Main guardian per-repo red-age: GET /api/verse/fleet/main-red-age
   // (core/verse/fleet-main-red-age-api.ts); read-only.
