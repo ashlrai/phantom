@@ -33,7 +33,7 @@ describe('fixed approved Leader inbox writer', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
   it('rejects missing, mismatched, body-forged and extra-field receipts', async () => {
-    for (const value of ['', request.text, JSON.stringify({ ...receipt(), requestId: 'b'.repeat(64) }), JSON.stringify({ ...receipt(), requestSha256: 'b'.repeat(64) }), JSON.stringify({ ...receipt(), actor: 'mason' })]) {
+    for (const value of ['', request.text, JSON.stringify({ ...receipt(), requestId: 'b'.repeat(64) }), JSON.stringify({ ...receipt(), requestSha256: 'b'.repeat(64) }), JSON.stringify({ ...receipt(), actor: 'mason' }), JSON.stringify({ ...receipt(), status: ['appended'] }), JSON.stringify({ ...receipt(), status: ['duplicate'] })]) {
       processResult(value);
       await expect(approvedLeaderInboxAppender(() => true)(request)).rejects.toThrow('invalid');
     }

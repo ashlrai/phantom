@@ -14,7 +14,7 @@ export function validLeaderInboxReceipt(value: unknown, request: LeaderInboxRequ
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   return Object.keys(row).sort().join(',') === 'requestId,requestSha256,schema,status' && row.schema === 'mason-inbox-receipt.v1' &&
-    row.requestId === request.requestId && row.requestSha256 === leaderInboxRequestHash(request) && ['appended', 'duplicate'].includes(String(row.status));
+    row.requestId === request.requestId && row.requestSha256 === leaderInboxRequestHash(request) && (row.status === 'appended' || row.status === 'duplicate');
 }
 
 /** Fixed argv, minimal environment, stdin-only text, bounded receipt, no stderr/body export.
