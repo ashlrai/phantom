@@ -63,6 +63,7 @@ import { CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MIN_POLL_MS } from '../core/fleet/ci-receipt-await.js';
 import { CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS } from '../core/fleet/ci-receipt-await-batch.js';
 
+import { retryStagingInventory } from './fleet-staging-inventory-retry.js';
 import { parseStagingBatchArgs, readStagingBatch, type StagingScanner } from './fleet-staging-inventory-batch.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
@@ -119,6 +120,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   });
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
+    {
+      name: 'fleet_staging_inventory_retry',
+      description: 'Retry incomplete roots in a staging batch report. Age and size do not establish cleanup eligibility. Does not delete or propose deletion.',
+      inputSchema: { type: 'object', properties: { report: { type: 'object' } }, required: ['report'], additionalProperties: false },
+      annotations,
+    },
     {
       name: 'fleet_staging_inventory_batch',
       description: 'Inventory 1 to 8 explicit staging roots sequentially. Age and size do not establish cleanup eligibility. Does not delete or propose approval to delete.',
@@ -491,12 +498,13 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch') {
+    if (name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
+    const retry = name === 'fleet_staging_inventory_retry' ? await retryStagingInventory(args, readers.stagingScanner) : null;
     const stagingRoots = name === 'fleet_staging_inventory_batch' ? parseStagingBatchArgs(args) : null;
     const limited = name === 'fleet_loop' || name === 'fleet_bus_hops';
     const maxLimit = name === 'fleet_bus_hops' ? MAX_FLEET_BUS_HOPS : MAX_FLEET_TICKS;
@@ -524,7 +532,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
-    if (name === 'fleet_staging_inventory_batch' ? stagingRoots === null :
+    if (name === 'fleet_staging_inventory_retry' ? retry === null :
+        name === 'fleet_staging_inventory_batch' ? stagingRoots === null :
         name === 'fleet_ci_receipt_await_batch' ? ciReceiptAwaitBatch === null :
         name === 'fleet_ci_receipt_await' ? ciReceiptAwait === null :
         name === 'fleet_ci_resume_inputs' ? ciResumeInputs === null :
@@ -554,7 +563,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
     try {
-      const value = name === 'fleet_staging_inventory_batch' ? await readStagingBatch(stagingRoots as string[], readers.stagingScanner, extra.signal)
+      const value = name === 'fleet_staging_inventory_retry' ? retry :
+        name === 'fleet_staging_inventory_batch' ? await readStagingBatch(stagingRoots as string[], readers.stagingScanner, extra.signal)
         : name === 'fleet_status' ? await readers.status()
         : name === 'fleet_loop' ? await readers.loop(limit as number)
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
