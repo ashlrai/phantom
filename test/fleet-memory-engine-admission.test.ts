@@ -3,24 +3,24 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetMemory } from '../src/cli/fleet-memory.js';
-import { ENGINE_ADMISSION_THRESHOLDS, type EngineAdmissionView } from '../src/core/fleet/engine-admission-view.js';
+import { ENGINE_ADMISSION_POLICY, type EngineAdmissionView } from '../src/core/fleet/engine-admission-view.js';
 
 const now = Date.parse('2026-11-01T19:30:00Z');
 const memstat = { free_pct: 42.5, swap_gb: 1.2, swapouts_per_min: 0.25, disk_gb: 118.4, ts: '2026-11-01T19:29:30Z' };
 
 const ALLOWED: EngineAdmissionView = {
-  gated: true, allowed: true, free_pct: 41.2, swap_gb: 1.3, reason: null,
-  thresholds: ENGINE_ADMISSION_THRESHOLDS,
+  gated: true, allowed: true, pressure_level: 1, free_pct: 41.2, swap_gb: 1.3, reason: null,
+  policy: ENGINE_ADMISSION_POLICY,
 };
 const HELD: EngineAdmissionView = {
-  gated: true, allowed: false, free_pct: 12.3, swap_gb: 9.87,
-  reason: 'Host memory pressure: 12.3% free, 9.87 GiB swap; launch held until at least 35% free and at most 6 GiB swap.',
-  thresholds: ENGINE_ADMISSION_THRESHOLDS,
+  gated: true, allowed: false, pressure_level: 2, free_pct: 12.3, swap_gb: 9.87,
+  reason: 'Kernel memory pressure warning; launch held.',
+  policy: ENGINE_ADMISSION_POLICY,
 };
 const NOT_GATED: EngineAdmissionView = {
-  gated: false, allowed: null, free_pct: null, swap_gb: null,
+  gated: false, allowed: null, pressure_level: null, free_pct: null, swap_gb: null,
   reason: 'Engine memory gate runs on macOS only.',
-  thresholds: ENGINE_ADMISSION_THRESHOLDS,
+  policy: ENGINE_ADMISSION_POLICY,
 };
 
 let root: string;
@@ -42,14 +42,13 @@ async function textOutput(admission: EngineAdmissionView, args: string[] = []): 
 describe('cmdFleetMemory engine launch line', () => {
   it('prints the allowed verdict with the live reading', async () => {
     const text = await textOutput(ALLOWED);
-    expect(text).toContain('engine launch: allowed (41.2% free, 1.30 GiB swap)');
+    expect(text).toContain('engine launch: allowed (pressure 1, 41.2% raw free, 1.30 GiB swap)');
     expect(text).toContain('free_pct: 42.5');
   });
 
   it('prints HELD with the gate reason when the gate refuses', async () => {
     const text = await textOutput(HELD);
-    expect(text).toContain('engine launch: HELD - Host memory pressure: 12.3% free, 9.87 GiB swap;'
-      + ' launch held until at least 35% free and at most 6 GiB swap.');
+    expect(text).toContain('engine launch: HELD - Kernel memory pressure warning; launch held.');
   });
 
   it('prints not gated when the platform has no engine gate', async () => {

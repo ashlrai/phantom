@@ -26,7 +26,7 @@ import {
   TasksGlyph,
   TerminalGlyph,
 } from '../dock/dock-icons.js';
-import { DOCK_PANES, type BuiltinPaneId } from '../shell/dock-catalog.js';
+import { DOCK_PANES, type BuiltinPaneId } from '../shell/dock-pane-catalog.js';
 import { isSlotAvailable } from '../shell/slots.js';
 import { BrowserPaneBody, ChangesPaneBody, TerminalPaneBody } from './builtin/SlotPanes.js';
 import { lazyPane, registerBuiltinPane, type PaneDefinition, type PaneIcon, type PaneProps } from './pane-registry.js';

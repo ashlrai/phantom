@@ -91,6 +91,15 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "machine": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "estimatedJobRssBytes": { "type": "integer", "minimum": 1 }
+          },
+          "description": "Opt-in local machine telemetry; no network or privileged probes."
+        },
         "pulse": {
           "type": "string"
         },

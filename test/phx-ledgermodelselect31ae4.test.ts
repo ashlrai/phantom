@@ -106,7 +106,7 @@ describe('resource ledger model selection', () => {
     expect(views.map(view => view.modelFilter.selectionOmitted)).toEqual([1, 1]);
   });
 
-  it.each([['--model'], ['--model', '--json'], ['--model', ''], ['--model', 'fake/a'], ['--model', 'fake model'], ['--model', 'x'.repeat(81)], ['--model', 'fake-a', '--model', 'fake-b']])('rejects invalid arguments %j before reading', async (...args) => {
+  it.each([['--model'], ['--model', '--json'], ['--model', ''], ['--model', 'fake/a'], ['--model', 'fake model'], ['--model', 'x'.repeat(81)], ['--model', 'fake-a', '--model', 'fake-b']])('rejects invalid arguments %j before reading (%#)', async (...args) => {
     const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);

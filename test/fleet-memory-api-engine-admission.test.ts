@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { createFleetMemoryApi, VERSE_FLEET_MEMORY_PATH as PATH } from '../src/core/verse/fleet-memory-api.js';
 import type { ApiModule } from '../src/core/verse/api-modules.js';
-import { ENGINE_ADMISSION_THRESHOLDS, type EngineAdmissionView } from '../src/core/fleet/engine-admission-view.js';
+import { ENGINE_ADMISSION_POLICY, type EngineAdmissionView } from '../src/core/fleet/engine-admission-view.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
 async function call(api: ApiModule, url = PATH, method = 'GET') {
@@ -20,9 +20,9 @@ const NOW = TS_SECONDS * 1000 + 30_000;
 const MEMSTAT = { schema: 'ashlr.memstat.v1', ts: TS_SECONDS, free_pct: 58, swap_gb: 0, swapouts_per_min: 0, disk_gb: 601 };
 
 const ADMISSION: EngineAdmissionView = {
-  gated: true, allowed: false, free_pct: 12.3, swap_gb: 9.87,
-  reason: 'Host memory pressure: 12.3% free, 9.87 GiB swap; launch held until at least 35% free and at most 6 GiB swap.',
-  thresholds: ENGINE_ADMISSION_THRESHOLDS,
+  gated: true, allowed: false, pressure_level: 2, free_pct: 12.3, swap_gb: 9.87,
+  reason: 'Kernel memory pressure warning; launch held.',
+  policy: ENGINE_ADMISSION_POLICY,
 };
 
 describe('fleet memory engine_admission field', () => {
@@ -46,8 +46,8 @@ describe('fleet memory engine_admission field', () => {
       readFiles: async () => ({ memstat: MEMSTAT, memguard: null }),
       runsDir: '/runs-root', now: () => NOW,
       readAdmission: () => ({
-        gated: false, allowed: null, free_pct: null, swap_gb: null,
-        reason: 'Engine memory gate runs on macOS only.', thresholds: ENGINE_ADMISSION_THRESHOLDS,
+        gated: false, allowed: null, pressure_level: null, free_pct: null, swap_gb: null,
+        reason: 'Engine memory gate runs on macOS only.', policy: ENGINE_ADMISSION_POLICY,
       }),
     });
     const result = await call(api);

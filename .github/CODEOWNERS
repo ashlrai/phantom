@@ -150,6 +150,7 @@
 /desktop/src-tauri/src/main.rs @masonwyatt23
 /desktop/src-tauri/src/lib.rs @masonwyatt23
 /src/core/run/desktop-metadata-launch-trust.ts @masonwyatt23
+/src/core/resources/quota-evidence-worker.ts @masonwyatt23
 /src/core/run/gateway-target.ts @masonwyatt23
 /src/cli/desktop-update.ts @masonwyatt23
 /src/cli/desktop.ts @masonwyatt23
@@ -885,6 +886,7 @@
 /test/m571.local-production-gate.test.ts @masonwyatt23
 /test/m66.mcp-ecosystem.test.ts @masonwyatt23
 /test/m71.onboard-stack.test.ts @masonwyatt23
+/test/m75.fleet-watch.test.ts @masonwyatt23
 /test/m78.titrr.test.ts @masonwyatt23
 /test/m80.subscription-usage.test.ts @masonwyatt23
 /test/m84.goal-direct.test.ts @masonwyatt23
@@ -982,6 +984,7 @@
 /test/post-merge-watch-310b.test.ts @masonwyatt23
 /test/post-merge-watch-suite-310b.test.ts @masonwyatt23
 /test/preparation-harness-custody.test.ts @masonwyatt23
+/test/pressure-launch-gate-e2e.test.ts @masonwyatt23
 /test/proactive-routing-lab.test.ts @masonwyatt23
 /test/process-group-liveness.test.ts @masonwyatt23
 /test/process-liveness-helper.test.ts @masonwyatt23
@@ -1045,9 +1048,11 @@
 /test/resource-profile-cli.test.ts @masonwyatt23
 /test/resource-profile-integration.test.ts @masonwyatt23
 /test/resource-profile-repin.test.ts @masonwyatt23
+/test/resource-quota-evidence-background.test.ts @masonwyatt23
 /test/resource-spark-enrollment-cli.test.ts @masonwyatt23
 /test/resource-spark-enrollment-files.test.ts @masonwyatt23
 /test/resource-spark-enrollment.test.ts @masonwyatt23
+/test/resource-volume-polling.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23

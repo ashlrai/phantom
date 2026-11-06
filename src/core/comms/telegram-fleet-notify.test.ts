@@ -44,9 +44,17 @@ describe('Telegram fleet notifier', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['needs-you', 'completed'] as const)('ignores %s events', async (kind) => {
+  it('ignores completed events', async () => {
     const send = vi.fn(async () => ({ ok: true }));
-    await createTelegramFleetNotifier({ cfg: configured(), send })(kind, { detail: 'private session text' });
+    await createTelegramFleetNotifier({ cfg: configured(), send })('completed', { detail: 'private session text' });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('sends only the generic notice for needs-you, never the private payload', async () => {
+    const send = vi.fn(async (_text: string, _x?: unknown, _cfg?: unknown) => ({ ok: true }));
+    const cfg = configured();
+    await createTelegramFleetNotifier({ cfg, send })('needs-you', { detail: 'private session text /Users/fake/secret' });
+    expect(send).toHaveBeenCalledExactlyOnceWith('Needs you.', undefined, cfg);
+    expect(String(send.mock.calls[0]![0])).not.toMatch(/private|secret/);
   });
 });

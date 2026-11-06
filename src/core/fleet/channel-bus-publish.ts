@@ -3,9 +3,6 @@
  * interjections without tailing MASON-INBOX.md. Publishing is strictly best
  * effort: it can never change a receipt, its acknowledgement, or its dedupe
  * window, and it never throws. */
-import { join } from 'node:path';
-import { sendWithBusWake } from './bus-wake.js';
-import { busWakeQueueEnqueue } from './bus-wake-queue.js';
 import { appendBusInbox } from './bus-inbox.js';
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
 import type { ChannelEnvelope } from './channel-envelope.js';
@@ -58,14 +55,7 @@ export async function publishChannelEnvelope(
     }
     const busEnvelope = buildChannelBusEnvelope(envelope, options.now);
     if (busEnvelope === null) return 'skipped';
-    const result = await sendWithBusWake(busEnvelope, {
-      send: message => {
-        const post = appendBusInbox(message, { root: options.root, now: options.now });
-        if (post.status !== 'posted' && post.status !== 'duplicate') throw new Error('Bus refused');
-      },
-      enqueue: busWakeQueueEnqueue(options.root),
-      ...(options.root === undefined ? {} : { hoplogFile: join(options.root, 'bus', 'hops.jsonl') }),
-    });
-    return result.sent ? 'published' : 'failed';
+    const post = appendBusInbox(busEnvelope, { root: options.root, now: options.now });
+    return post.status === 'posted' || post.status === 'duplicate' ? 'published' : 'failed';
   } catch { return 'failed'; }
 }

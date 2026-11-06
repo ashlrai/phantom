@@ -20,8 +20,8 @@ trusted: a version/help probe executes their code; this is not a sandbox.
 | Product | Executable | Reviewed release | Source commit |
 | --- | --- | --- | --- |
 | Phantom Secrets | `phantom` | [0.7.9](https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.9) | `7a51ce512ec4aee12cc29ff859036af63fbe93db` |
-| Locus | `locus` | [0.5.0](https://github.com/ashlrai/locus/releases/tag/v0.5.0) | `e7bced3cd4cb4adf08bbba020f2e05f163b55941` |
-| Lexicon | `lexicon` | [0.5.4](https://github.com/ashlrai/lexicon/releases/tag/v0.5.4) | `6ebc0721e33de2dafafbb54d89a6af50a362046a` |
+| Locus | `locus` | [0.7.0](https://github.com/ashlrai/locus/releases/tag/v0.7.0) | `94c3a0cc419faf348b635783c586c72388eee72f` |
+| Lexicon | `lexicon` | [0.5.9](https://github.com/ashlrai/lexicon/releases/tag/v0.5.9) | `d704451dce0247ae97b4f7b125e4780b22ba3e7b` |
 
 These pins describe reviewed CLI identity/version surfaces. They do not prove
 artifact provenance, runtime contract support or installed readiness. Verify

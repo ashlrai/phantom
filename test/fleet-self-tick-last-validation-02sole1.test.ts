@@ -34,6 +34,8 @@ const steps = (codes: Partial<Record<string, number>> = {}): SelfTickSteps => {
   return {
     'reset-release': run('reset-release'),
     'lane-autohold': run('lane-autohold'),
+    'stray-stop': run('stray-stop'),
+    'meter-incident': run('meter-incident'),
     'planner-tick': run('planner-tick'),
     'inbox-acks': run('inbox-acks'),
     'order-notices': run('order-notices'),
@@ -138,7 +140,7 @@ describe('self-tick last record: contradictions and tampering', () => {
 
   it('a failed step whose exit code becomes 0 is unreadable', async () => {
     await runAndPersist({ codes: { 'planner-tick': 1 } });
-    mutateStored((record) => { storedSteps(record)[2]!['exitCode'] = 0; });
+    mutateStored((record) => { storedSteps(record).find(step => step['step'] === 'planner-tick')!['exitCode'] = 0; });
     expect(readSelfTickLast(runsDir, NOW_MS)).toEqual({ state: 'unreadable' });
   });
 
