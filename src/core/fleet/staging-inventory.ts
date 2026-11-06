@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { lstat, opendir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -41,10 +41,28 @@ export function measureStaging(path: string): number {
   const text = execFileSync('du', ['-sk', path], {
     encoding: 'utf8', timeout: DU_TIMEOUT_MS, maxBuffer: DU_MAX_BUFFER, stdio: ['ignore', 'pipe', 'ignore'],
   });
+  return parseDuBytes(text);
+}
+
+function parseDuBytes(text: string): number {
   const match = /^(\d+)\s/.exec(text);
   const bytes = match ? Number(match[1]) * 1024 : NaN;
   if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('invalid du result');
   return bytes;
+}
+
+export function measureStagingAsync(path: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = execFile('du', ['-sk', path], {
+      encoding: 'utf8', timeout: DU_TIMEOUT_MS, maxBuffer: DU_MAX_BUFFER,
+    }, (error, stdout) => {
+      if (error) { reject(error); return; }
+      try { resolve(parseDuBytes(stdout)); } catch (parseError) { reject(parseError); }
+    });
+    child.stdin?.end();
+    child.stderr?.removeAllListeners('data');
+    child.stderr?.resume();
+  });
 }
 
 export async function inventoryStaging(root: string, deps: InventoryDeps = {}) {
@@ -58,7 +76,7 @@ export async function inventoryStaging(root: string, deps: InventoryDeps = {}) {
     try {
       // Recheck immediately before du; du's default physical mode does not follow symlinks.
       if (!deps.list && !(await lstat(join(root, child.name))).isDirectory()) throw new Error('child changed');
-      const measured = await (deps.measure ?? measureStaging)(join(root, child.name));
+      const measured = await (deps.measure ?? measureStagingAsync)(join(root, child.name));
       if (!Number.isSafeInteger(measured) || measured < 0) throw new Error('invalid measurement');
       bytes = measured;
     } catch { failed = true; }
