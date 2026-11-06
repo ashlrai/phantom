@@ -45,6 +45,11 @@ export function readLeaderNetworkConfig(options: LeaderRuntimeOptions = {}): { c
   return { configSource: read('agent-network.toml'), commsSource: read('comms.toml') };
 }
 
+/** Capture startup input plus a trusted fresh reader for later async recovery. */
+export function leaderNetworkSources(options: LeaderRuntimeOptions = {}) {
+  return { ...readLeaderNetworkConfig(options), readCurrentPolicy: () => readLeaderNetworkConfig(options) };
+}
+
 /** The installed host's sole writer is a fixed dependency. Custom isolated roots
  * keep their existing file writer unless the trusted test/host supplies a seam. */
 export function leaderInboxAppender(options: LeaderRuntimeOptions = {}): LeaderInboxAppender | undefined {
@@ -82,7 +87,7 @@ export async function readLeaderInbox(options: LeaderRuntimeOptions & { limit?: 
 /** Local terminal / mutation-authenticated desktop compose. The trusted endpoint
  * supplies local-owner; the request body cannot choose an owner identity. */
 export async function composeLeaderInbox(text: string, options: LeaderRuntimeOptions = {}) {
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   const decision = checkSendPolicy({ channel: 'bus', recipients: ['leader'], teamIdentities: parseTeamIdentities(sources.configSource), external: false, confirmedByMason: parseCommsConfirmation(sources.commsSource) });
   if (decision.status !== 'sent') return { ok: false as const, reason: decision.reason, status: decision.status };
   const at = (options.now ?? Date.now)();
@@ -100,7 +105,7 @@ export async function composeLeaderInbox(text: string, options: LeaderRuntimeOpt
  * iMessage intentionally stays local and never enters the bus. */
 export async function receiptLeaderChannel(envelope: ChannelEnvelope, options: LeaderRuntimeOptions = {}): Promise<'published' | 'ignored' | 'failed'> {
   if (envelope.channel !== 'telegram' && envelope.channel !== 'email') return 'ignored';
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   const identity: TeamIdentity = { channel: envelope.channel, id: envelope.verifiedSenderId };
   if (!parseMasonIdentities(sources.configSource).some(row => row.channel === identity.channel && row.id === identity.id)) return 'ignored';
   const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) });
@@ -188,7 +193,7 @@ async function generateLeaderReply(text: string, cfg: AshlrConfig, options: Lead
 }
 
 export async function hasPendingLeaderNetwork(options: LeaderRuntimeOptions = {}): Promise<boolean> {
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   if (!parseMasonIdentities(sources.configSource).length) return false;
   return (await createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) }).pending()).length > 0;
 }
@@ -199,7 +204,7 @@ export async function tickLeaderNetwork(cfg: AshlrConfig, options: LeaderRuntime
     const { tickTeammateMessages } = await import('../comms/imessage-teammate-worker.js');
     await tickTeammateMessages(cfg, options).catch(() => undefined);
   }
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   if (!parseMasonIdentities(sources.configSource).length) return { status: 'disabled' as const, replies: 0 };
   const directory = join(runsRoot(options), 'leader');
   ensurePrivateDirectory(directory);

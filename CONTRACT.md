@@ -327,6 +327,30 @@ Both are implemented in `src/cli/doctor-init.ts` and loaded lazily from the disp
 
 ---
 
+## Native seat resolution — fresh authority vs historical display
+
+`src/core/resources/native-profile.ts`, `account-identity-witness.ts`, `reading-cache.ts`.
+
+- `resolveNativeSeatLaunch(options) -> NativeSeatLaunchResult` — **unchanged signature.**
+  Every call reads the APFS volume identity afresh. Launch, admission, `captureEpoch`,
+  `remember`, `witness`, `readResourceAccountLocalEpoch` and
+  `recheckResourceAccountIdentitySnapshot` use only this path.
+- `resolveNativeSeatDisplayMetadata({ accountsRoot, provider, seatId? }) -> NativeSeatDisplayMetadata | null` — **new.**
+  Same manifest/launcher/directory/inode/template checks, but the volume identity may be
+  a private per-device observation up to 60 s old (failures cached too, 32 entries).
+  `NativeSeatDisplayMetadata` is `{ seatId, provider, command, nativeStatePath }`: no
+  `ok`, `launch` or `executable`, so it is not a `NativeSeatLaunchResult`/`NativeSeatLaunch`.
+- `readResourceAccountDisplayEpoch(accountsRoot, account) -> ResourceAccountDisplayEpoch | null` — **new.**
+  `{ scope: 'historical-display-only', profileDigest, displayEpochDigest, accountDigest? }`;
+  deliberately not assignable to `ResourceAccountLocalEpoch`.
+- `createResourceReadingCache` gains optional `readDisplayEpoch`; `ResourceReadingCache.lastKnown`
+  uses the display epoch and no longer calls `witness()`. `witness()` stays fresh, and cached
+  volume data never mints a witness, capacity or financial evidence. Historical labels are unchanged.
+- Consequence: after a volume change, `witness()`, `captureEpoch` and launch reject at once,
+  while `lastKnown` display may stay historical for up to 60 s.
+
+---
+
 ## Build / run
 
 - `npm run build` → tsc → `dist/`
