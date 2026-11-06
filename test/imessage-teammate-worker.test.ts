@@ -29,7 +29,7 @@ describe('teammate worker', () => {
   });
   it('never retries an uncertain native send; it reconciles the exact durable draft later', async () => {
     seed(); const deps = options(); deps.reconcile = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(receipt);
-    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ pending: 1, sent: 0 });
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ state: 'pending', pending: 1, sent: 0 });
     expect(state().replies[0]?.state).toBe('sending');
     expect(await runTeammateResponder(cfg, deps)).toMatchObject({ sent: 1 });
     expect(deps.send).toHaveBeenCalledOnce();

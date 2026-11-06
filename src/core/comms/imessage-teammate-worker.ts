@@ -132,7 +132,7 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       else report.pending++;
     }
     save();
-    return { ...report, state: 'healthy' };
+    return { ...report, state: report.pending > 0 ? 'pending' : 'healthy' };
   } catch { return report; }
   finally { if (held?.state === 'acquired') releaseLocalStoreLock(held.lock); }
 }
