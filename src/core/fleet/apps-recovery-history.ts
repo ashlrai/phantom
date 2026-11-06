@@ -70,7 +70,7 @@ export function readAppsRecoveryHistory(root: string, after: number, limit: numb
       cursor = row.cursor;
       const body = row.envelope.body;
       if (row.envelope.from !== 'apps-watch' || row.envelope.to !== 'leaders' || !object(body) ||
-        (invocationId !== undefined && body.invocationId !== invocationId)) continue;
+        (invocationId !== undefined && (typeof body.invocationId !== 'string' || body.invocationId.toLowerCase() !== invocationId.toLowerCase()))) continue;
       const data = project(body);
       if (data) events.push({ cursor: row.cursor, receivedAt: row.receivedAt, invocationId: body.invocationId, ...data });
       if (events.length === limit) return { v: 1 as const, availability: 'available', events, nextCursor: cursor, hasMore: true };

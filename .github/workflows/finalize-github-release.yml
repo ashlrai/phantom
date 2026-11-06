@@ -131,13 +131,14 @@ jobs:
           set -euo pipefail
           umask 077
           receipt=finalization-preflight/github-stable-finalization-preflight.json
-          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/master && "$GITHUB_REPOSITORY" == ashlrai/phantom ]]
-          [[ "$CONFIRM_STABLE_FINALIZATION" == true && "$EXPECTED_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$(find finalization-preflight -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" == 1 ]]
+          # Bash 3.2 does not reliably apply errexit to standalone [[ ... ]].
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" == refs/heads/master && "$GITHUB_REPOSITORY" == ashlrai/phantom ]] || exit 1
+          [[ "$CONFIRM_STABLE_FINALIZATION" == true && "$EXPECTED_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          [[ "$(find finalization-preflight -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" == 1 ]] || exit 1
           test -f "$receipt" && test ! -L "$receipt"
           test "$(stat --format='%h' "$receipt")" = 1
           test "$(wc -c < "$receipt")" -le 16384
-          [[ "$(sha256sum "$receipt" | cut -d ' ' -f 1)" == "$EXPECTED_RECEIPT_SHA256" ]]
+          [[ "$(sha256sum "$receipt" | cut -d ' ' -f 1)" == "$EXPECTED_RECEIPT_SHA256" ]] || exit 1
           jq -e --arg version "$VERSION" --arg candidate "$CANDIDATE_SHA" --arg integrity "$CANDIDATE_INTEGRITY" \
             --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" --arg sha "$GITHUB_SHA" \
             --arg publish "$PUBLISH_RUN_ID" --arg publishAttempt "$PUBLISH_RUN_ATTEMPT" \
@@ -217,25 +218,64 @@ jobs:
           verify_tag
           verify_release true
           jq -cn '{draft:false, make_latest:"true"}' > "$RUNNER_TEMP/patch.json"
+          # Persist bounded intent only after admission. Intent is not proof of execution.
+          evidence_dir="$RUNNER_TEMP/finalization-evidence"
+          mkdir "$evidence_dir"
+          jq -cn --slurpfile receipt "$receipt" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg hash "$EXPECTED_RECEIPT_SHA256" \
+            '{schemaVersion:1,effect:"github-release-draft-finalization-attempt",input:$receipt[0].input,
+              release:$receipt[0].release,preflightSha256:$hash,preparedAt:$at,githubReleaseMutationExecuted:null,
+              mutation:{method:"PATCH",fields:{draft:false,make_latest:"true"}}}' > "$evidence_dir/attempt.tmp"
+          test "$(wc -c < "$evidence_dir/attempt.tmp")" -le 16384
+          mv "$evidence_dir/attempt.tmp" "$evidence_dir/attempt.json"
+          phase=patch
+          record_outcome() {
+            local code=$? response_bytes=0 response_sha256=""
+            trap - EXIT
+            if [[ -f "$RUNNER_TEMP/patch-result.json" ]]; then
+              response_bytes="$(wc -c < "$RUNNER_TEMP/patch-result.json" | tr -d ' ')" || response_bytes=0
+              response_sha256="$(sha256sum "$RUNNER_TEMP/patch-result.json" | cut -d ' ' -f 1)" || response_sha256=""
+            fi
+            # Never upload raw transport output or infer nonexecution from a failed response.
+            if ! { jq -cn --arg phase "$phase" --argjson code "$code" --argjson bytes "$response_bytes" --arg hash "$response_sha256" \
+              '{schemaVersion:1,effect:"github-release-draft-finalization-outcome",phase:$phase,exitCode:$code,
+                state:(if $phase == "completed" then "postverified" elif $phase == "postcheck" then "postcheck_failed" else "unknown" end),
+                githubReleaseMutationExecuted:(if $phase == "completed" then true else null end),
+                patchResponse:{bytes:$bytes,sha256:(if $hash == "" then null else $hash end)}}' > "$evidence_dir/outcome.tmp" &&
+              test "$(wc -c < "$evidence_dir/outcome.tmp")" -le 4096 && mv "$evidence_dir/outcome.tmp" "$evidence_dir/outcome.json"; }; then
+              if [[ "$code" == 0 ]]; then code=1; fi
+            fi
+            exit "$code"
+          }
+          trap record_outcome EXIT
           # Sole external mutation. Never replay on an ambiguous response.
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" --input "$RUNNER_TEMP/patch.json" > "$RUNNER_TEMP/patch-result.json"
+          phase=postcheck
           verify_tag
           verify_release false
           gh api "repos/$GITHUB_REPOSITORY/releases/latest" | jq -e --argjson id "$release_id" --arg tag "$tag" \
             '.id == $id and .tag_name == $tag and .draft == false and .prerelease == false' >/dev/null
           curl --fail --silent --show-error --location --proto '=https' --max-time 30 --max-filesize 131072 \
             "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" > "$RUNNER_TEMP/latest.json"
-          [[ "sha256:$(sha256sum "$RUNNER_TEMP/latest.json" | cut -d ' ' -f 1)" == "$(jq -er '.[] | select(.name == "latest.json") | .digest' "$RUNNER_TEMP/assets.json")" ]]
+          [[ "sha256:$(sha256sum "$RUNNER_TEMP/latest.json" | cut -d ' ' -f 1)" == "$(jq -er '.[] | select(.name == "latest.json") | .digest' "$RUNNER_TEMP/assets.json")" ]] || exit 1
           jq -cn --slurpfile receipt "$receipt" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{schemaVersion:2,effect:"github-release-draft-finalization",release:$receipt[0].release,input:$receipt[0].input,
               evidence:$receipt[0].evidence,finalizedAt:$at,mutation:{method:"PATCH",count:1,fields:{draft:false,make_latest:"true"}},
               githubReleaseMutationExecuted:true,npmMutationAuthority:false,installAuthority:false,activationAuthority:false}' > "$RUNNER_TEMP/github-stable-finalization.json"
+          phase=completed
           echo 'Finalized signed Phantom draft; installed-app update and launch remain unverified.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Require successful finalization receipt
+        if: success()
+        shell: bash
+        run: test -s "$RUNNER_TEMP/github-stable-finalization.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
           name: github-stable-release-finalization-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/github-stable-finalization.json
-          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/finalization-evidence/attempt.json
+            ${{ runner.temp }}/finalization-evidence/outcome.json
+            ${{ runner.temp }}/github-stable-finalization.json
+          if-no-files-found: ignore
           retention-days: 30
           overwrite: false
           include-hidden-files: false

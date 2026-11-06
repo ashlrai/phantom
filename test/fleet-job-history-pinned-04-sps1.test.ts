@@ -44,8 +44,8 @@ it.each(['HEAD', 'origin/master'])('resolves %s once, then logs and reads paths 
     if (args[0] === 'rev-parse') return `${OID}\n`;
     if (args[0] === 'log') {
       // The symbolic ref moved after resolution: scanning it would see an unrelated newer head.
-      if (args[3] === ref) return record(9, 'bridge(RQ-OTHER-9): moved head');
-      if (args[3] === OID) return history;
+      if (args[4] === ref) return record(9, 'bridge(RQ-OTHER-9): moved head');
+      if (args[4] === OID) return history;
       throw new Error('unexpected log ref');
     }
     if (args[0] === 'diff-tree') return `p/${args.at(-2)!.slice(-6)}.ts\0`;
@@ -54,7 +54,7 @@ it.each(['HEAD', 'origin/master'])('resolves %s once, then logs and reads paths 
   const result = await jobPathHistory('RQ-TARGET-1', ref, 20, run);
   // Resolution precedes the log scan, which runs on the oid — never the movable ref.
   expect(run.mock.calls[0]![0]).toEqual(['rev-parse', '--verify', `${ref}^{commit}`]);
-  expect(run.mock.calls[1]![0]).toEqual(['log', '-n1000', '--format=%H%x00%cI%x00%s%x00', OID, '--']);
+  expect(run.mock.calls[1]![0]).toEqual(['log', '-n1000', '--first-parent', '--format=%H%x00%cI%x00%s%x00', OID, '--']);
   // Path evidence comes from the recorded commit shas only.
   expect(run.mock.calls.filter(call => call[0][0] === 'diff-tree').map(call => call[0].at(-2))).toEqual([sha(1), sha(4)]);
   expect(result).toMatchObject({ ref, resolvedRef: OID, scanBound: 1000, scanned: 4, scanMayBeTruncated: false });
@@ -70,7 +70,7 @@ it('accepts a sha256-length resolved oid like the batch contract allows', async 
     return 'wide.ts\0';
   });
   const result = await jobPathHistory('RQ-WIDE-1', 'origin/master', 20, run);
-  expect(run.mock.calls[1]![0]).toEqual(['log', '-n1000', '--format=%H%x00%cI%x00%s%x00', oid64, '--']);
+  expect(run.mock.calls[1]![0]).toEqual(['log', '-n1000', '--first-parent', '--format=%H%x00%cI%x00%s%x00', oid64, '--']);
   expect(result).toMatchObject({ resolvedRef: oid64, scanned: 1, paths: ['wide.ts'] });
 });
 
@@ -100,9 +100,10 @@ it('keeps bound and limit truncation evidence after pinning', async () => {
   expect(run.mock.calls.filter(call => call[0][0] === 'diff-tree')).toHaveLength(1);
   const full = Array.from({ length: 1000 }, (_, i) => record(i + 10, 'bridge(RQ-J-3): x')).join('');
   run.mockImplementation(async (args: string[]) =>
-    args[0] === 'rev-parse' ? `${OID}\n` : args[0] === 'log' ? full : 'p\0');
+    args[0] === 'rev-parse' ? `${OID}\n` : args[0] === 'log' ? full
+      : args[0] === 'rev-list' ? `${sha(1009)} ${sha(1010)}\n` : 'p\0');
   const bound = await jobPathHistory('RQ-J-3', 'HEAD', 100, run);
-  expect(bound).toMatchObject({ resolvedRef: OID, scanned: 1000, scanMayBeTruncated: true, matchesTruncated: true });
+  expect(bound).toMatchObject({ resolvedRef: OID, scanned: 1000, nextBefore: sha(1010), scanMayBeTruncated: true, matchesTruncated: true });
 });
 
 it('validates job, ref and limit before starting any git process', async () => {
