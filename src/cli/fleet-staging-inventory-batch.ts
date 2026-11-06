@@ -3,6 +3,18 @@ import { ELIGIBILITY, inventoryStaging } from '../core/fleet/staging-inventory.j
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = 'usage: ashlr fleet staging-inventory-batch --stdin [--json | --ndjson]';
+const HELP = [USAGE, '',
+  'A version-1 stdin JSON object describes roots for sequential scanning:',
+  '  {"version":1,"roots":["/path/a","/path/b"]}',
+  '',
+  'Constraints: 1–8 absolute roots, no duplicates, UTF-8, ≤16KiB.',
+  'Semantics: sequential read-only scan; partial-result exit codes',
+  '(0 all-complete, 1 some-failed, 2 usage-invalid).',
+  '',
+  'Options: --json prints a single safe JSON report; --ndjson emits',
+  '  per-root and summary lines to stdout.',
+  '--help, -h  print this help and exit 0.',
+].join('\n');
 const MAX_BYTES = 16 * 1024;
 type Input = AsyncIterable<Uint8Array | string> & { isTTY?: boolean };
 type Report = Awaited<ReturnType<typeof inventoryStaging>>;
@@ -41,6 +53,9 @@ async function readRoots(input: Input): Promise<string[] | null> {
 
 export async function cmdFleetStagingInventoryBatch(args: string[], deps: Deps = {}): Promise<number> {
   const output = deps.output ?? console;
+  for (const arg of args) {
+    if (arg === '--help' || arg === '-h') { output.log(HELP); return 0; }
+  }
   const flags = new Set(args);
   if (flags.size !== args.length || !flags.has('--stdin') || (flags.has('--json') && flags.has('--ndjson')) || [...flags].some((flag) => !['--stdin', '--json', '--ndjson'].includes(flag))) {
     output.error(USAGE); return 2;
