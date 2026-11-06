@@ -13,6 +13,7 @@ const parked: FleetQueueV1 = {
   total: 3, ready: 1, parked: 2, malformed: 0, skipsLast24h: 1,
   byLane: [{ lane: 'a', ready: 0, parked: 1 }, { lane: 'b', ready: 1, parked: 1 }],
   groups: [{ lane: 'a', reason: 'HOLD', count: 1, jobs: ['A'] }, { lane: 'b', reason: 'HOLD', count: 1, jobs: ['B'] }],
+  unmetDeps: [],
   skips: [{ at: 'now', job: 'B', code: 'SKIP', reason: 'busy' }],
 };
 const deps = () => ({ runs: readFleetRunsDirState, journal: vi.fn(async () => journal), parked: vi.fn(async () => parked) });

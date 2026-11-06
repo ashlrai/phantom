@@ -31,7 +31,8 @@ export async function runContextCheckedRun(opts: ContextCheckedRunOptions, io: C
   const stderr = io.stderr ?? process.stderr;
   let cwd: string;
   try {
-    const selected = opts.cwd === undefined ? process.cwd() : opts.cwd;
+    /* An injected gate cwd is the working tree under verification, so an omitted worker cwd follows it. */
+    const selected = opts.cwd === undefined ? (io.gate?.cwd ?? process.cwd()) : opts.cwd;
     if (typeof selected !== 'string' || !selected || selected.includes('\0') || !isAbsolute(selected)) throw new Error();
     cwd = realpathSync(selected);
     if (!statSync(cwd).isDirectory()) throw new Error();

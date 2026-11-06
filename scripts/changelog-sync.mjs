@@ -21,6 +21,26 @@ function sections(text) {
   });
 }
 
+// Bridge merges are titled `bridge(<JOB-ID>): <subject>` and most subjects are
+// boilerplate ("BRIDGE_NOTES — <JOB-ID>"). Returns the reader-facing subject, or
+// null when the entry should be omitted (boilerplate, bare job id, FIXUP- repair jobs).
+function bridgeSubject(scope, subject) {
+  if (scope && /^FIXUP-/i.test(scope)) return null;
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tail = '(?:\\s*[:—–]\\s*|\\s+-\\s+|\\s*$)';
+  const prefixes = [new RegExp(`^(?:bridge[ _-]?notes(?:\\.md)?|handoff)\\b${tail}`, 'i')];
+  if (scope) prefixes.unshift(new RegExp(`^${escape(scope)}${tail}`, 'i'));
+  let rest = subject.trim();
+  for (let again = true; again && rest;) {
+    again = false;
+    for (const prefix of prefixes) {
+      const next = rest.replace(prefix, '').trim();
+      if (next !== rest) { rest = next; again = true; }
+    }
+  }
+  return !rest || /^(?:RQ|FIXUP)-[A-Za-z0-9._-]+$/.test(rest) ? null : rest;
+}
+
 function update(text, data) {
   if (!Array.isArray(data.commits) || !Array.isArray(data.pullRequests)) {
     throw new Error('Snapshot requires commits and pullRequests arrays');
@@ -39,6 +59,10 @@ function update(text, data) {
     if (typeof entry.message !== 'string' || /[\r\n]/.test(entry.message)) throw new Error('Expected single-line subject');
     const match = entry.message.match(/^([a-z]+)(?:\(([^)]+)\))?(!)?: (.+)$/);
     if (!match) continue;
+    if (match[1] === 'bridge') {
+      match[4] = bridgeSubject(match[2], match[4]);
+      if (match[4] === null) continue;
+    }
     const group = new Map([['feat', 'Added'], ['fix', 'Fixed'], ['perf', 'Performance'], ['revert', 'Reverted']]).get(match[1]) ?? 'Changed';
     const line = `- ${match[3] ? '**BREAKING** ' : ''}${match[2] ? `**${match[2]}:** ` : ''}${match[4]}${entry.suffix}`;
     if (!seen.has(line)) groups.get(group).push(line);

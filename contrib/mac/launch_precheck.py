@@ -26,7 +26,12 @@ def precheck(job, repo, prompt, home, runs, runner=run):
         env["GIT_TERMINAL_PROMPT"] = "0"
         r = runner(["/bin/bash", runs + "/bin/precheck.sh", task,
                     home + "/Projects/ashlrai/" + repo], 20, env=env, cwd=home)
-        if r.returncode in (10, 11, 12, 13):
+        if r.returncode == 10:
+            receipt = re.fullmatch(
+                rf"SKIP {re.escape(job)} code=10 reason=(id_merged_pr_[1-9][0-9]*|pr_[1-9][0-9]*_(?:MERGED|CLOSED))\n?",
+                r.stdout)
+            return (10, receipt.group(1)) if receipt else (13, "unproven_completion")
+        if r.returncode in (11, 12, 13):
             m = re.search(r"reason=(\S+)", r.stdout)
             return (r.returncode, m.group(1) if m else "?")
     except Exception:

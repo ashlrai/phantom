@@ -107,10 +107,12 @@ describe('harness digest refresh projection', () => {
     }
   });
 
-  it('documents the projection and full-digest check in help', async () => {
+  it('documents the projection and pre-refresh selection check in help', async () => {
     const result = await run(['--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('--needs-refresh');
-    expect(result.out).toContain('check always evaluates the full digest');
+    // PR #2161 documents checks after source, takeaway and query selection.
+    expect(result.out).toContain('The check evaluates the selection before --needs-refresh, after --source,');
+    expect(result.out).toContain('--with-takeaways and --query.');
   });
 });

@@ -121,3 +121,27 @@ quarantine above is active.
 
 **This directory is entirely self-contained.**  It does not modify `src/`,
 `package.json`, or any other file in the repo root.
+
+
+## Background update discovery and local status
+
+The native shell checks signed releases every 15 minutes. A polling gap over
+30 seconds triggers a check after wake, including while the window is hidden.
+Checks use the existing background download and minisign verification path.
+Disabled updates stay disabled and concurrent checks are coalesced.
+
+Copy and paste: `phm app update status --json`. For a readable report, run
+`phm app update status`. This inspects the remembered local stage through the
+installed consumer policy without downloading or applying an update.
+`available` is the inspected stage version. `deferredReason` preserves host
+admission holds. Lease counts cover all host execution leases, including
+unknown leases; they do not identify sidecar ownership. `current` and
+`runningJobs` are null because app identity and attached job IDs are not yet
+exported. Missing or unsafe local status returns exit 1, never a false current
+or idle result. Invalid arguments return exit 2.
+
+Automatic relaunch remains unavailable: the installed consumer requires
+authority Stop and zero execution leases and requests an operator restart.
+This change preserves those gates. Daemon-specific admission, bounded
+sidecar-job deferral in the app, and automatic relaunch need a coordinated
+host installer change before seamless application can ship.

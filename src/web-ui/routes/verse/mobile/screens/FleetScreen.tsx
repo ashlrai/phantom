@@ -43,6 +43,7 @@ import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
 import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
+import { UsageResourcesCard } from '../UsageResourcesCard.js';
 import { MobileReleaseCard } from '../MobileReleaseCard.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { mergeSpeedLines } from '../merge-speed-lines.js';
@@ -458,6 +459,7 @@ export function FleetScreen() {
       </Section>
       <Section title="Right now" flat>{liveBody}</Section>
       <FleetUsageCard />
+      <UsageResourcesCard />
       <Section title="Waste forecast">
         {ledger.status === 'error' ? (
           <ErrorState title="Couldn’t read waste forecast" reason={readFailureReason(ledger.error)} onRetry={refetchLedger} />

@@ -621,6 +621,8 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
+| Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
+| Rebuildable disk growth (logs, sessions, staging, worktrees) | `phm disk-maint` (dry run: bytes reclaimable per class; `--apply` frees them; `phm disk-maint schedule --install` installs the daily job; the protect-list keeps `~/.codex*`, model weights, Docker, client trees and secrets always) |
 | Log roots using too much disk | `phm steward disk` (dry run; `--apply` deletes expired or over-quota plain logs and gzip-archives cold Codex and Claude sessions to `~/.ashlr/archive`; files modified in the last 24 hours are untouched) |
 | Ledger integrity questions | `phm authority ledger verify` |
 | Safety invariants | `phm verify-safety` |
@@ -725,3 +727,16 @@ The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
 excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
+
+`phm fleet repo-rate --json` reads merged PR outcomes from
+`~/.ashlr-runs/metrics/jobs.jsonl` for the last six hours. It reports each repo's
+merge count, median time to merge in seconds, and newest merge time. Each PR
+counts once; missing durations remain unknown. `--hours N` changes the window.
+The default target is 20 merges for `ashlrai/phantom`; `--target N` changes it
+and `--all` checks every observed repo. Exit 1 means a checked repo is below
+target or the ledger could not be read. No work is launched or changed.
+
+`phm fleet slow-prs [--json]` lists open PRs at least 30 minutes old, measured
+against the newest timestamp in the last 3000 lines of the jobs ledger. Plain
+output shows one line per repository with its count and PR URLs; JSON returns
+the typed `fleet.slow-prs.v1` report. This command only reads the local ledger.

@@ -27,7 +27,12 @@ phm --version
 phm docs --agent --json
 ```
 
-This source tree targets version 3.29.16; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.9; check canonical release availability and exact matching assets before installation.
+
+Patch release PRs are evaluated every 30 minutes when master has new green CI.
+`RELEASE_CADENCE_MINUTES` configures the minimum interval; the release PR keeps
+this version, desktop metadata and release notes together. Tags still require
+the exact commit's required checks, and publication requires signed artifacts.
 Install the promoted npm `latest` release, or pin a published version from
 [GitHub releases](https://github.com/ashlrai/phantom/releases/latest).
 The source tree is not proof that npm has that version yet.

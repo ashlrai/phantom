@@ -13,10 +13,13 @@
  *   doctor                     One-glance health check (config, phantom, providers).
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
+ *   radar [list|run|diff]      Observe public documentation and package changes.
+ *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
  *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
+ *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
  *   skills audit <path>        Quarantine-audit an external skill pack (read-only).
@@ -338,6 +341,11 @@ const loadGenomeCmd = lazyCmd(
 const loadDesktopCmd = lazyCmd(
   () => import('./desktop.js'), (m) => m.cmdDesktop as Cmd,
   'desktop command requires the installed compiled consumer installer.',
+);
+
+const loadAppsCmd = lazyCmd(
+  () => import('./apps-control.js'), (m) => m.cmdApps as Cmd,
+  'apps command requires src/cli/apps-control.ts.',
 );
 
 const loadDesktopUpdateCmd = lazyCmd(
@@ -782,6 +790,12 @@ const loadOpenaiAgentsCmd = lazyCmd(
   () => import('./openai-agents.js'),
   (m) => m.runOpenaiAgentsCli as Cmd,
   'openai-agents command requires a current build of src/cli/openai-agents.ts.',
+);
+
+const loadAgentsCmd = lazyCmd(
+  () => import('./agents-bus-contract.js'),
+  (m) => m.runAgentsCli as Cmd,
+  'agents command requires a current build of src/cli/agents-bus-contract.ts.',
 );
 
 // ─── 3.15 Automations ───────────────────────────────────────────────
@@ -2004,6 +2018,11 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'route': {
+        const { cmdRoute } = await import('./route.js');
+        process.exitCode = await cmdRoute(rest);
+        break;
+      }
       case 'router-calibration': {
         const { cmdRouterCalibration } = await import('./router-calibration.js');
         process.exitCode = await cmdRouterCalibration(rest);
@@ -2226,8 +2245,16 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'app': {
+        process.exitCode = await (await import('./app.js')).cmdApp(rest);
+        break;
+      }
       case 'desktop': {
         process.exitCode = await (await loadDesktopCmd())(rest);
+        break;
+      }
+      case 'apps': {
+        process.exitCode = await (await loadAppsCmd())(rest);
         break;
       }
       case 'desktop-update': {
@@ -2342,6 +2369,18 @@ async function main(): Promise<void> {
       case 'worktrees': {
         const { cmdWorktrees } = await import('./worktrees.js');
         process.exitCode = cmdWorktrees(rest);
+        break;
+      }
+
+      case 'disk': {
+        const { cmdDisk } = await import('./disk.js');
+        process.exitCode = await cmdDisk(rest);
+        break;
+      }
+
+      case 'disk-maint': {
+        const { cmdDiskMaint } = await import('./disk-maint.js');
+        process.exitCode = await cmdDiskMaint(rest);
         break;
       }
 
@@ -2532,6 +2571,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'verify': {
+        const { cmdVerify } = await import('./verify.js');
+        process.exitCode = await cmdVerify(rest);
+        break;
+      }
+
       case 'verify-safety': {
         const cmdVerifySafety = await loadVerifySafetyCmd();
         process.exitCode = await cmdVerifySafety(rest);
@@ -2574,6 +2619,17 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'drafts': {
+        // Outbound drafts awaiting approval (src/core/cos/drafts.ts); approve records, never sends.
+        process.exitCode = await (await import('./drafts.js')).cmdDrafts(rest);
+        break;
+      }
+
+      case 'radar': {
+        process.exitCode = await (await import('./radar.js')).cmdRadar(rest);
+        break;
+      }
+
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);
@@ -2601,6 +2657,24 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'imessage': {
+        const { cmdIMessage } = await import('./imessage.js');
+        process.exitCode = await cmdIMessage(rest);
+        break;
+      }
+
+      case 'memory': {
+        const { cmdMemory } = await import('./memory.js');
+        process.exitCode = await cmdMemory(rest);
+        break;
+      }
+
+      case 'connectors': {
+        const { cmdConnectors } = await import('./connectors.js');
+        process.exitCode = await cmdConnectors(rest);
         break;
       }
 
@@ -2724,6 +2798,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'agents': {
+        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        const cmdAgents = await loadAgentsCmd();
+        process.exitCode = await cmdAgents(rest);
+        break;
+      }
+
       case 'automations': {
         // 3.15: standing triggers → lane tasks (src/cli/automations.ts). `fire`
         // goes through the lanes' own gates; `fire --dry-run` writes nothing.
@@ -2754,6 +2835,12 @@ async function main(): Promise<void> {
       case 'signals': {
         const { cmdSignals } = await import('./signals.js');
         process.exitCode = await cmdSignals(rest);
+        break;
+      }
+
+      case 'friction': {
+        const { cmdFriction } = await import('./friction.js');
+        process.exitCode = await cmdFriction(rest);
         break;
       }
 

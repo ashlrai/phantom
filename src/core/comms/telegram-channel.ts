@@ -57,7 +57,8 @@ import { LaneTargetError, setLaneTarget } from '../fleet/runs-lane-targets.js';
 import { parseReleaseCommand, renderReleaseReply, type ReleaseReply } from './telegram-release-command.js';
 import { runTelegramJobCommand, renderJobCommandReply } from './telegram-job-command.js';
 import { runTelegramNeedsCommand, renderNeedsCommandReply } from './telegram-needs-command.js';
-import { listNeedsMason, resolveNeedsMason } from '../fleet/needs-mason-resolve.js';
+import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
+import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
 import { stopJob } from '../fleet/job-stop.js';
 import { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { parseHoldCommand, renderHoldReply, type HoldReply } from './telegram-hold-command.js';
@@ -1056,7 +1057,7 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
     const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
     if (Number.isSafeInteger(id) && event.fromChatId === chatId &&
         event.privateChat === true && event.senderUserId === id) {
-      const result = await runTelegramNeedsCommand(text, { list: listNeedsMason, resolve: resolveNeedsMason });
+      const result = await runTelegramNeedsCommand(text, { list: listNeedsMason, resolve: (request, opts) => resolveNeedsMasonWithInbox(request, opts) });
       const sent = await replyTo(event, renderNeedsCommandReply(result), cfg);
       if (!sent.ok) throw new Error('Telegram acknowledgement failed');
     }

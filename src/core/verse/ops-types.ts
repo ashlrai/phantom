@@ -244,6 +244,10 @@ export interface OpsSelfUpdateV1 {
   headSha: string | null; processHeadSha: string | null; headAt: string | null; originSha: string | null; branch: string | null;
   behindSubjects?: string[] | null;
   behind: number | null; ahead: number | null; dirty: boolean | null; lastFetchAt: string | null;
+  /** Up to 8 scrubbed repo-relative paths reported by `git status --porcelain`; null when the probe failed. */
+  dirtyPaths?: string[] | null;
+  /** Full porcelain entry count (dirtyPaths is capped at 8); null when the probe failed. */
+  dirtyCount?: number | null;
   processStartedAt: string; uptimeSeconds: number; pid: number; canFastForward: boolean | null;
 }
 export interface OpsSelfUpdateActionBody { action: 'fetch' }

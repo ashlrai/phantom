@@ -217,20 +217,26 @@ describe('H4 · SANDBOX-REQUIRED · mandatory-sandbox abort (ZERO tasks, tree un
   });
 
   it('2.3 [UNTESTED] aborts with "sandbox worktree module unavailable" when the module is absent', async () => {
-    // Force the lazy worktree binding to stay null by making the dynamic import
-    // of ../sandbox/worktree.js THROW for a freshly-imported runner instance.
-    // _m21Loaded is module-scoped, so a vi.resetModules() + fresh import resets
-    // the loader; the doMock makes loadM21's import fail → _createSandbox null.
-    // This matches how H2 exercises the lazy seams (binding forced absent).
+    // Force the lazy worktree binding to stay null for a freshly-imported
+    // runner instance: _m21Loaded is module-scoped, so a vi.resetModules() +
+    // fresh import resets the loader. The doMock keeps every real export but
+    // nulls createSandbox — a factory that THREW would also fire for the
+    // static worktree.js importers pulled into runner's fresh module graph
+    // (e.g. inbox/temp-worktree-reaper.ts via fleet/host-merge.ts), failing the
+    // whole import with a mock-factory error before runSwarm is reached. A null
+    // capability lands on the same `_createSandbox === null` branch → the
+    // "module unavailable" abort. This matches how H2 exercises the lazy seams
+    // (binding forced absent).
     const repo = fx.makeRepo(); // a REAL git repo so the abort is specifically
     // "module unavailable" (NOT non-git/HEAD): project IS a git repo, but the
     // worktree MODULE can't load.
     const before = repo.shasumTree();
 
     vi.resetModules();
-    vi.doMock('../src/core/sandbox/worktree.js', () => {
-      throw new Error('simulated: worktree module unavailable');
-    });
+    vi.doMock('../src/core/sandbox/worktree.js', async (importOriginal) => ({
+      ...await importOriginal<typeof import('../src/core/sandbox/worktree.js')>(),
+      createSandbox: null,
+    }));
     try {
       const mod = await import('../src/core/swarm/runner.js');
       const run = await mod.runSwarm(

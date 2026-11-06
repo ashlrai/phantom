@@ -12,6 +12,8 @@ export interface NodeRecord extends NodeSession {
   caps?: string[];
   /** Live load in permille (0-1000), self-reported on each heartbeat. */
   usage?: number;
+  /** Maximum concurrent claims; zero holds admission. Missing preserves legacy routing. */
+  slots?: number;
   auth?: NodeAuth;
 }
 
@@ -22,6 +24,8 @@ export interface NodesState {
   nodes: NodeRecord[];
   leader: LeaderLease | null;
   jobs: QueueJobV1[];
+  /** One designated backup serializes admission for both hosts. */
+  pool?: { primary: string; backup: string; active: 'primary' | 'backup'; epoch: number; heartbeatAt: number };
 }
 
 export function emptyState(): NodesState {
@@ -59,12 +63,17 @@ export function parseState(value: unknown): NodesState {
   if (!object(value) || value.version !== 'drive.nodes.v1' || !integer(value.sequence) ||
       !integer(value.observedAt) || !Array.isArray(value.nodes) || !Array.isArray(value.jobs)) return fail();
   const sequence = value.sequence;
+  if (value.pool !== undefined && (!object(value.pool) || !validId(value.pool.primary) ||
+      !validId(value.pool.backup) || value.pool.primary === value.pool.backup ||
+      !['primary', 'backup'].includes(String(value.pool.active)) || !integer(value.pool.epoch) ||
+      value.pool.epoch < 1 || value.pool.epoch > sequence || !integer(value.pool.heartbeatAt) || value.pool.heartbeatAt > value.observedAt)) return fail();
   const token = (v: unknown): boolean => integer(v) && v > 0 && v <= sequence;
   const session = (v: Record<string, unknown>): boolean => validId(v.nodeId) && token(v.session);
   const lease = (v: Record<string, unknown>): boolean => session(v) && token(v.token) && integer(v.expiresAt);
   if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt) &&
     (n.owners === undefined || list(n.owners, validId)) && (n.caps === undefined || list(n.caps, validCap)) &&
     (n.usage === undefined || (integer(n.usage) && n.usage <= 1000)) &&
+    (n.slots === undefined || (integer(n.slots) && n.slots <= 64)) &&
     (n.auth === undefined || ['ok', 'missing', 'unknown'].includes(String(n.auth))))) return fail();
   if (new Set(value.nodes.map(n => n.nodeId)).size !== value.nodes.length) return fail();
   if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();

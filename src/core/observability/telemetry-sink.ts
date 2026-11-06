@@ -27,7 +27,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, appendFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { resolveProviderKey } from '../integrations/secrets.js';
+import { readEnvironmentCredential, resolveProviderKey } from '../integrations/secrets.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig, GenAiSpan, TelemetryEmitResult } from '../types.js';
 import { buildGenAiTrace } from './otlp.js';
@@ -294,7 +294,7 @@ export function buildBusHopEvent(input: BusHopInput): BusHopEvent {
     },
   };
   // Even opaque environment credentials must not be copied into metadata.
-  const key = process.env['POSTHOG_API_KEY'];
+  const key = readEnvironmentCredential('POSTHOG_API_KEY');
   if (key && JSON.stringify(event).includes(key)) throw new Error('invalid bus hop metadata');
   return event;
 }
@@ -337,7 +337,7 @@ export async function emitBusHopEvent(input: BusHopInput, options: BusHopOptions
     return { ok: false, spooled: true, delivered: false, detail: 'invalid PostHog host' };
   }
   if (!posthogHost) return { ...local, detail: 'spooled locally' };
-  const key = process.env['POSTHOG_API_KEY'];
+  const key = readEnvironmentCredential('POSTHOG_API_KEY');
   if (!key || !key.trim() || /^phm_[A-Za-z0-9_-]+$/.test(key.trim())) {
     return { ...local, detail: 'spooled locally; PostHog credential unavailable' };
   }

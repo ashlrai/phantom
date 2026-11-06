@@ -1,4 +1,4 @@
-import { listNeedsMason } from '../core/fleet/needs-mason-resolve.js';
+import { listNeedsMason, readNeedsMason } from '../core/fleet/needs-mason-resolve.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 
 const usage = `Usage: ashlr fleet needs [--json] [--runs-dir DIR]
@@ -14,11 +14,14 @@ export async function cmdFleetNeeds(args: string[], deps: { list?: typeof listNe
     else if (arg === '--runs-dir' && runsDir === undefined && next && !next.startsWith('-')) { runsDir = next; i++; }
     else { process.stderr.write(`${usage}\n`); return 2; }
   }
-  let items: ReturnType<typeof listNeedsMason>;
-  try { items = (deps.list ?? listNeedsMason)({ runsDir }); }
-  catch { process.stderr.write('error: fleet needs unavailable\n'); return 1; }
-  if (json) console.log(JSON.stringify({ v: 1, count: items.length, items }));
+  let result: ReturnType<typeof readNeedsMason>;
+  try {
+    result = deps.list ? { status: 'available', items: deps.list({ runsDir }) } : readNeedsMason({ runsDir });
+  } catch { result = { status: 'unavailable', items: [] }; }
+  const { status, items } = result;
+  if (json) console.log(JSON.stringify({ v: 1, status, count: items.length, items }));
+  else if (status === 'unavailable') process.stderr.write('error: fleet needs unavailable\n');
   else if (!items.length) console.log('Nothing needs Mason.');
-  else console.log(scrubSecrets([...items.map(item => `${item.id}  ${item.text}`), `${items.length} item(s) need Mason.`].join('\n')));
-  return 0;
+  else console.log(scrubSecrets([...items.map(item => `${item.id}  ${item.text}`), `${items.length} item(s) need Mason.`, 'Resolve: ashlr fleet needs-resolve <id> --reply "..."'].join('\n')));
+  return status === 'unavailable' ? 1 : 0;
 }

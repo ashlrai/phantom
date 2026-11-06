@@ -1,6 +1,5 @@
 /** Explicit local startup for the dormant phone gateway. No Tunnel/DNS work. */
 import { lstatSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { loadConfigReadOnly } from '../config.js';
 import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { createTelegramFleetNotifier } from '../comms/telegram-fleet-notify.js';
@@ -11,7 +10,6 @@ import { startRemoteAdminSocket } from './remote-admin.js';
 import { createRemotePush } from './remote-push.js';
 import { createRemotePushWatcher } from './remote-push-watcher.js';
 import { loadOrCreateRemoteVapid } from './remote-push-vapid.js';
-import { assetsDir } from './server.js';
 
 function readConfig(path: string) {
   const stat = lstatSync(path);
@@ -35,9 +33,6 @@ function readConfig(path: string) {
 export async function startRemoteRuntime(configPath: string, hub: { port: number; readToken: string; token: string }) {
   const { access, gatewayPort } = readConfig(configPath);
   if (gatewayPort === hub.port) throw new Error('Remote gateway must use a separate loopback port');
-  const publicDir = assetsDir();
-  const shell = lstatSync(join(publicDir, 'next', 'index.html'));
-  if (!shell.isFile() || shell.isSymbolicLink()) throw new Error('Phone shell assets are unavailable');
   const devices = createRemoteDeviceStore();
   // Bun's compiled sidecar can evaluate tsyringe before SimpleWebAuthn's
   // transitive polyfill import. Finish this import before loading pairing.
@@ -50,7 +45,7 @@ export async function startRemoteRuntime(configPath: string, hub: { port: number
   let gateway: Awaited<ReturnType<typeof startRemoteReadGateway>>;
   try {
     gateway = await startRemoteReadGateway({ access, hub: { port: hub.port, readToken: hub.readToken,
-      mutationToken: hub.token }, devices, pairing, push, assetsDir: publicDir, mobileAssetsEnabled: true, port: gatewayPort });
+      mutationToken: hub.token }, devices, pairing, push, mobileAssetsEnabled: true, port: gatewayPort });
   } catch (error) { push.close(); throw error; }
   let admin: Awaited<ReturnType<typeof startRemoteAdminSocket>> | null = null;
   try {
