@@ -21,10 +21,18 @@ export function parseStagingBatchArgs(value: Record<string, unknown>): string[] 
   return roots;
 }
 
-export async function readStagingBatch(roots: string[], scan: StagingScanner = inventoryStaging): Promise<unknown> {
-  const reports: (Awaited<ReturnType<StagingScanner>> | { root: string; complete: false; source: 'failed'; cleanupEligibility: string })[] = [];
+export async function readStagingBatch(roots: string[], scan: StagingScanner = inventoryStaging, signal?: AbortSignal): Promise<unknown> {
+  const reports: (Awaited<ReturnType<StagingScanner>> | { root: string; complete: false; source: 'failed' | 'unattempted'; cleanupEligibility: string })[] = [];
   let completed = 0;
-  for (const root of roots) {
+  let cancelled = false;
+  for (const [index, root] of roots.entries()) {
+    if (signal?.aborted) {
+      cancelled = true;
+      for (const unattempted of roots.slice(index)) {
+        reports.push({ root: unattempted, complete: false, source: 'unattempted', cleanupEligibility: ELIGIBILITY });
+      }
+      break;
+    }
     try {
       const report = await scan(root);
       reports.push(report);
@@ -32,6 +40,8 @@ export async function readStagingBatch(roots: string[], scan: StagingScanner = i
     } catch {
       reports.push({ root, complete: false, source: 'failed', cleanupEligibility: ELIGIBILITY });
     }
+    if (signal?.aborted && index === roots.length - 1) cancelled = true;
   }
-  return sanitizePublicJson({ schema: 'fleet.staging-inventory-batch.v1', requested: roots.length, completed, reports });
+  return sanitizePublicJson({ schema: 'fleet.staging-inventory-batch.v1', requested: roots.length, completed, reports,
+    ...(cancelled ? { cancelled: true, complete: false } : {}) });
 }
