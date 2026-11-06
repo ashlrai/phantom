@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetPlannerCycle } from '../src/cli/fleet-planner-cycle.js';
 import { runPlannerCycle, type PlannerCycleDeps } from '../src/core/fleet/planner-cycle.js';
 import type { executePlannerPass } from '../src/core/fleet/planner-pass.js';
@@ -9,7 +9,9 @@ import type { PlannerPassOutput } from '../src/core/fleet/planner-pass-output.js
 import type { PlannerRunResult } from '../src/core/fleet/planner-run.js';
 
 type PassReturn = Awaited<ReturnType<typeof executePlannerPass>>;
-const ROOT = '/fake/runs', PROMPT = '/fake/prompt.txt';
+const PROMPT = '/fake/prompt.txt';
+// Apply mode takes the real single-flight lock under runsRoot, so the root must be a real private directory.
+let ROOT = '';
 
 function runResult(over: Partial<PlannerRunResult> = {}): PlannerRunResult {
   return {
@@ -37,6 +39,11 @@ const localStamp = (d: Date): string =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
 const roots: string[] = [];
+beforeEach(async () => {
+  const base = await mkdtemp(join(tmpdir(), 'planner-cycle-root-')); roots.push(base);
+  ROOT = join(base, 'runs');
+  await mkdir(ROOT, { mode: 0o700 });
+});
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 describe('planner cycle', () => {
