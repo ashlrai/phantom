@@ -164,6 +164,11 @@ export async function hasPendingLeaderNetwork(options: LeaderRuntimeOptions = {}
 }
 
 export async function tickLeaderNetwork(cfg: AshlrConfig, options: LeaderRuntimeOptions = {}, deps: LeaderNetworkTickDeps = {}) {
+  if (cfg.comms?.enabled === true) {
+    // Private teammate text stays on this host even when no operator bus identity is configured.
+    const { tickTeammateMessages } = await import('../comms/imessage-teammate-worker.js');
+    await tickTeammateMessages(cfg, options).catch(() => undefined);
+  }
   const sources = readLeaderNetworkConfig(options);
   if (!parseMasonIdentities(sources.configSource).length) return { status: 'disabled' as const, replies: 0 };
   const directory = join(runsRoot(options), 'leader');

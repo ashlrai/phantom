@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { buildDoctorReport, pollInboundSince, readCursor } from '../core/integrations/imessage.js';
 import { ingestIMessages } from '../core/comms/imessage-inbox-bridge.js';
-import { runTeammateResponder } from '../core/comms/imessage-teammate-worker.js';
+import { tickTeammateMessages } from '../core/comms/imessage-teammate-worker.js';
 import type { AshlrConfig } from '../core/types.js';
 
 const USAGE = 'phm imessage doctor [--json]; phm imessage poll [--apply] [--json]; phm imessage respond --apply [--json]';
@@ -31,10 +31,8 @@ export async function cmdIMessage(args: string[]): Promise<number> {
 
     if (command === 'respond') {
       if (!values.apply || !cfg) throw new Error('respond requires --apply and readable config');
-      const intake = await ingestIMessages(cfg);
-      if (!intake.ok) { out({ intake }, `iMessage intake: ${intake.state}`); return 1; }
-      const result = await runTeammateResponder(cfg);
-      out({ ...result, intake }, `Teammate responder: ${result.state}; sent ${result.sent}, pending ${result.pending}`);
+      const result = await tickTeammateMessages(cfg);
+      out(result, `Teammate responder: ${result.state}`);
       return result.state === 'healthy' || result.state === 'busy' ? 0 : 1;
     }
 

@@ -365,13 +365,14 @@ describe('M453 privacy-safe skill calibration snapshot projection', () => {
     expect(key).toEqual(keyBefore);
   });
 
-  it('has no runtime consumer or public API export', () => {
+  it('is consumed only by the fleet calibration CLI and has no public API export', () => {
     const sourceRoot = resolve(process.cwd(), 'src');
     const modulePath = join('core', 'fleet', 'skill-routing-calibration-snapshot.ts');
     const sourceFiles = readdirSync(sourceRoot, { recursive: true, encoding: 'utf8' })
       .filter((path) => path.endsWith('.ts') && path !== modulePath);
-    for (const path of sourceFiles) {
-      expect(readFileSync(join(sourceRoot, path), 'utf8')).not.toContain('skill-routing-calibration-snapshot');
-    }
+    const consumers = sourceFiles.filter((path) =>
+      readFileSync(join(sourceRoot, path), 'utf8').includes('skill-routing-calibration-snapshot'),
+    );
+    expect(consumers).toEqual([join('cli', 'fleet-skill-calibration.ts')]);
   });
 });

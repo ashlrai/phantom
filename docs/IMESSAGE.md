@@ -37,7 +37,16 @@ and your Apple ID email, for example). When it is unset or empty the allowlist i
 `phm imessage respond --apply --json` polls intake and processes at most three
 teammate records per pass. It never prints handles or message bodies. A host
 supervisor can schedule this explicit command; ordinary polling alone does not
-activate teammate delivery.
+activate teammate delivery. The live desktop sidecar schedules the same worker
+after startup, then thirty seconds after each completed pass. The existing
+resident Leader tick invokes it too; private work locks serialize both paths.
+The sidecar stops its timer and cancels generation on server shutdown.
+
+Full Disk Access belongs to the actual responsible native process. A successful
+foreground CLI check from an authorized app does not qualify a launchd runner.
+When `imessage/teammate-status.json` reports `blocked_full_disk_access`, grant
+Full Disk Access to the responsible app shown by `imessage doctor` and restart
+that app. Phantom never edits the TCC database or works around this permission.
 
 Sending requires all three current local facts: the peer is in
 `comms.imessageAllow`, its hashed `imessage:<sha256-16>` identity is explicitly
@@ -58,6 +67,12 @@ exact outgoing text, including attributed-body-only macOS records; an uncertain
 send is never automatically repeated. Pure acknowledgements and artifact-only
 updates produce no reply. Pending and uncertain records are preserved when
 storage is full. A native transport return alone does not prove delivery.
+
+A healthy pass with an empty inbox establishes that the worker ran. Qualify a
+live route with a fresh teammate task question, then inspect the private reply
+receipt for an exact outgoing message match and its sent/delivered flags. Keep
+that evidence tied to the actual responsible native app and source revision;
+a foreground CLI result does not establish desktop background operation.
 
 ## Check it
 
