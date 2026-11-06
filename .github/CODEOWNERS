@@ -1049,6 +1049,7 @@
 /test/resource-spark-enrollment-cli.test.ts @masonwyatt23
 /test/resource-spark-enrollment-files.test.ts @masonwyatt23
 /test/resource-spark-enrollment.test.ts @masonwyatt23
+/test/resource-volume-polling.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
