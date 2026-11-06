@@ -1,6 +1,7 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
+import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';
@@ -229,7 +230,7 @@ export class DriveNodes implements QueueV1 {
       owners: [...scope],
       nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
         .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c)),
+          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
           heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? 0, auth: n.auth ?? 'unknown' }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
       jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => this.jobView(j)),
