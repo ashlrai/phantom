@@ -7,6 +7,8 @@ export interface HostHeadroom {
   freePercent: number;
   /** Used swap in binary gigabytes (GiB), not allocated swap capacity. */
   swapGb: number;
+  /** Kernel dispatch pressure level: normal, warning, or critical. */
+  pressureLevel: 1 | 2 | 4;
 }
 
 /** Parse a single vm_stat snapshot. Inactive and purgeable pages are not free. */
@@ -42,17 +44,23 @@ export type HostHeadroomDecision = {
   reason: string | null;
 };
 
-/** Pure transition: a held host must clear both recovery thresholds. */
-export function assessHostHeadroom(reading: HostHeadroom | null, held = false): HostHeadroomDecision {
+/** Parse only known kernel dispatch levels; all other output is unknown. */
+export function parsePressureLevel(text: string): 1 | 2 | 4 | null {
+  const value = text.trim();
+  return value === '1' ? 1 : value === '2' ? 2 : value === '4' ? 4 : null;
+}
+
+/** Only a known normal kernel pressure permits a launch. */
+export function assessHostHeadroom(reading: HostHeadroom | null): HostHeadroomDecision {
   if (!reading || !Number.isFinite(reading.freePercent) || reading.freePercent < 0 || reading.freePercent > 100 ||
-      !Number.isFinite(reading.swapGb) || reading.swapGb < 0) {
+      !Number.isFinite(reading.swapGb) || reading.swapGb < 0 ||
+      ![1, 2, 4].includes(reading.pressureLevel)) {
     return { allowed: false, reading: null, reason: 'Host memory telemetry unavailable; launch held.' };
   }
-  const allowed = held ? reading.freePercent >= 35 && reading.swapGb <= 6
-    : reading.freePercent >= 30 && reading.swapGb <= 8;
+  const allowed = reading.pressureLevel === 1;
+  const level = reading.pressureLevel === 2 ? 'warning' : 'critical';
   return { allowed, reading, reason: allowed ? null
-    : `Host memory pressure: ${reading.freePercent.toFixed(1)}% free, ${reading.swapGb.toFixed(2)} GiB swap; `
-      + 'launch held until at least 35% free and at most 6 GiB swap.' };
+    : `Host memory pressure ${level} (level ${reading.pressureLevel}); launch held until normal.` };
 }
 
 type CommandReader = (file: string, args: string[]) => string;
@@ -61,7 +69,7 @@ const readCommand: CommandReader = (file, args) => execFileSync(file, args, {
 });
 
 /** Fixed absolute executables, bounded output/time, and no command error text exposed. */
-export function readMacHostHeadroom(read: CommandReader = readCommand, totalBytes = totalmem()): HostHeadroom | null {
+export function readMacMemoryDiagnostics(read: CommandReader = readCommand, totalBytes = totalmem()): Pick<HostHeadroom, 'freePercent' | 'swapGb'> | null {
   try {
     const freePercent = parseVmStat(read('/usr/bin/vm_stat', []), totalBytes);
     const swapGb = parseSwapUsage(read('/usr/sbin/sysctl', ['vm.swapusage']));
@@ -69,15 +77,20 @@ export function readMacHostHeadroom(read: CommandReader = readCommand, totalByte
   } catch { return null; }
 }
 
-/** One latch per host process, shared across its lanes; every attempt samples afresh. */
+export function readMacHostHeadroom(read: CommandReader = readCommand, totalBytes = totalmem()): HostHeadroom | null {
+  try {
+    const diagnostics = readMacMemoryDiagnostics(read, totalBytes);
+    const pressureLevel = parsePressureLevel(read('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']));
+    return diagnostics === null || pressureLevel === null ? null : { ...diagnostics, pressureLevel };
+  } catch { return null; }
+}
+
+/** Every attempt samples afresh; the kernel provides pressure recovery smoothing. */
 export function createHostHeadroomGate(read: () => HostHeadroom | null = readMacHostHeadroom): () => HostHeadroomDecision {
-  let held = false;
   return () => {
     let reading: HostHeadroom | null;
     try { reading = read(); } catch { reading = null; }
-    const decision = assessHostHeadroom(reading, held);
-    held = !decision.allowed;
-    return decision;
+    return assessHostHeadroom(reading);
   };
 }
 
