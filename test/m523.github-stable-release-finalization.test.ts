@@ -347,7 +347,7 @@ if (tool === 'stat') {process.stdout.write(String(fs.lstatSync(args[args.length-
 if (tool === 'curl') {
   const url = args.find(a => a.startsWith('https://'));
   if (url === 'https://registry.npmjs.org/@ashlr%2Fphantom') out({name:'@ashlr/phantom', 'dist-tags': {latest: mode === 'latest-moved' ? '3.30.10' : f.input.version}, versions: {[f.input.version]: {dist: {integrity:f.input.integrity}}}});
-  else if (url === 'https://github.com/ashlrai/phantom/releases/latest/download/latest.json') process.stdout.write(Buffer.from(f.latest,'base64'));
+  else if (url === 'https://github.com/ashlrai/phantom/releases/latest/download/latest.json') {if (mode === 'post-feed-unavailable') process.exit(22); process.stdout.write(mode === 'post-feed-changed' ? Buffer.from('different feed') : Buffer.from(f.latest,'base64'));}
   else unknown();
   process.exit(0);
 }
@@ -358,6 +358,7 @@ if (args.includes('--method')) {
   const method = args[args.indexOf('--method')+1];
   if (method !== 'PATCH' || suffix !== 'releases/14' || writes.length !== 0) unknown();
   const fields = JSON.parse(fs.readFileSync(args[args.indexOf('--input')+1], 'utf8'));
+  fs.writeFileSync(path.join(root, 'intent-at-patch.json'), JSON.stringify(fs.existsSync(path.join(process.env.RUNNER_TEMP, 'finalization-evidence', 'attempt.json'))));
   writes.push({method, endpoint, fields}); fs.writeFileSync(statePath, JSON.stringify(writes));
   if (mode === 'ambiguous-patch') {process.stderr.write('Simulated lost response');process.exit(1);}
   out({...f.release,draft:false});process.exit(0);
@@ -368,20 +369,32 @@ else if (suffix.startsWith('compare/')) out({status:'ahead'});
 else if (suffix === 'actions/runs/12/attempts/3') out(f.run);
 else if (suffix === 'actions/runs/12/attempts/3/jobs?per_page=100') out(mode === 'failed-job' ? {...f.jobs,jobs:f.jobs.jobs.map(j => j.name === 'promote' ? {...j,conclusion:'failure'} : j)} : f.jobs);
 else if (suffix === 'actions/artifacts/13') out(f.artifact);
-else if (suffix === 'git/ref/tags/v3.30.9') out({ref:'refs/tags/v3.30.9',object:{type:'commit',sha:mode === 'tag-moved' ? 'f'.repeat(40) : f.input.candidateSha}});
+else if (suffix === 'git/ref/tags/v3.30.9') out({ref:'refs/tags/v3.30.9',object:{type:'commit',sha:mode === 'tag-moved' || (mode === 'post-tag-moved' && writes.length) ? 'f'.repeat(40) : f.input.candidateSha}});
 else if (suffix === 'releases?per_page=100') out(mode === 'duplicate-release' ? [f.release,{...f.release,id:99}] : [{...f.release,draft:mode !== 'already-public'}]);
-else if (suffix === 'releases/14') out({...f.release,draft:writes.length === 0,body:mode === 'notes-race' ? 'Changed after verification' : f.release.body, target_commitish:mode === 'target-race' ? 'f'.repeat(40) : f.release.target_commitish, prerelease:mode === 'prerelease-race', name:mode === 'name-race' ? 'Changed name' : f.release.name});
+else if (suffix === 'releases/14') out({...f.release,draft:writes.length === 0,body:mode === 'notes-race' || (mode === 'post-notes-race' && writes.length) ? 'Changed after verification' : f.release.body, target_commitish:mode === 'target-race' ? 'f'.repeat(40) : f.release.target_commitish, prerelease:mode === 'prerelease-race', name:mode === 'name-race' ? 'Changed name' : f.release.name});
 else if (suffix === 'releases/14/assets?per_page=100') out(mode === 'asset-race' ? f.assets.map((a,i) => i === 0 ? {...a,digest:'sha256:'+'0'.repeat(64)} : a) : f.assets);
-else if (suffix === 'releases/latest') out({...f.release,draft:false});
+else if (suffix === 'releases/latest') out({...f.release,id:mode === 'post-latest-race' ? 999 : f.release.id,draft:false});
 else unknown();
 `;
     for (const tool of ['gh', 'curl', 'stat']) writeFileSync(join(bin, tool), stub, {mode: 0o755});
     const result = spawnSync('bash', ['-c', effect], {cwd: dir, encoding: 'utf8', timeout: 20_000,
       env: {...process.env, ...env, HOME: dir, GH_TOKEN: 'test-only', PATH: `${bin}:${process.env.PATH}`, FIXTURE_ROOT: dir, FIXTURE_MODE: mode,
-        RUNNER_TEMP: runtime, GITHUB_STEP_SUMMARY: join(dir, 'summary.md'), EXPECTED_RECEIPT_SHA256: hash(receiptBytes)}});
+        RUNNER_TEMP: runtime, GITHUB_STEP_SUMMARY: join(dir, 'summary.md'),
+        GITHUB_EVENT_NAME: mode === 'unexpected-event' ? 'pull_request' : env.GITHUB_EVENT_NAME,
+        GITHUB_REF: mode === 'wrong-ref' ? 'refs/heads/untrusted' : env.GITHUB_REF,
+        GITHUB_REPOSITORY: mode === 'wrong-repository' ? 'other/phantom' : env.GITHUB_REPOSITORY,
+        CONFIRM_STABLE_FINALIZATION: mode === 'unconfirmed' ? 'false' : env.CONFIRM_STABLE_FINALIZATION,
+        EXPECTED_RECEIPT_SHA256: mode === 'wrong-receipt-hash' ? '0'.repeat(64) : hash(receiptBytes)}});
     const writes = existsSync(join(dir, 'writes.json')) ? JSON.parse(readFileSync(join(dir, 'writes.json'), 'utf8')) : [];
     const postReceipt = existsSync(join(runtime, 'github-stable-finalization.json')) ? JSON.parse(readFileSync(join(runtime, 'github-stable-finalization.json'), 'utf8')) : null;
-    return {result, writes, postReceipt};
+    const evidence = join(runtime, 'finalization-evidence');
+    const attempt = existsSync(join(evidence, 'attempt.json')) ? JSON.parse(readFileSync(join(evidence, 'attempt.json'), 'utf8')) : null;
+    const outcome = existsSync(join(evidence, 'outcome.json')) ? JSON.parse(readFileSync(join(evidence, 'outcome.json'), 'utf8')) : null;
+    const intentAtPatch = existsSync(join(dir, 'intent-at-patch.json')) ? JSON.parse(readFileSync(join(dir, 'intent-at-patch.json'), 'utf8')) : false;
+    const responseBytes = existsSync(join(runtime, 'patch-result.json')) ? readFileSync(join(runtime, 'patch-result.json')) : Buffer.alloc(0);
+    const finalFeed = existsSync(join(runtime, 'latest.json')) ? readFileSync(join(runtime, 'latest.json')) : Buffer.alloc(0);
+    return {result, writes, postReceipt, attempt, outcome, intentAtPatch, responseBytes,
+      actualFeedDigest: `sha256:${hash(finalFeed)}`, expectedFeedDigest: observation.assets.find(asset => asset.name === 'latest.json')!.digest};
   } finally {rmSync(dir, {recursive: true, force: true});}
 }
 
@@ -399,5 +412,51 @@ describe('M523 — executable protected shell with fake transports', () => {
   it('never replays a PATCH after an ambiguous write response', () => {
     const {result, writes, postReceipt} = runEffect('ambiguous-patch');
     expect(result.status).not.toBe(0); expect(writes).toHaveLength(1); expect(postReceipt).toBeNull();
+  }, 30_000);
+});
+
+
+describe('M523 — retained bounded publication-attempt evidence', () => {
+  it('uploads only exact evidence files even on failure, while requiring the success receipt on success', () => {
+    const steps = workflow.jobs.finalize.steps as {name?: string; if?: string; run?: string; uses?: string; with?: {path?: string}}[];
+    const upload = steps.find(step => step.uses?.startsWith('actions/upload-artifact@'))!;
+    expect(upload.if).toBe('always()');
+    expect(upload.with?.path?.trim().split('\n')).toEqual([
+      '${{ runner.temp }}/finalization-evidence/attempt.json',
+      '${{ runner.temp }}/finalization-evidence/outcome.json',
+      '${{ runner.temp }}/github-stable-finalization.json',
+    ]);
+    const successCheck = steps.find(step => step.name === 'Require successful finalization receipt')!;
+    expect(successCheck.if).toBe('success()');
+    expect(successCheck.run).toContain('test -s "$RUNNER_TEMP/github-stable-finalization.json"');
+    expect(steps.indexOf(successCheck)).toBeLessThan(steps.indexOf(upload));
+  });
+  it.each(['happy', 'ambiguous-patch', 'post-tag-moved', 'post-notes-race', 'post-latest-race', 'post-feed-unavailable', 'post-feed-changed'])('retains %s evidence without replay or false success', mode => {
+    const {result, writes, postReceipt, attempt, outcome, intentAtPatch, responseBytes, actualFeedDigest, expectedFeedDigest} = runEffect(mode);
+    if (mode === 'post-feed-changed') expect(actualFeedDigest).not.toBe(expectedFeedDigest);
+    expect(intentAtPatch).toBe(true); expect(writes).toHaveLength(1);
+    expect(attempt).toMatchObject({schemaVersion: 1, effect: 'github-release-draft-finalization-attempt',
+      input, release: {id: 14}, githubReleaseMutationExecuted: null,
+      mutation: {method: 'PATCH', fields: {draft: false, make_latest: 'true'}}});
+    expect(attempt.preflightSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(outcome).toMatchObject({schemaVersion: 1, effect: 'github-release-draft-finalization-outcome', exitCode: result.status,
+      patchResponse: {bytes: responseBytes.length, sha256: hash(responseBytes)}});
+    expect(JSON.stringify(outcome).length).toBeLessThan(4096);
+    expect(JSON.stringify(attempt).length).toBeLessThan(16384);
+    expect(JSON.stringify({attempt, outcome})).not.toContain('Verified release notes.');
+    if (mode === 'happy') {
+      expect(result.status).toBe(0); expect(postReceipt).not.toBeNull();
+      expect(outcome).toMatchObject({phase: 'completed', state: 'postverified', githubReleaseMutationExecuted: true});
+    } else {
+      expect(result.status).not.toBe(0); expect(postReceipt).toBeNull();
+      expect(outcome).toMatchObject({phase: mode === 'ambiguous-patch' ? 'patch' : 'postcheck',
+        state: mode === 'ambiguous-patch' ? 'unknown' : 'postcheck_failed', githubReleaseMutationExecuted: null});
+    }
+  }, 30_000);
+  it.each(['expired', 'environment-bypass', 'failed-job', 'latest-moved', 'tag-moved', 'notes-race',
+    'unexpected-event', 'wrong-ref', 'wrong-repository', 'unconfirmed', 'wrong-receipt-hash'])('does not manufacture an attempt after prewrite refusal %s', mode => {
+    const {result, writes, attempt, outcome, intentAtPatch} = runEffect(mode);
+    expect(result.status).not.toBe(0); expect(writes).toEqual([]);
+    expect(attempt).toBeNull(); expect(outcome).toBeNull(); expect(intentAtPatch).toBe(false);
   }, 30_000);
 });
