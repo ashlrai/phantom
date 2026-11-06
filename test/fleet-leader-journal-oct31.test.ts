@@ -1,5 +1,5 @@
 // Keep the colocated notes regressions in the standard backend test lane.
-import '../src/core/fleet/leader-journal.notes.test.js';
+import './fleet-leader-journal-notes.test.js';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

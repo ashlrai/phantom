@@ -28,11 +28,11 @@ beforeEach(() => {
   status();
 });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
-function status(used = 100, reset = iso(86_400_000), tick: string | null = iso(-600_000)) {
+function status(used = 100, reset = iso(86_400_000), tick: string | null = iso(-600_000), observedAt: string | null = tick) {
   statusText = JSON.stringify({ last_tick: tick,
     lanes: { 'codex-personal': { held: true }, 'codex-cmp': { held: true } },
-    budget: { 'codex-personal': { weekly_used_pct: used, reset_at: reset, source: 'fake-status' },
-      'codex-cmp': { weekly_used_pct: 100, reset_at: reset } } });
+    budget: { 'codex-personal': { weekly_used_pct: used, reset_at: reset, source: 'fake-status', observed_at: observedAt },
+      'codex-cmp': { weekly_used_pct: 100, reset_at: reset, observed_at: observedAt } } });
   writeFileSync(join(root, 'queue/status.json'), statusText);
 }
 function rollout(used: number, at = iso(-30_000), minutes = 10080, reset = iso(86_400_000)) {
@@ -68,6 +68,42 @@ it('treats 100 used as exhausted, never as 100 remaining', async () => {
   status(0);
   rollout(100);
   expect((await read()).lanes[0]!.quotaEvidence).toMatchObject({ state: 'exhausted', holdConflict: null });
+});
+it('does not let a fresh controller tick hide a newer personal quota observation', async () => {
+  status(100, iso(86_400_000), iso(-1), iso(-600_000));
+  rollout(0, iso(-30_000));
+  const ledger = await read();
+  expect(ledger.asOf).toBe(iso(-1));
+  expect(ledger.lanes[0]).toMatchObject({ usedPct: 0, held: true,
+    quotaEvidence: { reason: 'quota-recovered', holdConflict: 'recovered-quota-while-held',
+      statusQuota: { usedPct: 100, observedAt: iso(-600_000) },
+      measuredQuota: { usedPct: 0, observedAt: iso(-30_000) } } });
+  expect(readFileSync(join(root, 'queue/status.json'), 'utf8')).toBe(statusText);
+});
+it('keeps an old quota stale when the controller republishes it without a new measurement', async () => {
+  status(100, iso(86_400_000), iso(-1), iso(-600_000));
+  expect((await read()).lanes[0]).toMatchObject({ usedPct: 100, held: true,
+    quotaEvidence: { state: 'refresh-needed', reason: 'stale-or-invalid-reading',
+      statusQuota: { observedAt: iso(-600_000) }, measuredQuota: null } });
+});
+it.each([null, 'invalid', iso(1)])('never promotes a controller tick into an absent or invalid quota timestamp (%s)', async observedAt => {
+  status(100, iso(86_400_000), iso(-1), observedAt);
+  const lane = (await read()).lanes[0]!;
+  expect(lane.quotaEvidence).toMatchObject({ state: 'refresh-needed', reason: 'stale-or-invalid-reading',
+    statusQuota: { observedAt: observedAt === 'invalid' ? null : observedAt } });
+});
+it('compares personal observations with the same lane quota timestamp, preserving a newer quota', async () => {
+  status(89, iso(86_400_000), iso(-1), iso(-10_000));
+  rollout(5, iso(-30_000));
+  expect((await read()).lanes[0]).toMatchObject({ usedPct: 89, source: 'fake-status',
+    quotaEvidence: { measuredQuota: null, statusQuota: { observedAt: iso(-10_000) } } });
+});
+it.each([null, 'invalid', iso(1)])('accepts a measured personal reading over an unorderable status quota (%s)', async observedAt => {
+  status(100, iso(86_400_000), iso(-1), observedAt);
+  rollout(0, iso(-30_000));
+  expect((await read()).lanes[0]).toMatchObject({ usedPct: 0, held: true,
+    quotaEvidence: { state: 'observed-headroom', reason: 'measured-quota', holdConflict: null,
+      measuredQuota: { usedPct: 0, observedAt: iso(-30_000) } } });
 });
 it('requires a reading after the reset passes and does not invent zero usage', async () => {
   status(100, iso(-1));

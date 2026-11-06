@@ -1,5 +1,7 @@
 import { compactGuardianState, type GuardianCompactOptions } from '../core/fleet/guardian-state-compact.js';
 
+export const usage = 'Usage: ashlr fleet guardian-compact --manifest <file> --source-state <file> --output-state <file> [--json]';
+
 // Deliberately a const-arrow export: this job must not touch the shared
 // fleet-subcommand registry, whose generator only collects `export async
 // function` verbs. Convention dispatch activates with the next registry pass.

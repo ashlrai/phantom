@@ -3,6 +3,8 @@ import type { CloudGh } from '../core/cloud/pr-actions.js';
 import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { publishCiIncident, validCiPublishInput } from '../core/fleet/ci-bus-incident.js';
 
+const usage = 'usage: ashlr fleet ci-publish --repo <owner/name> --run <id> --to <bus-address> [--dry-run] [--json]';
+
 export async function cmdFleetCiPublish(args: string[], deps: { gh?: CloudGh; bus?: BusInboxOptions } = {}): Promise<number> {
   const values = new Map<string, string>();
   const flags = new Set<string>();
@@ -11,7 +13,7 @@ export async function cmdFleetCiPublish(args: string[], deps: { gh?: CloudGh; bu
     if ((arg === '--json' || arg === '--dry-run') && !flags.has(arg)) flags.add(arg);
     else if ((arg === '--repo' || arg === '--run' || arg === '--to') && !values.has(arg) && args[i + 1] && !args[i + 1]!.startsWith('--')) values.set(arg, args[++i]!);
     else {
-      console.error('usage: ashlr fleet ci-publish --repo <owner/name> --run <id> --to <bus-address> [--dry-run] [--json]');
+      console.error(usage);
       return 2;
     }
   }

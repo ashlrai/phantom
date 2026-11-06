@@ -67,7 +67,8 @@ vi.mock('../src/core/inbox/store.js', () => ({
   resolveRequest: vi.fn(),
 }));
 
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  DEFAULT_STALE_GOAL_MILESTONE_MS: (await importOriginal<typeof import('../src/core/goals/store.js')>()).DEFAULT_STALE_GOAL_MILESTONE_MS,
   listGoals: mockListGoals,
   createGoal: vi.fn(),
   loadGoal: vi.fn().mockReturnValue(null),

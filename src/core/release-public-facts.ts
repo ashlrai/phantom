@@ -174,11 +174,11 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   const workflow = object(document.toJS({ maxAliasCount: 100 }) as unknown);
   equal(workflow['name'], 'CI', 'CI workflow name');
   const jobs = object(workflow['jobs']);
-  // This reviewed source revision adds the separate fast desktop producer. Its
-  // exact original bytes are recognized; an edited workflow cannot inherit the
+  // These reviewed source revisions retain the separate fast desktop producer.
+  // Only their exact original bytes are recognized; an edited workflow cannot inherit the
   // admission. Runtime verification below still requires all fifteen complete
   // roles and their successful steps, never the fast producer's green summary.
-  if (createHash('sha256').update(bytes).digest('hex') === COMPLETE_CI_WORKFLOW_SHA256) return 'gate-complete';
+  if (COMPLETE_CI_WORKFLOW_SHA256.has(createHash('sha256').update(bytes).digest('hex'))) return 'gate-complete';
   const hasClassifier = Object.hasOwn(jobs, 'classify'); const hasSite = Object.hasOwn(jobs, 'site');
   const hasGate = Object.hasOwn(jobs, 'merge-gate');
   const hasDocumentation = Object.hasOwn(jobs, 'documentation');
@@ -258,7 +258,13 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   return hasFrontend ? 'frontend-gate' : hasDocumentation ? 'documentation-gate' : fast ? 'gate-fast' : hasDocs ? 'gate-docs' : 'gate';
 }
 
-const COMPLETE_CI_WORKFLOW_SHA256 = 'ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390';
+// Exact reviewed source bytes: legacy topology and bounded outer envelopes for
+// the same complete roles. Per-test bounds and required coverage are unchanged.
+const COMPLETE_CI_WORKFLOW_SHA256 = new Set([
+  'ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390',
+  '5d88a822dabe4b188e44683991cd921623470c0fa0e20fb96df883cb4f173444',
+  '95714a1fd967c9a5b072761c1aff68ec9ea3792ac5e7058a62e0cde2a18bbd21',
+]);
 const COMPLETE_SKIPPED_JOBS = Object.freeze(['Prepare unsigned desktop release', 'Desktop release smoke', 'Daily fixup queue']);
 const FAST_SUFFIX = " && github.event_name != 'pull_request' && github.event_name != 'merge_group'";
 const FAST_JOBS = Object.freeze(['Secret-shape scan', 'Quick typecheck', 'Daily fixup queue']);

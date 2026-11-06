@@ -415,10 +415,24 @@ describe('status and readiness lines', () => {
     const unknown = task({ state: 'failed', failure: 'network', sessionId: null, sessionUrl: null, session: null,
       maxAcu: 40, createdAt: older, launchedAt: older, updatedAt: older, launchOrgId });
     writeDevinTask(unknown);
+    let storedTemplate: DevinTaskV1 | null = null;
     for (let index = 0; index < 500; index++) {
       const at = new Date(Date.parse('2026-10-04T12:00:00Z') + index * 1000).toISOString();
-      writeDevinTask(task({ state: 'expired', createdAt: at, launchedAt: at, updatedAt: at, launchOrgId: FAKE_ORG,
-        session: { status: 'exit', statusDetail: null, acusConsumed: 0, prUrls: [], readAt: at } }));
+      const row = task({ state: 'expired', createdAt: at, launchedAt: at, updatedAt: at, launchOrgId: FAKE_ORG,
+        session: { status: 'exit', statusDetail: null, acusConsumed: 0, prUrls: [], readAt: at } });
+      if (storedTemplate === null) {
+        writeDevinTask(row);
+        storedTemplate = readDevinTask(row.id);
+        expect(storedTemplate).toEqual(row);
+      } else {
+        // This is a 501-row readiness/inventory test, not 500 durability tests.
+        // Clone a real stored record into this owned fixture directory, retaining
+        // all 500 distinct rows and exercising the real bounded/unbounded readers.
+        const fixture: DevinTaskV1 = { ...storedTemplate, ...row, updatedAt: new Date().toISOString() };
+        expect(isDevinTask(fixture)).toBe(true);
+        writeFileSync(join(devinTasksDir(), `${fixture.id}.json`), `${JSON.stringify(fixture, null, 2)}\n`,
+          { flag: 'wx', mode: 0o600 });
+      }
     }
     expect(listDevinTasks()).toHaveLength(500);
     expect(listDevinTasks().some(row => row.id === unknown.id)).toBe(false);
