@@ -523,6 +523,7 @@
 /test/l1-seat-threading-310.test.ts @masonwyatt23
 /test/leader-api-310b.test.ts @masonwyatt23
 /test/leader-apply-310b.test.ts @masonwyatt23
+/test/leader-ceo-failover.test.ts @masonwyatt23
 /test/leader-cloud-311.test.ts @masonwyatt23
 /test/leader-comms-310b.test.ts @masonwyatt23
 /test/leader-conversation-gaps-315.test.ts @masonwyatt23
@@ -531,6 +532,7 @@
 /test/leader-lessons-315.test.ts @masonwyatt23
 /test/leader-local-transport-314.test.ts @masonwyatt23
 /test/leader-memo-310b.test.ts @masonwyatt23
+/test/leader-network-routing.test.ts @masonwyatt23
 /test/leader-outcome-planning-retry.test.ts @masonwyatt23
 /test/leader-outcomes.test.ts @masonwyatt23
 /test/leader-preferences.test.ts @masonwyatt23

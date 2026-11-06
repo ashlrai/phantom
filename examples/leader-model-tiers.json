@@ -1,0 +1,17 @@
+{
+  "foundry": {
+    "leader": {
+      "modelTiers": {
+        "elite": ["gpt-6-astra", "claude-fable-5-1"],
+        "workhorse": ["gpt-6.1-sol", "claude-opus-5-5", "swe2-max-lightning", "grok-5", "grok-4.7"],
+        "fast": ["gpt-6.1-terra", "claude-sonnet-5-5", "gpt-6-luna", "claude-haiku"],
+        "local": []
+      },
+      "taskTier": {
+        "full": "elite",
+        "checkin": "workhorse",
+        "reply": "workhorse"
+      }
+    }
+  }
+}
