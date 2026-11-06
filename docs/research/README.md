@@ -9,3 +9,4 @@ scanning commit history.
 - **[harness-digest-2026-10-31.md](harness-digest-2026-10-31.md)** — What the leading agent harnesses shipped in late October 2026, checked on 2026-10-31 UTC against public changelogs.
 - **[speculative-parallel-memory.md](speculative-parallel-memory.md)** — Research on speculative execution, bounded parallelism and agent memory from the `a6f3c323` repository.
 - **[AGENT-NETWORK-RESEARCH.md](AGENT-NETWORK-RESEARCH.md)**: Cross-vendor agent identity, native bus integration, Slack, Telegram, local iMessage, Gmail drafts, threat models and proposed interfaces. Handoff reconciliation remains blocked by host access permissions.
+- **[RQ-OSS-A2A-ORCH-1.md](RQ-OSS-A2A-ORCH-1.md)**: Ranked OSS survey (26 projects, licenses verified per-row) of agent-to-agent protocols, durable orchestration runtimes and subagent pattern libraries; recommends A2A schema alignment and a Hatchet/DBOS spike for cross-host job handoff. Dated 2026-11-06.
