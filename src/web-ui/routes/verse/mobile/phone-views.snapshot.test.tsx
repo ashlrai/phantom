@@ -21,6 +21,8 @@ it('390px fleet status', async () => {
   const view = renderMobile(<div style={{ width: 390 }}><FleetScreen /></div>);
   await screen.findByRole('heading', { name: 'Fleet' });
   await waitFor(() => expect(view.container.querySelector('[aria-busy="true"]')).toBeNull());
+  expect(screen.getByRole('heading', { name: 'Every resource' })).toBeInTheDocument();
+  expect(screen.getByText('This server does not expose /api/verse/usage-resources yet, so this panel has no source.')).toBeInTheDocument();
   expect(view.container).toMatchSnapshot();
 });
 

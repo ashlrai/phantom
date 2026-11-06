@@ -24,11 +24,14 @@ function setup(entries: Array<{ at: string; source: string; priority: null; text
 
 it('shows the pending summary above the inbox entries', async () => {
   setup([{ at: '2026-10-31 00:20', source: 'phone', priority: null, text: 'A message' }]);
-  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 waiting for a leader pass · next due in 7 min'));
+  await waitFor(() => expect(screen.getByText(/1 waiting for a leader pass/)).toHaveTextContent('1 waiting for a leader pass · next due in 7 min'));
+  const summary = screen.getByText(/1 waiting for a leader pass/);
+  expect(summary).toHaveAttribute('role', 'status');
+  expect(summary.compareDocumentPosition(screen.getByText('A message')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it('hides the summary for an empty inbox', async () => {
   setup([]);
   await screen.findByText('Nothing yet.');
-  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  expect(screen.queryByText(/waiting for a leader pass|All messages seen by a leader/)).not.toBeInTheDocument();
 });
