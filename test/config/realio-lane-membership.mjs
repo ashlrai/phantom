@@ -134,6 +134,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resolve-remote-branch-head.test.ts', // execSync runs git commands in a real child
   'test/realio-lane-guard-green.test.ts', // execFileSync runs the real lane guard in a Node child
   'test/fleet-ci-daily-plan-nov01.test.ts', // Applies generated patches with real git in a temporary repo.
+  'test/fleet-ci-resume-inputs-05-srf1.test.ts', // Builds real temp git repos and runs ls-tree/diff-tree through the CLI.
   'test/mcp-gateway-lazy-start.test.ts', // Real stdio gateway + downstream subprocesses.
   // test/integration/lane-membership.mjs DERIVES its view by filtering this
   // array for `test/integration/` — importing it here instead would be a
@@ -527,6 +528,7 @@ export const REAL_IO_TEST_FILES = [
   'test/h5.leak-containment.test.ts', // real subprocess/fs work (marker-detected or measured) — 30.6s slowest test in the quiet baseline
   'test/m518.goal-timestamp-repair-faults.test.ts', // real subprocess/fs work (marker-detected or measured) — 3.5s slowest test in the quiet baseline
   'test/m522.production-promotion-admission.test.ts', // spawns a real Node child to validate immutable promotion admission
+  'test/m523.github-stable-release-finalization.test.ts', // executes the privileged Bash/jq effect with file-backed fake transports
 
   // --- special cases: fast on a quiet machine but genuinely real I/O, so still contention-prone ---
   'test/local-runtime-acceptance.test.ts', // pinned archives, real installed Node smoke and durable selection failure recovery

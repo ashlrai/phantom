@@ -296,9 +296,9 @@ export function parseFinalizeArguments(args) {
   assert.equal(Object.keys(flags).length, allowed.length); assert.match(flags['--revision'], /^[a-f0-9]{40}$/); assert.match(flags['--attestor-sha'], /^[a-f0-9]{40}$/);
   for (const key of ['--run', '--attempt', '--attestor-run', '--attestor-attempt', '--audit-run', '--audit-attempt']) assert.ok(/^[1-9]\d*$/.test(flags[key]) && Number.isSafeInteger(Number(flags[key])));
   for (const key of ['--bundle', '--output-parent']) assert.equal(resolve(flags[key]), flags[key]);
-  return {revision: flags['--revision'], bundle: flags['--bundle'], outputParent: flags['--output-parent'], policy: {runId: Number(flags['--run']), runAttempt: Number(flags['--attempt']), attestorSha: flags['--attestor-sha'], attestorRun: Number(flags['--attestor-run']), attestorAttempt: Number(flags['--attestor-attempt'])}, audit: {runId: Number(flags['--audit-run']), runAttempt: Number(flags['--audit-attempt'])}};
+  return {revision: flags['--revision'], bundle: fs.realpathSync(flags['--bundle']), outputParent: fs.realpathSync(flags['--output-parent']), policy: {runId: Number(flags['--run']), runAttempt: Number(flags['--attempt']), attestorSha: flags['--attestor-sha'], attestorRun: Number(flags['--attestor-run']), attestorAttempt: Number(flags['--attestor-attempt'])}, audit: {runId: Number(flags['--audit-run']), runAttempt: Number(flags['--audit-attempt'])}};
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { console.log(JSON.stringify(await finalizeDesktopUpdate(parseFinalizeArguments(process.argv.slice(2))))); }
-  catch { console.error('Desktop update finalization held; no feed was published. Inspect qualified source and private evidence.'); process.exitCode = 1; }
+  catch (error) { console.error(`Desktop update finalization held; no feed was published. Reason: ${String(error?.message ?? error).split('\n')[0].slice(0, 300)}`); process.exitCode = 1; }
 }

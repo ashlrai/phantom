@@ -42,6 +42,7 @@ import { outcomePlanningBasis, outcomePlanningProgress } from './leader-outcomes
 import { goalPreferencesReady, knownGoalCount, resolveGoalPreferences, unavailableGoalPreferences, type ResolvedGoalPreferences } from '../goals/preferences.js';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { hasLeaderNetworkConfig } from '../agents/leader-network-config.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { leaderPreferencesReady, resolveLeaderPreferences, unavailableLeaderPreferences, type ResolvedLeaderPreferences } from './leader-preferences.js';
 import { join } from 'node:path';
@@ -1473,6 +1474,16 @@ export interface LeaderTickResult {
  */
 export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
   const nowMs = deps.now();
+  // Both the resident daemon and CLI use this boundary. Away digests must
+  // continue even when the daemon already consumed the ordinary memo cadence.
+  // The private network worker lock fences overlapping background ticks.
+  if (hasLeaderNetworkConfig()) {
+    const networkJob = import('../agents/leader-network-runtime.js')
+      .then(network => network.tickLeaderNetwork(deps.liveConfig?.() ?? deps.cfg))
+      .catch(() => undefined);
+    if (opts.awaitRun) await networkJob;
+    else void networkJob;
+  }
   let applied: LeaderAction[] = [];
   try {
     applied = await applyDueLeaderActions(deps.apply);
