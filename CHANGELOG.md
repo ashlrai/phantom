@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.12 |
-| Latest dated changelog release (2026-11-06) | 3.30.12 |
+| Source package | 3.30.13 |
+| Latest dated changelog release (2026-11-06) | 3.30.13 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.13](https://github.com/ashlrai/phantom/compare/v3.30.12...v3.30.13) (2026-11-06)
+## [Unreleased]
+
+## [3.30.13] — 2026-11-06
 
 
 ### Changes
@@ -25,8 +27,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * RQ-RECUT-V330-FIXTURES-NOV6 ([#3773](https://github.com/ashlrai/phantom/issues/3773)) ([05fd959](https://github.com/ashlrai/phantom/commit/05fd9597d2cf735824948aed8a144c46aa28c40e))
 * RQ-RECUT-V330-FIXTURES-NOV6 ([#3774](https://github.com/ashlrai/phantom/issues/3774)) ([ba3db13](https://github.com/ashlrai/phantom/commit/ba3db1316b155f230b45a3b425d3b32df8d42444))
 * RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3772](https://github.com/ashlrai/phantom/issues/3772)) ([be1946b](https://github.com/ashlrai/phantom/commit/be1946b03c19e0158d35bb8ea8a2a1239e4f5637))
-
-## [Unreleased]
 
 ## [3.30.12] — 2026-11-06
 
