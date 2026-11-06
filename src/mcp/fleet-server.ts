@@ -54,10 +54,21 @@ import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessage
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
+import { parseFleetCiResumeInputsArgs, readFleetCiResumeInputs, type FleetCiResumeInputsArgs } from './fleet-ci-resume-inputs.js';
+import { parseFleetCiReceiptAwaitArgs, readFleetCiReceiptAwait, type FleetCiReceiptAwaitArgs } from './fleet-ci-receipt-await.js';
+import { parseFleetCiReceiptAwaitBatchArgs, readFleetCiReceiptAwaitBatch,
+  type FleetCiReceiptAwaitBatchArgs } from './fleet-ci-receipt-await-batch.js';
+import { CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
+  CI_RECEIPT_AWAIT_MAX_POLL_MS, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
+  CI_RECEIPT_AWAIT_MIN_POLL_MS } from '../core/fleet/ci-receipt-await.js';
+import { CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS } from '../core/fleet/ci-receipt-await-batch.js';
+
+import { parseStagingBatchArgs, readStagingBatch, type StagingScanner } from './fleet-staging-inventory-batch.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
 export interface FleetReaders {
+  stagingScanner?: StagingScanner;
   status: () => Promise<unknown>;
   loop: (limit: number) => Promise<unknown>;
   bus?: (limit: number) => Promise<unknown>;
@@ -88,6 +99,9 @@ export interface FleetReaders {
   commsReadiness?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
+  ciResumeInputs?: (input: FleetCiResumeInputsArgs) => Promise<unknown>;
+  ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
+  ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -105,6 +119,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   });
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [
+    {
+      name: 'fleet_staging_inventory_batch',
+      description: 'Inventory 1 to 8 explicit staging roots sequentially. Age and size do not establish cleanup eligibility. Does not delete or propose approval to delete.',
+      inputSchema: { type: 'object', properties: { roots: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string' } } }, required: ['roots'], additionalProperties: false },
+      annotations,
+    },
     {
       name: 'fleet_status',
       description: 'Read persisted fleet daemon liveness, budget, stop controls, backend quota, cached queue and proposal counts. Local-only subset of phm fleet status; no provider probes. Null means unknown, not zero.',
@@ -404,16 +424,80 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_ci_resume_inputs',
+      description: 'Plan which CI jobs may reuse passing input-tree receipts after a fix — the RESUME-FROM-FAILURE order — through the same shared planCiResumeInputs planner as `phm fleet ci-resume-inputs`, never a second digest algorithm. Takes the version-1 manifest and prior-receipts documents inline as JSON objects (each at most 1 MiB serialized, never file paths) plus hexadecimal base and head revisions. Per job it returns the planner\'s structured reuse-or-rerun decision, fixed reasons, reproduced base and head input digests, covered and shared changed paths and the matched prior receipt; unknown or unmapped coverage stays a rerun. The repository is the server\'s own cwd: no caller cwd, filesystem path, executable, environment or git option is accepted. Read-only: git objects only (rev-parse, ls-tree, diff-tree), the working tree is never read, and the tool never posts a status or check, writes a receipt, dispatches a workflow or mutates CI.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          manifest: { type: 'object', description: 'Inline version-1 ci-resume manifest (repo, shared paths, jobs with covered paths); at most 1 MiB serialized — a JSON object, never a file path.' },
+          prior: { type: 'object', description: 'Inline version-1 prior-receipts document (repo, receipts with stored inputsDigest); at most 1 MiB serialized — a JSON object, never a file path.' },
+          base: { type: 'string', pattern: '^[0-9a-fA-F]{4,64}$', description: 'Hexadecimal revision the prior attempt ran at.' },
+          head: { type: 'string', pattern: '^[0-9a-fA-F]{4,64}$', description: 'Hexadecimal revision after the fix.' },
+        },
+        required: ['manifest', 'prior', 'base', 'head'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_ci_receipt_await',
+      description: 'Wait for one explicitly named receipts artifact on one exact GitHub Actions run attempt — the RESUME-FROM-FAILURE order — through the same shared awaitCiReceipt evidence waiter as `phm fleet ci-receipt-await`, never a second poller or artifact binder, then return the validated CiResumePrior document in the `prior` field for `fleet_ci_resume_inputs`. Pending is proven by evidence only: each poll is a bounded GET of the exact attempt\'s metadata plus the run\'s artifact list; only a positively observed running/queued attempt whose named artifact is still absent sleeps and retries, and another attempt is never substituted. Once observed, the artifact is bound through the merged discover path with producer inputsDigests preserved verbatim. Timeout, cancellation, a completed attempt without the artifact, and duplicate, expired, malformed or mismatched evidence stay tool errors — never a fabricated prior. Read-only GitHub evidence: every call is a GET metadata/listing read plus a bounded archive download; the tool never reruns CI, posts a status or check, dispatches a workflow, writes a receipt or authorizes reuse. No caller executable, cwd, environment, filesystem path or API route is accepted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repo: { type: 'string', pattern: '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$', description: 'GitHub owner/name the run belongs to; never a path, URL or remote.' },
+          run: { type: 'integer', minimum: 1, description: 'Exact workflow run id.' },
+          attempt: { type: 'integer', minimum: 1, description: 'Exact run attempt number; another attempt is never substituted.' },
+          artifactName: { type: 'string', minLength: 1, maxLength: 200, description: 'Exact artifact name such as ci-resume-receipts; never guessed or substituted.' },
+          timeoutMs: { type: 'integer', minimum: 1, maximum: CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS, default: CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS, description: 'Total wait bound, at most one hour; defaults to 600000.' },
+          pollMs: { type: 'integer', minimum: CI_RECEIPT_AWAIT_MIN_POLL_MS, maximum: CI_RECEIPT_AWAIT_MAX_POLL_MS, default: CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, description: 'Poll interval; defaults to 5000.' },
+        },
+        required: ['repo', 'run', 'attempt', 'artifactName'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_ci_receipt_await_batch',
+      description: 'Wait for a bounded batch of explicitly named receipts artifacts — the RESUME-FROM-FAILURE and t1626u batching orders — in one call through the same shared awaitCiReceiptBatch waiter as `phm fleet ci-receipt-await-batch`, never a second poller or artifact binder. The whole targets document and the timeout/poll timings are validated before anything touches the network: unknown keys, malformed fields, an out-of-range or duplicate exact identity list and a serialized document over 64 KiB are all refused up front. Targets then wait strictly in input order with at most one read in flight under one shared deadline that is never refreshed per target. Each bound entry returns its exact repo/run/attempt/artifact identity and validated CiResumePrior document in the `prior` field for `fleet_ci_resume_inputs`, with producer inputsDigests preserved verbatim; a terminal failure is recorded beside its exact identity and the batch moves on while time remains; targets the deadline or cancellation never reached get explicit not-started entries — a prior is never fabricated or substituted from another entry. Read-only GitHub evidence: every call is a GET metadata/listing read plus a bounded archive download; the tool never reruns CI, posts a status or check, dispatches a workflow, writes a receipt or authorizes reuse. No caller executable, cwd, environment, filesystem path or API route is accepted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          targets: {
+            type: 'array', minItems: 1, maxItems: CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS,
+            description: 'Exact run/attempt/artifact identities waited on in input order, serialized and validated as the CLI\'s version-1 targets document; duplicate exact identities are refused.',
+            items: {
+              type: 'object',
+              properties: {
+                repo: { type: 'string', pattern: '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$', description: 'GitHub owner/name the run belongs to; never a path, URL or remote.' },
+                run: { type: 'integer', minimum: 1, description: 'Exact workflow run id.' },
+                attempt: { type: 'integer', minimum: 1, description: 'Exact run attempt number; another attempt is never substituted.' },
+                artifactName: { type: 'string', minLength: 1, maxLength: 200, description: 'Exact artifact name such as ci-resume-receipts; never guessed or substituted.' },
+              },
+              required: ['repo', 'run', 'attempt', 'artifactName'],
+              additionalProperties: false,
+            },
+          },
+          timeoutMs: { type: 'integer', minimum: 1, maximum: CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS, default: CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS, description: 'One shared deadline covering the whole batch, at most one hour and never refreshed per target; defaults to 600000.' },
+          pollMs: { type: 'integer', minimum: CI_RECEIPT_AWAIT_MIN_POLL_MS, maximum: CI_RECEIPT_AWAIT_MAX_POLL_MS, default: CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, description: 'Poll interval; defaults to 5000.' },
+        },
+        required: ['targets'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks') {
+    if (name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
+    const stagingRoots = name === 'fleet_staging_inventory_batch' ? parseStagingBatchArgs(args) : null;
     const limited = name === 'fleet_loop' || name === 'fleet_bus_hops';
     const maxLimit = name === 'fleet_bus_hops' ? MAX_FLEET_BUS_HOPS : MAX_FLEET_TICKS;
     const limit = args['limit'] ?? 20;
@@ -437,7 +521,14 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const emailDiagnosisArgs = name === 'fleet_email_diagnosis' ? parseFleetEmailDiagnosisArgs(args) : null;
     const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
     const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
-    if (name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
+    const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
+    const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
+    const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    if (name === 'fleet_staging_inventory_batch' ? stagingRoots === null :
+        name === 'fleet_ci_receipt_await_batch' ? ciReceiptAwaitBatch === null :
+        name === 'fleet_ci_receipt_await' ? ciReceiptAwait === null :
+        name === 'fleet_ci_resume_inputs' ? ciResumeInputs === null :
+        name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
         name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
@@ -463,7 +554,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
     try {
-      const value = name === 'fleet_status' ? await readers.status()
+      const value = name === 'fleet_staging_inventory_batch' ? await readStagingBatch(stagingRoots as string[], readers.stagingScanner, extra.signal)
+        : name === 'fleet_status' ? await readers.status()
         : name === 'fleet_loop' ? await readers.loop(limit as number)
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
@@ -492,6 +584,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_email_diagnosis' ? await (readers.emailDiagnosis ?? readFleetEmailDiagnosis)()
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
+        : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
+        : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
+        : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.

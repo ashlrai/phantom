@@ -82,6 +82,14 @@ Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
 
+Disk maintenance: `phm disk-maint` is a dry run that reports reclaimable bytes
+per class; `--apply` rotates, compresses and deletes rebuildable leftovers and
+reaps finished worktrees. `phm disk-maint schedule [--install]` prints or
+installs the daily per-user job. The protect-list (`~/.codex*`, model weights,
+Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
+plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
+See [DISK-MAINT](docs/DISK-MAINT.md).
+
 ## Publish subscription capacity
 
 Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;
@@ -201,6 +209,26 @@ are under `~/.phantom/radar/snapshots/` with mode 0600. Failed discovery preserv
 the last successful evidence. Remote content never authorizes actions or sends.
 Individual fetch failures are warnings and retain the last successful snapshot.
 
+## GitHub stable-release finalization
+
+`finalize-github-release.yml` accepts `version`, `publish_run_id`,
+`publish_run_attempt`, `candidate_sha`, `candidate_integrity` and
+`confirm_stable_finalization` for `@ashlr/phantom`. It binds a successful canonical
+npm publication to an existing draft with nonempty notes and all seven signed
+desktop assets, then performs one protected release-record PATCH. It does not
+create releases, upload assets, mutate npm or activate a runtime. Copy-paste JSON
+dispatch and post-merge enable commands:
+[Releasing Phantom](docs/RELEASING.md#finalize-a-stocked-phantom-draft).
+Machine evidence is JSON; policy: [M523](docs/contracts/CONTRACT-M523.md).
+
+The workflow change is a `[SECURITY REVIEW]` `-sec` PR: no auto-merge; wait for
+Security pin review of the workflow/permissions diff. Enable workflow ID
+`350636007` only after the reviewed fixed YAML is on `master`. Leave public empty
+`v3.30.8` unchanged: no unpublish, tag move or hand assets. Keep the sanctioned
+desktop publisher's live-feed refusal. Fix forward on the next free patch with
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; source handoff does not prove updater recovery
+or installed-app acceptance. See [recovery evidence](docs/contracts/CONTRACT-M523.md#recovery-evidence).
+
 ## Release autonomy audit
 
 The release autonomy command is awaiting top-level CLI wiring. Once wired, it will read the enrolled repositories' release gates and the local publish switch and offer a Markdown report for one repository. It proposes classifications without changing settings. Unknown evidence is not evidence of an absent gate. See [release autonomy](docs/RELEASE-AUTONOMY.md).
@@ -220,3 +248,5 @@ The backup witnesses every admission; after 15 minutes without heartbeat it take
 over and fences the returning primary. Publication remains primary-only. No
 production dispatchd cutover or runner installation is performed. See
 [Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
+
+Agent network channels: `phm agents bus channels list --json` and `phm agents bus channels test email --json` are offline dry runs. See [agent network channels](docs/AGENT-NETWORK-CHANNELS.md) for the default-deny policy and adapter contract.
