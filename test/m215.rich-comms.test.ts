@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 /**
  * M215 — Rich comms test suite.
  *
@@ -153,6 +154,7 @@ const origHome = process.env['HOME'];
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'm215-'));
   process.env['HOME'] = tmpHome;
+  pairedTelegram(tmpHome, 42);
   vi.clearAllMocks();
   mockSendTelegramMessage.mockResolvedValue({ ok: true });
   mockPollTelegramUpdates.mockResolvedValue({ updates: [], newOffset: 0 });
@@ -357,7 +359,7 @@ describe('dispatch.ts — M215 text commands', () => {
 
   it('11. "snapshot" text → calls buildFleetSnapshot and sends reply', async () => {
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: 'snapshot', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'snapshot', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     await runCommsCycle(makeCfg() as never);
@@ -370,7 +372,7 @@ describe('dispatch.ts — M215 text commands', () => {
 
   it('12. "dashboard" text → reply contains dashboard URL', async () => {
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: 'dashboard', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'dashboard', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     await runCommsCycle(makeCfg() as never);
@@ -380,7 +382,7 @@ describe('dispatch.ts — M215 text commands', () => {
 
   it('13. "revert:<id>:<repo>" text → sends proposal confirmation', async () => {
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: 'revert:prop-abc:/home/user/my-repo', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'revert:prop-abc:/home/user/my-repo', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     await runCommsCycle(makeCfg() as never);
@@ -392,7 +394,7 @@ describe('dispatch.ts — M215 text commands', () => {
 
   it('14. revert confirmation text says "pending, not applied"', async () => {
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: 'revert:prop-abc:/home/user/my-repo', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'revert:prop-abc:/home/user/my-repo', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     await runCommsCycle(makeCfg() as never);

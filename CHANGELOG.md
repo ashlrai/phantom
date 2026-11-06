@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- fresh:begin version-table -->
+| Version source | Version |
+| --- | --- |
+| Source package | 3.30.11 |
+| Latest dated changelog release (2026-11-06) | 3.30.11 |
+<!-- fresh:end -->
+
 All notable changes to Phantom are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -9,7 +16,286 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [Unreleased]
+
+## [3.30.11] — 2026-11-06
+
+
+### Changes
+
+* RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3715](https://github.com/ashlrai/phantom/issues/3715)) ([261c520](https://github.com/ashlrai/phantom/commit/261c5200129b50ee246ec85fc1ec339c9a282915))
+
+## [3.30.10] — 2026-11-06
+
+
+### Features
+
+* connect authenticated Slack to Phantom Leader ([#3697](https://github.com/ashlrai/phantom/issues/3697)) ([78ca550](https://github.com/ashlrai/phantom/commit/78ca55033b74b9359f4fda87e5576e4897a5b9bb))
+
+
+### Fixes
+
+* bind historical updater feed identities ([#3694](https://github.com/ashlrai/phantom/issues/3694)) ([93af05a](https://github.com/ashlrai/phantom/commit/93af05a2c7b4938b6e3301dbab136fcd1cc32255))
+* include current operator guides in release package ([#3700](https://github.com/ashlrai/phantom/issues/3700)) ([91235fd](https://github.com/ashlrai/phantom/commit/91235fde153241806d04c5f689e2c0662d762d68))
+* protect stable release finalizer authority ([#3692](https://github.com/ashlrai/phantom/issues/3692)) ([cd22d72](https://github.com/ashlrai/phantom/commit/cd22d72c63954436458e359f7cef110e0fdb7104))
+* reconcile updater recovery and publication evidence ([#3706](https://github.com/ashlrai/phantom/issues/3706)) ([59b3097](https://github.com/ashlrai/phantom/commit/59b30970a630672055be38cf8603b4ccae73b5db))
+* recover desktop smoke after empty latest release ([#3675](https://github.com/ashlrai/phantom/issues/3675)) ([3cadede](https://github.com/ashlrai/phantom/commit/3cadeded9b3c01ad3fabbfb083ba1ce2b1c33805))
+* report private-safe desktop finalization phases ([#3696](https://github.com/ashlrai/phantom/issues/3696)) ([f2dc2ed](https://github.com/ashlrai/phantom/commit/f2dc2ed21b5f48053f7a971e069f2726ae27203b))
+* restore local Phantom teammate replies ([#3598](https://github.com/ashlrai/phantom/issues/3598)) ([a3a2408](https://github.com/ashlrai/phantom/commit/a3a2408830d1b5aaa474ddb3fbcfc63c8c547c8a))
+* run teammate replies inside Phantom ([#3695](https://github.com/ashlrai/phantom/issues/3695)) ([ef0718c](https://github.com/ashlrai/phantom/commit/ef0718c6bceb2d8ed1e18056bbc941e5f24a9833))
+
+
+### Changes
+
+* **RQ-DISKMAINT-1:** BRIDGE_NOTES - RQ-DISKMAINT-1 ([#3680](https://github.com/ashlrai/phantom/issues/3680)) ([ee5dd4e](https://github.com/ashlrai/phantom/commit/ee5dd4e789b0e038b15393188ab7274d77ab1142))
+* **RQ-LEADER-CEO-1:** RQ-LEADER-CEO-1 bridge notes ([#3677](https://github.com/ashlrai/phantom/issues/3677)) ([32a92b0](https://github.com/ashlrai/phantom/commit/32a92b09ffa6457bf7e413dffc3c49465fd60fa9))
+* **RQ-OUTBOXFALLBACKQ8:** RQ-OUTBOXFALLBACKQ8 ([#3707](https://github.com/ashlrai/phantom/issues/3707)) ([c633f05](https://github.com/ashlrai/phantom/commit/c633f05ce3c3ae27fda04cad561ff3cad903ad04))
+* **RQ-PHX-INSTALLEDMILESTONEREAD05SSV2:** Bridge notes ([#3676](https://github.com/ashlrai/phantom/issues/3676)) ([2a98a51](https://github.com/ashlrai/phantom/commit/2a98a51d951fb568bc773495173090d1571f31a0))
+* **RQ-PHX-MCPSTAGINGBATCH05SSZ2:** Staging inventory batch MCP handoff ([#3684](https://github.com/ashlrai/phantom/issues/3684)) ([ad35f75](https://github.com/ashlrai/phantom/commit/ad35f75413f979b073ebfc6d0bdf5b0feb6b4749))
+* **RQ-PHX-MCPSTAGINGCANCEL05STB2:** MCP staging cancellation handoff ([#3689](https://github.com/ashlrai/phantom/issues/3689)) ([370ad1c](https://github.com/ashlrai/phantom/commit/370ad1cd998e396d313515cc712ea07d2899ba64))
+* **RQ-PHX-MCPSTAGINGRETRY05STD1:** MCP staging retry handoff ([#3693](https://github.com/ashlrai/phantom/issues/3693)) ([e027319](https://github.com/ashlrai/phantom/commit/e027319f830c8ee47656a53b1c82c1563d0fffe7))
+* **RQ-PHX-STAGINGASYNCDU05STA1:** Staging inventory responsiveness handoff ([#3686](https://github.com/ashlrai/phantom/issues/3686)) ([a62da61](https://github.com/ashlrai/phantom/commit/a62da61d1d275d669f6f3233c30aacd89f301379))
+* **RQ-PHX-STAGINGBATCH05SSW2:** Staging inventory batch handoff ([#3679](https://github.com/ashlrai/phantom/issues/3679)) ([2d98ecd](https://github.com/ashlrai/phantom/commit/2d98ecd02c61240e14f7a84c1e818c85bd18ba15))
+* **RQ-PHX-STAGINGBATCHHELP05SSZ1:** BRIDGE_NOTES: RQ-PHX-STAGINGBATCHHELP05SSZ1 ([#3688](https://github.com/ashlrai/phantom/issues/3688)) ([e61dbb1](https://github.com/ashlrai/phantom/commit/e61dbb1ecf2017d916fc233e08fc0aab691e0dde))
+* **RQ-PHX-STAGINGBATCHPROGRESS05SSY1:** Staging batch progress handoff ([#3683](https://github.com/ashlrai/phantom/issues/3683)) ([b78a0d3](https://github.com/ashlrai/phantom/commit/b78a0d33bfc215a7cbda5c371ff94f0bac71367a))
+* **RQ-PHX-STAGINGBATCHREACH05SSX1:** Staging batch dispatch handoff ([#3682](https://github.com/ashlrai/phantom/issues/3682)) ([ba59bf8](https://github.com/ashlrai/phantom/commit/ba59bf8c843f3f8ed1b8fd2fabc6f1d1be26dee9))
+* **RQ-PHX-STAGINGBATCHSTOP05STA2:** Staging batch stop handoff ([#3687](https://github.com/ashlrai/phantom/issues/3687)) ([d2a8501](https://github.com/ashlrai/phantom/commit/d2a8501113c1b7bece31e294d982261f57cee31d))
+* **RQ-PHX-STAGINGRETRY05STB1:** Staging inventory retry handoff ([#3690](https://github.com/ashlrai/phantom/issues/3690)) ([c7a1ff2](https://github.com/ashlrai/phantom/commit/c7a1ff24918b4e3d2d6d0fec1d935f3d8bdffb14))
+* **RQ-PHX-STAGINGRETRYCANCEL05STC1:** Staging inventory cancellation retry handoff ([#3691](https://github.com/ashlrai/phantom/issues/3691)) ([623925f](https://github.com/ashlrai/phantom/commit/623925f9401f56c99dfdab0dd40d3ca38c8e7e5b))
+* **RQ-RECUT-MACDISPATCH-SNAPSHOT-NOV5:** Bound macOS fleet process ownership observations ([#3704](https://github.com/ashlrai/phantom/issues/3704)) ([423a2a7](https://github.com/ashlrai/phantom/commit/423a2a7db52a2ef31b5b12a9e104364616b30f0b))
+* **RQ-RECUT-MR-CONFLICT-DRIVERS-phantom-NOV5-R2:** Recovery Apps backlog integration against current iMessage o ([#3708](https://github.com/ashlrai/phantom/issues/3708)) ([4630340](https://github.com/ashlrai/phantom/commit/46303405152a552e75d241e5bbb4992db92a5069))
+* RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3712](https://github.com/ashlrai/phantom/issues/3712)) ([df2b35f](https://github.com/ashlrai/phantom/commit/df2b35fcfe3f63de6b943d50252fd8f3ddf3b9f9))
+* **RQ-V330-CIFIX-10R3:** RQ-V330-CIFIX-10R3 ([#3703](https://github.com/ashlrai/phantom/issues/3703)) ([6c7b0f5](https://github.com/ashlrai/phantom/commit/6c7b0f5255b42cc0dc96bd75422c95a14ac33448))
+* **RQ-V330-CIFIX-15R2:** RQ-V330-CIFIX-15R2 ([#3702](https://github.com/ashlrai/phantom/issues/3702)) ([f0f9a0f](https://github.com/ashlrai/phantom/commit/f0f9a0f69194ee97d1b52ef15ac5b74f60f6d9c6))
+* **RQ-V330-CIFIX-22:** BRIDGE_NOTES: RQ-V330-CIFIX-22 ([#3698](https://github.com/ashlrai/phantom/issues/3698)) ([b8a82fe](https://github.com/ashlrai/phantom/commit/b8a82fe2625288f39c4e497c626b4c6065941c16))
+* **RQ-V330-CIFIX-23:** BRIDGE_NOTES - RQ-V330-CIFIX-23 ([#3701](https://github.com/ashlrai/phantom/issues/3701)) ([fb60409](https://github.com/ashlrai/phantom/commit/fb60409191a8dc2600e4d151e52cb38de4a10999))
+* **RQ-V330-CIFIX-24:** RQ-V330-CIFIX-24 ([#3699](https://github.com/ashlrai/phantom/issues/3699)) ([1cb7fd5](https://github.com/ashlrai/phantom/commit/1cb7fd55f34e8450a23e44c95fa3e6cc182be37d))
+
+## [3.30.9] — 2026-11-05
+
+
+### Changes
+
+* **RQ-PHX-CIMCPRECOVERYPIPE05SSG2:** BRIDGE_NOTES — RQ-PHX-CIMCPRECOVERYPIPE05SSG2 ([#3660](https://github.com/ashlrai/phantom/issues/3660)) ([3c9e0df](https://github.com/ashlrai/phantom/commit/3c9e0dfd6fa1675f9f835151b882f99741e18723))
+* **RQ-PHX-CIRECEIPTAWAITBATCH05SRZ1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTAWAITBATCH05SRZ1 ([#3656](https://github.com/ashlrai/phantom/issues/3656)) ([89690c0](https://github.com/ashlrai/phantom/commit/89690c09bd1cac064d59719219edd8b3205bb445))
+* **RQ-PHX-CIRECEIPTPROGRESS05SSH2:** Batch receipt progress bridge ([#3662](https://github.com/ashlrai/phantom/issues/3662)) ([150f8c5](https://github.com/ashlrai/phantom/commit/150f8c5e08a958e7d75488b1245f6f9779a74481))
+* **RQ-PHX-CIRECEIPTSELECT05SSL1:** BRIDGE NOTES — RQ-PHX-CIRECEIPTSELECT05SSL1 ([#3665](https://github.com/ashlrai/phantom/issues/3665)) ([f69629a](https://github.com/ashlrai/phantom/commit/f69629a575303a81483df70bb1924a52e4504e2c))
+* **RQ-PHX-CIRESUMERENAME05SSC1:** BRIDGE_NOTES — RQ-PHX-CIRESUMERENAME05SSC1 ([#3659](https://github.com/ashlrai/phantom/issues/3659)) ([78cc2e0](https://github.com/ashlrai/phantom/commit/78cc2e065d03b549edb4313543e0ba42b24bb91b))
+* **RQ-PHX-MCPRECEIPTBATCH05SSJ1:** BRIDGE_NOTES — RQ-PHX-MCPRECEIPTBATCH05SSJ1 ([#3664](https://github.com/ashlrai/phantom/issues/3664)) ([c6a0296](https://github.com/ashlrai/phantom/commit/c6a0296af55034ca7b9b0c82a7eaa6d53a8108b6))
+* **RQ-PHX-RECEIPTBATCHREPLAN05SSK1:** BRIDGE_NOTES — RQ-PHX-RECEIPTBATCHREPLAN05SSK1 ([#3666](https://github.com/ashlrai/phantom/issues/3666)) ([1ec1c18](https://github.com/ashlrai/phantom/commit/1ec1c18bb327e5080bdd8837e0e3571d5bbff57b))
+* **RQ-PHX-RELEASEBATCHCANCEL05SRZ2:** RQ-PHX-RELEASEBATCHCANCEL05SRZ2 — Batch Cancellation ([#3657](https://github.com/ashlrai/phantom/issues/3657)) ([1d8a357](https://github.com/ashlrai/phantom/commit/1d8a357343260efaa057ce6e1e3957cd2242d045))
+* **RQ-PHX-RELEASEPACEDRETRY05SSN2:** BRIDGE_NOTES — RQ-PHX-RELEASEPACEDRETRY05SSN2 ([#3661](https://github.com/ashlrai/phantom/issues/3661)) ([5a64590](https://github.com/ashlrai/phantom/commit/5a645908f250eec14948492e18aa5793530c82e7))
+* **RQ-PHX-RELEASERETRYPIPE05SSA2:** BRIDGE_NOTES: RQ-PHX-RELEASERETRYPIPE05SSA2 ([#3655](https://github.com/ashlrai/phantom/issues/3655)) ([b7a43e7](https://github.com/ashlrai/phantom/commit/b7a43e79113fb218ed38ef03ffa08f6c3bcad1c9))
+* **RQ-PHX-RELEASERETRYREENTRANT05SSD1:** RQ-PHX-RELEASERETRYREENTRANT05SSD1 ([#3658](https://github.com/ashlrai/phantom/issues/3658)) ([d5a7a3a](https://github.com/ashlrai/phantom/commit/d5a7a3acb3c7361bbdf6a1934c0874a39bfd92b7))
+
+## [3.30.8] — 2026-11-05
+
+
+### Changes
+
+* **RQ-PHX-CANDIDATESHA05SRK2:** Candidate SHA inspection handoff ([#3629](https://github.com/ashlrai/phantom/issues/3629)) ([3e214cf](https://github.com/ashlrai/phantom/commit/3e214cfec1c5796f6b2d07eaa6cfb5dd14c6f899))
+* **RQ-PHX-CIDISCOVERYPIPE05SRS1:** RQ-PHX-CIDISCOVERYPIPE05SRS1 ([#3642](https://github.com/ashlrai/phantom/issues/3642)) ([25da983](https://github.com/ashlrai/phantom/commit/25da9835a67dd9af39909f3ea2f49caa58e8b2ba))
+* **RQ-PHX-CIFAILEDRETRY05SRG1:** BRIDGE_NOTES — RQ-PHX-CIFAILEDRETRY05SRG1 ([#3624](https://github.com/ashlrai/phantom/issues/3624)) ([947fd9c](https://github.com/ashlrai/phantom/commit/947fd9c48b95d78971e09a5d72c2605287a2db76))
+* **RQ-PHX-CIRECEIPTAWAIT05SRU1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTAWAIT05SRU1 ([#3646](https://github.com/ashlrai/phantom/issues/3646)) ([115c825](https://github.com/ashlrai/phantom/commit/115c8257d52abe6bf8e906786cb7c1742e568255))
+* **RQ-PHX-CIRECEIPTDISCOVER05SRQ1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTDISCOVER05SRQ1 ([#3641](https://github.com/ashlrai/phantom/issues/3641)) ([b658b74](https://github.com/ashlrai/phantom/commit/b658b742c987774f0d1e056d919256dea9501021))
+* **RQ-PHX-CIRECEIPTFETCH05SRK1:** BRIDGE_NOTES — RQ-PHX-CIRECEIPTFETCH05SRK1 ([#3635](https://github.com/ashlrai/phantom/issues/3635)) ([fa00f95](https://github.com/ashlrai/phantom/commit/fa00f95d44fe81ed94c87edbc608fb1837e0d022))
+* **RQ-PHX-CIRECEIPTSEED05SRM2:** CI input digest seeds handoff ([#3634](https://github.com/ashlrai/phantom/issues/3634)) ([b4645b5](https://github.com/ashlrai/phantom/commit/b4645b595c0bf484fffe674178d22b2061de1b3b))
+* **RQ-PHX-CIRESUMEBYNAME05SRV1:** CI resume plan by artifact name ([#3649](https://github.com/ashlrai/phantom/issues/3649)) ([7ae51de](https://github.com/ashlrai/phantom/commit/7ae51ded5174eba69a3fa3fe5bbbaf21e9e163c3))
+* **RQ-PHX-CIRESUMEFETCHPLAN05SRR2:** CI resume plan handoff ([#3643](https://github.com/ashlrai/phantom/issues/3643)) ([a06f7dc](https://github.com/ashlrai/phantom/commit/a06f7dc840617e7ce617352ff47ae06d2820e242))
+* **RQ-PHX-CIRESUMEINPUTS05SRF1:** BRIDGE_NOTES — RQ-PHX-CIRESUMEINPUTS05SRF1 (resume-from-fail ([#3625](https://github.com/ashlrai/phantom/issues/3625)) ([b5560b2](https://github.com/ashlrai/phantom/commit/b5560b2e49d376eef9e64fa9600ca28367cb8b3b))
+* **RQ-PHX-CIRESUMESTDIN05SRL2:** BRIDGE_NOTES — RQ-PHX-CIRESUMESTDIN05SRL2 (Nov 5 01:47 P0 RE ([#3633](https://github.com/ashlrai/phantom/issues/3633)) ([1bd2c48](https://github.com/ashlrai/phantom/commit/1bd2c48c7f5951b8319181a143efc8af19fd1983))
+* **RQ-PHX-CISTDINREALPIPE05SRN1:** Bridge notes — real stdin pipe ([#3637](https://github.com/ashlrai/phantom/issues/3637)) ([da180c9](https://github.com/ashlrai/phantom/commit/da180c91635465d6faf80d030483739a03688c2f))
+* **RQ-PHX-COMMSCUTOVER05SRB1:** BRIDGE_NOTES — RQ-PHX-COMMSCUTOVER05SRB1 ([#3618](https://github.com/ashlrai/phantom/issues/3618)) ([8d6faef](https://github.com/ashlrai/phantom/commit/8d6faef826eccf0833808832c90d10262ffeb5eb))
+* **RQ-PHX-MCPCIAWAIT05SRX2:** BRIDGE_NOTES — RQ-PHX-MCPCIAWAIT05SRX2 ([#3652](https://github.com/ashlrai/phantom/issues/3652)) ([4198328](https://github.com/ashlrai/phantom/commit/419832842580698f6d6a63de7e60921904850698))
+* **RQ-PHX-MCPCIRESUME05SRJ1:** RQ-PHX-MCPCIRESUME05SRJ1 — fleet_ci_resume_inputs MCP tool ([#3632](https://github.com/ashlrai/phantom/issues/3632)) ([e77fb46](https://github.com/ashlrai/phantom/commit/e77fb46332374b1f64877633c473ab9743313c71))
+* **RQ-PHX-MCPCOMMSREADINESS05SRG2:** Comms readiness MCP bridge ([#3622](https://github.com/ashlrai/phantom/issues/3622)) ([b8a2116](https://github.com/ashlrai/phantom/commit/b8a21168ba6967f7738e28a0a2265a40d21a04e3))
+* **RQ-PHX-MCPEMAILWAITTRUTH05SRE2:** BRIDGE_NOTES.md — RQ-PHX-MCPEMAILWAITTRUTH05SRE2 ([#3623](https://github.com/ashlrai/phantom/issues/3623)) ([233cddf](https://github.com/ashlrai/phantom/commit/233cddfce981962986dce74a93458ecdccba0320))
+* **RQ-PHX-MCPIMESSAGEEVIDENCE05SRC2:** BRIDGE_NOTES — RQ-PHX-MCPIMESSAGEEVIDENCE05SRC2 ([#3619](https://github.com/ashlrai/phantom/issues/3619)) ([9d6fed7](https://github.com/ashlrai/phantom/commit/9d6fed70b7c126d5620551925a2286670312ca32))
+* **RQ-PHX-RELEASEADVANCE05SRL1:** BRIDGE_NOTES — RQ-PHX-RELEASEADVANCE05SRL1 ([#3631](https://github.com/ashlrai/phantom/issues/3631)) ([3532222](https://github.com/ashlrai/phantom/commit/353222298d79f5f26c4ee1f272d4b73f0229b521))
+* **RQ-PHX-RELEASEADVANCEONCE05SRP2:** BRIDGE_NOTES — RQ-PHX-RELEASEADVANCEONCE05SRP2 ([#3639](https://github.com/ashlrai/phantom/issues/3639)) ([cb96dd6](https://github.com/ashlrai/phantom/commit/cb96dd6a350800f46cbec3606ed28496622999d1))
+* **RQ-PHX-RELEASEADVANCEWAIT05SRN2:** Release advance wait handoff ([#3638](https://github.com/ashlrai/phantom/issues/3638)) ([b05dc4e](https://github.com/ashlrai/phantom/commit/b05dc4e222f2fb2b2eacd139ee8c3bcdd5bd9354))
+* **RQ-PHX-RELEASEASSETTRUTH05SRH2:** Release asset truth handoff ([#3626](https://github.com/ashlrai/phantom/issues/3626)) ([9d26ba7](https://github.com/ashlrai/phantom/commit/9d26ba704fc90460256e28cbe96f530ac067d312))
+* **RQ-PHX-RELEASEBATCH05SRS2:** BRIDGE_NOTES — RQ-PHX-RELEASEBATCH05SRS2 ([#3644](https://github.com/ashlrai/phantom/issues/3644)) ([e8f3184](https://github.com/ashlrai/phantom/commit/e8f3184a9b2327557760db46c25b0cf915d3787f))
+* **RQ-PHX-RELEASEBATCHRETRY05SRW2:** BRIDGE_NOTES — RQ-PHX-RELEASEBATCHRETRY05SRW2 ([#3653](https://github.com/ashlrai/phantom/issues/3653)) ([02e9478](https://github.com/ashlrai/phantom/commit/02e947830ee5746e3a3a0a317293d47cb57100bb))
+* **RQ-PHX-RELEASECANDIDATEPLAN05SRH1:** BRIDGE_NOTES — RQ-PHX-RELEASECANDIDATEPLAN05SRH1 ([#3627](https://github.com/ashlrai/phantom/issues/3627)) ([72367cc](https://github.com/ashlrai/phantom/commit/72367cc7da4816eaca2ba1eac8ebdeab65b9143d))
+* **RQ-PHX-RELEASEMILESTONES05SRF2:** Release milestone bridge ([#3621](https://github.com/ashlrai/phantom/issues/3621)) ([73664a2](https://github.com/ashlrai/phantom/commit/73664a2b0efde6de5d09b03e78d71c2706e0ec0e))
+* **RQ-PHX-RELEASEMILESTONEWAIT05SRJ2:** Release milestone await handoff ([#3628](https://github.com/ashlrai/phantom/issues/3628)) ([7f4fcc8](https://github.com/ashlrai/phantom/commit/7f4fcc8d61e7dc1653ae2d06ee53da3945a0bced))
+* **RQ-PHX-RELEASEONCEREALPIPE05SRV2:** BRIDGE_NOTES — RQ-PHX-RELEASEONCEREALPIPE05SRV2 ([#3651](https://github.com/ashlrai/phantom/issues/3651)) ([9acbeca](https://github.com/ashlrai/phantom/commit/9acbeca930412f4067e330b0cf50fe25a82de9b4))
+* **RQ-PHX-RELEASEONCERETRY05SRT1:** BRIDGE_NOTES — RQ-PHX-RELEASEONCERETRY05SRT1 ([#3647](https://github.com/ashlrai/phantom/issues/3647)) ([13aa5cf](https://github.com/ashlrai/phantom/commit/13aa5cf486be1e7de32fb6e86e26b43830f02471))
+* **RQ-PHX-RELEASEWAITSERIAL05SRR1:** BRIDGE_NOTES — RQ-PHX-RELEASEWAITSERIAL05SRR1 ([#3645](https://github.com/ashlrai/phantom/issues/3645)) ([50ff472](https://github.com/ashlrai/phantom/commit/50ff4724f172913477e9c22edc17496f630ca6c4))
+
+## [3.30.1] — 2026-11-05
+
+### Changed
+- Prepare continuous patch releases from green master commits on a configurable
+  30-minute cadence, with the README, desktop version carriers and generated
+  release notes updated together in the release PR.
+- Reuse the exact commit's green push CI evidence for desktop release
+  qualification while keeping exhaustive platform suites in their nightly lane.
+  Existing signing, artifact digests and release provenance remain required.
+
+## [3.30.0] — 2026-11-04
+
+### Added
+- `phm autopilot` drives Phantom's own pull requests toward green: it fixes CI,
+  answers review, updates the merge base and stops when the PR is not ours.
+  Operator credentials stay out of fixer and verify children.
+- Land the reviewed memory foundation behind a benchmark gate, with an optional
+  local meaning signal measured on the same benchmark.
+- Lessons show what each lesson cites and inject only the lessons about the
+  task. A lessons holdout and outcome-ranked scoring gate self-improvement
+  promotion on measured evidence, and lessons whose source PRs were reverted
+  are withheld.
+- Add a `localInference` config block for loopback-only OpenAI-compatible
+  providers (Ollama, oMLX, mlx-lm): no placeholder or OAuth keys are sent to
+  local URLs, doctor and status probe `GET /models` with a bounded streamed
+  body, `phm --ashlr-handshake` reports the handshake, and `OLLAMA_HOST` is
+  honored on loopback in the knowledge indexer and model-manager probe.
+- Lay the governed-client gateway: the `gateways` config block is validated at
+  load, a target validator checks destinations, and governed clients can be
+  routed through an opted-in gateway.
+- Fleet gains a canary enforce ladder state machine — enforce stays
+  unreachable while host cancellation is unproven — plus a read-only Shadow
+  Report (`automerge-canary report [--json]`) that reads the spawn custody
+  ledger.
+- The router spends work across Codex, then Devin, SuperGrok and oMLX, and a
+  queue.v1 `fleet_hop` emitter records station exits.
+- Ashlr MD becomes the out-of-box Markdown opener and registers its native
+  `mdopener-mcp` in `mcp ecosystem`; Gemini CLI joins `wire` as a status-only
+  target; lexicon and locus are enrolled as core-fleet repos; the Ashlr.AI
+  Plugin can read the project's repo sessions and confined runs.
+- First run on any machine gets portable default roots and `--json` on
+  `onboard`, `enroll add`, `mcp ecosystem` and `docs`; `phm init` builds the
+  repo index; `phm upgrade` runs `phm update`; `wire status` prints a
+  read-only report.
+- Ecosystem stars and commits are aggregated daily, artifact installs record
+  their installation time, `phm status` counts repositories with no commits,
+  and cloud sessions claim the companion tools they called.
+- The self-improvement gate and PR autopilot become Tier-1 owned paths, and
+  the promote gate's metric runs in the verification sandbox under a standing
+  grant.
+- Fleet job drafts get a stdin-capable draft check with header validation,
+  collision output and snapshot-aware prechecks (CLI and MCP), `fleet trim`
+  joins the verb registry, and idle lanes report how long they have been idle.
+
+### Removed
+- Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Several symbols were already cleaned by intervening PRs (the original sweep targeted 150; 7 were superseded). No CLI command, flag or config key changes.
+
+### Fixed
+- The Verse update panel lists the local changes that block self-update and
+  holds on a failed update commit, and lane capacity without a meter shows as
+  unknown instead of a guessed allowance.
+- Resolve MCP gateway TS2300 duplicate-identifier error by deriving the
+  JSON-RPC message type from `serializeMessage` rather than importing from
+  a conflicting SDK module path.
+- Scrub stops flagging prose, code references and public digests as secrets.
+- Automations dedupe prunes against the wall clock (master was red), and the
+  daily full-run drift — CLI registry, docs links, spawn-gate assertion and
+  web typecheck — is cleared.
+- The fleet post-merge watch stays open while CI is still running, and
+  stale git lock files surface in doctor and at daemon start.
+- Recover cleanly from killed or crashed agents: crash-orphaned runs are
+  labeled stale in `phm runs`, scratch dirs and apply worktrees are reclaimed,
+  sandbox locks are held only for worktree registration, and the fabric run
+  cache is bounded with crash-safe rewrites.
+- Reap zombie-only process groups and stale keep-alive worker sockets, and
+  clear environment-dependent and CI cold-start flakes.
+- Close per-agent auto-merge gaps — self-repo detection, exact-diff gate,
+  Stop/Pause and merge-prompt injection — and pin the local auto-merge to the
+  staged commit while keeping protected paths out of it. The trust-root PR
+  opens through the GitHub API instead of a local checkout.
+- `--help` never acts, `--json` stays machine-readable on refusals, and
+  unknown options are refused before side effects across the CLI and MCP
+  gateway (unknown gateway tools answer `-32602`).
+- Detect ashlr-plugin installs including Claude Code marketplace layouts and
+  detect Claude Code, Codex and Cursor from their CLI on PATH. `devin connect`
+  refuses off macOS before asking for the key.
+- Drop the desktop updater's zip feature, clearing RUSTSEC-2026-0367,
+  RUSTSEC-2026-0368 and RUSTSEC-2026-0369.
+- Treat renaming a test out of the suite as deleting it, and refuse cloud
+  Land on test tampering rather than only showing the chip.
+- The desktop app stops repainting the window per streamed token or waking
+  the page for chat pulses; cold load, long chats and first ⌘K are faster,
+  derived turns survive switching chats, and typing stays smooth with
+  hundreds of chats.
+
+### Performance
+- The web console re-renders only the live turn's block of the transcript per
+  streamed token.
+
+## [3.29.17] — 2026-11-03
+
+### Fixed
+- The pinned `@ashlrai/locus-mcp` companion moves to 0.6.2, because the 0.5.0
+  npm shim re-executed itself through `which` and forked without bound.
+- The Devin bus adapter runs in read-only auto mode.
+
+Unreleased work that landed alongside this patch release is described under
+3.30.0 above.
+
+## [3.29.16] — 2026-11-01
+
+Tagged as `v3.29.16`. This section was written after the tag, so it does not
+show that the package is published to npm.
+
+### Added
+- Fleet console: keyboard shortcuts in the fleet pane, a runs history view, a
+  dispatch dock pane, a per-lane "Next up" queue view and a planner logins panel.
+- Shared bus: a durable local inbox, reply and watch commands, work claims so one
+  worker takes each job, consumer checkpoints that survive restarts and address
+  filters.
+- Planner: a brief builder that assembles context for each planner pass, and
+  single-flight cycles so two planner ticks never overlap.
+- Graph: neighbor and route queries, relation traversal, kind filters, Mermaid
+  export, streamed node output and per-node working directories.
+- Usage and resources: a resource ledger command with model usage, personal usage
+  for Claude weekly-only windows and the Codex weekly API meter, and detection of
+  usage resets.
+- Memory pressure and recovery: a memory pressure monitor and a recovery watch
+  that flags stalled runs, so unattended runs recover from crashes, hangs and
+  clock skew.
+- Multi-host queue: host queue ingress, a foreground worker per host, local
+  leader failover with a proof test, and the mobile fleet view of queue state.
+- Run receipts: an opt-in, signed `receipt.v1` record written when a run closes
+  (`ASHLR_RUN_RECEIPTS=1`), with CI, merge, survival and revert follow-ups chained to it.
+- Custody ledger: every engine spawn leaves a value-free record, and `phm status`
+  shows the strict preflight.
+- Local inference: a `localInference` config with loopback-only OpenAI-compatible
+  endpoints, and doctor and status probes of the models endpoint.
+- `phm upgrade` runs `phm update`, and Ashlr MD is the default Markdown opener.
+
+### Changed
+- Auto-merge canary: enforce mode stays unavailable while cancelling a merge is
+  unproven. A read-only Shadow Report is available.
+- The gateways config is validated when it loads, not on first use.
+- Docs-only PRs take a shorter CI lane. Mac lanes on master run one push at a
+  time and are skipped on draft PRs.
+- Dispatch limits understand Claude weekly-only usage windows.
+- Doctor shows one MCP warning instead of two on a fresh install, and one
+  local-model warning instead of four when no local model is running.
+- Product copy calls it Phantom, not Verse.
+
+### Fixed
+- `--help` never runs a command's side effects. Unknown options are refused
+  before anything acts, across fleet, sandbox, enroll, comms and more.
+- `--json` output stays machine-readable when a command refuses.
+- Provider error bodies that echo the API key have the key redacted.
+- The Pulse token is read from a hidden prompt or stdin, never from a command argument.
+- Agents killed mid-run are recovered cleanly, and the sandbox lock is held for less time.
+- Automation dedupe pruning no longer depends on the wall clock, which had kept master red.
+- Zombie process groups and stale keep-alive worker sockets are cleaned up.
+- Run receipts are written for real dispatches.
+- Mission console reads retry transient transport failures, within a bound.
+
 ## [3.29.15] — Unreleased
+
+### Fixed
+- Local inference URLs and local Ollama defaults pin `localhost` to
+  `127.0.0.1`, avoiding name resolution. Provider probes and Ollama model
+  lookups refuse redirects instead of contacting another endpoint.
+
+### Removed
+- Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used (`WIRE_CONTRACT_KEYS` is kept as a compile-time contract guard). Rebased onto current master the count drops from 150 to 143: `_handlerCounts` is kept (now referenced by `test/m241.event-bus.test.ts`) and six symbols were already removed on master (`AutonomyIcon`, `ApprovalsIcon`, `ThemeIcon`, `TrashIcon`, `hasCommandHandler`, `preloadGuardDialogs`). Includes the internal `GenomeCapture` type in `src/core/types/genome.ts` (deprecated and removed in one step: it was never exported from a published entry point such as `@ashlr/hub`, `@ashlr/hub/types` or `@ashlr/hub/plugin`, so no user import can break; docs/contracts/CONTRACT-M16.md updated). No CLI command, flag or config key changes.
 
 ### Added
 - Every engine spawn that is not wrapped by `phantom exec` now leaves a
@@ -65,6 +351,20 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Create improvement proposals in unique owned worktrees, withhold private or
   unverified GitHub evidence, and scrub public titles consistently. Proposals
   remain drafts; automatic merging requires the existing protected process.
+
+### Deprecated
+- `npm run release:canary` and the signed observation-only release canary are
+  retired: `scripts/run-signed-release-canary.mjs` and
+  `scripts/verify-signed-release-canary-receipt.mjs` are removed, so the
+  `release:canary` manifest alias now fails until owner-lane cleanup removes
+  it and the frozen `v3.3.2` `release.yml`/`promote.yml` workflows. The
+  commissioned `publish-canonical-npm.yml` trusted-publishing workflow is the
+  one sanctioned npm release path.
+- The manual `npm pack`/`npm publish` release instructions formerly in
+  `docs/RELEASING-LOCALLY.md` are retired; publish only through the
+  commissioned canonical publisher and reconcile uncertain registry state by
+  reads, never replayed writes. The legacy `verify:local-production` gate
+  remains in-tree as evidence only and admits no canonical package.
 
 ## [3.29.14] — Unreleased
 

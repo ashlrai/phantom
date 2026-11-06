@@ -1,8 +1,12 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { evictAll } from '../../data/cache.js';
+import { fleetRunsNotifyQuery } from './fleet-runs-query.js';
+import { phonePendingQuery } from './phone-pending-query.js';
+import { NOTIFICATION_CATEGORY_LABEL } from './types.js';
+import { evictAll, refetchQuery } from '../../data/cache.js';
 import { markCheckComplete } from '../../data/auth-store.js';
-import { __resetNotificationStoreForTests, getNotificationSnapshot } from './notification-store.js';
+import { getVerseUiState, resetVerseUi } from '../../routes/verse/verse-ui-store.js';
+import { __resetNotificationStoreForTests, enableDesktopNotifications, getNotificationSnapshot, setMuted } from './notification-store.js';
 import { useNotificationEngine } from './useNotificationEngine.js';
 
 class EventSourceStub extends EventTarget {
@@ -26,6 +30,30 @@ function healthyControl() {
   };
 }
 
+function quietReleasePr() {
+  return { v: 1, generatedAt: '2026-09-06T12:00:00.000Z', sourceState: 'healthy', repos: [] };
+}
+
+/** A valid self-update probe answer with nothing pending — the quiet baseline. */
+function quietSelfUpdate() {
+  return {
+    v: 1, sourceState: 'healthy', installedVersion: '3.29.4',
+    headSha: 'a'.repeat(40), headAt: '2026-09-06T08:00:00.000Z',
+    originSha: 'a'.repeat(40), branch: 'master', behind: 0, ahead: 0, dirty: false,
+    lastFetchAt: '2026-09-06T12:00:00.000Z', processStartedAt: '2026-09-06T06:00:00.000Z',
+    uptimeSeconds: 21_900, canFastForward: false, lastApply: null,
+  };
+}
+
+/** A valid resource ledger with no lanes — the quiet baseline. */
+function quietLedger() {
+  return {
+    v: 1, generatedAt: '2026-09-06T12:00:00.000Z',
+    sources: { status: 'healthy', apiSpend: 'healthy', jobs: 'healthy' },
+    asOf: '2026-09-06T12:00:00.000Z', lanes: [], apiSpend: null,
+  };
+}
+
 describe('notification refresh channel', () => {
   beforeEach(async () => {
     // Keep the recorded failure inside the production 24-hour notification
@@ -34,6 +62,7 @@ describe('notification refresh channel', () => {
     markCheckComplete(false);
     evictAll();
     __resetNotificationStoreForTests();
+    resetVerseUi();
     vi.stubGlobal('EventSource', EventSourceStub);
     // The app loads its global SSE channel after first paint; mount it here
     // explicitly so this test exercises the real invalidation channel.
@@ -46,10 +75,14 @@ describe('notification refresh channel', () => {
     vi.restoreAllMocks();
   });
 
-  it('fetches each source initially without creating a separate polling timer', async () => {
+  it('fetches each source initially and polls non-SSE sources at 60 seconds', async () => {
     const sources: Record<string, unknown> = {
       '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
+      '/api/verse/fleet/runs': null, '/api/verse/fleet/control/lanes': null, '/api/verse/ops/self-update': quietSelfUpdate(),
+      '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
+      '/api/verse/fleet/control/remote-pending': null,
+      '/api/verse/leader/planner/plan': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -57,7 +90,8 @@ describe('notification refresh channel', () => {
     await act(async () => { render(<Harness />); });
 
     expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(Object.keys(sources).sort());
-    expect(intervals).not.toHaveBeenCalled();
+    // The fleet snapshots and four other probes poll at 60 seconds.
+    expect(intervals.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000, 60_000, 60_000, 30_000, 60_000]);
     expect(getNotificationSnapshot().items).toHaveLength(0);
   });
 
@@ -65,6 +99,10 @@ describe('notification refresh channel', () => {
     const sources: Record<string, unknown> = {
       '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
       '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
+      '/api/verse/fleet/runs': null, '/api/verse/fleet/control/lanes': null, '/api/verse/ops/self-update': quietSelfUpdate(),
+      '/api/verse/release-pr': quietReleasePr(), '/api/verse/leader/resources': quietLedger(),
+      '/api/verse/fleet/control/remote-pending': null,
+      '/api/verse/leader/planner/plan': null,
     };
     const fetch = vi.fn(async (path: string) => new Response(JSON.stringify(sources[path]), { status: 200 }));
     vi.stubGlobal('fetch', fetch);
@@ -88,7 +126,109 @@ describe('notification refresh channel', () => {
       'next-action-check-output', 'proposal-backlog', 'run-failed-failed-run', 'security-critical',
     ]);
     for (const path of Object.keys(sources)) {
-      expect(fetch.mock.calls.filter(([called]) => called === path)).toHaveLength(2);
+      // The fleet projection, self-update, release PR and resource-ledger probes
+      // have no SSE event — they are fetched once at mount and not invalidated by
+      // these events.
+      const expected = path === '/api/verse/fleet/control/lanes' || path === '/api/verse/fleet/runs' || path === '/api/verse/ops/self-update' || path === '/api/verse/release-pr' || path === '/api/verse/leader/resources' || path === '/api/verse/fleet/control/remote-pending' || path === '/api/verse/leader/planner/plan' ? 1 : 2;
+      expect(fetch.mock.calls.filter(([called]) => called === path)).toHaveLength(expected);
     }
+  });
+
+  it('derives the fleet category and retires it when the optional endpoint answers 404', async () => {
+    let missing = false;
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+      if (path === '/api/verse/fleet/runs') return missing
+        ? new Response('not found', { status: 404 })
+        : new Response(JSON.stringify({ generatedAt: '2026-09-06T12:05:00.000Z', paused: false,
+          claudeLane: 'down', lanes: [], workers: [], mergesLastHour: { count: null }, drop: null, events: [] }));
+      const sources: Record<string, unknown> = { '/api/control': healthyControl(),
+        '/api/fleet': { nextActions: [] }, '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
+        '/api/verse/ops/self-update': quietSelfUpdate(), '/api/verse/leader/resources': quietLedger() };
+      return new Response(JSON.stringify(sources[path]));
+    }));
+    await act(async () => { render(<Harness />); });
+    expect(getNotificationSnapshot().items).toEqual([expect.objectContaining({
+      id: 'fleet-claude-lane-down', category: 'fleet', severity: 'high',
+    })]);
+    expect(NOTIFICATION_CATEGORY_LABEL.fleet).toBe('Fleet on this Mac');
+    missing = true;
+    await expect(fleetRunsNotifyQuery.fetch()).resolves.toBeNull();
+    await act(async () => {
+      await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true);
+    });
+    expect(getNotificationSnapshot().items).toEqual([]);
+  });
+
+  it('adds and clears a pending phone on the next visible poll', async () => {
+    let approvals = [{ id: 'phone-1', label: 'Phone', email: 'person@example.test', deviceType: 'phone', subject: 'fake-credential' }];
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+      if (path === '/api/verse/fleet/control/remote-pending') return Response.json({ v: 1, approvals });
+      const sources: Record<string, unknown> = { '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
+        '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] }, '/api/verse/ops/self-update': quietSelfUpdate(),
+        '/api/verse/leader/resources': quietLedger() };
+      return new Response(JSON.stringify(sources[path]));
+    }));
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    await act(async () => { render(<Harness />); });
+    const item = getNotificationSnapshot().items.find((row) => row.id === 'phone-pending:phone-1');
+    expect(item).toMatchObject({ title: 'Phone waiting for approval', category: 'action-required' });
+    act(() => item?.actionRun?.());
+    expect(getVerseUiState().section).toBe('settings');
+    approvals = [];
+    const tick = intervals.mock.calls.find((call) => call[1] === 30_000)?.[0];
+    expect(tick).toBeTypeOf('function');
+    await act(async () => { (tick as () => void)(); await refetchQuery(phonePendingQuery.key, () => phonePendingQuery.fetch()); });
+    expect(getNotificationSnapshot().items.some((row) => row.id === 'phone-pending:phone-1')).toBe(false);
+  });
+
+  it('shows merges alongside incidents, sends one desktop alert per merge, and honors fleet mute', async () => {
+    const desktop = vi.fn();
+    vi.stubGlobal('Notification', Object.assign(desktop, { permission: 'granted' }));
+    await enableDesktopNotifications();
+    const fleetSnapshot = { generatedAt: '2026-09-06T12:05:00.000Z', paused: false,
+      claudeLane: 'down', lanes: [], workers: [], sources: { merges: 'healthy' },
+      mergesLastHour: { count: 1, items: [{ repo: 'ashlrai/bridge', number: 1715, title: 'RQ-PHX-INBOXPOST31' }] },
+      drop: null, events: [] };
+    const sources: Record<string, unknown> = { '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
+      '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] }, '/api/verse/fleet/runs': fleetSnapshot,
+      '/api/verse/ops/self-update': quietSelfUpdate(), '/api/verse/leader/resources': quietLedger() };
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => Response.json(sources[path])));
+    await act(async () => { render(<Harness />); });
+    expect(getNotificationSnapshot().items.map((item) => item.id)).toEqual([
+      'fleet-claude-lane-down', 'fleet-merge:ashlrai/bridge#1715',
+    ]);
+    expect(desktop).toHaveBeenCalledTimes(2);
+    expect(desktop).toHaveBeenCalledWith('Merged #1715', expect.objectContaining({ tag: 'fleet-merge:ashlrai/bridge#1715' }));
+    await act(async () => { await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true); });
+    expect(getNotificationSnapshot().items).toHaveLength(2);
+    expect(desktop).toHaveBeenCalledTimes(2);
+    act(() => setMuted('fleet', true));
+    expect(getNotificationSnapshot().items).toEqual([]);
+    fleetSnapshot.mergesLastHour.items.push({ repo: 'ashlrai/bridge', number: 1716, title: 'Another merge' });
+    fleetSnapshot.mergesLastHour.count = 2;
+    await act(async () => { await refetchQuery(fleetRunsNotifyQuery.key, () => fleetRunsNotifyQuery.fetch(), true); });
+    expect(getNotificationSnapshot().items).toEqual([]);
+    expect(desktop).toHaveBeenCalledTimes(2);
+  });
+
+  it('raises one update-ready item when the self-update probe reports a staged fast-forward', async () => {
+    const ready = { ...quietSelfUpdate(), behind: 3, canFastForward: true,
+      originSha: 'b'.repeat(40), lastFetchAt: '2026-09-06T12:04:00.000Z' };
+    const sources: Record<string, unknown> = {
+      '/api/control': healthyControl(), '/api/fleet': { nextActions: [] },
+      '/api/runs': [], '/api/inbox': { pending: 0, proposals: [] },
+      '/api/verse/fleet/runs': null, '/api/verse/ops/self-update': ready,
+      '/api/verse/leader/resources': quietLedger(),
+    };
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => Response.json(sources[path])));
+    await act(async () => { render(<Harness />); });
+
+    expect(getNotificationSnapshot().items).toEqual([expect.objectContaining({
+      id: 'update-ready:bbbbbbb', category: 'action-required', severity: 'high',
+      title: 'Phantom bbbbbbb is ready to install', actionLabel: 'Update now',
+    })]);
+    // The action is the same surface switch the gear tray's update entry makes.
+    act(() => { getNotificationSnapshot().items[0]!.actionRun!(); });
+    expect(getVerseUiState().section).toBe('settings');
   });
 });

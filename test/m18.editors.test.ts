@@ -666,7 +666,7 @@ describe('Codex official CLI registration', () => {
   );
 
   it.skipIf(process.platform === 'win32').each(['stdout', 'stderr'] as const)(
-    'does not report $0 overflow while a TERM-ignoring process tree can still mutate',
+    'does not report $0 overflow on %s while a TERM-ignoring process tree can still mutate',
     async (stream) => {
       const failed = await exerciseTermIgnoringCodex(stream);
 
@@ -690,7 +690,7 @@ describe('Codex official CLI registration', () => {
   );
 
   it.runIf(process.platform === 'win32').each(['stdout', 'stderr'] as const)(
-    'does not report $0 overflow while a Windows descendant tree can still mutate',
+    'does not report $0 overflow on %s while a Windows descendant tree can still mutate',
     async (stream) => {
       const failed = await exerciseTermIgnoringCodex(stream);
 

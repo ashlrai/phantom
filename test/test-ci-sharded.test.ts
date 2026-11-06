@@ -38,9 +38,19 @@ function runFixture(
     writeFileSync(join(root, 'test', 'helpers', 'test-durations.json'), durations);
   }
   mkdirSync(join(root, 'node_modules', 'vitest'), { recursive: true });
+  const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
+  mkdirSync(dirname(policy), { recursive: true });
+  copyFileSync(resolve(sourceScripts, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
   for (const file of ['test-ci.mjs', 'test-ci-sharded.mjs', 'test-shard-plan.mjs']) {
     copyFileSync(join(sourceScripts, file), join(root, 'scripts', file));
   }
+  // Keep fixture capacity deterministic; policy tests cover low-memory inputs.
+  const fixtureWrapper = join(root, 'scripts', 'test-ci.mjs');
+  expect(readFileSync(fixtureWrapper, 'utf8'), 'Fixture capacity call must match production').toContain('boundedVitestJob(process.env, process.argv.slice(2))');
+  writeFileSync(fixtureWrapper, readFileSync(fixtureWrapper, 'utf8').replace(
+    'boundedVitestJob(process.env, process.argv.slice(2))',
+    'boundedVitestJob(process.env, process.argv.slice(2), 68719476736, 8)',
+  ));
   let reportDirectory: string | undefined;
   if (report !== undefined) {
     reportDirectory = join(realpathSync(root), 'reports');
@@ -284,12 +294,12 @@ describe('local exhaustive prepublish shards', () => {
   });
 
   it.each([
-    ['--general-shard=0/4'], ['--general-shard=5/4'], ['--general-shard=1/3'], ['--general-shard=01/4'],
-    ['--general-shard=1/4', '--isolated-only'], ['--isolated-only', '--isolated-only'],
-    ['--general-shard=1/4', '--general-shard=2/4'], ['--isolated-only', '-t', 'arbitrary'],
-    ['test/other.test.ts'], ['--shard=1/4'], ['--help'],
-    ['--workers=0'], ['--workers=9'], ['--workers=04'], ['--workers'], ['--workers=4', '--isolated-only'],
-  ])('rejects invalid selectors without launching children: %j', (...args) => {
+    [['--general-shard=0/4']], [['--general-shard=5/4']], [['--general-shard=1/3']], [['--general-shard=01/4']],
+    [['--general-shard=1/4', '--isolated-only']], [['--isolated-only', '--isolated-only']],
+    [['--general-shard=1/4', '--general-shard=2/4']], [['--isolated-only', '-t', 'arbitrary']],
+    [['test/other.test.ts']], [['--shard=1/4']], [['--help']],
+    [['--workers=0']], [['--workers=9']], [['--workers=04']], [['--workers']], [['--workers=4', '--isolated-only']],
+  ])('rejects invalid selectors without launching children: %j', (args) => {
     const result = runFixture('none', {}, args);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(2);
     expect(result.stdout).toBe('');

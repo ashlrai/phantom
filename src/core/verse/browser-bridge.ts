@@ -618,6 +618,3 @@ export function resetBrowserBridgeForTest(): void {
   clock = Date.now;
 }
 
-export function setBrowserBridgeClockForTest(next: (() => number) | null): void {
-  clock = next ?? Date.now;
-}

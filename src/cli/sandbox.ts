@@ -428,9 +428,9 @@ export type EnrollmentListResponse =
 
 const ENROLL_USAGE: Record<'list' | 'add' | 'remove' | 'kill', string> = {
   list:   'Usage: ashlr enroll list [--json]',
-  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]',
-  remove: 'Usage: ashlr enroll remove <repo>',
-  kill:   'Usage: ashlr enroll kill on|off',
+  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]',
+  remove: 'Usage: ashlr enroll remove <repo> [--json]',
+  kill:   'Usage: ashlr enroll kill on|off [--json]',
 };
 
 function printEnrollHelp(sub?: string): void {
@@ -494,7 +494,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return code;
     };
     // A typo such as `--locus-frm` used to enroll without Locus firm mode.
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--yes', '--locus-firm'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--yes', '--locus-firm', '--no-secrets-offer'] });
     if (bad) {
       if (json) return fail(2, bad.message);
       console.error(red('error: ') + bad.message);
@@ -502,7 +502,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return 2;
     }
     if (!repo) {
-      return fail(2, 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]');
+      return fail(2, 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]');
     }
     const policy = await loadPolicy();
     if (!policy) {
@@ -524,6 +524,14 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       const failure = result === undefined ? null : policyMutationFailure(result, 'Enrollment');
       if (failure) return fail(1, failure);
       if (!json) console.log(green('✓') + ` Enrolled: ${cyan(repo)}`);
+      if (!json && !args.includes('--no-secrets-offer')) {
+        try {
+          const { secretsSetupOffer } = await import('./enroll-secrets-offer.js');
+          for (const line of secretsSetupOffer(repo)) console.log(dim(line));
+        } catch {
+          // Advisory only; enrollment already succeeded.
+        }
+      }
 
       // Soft-offer Locus firm on FIRST successful enrollment only. Never forces
       // on CI/tests: non-TTY / --yes requires --locus-firm or ASHLR_LOCUS_FIRM=1.
@@ -554,50 +562,55 @@ export async function cmdEnroll(args: string[]): Promise<number> {
     }
   }
 
-  if (sub === 'remove') {
-    // `remove --typo` used to unenroll a repo literally named "--typo".
-    if (refuseUnknownOption(args.slice(1), {}, ENROLL_USAGE.remove)) return 2;
-    const repo = args[1];
-    if (!repo) {
-      console.error(red('error: ') + 'Usage: ashlr enroll remove <repo>');
-      return 2;
-    }
+  if (sub === 'remove' || sub === 'kill') {
+    // Options end at `--`; the first token after it can be an option-shaped repo.
+    const rest = args.slice(1);
+    const sep = rest.indexOf('--');
+    const options = sep === -1 ? rest : rest.slice(0, sep);
+    const target = options.find((a) => !a.startsWith('--')) ?? (sep === -1 ? undefined : rest[sep + 1]);
+    const json = options.includes('--json');
+    // --json: exactly one JSON object on stdout; human prose goes to stderr.
+    const fail = (code: number, error: string): number => {
+      if (json) writeEnrollJson({ ok: false, error, ...(sub === 'remove' && target ? { repo: target } : {}) });
+      else console.error(red('error: ') + error);
+      return code;
+    };
+    // Preserve the current-main typo guard for both mutation commands.
+    const bad = rejectUnknownOptions(rest, { flags: ['--json'] });
+    if (bad) return fail(2, `${bad.message}\n${ENROLL_USAGE[sub]}`);
+    if (sub === 'remove' && !target) return fail(2, ENROLL_USAGE.remove);
+    if (sub === 'kill' && target !== 'on' && target !== 'off') return fail(2, ENROLL_USAGE.kill);
     const policy = await loadPolicy();
-    if (!policy) { moduleNotBuilt('enroll remove'); return 1; }
+    if (!policy) {
+      if (json) return fail(1, `enroll ${sub} requires src/core/sandbox/ (M21 module not yet built).`);
+      moduleNotBuilt(`enroll ${sub}`); return 1;
+    }
     try {
-      const result = policy.unenroll(repo);
-      const failure = result === undefined ? null : policyMutationFailure(result, 'Unenrollment');
-      if (failure) {
-        console.error(red('error: ') + failure);
-        return 1;
+      if (sub === 'remove') {
+        const repo = target!;
+        const result = policy.unenroll(repo);
+        const failure = result === undefined ? null : policyMutationFailure(result, 'Unenrollment');
+        if (failure) return fail(1, failure);
+        const wasEnrolled = !(result && result.changed === false);
+        if (json) {
+          writeEnrollJson({ ok: true, repo, enrolled: false, removed: wasEnrolled });
+        } else if (wasEnrolled) {
+          console.log(green('✓') + ` Removed: ${cyan(repo)}`);
+        } else {
+          console.log(dim('Not enrolled, nothing removed: ') + cyan(repo));
+          console.log(dim('Run `ashlr enroll list` to see enrolled repos.'));
+        }
+        return 0;
       }
-      console.log(green('✓') + ` Removed: ${cyan(repo)}`);
-      return 0;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(red('error: ') + msg);
-      return 1;
-    }
-  }
-
-  if (sub === 'kill') {
-    const val = args[1];
-    if (val !== 'on' && val !== 'off') {
-      console.error(red('error: ') + 'Usage: ashlr enroll kill on|off');
-      return 2;
-    }
-    const policy = await loadPolicy();
-    if (!policy) { moduleNotBuilt('enroll kill'); return 1; }
-    try {
-      const result = policy.setKill(val === 'on');
+      const on = target === 'on';
+      const result = policy.setKill(on);
       const failure = result === undefined
         ? null
-        : policyMutationFailure(result, val === 'on' ? 'Kill switch pause' : 'Kill switch resume');
-      if (failure) {
-        console.error(red('error: ') + failure);
-        return 1;
-      }
-      if (val === 'on') {
+        : policyMutationFailure(result, on ? 'Kill switch pause' : 'Kill switch resume');
+      if (failure) return fail(1, failure);
+      if (json) {
+        writeEnrollJson({ ok: true, killSwitchOn: on });
+      } else if (on) {
         console.log(yellow('Kill switch ON') + dim(' — all autonomous/sandbox ops refused.'));
       } else {
         console.log(green('Kill switch OFF') + dim(' — normal operation.'));
@@ -605,8 +618,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return 0;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(red('error: ') + msg);
-      return 1;
+      return fail(1, msg);
     }
   }
 

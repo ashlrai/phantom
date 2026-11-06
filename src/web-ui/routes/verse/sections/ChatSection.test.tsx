@@ -30,6 +30,7 @@ import { getVerseUiState, openVerseSession, requestVerseCommand, resetVerseUi, V
 import { resetCommandBus, runCommand } from '../shell/command-bus.js';
 import { mockCompactViewport, mockViewport } from '../shell/viewport.test-support.js';
 import { getDockSnapshot, requestTerminal, resetDockStore } from '../dock/dock-store.js';
+import { resetAutoOpenForTests } from '../dock/fleet-workspace-auto.js';
 import { setFocusMode } from '../shell/focus-mode.js';
 import { resetLocalSeen } from '../chat/use-chat-activity.js';
 import { CHAT_PANEL_RANGES, CHAT_PANEL_SIZING_KEY, resetChatPanelSizing } from '../chat-panel-sizing.js';
@@ -60,6 +61,7 @@ beforeEach(() => {
   resetVerseStore();
   resetVerseUi();
   resetDockStore();
+  resetAutoOpenForTests();
   resetLocalSeen();
   resetCommandBus();
   resetChatPanelSizing();
@@ -75,6 +77,20 @@ afterEach(() => {
 });
 
 describe('ChatSection bootstrap', () => {
+  it('opens the fleet workspace from a closed dock when workers are running', async () => {
+    const { fetch } = verseFetch();
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/verse/fleet/runs') {
+        return Promise.resolve(new Response(JSON.stringify({ workers: [{ job: 'worker' }], leaders: [] }), { headers: { 'Content-Type': 'application/json' } }));
+      }
+      return fetch(input, init);
+    }));
+    expect(getDockSnapshot().state.open).toBe(false);
+    mount();
+    await screen.findByText('Fleet is running on this Mac. Opened the fleet workspace.');
+    expect(getDockSnapshot().state).toMatchObject({ open: true, active: 'fleet-hub', splitWith: 'fleet-lanes', tabs: ['fleet-hub', 'fleet-lanes', 'fleet-merges', 'fleet-inbox'] });
+  });
+
   it('settles selected sidebar activity from a matching streamed terminal without waiting for the activity poll', async () => {
     const { fetch, state } = verseFetch();
     const baseFetch = fetch as typeof globalThis.fetch;

@@ -1,7 +1,7 @@
 /**
  * reasoning/reasoning-panes.chat.test.tsx — in the real chat surface, ⇧⌘S and
  * ⇧⌘Y open THIS unit's Sources and Reasoning panes (registered over the
- * first-party stubs by reasoning.pane.tsx), and the transcript's own toggles
+ * first-party stubs by their respective .pane.tsx files), and the transcript's own toggles
  * open the same dock panes rather than a sheet of their own.
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react';

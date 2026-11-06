@@ -49,6 +49,7 @@ export function isDesktopShell(): boolean {
  * here, not be passed through.
  */
 export function resolveTheme(preference: ThemePreference): 'light' | 'dark' {
+  if (preference === 'high-contrast') return 'dark';
   if (preference === 'light' || preference === 'dark') return preference;
   try {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

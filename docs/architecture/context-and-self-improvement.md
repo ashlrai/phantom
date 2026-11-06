@@ -137,6 +137,55 @@ with a randomized holdout, not with hit counts:
   reverted) with and without lessons, overall and per note, with a 95%
   interval. Below three finished runs in either arm the effect is unknown.
 
+### Nightly ONE-TEAM proposals
+
+The Verse retro timer also checks for a nightly run after 02:00 UTC, once per
+UTC day, when `foundry.selfImprove` is explicitly `true`. It shares the existing
+startup delay, shutdown handling and `ASHLR_RETRO_SWEEP_TIMER=0` kill switch.
+An hourly sweep being recent or busy does not suppress the nightly check. A
+missed night catches up on the next eligible tick while Verse is running.
+
+The local producer supplies two newline-terminated JSONL files under
+`~/.ashlr/learn/retro-input/`. Both must exist; an empty review file is valid.
+This is a versioned adapter contract because the router queue format is not
+part of this repository:
+
+* `jobs.jsonl`: `v: 1`, `id`, `repo` (`owner/repo`), `arm` (a producer-assigned,
+  provider-agnostic routing arm), `status`, `updatedAt` (canonical ISO UTC),
+  and optional `playbook` (string or null). Status is one of `succeeded`,
+  `failed`, `running`, `blocked`, or `cancelled`.
+* `review-blocks.jsonl`: `v: 1`, `id`, `jobId`, `repo`,
+  `kind: "review-block"`, `updatedAt`, and `body` (at most 16,384 characters).
+  Review IDs are stable across edits. Job IDs identify attempts; use a new ID
+  for a retry and a newer timestamp to correct an observation.
+
+The latest observation for each repository and ID wins. Conflicting normalized records
+at the same timestamp, invalid versions, future timestamps, torn JSONL,
+unsafe paths, and unreadable inputs fail the run without advancing completion.
+Each input is bounded to 8 MiB and 10,000 rows. Retained jobs and reviews are
+each capped at 10,000; the output is capped at 8 MiB. Exceeding a bound requires
+operator attention and never silently drops deduplication evidence.
+
+The atomic private file `~/.ashlr/learn/retro-proposals.json` contains:
+
+* Advisory routing priors grouped by repository and arm: `alpha = 1 + successes`,
+  `beta = 1 + failures`. Only explicit terminal outcomes count. Review comments
+  do not add failures, and these producer observations do not establish verified
+  merge credit or automatically change router policy.
+* Pending playbook lessons with local job or review evidence references. Raw
+  comments are classified into finite categories and discarded. A review joins
+  only its exact repository and job; unmatched reviews wait for later input.
+* Proposed improvement jobs derived through `fleet/self-improve.ts`, each with
+  a stable ID, evaluation and target metric. These are local suggestions only.
+* Retained normalized observations and the completed UTC night, committed in
+  the same write so retries and process restarts cannot duplicate credit.
+
+No queue, approved knowledge, active playbook, provider, git remote, or live
+routing policy is written. Source files are read-only. The nightly path calls
+no model and requires no new credentials. Rotating source files is safe after
+a successful run because normalized observations remain in the proposal file.
+Corrupt output fails closed instead of resetting that history.
+
 ## 5. Roadmap
 
 * Proposals implement code (agent run in the worktree) and register their own

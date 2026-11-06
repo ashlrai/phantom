@@ -60,11 +60,6 @@ const TokenDialogModule = preloadedLazy<ComponentProps<typeof MutationTokenDialo
 );
 const MutationTokenDialog = TokenDialogModule.Slot;
 
-/** Resolves once both dialogs are in (tests await it; the app never needs to). */
-export function preloadGuardDialogs(): Promise<unknown> {
-  return Promise.all([ConfirmDialogModule.ready(), TokenDialogModule.ready()]);
-}
-
 /** Mounted once by the shell. */
 export function GuardHost() {
   const { request, phase, error } = useGuardState();

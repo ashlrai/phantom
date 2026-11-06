@@ -506,17 +506,6 @@ export type FleetPhase =
   | 'watching'
   | 'reverting';
 
-export const FLEET_PHASES: readonly FleetPhase[] = [
-  'queued',
-  'parked',
-  'producing',
-  'verifying',
-  'judging',
-  'landing',
-  'watching',
-  'reverting',
-];
-
 export type FleetRunOutcome = 'merged' | 'proposed' | 'owner-lane' | 'refused' | 'failed' | 'reverted' | 'cancelled';
 
 export interface FleetLiveRun {
@@ -591,6 +580,17 @@ export interface FleetLiveSummary {
   merged7d: number | null;
   postMergeGreenPct7d: number | null;
   cycleTimeP50Ms7d: number | null;
+  /**
+   * Median of (merge:landed.landedAt − daemon:dispatch-start.ts) over merges
+   * landed in the last 7 d — the WHOLE dispatch→merge loop, not just the
+   * proposal→merge tail `cycleTimeP50Ms7d` measures. The join is runId- and
+   * proposalId-keyed (the agent-action ledger's terminal dispatch row carries
+   * both). null = unknown (no correlated sample, or the dispatch ledger could
+   * not be read). Optional: absent from a pre-change snapshot.
+   */
+  dispatchToMergeP50Ms7d?: number | null;
+  /** The same median over the prior 7 d — the "before" beside the current reading. */
+  dispatchToMergeP50MsPrior7d?: number | null;
 }
 
 /**
@@ -622,7 +622,13 @@ export interface FleetLiveSnapshotV1 {
    * Absent from a pre-3.10.1 server.
    */
   darkSince?: string | null;
+  /** Active repository holds; null means the hold store is unreadable. */
+  blockedHolds?: { repo: string; reason: string; until: string | null }[] | null;
+  /** Recorded landings in the rolling 24h window; null means unreadable ledger. */
+  merged24h?: { id: string; repo: string; prNumber: number; landedAt: string }[] | null;
   summary: FleetLiveSummary;
+  /** Short commit of the build serving this view; null/absent = unknown. */
+  commit?: string | null;
   lanes: FleetLaneState[];
   /** Live runs plus the last 12 h (Swimlane), newest first. */
   runs: FleetLiveRun[];

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "description": "PostHog event and property contract for coding-pool routing dashboards.",
+  "events": {
+    "station_dispatched": {
+      "event": "coding_station_dispatched",
+      "properties": ["station_id", "pool_id", "task_id", "dispatched_at"]
+    },
+    "station_completed": {
+      "event": "coding_station_completed",
+      "properties": ["station_id", "pool_id", "task_id", "started_at", "completed_at", "time_to_green_seconds", "status"]
+    },
+    "pool_capacity": {
+      "event": "coding_pool_capacity_observed",
+      "properties": ["pool_id", "rho", "observed_at"]
+    }
+  },
+  "metrics": {
+    "station_volume": "count of coding_station_dispatched grouped by station_id",
+    "pool_rho": "latest coding_pool_capacity_observed.rho grouped by pool_id",
+    "time_to_green": "median duration between coding_station_dispatched.dispatched_at and coding_station_completed.completed_at for status=green"
+  }
+}

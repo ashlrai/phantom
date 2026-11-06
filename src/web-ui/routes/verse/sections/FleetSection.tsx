@@ -23,6 +23,7 @@
  * cards are left out instead of each repeating "Fleet dark since …".
  */
 import { Suspense, lazy, useId, useState } from 'react';
+import { ResourcePanel } from '../../fleet-dashboard/ResourcePanel.js';
 import { RefreshIndicator } from '../../../components/primitives/RefreshIndicator.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { IconChevronRight } from '../../../components/primitives/icons.js';
@@ -35,6 +36,10 @@ import { budgetPreviewQuery, budgetQuery } from '../budget/budget-queries.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { paletteBlock, useGrantFlow } from '../command/AutonomyBar.js';
 import { anchorId } from '../command/nav.js';
+import { RunsLanesCard } from '../fleet/RunsLanesCard.js';
+import { WorkersCard } from '../fleet/WorkersCard.js';
+import { InterjectBox } from '../fleet/InterjectBox.js';
+import { CosTaskList } from '../fleet/CosTaskList.js';
 import { FleetControl } from '../fleet/FleetControl.js';
 import { SteerPanel } from '../fleet/SteerPanel.js';
 import { Cell, Surface, lazyPanel } from '../command/Surface.js';
@@ -43,9 +48,11 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useViewport } from '../shell/viewport.js';
 import { executeCatalogCommand } from '../shell/run-command.js';
 import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, WhySeatCard } from '../fleet/FleetCards.js';
+import { MainHealthRows } from '../fleet/MainHealthRows.js';
 import { RepoTable } from '../fleet/RepoTable.js';
 import { FleetScheduling } from '../resources/SchedulingEvidence.js';
 import { ExecutionFeedback } from '../fleet/ExecutionFeedback.js';
+import { GrokUltraRunway } from '../fleet/GrokUltraRunway.js';
 const ResetSpendingControl = lazyPanel(() => import('../budget/ResetSpendingControl.js').then((m) => m.ResetSpendingControl));
 import { nothingToDraw } from '../fleet/live-model.js';
 import { fleetDarkSince } from '../fleet/dark-since.js';
@@ -135,13 +142,21 @@ export function FleetSection() {
             <span id={anchorId('authority-grant')} />
             <FleetControl actions={actions} grantFlow={grantFlow} darkSince={fleetDarkSince(live)} setupShownBelow={off?.kind === 'setup'} />
           </div>
+          <InterjectBox />
+          <CosTaskList />
+          <WorkersCard />
+          <RunsLanesCard />
           {/* The one-time setup checklist (the only step list left); every other
               off state is FleetControl's single blocker + button. */}
           {off && off.kind === 'setup' ? <AutonomyOffState state={off} here="fleet" /> : null}
           <LanesStrip live={live} />
+          {/* Per-repo main state from the guardian's state.json — one row each,
+              unknown never green. Owns its own read + poll. */}
+          <MainHealthRows />
         </>
       }
     >
+      <Cell span={12}><GrokUltraRunway /></Cell>
       {auth && auth.grant.state === 'active' ? (
         // Needs-you's rollout and Stop items, and ⌘K "Autonomy status", point here.
         <Cell span={12}>
@@ -163,9 +178,10 @@ export function FleetSection() {
         </Button>
         <div id={worldId}>
           {worldOpen ? <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the agent world…</p>}>
-            <FleetWorld read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
+            <FleetWorld agentWorkspace={new URLSearchParams(window.location.search).get('agentWorkspace') === '1'} read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
           </Suspense> : null}
         </div>
+        <ResourcePanel />
         <div id="fleet-working-runs"><SteerPanel live={live} actions={actions} now={now} /></div>
         <Suspense fallback={<p className={styles.muted}>Loading allowance controls…</p>}>
           <ResetSpendingControl view={budget.data ?? null} nowMs={now} readOnly={actions.readOnly}

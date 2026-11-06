@@ -131,7 +131,8 @@ describe('saved Grok Bot resource metadata', () => {
     vi.mocked(useQuery).mockImplementation(query => ({ data: query.key === proactiveProfilesQuery.key ? { schemaVersion: 1, profiles } : undefined,
       error: query.key === proactiveProfilesQuery.key ? new Error('Metadata unavailable') : undefined } as never));
     view.rerender(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(expected.filter(id => id?.startsWith('account:')));
+    // The personal session-log resource remains alongside the native accounts.
+    expect(ids(view.container)).toEqual(expected.filter(id => id?.startsWith('account:') || id === 'codex-personal:sessions'));
     expect(screen.getByText('72% left')).toBeVisible();
   });
 
@@ -382,18 +383,19 @@ describe('custom resource order', () => {
 
   const ids = (container: HTMLElement) => [...container.querySelectorAll('[data-resource-id]')].map(row => row.getAttribute('data-resource-id'));
 
+  // The personal session-log resource participates in the same saved order.
   it('moves independent accounts with keyboard controls and restores the same DOM order', () => {
     const first = render(<ResourcesBar expanded />);
-    expect(ids(first.container)).toEqual(['account:codex-a', 'account:codex-b', 'budget:cloud']);
+    expect(ids(first.container)).toEqual(['account:codex-a', 'account:codex-b', 'codex-personal:sessions', 'budget:cloud']);
     expect(screen.getByRole('button', { name: 'Move Personal Codex up' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Move Work Codex up' }));
-    expect(ids(first.container)).toEqual(['account:codex-b', 'account:codex-a', 'budget:cloud']);
-    expect(screen.getByRole('status')).toHaveTextContent('Work Codex moved to position 1 of 3.');
+    expect(ids(first.container)).toEqual(['account:codex-b', 'account:codex-a', 'codex-personal:sessions', 'budget:cloud']);
+    expect(screen.getByRole('status')).toHaveTextContent('Work Codex moved to position 1 of 4.');
     first.unmount(); reloadResourceOrderForTest();
     const reloaded = render(<ResourcesBar expanded={false} />);
-    expect(ids(reloaded.container)).toEqual(['account:codex-b', 'account:codex-a', 'budget:cloud']);
+    expect(ids(reloaded.container)).toEqual(['account:codex-b', 'account:codex-a', 'codex-personal:sessions', 'budget:cloud']);
     fireEvent.click(screen.getByRole('button', { name: 'Move Work Codex down' }));
-    expect(ids(reloaded.container)).toEqual(['account:codex-a', 'account:codex-b', 'budget:cloud']);
+    expect(ids(reloaded.container)).toEqual(['account:codex-a', 'account:codex-b', 'codex-personal:sessions', 'budget:cloud']);
   });
 
   it('drags cloud estimates with accounts and ignores an unrelated external drag', () => {
@@ -403,22 +405,22 @@ describe('custom resource order', () => {
     fireEvent.dragStart(row('budget:cloud'), { dataTransfer });
     fireEvent.dragOver(row('account:codex-a'), { dataTransfer });
     fireEvent.drop(row('account:codex-a'), { dataTransfer });
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b']);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b', 'codex-personal:sessions']);
     expect(dataTransfer.setData).toHaveBeenCalledWith('application/x-ashlr-resource', 'budget:cloud');
     fireEvent.drop(row('account:codex-b'), { dataTransfer });
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b']);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b', 'codex-personal:sessions']);
   });
 
   it('ignores removed accounts and appends new accounts without reordering on a reading', () => {
     localStorage.setItem(RESOURCE_ORDER_KEY, JSON.stringify(['account:gone', 'budget:cloud', 'account:codex-b', 'account:codex-a']));
     reloadResourceOrderForTest();
     const view = render(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a']);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a', 'codex-personal:sessions']);
     const current = vi.mocked(useCapacityData).getMockImplementation()!();
     vi.mocked(useCapacityData).mockReturnValue({ ...current, seats: [...current.seats,
       nativeSeat(capacity(), { id: 'codex-new', engine: 'codex', label: 'New Codex' })] });
     view.rerender(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a', 'account:codex-new']);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a', 'account:codex-new', 'codex-personal:sessions']);
   });
 
   it('keeps Devin cloud consumption, CLI account and tracked budget independently reorderable', () => {
@@ -431,11 +433,11 @@ describe('custom resource order', () => {
         reportedAcuUsed: 10, unconfirmedAcuExposure: 0, paused: false, running: 0, sessionsToday: 0 },
     } } : undefined } as never));
     const view = render(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(['account:devin', 'account:devin-cli', 'budget:devin']);
+    expect(ids(view.container)).toEqual(['account:devin', 'account:devin-cli', 'codex-personal:sessions', 'budget:devin']);
     expect(screen.getByRole('button', { name: /Devin \(cloud\): consumption not reported · remaining quota unknown/ })).toBeInTheDocument();
     expect(screen.getByText('Devin budget')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Move Devin tracked budget up' }));
-    expect(ids(view.container)).toEqual(['account:devin', 'budget:devin', 'account:devin-cli']);
+    expect(ids(view.container)).toEqual(['account:devin', 'account:devin-cli', 'budget:devin', 'codex-personal:sessions']);
   });
 });
 

@@ -16,6 +16,8 @@ export const WEBSITE_PROFILE = Object.freeze({
   projectId: 'prj_JWhwNui15SqYFzeBInVdUlqrOdd2', cliVersion: '63.1.0',
   cliIntegrity: 'sha512-JQvJODfMeBGejhW1nfu0zfczU8I0NiARD3FilxuBjFeMtEzgK2LeBD6RC1yyhwR8mVQzod/p/SbjyDNFx11njQ==',
   primaryDomain: 'phm.dev', routes: ['/', '/secrets'], recipe: 'phantom-public-web-v1',
+  /** Pinned minimum required-check set; the live ruleset must require at least these, each from its App. */
+  requiredChecks: Object.freeze([Object.freeze({ context: 'ashlr/verify', appId: '5089472' })]),
 });
 export type WebsiteMode = 'auto' | 'paused' | 'off';
 export type WebsitePhase = 'queued' | 'qualifying' | 'building' | 'upload-sent' | 'staged' | 'promote-sent' | 'published' | 'held' | 'failed' | 'upload-unknown' | 'promotion-unknown' | 'promoted-unverified';

@@ -25,7 +25,7 @@ describe('focused agent creation', () => {
   it('starts with the existing options unchanged and optional controls collapsed', async () => {
     const { container, onSpawn } = show();
     await waitFor(() => expect(screen.getByLabelText('What should it do?')).toHaveFocus());
-    expect(container.querySelector('details')).not.toHaveAttribute('open');
+    expect(screen.getByText('Options').closest('details')).not.toHaveAttribute('open');
     fireEvent.change(screen.getByLabelText('What should it do?'), { target: { value: 'Fix login and verify it.' } });
     fireEvent.submit(container.querySelector('form')!);
     expect(onSpawn).toHaveBeenCalledWith([expect.objectContaining({
@@ -37,9 +37,9 @@ describe('focused agent creation', () => {
   it('retains explicitly selected optional settings when the disclosure closes', async () => {
     const { container, onSpawn } = show();
     const user = userEvent.setup();
-    const disclosure = container.querySelector('summary')!;
+    const disclosure = screen.getByText('Options');
     await user.click(disclosure);
-    const options = container.querySelector('details')!;
+    const options = screen.getByText('Options').closest('details')!;
     await user.click(within(options).getByRole('switch', { name: 'Auto-merge when green' }));
     expect(container).toHaveTextContent('Phantom itself only when the grant’s self-land policy allows');
     expect(container).toHaveTextContent('GitHub’s branch rules still apply');

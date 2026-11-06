@@ -73,7 +73,19 @@ export interface DaemonTick {
   spentUsd: number;        // estimated USD spent this tick
   reason: string;          // 'ok' | 'kill-switch' | 'budget-exhausted'
                            //  | 'no-enrolled-repos' | 'no-backlog' | 'dry-run'
+  phases?: DaemonTickPhase[]; // RQ-DAEMONTICK-UNBLOCK: the tick's settled
+                              // bounded-phase ledger (see below)
 }
+
+// RQ-DAEMONTICK-UNBLOCK — additive, optional; absent on older records.
+export type DaemonTickPhaseStatus = 'ok' | 'degraded' | 'timeout' | 'skipped' | 'running';
+export interface DaemonTickPhase {
+  name: string;                  // capped at 120 chars
+  status: DaemonTickPhaseStatus; // 'running' appears only in snapshots
+  durationMs: number;
+  error?: string;                // capped at 300 chars; skip reason on 'skipped'
+}
+export type DaemonTickOutcome = 'ok' | 'degraded' | 'failed' | 'timeout';
 
 export interface DaemonState {
   running: boolean;
@@ -84,8 +96,24 @@ export interface DaemonState {
   todaySpentUsd: number;        // reset when todayDate rolls over
   itemsProcessed: number;       // cumulative across all ticks
   ticks: DaemonTick[];          // bounded history (most-recent last)
+  // RQ-DAEMONTICK-UNBLOCK — additive, optional; absent on older state files.
+  lastTickOutcome?: DaemonTickOutcome; // outcome of the last resident tick
+  lastTickPhases?: DaemonTickPhase[];  // its phase ledger (capped at 40)
+  lastTickError?: string | null;       // first degraded/timeout phase error
+                                     // or the whole-tick failure text
 }
 ```
+
+RQ-DAEMONTICK-UNBLOCK: `runDaemon` wraps each `tick()` in a bounded race
+(60-minute backstop, `DAEMON_TICK_DEADLINE_MS`; `opts.tickDeadlineMs`
+overrides). Whatever `tick()` does — return, throw, or never settle — the
+resident loop persists `lastTickAt`/`lastTickOutcome`/`lastTickPhases`/
+`lastTickError` in a `finally`, and refuses to start a new tick while a
+previously abandoned one remains open (`refused-open`). Inside `tick()`,
+every awaited stage runs via `runTickPhase(name, run, { deadlineMs })` with
+an `AbortSignal`, degrade/timeout capture, and ledger recording; dispatched
+runs detach under their own watchdog and never block tick completion.
+`phm daemon status --json` exposes the ledger at `.tick.phases`.
 
 `AshlrConfig` is extended with optional `daemon?: Partial<DaemonConfig>` (caps
 only — grants no authority). `DashboardSnapshot` gains optional

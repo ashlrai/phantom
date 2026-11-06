@@ -85,14 +85,14 @@ describe('Universe portfolio CLI', () => {
   });
 
   it.each([
-    [], ['unknown'], ['plan'], ['run'], ['plan', 'portfolio.json'], ['run', 'campaign-id'],
-    ['plan', '--manifest'], ['plan', '--manifest', '--json'], ['plan', '--manifest', ''],
-    ['plan', '--manifest', '\0'], ['run', '--manifest', 'a\nb'], ['plan', '--root', '\x85'],
-    ['plan', '--root', '-h'], ['plan', '--manifest', 'x'.repeat(4_097)],
-    ['plan', '--manifest', 'first', '--manifest', 'second'], ['plan', '--root', 'first', '--root', 'second'],
-    ['plan', '--unknown'], ['plan', '--json'], ['plan', '--help', '-h'],
-    ['plan', '--help', '--unknown'], ['help', 'extra'], ['run', '--depth', '1'],
-  ])('rejects invalid arguments %j before reading campaign evidence or executing', async (...args) => {
+    [[]], [['unknown']], [['plan']], [['run']], [['plan', 'portfolio.json']], [['run', 'campaign-id']],
+    [['plan', '--manifest']], [['plan', '--manifest', '--json']], [['plan', '--manifest', '']],
+    [['plan', '--manifest', '\0']], [['run', '--manifest', 'a\nb']], [['plan', '--root', '\x85']],
+    [['plan', '--root', '-h']], [['plan', '--manifest', 'x'.repeat(4_097)]],
+    [['plan', '--manifest', 'first', '--manifest', 'second']], [['plan', '--root', 'first', '--root', 'second']],
+    [['plan', '--unknown']], [['plan', '--json']], [['plan', '--help', '-h']],
+    [['plan', '--help', '--unknown']], [['help', 'extra']], [['run', '--depth', '1']],
+  ])('rejects invalid arguments %j before reading campaign evidence or executing', async (args) => {
     expect(await cmdUniversePortfolio([...args, '--json'])).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toHaveProperty('error');
     expect(core.readUniversePortfolioPlan).not.toHaveBeenCalled();
@@ -266,17 +266,17 @@ describe('Universe portfolio CLI', () => {
   });
 
   it.each([
-    ['plan', '--delivery-plan', '/private/plan-marker.json'],
-    ['help', '--delivery-plan', '/private/plan-marker.json'],
-    ['run', '--delivery-plan'],
-    ['run', '--delivery-plan', 'relative-plan-marker.json'],
-    ['run', '--delivery-plan', '/private/../plan-marker.json'],
-    ['run', '--delivery-plan', '/'],
-    ['run', '--delivery-plan', '/private/plan-marker.json', '--delivery-plan', '/private/second.json'],
-    ['run', '--delivery-plan', '/private/plan-marker\n.json'],
-    ['run', '--delivery-plan', '/' + 'é'.repeat(2048)],
-    ['run', '--delivery-plan=/private/plan-marker.json'],
-  ])('rejects delivery scope/path before reading any files: %j', async (...args) => {
+    [['plan', '--delivery-plan', '/private/plan-marker.json']],
+    [['help', '--delivery-plan', '/private/plan-marker.json']],
+    [['run', '--delivery-plan']],
+    [['run', '--delivery-plan', 'relative-plan-marker.json']],
+    [['run', '--delivery-plan', '/private/../plan-marker.json']],
+    [['run', '--delivery-plan', '/']],
+    [['run', '--delivery-plan', '/private/plan-marker.json', '--delivery-plan', '/private/second.json']],
+    [['run', '--delivery-plan', '/private/plan-marker\n.json']],
+    [['run', '--delivery-plan', '/' + 'é'.repeat(2048)]],
+    [['run', '--delivery-plan=/private/plan-marker.json']],
+  ])('rejects delivery scope/path before reading any files: %j', async (args) => {
     expect(await cmdUniversePortfolio([...args, '--manifest', '/private/missing.json', '--json'])).toBe(2);
     expect(output.mock.calls[0]![0]).not.toContain('plan-marker');
     expect(core.readUniversePortfolioPlan).not.toHaveBeenCalled();
@@ -315,16 +315,16 @@ describe('Universe portfolio CLI', () => {
   });
 
   it.each([
-    ['plan', '--resource-runtime', '/private/runtime-marker.json'],
-    ['help', '--resource-runtime', '/private/runtime-marker.json'],
-    ['run', '--resource-runtime'],
-    ['run', '--resource-runtime', 'relative-runtime-marker.json'],
-    ['run', '--resource-runtime', '/private/runtime-marker\n.json'],
-    ['run', '--resource-runtime', '/private/runtime-marker\x85.json'],
-    ['run', '--resource-runtime', '/private/runtime-marker.json', '--resource-runtime', '/private/other.json'],
-    ['run', '--resource-runtime', '/' + 'é'.repeat(2048)],
-    ['run', '--resource-runtime=/private/runtime-marker.json'],
-  ])('rejects invalid runtime scope or path without echoing it: %j', async (...args) => {
+    [['plan', '--resource-runtime', '/private/runtime-marker.json']],
+    [['help', '--resource-runtime', '/private/runtime-marker.json']],
+    [['run', '--resource-runtime']],
+    [['run', '--resource-runtime', 'relative-runtime-marker.json']],
+    [['run', '--resource-runtime', '/private/runtime-marker\n.json']],
+    [['run', '--resource-runtime', '/private/runtime-marker\x85.json']],
+    [['run', '--resource-runtime', '/private/runtime-marker.json', '--resource-runtime', '/private/other.json']],
+    [['run', '--resource-runtime', '/' + 'é'.repeat(2048)]],
+    [['run', '--resource-runtime=/private/runtime-marker.json']],
+  ])('rejects invalid runtime scope or path without echoing it: %j', async (args) => {
     // An unreadable manifest ensures argument rejection happens before any
     // portfolio file, campaign evidence, or private runtime can be read.
     expect(await cmdUniversePortfolio([...args, '--manifest', '/private/nonexistent-portfolio.json', '--json'])).toBe(2);

@@ -33,6 +33,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// These inert subprocess fixtures test engine I/O, not the runner's live RAM.
+// Host admission thresholds and hysteresis have their own host-headroom suite.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: () => ({ allowed: true, reading: { freePercent: 50, swapGb: 0 }, reason: null }),
+}));
+
 const hoisted = vi.hoisted(() => ({ standing: null as null | { grantId: string }, repairChecks:null as null | number }));
 
 vi.mock('../src/core/authority/effective-config.js', async (importOriginal) => {

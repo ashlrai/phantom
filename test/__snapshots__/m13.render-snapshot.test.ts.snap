@@ -1,0 +1,495 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > inbox tab 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+ ◆ Inbox — Pending Approvals                                                                        
+                                                                                                    
+   2 proposals awaiting approval.                                                                   
+                                                                                                    
+   To act on a proposal:                                                                            
+   ashlr inbox              — list pending proposals                                                
+   ashlr inbox show <id>    — view full diff                                                        
+   ashlr inbox approve <id> — approve and apply                                                     
+   ashlr inbox reject <id>  — reject and discard                                                    
+                                                                                                    
+   Approval is CLI-only. Nothing applies automatically.                                             
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > mcp tab 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Name                                                                               Status    Tools 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ashlr                                                                                 ●          12 
+phantom-secrets                                                                       ●           0 
+a-very-long-mcp-server-name-that-truncates                                            ●           3 
+
+  2/3 servers online                                                                                
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > overview tab 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ◆ Operator briefing                                                                                
+   Needs you: No operator action · fresh evidence within authority                                  
+   No command · display only                                                                        
+   Autonomous now: Daemon running · autonomous · 1 active · $0.25 today                             
+   Last proof: Observed HH:MM:SS → Decided autonomous                                               
+   Acted 1 dispatch → Proved 1 proposal produced                                                    
+                                                                                                    
+ ◆ Repos                                                                                            
+   Total: 12   Dirty: 3   Stale: 2                                                                  
+                                                                                                    
+ ◆ Ecosystem Tools                                                                                  
+   [██████████░░░░░░░░░░]  5/10 installed                                                           
+                                                                                                    
+ ◆ Activity (7d)                                                                                    
+   Sessions: 8   Tokens: 42.0k   Cost: $1.23   Commits: 15                                          
+                                                                                                    
+ ◆ Genome                                                                                           
+   Entries: 42   Projects: 7                                                                        
+                                                                                                    
+   Runs: 6   Swarms: 3   MCP servers up: 2/3                                                        
+                                                                                                    
+  ⚠ Inbox: 2 proposals awaiting approval  (use \`ashlr inbox approve <id>\` to act)                   
+                                                                                                    
+ ◆ Daemon                                                                                           
+   Status: running   Spend today: $0.5000   Pending proposals: 2                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > portfolio tab 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+ ◆ Portfolio — Org Health                                                                           
+   Repos scored: 9   Avg score: 78   Grade: B                                                       
+   Needs attention:                                                                                 
+     phantom  F (41)                                                                                
+     lexicon  D (56)                                                                                
+                                                                                                    
+ ◆ Goals in flight                                                                                  
+   [███████░░░░░] 60%  Ship the TUI snapshot lane                                                   
+       next: Add snapshot coverage for inbox + portfolio                                            
+   [████░░░░░░░░] 25%  A second goal with nothing actionable                                        
+                                                                                                    
+ ◆ Top backlog                                                                                      
+     88  Triage the flaky windows lane                                                              
+     72  Backfill docs for digest windows                                                           
+                                                                                                    
+ ◆ Cost (7d)                                                                                        
+   Spent: $3.21   Saved (local): $12.40   Proj./mo: $13.76                                          
+                                                                                                    
+ ◆ Effectiveness                                                                                    
+   Ship-rate 80% (+4.5pp WoW)                                                                       
+                                                                                                    
+ ◆ Today                                                                                            
+   Pending: +1   Dirty: -2   Spend: -$0.50   Health: 0   Goals: —                                   
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > pulse tab 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+ ◆ Activity — 7d Totals                                                                             
+                                                                                                    
+   Sessions : 8                                                                                     
+   Tokens   : 42.0k                                                                                 
+   Est. Cost: $1.2345                                                                               
+   Commits  : 15                                                                                    
+                                                                                                    
+ ◆ Token Usage Bar                                                                                  
+   [██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]  42.0k tok                                            
+                                                                                                    
+   Tip: use \`ashlr pulse\` for full per-project / per-day breakdown.                                 
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > runs tab 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ID           Goal                                                           Status          Tokens 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+run-001       Build feature X                                                done              4.5k 
+run-002       Refactor module Y                                              running           3.0k 
+run-003       Fix critical bug Z                                             failed            1.2k 
+run-004       Plan next sprint                                               planning           640 
+run-005       Aborted experiment                                             aborted              0 
+run-006       Status outside the known lifecycle                             mystery             12 
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > runs tab with the second row selected 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ID           Goal                                                           Status          Tokens 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+run-001       Build feature X                                                done              4.5k 
+run-002       Refactor module Y                                              running           3.0k 
+run-003       Fix critical bug Z                                             failed            1.2k 
+run-004       Plan next sprint                                               planning           640 
+run-005       Aborted experiment                                             aborted              0 
+run-006       Status outside the known lifecycle                             mystery             12 
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — canonical 100x30 dashboard > swarms tab 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ID           Goal                                     Status      Phase         Progress           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+swarm-001     M13 surfaces                             running     build         [███░░░░░░░] 2/6   
+swarm-002     Refactor core                            done        —             [██████████] 4/4   
+swarm-003     Phaseless swarm renders an em-dash       failed      —             [░░░░░░░░░░] 0/3   
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — geometry edges > narrow overview (48x20) uses the compact proof layout 1`] = `
+" ashlr hub                              HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MC
+────────────────────────────────────────────────
+ ◆ Operator briefing                            
+   Needs you: No operator action · fresh evidenc
+   No command · display only                    
+   Autonomous now: Daemon running · autonomous ·
+   Last proof: Observed HH:MM:SS                
+   Decided autonomous                           
+   Acted 1 dispatch · Proved 1 proposal produced
+                                                
+ ◆ Repos                                        
+   Total: 12   Dirty: 3   Stale: 2              
+                                                
+ ◆ Ecosystem Tools                              
+   [██████████░░░░░░░░░░]  5/10 installed       
+                                                
+ ◆ Activity (7d)                                
+   Sessions: 8   Tokens: 42.0k   Cost: $1.23   C
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter d"
+`;
+
+exports[`renderFrame snapshots — geometry edges > narrow portfolio (48x20) truncates long objectives and items 1`] = `
+" ashlr hub                              HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MC
+────────────────────────────────────────────────
+                                                
+ ◆ Portfolio — Org Health                       
+   Repos scored: 9   Avg score: 78   Grade: B   
+   Needs attention:                             
+     phantom  F (41)                            
+     lexicon  D (56)                            
+                                                
+ ◆ Goals in flight                              
+   [███████░░░░░] 60%  Ship the TUI snapsh…     
+       next: Add snapshot coverage for inbox +… 
+   [████░░░░░░░░] 25%  A second goal with …     
+                                                
+ ◆ Top backlog                                  
+     88  Triage the flaky windows lane          
+     72  Backfill docs for digest windows       
+                                                
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter d"
+`;
+
+exports[`renderFrame snapshots — geometry edges > pulse tab renders the token bar for million-scale usage 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+ ◆ Activity — 7d Totals                                                                             
+                                                                                                    
+   Sessions : 30                                                                                    
+   Tokens   : 2.5M                                                                                  
+   Est. Cost: $11.5000                                                                              
+   Commits  : 61                                                                                    
+                                                                                                    
+ ◆ Token Usage Bar                                                                                  
+   [████████████████████████████████████████]  2.5M tok                                             
+                                                                                                    
+   Tip: use \`ashlr pulse\` for full per-project / per-day breakdown.                                 
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — geometry edges > tiny frame (32x10) clips the body to the terminal 1`] = `
+" ashlr hub              HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms 
+────────────────────────────────
+ ◆ Operator briefing            
+   Needs you: No operator action
+   No command · display only    
+   Autonomous now: Daemon runnin
+   Last proof: Observed HH:MM:SS
+   Decided autonomous           
+ 1-7 tabs  ·  j/k move  ·  r ref"
+`;
+
+exports[`renderFrame snapshots — inbox tab > clear inbox (pending 0) 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+ ◆ Inbox — Pending Approvals                                                                        
+                                                                                                    
+   No pending proposals. The inbox is clear.                                                        
+                                                                                                    
+   Tip: use \`ashlr inbox\` to list all proposals.                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — overview extras > no fleet evidence fails closed to the inspection action 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ◆ Operator briefing                                                                                
+   Needs you: Inspect fleet state                                                                   
+   [read-only] ashlr fleet status --json                                                            
+   Autonomous now: Daemon state unknown · mode unknown · active work unknown · spend unknown        
+   Last proof: Observed HH:MM:SS → Decided mode unknown                                             
+   Acted activity unknown → Proved Proof withheld · sources incomplete                              
+                                                                                                    
+ ◆ Repos                                                                                            
+   Total: 12   Dirty: 3   Stale: 2                                                                  
+                                                                                                    
+ ◆ Ecosystem Tools                                                                                  
+   [██████████░░░░░░░░░░]  5/10 installed                                                           
+                                                                                                    
+ ◆ Activity (7d)                                                                                    
+   Sessions: 8   Tokens: 42.0k   Cost: $1.23   Commits: 15                                          
+                                                                                                    
+ ◆ Genome                                                                                           
+   Entries: 42   Projects: 7                                                                        
+                                                                                                    
+   Runs: 6   Swarms: 3   MCP servers up: 2/3                                                        
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — portfolio tab > absent portfolio section degrades to the enrollment hint 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+ ◆ Portfolio                                                                                        
+                                                                                                    
+   No portfolio data. Enroll repos and run \`ashlr health\`                                           
+   / \`ashlr goals\` to populate the org-level view.                                                  
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — portfolio tab > empty sub-sources and no prior digest 1`] = `
+" ashlr hub                                                                                  HH:MM:SS
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+ ◆ Portfolio — Org Health                                                                           
+   No enrolled repos scored.                                                                        
+                                                                                                    
+ ◆ Goals in flight                                                                                  
+   None active.                                                                                     
+                                                                                                    
+ ◆ Top backlog                                                                                      
+   Empty.                                                                                           
+                                                                                                    
+ ◆ Cost (30d)                                                                                       
+   Spent: $0.00   Saved (local): $0.00   Proj./mo: $0.00                                            
+                                                                                                    
+ ◆ Today                                                                                            
+   No prior digest to compare against yet.                                                          
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+`;
+
+exports[`renderFrame snapshots — raw ANSI pins > active tab is marked with reverse video in the tab bar 1`] = `"[1m[7m 1:Overview [0m[0m[2m│[0m[2m 2:Runs [0m[2m│[0m[2m 3:Swarms [0m[2m│[0m[2m 4:Pulse [0m[2m│[0m[2m 5:MCP [0m[2m│[0m[2m 6:Inbox [0m[2m│[0m[2m 7:Portfolio [0m                          "`;
+
+exports[`renderFrame snapshots — raw ANSI pins > portfolio grade colors: F is red, D is red, and handles stay dim 1`] = `"     [2mphantom[0m  [31mF[0m [2m(41)[0m                                                                                "`;
+
+exports[`renderFrame snapshots — raw ANSI pins > the selected runs row is reverse-video and the failed status is red 1`] = `"[7mrun-003       Fix critical bug Z                                             [31mfailed[0m            1.2k[0m "`;

@@ -81,6 +81,11 @@
 
 import * as os from 'node:os';
 import { readCodexRateLimits } from '../observability/codex-source.js';
+import {
+  collectCodexSessionUsages,
+  publishCodexFleetUsage,
+  type CodexSessionUsage,
+} from './codex-session-usage.js';
 import { loadBudgetPolicy, readCapacitySnapshot } from '../routing/budget-store.js';
 import { assessSeat, type SeatCapacity } from '../routing/headroom.js';
 import { defaultSeatPolicy, effectiveSeatPolicy, engineOfSeatId } from '../routing/policy.js';
@@ -202,24 +207,21 @@ export function subscriptionUsage(
     let local: SubscriptionUsage | null = null;
 
     if (engine === 'codex') {
-      const limits = readCodexRateLimits();
-      if (limits) {
-        const { primary, secondary } = limits;
-        let best: { usedPercent: number; windowMinutes: number; resetsAt: number } | null = null;
-        for (const window of [primary, secondary]) {
-          if (!window) continue;
-          if (best === null || window.usedPercent > best.usedPercent) {
-            best = window;
-          }
-        }
-        if (best) {
-          local = {
-            usedPercent: best.usedPercent,
-            windowLabel: minutesToLabel(best.windowMinutes),
-            resetsAt: best.resetsAt,
-          };
-        }
+      // RQ-CODEX-USAGE-SOURCE: per-account session readings. Every credential
+      // home is checked ($CODEX_HOME/~/.codex and $CODEX_HOME_ALT/~/.codex-2)
+      // and the most-saturated window across accounts governs. The legacy
+      // default-home reader stays: it keeps byte-identical behavior when only
+      // ~/.codex exists. The collected readings are also published to the
+      // shared fleet document (best-effort, below).
+      const { best, usages } = _codexLocalUsage();
+      if (best) {
+        local = {
+          usedPercent: best.usedPercent,
+          windowLabel: best.windowMinutes !== null ? minutesToLabel(best.windowMinutes) : 'unknown',
+          ...(best.resetsAt !== null ? { resetsAt: best.resetsAt } : {}),
+        };
       }
+      _maybePublishFleet(usages);
     }
     // Claude + other subscription engines: no local utilization signal.
 
@@ -617,5 +619,64 @@ function _aggregateSharedUsage(engine: EngineId, cfg: unknown): SubscriptionUsag
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * RQ-CODEX-USAGE-SOURCE: the most-saturated rate-limit window across every
+ * Codex credential home. The session reader sees `$CODEX_HOME` (~/.codex) and
+ * `$CODEX_HOME_ALT` (~/.codex-2); the legacy default-home reader stays folded
+ * in so a single-home machine reports identically. Window minutes or reset
+ * may be absent in a snapshot; null is preserved rather than invented.
+ * Never throws.
+ */
+function _codexLocalUsage(): {
+  best: { usedPercent: number; windowMinutes: number | null; resetsAt: number | null } | null;
+  usages: CodexSessionUsage[];
+} {
+  let best: { usedPercent: number; windowMinutes: number | null; resetsAt: number | null } | null = null;
+  const consider = (window: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null | undefined): void => {
+    if (!window || typeof window.usedPercent !== 'number' || !Number.isFinite(window.usedPercent)) return;
+    if (best === null || window.usedPercent > best.usedPercent) {
+      best = {
+        usedPercent: window.usedPercent,
+        windowMinutes: window.windowMinutes ?? null,
+        resetsAt: window.resetsAt ?? null,
+      };
+    }
+  };
+  let usages: CodexSessionUsage[] = [];
+  try {
+    usages = collectCodexSessionUsages();
+  } catch {
+    usages = [];
+  }
+  for (const usage of usages) {
+    consider(usage.primary);
+    consider(usage.secondary);
+  }
+  try {
+    const limits = readCodexRateLimits();
+    if (limits) {
+      consider(limits.primary);
+      consider(limits.secondary);
+    }
+  } catch {
+    // best-effort
+  }
+  return { best, usages };
+}
+
+/**
+ * RQ-CODEX-USAGE-SOURCE: publish the per-account resource.v1 document into
+ * the shared fleet.json (namespaced `codexUsage` extension). Self-throttling
+ * inside the publisher and best-effort like every fleet write: any failure
+ * leaves the local decision alone.
+ */
+function _maybePublishFleet(usages: readonly CodexSessionUsage[]): void {
+  try {
+    publishCodexFleetUsage({ usages });
+  } catch {
+    // never propagate
   }
 }

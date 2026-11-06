@@ -1,5 +1,5 @@
 /** Value-blind executable inventory. Version/help evidence never grants execution authority. */
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { constants, accessSync, closeSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
@@ -95,6 +95,33 @@ export function companionExecutableKind(path: string): 'native' | 'script' | 'bo
     return /^#![^\r\n]*(?:\bnode|\bnodejs)(?:\s|$)/u.test(source) ? 'script' : 'unknown';
   } catch { return 'unknown'; }
   finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
+/** How long a PATH locator probe may run before it is abandoned. */
+const LOCATOR_TIMEOUT_MS = 3_000;
+
+/**
+ * Where `binary` resolves on PATH, and whether it may be executed. A bootstrap
+ * launcher (the npm `locus-cli` shim runs `cargo install` even for a probe) is
+ * `unsupported-launcher` and must never be run. A locator that reported success
+ * without a path cannot be classified, so it stays `available` rather than
+ * inventing a refusal. Never throws.
+ */
+export type CompanionExecutableState = 'missing' | 'unsupported-launcher' | 'available';
+
+export function companionExecutableState(binary: string): CompanionExecutableState {
+  try {
+    const stdout = execFileSync(
+      process.platform === 'win32' ? 'where' : 'which',
+      [binary],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: LOCATOR_TIMEOUT_MS },
+    );
+    const located = stdout.split(/\r?\n/u).map(line => line.trim()).find(Boolean);
+    if (located && companionExecutableKind(located) === 'bootstrap') return 'unsupported-launcher';
+    return 'available';
+  } catch {
+    return 'missing';
+  }
 }
 
 /** Never inherit provider credentials, user config roots or executable discovery PATH. */

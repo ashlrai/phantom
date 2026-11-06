@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+reviews:
+  profile: assertive
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    # Default branch of this repository. PRs target master.
+    base_branches:
+      - master
+  path_filters:
+    - "!**/package-lock.json"
+    - "!**/npm-shrinkwrap.json"
+    - "!**/Cargo.lock"
+    - "!**/bun.lock"
+    - "!**/dist/**"
+    - "!**/*generated*"
+    - "!**/gen/**"
+    - "!**/target/**"
+  path_instructions:
+    - path: "src/core/integrations/secrets.ts"
+      instructions: "High scrutiny. Secret handling. Check for leakage, logging, and who may read or write secret material."
+    - path: "src/core/devin/secret.ts"
+      instructions: "High scrutiny. Secret handling. Check for leakage, logging, and who may read or write secret material."
+    - path: "tools/custody/**"
+      instructions: "High scrutiny. Secret handling and custody. Check for leakage, logging, and who may read or write secret material."
+    - path: "**/*secret*"
+      instructions: "High scrutiny. Secret handling. Check for leakage, logging, and who may read or write secret material."
+    - path: "src/core/web/**"
+      instructions: "High scrutiny. Loopback-only rules. Console servers bind to 127.0.0.1 and must not accept a non-loopback host."
+    - path: "src/core/local-runtime/llama/**"
+      instructions: "High scrutiny. Loopback-only rules. Local inference binds to 127.0.0.1 unless an explicit operator opt-in says otherwise, and that opt-in stays gated."
+    - path: "src/core/policy/local-only.ts"
+      instructions: "High scrutiny. Loopback-only rules. An endpoint that is not loopback must not be treated as local or free."
+    - path: "src/core/mcp-native-engineer.ts"
+      instructions: "High scrutiny. Loopback-only rules. Local tool targets must be exactly localhost, 127.0.0.1, or ::1."
+    - path: "src/core/run/gateway-target.ts"
+      instructions: "High scrutiny. Loopback-only rules. This decides where a provider key may be sent."
+    - path: "src/core/authority/**"
+      instructions: "High scrutiny. Tier-1 authority path. This code decides what the fleet may do."
+    - path: "src/core/daemon/**"
+      instructions: "High scrutiny. Tier-1 authority path. Resident and tick code runs unattended."
+    - path: "src/core/inbox/merge.ts"
+      instructions: "High scrutiny. Tier-1 authority path. Merge authority."
+    - path: "src/core/fleet/**"
+      instructions: "High scrutiny. Tier-1 authority path. Fleet merge and automerge decisions."
+    - path: "desktop/src-tauri/src/lib.rs"
+      instructions: "High scrutiny. Tier-1 authority path. Native shell entry."
+    - path: "desktop/src-tauri/src/main.rs"
+      instructions: "High scrutiny. Tier-1 authority path. Native shell entry."
+    - path: "desktop/src-tauri/src/native_metadata_launch.rs"
+      instructions: "High scrutiny. Tier-1 authority path. Native metadata re-entry."
+    - path: ".github/workflows/**"
+      instructions: "High scrutiny. Tier-1 CI path. Workflow changes decide which checks run and which tokens they hold."
+    - path: ".github/CODEOWNERS"
+      instructions: "High scrutiny. Tier-1 review path. Code owners decide who must approve a change."
+chat:
+  auto_reply: false

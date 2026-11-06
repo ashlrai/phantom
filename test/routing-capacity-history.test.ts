@@ -17,22 +17,27 @@ import type { AddressInfo } from 'node:net';
 
 import {
   appendCapacityHistory,
+  appendCapacitySamples,
   buildCapacityHistoryResponse,
   capacityHistoryDisabled,
   capacityHistoryPath,
+  CODEX_LOCAL_POOL_ID,
   collapseFlatRuns,
   compactCapacityHistory,
+  DEVIN_POOL_ID,
   HISTORY_COMPACT_TARGET_BYTES,
   HISTORY_FLAT_ROW_MS,
   HISTORY_KEEP_MS,
   HISTORY_MAX_BYTES,
   HISTORY_MAX_POINTS_PER_SERIES,
+  historyRowsFromSamples,
   historyRowsFromSeats,
   historyWindowClass,
   parseHistoryLine,
   readCapacityHistory,
   recordCapacityHistoryFromSnapshot,
   shouldRecordRow,
+  type CapacityPoolSample,
 } from '../src/core/routing/capacity-history.js';
 import {
   capacityHistoryFollowRefusal,
@@ -139,6 +144,93 @@ describe('rows from a snapshot', () => {
     const rows = historyRowsFromSeats([seat], { nowMs: NOW, source: 'verse' });
     // Both are weekly now; the peak (40) is the weekly reading, and there is no session row.
     expect(rows.map((r) => [r.window, r.usedPct])).toEqual([['weekly', 40]]);
+  });
+});
+
+// VISION-V4 (RQ-V4-CAPACITY-HISTORY-POOLS-1): pools that never appear as
+// snapshot seats — `devin` (ACU spend as percent of the daily budget) and
+// `codex-local` (the local session-log Codex reading) — record samples
+// under their pool id, in the same file, beside the seat series.
+describe('pool capacity samples', () => {
+  const devin = (observedAt: number, usedPct: number, resetsAt: string | null = null): CapacityPoolSample =>
+    ({ pool: DEVIN_POOL_ID, window: 'session', usedPct, resetsAt, observedAt: iso(observedAt) });
+  const codexLocal = (observedAt: number, primary: number, secondary: number): CapacityPoolSample[] => [
+    { pool: CODEX_LOCAL_POOL_ID, window: 'session', usedPct: primary, resetsAt: iso(NOW + 2 * HOUR), observedAt: iso(observedAt) },
+    { pool: CODEX_LOCAL_POOL_ID, window: 'weekly', usedPct: secondary, resetsAt: iso(NOW + 3 * DAY), observedAt: iso(observedAt) },
+  ];
+
+  it('appends devin and codex-local samples as series beside the seat rows', () => {
+    expect(appendCapacityHistory([claude(NOW, 10, 40)], { source: 'verse', nowMs: NOW }).appended).toBe(2);
+    const result = appendCapacitySamples([devin(NOW - 5_000, 62.26), ...codexLocal(NOW - 10_000, 60, 33)], { source: 'daemon', nowMs: NOW });
+    expect(result).toEqual({ appended: 3, compacted: false, error: null });
+    expect(readCapacityHistory().map((r) => [r.seat, r.window, r.usedPct, r.resetsAt])).toEqual([
+      ['claude-a', 'session', 10, null],
+      ['claude-a', 'weekly', 40, null],
+      ['devin', 'session', 62.3, null],
+      ['codex-local', 'session', 60, '2026-09-24T17:00:00Z'],
+      ['codex-local', 'weekly', 33, '2026-09-27T15:00:00Z'],
+    ]);
+    // The rows are ordinary history rows: they serialize, parse and tighten modes identically.
+    expect(fs.statSync(capacityHistoryPath()).mode & 0o777).toBe(0o600);
+    for (const line of fileRows()) expect(parseHistoryLine(line)).not.toBeNull();
+  });
+
+  it('applies the seat honesty rules: nothing records that cannot be placed on a chart', () => {
+    const rows = historyRowsFromSamples([
+      { pool: 'bad pool!', window: 'weekly', usedPct: 10, observedAt: iso(NOW) },
+      { pool: 'devin', window: 'weekly', usedPct: Number.NaN, observedAt: iso(NOW) },
+      { pool: 'devin', window: 'weekly', usedPct: 10, observedAt: 'not a date' },
+      { pool: 'devin', window: 'weekly', usedPct: 10, observedAt: iso(NOW + HOUR) },
+      { pool: 'devin', window: 'weekly', usedPct: 10, observedAt: iso(NOW - 9 * DAY) },
+      { pool: 'devin', window: 'monthly' as never, usedPct: 10, observedAt: iso(NOW) },
+    ], { nowMs: NOW, source: 'daemon' });
+    expect(rows).toEqual([]);
+    // A batch with nothing placeable never touches the file.
+    expect(appendCapacitySamples([devin(NOW + HOUR, 20)], { source: 'daemon', nowMs: NOW }).appended).toBe(0);
+    expect(fs.existsSync(capacityHistoryPath())).toBe(false);
+  });
+
+  it('keeps a pool row\'s machine reset when reported, and drops a malformed one', () => {
+    const rows = historyRowsFromSamples([
+      { pool: 'devin', window: 'session', usedPct: 50, resetsAt: iso(NOW + DAY), observedAt: iso(NOW) },
+      { pool: 'devin', window: 'weekly', usedPct: 30, resetsAt: 'soon-ish', observedAt: iso(NOW) },
+    ], { nowMs: NOW, source: 'verse' });
+    expect(rows.map((r) => [r.window, r.resetsAt])).toEqual([['session', '2026-09-25T15:00:00Z'], ['weekly', null]]);
+  });
+
+  it('compresses pool rows exactly like seat rows: a repeat records nothing, a change does', () => {
+    expect(appendCapacitySamples(codexLocal(NOW, 60, 33), { source: 'daemon', nowMs: NOW }).appended).toBe(2);
+    // The same observation recorded again — by the other recorder too — adds nothing.
+    expect(appendCapacitySamples(codexLocal(NOW, 60, 33), { source: 'verse', nowMs: NOW + 30_000 }).appended).toBe(0);
+    // A flat value five minutes later: nothing. A change in one window: one row.
+    expect(appendCapacitySamples(codexLocal(NOW + 5 * MIN, 60, 33), { source: 'daemon', nowMs: NOW + 5 * MIN }).appended).toBe(0);
+    expect(appendCapacitySamples(codexLocal(NOW + 6 * MIN, 61, 33), { source: 'daemon', nowMs: NOW + 6 * MIN }).appended).toBe(1);
+    expect(readCapacityHistory({ pool: CODEX_LOCAL_POOL_ID }).map((r) => [r.window, r.usedPct]))
+      .toEqual([['session', 60], ['weekly', 33], ['session', 61]]);
+  });
+
+  it('queries per pool: readCapacityHistory and the response both narrow to one pool id', () => {
+    appendCapacityHistory([claude(NOW, 10, 40)], { source: 'verse', nowMs: NOW });
+    appendCapacitySamples(codexLocal(NOW, 60, 33), { source: 'daemon', nowMs: NOW });
+    appendCapacitySamples([devin(NOW, 25)], { source: 'daemon', nowMs: NOW });
+    expect(readCapacityHistory({ pool: CODEX_LOCAL_POOL_ID }).map((r) => [r.window, r.usedPct])).toEqual([['session', 60], ['weekly', 33]]);
+    expect(readCapacityHistory({ pool: DEVIN_POOL_ID }).map((r) => [r.window, r.usedPct])).toEqual([['session', 25]]);
+    expect(readCapacityHistory({ pool: 'no-such-pool' })).toEqual([]);
+    const body = buildCapacityHistoryResponse(readCapacityHistory(), { nowMs: NOW, days: 8, pool: CODEX_LOCAL_POOL_ID });
+    expect(body.series.map((s) => [s.seatId, s.window, s.points.map((p) => p[1])])).toEqual([
+      ['codex-local', 'session', [60]],
+      ['codex-local', 'weekly', [33]],
+    ]);
+    // And a pool row answers the unfiltered response as just another series.
+    const all = buildCapacityHistoryResponse(readCapacityHistory(), { nowMs: NOW, days: 8 });
+    expect(all.series.map((s) => s.seatId)).toEqual(['claude-a', 'claude-a', 'codex-local', 'codex-local', 'devin']);
+  });
+
+  it('ASHLR_CAPACITY_HISTORY=0 turns the sample door off like every other recorder', () => {
+    process.env['ASHLR_CAPACITY_HISTORY'] = '0';
+    expect(appendCapacitySamples([devin(NOW, 25)], { source: 'daemon', nowMs: NOW }))
+      .toEqual({ appended: 0, compacted: false, error: null });
+    expect(fs.existsSync(capacityHistoryPath())).toBe(false);
   });
 });
 

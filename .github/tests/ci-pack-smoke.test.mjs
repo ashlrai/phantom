@@ -387,7 +387,8 @@ for (const kind of ['too many entries', 'non-file', 'reader export', 'missing re
         f.recordPath = join(dirname(f.snapshotPath), 'original-pack.json');
       }
       const rows = [...f.rows];
-      if (kind === 'too many entries') for (let i = rows.length; i <= 20_000; i++) rows.push({ path: `package/files/${i}.bin` });
+      // Cross the actual 50,000-entry admission bound in local-runtime/archive.ts.
+      if (kind === 'too many entries') for (let i = rows.length; i <= 50_000; i++) rows.push({ path: `package/files/${i}.bin` });
       if (kind === 'non-file') rows[0] = { ...rows[0], type: 'Directory' };
       await assert.rejects(preparePack({ ...f, runNpm: (_bin, args) => {
         calls++; return realReport(args[4], rows);

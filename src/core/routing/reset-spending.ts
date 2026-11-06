@@ -3,7 +3,9 @@ import { standingSeatFor } from '../authority/effective-config.js';
 import type { EffectivePolicy } from '../authority/types.js';
 import { assessSeat, type SeatCapacity } from './headroom.js';
 import { effectiveSeatPolicy } from './policy.js';
-import { assessResetOpportunity, forecastFit, hasResetDeadline } from './reset-pressure.js';
+import { assessResetOpportunity, forecastFit, hasResetDeadline, resetLaneOrder, resetPace,
+  RESET_TARGET_USED_PERCENT, validResetCalendarPool,
+  type ResetCalendarPool, type ResetLane, type ResetPaceStatus } from './reset-pressure.js';
 import type { BudgetPolicy } from './types.js';
 import type { TaskWorkForecast } from './scheduling-types.js';
 import type { ResetSpendingAccountStatus, ResetSpendingStatus } from './reset-spending-types.js';
@@ -126,5 +128,47 @@ export function nextResetSpendingWake(status: ResetSpendingStatus, nowMs: number
     const deadline = Date.parse(account.deadline); const p75 = account.forecastBasis.p75Ms;
     return [deadline - 2 * p75, deadline - p75, deadline].filter(at => Number.isFinite(at) && at > nowMs);
   });
+  return times.length ? Math.min(...times) : null;
+}
+
+/** Reset-calendar projection: per-pool required pace plus the spend lane order. */
+export interface ResetCalendarStatus {
+  checkedAt: string;
+  /** Percent used the calendar aims to land on at each reset. */
+  targetUsedPercent: number;
+  /** Pace math per pool, keyed by pool id; malformed entries are dropped. */
+  pools: Record<string, ResetPaceStatus>;
+  /**
+   * Spend order for the router queue: every spendable weekly quota lane
+   * precedes every credits lane, weekly lanes by required burn first.
+   */
+  lanes: ResetLane[];
+}
+
+/**
+ * Project the reset calendar for a set of pool readings. Pure and advisory:
+ * it orders spend lanes, it never moves a grant, a reserve or a balance.
+ */
+export function projectResetCalendar(pools: readonly ResetCalendarPool[], nowMs: number,
+  target = RESET_TARGET_USED_PERCENT): ResetCalendarStatus {
+  const statuses: Record<string, ResetPaceStatus> = Object.create(null);
+  for (const pool of pools) {
+    if (!validResetCalendarPool(pool)) continue;
+    statuses[pool.pool] = resetPace(pool, nowMs, target);
+  }
+  return {
+    checkedAt: new Date(nowMs).toISOString(),
+    targetUsedPercent: target,
+    pools: statuses,
+    lanes: resetLaneOrder(pools, nowMs, target),
+  };
+}
+
+/** Earliest reset among spendable weekly lanes; the next natural re-evaluation point. */
+export function nextResetCalendarWake(status: ResetCalendarStatus, nowMs: number): number | null {
+  const times = status.lanes
+    .filter((lane) => lane.kind === 'weekly' && lane.resetAt !== null)
+    .map((lane) => Date.parse(lane.resetAt!))
+    .filter((at) => Number.isFinite(at) && at > nowMs);
   return times.length ? Math.min(...times) : null;
 }

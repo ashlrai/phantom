@@ -7,6 +7,93 @@ other's fleet activity attributed by owner.
 
 ---
 
+## Start here: role, context and next action
+
+The setup below connects independent machines to Pulse. The shipped
+`phm team` protocol is a separate **local-only** coordination log; using the
+same team name on two machines does not sync members, messages or claims.
+Ask the team owner which machine/log and team ID are authoritative before
+joining an empty team. Pulse identity does not grant team or repository access.
+
+| Your situation | Next action | Ready when |
+|---|---|---|
+| New member | Ask the owner for the team ID, your responsibility, repository access and a first task; inspect `phm team view --team <id>` on the agreed local log, then run `phm team join --team <id>` from your human terminal. | The view shows your expected role and you can open the task's source references. |
+| Missing access or unclear readiness | Ask the owner/admin through an existing approved channel for the specific missing repo, connector or context scope; include the task reference, failing command and a redacted error. | The owner confirms access and the original read/check succeeds; until then, review accessible docs or report the blocker. |
+| Returning member | Run `phm team view --team <id>` again; review recent messages, open handoffs, pending approvals and unexpired claims, then re-read the linked task sources. | Your assignment and scope are current, access still works and no claim conflicts with the next edit. |
+
+Roles in the view are protocol permissions: the first joining human becomes
+`owner`, subsequent humans are `member`, and agents have role `agent`.
+Human owners/admins decide consequential handoff approvals. `join --role admin`
+does not promote a member, and `--as` does not change join or approval identity.
+Confirm your actual work responsibility with the owner; a role or online dot
+alone does not establish readiness or authorize a release, spend or secret change.
+Do not create a replacement team or disable a control to work around refusal.
+
+For shared context, request the current objective, acceptance criteria, assigned
+owner, repo/branch/path scope, source links and next checkpoint. Agents can use
+`phm_team_context_get` with the agreed owner/project/person scope and token
+budget; inspect its source, author and timestamp and re-read stale sources.
+An empty pack can mean a scope mismatch or missing context; ask the context
+owner to confirm the scope and add a cited entry using `phm_team_context_add`.
+Never widen client scope to find missing data. These tools are available through
+the MCP gateway, not `phm team context` subcommands. Use Phantom Secrets
+references for credentials and Locus for scoped account access; never paste
+credentials into a message, context entry or blocker report.
+
+Once ready, claim the task scope before editing in a task worktree:
+
+```bash
+phm team claim <owner/repo> --branch <branch> --path <path> --reason "<task reference>" --team <id>
+```
+
+A conflict means coordinate with the displayed holder or wait for lease expiry;
+returning members must reacquire expired claims. Claims coordinate the local
+log only and do not grant GitHub permissions or enforce cross-machine exclusion.
+See the [team architecture](architecture/teams.md) for handoffs and trust limits.
+
+### Invite, join and remove a teammate
+
+An invite makes someone a team **member** and nothing else. It never carries a
+password, token or key, and it does not give access to anyone's repositories,
+connectors or models. Each person's machine keeps using its own local login.
+
+```bash
+# Owner/admin, on the node that holds the team log:
+phm team invite octocat --team acme            # prints a phm-invite-v1.… line
+# Invited person, on their own node, signed in as that person:
+phm team join phm-invite-v1.<paste-the-line>   # team comes from the invite
+phm team view --team acme                      # confirm you are a member
+# Owner/admin, to revoke:
+phm team remove octocat --team acme
+```
+
+Add `--json` to any of these for machine-readable output. `remove` takes effect
+at once: the member's claims are released, their accepted handoffs go back to
+`open` for someone else, and anything they post afterwards is ignored. Re-run
+`invite` to bring them back. Owners cannot be removed, and you cannot remove
+yourself.
+
+If `join` says the identity does not match, run it from the invited person's
+account or pin their name in `owner.json` as the message shows. If it says there
+is no live invite, the log has not reached this node (or the invite was revoked):
+get the latest log through your sync service or ask for a fresh `invite`.
+
+### Onboarding walkthrough checks
+
+Repeat these checks after changing onboarding guidance:
+
+1. **New member:** start with an empty local view. It should direct you to
+   confirm the authoritative log before joining; after joining, verify the role
+   rather than assuming admin access. Identify a named owner and first task.
+2. **Missing access:** use an unavailable task source or an empty scoped context
+   pack. Identify the owner/admin to contact, the redacted evidence to provide
+   and the read/check to retry. Do not proceed with edits that need that context.
+3. **Returning member:** inspect a view with messages, an open handoff and a
+   conflicting claim. Follow source links, confirm the assignment and coordinate
+   with the holder before claiming; pending approval stays with a human owner/admin.
+
+---
+
 ## The team model
 
 ```

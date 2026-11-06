@@ -55,7 +55,6 @@ import { dirname, join } from 'node:path';
 import { existsSync, openSync, readSync, closeSync, readdirSync, readFileSync, statSync } from 'node:fs';
 
 import { validResetProvenance } from '../routing/reset-pressure.js';
-import { inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readResourceJson } from '../resources/pool-runtime.js';
 import { createResourceReadingCache, normalizeResourceLastKnownUsage, type ResourceReadingCache } from '../resources/reading-cache.js';
 import type { ResourceLastKnownUsage } from '../resources/reading-cache-types.js';
@@ -178,7 +177,7 @@ const EVIDENCE_HEARTBEAT_MS = 1_000;
  * verified build, kept for display; the drift test asserts it is the last entry
  * of that list. Surfacing the gate is the point: a silent "unknown" would hide it.
  */
-export const VERSE_CLAUDE_USAGE_PINNED_VERSION = '2.1.280';
+export const VERSE_CLAUDE_USAGE_PINNED_VERSION = '2.1.312';
 
 /** The probe's verbatim reason when the installed Claude Code is not the pin. */
 export const VERSE_CLAUDE_VERSION_REASON = 'usage-version-unsupported';
@@ -2024,12 +2023,3 @@ export function buildVerseAccountsSnapshot(options: {
   };
 }
 
-/** Best-effort private-directory check used by callers before starting a collector. */
-export function accountsRootIsPrivate(accountsRoot: string): boolean {
-  try {
-    inspectPrivateDirectory(accountsRoot);
-    return true;
-  } catch {
-    return false;
-  }
-}

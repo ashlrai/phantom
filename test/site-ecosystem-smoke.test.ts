@@ -48,7 +48,12 @@ describe('static ecosystem page', () => {
     const entries = [...sitemap.querySelectorAll('url')];
     expect(entries.map((entry) => entry.querySelector('loc')?.textContent)).toEqual([
       'https://verse.ashlr.ai/',
+      'https://verse.ashlr.ai/compare/agent-clis',
       'https://verse.ashlr.ai/ecosystem',
+      'https://verse.ashlr.ai/use-cases/local-models',
+      'https://verse.ashlr.ai/use-cases/own-accounts',
+      'https://verse.ashlr.ai/use-cases/review-agent-work',
+      'https://verse.ashlr.ai/use-cases/signed-autonomy',
     ]);
     for (const entry of entries) {
       expect(entry.querySelector('lastmod')?.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/);

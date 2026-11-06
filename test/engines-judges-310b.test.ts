@@ -23,6 +23,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AshlrConfig, EngineCommand, EngineId, Proposal } from '../src/core/types.js';
 
+// These inert subprocess fixtures test engine I/O, not the runner's live RAM.
+// Host admission thresholds and hysteresis have their own host-headroom suite.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: () => ({ allowed: true, reading: { freePercent: 50, swapGb: 0 }, reason: null }),
+}));
+
 const hoisted = vi.hoisted(() => ({
   engineInstalled: null as null | ((engine: string) => boolean),
   spawn: null as null | ((cmd: unknown, cfg: unknown, opts: unknown) => unknown),

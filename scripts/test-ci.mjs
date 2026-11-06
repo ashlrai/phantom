@@ -7,7 +7,8 @@
  * only a bounded last-line diagnostic is retained.
  */
 
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import * as nodeModule from 'node:module';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -29,6 +30,19 @@ const DEFAULT_HARD_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_LINE_TAIL = 2_048;
+
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 15) || typeof nodeModule.stripTypeScriptTypes !== 'function') {
+  console.error('[test-ci] Node >=22.15.0 is required. Please upgrade Node before running tests.');
+  process.exit(1);
+}
+
+// Share the production policy without a build or a transpiler subprocess.
+// The local launch utility imports only Node builtins, so stripping its types
+// into an in-memory module needs no persistent/global loader hooks.
+const memorySource = nodeModule.stripTypeScriptTypes(readFileSync(
+  new URL('../src/core/run/tool-path.ts', import.meta.url), 'utf8'));
+const { boundedVitestJob, prepareJobMemory } = await import(`data:text/javascript;base64,${Buffer.from(memorySource).toString('base64')}`);
 
 function readPositiveDuration(name, fallback) {
   const raw = Number(process.env[name] ?? fallback);
@@ -52,12 +66,14 @@ const heartbeatIntervalMs = readPositiveDuration(
   DEFAULT_HEARTBEAT_INTERVAL_MS,
 );
 
+const memoryJob = boundedVitestJob(process.env, process.argv.slice(2));
+const extraArgs = memoryJob.args;
 const home = mkdtempSync(join(tmpdir(), 'ashlr-test-ci-home-'));
 const privateTmp = join(home, 'tmp');
 mkdirSync(privateTmp);
+const memory = prepareJobMemory({ ...memoryJob.env, HOME: home }, 'test');
 const vitestBin = join(process.cwd(), 'node_modules', 'vitest', 'vitest.mjs');
 const progressReporter = fileURLToPath(new URL('./vitest-progress-reporter.mjs', import.meta.url));
-const extraArgs = process.argv.slice(2);
 const hasExplicitReporter = extraArgs.some((arg) => arg === '--reporter' || arg.startsWith('--reporter='));
 const args = [
   vitestBin,
@@ -71,7 +87,7 @@ const child = spawn(process.execPath, args, {
   cwd: process.cwd(),
   stdio: ['inherit', 'pipe', 'pipe'],
   env: {
-    ...process.env,
+    ...memory.env,
     HOME: home,
     USERPROFILE: home,
     ASHLR_HOME: join(home, '.ashlr'),
@@ -245,6 +261,11 @@ clearTimeout(idleTimer);
 clearTimeout(hardTimer);
 clearInterval(heartbeatTimer);
 if (terminationPromise) await terminationPromise;
+
+const memoryUsage = memory.finish();
+for (const row of memoryUsage.processes) {
+  console.error('[job-memory] ' + JSON.stringify({ schema: 'phantom-job-memory/v1', jobClass: 'test', ...row }));
+}
 
 try {
   rmSync(home, { recursive: true, force: true });

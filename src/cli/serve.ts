@@ -301,6 +301,9 @@ function printUsage(): void {
   console.log(`    ${cyan('GET  /api/pulse?window=7d')} Activity rollup (1d / 7d / 30d)`);
   console.log(`    ${cyan('GET  /api/genome[?q=...]')} Genome entries (optional search query)`);
   console.log(`    ${cyan('GET  /api/events')}          Server-Sent Events live feed`);
+  console.log(`    ${cyan('GET  /api/wb/v1/snapshot')}  Desktop shell: fleet capacity snapshot (stale/invalid → unknown)`);
+  console.log(`    ${cyan('GET  /api/wb/v1/gh')}        Desktop shell: GitHub read over enrolled repos (cached + backoff)`);
+  console.log(`    ${cyan('GET  /api/wb/v1/budget')}    Desktop shell: budget policy + per-seat usage`);
   console.log('');
   console.log('  ' + bold('Dispatch route (--allow-dispatch only):'));
   console.log(`    ${cyan('POST /api/run')}             Launch phm run (requires X-Ashlr-Token header)`);

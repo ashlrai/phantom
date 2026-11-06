@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://verse.ashlr.ai/</loc><lastmod>2026-10-26</lastmod></url>
-  <url><loc>https://verse.ashlr.ai/ecosystem</loc><lastmod>2026-10-10</lastmod></url>
+  <url><loc>https://verse.ashlr.ai/</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://verse.ashlr.ai/compare/agent-clis</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://verse.ashlr.ai/ecosystem</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://verse.ashlr.ai/use-cases/local-models</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://verse.ashlr.ai/use-cases/own-accounts</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://verse.ashlr.ai/use-cases/review-agent-work</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://verse.ashlr.ai/use-cases/signed-autonomy</loc><lastmod>2026-10-28</lastmod></url>
 </urlset>

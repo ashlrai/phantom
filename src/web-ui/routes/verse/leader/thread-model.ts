@@ -321,6 +321,9 @@ export const CHANNEL_LABEL: Readonly<Record<LeaderThreadChannel, string>> = {
   telegram: 'Telegram',
   cli: 'CLI',
   system: 'System',
+  imessage: 'iMessage',
+  email: 'Email',
+  mobile: 'Phone',
 };
 
 /** Only source-generated memo/action prose is projected; human words and model conversation stay exact. */

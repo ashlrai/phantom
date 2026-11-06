@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { runInNewContext } from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { spawnSync } from 'node:child_process';
@@ -36,6 +37,8 @@ import {
 import { verifyTaskStructured } from '../src/core/run/verify.js';
 import { newUsage } from '../src/core/run/budget.js';
 import { processIsRunning, waitForProcessExit } from './helpers/process-liveness.js';
+import { JOB_MEMORY_LIMITS, prepareJobMemory } from '../src/core/run/tool-path.js';
+import { readAudit } from '../src/core/sandbox/audit.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -362,6 +365,87 @@ describe('detectVerifyCommands', () => {
 // ---------------------------------------------------------------------------
 
 describe('runVerifyCommand', () => {
+  it('keeps descendant stderr clean even when the parent captures it privately', async () => {
+    const script = `const { spawnSync } = require('child_process');
+      const child = spawnSync(process.execPath, ['-e', "process.stdout.write('ok')"], { encoding: 'utf8' });
+      if (child.status !== 0 || child.stderr !== '' || child.stdout !== 'ok') process.exit(9);
+      process.stdout.write('clean');`;
+    const vc: VerifyCommand = { kind: 'test', cmd: ['node', '-e', script] };
+    for (const result of [runVerifyCommand(vc, workdir, cfg), await runVerifyCommandAsync(vc, workdir, cfg)]) {
+      expect(result.ok, result.output).toBe(true);
+      expect(result.output).toBe('clean');
+      expect(result.memoryUsage!.processes.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('allows an explicit repository Node heap flag for larger test suites', async () => {
+    const vc: VerifyCommand = { kind: 'test', cmd: ['node', '--max-old-space-size=4096', '-e',
+      "const heap = require('v8').getHeapStatistics().heap_size_limit / 1048576; if (heap < 4096 || heap > 4224) process.exit(9);"] };
+    for (const result of [runVerifyCommand(vc, workdir, cfg), await runVerifyCommandAsync(vc, workdir, cfg)]) {
+      expect(result.ok, result.output).toBe(true);
+      expect(result.memoryUsage!.peakRssKiB).toBeGreaterThan(0);
+    }
+  });
+
+  it('uses a legacy-compatible preload and tolerates missing telemetry APIs', () => {
+    const memory = prepareJobMemory({ HOME: workdir }, 'test');
+    const recorder = JSON.parse(memory.env.NODE_OPTIONS!.split(' --require=')[1]!);
+    try {
+      expect(memory.env.NODE_OPTIONS).not.toContain('--import');
+      const source = readFileSync(recorder, 'utf8');
+      const appendFileSync = vi.fn();
+      let exit: (() => void) | undefined;
+      const requireBuiltin = (name: string) => name === 'fs' ? { appendFileSync } : { isMainThread: true };
+      // No getBuiltinModule exists in this older-Node process fixture.
+      expect(() => runInNewContext(source, { require: requireBuiltin, process: {
+        pid: 123, resourceUsage: () => ({ maxRSS: 456 }), once: (_event: string, cb: () => void) => { exit = cb; },
+      } })).not.toThrow();
+      expect(exit).toBeTypeOf('function');
+      exit!();
+      expect(appendFileSync).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('"peakRssKiB":456'));
+      expect(() => runInNewContext(source, { require: requireBuiltin, process: {} })).not.toThrow();
+      expect(() => runInNewContext(source, { require: () => { throw new Error('no worker_threads'); }, process: {} })).not.toThrow();
+    } finally { memory.finish(); }
+    expect(existsSync(recorder)).toBe(false);
+  });
+
+  it('falls back to heap-only options when a receipt directory cannot be created', () => {
+    const memory = prepareJobMemory({ HOME: join(workdir, 'missing') }, 'test');
+    expect(memory.env.NODE_OPTIONS).toBe('--max-old-space-size=1024');
+    expect(memory.finish()).toEqual({ jobClass: 'test', peakRssKiB: null, processes: [] });
+  });
+
+  it.each(Object.keys(JOB_MEMORY_LIMITS) as Array<keyof typeof JOB_MEMORY_LIMITS>)(
+    'caps %s descendants and records their own peak RSS in sync and async jobs', async (kind) => {
+      const maxMiB = JOB_MEMORY_LIMITS[kind].maxOldSpaceMiB;
+      // Check the effective V8 heap in a grandchild, not just an environment
+      // string in the watchdog. V8 adds a small fixed young-generation margin.
+      const child = `const { getHeapStatistics } = require('node:v8');
+        const heapMiB = getHeapStatistics().heap_size_limit / 1048576;
+        if (heapMiB < ${maxMiB} || heapMiB > ${maxMiB + 128}) process.exit(8);
+        console.log('heap-cap-ok'); process.exit(0);`;
+      const script = `require('node:child_process').execFileSync(process.execPath,
+        ['-e', ${JSON.stringify(child)}], { stdio: 'inherit' });`;
+      const vc: VerifyCommand = { kind, cmd: ['node', '-e', script] };
+      for (const result of [runVerifyCommand(vc, workdir, cfg), await runVerifyCommandAsync(vc, workdir, cfg)]) {
+        expect(result.ok, result.output).toBe(true);
+        expect(result.output).toContain('heap-cap-ok');
+        const receipts = result.memoryUsage!.processes;
+        expect(result.memoryUsage!.jobClass).toBe(kind);
+        expect(result.memoryUsage!.peakRssKiB).toBe(Math.max(...receipts.map(row => row.peakRssKiB)));
+        expect(result.output).not.toContain('[job-memory]');
+        expect(receipts.length).toBeGreaterThanOrEqual(2);
+        expect(new Set(receipts.map(row => row.pid)).size).toBe(receipts.length);
+        for (const row of receipts) {
+          expect(row).toEqual({ pid: expect.any(Number), peakRssKiB: expect.any(Number) });
+          expect(row.peakRssKiB).toBeGreaterThan(0);
+        }
+        expect(readAudit(50).some(row => row.action === 'verify:command' &&
+          row.summary.startsWith(`${kind}:`) && row.summary.endsWith(`peakNodeRssKiB=${result.memoryUsage!.peakRssKiB}`))).toBe(true);
+      }
+    },
+  );
+
   it('reports ok:true / exit 0 for a passing command', () => {
     const vc: VerifyCommand = { kind: 'test', cmd: ['node', '-e', 'process.exit(0)'] };
     const res = runVerifyCommand(vc, workdir, cfg);

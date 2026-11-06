@@ -1,0 +1,1354 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifications in compact JSON 1`] = `
+{
+  "fields": [
+    "servers",
+    "tools",
+    "native",
+  ],
+  "native": [
+    {
+      "name": "phm_proactive_agents_list",
+      "safety": "read",
+    },
+    {
+      "name": "phm_proactive_agents_create",
+      "safety": "append",
+    },
+    {
+      "name": "phm_proactive_agents_update",
+      "safety": "append",
+    },
+    {
+      "name": "phm_proactive_agents_delete",
+      "safety": "append",
+    },
+    {
+      "name": "phm_task_context",
+      "safety": "read",
+    },
+    {
+      "name": "phm_team_register",
+      "safety": "append",
+    },
+    {
+      "name": "phm_team_publish",
+      "safety": "append",
+    },
+    {
+      "name": "phm_team_view",
+      "safety": "read",
+    },
+    {
+      "name": "phm_team_claim",
+      "safety": "append",
+    },
+    {
+      "name": "phm_team_handoff",
+      "safety": "append",
+    },
+    {
+      "name": "phm_team_context_add",
+      "safety": "append",
+    },
+    {
+      "name": "phm_team_context_get",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_website_publish",
+      "safety": "append",
+    },
+    {
+      "name": "ashlr_website_status",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_orient",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_ask",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_recall",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_learn",
+      "safety": "append",
+    },
+    {
+      "name": "ashlr_backlog",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_health",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_status",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_impact",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_pulse",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_inbox_list",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_inbox_propose",
+      "safety": "proposal",
+    },
+    {
+      "name": "ashlr_browser_task",
+      "safety": "proposal",
+    },
+    {
+      "name": "ashlr_fleet_status",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_scorecard",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_oversight",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_routing",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_north_star",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_self_heal",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_racing",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_comms",
+      "safety": "read",
+    },
+    {
+      "name": "ashlr_desktop_open",
+      "safety": "proposal",
+    },
+  ],
+  "registryFields": [
+    "tools",
+    "installedCount",
+  ],
+  "toolFields": [
+    "id",
+    "name",
+    "installed",
+    "version",
+    "path",
+  ],
+}
+`;
+
+exports[`native MCP tool inventory > preserves the complete input schema contract for every listed tool 1`] = `
+[
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "accountId": {
+          "type": "string",
+        },
+        "limit": {
+          "type": "number",
+        },
+        "offset": {
+          "type": "number",
+        },
+        "provider": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phm_proactive_agents_list",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "additionalProperties": false,
+          "properties": {
+            "avatar": {
+              "additionalProperties": false,
+              "properties": {
+                "color": {
+                  "pattern": "^#[a-fA-F0-9]{6}$",
+                  "type": "string",
+                },
+                "variant": {
+                  "enum": [
+                    "classic",
+                    "round",
+                    "pixel",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "color",
+                "variant",
+              ],
+              "type": "object",
+            },
+            "capabilityIds": {
+              "description": "<description>",
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string",
+              },
+              "maxItems": 32,
+              "type": "array",
+              "uniqueItems": true,
+            },
+            "computer": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "hosted",
+                    "connected-local",
+                    "unknown",
+                  ],
+                  "type": "string",
+                },
+                "label": {
+                  "maxLength": 120,
+                  "type": "string",
+                },
+                "providerComputerId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+              },
+              "required": [
+                "kind",
+                "label",
+                "providerComputerId",
+              ],
+              "type": "object",
+            },
+            "displayName": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string",
+            },
+            "enabled": {
+              "description": "<description>",
+              "type": "boolean",
+            },
+            "fundingReference": {
+              "anyOf": [
+                {
+                  "type": "null",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "enum": [
+                        "subscription",
+                        "promotional-api",
+                        "unknown",
+                      ],
+                      "type": "string",
+                    },
+                    "poolId": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "poolId",
+                  ],
+                  "type": "object",
+                },
+              ],
+              "description": "<description>",
+            },
+            "identity": {
+              "additionalProperties": false,
+              "properties": {
+                "accountId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string",
+                },
+                "agentId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string",
+                },
+                "provider": {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "provider",
+                "accountId",
+                "agentId",
+              ],
+              "type": "object",
+            },
+            "preferences": {
+              "additionalProperties": false,
+              "properties": {
+                "maxConcurrent": {
+                  "default": 1,
+                  "maximum": 32,
+                  "minimum": 1,
+                  "type": "integer",
+                },
+                "priority": {
+                  "default": 50,
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "projectBindingIds": {
+                  "default": [],
+                  "description": "<description>",
+                  "items": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                  "maxItems": 32,
+                  "type": "array",
+                  "uniqueItems": true,
+                },
+              },
+              "type": "object",
+            },
+            "responsibility": {
+              "maxLength": 4000,
+              "type": "string",
+            },
+            "services": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                  "label": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "label",
+                ],
+                "type": "object",
+              },
+              "maxItems": 100,
+              "type": "array",
+            },
+          },
+          "required": [
+            "identity",
+            "displayName",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "profile",
+      ],
+      "type": "object",
+    },
+    "name": "phm_proactive_agents_create",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+        },
+        "patch": {
+          "additionalProperties": false,
+          "properties": {
+            "avatar": {
+              "additionalProperties": false,
+              "properties": {
+                "color": {
+                  "pattern": "^#[a-fA-F0-9]{6}$",
+                  "type": "string",
+                },
+                "variant": {
+                  "enum": [
+                    "classic",
+                    "round",
+                    "pixel",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "color",
+                "variant",
+              ],
+              "type": "object",
+            },
+            "capabilityIds": {
+              "description": "<description>",
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "type": "string",
+              },
+              "maxItems": 32,
+              "type": "array",
+              "uniqueItems": true,
+            },
+            "computer": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "hosted",
+                    "connected-local",
+                    "unknown",
+                  ],
+                  "type": "string",
+                },
+                "label": {
+                  "maxLength": 120,
+                  "type": "string",
+                },
+                "providerComputerId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+              },
+              "required": [
+                "kind",
+                "label",
+                "providerComputerId",
+              ],
+              "type": "object",
+            },
+            "displayName": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string",
+            },
+            "enabled": {
+              "description": "<description>",
+              "type": "boolean",
+            },
+            "expectedVersion": {
+              "minimum": 1,
+              "type": "integer",
+            },
+            "fundingReference": {
+              "anyOf": [
+                {
+                  "type": "null",
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    "kind": {
+                      "enum": [
+                        "subscription",
+                        "promotional-api",
+                        "unknown",
+                      ],
+                      "type": "string",
+                    },
+                    "poolId": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        {
+                          "type": "null",
+                        },
+                      ],
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "accountId",
+                    "poolId",
+                  ],
+                  "type": "object",
+                },
+              ],
+              "description": "<description>",
+            },
+            "preferences": {
+              "additionalProperties": false,
+              "properties": {
+                "maxConcurrent": {
+                  "default": 1,
+                  "maximum": 32,
+                  "minimum": 1,
+                  "type": "integer",
+                },
+                "priority": {
+                  "default": 50,
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "projectBindingIds": {
+                  "default": [],
+                  "description": "<description>",
+                  "items": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                  "maxItems": 32,
+                  "type": "array",
+                  "uniqueItems": true,
+                },
+              },
+              "type": "object",
+            },
+            "responsibility": {
+              "maxLength": 4000,
+              "type": "string",
+            },
+            "services": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                  "label": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "label",
+                ],
+                "type": "object",
+              },
+              "maxItems": 100,
+              "type": "array",
+            },
+          },
+          "required": [
+            "expectedVersion",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "id",
+        "patch",
+      ],
+      "type": "object",
+    },
+    "name": "phm_proactive_agents_update",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedVersion": {
+          "type": "number",
+        },
+        "id": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "id",
+        "expectedVersion",
+      ],
+      "type": "object",
+    },
+    "name": "phm_proactive_agents_delete",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "asOf": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "maxEvents": {
+          "description": "<description>",
+          "type": "number",
+        },
+        "observedThrough": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "outcomeId": {
+          "type": "string",
+        },
+        "taskId": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "outcomeId",
+        "taskId",
+      ],
+      "type": "object",
+    },
+    "name": "phm_task_context",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "capabilities": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "onBehalfOf": {
+          "type": "string",
+        },
+        "provider": {
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "agentId",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_register",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "channel": {
+          "type": "string",
+        },
+        "status": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "agentId",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_publish",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phm_team_view",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "branch": {
+          "type": "string",
+        },
+        "claimId": {
+          "type": "string",
+        },
+        "op": {
+          "enum": [
+            "acquire",
+            "release",
+          ],
+          "type": "string",
+        },
+        "path": {
+          "type": "string",
+        },
+        "reason": {
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "ttlMinutes": {
+          "description": "<description>",
+          "type": "number",
+        },
+      },
+      "required": [
+        "agentId",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_claim",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "<description>",
+          "enum": [
+            "push-main",
+            "deploy",
+            "release",
+            "merge",
+            "rotate-secret",
+            "external-message",
+            "delete",
+            "spend",
+          ],
+          "type": "string",
+        },
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "contextRefs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "detail": {
+          "type": "string",
+        },
+        "handoffId": {
+          "type": "string",
+        },
+        "op": {
+          "enum": [
+            "request",
+            "accept",
+            "complete",
+            "decline",
+          ],
+          "type": "string",
+        },
+        "result": {
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+        "to": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "agentId",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_handoff",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "agentId": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "importance": {
+          "description": "<description>",
+          "type": "number",
+        },
+        "observedAt": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "owner": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "person": {
+          "type": "string",
+        },
+        "project": {
+          "type": "string",
+        },
+        "source": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "supersedes": {
+          "description": "<description>",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+        "title": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "agentId",
+        "title",
+        "text",
+        "source",
+        "owner",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_context_add",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "budgetTokens": {
+          "type": "number",
+        },
+        "limit": {
+          "type": "number",
+        },
+        "owner": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "person": {
+          "type": "string",
+        },
+        "project": {
+          "type": "string",
+        },
+        "query": {
+          "type": "string",
+        },
+        "team": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+        "owner",
+      ],
+      "type": "object",
+    },
+    "name": "phm_team_context_get",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedMerge": {
+          "description": "<description>",
+          "pattern": "^[a-f0-9]{40}$",
+          "type": "string",
+        },
+        "profile": {
+          "enum": [
+            "phantom-public-web",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "profile",
+        "expectedMerge",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_website_publish",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_website_status",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_orient",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "question": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "question",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_ask",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "<description>",
+          "type": "number",
+        },
+        "query": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_recall",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "tags": {
+          "description": "<description>",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "text": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "title": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_learn",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "<description>",
+          "type": "number",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_backlog",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_health",
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_status",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "target": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "target",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_impact",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "window": {
+          "description": "<description>",
+          "enum": [
+            "1d",
+            "7d",
+            "30d",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_pulse",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "status": {
+          "description": "<description>",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "awaiting-host-merge",
+            "applied",
+            "failed",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_inbox_list",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "diff": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "kind": {
+          "description": "<description>",
+          "enum": [
+            "patch",
+            "pr",
+            "note",
+          ],
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "summary": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "title": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "kind",
+        "title",
+        "summary",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_inbox_propose",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "instructions": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "summary": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "title": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "url": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "repo",
+        "instructions",
+        "title",
+        "summary",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_browser_task",
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_fleet_status",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "window": {
+          "description": "<description>",
+          "enum": [
+            "7d",
+            "30d",
+            "all",
+          ],
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_scorecard",
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_oversight",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "<description>",
+          "type": "number",
+        },
+      },
+      "type": "object",
+    },
+    "name": "ashlr_routing",
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_north_star",
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_self_heal",
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_racing",
+  },
+  {
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "ashlr_comms",
+  },
+  {
+    "inputSchema": {
+      "properties": {
+        "action_type": {
+          "description": "<description>",
+          "enum": [
+            "open-editor",
+            "open-finder",
+            "open-terminal",
+          ],
+          "type": "string",
+        },
+        "repo": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "summary": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "target": {
+          "description": "<description>",
+          "type": "string",
+        },
+        "title": {
+          "description": "<description>",
+          "type": "string",
+        },
+      },
+      "required": [
+        "repo",
+        "action_type",
+        "target",
+        "title",
+        "summary",
+      ],
+      "type": "object",
+    },
+    "name": "ashlr_desktop_open",
+  },
+]
+`;

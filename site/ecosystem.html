@@ -21,7 +21,8 @@
 <title>Engineering ecosystem · Phantom</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
 <style>
   :root {
     --bg:#edf0f4; --paper:#fff; --ink:#0f1822; --muted:#58657a; --line:#d3dbe4;
@@ -101,7 +102,7 @@
   .project .stars { font:700 25px var(--font-display); text-align:right; white-space:nowrap; }
   .project .stars small { display:block; color:var(--muted); font:500 11px var(--font-mono); }
   .project[data-repo="phantom"] { border-top:3px solid var(--accent); padding-top:29px; }
-  .next { padding-top:74px; display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .next { padding-top:74px; display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; }
   .next > div { padding:27px; border:1px solid var(--line); background:var(--paper); }
   .next h2 { font:700 24px var(--font-display); margin:0 0 8px; }
   .next p { margin:0 0 16px; color:var(--muted); }
@@ -195,6 +196,7 @@
 
   <section class="wrap next" aria-label="Get involved">
     <div><h2>Start building in Phantom.</h2><p>Install the CLI, open the console, and follow the guide for your first seat.</p><a href="/#start">Install and get started</a></div>
+    <div><h2>Pick a use-case guide.</h2><p>Own accounts, local models, signed autonomy and review workflows, each claim linked to its source.</p><a href="/use-cases/own-accounts">Browse the guides</a></div>
     <div><h2>Make a project better.</h2><p>Each repository has its own source, issues, and contribution path. Pick one that matters to you.</p><a href="https://github.com/orgs/ashlrai/repositories">Browse all public repositories</a></div>
   </section>
 </main>

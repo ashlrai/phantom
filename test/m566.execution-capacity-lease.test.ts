@@ -11,13 +11,17 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { DriveNodes, LocalNodesStore } from '../src/core/drive/nodes/index.js';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -33,7 +37,7 @@ import {
   type ExecutionCapacityEvidenceVerifierV1,
   type ExecutionCapacityLeaseBatchItemV1,
 } from '../src/core/fabric/execution-capacity-lease.js';
-import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
+import { acquireLocalStoreLock, acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
 
 const NOW = Date.parse('2026-09-04T16:00:00.000Z');
 const pair = generateKeyPairSync('ed25519');
@@ -623,5 +627,93 @@ describe('M566 Execution Capacity Lease V1', () => {
     expect(store.inspect()).toMatchObject({
       sourceState: 'degraded', complete: false, stopReasons: ['store-unavailable'],
     });
+  });
+});
+
+// Drive uses the same durable local-store lock; keep its integration cases in
+// this established real-I/O lease suite without changing protected lane config.
+const driveNodeRoots: string[] = [];
+function driveNodeDirectory() {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'drive-nodes-')));
+  driveNodeRoots.push(root);
+  return root;
+}
+afterEach(() => { for (const root of driveNodeRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+describe('local drive authority', () => {
+  it('persists fencing, registry and completed jobs across store instances', () => {
+    const root = driveNodeDirectory();
+    const a = new DriveNodes(new LocalNodesStore(root), { now: () => 1000 });
+    const session = a.join('a')!;
+    const leader = a.heartbeat(session)!.leader!;
+    a.enqueue('job');
+    const claim = a.claim(leader, session, 'job')!;
+    expect(a.complete(claim, 'done')).toBe(true);
+    const b = new DriveNodes(new LocalNodesStore(root), { now: () => 40000 });
+    const rejoined = b.join('a')!;
+    const next = b.heartbeat(rejoined)!.leader!;
+    expect(next.token).toBeGreaterThan(claim.token);
+    expect(b.claim(next, rejoined, 'job')).toBeNull();
+    expect(b.snapshot().jobs[0].result).toBe('done');
+    expect(b.complete(claim, 'late')).toBe(false);
+  });
+
+  it('rolls back a failed transaction and releases its lock', () => {
+    const root = driveNodeDirectory();
+    const store = new LocalNodesStore(root);
+    new DriveNodes(store).enqueue('first');
+    const before = readFileSync(join(root, 'nodes.json'), 'utf8');
+    expect(() => store.transaction(state => { state.sequence = 50; throw new Error('abort'); })).toThrow('abort');
+    expect(readFileSync(join(root, 'nodes.json'), 'utf8')).toBe(before);
+    expect(new DriveNodes(store).enqueue('second')).toBe(true);
+  });
+
+  it('refuses malformed and symlink state without resetting fencing', () => {
+    const root = driveNodeDirectory();
+    const path = join(root, 'nodes.json');
+    writeFileSync(path, '{broken', { mode: 0o600 });
+    const nodes = new DriveNodes(new LocalNodesStore(root));
+    expect(() => nodes.join('a')).toThrow();
+    expect(readFileSync(path, 'utf8')).toBe('{broken');
+    rmSync(path);
+    const target = join(root, 'target');
+    writeFileSync(target, 'untouched', { mode: 0o600 });
+    symlinkSync(target, path);
+    expect(() => nodes.join('a')).toThrow();
+    expect(readFileSync(target, 'utf8')).toBe('untouched');
+  });
+
+  it('fails closed while a live process owns the transaction lock', () => {
+    const root = driveNodeDirectory();
+    const lock = acquireLocalStoreLock(join(root, 'nodes.lock'));
+    expect(lock).not.toBeNull();
+    try {
+      expect(() => new DriveNodes(new LocalNodesStore(root)).join('a')).toThrow('unavailable or contended');
+    } finally { releaseLocalStoreLock(lock); }
+    expect(new DriveNodes(new LocalNodesStore(root)).join('a')).not.toBeNull();
+  });
+
+  it('serializes independent processes racing to claim and complete one job', async () => {
+    const root = driveNodeDirectory();
+    const nodes = new DriveNodes(new LocalNodesStore(root), { nodeTtlMs: 60_000, leaderTtlMs: 60_000 });
+    const owner = nodes.join('owner')!;
+    const leader = nodes.heartbeat(owner)!.leader!;
+    nodes.enqueue('race');
+    const modulePath = pathToFileURL(resolve('src/core/drive/nodes/index.ts')).href;
+    const run = () => new Promise<string>((resolveOutput, reject) => {
+      const code = `import { DriveNodes, LocalNodesStore } from ${JSON.stringify(modulePath)};
+        const nodes = new DriveNodes(new LocalNodesStore(${JSON.stringify(root)}));
+        const claim = nodes.claim(${JSON.stringify(leader)}, ${JSON.stringify(owner)}, 'race');
+        process.stdout.write(String(claim !== null && nodes.complete(claim, 'winner')));`;
+      const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      let errors = '';
+      child.stdout.on('data', chunk => { output += String(chunk); });
+      child.stderr.on('data', chunk => { errors += String(chunk); });
+      child.on('error', reject);
+      child.on('close', status => status === 0 ? resolveOutput(output) : reject(new Error(errors)));
+    });
+    expect((await Promise.all([run(), run()])).sort()).toEqual(['false', 'true']);
+    expect(nodes.snapshot().jobs[0].result).toBe('winner');
   });
 });

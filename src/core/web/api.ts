@@ -21,6 +21,7 @@
  *   GET /api/autonomy/evidence -> list autonomy evidence packs (metadata only)
  *   GET /api/daemon            -> strict provenance-bearing daemon observation
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
+ *   GET /api/host              -> read-only console, inference bind and Stop summary
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
@@ -42,6 +43,7 @@
  *    (tracked by server.ts).
  */
 
+import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
@@ -72,7 +74,8 @@ import { listSwarms, loadSwarm } from '../swarm/store.js';
 import { buildRollup } from '../observability/rollup.js';
 import { loadGenome } from '../genome/store.js';
 import { recall } from '../genome/recall.js';
-import { listProposals, loadProposal, setStatus } from '../inbox/store.js';
+import { decideApprovalRequest, listProposals, loadProposal, setStatus } from '../inbox/store.js';
+import { approvalRequestForProposal, isApprovalRequestRevision } from '../inbox/pending-authority.js';
 import {
   readPublicDaemonObservation,
   type PublicDaemonObservation,
@@ -94,10 +97,11 @@ import { sanitizePublicJson } from '../util/public-json.js';
 import { ReadProjectionError, type ReadProjectionReader } from './read-projections.js';
 import type { MissionShadowObservation } from '../vision/mission-shadow-observer.js';
 import { readAgentOsRuntimeSnapshotV1 } from '../vision/agent-os-runtime-read.js';
-import { readUniverseOverview } from '../universe/index.js';
+import { readUniverseOverview } from '../universe/overview.js';
 import { readUniverseGraph } from '../universe/graph-reader.js';
 import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
+import { buildHostSummary, HOST_SUMMARY_PATH } from './host-summary.js';
 import { handleVerseApi, isVerseApiPath, verseSessionsDigest, verseSessionsSnapshot, verseAccountReadingsDigest } from '../verse/verse-api.js';
 // V2 autonomy control plane (mounted BEFORE handleVerseApi — see handleApi).
 import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.js';
@@ -105,6 +109,8 @@ import { handleVerseControlApi, isVerseControlPath } from '../verse/control-api.
 import { handleVerseGithubApi, isVerseGithubPath } from '../verse/github-api.js';
 // MCP + per-account CLI management (mounted BEFORE both — see handleApi).
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
+// Desktop native-shell read API (GET /api/wb/v1/*).
+import { handleWbApi, isWbApiPath } from './wb-read-api.js';
 
 // ---------------------------------------------------------------------------
 // SSE registry — shared across all open SSE connections so server.ts can
@@ -1290,6 +1296,7 @@ export async function handleApi(
     allowDispatch: boolean;
     readSession?: { id: string; expiresAt: number };
     readProjections?: ReadProjectionReader;
+    usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -1302,7 +1309,23 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === HOST_SUMMARY_PATH) {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+      } else {
+        sendJson(res, 200, await buildHostSummary(cfg, req.socket));
+      }
+      return true;
+    }
+
     // ── GET /api/snapshot ───────────────────────────────────────────────────
+    if (path === '/api/resource' && method === 'GET') {
+      const { readResourceView } = await import('../fabric/resource-view-store.js');
+      sendJson(res, 200, await readResourceView());
+      return true;
+    }
+
     if (path === '/api/snapshot' && method === 'GET') {
       const snapshot = await buildCachedSnapshot(cfg, ctx.readProjections);
       // Read authority after the potentially slow snapshot build so the
@@ -1677,7 +1700,7 @@ export async function handleApi(
         };
       }
 
-      sendJson(res, 200, { ...proposal, decisionEvidence });
+      sendJson(res, 200, { ...proposal, decisionEvidence, approvalRequest: approvalRequestForProposal(proposal) });
       return true;
     }
 
@@ -1697,13 +1720,40 @@ export async function handleApi(
       const parts = sub.split('/');
       const id = parts[0] ?? '';
       const action = parts[1] ?? '';
-      if (!id || (action !== 'approve' && action !== 'reject') || parts.length > 2) {
+      if (!id || !['approve', 'reject', 'decision'].includes(action) || parts.length > 2) {
         sendJson(res, 404, { error: `not found: ${method} ${path}` });
         return true;
       }
 
       // Same token + Content-Type gate as handleDispatch.
       if (!passesMutationGate(req, res, ctx.token)) {
+        return true;
+      }
+
+      // Approval cards persist consent only. They must never fall through to
+      // the legacy approve-and-apply route below.
+      if (action === 'decision') {
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req, 4096));
+        } catch {
+          sendJson(res, 400, { error: 'expected a bounded JSON approval decision' });
+          return true;
+        }
+        if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'revision' && key !== 'decision') ||
+          !('revision' in body) || !isApprovalRequestRevision(body.revision) ||
+          !('decision' in body) || (body.decision !== 'approve' && body.decision !== 'deny')) {
+          sendJson(res, 400, { error: 'expected revision and decision (approve or deny)' });
+          return true;
+        }
+        const result = decideApprovalRequest(id, body.revision, body.decision);
+        const statusCode = result.ok ? 200 : result.code === 'not-found' ? 404 : result.code === 'conflict' ? 409 : 503;
+        sendJson(res, statusCode, result.ok ? result : {
+          ...result, error: result.code === 'conflict'
+            ? 'This approval request changed or was already decided. Reload it before deciding.'
+            : 'Approval decision unavailable.',
+        });
         return true;
       }
 
@@ -1855,6 +1905,60 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/lanes ─────────────────────────────────────────────
+    // RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
+    // credit left, queue depth, live jobs and merges/hour per router lane,
+    // from the host queue dir (ready.tsv/queue.v1.json/jobs.jsonl) and the
+    // local usage readers. READ-ONLY bounded fs reads; never throws on
+    // absent/degraded inputs; same no-auth read class as /api/fleet.
+    if (path === '/api/fleet/lanes' && method === 'GET') {
+      const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
+      sendJson(res, 200, await getFleetLaneSnapshot());
+      return true;
+    }
+
+    // ── GET /api/fleet/job ───────────────────────────────────────────────
+    // RQ-PHX-JOBDETAIL: single-job detail from the dispatchd runs dir —
+    // state, lane/model provenance, publish outcome and a scrubbed bounded
+    // log tail. READ-ONLY; never throws on absent/degraded inputs; same
+    // no-auth read class as /api/fleet/lanes.
+    if (path === '/api/fleet/job' && method === 'GET') {
+      const { getFleetJobDetail, isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobDetail(id));
+      return true;
+    }
+
+    // Read-only, on-demand worker brief and published notes.
+    if (path === '/api/fleet/job/text' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobText } = await import('../fleet/runs-job-texts.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const kind = getQueryParam(req.url ?? '', 'kind');
+      if (!id || !isFleetJobId(id) || (kind !== 'notes' && kind !== 'prompt')) {
+        sendJson(res, 400, { error: 'valid job id and kind (notes or prompt) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobText(id, kind));
+      return true;
+    }
+
+    if (path === '/api/fleet/job/changes' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobChanges } = await import('../fleet/runs-job-changes.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobChanges(id));
+      return true;
+    }
+
     // ── GET /api/estimate ───────────────────────────────────────────────────
     // M32: read-only pre-flight cost estimate (pure local computation over
     // persisted history — no token needed; same class as /api/pulse).
@@ -1882,6 +1986,42 @@ export async function handleApi(
       const { buildOrientation } = await import('../orient.js');
       const repo = getQueryParam(req.url ?? '', 'repo');
       const result = await buildOrientation(cfg, repo);
+      sendJson(res, 200, result);
+      return true;
+    }
+
+    // ── GET /api/onboard/status ── RQ-ONB-2 DETECT + RQ-ONB-7: per-catalog rows,
+    // this computer's scheduled agents, and the resource-balancer summary.
+    // `which` resolves binaries; the CLI's OWN status command supplies login
+    // verdicts (never token files or ~/.codex contents); usage reports only
+    // real-source readings. Read-only like /api/orient; probes are bounded.
+    if (path === '/api/onboard/status' && method === 'GET') {
+      const { buildOnboardStatusReport } = await import('../onboard.js');
+      sendJson(res, 200, await buildOnboardStatusReport(cfg, ctx.allowDispatch));
+      return true;
+    }
+
+    // ── POST /api/onboard/plan-tier ── persists a pick to cfg.onboard.planTiers.
+    // Same posture as every mutation route: 404 w/o dispatch, token + JSON required.
+    if (path === '/api/onboard/plan-tier' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        sendJson(res, 400, { error: 'invalid JSON body' });
+        return true;
+      }
+      const { persistOnboardPlanTier } = await import('../onboard.js');
+      const result = persistOnboardPlanTier(body);
+      if (!result.ok) {
+        sendJson(res, 400, { error: result.error });
+        return true;
+      }
       sendJson(res, 200, result);
       return true;
     }
@@ -2229,6 +2369,13 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/wb/v1/{snapshot,gh,budget} (desktop native shell reads) ────
+    // Versioned loopback read surface for desktop/src-tauri fleet ops.
+    // GET-only; already behind the read-session boundary like every /api/* GET.
+    if (isWbApiPath(path)) {
+      return handleWbApi(req, res, cfg, path);
+    }
+
     // ── /api/verse/mcp[/...] (MCP + per-account CLI management) ─────────────
     // MUST come before BOTH verse handlers below. isVerseApiPath() matches
     // every /api/verse/* path and 404s what it does not recognize, and the
@@ -2245,6 +2392,10 @@ export async function handleApi(
         path,
         method,
       );
+    }
+
+    if (path === '/api/verse/feedback') {
+      return handleFrictionFeedback(ctx, req, res);
     }
 
     // ── /api/verse/{control,caps,scope,audit,daemon,safety} (V2 control) ────
@@ -2285,6 +2436,7 @@ export async function handleApi(
     if (isVerseApiPath(path)) {
       const handled = await handleVerseApi(
         { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+          usageResourcesApi: ctx.usageResourcesApi,
           ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) },
         req,
         res,

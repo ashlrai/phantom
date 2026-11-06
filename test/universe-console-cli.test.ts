@@ -35,19 +35,19 @@ describe('foreground Universe console CLI', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
   it.each([
-    [], ['--root'], ['--root', 'relative'], ['--root', '~/.ashlr/universe'], ['--root', '/'],
-    ['--root', '////'], ['--root', '/private/..'], ['--root', '/private/x\n'], ['--root', '/private/x\0'],
-    ['--root', '/private/x\u0085'], ['--root', `/${'x'.repeat(4_096)}`],
-    ['--root', root, '--root', '/private/other'], ['--root', root, '--json', '--json'],
-    ['--root', root, '--port', '0', '--port', '1'], ['--root', root, '--port'],
-    ['--root', root, '--port', '-1'], ['--root', root, '--port', '1.5'], ['--root', root, '--port', '65536'],
-    ['--root', root, '--port', '1e3'], ['--root', root, '--port', '+1'], ['--root', root, '--port', ' 1'],
-    ['--root', root, '--port', '01'], ['--root', root, '--port', '0\n'],
-    ['--root', root, '--open'], ['--root', root, '--allow-dispatch'], ['--root', root, '--unknown'],
-    ['--root', root, 'extra'], ['--root', root, '--'], ['--root=/private/u'],
-    ['--help', '--root', root], ['--root', root, '--help'], ['--help', '--json'], ['help'],
-    ['--root', `/${'é'.repeat(2_048)}`], Array.from({ length: 17 }, () => '--json'),
-  ])('rejects %j before backend import or startup', async (...args) => {
+    [[]], [['--root']], [['--root', 'relative']], [['--root', '~/.ashlr/universe']], [['--root', '/']],
+    [['--root', '////']], [['--root', '/private/..']], [['--root', '/private/x\n']], [['--root', '/private/x\0']],
+    [['--root', '/private/x\u0085']], [['--root', `/${'x'.repeat(4_096)}`]],
+    [['--root', root, '--root', '/private/other']], [['--root', root, '--json', '--json']],
+    [['--root', root, '--port', '0', '--port', '1']], [['--root', root, '--port']],
+    [['--root', root, '--port', '-1']], [['--root', root, '--port', '1.5']], [['--root', root, '--port', '65536']],
+    [['--root', root, '--port', '1e3']], [['--root', root, '--port', '+1']], [['--root', root, '--port', ' 1']],
+    [['--root', root, '--port', '01']], [['--root', root, '--port', '0\n']],
+    [['--root', root, '--open']], [['--root', root, '--allow-dispatch']], [['--root', root, '--unknown']],
+    [['--root', root, 'extra']], [['--root', root, '--']], [['--root=/private/u']],
+    [['--help', '--root', root]], [['--root', root, '--help']], [['--help', '--json']], [['help']],
+    [['--root', `/${'é'.repeat(2_048)}`]], [Array.from({ length: 17 }, () => '--json')],
+  ])('rejects %j before backend import or startup', async (args) => {
     const imports = backend.imported.mock.calls.length;
     expect(await cmdUniverseConsole(args)).toBe(2);
     expect(backend.imported).toHaveBeenCalledTimes(imports);

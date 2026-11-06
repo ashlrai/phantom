@@ -1,0 +1,12 @@
+{
+  "schema": "graph.v1",
+  "readOnly": false,
+  "complete": true,
+  "sources": {
+    "fleet": "loaded",
+    "seats": "loaded"
+  },
+  "nodes": [],
+  "edges": [],
+  "issues": []
+}

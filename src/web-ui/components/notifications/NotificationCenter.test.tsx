@@ -5,6 +5,7 @@ import { NotificationBell } from './NotificationBell.js';
 import { NotificationCenter } from './NotificationCenter.js';
 import { evictAll } from '../../data/cache.js';
 import { __resetNotificationStoreForTests } from './notification-store.js';
+import { NotificationItem } from './NotificationItem.js';
 
 const CONTROL = {
   ts: new Date().toISOString(),
@@ -52,6 +53,16 @@ describe('NotificationBell + NotificationCenter', () => {
 
     await waitFor(() => expect(screen.getByText('1 critical security finding')).toBeInTheDocument());
     expect(screen.getByText('r: bad thing')).toBeInTheDocument();
+  });
+
+  it('keeps an absolute workbench deep link intact while preserving hash-router actions', () => {
+    const item = { id: 'fleet-merge:repo#1', category: 'fleet' as const, severity: 'info' as const,
+      title: 'Merged #1', detail: 'repo: Change', ts: new Date().toISOString(), actionLabel: 'Open merges',
+      actionHref: 'http://localhost/verse/?pane=fleet-merges' };
+    const { rerender } = render(<NotificationItem item={item} />);
+    expect(screen.getByRole('link', { name: 'Open merges' })).toHaveAttribute('href', item.actionHref);
+    rerender(<NotificationItem item={{ ...item, actionHref: '/control/fleet' }} />);
+    expect(screen.getByRole('link', { name: 'Open merges' })).toHaveAttribute('href', '#/control/fleet');
   });
 
   it('muting a category removes it from the badge count and list', async () => {

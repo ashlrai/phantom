@@ -41,6 +41,7 @@
  *     gates elsewhere are never weakened from here.
  */
 
+import { readEnvironmentCredential } from './secrets.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -134,9 +135,9 @@ function resolveEndpoint(cfg: AshlrConfig): string | undefined {
 /** Resolve the fleet PAT (spec env → exporter envs). Null when none present. */
 function resolvePat(): string | null {
   const pat =
-    process.env[PULSE_FLEET_PAT_ENV] ??
-    process.env[ASHLR_PULSE_READ_PAT_ENV] ??
-    process.env[ASHLR_PULSE_PAT_ENV];
+    readEnvironmentCredential(PULSE_FLEET_PAT_ENV) ??
+    readEnvironmentCredential(ASHLR_PULSE_READ_PAT_ENV) ??
+    readEnvironmentCredential(ASHLR_PULSE_PAT_ENV);
   return pat && pat.length > 0 ? pat : null;
 }
 

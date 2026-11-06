@@ -1,0 +1,6 @@
+[
+  {"pool":"codex-cmp","bucket":"weeklyPct","remaining":10,"resetAt":"2026-10-25T12:00:00Z","timestamp":"2026-10-25T09:00:00Z","source":"log"},
+  {"pool":"codex-cmp","bucket":"weeklyPct","remaining":0,"resetAt":"2026-10-25T12:00:00Z","timestamp":"2026-10-25T10:00:00Z","source":"log"},
+  {"pool":"codex-cmp","bucket":"credits","remaining":42,"resetAt":null,"timestamp":"2026-10-25T10:00:00Z","source":"log"},
+  {"pool":"codex-cmp","bucket":"weeklyPct","remaining":100,"resetAt":"2026-11-01T12:00:00Z","timestamp":"2026-10-25T12:01:00Z","source":"log"}
+]

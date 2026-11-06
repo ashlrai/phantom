@@ -1,0 +1,878 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`390px approve and held-lane decisions 1`] = `
+<div>
+  <div
+    style="width: 390px;"
+  >
+    <section
+      aria-labelledby="_r_h_"
+      class="_screen_a86a66 _enter_a86a66"
+    >
+      <header
+        class="_topbar_a86a66"
+      >
+        <div
+          class="_topbarLead_a86a66"
+        />
+        <span
+          aria-hidden="true"
+          class="_topbarTitle_a86a66"
+        >
+          Needs you
+        </span>
+        <div
+          class="_topbarTrail_a86a66"
+        />
+      </header>
+      <div
+        aria-label="Waiting on you"
+        class="_scroller_a86a66"
+      >
+        <div
+          aria-hidden="true"
+          class="_pull_a86a66"
+          style="height: 0px;"
+        />
+        <h1
+          class="_largeTitle_a86a66"
+          id="_r_h_"
+        >
+          Needs you
+        </h1>
+        <div
+          aria-label="Filter"
+          class="_splits_972402"
+          role="group"
+        >
+          <button
+            aria-pressed="true"
+            type="button"
+          >
+            All
+             
+            1
+          </button>
+          <button
+            aria-pressed="false"
+            type="button"
+          >
+            Approvals
+             
+            1
+          </button>
+          <button
+            aria-pressed="false"
+            type="button"
+          >
+            Fleet
+             
+            0
+          </button>
+          <button
+            aria-pressed="false"
+            type="button"
+          >
+            Chats
+             
+            0
+          </button>
+          <button
+            aria-pressed="false"
+            type="button"
+          >
+            Accounts
+             
+            0
+          </button>
+        </div>
+        <section
+          aria-labelledby="_r_k_"
+        >
+          <div>
+            <h2
+              id="_r_k_"
+              style="margin: 0px;"
+            >
+              Held lanes
+            </h2>
+          </div>
+          <div>
+            <div>
+              <span>
+                <span>
+                  codex-personal is held
+                </span>
+                <span>
+                  usage limit · no end set
+                </span>
+              </span>
+              <span>
+                <button
+                  aria-label="Release: codex-personal"
+                  class="_btn_a86a66 _secondary_a86a66"
+                  type="button"
+                >
+                  Release
+                </button>
+              </span>
+            </div>
+          </div>
+        </section>
+        <ul
+          aria-label="All waiting on you"
+          class="_list_972402"
+        >
+          <li
+            class="_swipe_972402"
+          >
+            <article
+              aria-labelledby="_r_i_"
+              class="_card_972402"
+            >
+              <div
+                class="_head_972402"
+              >
+                <span
+                  class=""
+                >
+                  Approval
+                </span>
+                <span
+                  class="_age_972402"
+                  title="Sun, Sep 27, 2026, 7:00 AM"
+                >
+                  38 days ago
+                </span>
+              </div>
+              <h2
+                class="_title_972402"
+                id="_r_i_"
+                title="PR: fix the flaky snapshot test"
+              >
+                fix the flaky snapshot test
+              </h2>
+              <p
+                class="_meta_972402"
+              >
+                <span>
+                  Pull request
+                </span>
+                <span
+                  title="ashlrai/ashlr-hub"
+                >
+                  ashlr-hub
+                </span>
+              </p>
+              <p
+                class="_detail_972402"
+              >
+                Review before applying.
+              </p>
+              <p
+                class="_consequence_972402"
+              >
+                Approves it on your Mac.
+              </p>
+              <div>
+                <button
+                  aria-label="Approve: fix the flaky snapshot test"
+                  class="_btn_a86a66 _primary_a86a66"
+                  type="button"
+                >
+                  Approve
+                </button>
+                <button
+                  aria-label="Reject: fix the flaky snapshot test"
+                  class="_btn_a86a66 _destructiveTinted_a86a66"
+                  type="button"
+                >
+                  Reject
+                </button>
+                <button
+                  aria-label="Hold repo: ashlrai/ashlr-hub"
+                  class="_btn_a86a66 _secondary_a86a66"
+                  type="button"
+                >
+                  Hold
+                </button>
+                <button
+                  aria-label="Hide on this phone: fix the flaky snapshot test"
+                  class="_btn_a86a66 _plain_a86a66"
+                  type="button"
+                >
+                  Hide
+                </button>
+              </div>
+            </article>
+          </li>
+        </ul>
+      </div>
+    </section>
+  </div>
+</div>
+`;
+
+exports[`390px fleet status 1`] = `
+<div>
+  <div
+    style="width: 390px;"
+  >
+    <section
+      aria-labelledby="_r_0_"
+      class="_screen_a86a66 _enter_a86a66"
+    >
+      <header
+        class="_topbar_a86a66"
+      >
+        <div
+          class="_topbarLead_a86a66"
+        >
+          <button
+            class="_btn_a86a66 _plain_a86a66"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              fill="none"
+              focusable="false"
+              height="18"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              viewBox="0 0 16 16"
+              width="18"
+            >
+              <path
+                d="M10 3 5 8l5 5"
+              />
+            </svg>
+            <span>
+              More
+            </span>
+          </button>
+        </div>
+        <h1
+          class="_topbarTitle_a86a66"
+          id="_r_0_"
+        >
+          Fleet
+        </h1>
+        <div
+          class="_topbarTrail_a86a66"
+        />
+      </header>
+      <div
+        aria-label="Fleet"
+        class="_scroller_a86a66"
+      >
+        <div
+          aria-hidden="true"
+          class="_pull_a86a66"
+          style="height: 0px;"
+        />
+        <section
+          aria-label="Fleet state"
+          class="_fleetCard_507dbd"
+        >
+          <div>
+            <span
+              class="_cardTitle_507dbd"
+            >
+              Fleet
+            </span>
+            <span
+              class=""
+            >
+              <span
+                aria-hidden="true"
+                class=""
+              />
+              Running
+            </span>
+          </div>
+          <p
+            class="_detail_507dbd"
+          >
+            Idle between tasks.
+          </p>
+          <div>
+            <button
+              class="_btn_a86a66 _tinted_a86a66"
+              type="button"
+            >
+              Pause
+            </button>
+            <button
+              class="_btn_a86a66 _destructiveTinted_a86a66"
+              type="button"
+            >
+              Stop fleet
+            </button>
+          </div>
+        </section>
+        <section
+          aria-labelledby="_r_1_"
+        >
+          <div>
+            <h2
+              id="_r_1_"
+              style="margin: 0px;"
+            >
+              Switches on the Mac
+            </h2>
+          </div>
+          <div
+            aria-label="Switches on the Mac"
+            role="group"
+          >
+            <div>
+              <span>
+                <span>
+                  Hold all dispatch
+                </span>
+                <span>
+                  The dispatcher sends nothing new until the hold lifts.
+                </span>
+              </span>
+              <span>
+                <span
+                  class=""
+                >
+                  —
+                </span>
+              </span>
+            </div>
+            <div>
+              <span>
+                <span>
+                  Pause workers
+                </span>
+                <span>
+                  Running jobs finish; nothing new starts.
+                </span>
+              </span>
+              <span>
+                <span
+                  class=""
+                >
+                  —
+                </span>
+              </span>
+            </div>
+            <div>
+              <span>
+                <span>
+                  Stop leader passes
+                </span>
+                <span>
+                  New Claude and Sol leader passes stop; workers keep running.
+                </span>
+              </span>
+              <span>
+                <span
+                  class=""
+                >
+                  —
+                </span>
+              </span>
+            </div>
+            <div>
+              <span>
+                <span>
+                  Stop the Opus leader
+                </span>
+                <span>
+                  The hourly Opus leader does not run.
+                </span>
+              </span>
+              <span>
+                <span
+                  class=""
+                >
+                  —
+                </span>
+              </span>
+            </div>
+            <div>
+              <span>
+                <span>
+                  Hold publishing
+                </span>
+                <span>
+                  Finished jobs are not published as pull requests.
+                </span>
+              </span>
+              <span>
+                <span
+                  class=""
+                >
+                  —
+                </span>
+              </span>
+            </div>
+            <div>
+              <span>
+                <span>
+                  Disable the queue
+                </span>
+                <span>
+                  Queued jobs are not claimed.
+                </span>
+              </span>
+              <span>
+                <span
+                  class=""
+                >
+                  —
+                </span>
+              </span>
+            </div>
+          </div>
+          <p>
+            Switches can be changed from the Mac in this build.
+          </p>
+        </section>
+        <section
+          aria-labelledby="_r_2_"
+        >
+          <div>
+            <h2
+              id="_r_2_"
+              style="margin: 0px;"
+            >
+              This Mac
+            </h2>
+          </div>
+          <div
+            class=""
+          >
+            <p>
+              Mac host numbers unavailable
+            </p>
+          </div>
+        </section>
+        <section
+          aria-labelledby="_r_3_"
+        >
+          <div>
+            <h2
+              id="_r_3_"
+              style="margin: 0px;"
+            >
+              Right now
+            </h2>
+          </div>
+          <p
+            class=""
+          >
+            The live fleet view is not in this build yet, so this card has no source.
+          </p>
+        </section>
+        <section
+          aria-labelledby="_r_4_"
+        >
+          <div>
+            <h2
+              id="_r_4_"
+              style="margin: 0px;"
+            >
+              Usage
+            </h2>
+          </div>
+          <div>
+            <div>
+              <span>
+                <span>
+                  Ledger not readable from this Mac yet
+                </span>
+              </span>
+            </div>
+          </div>
+        </section>
+        <section
+          aria-labelledby="_r_5_"
+        >
+          <div>
+            <h2
+              id="_r_5_"
+              style="margin: 0px;"
+            >
+              Waste forecast
+            </h2>
+          </div>
+          <div>
+            <div>
+              <span>
+                <span>
+                  Ledger not readable from this Mac yet
+                </span>
+              </span>
+            </div>
+          </div>
+        </section>
+        <section
+          aria-labelledby="_r_a_"
+        >
+          <div>
+            <h2
+              id="_r_a_"
+              style="margin: 0px;"
+            >
+              Queue
+            </h2>
+          </div>
+          <p>
+            Queue not in this build
+          </p>
+        </section>
+        <section
+          aria-labelledby="_r_7_"
+        >
+          <div>
+            <h2
+              id="_r_7_"
+              style="margin: 0px;"
+            >
+              Budget mode
+            </h2>
+          </div>
+          <p
+            class=""
+          >
+            not found
+          </p>
+        </section>
+        <section
+          aria-labelledby="_r_8_"
+        >
+          <div>
+            <h2
+              id="_r_8_"
+              style="margin: 0px;"
+            >
+              Grant
+            </h2>
+          </div>
+          <p
+            class=""
+          >
+            The authority service is not in this build yet, so this card has no source.
+          </p>
+          <p>
+            Grants are signed on your Mac with Touch ID.
+          </p>
+        </section>
+        <section
+          aria-labelledby="_r_9_"
+        >
+          <div>
+            <h2
+              id="_r_9_"
+              style="margin: 0px;"
+            >
+              Recent decisions
+            </h2>
+          </div>
+          <div>
+            <p>
+              Merge decisions is not in this build yet, so this card has no source.
+            </p>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
+</div>
+`;
+
+exports[`390px shared chat inbox with desktop and phone channels 1`] = `
+<div>
+  <div
+    style="width: 390px;"
+  >
+    <section
+      aria-labelledby="_r_c_"
+      class="_screen_a86a66 _enter_a86a66"
+    >
+      <header
+        class="_topbar_a86a66"
+      >
+        <div
+          class="_topbarLead_a86a66"
+        >
+          <button
+            class="_btn_a86a66 _plain_a86a66"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              fill="none"
+              focusable="false"
+              height="18"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              viewBox="0 0 16 16"
+              width="18"
+            >
+              <path
+                d="M10 3 5 8l5 5"
+              />
+            </svg>
+            <span>
+              More
+            </span>
+          </button>
+        </div>
+        <h1
+          class="_topbarTitle_a86a66"
+          id="_r_c_"
+        >
+          Inbox
+        </h1>
+        <div
+          class="_topbarTrail_a86a66"
+        />
+      </header>
+      <div
+        aria-label="Inbox"
+        class="_scroller_a86a66"
+      >
+        <div
+          aria-hidden="true"
+          class="_pull_a86a66"
+          style="height: 0px;"
+        />
+        <section
+          aria-labelledby="_r_d_"
+        >
+          <div>
+            <h2
+              id="_r_d_"
+              style="margin: 0px;"
+            >
+              Chat with the leaders
+            </h2>
+          </div>
+          <div>
+            <form
+              class="undefined undefined"
+            >
+              <label
+                class="visually-hidden"
+                for="mobile-interject"
+              >
+                Message to the leaders
+              </label>
+              <div>
+                <textarea
+                  id="mobile-interject"
+                  maxlength="6000"
+                  placeholder="A prompt, a thought, a correction. The next leader pass reads it."
+                />
+                <span
+                  class="_micWrap_0674e4"
+                  data-size="inline"
+                >
+                  <button
+                    aria-label="Dictation unavailable in this browser"
+                    class="_btn_a86a66 _mic_0674e4"
+                    data-size="inline"
+                    disabled=""
+                    type="button"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      fill="none"
+                      focusable="false"
+                      height="20"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.5"
+                      viewBox="0 0 16 16"
+                      width="20"
+                    >
+                      <rect
+                        height="8"
+                        rx="2.25"
+                        width="4.5"
+                        x="5.75"
+                        y="1.75"
+                      />
+                      <path
+                        d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.25"
+                      />
+                    </svg>
+                  </button>
+                  <span
+                    class="_micNote_0674e4"
+                    data-size="inline"
+                    role="status"
+                  >
+                    Tap the microphone on your keyboard to dictate into this box.
+                  </span>
+                </span>
+              </div>
+              <button
+                class="_btn_a86a66 _primary_a86a66"
+                disabled=""
+                type="submit"
+              >
+                Send
+              </button>
+            </form>
+            <div>
+              <span>
+                <span>
+                  No inbox entries yet
+                </span>
+              </span>
+            </div>
+          </div>
+        </section>
+        <div
+          data-tone="warning"
+          role="status"
+        >
+          2 waiting for a leader pass · next pass unknown
+        </div>
+        <div
+          aria-label="Filter by source"
+          role="group"
+        >
+          <button
+            aria-pressed="true"
+            type="button"
+          >
+            All
+          </button>
+          <button
+            aria-pressed="false"
+            type="button"
+          >
+            Phantom mobile
+          </button>
+          <button
+            aria-pressed="false"
+            type="button"
+          >
+            Phantom desktop
+          </button>
+        </div>
+        <div>
+          <article
+            class="_entry_67ab40"
+          >
+            <header
+              class="_entryHead_67ab40"
+            >
+              <span
+                class=""
+              >
+                Phantom mobile
+              </span>
+              <span
+                class=""
+              >
+                P1
+              </span>
+              <time
+                class="_entryTime_67ab40"
+                datetime="2026-11-04T11:59:00Z"
+                title="2026-11-04T11:59:00Z"
+              >
+                1 m ago
+              </time>
+            </header>
+            <span
+              class=""
+            >
+              Leader status unknown
+            </span>
+            <p
+              class="_entryText_67ab40"
+              id="_r_e_"
+            >
+              The phone shares this inbox.
+            </p>
+          </article>
+          <article
+            class="_entry_67ab40"
+          >
+            <header
+              class="_entryHead_67ab40"
+            >
+              <span
+                class=""
+              >
+                Phantom desktop
+              </span>
+              <time
+                class="_entryTime_67ab40"
+                datetime="2026-11-04T11:58:00Z"
+                title="2026-11-04T11:58:00Z"
+              >
+                2 m ago
+              </time>
+            </header>
+            <span
+              class=""
+            >
+              Leader status unknown
+            </span>
+            <p
+              class="_entryText_67ab40"
+              id="_r_f_"
+            >
+              Check the mobile build.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+`;
+
+exports[`390px usage panel 1`] = `
+<div>
+  <div
+    style="width: 390px;"
+  >
+    <section
+      aria-labelledby="_r_g_"
+    >
+      <div>
+        <h2
+          id="_r_g_"
+          style="margin: 0px;"
+        >
+          Usage
+        </h2>
+      </div>
+      <div>
+        <div>
+          <span>
+            <span>
+              Codex
+            </span>
+            <span>
+              1.4 %/h
+            </span>
+          </span>
+          <span>
+            72 % of weekly
+          </span>
+        </div>
+      </div>
+      <p>
+        ledger as of just now
+      </p>
+    </section>
+  </div>
+</div>
+`;

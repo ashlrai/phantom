@@ -15,6 +15,33 @@
 
 import type { EngineId } from '../types.js';
 
+/**
+ * HTTP API version, independent of the Anthropic SDK major version.
+ * Migration: https://platform.claude.com/docs/en/api/migration-2026-10-21
+ * Messages using this version must omit temperature, top_p and top_k.
+ */
+export const ANTHROPIC_API_VERSION = '2026-10-21';
+
+/**
+ * Protocol compatibility does not imply support for Anthropic's version contract.
+ * Local runtimes do not negotiate that contract, so they omit the header.
+ */
+export const PROVIDER_API_CAPABILITIES = Object.freeze({
+  anthropic: Object.freeze({ anthropicVersionHeader: true }),
+  'llama-server': Object.freeze({ anthropicVersionHeader: false }),
+  ollama: Object.freeze({ anthropicVersionHeader: false }),
+});
+
+/** Relays to Anthropic retain its provider identity; unknown providers opt out. */
+export function anthropicVersionHeaders(provider: string): Record<string, string> {
+  const capabilities = Object.hasOwn(PROVIDER_API_CAPABILITIES, provider)
+    ? PROVIDER_API_CAPABILITIES[provider as keyof typeof PROVIDER_API_CAPABILITIES]
+    : undefined;
+  return capabilities?.anthropicVersionHeader === true
+    ? { 'anthropic-version': ANTHROPIC_API_VERSION }
+    : {};
+}
+
 /** Resolve identity for an already selected engine, without ranking catalog priors. */
 export function resolveSelectedEngineModel(input: {
   engine: string;
@@ -145,6 +172,11 @@ export interface ModelEntry {
    * win the cheapest-first sort would silently route work onto a paid seat.
    */
   seatRouted?: true;
+  /** Available for explicit selection only, pending qualification. */
+  explicitOnly?: true;
+  /** Published API limits and tool transport; native seat limits can differ. */
+  apiContextWindow?: number;
+  toolApi?: 'responses';
   /** Exact historical lookup remains valid; not offered for automatic new work. */
   historical?: true;
   /** Published maximum context, not a claim about the connected account. */
@@ -198,11 +230,15 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     // https://openai.com/index/introducing-gpt-6-1-terra/
     // API prices are published. Speed is workload-dependent; allowance is a
     // conservative policy prior, never a replacement for subscriptionAllows.
+    // Single merged entry: the API transport fields (apiContextWindow, toolApi)
+    // used to live on a second 'codex:gpt-6.1-terra' literal that every id
+    // lookup shadowed. Terra stays implicitly pickable — catalogFor, pickModel
+    // preferCheap, banditCandidateArms and codexArmPriors all rely on that.
     id: `codex:${CODEX_TERRA_MODEL_ID}`, engine: 'codex', tier: 'mid',
     costPerMTokIn: 1, costPerMTokOut: 5,
     capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
     minEffort: 1, apiModelId: CODEX_TERRA_MODEL_ID,
-    contextWindowTokens: 1_050_000,
+    contextWindowTokens: 1_050_000, apiContextWindow: 1_050_000, toolApi: 'responses',
     reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
     relativeSpeed: 3, planAllowanceWeight: 0.5,
   },
@@ -212,6 +248,29 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
     capabilities: ['general', 'coder', 'reasoning', 'long-context'],
     minEffort: 4, apiModelId: CODEX_ASTRA_MODEL_ID,
     relativeSpeed: 1, planAllowanceWeight: 5,
+  },
+  // Current concrete Haiku entry; preserve legacy aliases for exact lookup.
+  // Pricing is a routing estimate, not account admission or spending authority.
+  {
+    id: 'claude:claude-haiku-5-5', engine: 'claude', tier: 'small',
+    // Conservative >100k prompt rate; shorter prompts cost $0.10/$0.50.
+    costPerMTokIn: 0.5, costPerMTokOut: 2.5,
+    capabilities: ['fast', 'general', 'long-context'],
+    minEffort: 1, apiModelId: 'claude-haiku-5-5', qualityRank: 1,
+  },
+  // Sonnet 5.5: current Sonnet generation — $2/$10 per MTok, verified against
+  // platform.claude.com/docs/en/models/overview on 2026-11-04. Listed in
+  // CLAUDE5_CATALOG_IDS like the other Claude 5 ids, and explicitOnly on top:
+  // claude5ExcludeIds returns the empty set by default, so a cheaper large
+  // sonnet would otherwise silently replace claude:sonnet-5 as every flag-on
+  // static pick (m320/m323 pin sonnet-5). Explicit config/model pins still
+  // dispatch 'claude-sonnet-5-5' today; the fast-tier wiring flips the flag.
+  {
+    id: 'claude:claude-sonnet-5-5', engine: 'claude', tier: 'large',
+    costPerMTokIn: 2, costPerMTokOut: 10,
+    capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 2, apiModelId: 'claude-sonnet-5-5', qualityRank: 3,
+    explicitOnly: true,
   },
   // -- Claude (subscription / token-billed via API) -------------------------
   {
@@ -509,7 +568,7 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
  * Current automatic entries for a specific engine. KNOWN_MODELS also preserves historical lookups.
  */
 export function catalogFor(engine: EngineId | string): ModelEntry[] {
-  return KNOWN_MODELS.filter((m) => !m.historical && m.engine === (engine as EngineId));
+  return KNOWN_MODELS.filter((m) => !m.historical && !m.explicitOnly && m.engine === (engine as EngineId));
 }
 
 /**
@@ -548,7 +607,7 @@ export function pickModel(opts: {
 }): ModelEntry | null {
   const excluded = opts.excludeIds ?? CLAUDE5_CATALOG_IDS;
   let pool = KNOWN_MODELS.filter((m) => {
-    if (m.historical || excluded.has(m.id)) return false;
+    if (m.historical || m.explicitOnly || excluded.has(m.id)) return false;
     if (opts.engine && m.engine !== (opts.engine as EngineId)) return false;
     // V3.10: a seat-routed entry is reachable only by naming its engine.
     if (m.seatRouted && !opts.engine) return false;
@@ -609,6 +668,7 @@ export const CLAUDE5_CATALOG_IDS: ReadonlySet<string> = new Set([
   'claude:sonnet-5',
   'claude:fable-5',
   `claude:${DEFAULT_FABLE_MODEL_ID}`,
+  'claude:claude-sonnet-5-5',
 ]);
 
 const EMPTY_EXCLUDES: ReadonlySet<string> = new Set();

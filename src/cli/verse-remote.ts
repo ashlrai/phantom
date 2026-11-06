@@ -1,6 +1,7 @@
-/** Mac-local remote phone custody commands. This never speaks HTTP or Tunnel. */
+/** Mac-local remote phone custody and diagnosis commands. */
 import { createInterface } from 'node:readline/promises';
 import { sendRemoteAdminCommand } from '../core/web/remote-admin.js';
+import { diagnoseRemoteLocal, type RemoteDoctorDeps } from '../core/web/remote-local-doctor.js';
 
 const UUID = /^[0-9a-f-]{36}$/;
 
@@ -11,11 +12,31 @@ async function confirm(phrase: string): Promise<boolean> {
   finally { reader.close(); }
 }
 
-export async function cmdVerseRemote(args: string[]): Promise<number> {
+export async function cmdVerseRemote(args: string[], doctorDeps?: RemoteDoctorDeps): Promise<number> {
   const [action, id] = args;
+  if (action === 'status') {
+    const rest = args.slice(1);
+    const json = rest.includes('--json');
+    const configIndex = rest.indexOf('--config');
+    if (configIndex < 0 || !rest[configIndex + 1] || rest[configIndex + 1].startsWith('--')
+      || rest.filter((arg) => arg === '--config').length !== 1
+      || rest.filter((arg) => arg === '--json').length > 1 || rest.length !== (json ? 3 : 2)) {
+      console.error('Usage: phm verse remote status --config <path> [--json]'); return 2;
+    }
+    const report = await diagnoseRemoteLocal(rest[configIndex + 1], doctorDeps);
+    if (json) console.log(JSON.stringify(report));
+    else {
+      console.log(`Phone URL: ${report.phoneUrl ?? 'unknown (config unavailable)'}`);
+      console.log(`Config: ${report.config}; local listener: ${report.listener}${report.gatewayPort ? ` (port ${report.gatewayPort})` : ''}; admin: ${report.admin}`);
+      console.log(`Paired active devices: ${report.activeDevices ?? 'unknown'}`);
+      console.log('Public reachability: unknown; Access policy: unknown');
+      console.log(`Next: ${report.nextStep}`);
+    }
+    return report.localReady ? 0 : 1;
+  }
   if (!action || !['invite', 'pending', 'devices', 'approve', 'deny', 'revoke'].includes(action)
     || (action !== 'invite' && args.length > 2)) {
-    console.error('Usage: phm verse remote invite <Access-subject> [read|act] | pending | devices | approve <id> | deny <id> | revoke <id>');
+    console.error('Usage: phm verse remote status --config <path> [--json] | invite <Access-subject> [read|act] | pending | devices | approve <id> | deny <id> | revoke <id>');
     return 2;
   }
   if (action === 'invite') {

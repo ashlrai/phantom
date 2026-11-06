@@ -189,6 +189,8 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   agents: 'handleAgentsApi',
   outcomes: 'handleOutcomesApi',
   'proactive-agents': 'handleProactiveAgentsApi',
+  // The desktop command center: board, router, releases and the leaders' channel.
+  ops: 'handleOpsApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));

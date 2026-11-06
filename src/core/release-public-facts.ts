@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { parseDocument } from 'yaml';
+import { canonicalJson } from './authority/canonical-json.js';
 import { requireHubRepositoryMetadata, requireHubRepositoryReference, type HubRepositoryLabel } from './authority/repository-binding.js';
 import { desktopUpdateProfileForPackage, type DesktopUpdateProfile } from './desktop/update-manifest.js';
 
@@ -144,7 +145,24 @@ async function jobsFor(reader: ReleasePublicReader, base: string, id: number, at
 }
 /** The exact candidate workflow distinguishes historical full matrices from the
  * later site lane and merge gate. Neither replaces the 15 authority gates. */
-async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-fast'> {
+type CiAncillaryTopology = 'historical' | 'site' | 'gate' | 'gate-docs' | 'gate-fast' | 'documentation-gate' | 'frontend-gate';
+// Reviewed complete decision bodies, not executable lookalikes containing guard strings.
+// Legacy body: protected b5a6 CI. Documentation body/job: reviewed da4db0 CI patch.
+// These bind parsed original-CI bytes fetched at sourceSha, never the local checkout.
+const CI_GATE_DECISION_DIGESTS = Object.freeze({
+  gate: '94cf9fa3f19024bc12d971256f5e192f6961c85dfa16b57fd9da0d1901afe507',
+  'documentation-gate': '1cae78c15b4e4528efe7df3efa7ceff610121a4baa27cd2f6b827af6f4778e19',
+  'frontend-gate': '3b39569528b8c70137732eb9f32f65f3c6f5c0f23ce3fdc3ff6bf685aa32e12b',
+});
+const DOCUMENTATION_JOB_DIGEST = '0ea1ea105f7da070d0df4e0974213f6043496c9cf0df6033a733168437f569c0';
+// Complete reviewed faaa10 frontend topology, including conditional parser install.
+const FRONTEND_CLASSIFIER_DIGEST = 'fb04339d6f10683afffff4d0679f707ced7b17a2f066cb46008f2c58495941d1';
+const FRONTEND_JOB_DIGEST = '6a174eada446929143ad43c69290321cc62333d739d313d460a938bd458f0261';
+const FRONTEND_GATE_JOB_DIGEST = '8c477174fb3c694aa5e3ea4e7f8cf0480a561ff7d9cfb274ef4a85b40731dca5';
+const hasDocumentationTopology = (topology: CiAncillaryTopology): boolean => ['documentation-gate', 'frontend-gate'].includes(topology);
+const classifierStepName = (topology: CiAncillaryTopology): string => hasDocumentationTopology(topology)
+  ? 'Classify exact reviewed PR lane' : 'Classify exact ecosystem-only PR';
+async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: ReleasePublicReader, signal?: AbortSignal): Promise<CiAncillaryTopology> {
   const path = '.github/workflows/ci.yml';
   const file = object(await reader.github(`${base}/contents/${path}?ref=${sourceSha}`, signal));
   equal(file['type'], 'file', 'CI workflow type'); equal(file['path'], path, 'CI workflow path');
@@ -158,8 +176,13 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   const jobs = object(workflow['jobs']);
   const hasClassifier = Object.hasOwn(jobs, 'classify'); const hasSite = Object.hasOwn(jobs, 'site');
   const hasGate = Object.hasOwn(jobs, 'merge-gate');
-  if (!hasClassifier && !hasSite && !hasGate) return 'historical';
+  const hasDocumentation = Object.hasOwn(jobs, 'documentation');
+  const hasFrontend = Object.hasOwn(jobs, 'frontend');
+  if (!hasClassifier && !hasSite && !hasGate && !hasDocumentation && !hasFrontend) return 'historical';
   if (!hasClassifier || !hasSite) throw new Error('Incomplete source CI site topology');
+  if (hasDocumentation && !hasGate) throw new Error('Incomplete source documentation gate topology');
+  if (hasFrontend && (!hasGate || !hasDocumentation)) throw new Error('Incomplete source frontend gate topology');
+  const topology = hasFrontend ? 'frontend-gate' : hasDocumentation ? 'documentation-gate' : hasGate ? 'gate' : 'site';
   const classifier = object(jobs['classify']); const site = object(jobs['site']); const full = object(jobs['ci']);
   equal(classifier['name'], 'Classify PR site lane', 'classifier source name');
   equal(classifier['runs-on'], 'ubuntu-latest', 'classifier source runner');
@@ -172,10 +195,23 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
   equal(full['needs'], 'classify', 'full source dependency'); equal(full['if'], `needs.classify.outputs.lane == 'full'${suffix}`, 'full source condition');
   if (!Array.isArray(classifier['steps'])) throw new Error('Classifier source steps unavailable');
   for (const [name, command] of [['Bind candidate source', 'node .github/scripts/ci-source-binding.mjs'],
-    ['Classify exact ecosystem-only PR', 'node .github/scripts/ci-site-lane.mjs']]) {
+    [classifierStepName(topology), 'node .github/scripts/ci-site-lane.mjs']]) {
     const matches = classifier['steps'].map(object).filter((step) => step['name'] === name);
     if (matches.length !== 1) throw new Error('Classifier source step missing or ambiguous');
     equal(matches[0]!['run'], command, 'classifier source command');
+  }
+  const classifierNames = classifier['steps'].map(object).map(step => step['name']);
+  if (classifierNames.includes(classifierStepName(hasDocumentation ? 'gate' : 'documentation-gate'))) {
+    throw new Error('Mixed source classifier generations');
+  }
+  if (hasDocumentation) {
+    equal(createHash('sha256').update(canonicalJson(object(jobs['documentation']))).digest('hex'),
+      DOCUMENTATION_JOB_DIGEST, 'reviewed documentation source job');
+  }
+  if (hasFrontend) {
+    equal(createHash('sha256').update(canonicalJson(classifier)).digest('hex'), FRONTEND_CLASSIFIER_DIGEST, 'reviewed frontend source classifier');
+    equal(createHash('sha256').update(canonicalJson(object(jobs['frontend']))).digest('hex'), FRONTEND_JOB_DIGEST, 'reviewed frontend source job');
+    equal(createHash('sha256').update(canonicalJson(object(jobs['merge-gate']))).digest('hex'), FRONTEND_GATE_JOB_DIGEST, 'reviewed frontend source gate');
   }
   if (!hasGate) return 'site';
   const gate = object(jobs['merge-gate']);
@@ -196,26 +232,32 @@ async function sourceCiAncillaryJobs(base: string, sourceSha: string, reader: Re
     if (Object.hasOwn(scan, 'if') || Object.hasOwn(scan, 'needs')) throw new Error('Conditional source secret-shape scan');
   }
   const required = fast ? ['secret-shape', 'classify', 'quick', 'site', 'docs', 'ci', 'windows-service-authority'] :
-    ['classify', 'site', ...(hasDocs ? ['docs'] : []), 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
-      'native-macos-broker-foundation', 'windows-service-authority'];
+    ['classify', 'site', ...(hasDocs ? ['docs'] : []), ...(hasDocumentation ? ['documentation'] : []), ...(hasFrontend ? ['frontend'] : []),
+      'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
   if (!Array.isArray(gate['needs']) || JSON.stringify(gate['needs']) !== JSON.stringify(required)) throw new Error('Incomplete source merge gate dependencies');
   if (!Array.isArray(gate['steps']) || gate['steps'].length !== 1) throw new Error('Unexpected source merge gate steps');
   const step = object(gate['steps'][0]);
   equal(step['name'], 'Require selected CI lane', 'merge gate source step');
   equal(object(step['env'])['GATE_NEEDS'], '${{ toJSON(needs) }}', 'merge gate source input');
-  const selection = hasDocs ? "const selected = lane === 'full' ? full : [lane];" : "const selected = lane === 'site' ? ['site'] : full;";
-  if (typeof step['run'] !== 'string' || !step['run'].includes(selection) ||
-      !step['run'].includes("if (outcome(name) !== 'success')") || !step['run'].includes("if (outcome(name) !== 'skipped')")) {
-    throw new Error('Incomplete source merge gate decision');
+  if (typeof step['run'] !== 'string') throw new Error('Incomplete source merge gate decision');
+  if (hasDocumentation || hasFrontend || (!hasDocs && !fast)) {
+    const expected = CI_GATE_DECISION_DIGESTS[hasFrontend ? 'frontend-gate' : hasDocumentation ? 'documentation-gate' : 'gate'];
+    if (createHash('sha256').update(step['run']).digest('hex') !== expected) throw new Error('Incomplete source merge gate decision');
+  } else {
+    const selection = "const selected = lane === 'full' ? full : [lane];";
+    if (!step['run'].includes(selection) ||
+        !step['run'].includes("if (outcome(name) !== 'success')") || !step['run'].includes("if (outcome(name) !== 'skipped')")) {
+      throw new Error('Incomplete source merge gate decision');
+    }
   }
-  return fast ? 'gate-fast' : hasDocs ? 'gate-docs' : 'gate';
+  return hasFrontend ? 'frontend-gate' : hasDocumentation ? 'documentation-gate' : fast ? 'gate-fast' : hasDocs ? 'gate-docs' : 'gate';
 }
 
 const FAST_SUFFIX = " && github.event_name != 'pull_request' && github.event_name != 'merge_group'";
 const FAST_JOBS = Object.freeze(['Secret-shape scan', 'Quick typecheck', 'Daily fixup queue']);
 
-function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, gate: boolean, docs = false, fast = false): void {
-  if (fast) {
+function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sourceSha: string, topology: CiAncillaryTopology): void {
+  if (topology === 'gate-fast') {
     for (const [name, conclusion] of [['Secret-shape scan', 'success'], ['Quick typecheck', 'skipped']]) {
       const matches = jobs.filter((job) => job['name'] === name);
       if (matches.length !== 1) throw new Error('Fast gate qualification job missing or ambiguous');
@@ -223,7 +265,10 @@ function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sour
       equal(matches[0]!['conclusion'], conclusion, 'fast gate job outcome');
     }
   }
-  for (const name of ['Classify PR site lane', 'Site PR (ecosystem)', ...(docs ? ['Docs PR (docs-only)'] : [])]) {
+  for (const name of ['Classify PR site lane', 'Site PR (ecosystem)',
+    ...(topology === 'gate-docs' || topology === 'gate-fast' ? ['Docs PR (docs-only)'] : []),
+    ...(hasDocumentationTopology(topology) ? ['Documentation PR (reviewed prose)'] : []),
+    ...(topology === 'frontend-gate' ? ['Frontend PR (reviewed presentation)'] : [])]) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Ancillary qualification job missing or ambiguous');
     const job = matches[0]!;
@@ -231,19 +276,26 @@ function verifyCiAncillaryJobs(jobs: Record<string, unknown>[], id: number, sour
     equal(job['status'], 'completed', 'ancillary job status');
     if (!Array.isArray(job['labels']) || job['labels'].includes('self-hosted') || !job['labels'].includes('ubuntu-latest')) throw new Error('Unexpected ancillary qualification runner');
     if (!Array.isArray(job['steps'])) throw new Error('Ancillary qualification steps unavailable');
-    if (name === 'Site PR (ecosystem)' || name === 'Docs PR (docs-only)') {
+    if (name !== 'Classify PR site lane') {
       // A public full release must qualify every authority gate, not the site lane.
-      equal(job['conclusion'], 'skipped', 'site qualification outcome'); equal(job['steps'].length, 0, 'site skipped steps');
+      equal(job['conclusion'], 'skipped', 'PR-only qualification outcome'); equal(job['steps'].length, 0, 'PR-only skipped steps');
     } else {
       equal(job['conclusion'], 'success', 'classifier qualification outcome');
       if (job['steps'].some((step) => !['success', 'skipped'].includes(String(object(step)['conclusion'])) || object(step)['status'] !== 'completed')) throw new Error('Classifier qualification steps incomplete');
-      for (const stepName of ['Bind candidate source', 'Classify exact ecosystem-only PR']) {
+      for (const stepName of ['Bind candidate source', classifierStepName(topology),
+        ...(topology === 'frontend-gate' ? ['Checkout', 'Detect reviewed frontend dependency candidate'] : [])]) {
         const steps = job['steps'].map(object).filter((step) => step['name'] === stepName);
         if (steps.length !== 1 || steps[0]!['status'] !== 'completed' || steps[0]!['conclusion'] !== 'success') throw new Error('Required classifier step missing or skipped');
       }
+      if (topology === 'frontend-gate') {
+        for (const stepName of ['Node for frontend classification', 'Install frontend classifier parser dependencies']) {
+          const steps = job['steps'].map(object).filter(step => step['name'] === stepName);
+          if (steps.length !== 1 || steps[0]!['status'] !== 'completed' || steps[0]!['conclusion'] !== 'skipped') throw new Error('Frontend-only classifier dependency ran in full qualification');
+        }
+      }
     }
   }
-  if (gate) {
+  if (topology !== 'site') {
     const matches = jobs.filter((job) => job['name'] === 'Merge Gate');
     if (matches.length !== 1) throw new Error('Merge gate job missing or ambiguous');
     const job = matches[0]!;
@@ -274,11 +326,14 @@ async function successfulRun(reader: ReleasePublicReader, base: string, reposito
   const names = workflow === 'ci.yml' ? RELEASE_CI_JOBS : ['Dependency audit (root + Raycast)'];
   const ancillary = workflow === 'ci.yml' ? await sourceCiAncillaryJobs(base, sourceSha, reader, signal) : 'historical';
   const allNames: readonly string[] = ancillary === 'historical' ? names :
-    [...names, 'Classify PR site lane', 'Site PR (ecosystem)', ...(ancillary === 'gate-docs' || ancillary === 'gate-fast' ? ['Docs PR (docs-only)'] : []),
+    [...names, 'Classify PR site lane', 'Site PR (ecosystem)',
+      ...(ancillary === 'gate-docs' || ancillary === 'gate-fast' ? ['Docs PR (docs-only)'] : []),
+      ...(hasDocumentationTopology(ancillary) ? ['Documentation PR (reviewed prose)'] : []),
+      ...(ancillary === 'frontend-gate' ? ['Frontend PR (reviewed presentation)'] : []),
       ...(ancillary === 'site' ? [] : ['Merge Gate']), ...(ancillary === 'gate-fast' ? FAST_JOBS : [])];
   if (jobs.length !== allNames.length || new Set(jobs.map((job) => job['id'])).size !== jobs.length ||
       new Set(jobs.map((job) => job['name'])).size !== jobs.length || jobs.some((job) => !allNames.includes(String(job['name'])))) throw new Error('Unexpected qualification job inventory');
-  if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, ancillary !== 'site', ancillary === 'gate-docs' || ancillary === 'gate-fast', ancillary === 'gate-fast');
+  if (ancillary !== 'historical') verifyCiAncillaryJobs(jobs, id, sourceSha, ancillary);
   for (const name of names) {
     const matches = jobs.filter((job) => job['name'] === name);
     if (matches.length !== 1) throw new Error('Required qualification job missing or ambiguous');

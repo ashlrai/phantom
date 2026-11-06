@@ -1,5 +1,3 @@
-/** Display suggestions only; providers are extensible stable slugs, not a closed registry. */
-export const PROACTIVE_PROVIDERS = ['openai-dot', 'grok-bot', 'meta-muse', 'other'] as const;
 export type ProactiveProvider = string;
 export interface ProactiveIdentity { provider: ProactiveProvider; accountId: string; agentId: string }
 export interface ProactiveAvatar { color: string; variant: 'classic' | 'round' | 'pixel' }
@@ -19,10 +17,6 @@ export interface ProactiveOperationReadiness {
 }
 /** Acceptance, provider completion and independently verified outcome are different observations. */
 export type ProactiveRunState = 'accepted' | 'running' | 'completed' | 'result-verified' | 'failed' | 'unknown';
-export interface ProactiveRunObservation {
-  id: string; requestId: string; state: ProactiveRunState; providerRunId: string | null;
-  observedAt: string; sourceReference: string; resultReference: string | null;
-}
 export interface ProactiveProfileInput {
   identity: ProactiveIdentity; displayName: string; avatar?: ProactiveAvatar; responsibility?: string;
   computer?: ProactiveComputer; services?: ProactiveService[]; fundingReference?: ProactiveFundingReference | null;

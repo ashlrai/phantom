@@ -12,7 +12,7 @@
  *  - No secrets in any emitted WorkItem.
  */
 
-import { execFile } from 'node:child_process';
+import { credentialExecFile as execFile } from '../integrations/secrets.js';
 import { promisify } from 'node:util';
 import { existsSync, lstatSync, opendirSync, statSync, readFileSync } from 'node:fs';
 import { join, basename, relative, resolve } from 'node:path';
@@ -70,7 +70,6 @@ const MAX_OUTDATED_ITEMS = 50;
 const MAX_VULN_ITEMS = 20;
 const MAX_QUEUED_AUTONOMY_ITEMS = 25;
 const MAX_BINSHIELD_DEP_BUMP_SCANS = 10;
-export const MAX_SCANNER_OBSERVATIONS = 500;
 const BINSHIELD_DEP_BUMP_FAIL_ON: BinshieldRiskLevel = 'high';
 const MAX_WORK_ITEM_TITLE_LENGTH = 240;
 const MAX_WORK_ITEM_DETAIL_LENGTH = 4_000;

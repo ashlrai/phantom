@@ -81,7 +81,7 @@ describe('RunEstimate shape lock', () => {
 });
 
 describe('native MCP tool surface lock', () => {
-  it('the 35 native tool names and their safety classes are pinned', () => {
+  it('the native tool names and their safety classes are pinned', () => {
     const surface = nativeToolDefs()
       .map((t) => `${t.name}:${t.safety}`)
       .sort();
@@ -109,6 +109,24 @@ describe('native MCP tool surface lock', () => {
       'ashlr_status:read',
       'ashlr_website_publish:append',
       'ashlr_website_status:read',
+      'phantom_agent_bus_post:append',
+      'phantom_agent_bus_read:read',
+      'phantom_agent_bus_status:read',
+      'phantom_fleet_apps_await:read',
+      'phantom_fleet_apps_changes:read',
+      'phantom_fleet_apps_ensure:append',
+      'phantom_fleet_apps_follow:read',
+      'phantom_fleet_apps_history:read',
+      'phantom_fleet_apps_recovery_batch:read',
+      'phantom_fleet_apps_recovery_check:read',
+      'phantom_fleet_apps_recovery_wait:read',
+      'phantom_fleet_apps_status:read',
+      'phantom_fleet_drop_job:append',
+      'phantom_fleet_graph:read',
+      'phantom_fleet_job_reassign:append',
+      'phantom_fleet_orders:read',
+      'phantom_fleet_planner_run:append',
+      'phantom_fleet_session:read',
       'phm_proactive_agents_create:append',
       'phm_proactive_agents_delete:append',
       'phm_proactive_agents_list:read',

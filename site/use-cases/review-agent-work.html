@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<link rel="icon" href="/assets/phantom-mark.svg" type="image/svg+xml">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Review AI agent changes before they land: per-turn checkpoints, per-file and per-hunk accept and reject, undo and rewind previews, and a recorded decision log in Phantom.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://verse.ashlr.ai/use-cases/review-agent-work">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://verse.ashlr.ai/use-cases/review-agent-work">
+<meta property="og:title" content="Review every agent change · Phantom">
+<meta property="og:site_name" content="Phantom">
+<meta property="og:description" content="Review AI agent changes before they land: per-turn checkpoints, per-hunk accept and reject, and a recorded decision log.">
+<meta property="og:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
+<meta property="og:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta name="twitter:title" content="Review every agent change · Phantom">
+<meta name="twitter:description" content="Review AI agent changes before they land: per-turn checkpoints, per-hunk accept and reject, and a recorded decision log.">
+<meta name="twitter:image:alt" content="Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts; no provider ran">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://verse.ashlr.ai/assets/work-with-me-3.24.3-demo.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "@id": "https://verse.ashlr.ai/use-cases/review-agent-work#webpage",
+  "url": "https://verse.ashlr.ai/use-cases/review-agent-work",
+  "name": "Review every agent change · Phantom",
+  "description": "Review AI agent changes before they land: per-turn checkpoints, per-hunk accept and reject, and a recorded decision log.",
+  "isPartOf": { "@id": "https://verse.ashlr.ai/#website" },
+  "about": { "@id": "https://verse.ashlr.ai/#application" }
+}
+</script>
+<title>Review every agent change · Phantom use cases</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
+<style>
+:root{--bg:#EDF0F4;--surface:#FFFFFF;--surface-2:#F5F8FA;--ink:#0F1822;--muted:#58657A;--faint:#5F6C80;--line:#D3DBE4;--line-soft:#E3E9EF;--accent:hsl(245 72% 50%);--accent-dim:hsl(245 72% 94%);--live:#0E6F78;--live-dim:#D2E6E8;--warn:#8A6100;--f-display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;--f-body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;--f-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;--step--1:0.8125rem;--step-0:1rem;--step-1:1.1875rem;--step-2:1.5rem;--step-3:2.125rem;--gutter:clamp(20px,5vw,64px);--max:1160px}
+@media (prefers-color-scheme:dark){:root{--bg:#0C121A;--surface:#121A24;--surface-2:#17212C;--ink:#E7EDF4;--muted:#93A1B4;--faint:#7B8EA4;--line:#22303F;--line-soft:#1B2734;--accent:hsl(245 72% 66%);--accent-dim:hsl(245 40% 20%);--live:#44CBD8;--live-dim:#0F3239;--warn:#E0A93B}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+img{max-width:100%}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:var(--step-0);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--max);margin-inline:auto;padding-inline:var(--gutter)}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;letter-spacing:-0.02em}
+a{color:var(--accent);text-underline-offset:2px}
+a:focus-visible,button:focus-visible,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+.skip-link{position:fixed;z-index:30;top:-100px;left:var(--gutter);padding:10px 14px;background:var(--ink);color:var(--surface);border-radius:3px;font-weight:600;text-decoration:none}
+.skip-link:focus{top:max(12px,env(safe-area-inset-top))}
+main,section{scroll-margin-top:72px}
+.masthead{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line-soft)}
+.masthead .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:14px}
+.brand{white-space:nowrap;flex-shrink:0;display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:var(--step-1);letter-spacing:-0.03em;color:var(--ink);text-decoration:none}
+.brand .sub{color:var(--faint);font-weight:500}
+.masthead nav{display:flex;gap:18px;font-size:var(--step--1);flex-wrap:wrap}
+.masthead nav a{color:var(--muted);text-decoration:none}
+.masthead nav a:hover{color:var(--ink)}
+.masthead nav a[aria-current]{color:var(--ink);font-weight:600}
+@media (max-width:860px){.masthead nav{display:none}}
+.hero{padding-block:clamp(40px,6vw,72px) clamp(24px,4vw,40px)}
+.hero h1{font-size:clamp(2.3rem,4.6vw,3.4rem);line-height:1.04;font-weight:700;max-width:20ch;margin-block:16px 18px}
+.hero .lede{font-size:var(--step-1);color:var(--muted);max-width:64ch;margin:0}
+.eyebrow{font-family:var(--f-mono);font-size:var(--step--1);letter-spacing:0.1em;text-transform:uppercase;color:var(--faint);margin:0}
+.eyebrow a{color:var(--faint);text-decoration:none}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;align-items:center}
+.btn{font-weight:600;font-size:var(--step-0);padding:11px 20px;border-radius:3px;text-decoration:none;border:1px solid transparent;display:inline-block}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{filter:brightness(1.07)}
+.btn-ghost{border-color:var(--line);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--muted)}
+section{padding-block:clamp(40px,6vw,72px);border-top:1px solid var(--line-soft)}
+.sec-head{max-width:66ch;margin-bottom:30px}
+.sec-head h2{font-size:var(--step-3);margin-block:10px 12px;line-height:1.12}
+.sec-head p{color:var(--muted);margin:0}
+.claims{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.claim{border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:18px 20px;display:grid;gap:8px;align-content:start}
+.claim h3{font-size:var(--step-1)}
+.claim p{margin:0;color:var(--muted);font-size:var(--step--1);line-height:1.6}
+.src{font-family:var(--f-mono);font-size:.75rem;color:var(--faint);margin:0;line-height:1.5}
+.claim .src{border-top:1px solid var(--line-soft);padding-top:9px;margin-top:2px}
+.src a{color:var(--accent)}
+code{font-family:var(--f-mono);font-size:.875em;background:var(--surface-2);border:1px solid var(--line-soft);padding:1px 5px;border-radius:2px}
+pre{margin:0;padding:14px 16px;overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:3px;font-family:var(--f-mono);font-size:var(--step--1);line-height:1.7}
+.status{display:flex;flex-wrap:wrap;gap:8px 18px;font-family:var(--f-mono);font-size:var(--step--1);color:var(--muted);border:1px solid var(--line-soft);background:var(--surface);border-radius:3px;padding:10px 14px}
+.status b{color:var(--ink);font-weight:500}
+.related{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.related a{display:grid;gap:6px;border:1px solid var(--line);border-radius:4px;background:var(--surface);padding:16px 18px;text-decoration:none;color:var(--ink)}
+.related a:hover{border-color:var(--accent)}
+.related .t{font-family:var(--f-display);font-weight:700;font-size:var(--step-0)}
+.related .d{font-size:var(--step--1);color:var(--muted);line-height:1.5}
+footer{border-top:1px solid var(--line-soft);padding-block:32px 44px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:14px 30px;justify-content:space-between;align-items:baseline}
+footer p{margin:0;color:var(--faint);font-size:var(--step--1);font-family:var(--f-mono)}
+footer a{color:var(--muted);text-decoration:none;font-size:var(--step--1)}
+footer a:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/"><img class="mark" src="/assets/phantom-mark.svg" width="24" height="24" alt="" />Phantom&nbsp;<span class="sub">by AshlrAI</span></a>
+    <nav aria-label="Site">
+      <a href="/">Product</a>
+      <a href="/use-cases/own-accounts">Own accounts</a>
+      <a href="/use-cases/local-models">Local models</a>
+      <a href="/use-cases/signed-autonomy">Signed autonomy</a>
+      <a href="/use-cases/review-agent-work" aria-current="page">Review work</a>
+      <a href="/compare/agent-clis">Compare</a>
+      <a href="/ecosystem">Ecosystem</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content" tabindex="-1">
+  <div class="wrap hero">
+    <p class="eyebrow">Phantom &middot; use cases</p>
+    <h1>Review agent work like you wrote it.</h1>
+    <p class="lede">
+      Agent speed only helps if review stays cheap. Phantom checkpoints every turn on every
+      seat, gives you per-file and per-hunk accept and reject, and records the decision. Fleet
+      proposals wait in a local inbox until the machine owner applies them.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="/#install-verse">Install Phantom</a>
+      <a class="btn btn-ghost" href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">Read the workbench guide</a>
+    </div>
+  </div>
+
+  <section aria-labelledby="checkpoints-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Interactive review</p>
+        <h2 id="checkpoints-title">Every turn has a before and an after.</h2>
+        <p>Before every agent turn, on every seat, Phantom writes a checkpoint ref and writes
+        another after the turn. The Changes pane is a file tree with unified or split diffs,
+        and every control previews before it applies.</p>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>Per-turn checkpoints</h3>
+          <p>Checkpoints live under <code>refs/ashlr/checkpoints/&lt;chat&gt;/&lt;turn&gt;/&lt;root&gt;/pre</code> and a matching post ref. A turn with no changed paths gets no checkpoint, and the pane says so.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md, changes and checkpoints</a></p>
+        </div>
+        <div class="claim">
+          <h3>Accept and reject per file or hunk</h3>
+          <p>Reject restores from the checkpoint; a file reject needs a second click, and a hunk that moved is refused rather than silently applied.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Undo, rewind and redo preview first</h3>
+          <p>Undo turn, rewind to before turn N and redo always preview; apply is refused if anything changed underneath, and refused while any overlapping chat has a turn running.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Decisions are recorded</h3>
+          <p>Every checkpoint and decision lands in <code>~/.ashlr/verse/checkpoints/&lt;chat&gt;.jsonl</code> with 0600 permissions. <code>ASHLR_VERSE_CHECKPOINTS=0</code> in the server's environment turns checkpoints off entirely.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Evidence links to source lines</h3>
+          <p>Cited files in a chat open in context: web searches, docs, wiki pages and shared memory appear beside the tools and context the agent reported for the turn.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Lessons are approved knowledge</h3>
+          <p>A lesson is used only after approval, matched and applied within a 16 KiB cap that drops whole notes. An unmatched lesson changes nothing: prompts stay byte-identical.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">docs/VERSE.md, lessons</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="fleet-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Fleet review</p>
+        <h2 id="fleet-title">Proposals wait for the owner. Merges pass gates.</h2>
+      </div>
+      <div class="claims">
+        <div class="claim">
+          <h3>The inbox stays local</h3>
+          <p>Fleet proposals sit in the machine's local inbox until the machine owner reviews and applies them. A teammate's fleet writes only to repos enrolled on their own machine.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/TEAM.md">docs/TEAM.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>Verified means the exact tree</h3>
+          <p>The fleet's GitHub App posts the <code>ashlr/verify</code> check only when verification passed on exactly the tree it proposes, never on a nearby commit.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md">docs/STANDING-AUTHORITY.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>&ldquo;Plan verified&rdquo; is a bounded claim</h3>
+          <p>It means the outcome's active tasks have verification or explicit gate evidence. It is not an independent proof of the whole desired result, which stays yours to check against your acceptance criteria.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/docs/AUTOMATIC-OUTCOMES.md">docs/AUTOMATIC-OUTCOMES.md</a></p>
+        </div>
+        <div class="claim">
+          <h3>A different family judges</h3>
+          <p>Gate G6 requires a judge whose family is not the producer family: local work goes to a Grok judge, Grok work to a Claude judge. The same vendor never marks its own homework on the cloud lane.</p>
+          <p class="src">Source: <a href="https://github.com/ashlrai/phantom/blob/master/src/core/fleet/reviewer-independence.ts">src/core/fleet/reviewer-independence.ts</a></p>
+        </div>
+      </div>
+      <p class="status" role="note" style="margin-top:22px"><span><b>Honest boundary:</b> review surfaces show what the tools reported and what verification ran. They do not prove intent, and protected paths always go to a human.</span></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="try-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Try it</p>
+        <h2 id="try-title">Open a project, run a turn, inspect the diff.</h2>
+      </div>
+      <pre>npm i -g @ashlr/phantom
+phm verse</pre>
+      <p class="src" style="margin-top:12px">First turn walkthrough: <a href="https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md#make-your-first-useful-turn">docs/QUICKSTART.md</a></p>
+    </div>
+  </section>
+
+  <section aria-labelledby="more-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">Keep going</p>
+        <h2 id="more-title">Related guides</h2>
+      </div>
+      <div class="related">
+        <a href="/use-cases/own-accounts"><span class="t">Bring your own agent accounts</span><span class="d">Every CLI you already use, pinned to its own profile.</span></a>
+        <a href="/use-cases/local-models"><span class="t">Coding agents on local models</span><span class="d">Discovery through Ollama, dispatch on llama-server, measured numbers.</span></a>
+        <a href="/use-cases/signed-autonomy"><span class="t">Autonomy inside a signed scope</span><span class="d">A Touch ID grant, an eight-stage ladder, the same gates for every merge.</span></a>
+        <a href="/compare/agent-clis"><span class="t">Phantom or the CLIs directly</span><span class="d">What each vendor CLI already does, and what a workbench adds.</span></a>
+        <a href="/#install-verse"><span class="t">Install Phantom</span><span class="d">Node 22.15+, one global package, console on loopback.</span></a>
+        <a href="/ecosystem"><span class="t">The ecosystem</span><span class="d">Six public Ashlr repositories with dated GitHub history.</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Phantom &middot; by AshlrAI</p>
+    <span><a href="/">Product</a> &middot; <a href="/ecosystem">Ecosystem</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md">User guide</a> &middot; <a href="https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md">Changelog</a> &middot; <a href="https://github.com/ashlrai/phantom">github.com/ashlrai/phantom</a></span>
+  </div>
+</footer>
+</body>
+</html>

@@ -96,7 +96,7 @@ describe('bounded explicit enrollment', () => {
     ['budget-exhausted', 'paused', 'request-budget-exhausted'], ['owned', 'running', 'owner-active'],
     ['terminal', 'stopped', 'campaign-stopped'], ['terminal', 'failed', 'campaign-failed'],
     ['unavailable', null, 'evidence-degraded'],
-  ] as const)('never starts held %s / %s', async (disposition, observedState, reasonCode) => {
+  ] as const)('never starts held %s / %s / %s', async (disposition, observedState, reasonCode) => {
     const f = fixture(['a']); Object.assign(f.reports.get('a')!, { disposition, observedState, reasonCode,
       ...(disposition === 'unavailable' ? { sourceState: 'degraded', expectedIdentity: null } : {}) });
     const result = await superviseUniverseCampaigns(['a'], options());

@@ -511,12 +511,13 @@ describe.skipIf(process.platform === 'win32')('durable resource task runtime acc
       status: 'rejected', rateLimitType: 'seven_day', resetsAt: Math.floor(Date.now() / 1000) + 3600,
     } }, { type: 'result', subtype: 'success', is_error: false, result: 'PRIVATE_NATIVE_OUTPUT',
       usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 } }];
-    writeFileSync(script, `process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));`, { mode: 0o600 });
+    // The exact enrolled wrapper must pass the real version gate before a task.
+    writeFileSync(script, `if(process.argv.includes('--version')){console.log('2.1.309 (Claude Code)');}else{process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));}`, { mode: 0o600 });
     const poolValue: ResourcePool = { schemaVersion: 1, id: 'claude-pool', workers: [worker('claude-a', { provider: 'claude', allowUnknownQuota: true })] };
     const bindings: ResourceBinding[] = [{ workerId: 'claude-a', capacityKey: 'claude-account', kind: 'native-cli', command: [process.execPath, script] }];
     const taskValue = f.task('task-a', { allowedWorkerIds: ['claude-a'] });
     const first = await runResourceTask({ root: f.root, pool: poolValue, bindings, observations: [], task: taskValue });
-    expect(first.receipt?.status).toBe('completed');
+    expect(first.receipt).toMatchObject({ status: 'completed', inputTokens: 1, outputTokens: 1 });
     const second = await runResourceTask({ root: f.root, pool: poolValue, bindings, observations: [],
       task: { ...taskValue, id: 'task-b' } });
     expect(second.receipt).toBeNull();
@@ -537,7 +538,8 @@ describe.skipIf(process.platform === 'win32')('durable resource task runtime acc
       status: 'rejected', rateLimitType: 'seven_day', resetsAt: Math.floor(now / 1000) + 3600,
     } }, { type: 'result', subtype: 'success', is_error: false, result: 'PRIVATE_OVERFLOW_OUTPUT',
       usage: { input_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 3 } }];
-    writeFileSync(script, `process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));`, { mode: 0o600 });
+    // The exact enrolled wrapper must pass the real version gate before a task.
+    writeFileSync(script, `if(process.argv.includes('--version')){console.log('2.1.309 (Claude Code)');}else{process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));}`, { mode: 0o600 });
     const poolValue: ResourcePool = { schemaVersion: 1, id: 'claude-overflow-pool',
       workers: [worker('claude-a', { provider: 'claude', allowUnknownQuota: true })] };
     const bindings: ResourceBinding[] = [{ workerId: 'claude-a', capacityKey: 'claude-account',
@@ -576,6 +578,54 @@ describe.skipIf(process.platform === 'win32')('durable resource task runtime acc
     const blocked = await f.run('task-b', { allowedWorkerIds: ['local-b'] }, []);
     expect(blocked.receipt).toBeNull(); expect(f.requests).toHaveLength(1);
     expect(blocked.plan?.exclusions.find((row) => row.workerId === 'local-b')?.reasons).toContain('provider-retry-after');
+  });
+
+  it('releases a service-tier refusal back to admission and reroutes the queued task to another worker', async () => {
+    const f = await fixture({ workers: [worker('local-a', { priority: 2 }), worker('local-b')],
+      respond: (res, request) => {
+        if (request.model === 'fixture-local-a') {
+          res.statusCode = 429; res.setHeader('retry-after', '600');
+          res.end(JSON.stringify({ error: { message: 'PRIVATE_TIER_DETAIL', type: 'server_error', code: 'service_tier_at_capacity' } }));
+        } else res.end(JSON.stringify(completion()));
+      } });
+    const denied = await f.run('tier-task');
+    expect(denied.receipt).toBeNull(); expect(denied.replayed).toBe(false);
+    expect(denied.plan?.exclusions.find((row) => row.workerId === 'local-a')?.reasons).toContain('provider-retry-after');
+    expect(f.status().attempts).toEqual([]); expect(f.requests).toHaveLength(1);
+    const rerouted = await f.run('tier-task', {}, [f.observations.find((row) => row.workerId === 'local-b')!]);
+    expect(rerouted.receipt).toMatchObject({ status: 'completed', workerId: 'local-b' });
+    expect(f.requests.map((row) => row.model)).toEqual(['fixture-local-a', 'fixture-local-b']);
+    expect(f.ledger()).not.toContain('PRIVATE_TIER_DETAIL');
+  });
+
+  it('holds a queued task as unavailable capacity across repeated tier refusals without a settled failure', async () => {
+    const f = await fixture({ respond: (res) => { res.statusCode = 503;
+      res.end(JSON.stringify({ error: { message: 'PRIVATE_TIER_DETAIL', type: 'service_tier_unavailable' } })); } });
+    const first = await f.run('held-task');
+    expect(first.receipt).toBeNull(); expect(f.requests).toHaveLength(1);
+    const again = await f.run('held-task', {}, []);
+    expect(again.receipt).toBeNull();
+    expect(again.plan?.exclusions.find((row) => row.workerId === 'local-a')?.reasons).toContain('provider-retry-after');
+    expect(f.requests).toHaveLength(1); expect(f.status().attempts).toEqual([]);
+    expect(f.ledger()).not.toContain('PRIVATE_TIER_DETAIL');
+  });
+
+  it('still settles an unstructured provider error as a failed task', async () => {
+    const f = await fixture({ respond: (res) => { res.statusCode = 503;
+      res.end(JSON.stringify({ error: { message: 'PRIVATE_VENDOR_ERROR', type: 'server_error' } })); } });
+    const result = await f.run('failed-task');
+    expect(result.receipt).toMatchObject({ status: 'failed', reason: 'worker-transport-failed' });
+    expect(f.status().attempts).toHaveLength(1); expect(f.ledger()).not.toContain('PRIVATE_VENDOR_ERROR');
+  });
+
+  it('sends extended prompt-cache retention only when the task qualifies', async () => {
+    const f = await fixture();
+    const retained = await f.run('retained', { timeoutMs: 600_000, prompt: 'x'.repeat(40_000) });
+    expect(retained.receipt?.status).toBe('completed');
+    expect(f.requests[0]).toMatchObject({ prompt_cache_retention: '12h' });
+    const plain = await f.run('plain');
+    expect(plain.receipt?.status).toBe('completed');
+    expect(f.requests[1]).not.toHaveProperty('prompt_cache_retention');
   });
 
   it('settles cancellation after an actual local request and never replays the consumed task', async () => {

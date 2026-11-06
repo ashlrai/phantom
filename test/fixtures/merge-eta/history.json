@@ -1,0 +1,7 @@
+[
+  {"repo":"ashlrai/phantom","name":"build","durationMs":120000},
+  {"repo":"ashlrai/phantom","name":"build","durationMs":240000},
+  {"repo":"ashlrai/phantom","name":"test","durationMs":300000},
+  {"repo":"ashlrai/phantom","name":"test","durationMs":480000},
+  {"repo":"other/repo","name":"test","durationMs":60000000}
+]

@@ -4,13 +4,66 @@
  * Probes each known tool via the platform PATH locator + a `--version` invocation
  * (version string). Fast, synchronous, and NEVER throws — a missing or broken
  * tool yields { installed: false, version: null, path: null }.
+ *
+ * A located file that is an npm bootstrap launcher (it installs or downloads
+ * the real tool even for `--version`) is never executed and is reported as not
+ * installed; the classification mirrors `phm companions` (companion-inventory)
+ * and is inlined because this module sits in the tier-1 import closure, which
+ * only grows by owner review.
  */
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, win32 } from 'node:path';
 import type { ToolInfo, ToolsRegistry } from './types.js';
+
+/** Optional remote capabilities use caller-owned authenticated MCP sessions. */
+export const STACKSYNC_CAPABILITY = {
+  id: 'stacksync',
+  endpoint: 'https://mcp.stacksync.com/mcp',
+  workspaceId: 5411,
+  tools: ['workflows_run', 'workflows_runs', 'genies_ask', 'syncs_list', 'syncs_issues'],
+  readOnlyTools: ['workflows_runs', 'syncs_list', 'syncs_issues'],
+} as const;
+
+export interface OptionalMcpSession {
+  endpoint: string;
+  workspaceId: number;
+  callTool(request: { name: string; arguments: Record<string, unknown> }): Promise<unknown>;
+}
+
+/**
+ * Registration never opens a connection or reads authentication material.
+ * The host supplies an authenticated, workspace-scoped session, or omits it.
+ * Read-only mode conservatively excludes both execution and genie prompts.
+ */
+export function getOptionalToolRegistry(
+  sessions: Readonly<Record<string, OptionalMcpSession | undefined>> = {},
+  options: { allowWrites?: boolean } = {},
+) {
+  const capability = STACKSYNC_CAPABILITY;
+  const session = sessions[capability.id];
+  const available = session?.endpoint === capability.endpoint &&
+    session.workspaceId === capability.workspaceId;
+  const allowed: readonly string[] = options.allowWrites === true
+    ? capability.tools : capability.readOnlyTools;
+  return [{
+    ...capability,
+    status: available ? 'ready' as const : 'skipped' as const,
+    reason: available ? null : 'No matching authenticated Stacksync session',
+    allowedTools: available ? [...allowed] : [],
+    async callTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+      if (!available || !session) throw new Error('Stacksync session unavailable');
+      if (!allowed.includes(name)) throw new Error('Stacksync tool not allowed');
+      // Never let a request override the session workspace.
+      if (args.workspace_id !== undefined && args.workspace_id !== capability.workspaceId) {
+        throw new Error('Stacksync workspace mismatch');
+      }
+      return session.callTool({ name, arguments: { ...args, workspace_id: capability.workspaceId } });
+    },
+  }];
+}
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -78,16 +131,9 @@ const PROBE_KILL_SIGNAL = 'SIGKILL';
  */
 function findBinary(binary: string): string | null {
   try {
-    let locator = 'which';
-    let query = binary;
-    if (process.platform === 'win32') {
-      const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
-      if (!systemRoot || !win32.isAbsolute(systemRoot)) return null;
-      locator = win32.join(systemRoot, 'System32', 'where.exe');
-      // The $PATH: prefix excludes the current directory from where.exe lookup.
-      query = `$PATH:${binary}`;
-    }
-    const result = execFileSync(locator, [query], {
+    const locator = binaryLocator(binary);
+    if (!locator) return null;
+    const result = execFileSync(locator[0], [locator[1]], {
       encoding: 'utf8',
       timeout: LOCATOR_TIMEOUT_MS,
       killSignal: PROBE_KILL_SIGNAL,
@@ -99,10 +145,18 @@ function findBinary(binary: string): string | null {
   }
 }
 
+/** Keep both inventory paths on the same PATH-only Windows lookup. */
+function binaryLocator(binary: string): [string, string] | null {
+  if (process.platform !== 'win32') return ['which', binary];
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  if (!systemRoot || !win32.isAbsolute(systemRoot)) return null;
+  return [win32.join(systemRoot, 'System32', 'where.exe'), `$PATH:${binary}`];
+}
+
 /**
- * Run a command and return its combined stdout+stderr as a trimmed string.
- * Returns null on any failure (non-zero exit, timeout, ENOENT, etc.).
- * Never throws.
+ * Run a command and return its trimmed stdout.
+ * Returns null on any failure (non-zero exit, timeout, ENOENT, etc.): output
+ * from a failed probe is never parsed as a version. Never throws.
  */
 function runVersionCmd(args: string[]): string | null {
   if (args.length === 0) return null;
@@ -112,20 +166,40 @@ function runVersionCmd(args: string[]): string | null {
       encoding: 'utf8',
       timeout: VERSION_TIMEOUT_MS,
       killSignal: PROBE_KILL_SIGNAL,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return stdout.trim() || null;
-  } catch (err: unknown) {
-    // execFileSync throws on non-zero exit; stderr is often in err.stderr
-    if (err !== null && typeof err === 'object') {
-      const e = err as { stderr?: unknown; stdout?: unknown };
-      const combined = [e.stdout, e.stderr]
-        .map((v) => (typeof v === 'string' ? v.trim() : ''))
-        .filter(Boolean)
-        .join('\n');
-      return combined || null;
-    }
+    return stdout.trim();
+  } catch {
     return null;
+  }
+}
+
+/**
+ * True when `path` is a bootstrap launcher that installs or downloads the real
+ * tool on any invocation — even `--version` (e.g. the npm locus-cli shim runs
+ * `cargo install`). Mirrors companionExecutableKind in companion-inventory.ts,
+ * inlined because this module is inside the tier-1 import closure. Windows
+ * .cmd/.bat shims count as launchers. Never throws; an unreadable file is not
+ * a launcher (its version probe fails and reports not-installed anyway).
+ */
+function isBootstrapLauncher(path: string): boolean {
+  if (/\.(?:cmd|bat)$/iu.test(path)) return true;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, 'r');
+    const buffer = Buffer.alloc(64 * 1024);
+    const length = readSync(descriptor, buffer, 0, buffer.length, 0);
+    const header = buffer.subarray(0, 4).toString('hex');
+    if (header === '7f454c46' || ['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe',
+      'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(header) ||
+      buffer.subarray(0, 2).toString('ascii') === 'MZ') return false;
+    const source = buffer.subarray(0, length).toString('utf8');
+    if (!source.startsWith('#!')) return false;
+    return /downloadReleaseBinary|INSTALL_FROM_SOURCE|cargo\s+install\s+--git|npm\s+install|npx\s+/u.test(source);
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -269,6 +343,14 @@ const TOOL_SPECS: ToolSpec[] = [
     // No parseVersion override needed — probeTool defaults to extractSemver.
   },
 
+  // ── lexicon (voice correction CLI) ────────────────────────────────────────
+  {
+    id: 'lexicon',
+    name: 'Lexicon (voice lexicon)',
+    binaries: ['lexicon'],
+    parseVersion: extractSemver,
+  },
+
   // ── ashlrcode CLI ─────────────────────────────────────────────────────────
   // NOTE: the generic `ac` alias was dropped — on macOS/Linux `ac` is the
   // system login-accounting binary (/usr/sbin/ac), which produced a false
@@ -359,7 +441,11 @@ const TOOL_SPECS: ToolSpec[] = [
  * Probe a single ToolSpec and return a ToolInfo.
  * Never throws.
  */
-function probeTool(spec: ToolSpec): ToolInfo {
+function probeTool(
+  spec: ToolSpec,
+  locate = findBinary,
+  versionOutput = runVersionCmd,
+): ToolInfo {
   // App-type tools (e.g. Tauri desktop apps) are detected by filesystem path,
   // not by a CLI binary in PATH. Short-circuit before the locator probe.
   if (spec.appPaths && spec.appPaths.length > 0) {
@@ -374,7 +460,7 @@ function probeTool(spec: ToolSpec): ToolInfo {
   let resolvedPath: string | null = null;
   let resolvedBinary: string | null = null;
   for (const bin of spec.binaries) {
-    const p = findBinary(bin);
+    const p = locate(bin);
     if (p) {
       resolvedPath = p;
       resolvedBinary = bin;
@@ -382,7 +468,12 @@ function probeTool(spec: ToolSpec): ToolInfo {
     }
   }
 
-  if (!resolvedPath || !resolvedBinary) {
+  // A bootstrap launcher installs or downloads the real tool even for
+  // `--version` (e.g. the npm locus-cli launcher runs `cargo install`). Never
+  // execute it — it counts as absent, so the plugin-cache fallback can still
+  // see a real install beside a stale shim.
+  const launcherOnPath = resolvedPath !== null && isBootstrapLauncher(resolvedPath);
+  if (!resolvedPath || !resolvedBinary || launcherOnPath) {
     const cached = spec.claudePlugin ? probeClaudePluginCache(spec.claudePlugin) : null;
     if (cached) {
       return { id: spec.id, name: spec.name, installed: true, version: cached.version, path: cached.path };
@@ -397,7 +488,11 @@ function probeTool(spec: ToolSpec): ToolInfo {
     // Execute the located path, not a second PATH lookup that could resolve a
     // different file. Windows script shims fail closed because no shell is used.
     const args: string[] = spec.versionArgs ?? [resolvedPath, '--version'];
-    const raw = runVersionCmd(args);
+    const raw = versionOutput(args);
+    // A failed probe is not an install.
+    if (raw === null) {
+      return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
+    }
 
     if (raw) {
       version = spec.parseVersion ? spec.parseVersion(raw) : extractSemver(raw);
@@ -431,9 +526,13 @@ function probeTool(spec: ToolSpec): ToolInfo {
  * filesystem presence for desktop app tools (e.g. ashlr-md .app bundle).
  * Fast and NEVER throws — a missing tool yields { installed:false, version:null,
  * path:null }. Detects: phantom, locus, ashlr/ashlr-plugin, stack, pulse/pulse-agent,
- * ashlrcode, aw (ashlr-workbench), morphkit, binshield, ashlr-md (app), ashlr-hub.
+ * ashlrcode, aw (ashlr-workbench), morphkit, binshield, ashlr-md (app), ashlr-hub,
+ * lexicon.
  */
-export function getToolsRegistry(): ToolsRegistry {
+export function getToolsRegistry(options: { parallel: true }): Promise<ToolsRegistry>;
+export function getToolsRegistry(): ToolsRegistry;
+export function getToolsRegistry(options?: { parallel: true }): ToolsRegistry | Promise<ToolsRegistry> {
+  if (options?.parallel) return getToolsRegistryAsync();
   const tools: ToolInfo[] = [];
 
   for (const spec of TOOL_SPECS) {
@@ -453,4 +552,51 @@ export function getToolsRegistry(): ToolsRegistry {
 
   const installedCount = tools.filter((t) => t.installed).length;
   return { tools, installedCount };
+}
+
+/** Same inventory as getToolsRegistry, with independent child probes in parallel. */
+async function getToolsRegistryAsync(): Promise<ToolsRegistry> {
+  const tools = await Promise.all(TOOL_SPECS.map(async spec => {
+    try {
+      if (spec.appPaths?.length) return probeTool(spec);
+      let binary: string | undefined;
+      let path: string | null = null;
+      for (const candidate of spec.binaries) {
+        const locator = binaryLocator(candidate);
+        if (!locator) break;
+        const output = await runProbeAsync(locator[0], [locator[1]], LOCATOR_TIMEOUT_MS);
+        path = output?.split(/\r?\n/u).map(line => line.trim()).find(Boolean) ?? null;
+        if (path) {
+          binary = candidate;
+          break;
+        }
+      }
+      const args = spec.versionArgs ?? (path ? [path, '--version'] : []);
+      const raw = path && !isBootstrapLauncher(path) && spec.versionArgs !== null
+        ? await runProbeAsync(args[0]!, args.slice(1), VERSION_TIMEOUT_MS)
+        : null;
+      // Reuse the canonical fallback, ambiguity and version parsing rules.
+      return probeTool(spec, candidate => candidate === binary ? path : null, () => raw);
+    } catch {
+      return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
+    }
+  }));
+  return { tools, installedCount: tools.filter(tool => tool.installed).length };
+}
+
+function runProbeAsync(cmd: string, args: string[], timeout: number): Promise<string | null> {
+  return new Promise(resolve => {
+    const child = execFile(cmd, args, {
+      encoding: 'utf8', timeout, killSignal: PROBE_KILL_SIGNAL,
+      maxBuffer: 1024 * 1024,
+    }, (error, stdout) => {
+      if (!error) {
+        resolve(stdout.trim());
+        return;
+      }
+      resolve(null);
+    });
+    // Match the synchronous inventory's ignored stdin: MCP shims may wait for EOF.
+    child?.stdin?.end();
+  });
 }

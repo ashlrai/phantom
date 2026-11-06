@@ -453,13 +453,6 @@ export function linePath(run: ReadonlyArray<XY>): string {
   return run.map((p, i) => `${i === 0 ? 'M' : 'L'}${round(p.x)},${round(p.y)}`).join(' ');
 }
 
-/** Closed area under (or between) a run and a baseline run of equal length. */
-export function areaPath(top: ReadonlyArray<XY>, bottom: ReadonlyArray<XY>): string {
-  if (top.length === 0) return '';
-  const back = [...bottom].reverse();
-  return `${linePath(top)} ${back.map((p) => `L${round(p.x)},${round(p.y)}`).join(' ')} Z`;
-}
-
 export function round(v: number): number {
   return Math.round(v * 10) / 10;
 }

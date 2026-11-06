@@ -1,0 +1,6 @@
+.room { padding: 16px; border: 1px solid currentColor; border-radius: 8px; }
+.viewport { overflow: auto; max-height: 480px; }
+.node { width: 100%; height: 52px; text-align: left; color: inherit; background: var(--surface, Canvas); border: 1px solid currentColor; border-radius: 6px; cursor: pointer; padding: 4px 8px; }
+.node strong, .node span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node[aria-pressed='true'] { outline: 2px solid currentColor; outline-offset: -4px; }
+.node:focus-visible { outline: 3px solid Highlight; }

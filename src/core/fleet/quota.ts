@@ -647,7 +647,7 @@ interface NormalizedQuotaRequest {
 }
 
 function configuredReservationLimit(
-  cfg: AshlrConfig,
+  cfg: AshlrConfig | null | undefined,
   backend: EngineId,
 ): { max: number; windowMs: number } | null | 'invalid' {
   const configured = cfg?.foundry?.limits?.[backend];
@@ -658,6 +658,19 @@ function configuredReservationLimit(
   if (windowMs === null || !Number.isSafeInteger(configured.max) ||
     configured.max <= 0 || configured.max > MAX_EVENTS) return 'invalid';
   return { max: configured.max, windowMs };
+}
+
+/**
+ * The configured rolling-window dispatch cap for `backend`: null when uncapped,
+ * 'invalid' when present but malformed (the reservation path fails closed on
+ * the same input). Read-only — no ledger access; for status surfaces that
+ * count events themselves (graph-live.ts).
+ */
+export function inspectConfiguredQuotaLimit(
+  cfg: AshlrConfig | null | undefined,
+  backend: EngineId,
+): { max: number; windowMs: number } | null | 'invalid' {
+  return configuredReservationLimit(cfg, backend);
 }
 
 function compactReservationEvents(

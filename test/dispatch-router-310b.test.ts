@@ -14,11 +14,15 @@ import {
   FLEET_LOCAL_SEAT_ID,
   LANE_DEFAULT_SLOTS,
   FANOUT_LOCAL_EXTRA_MAX,
+  LAND_FIRST_OPEN_PR_LIMIT,
   anyFanoutCandidate,
   bestOfNCandidates,
   difficultyOf,
   fitBestOfNToLanes,
   fleetLaneOf,
+  landFirstClassOf,
+  landFirstPriority,
+  landFirstRefusal,
   planFanoutReserve,
   planStandingBestOfN,
   countOf,
@@ -797,5 +801,145 @@ describe('shared outcome manager routing', () => {
     expect(route.hold).toBeNull();
     expect(route.backend).toBe('grok-cli');
     expect(route.tier).toBe('mid');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RQ-V4-LAND-FIRST-1: land-first scheduling — a repo with more than 30 counted
+// open PRs launches no new feature work; its free slots go to LAND and FIXUP.
+// ---------------------------------------------------------------------------
+
+describe('land-first scheduling', () => {
+  const OTHER_PATH = '/tmp/mirrors/ashlrai__other';
+  const OTHER_REPO = 'ashlrai/other';
+  const SATURATED = { [REPO]: LAND_FIRST_OPEN_PR_LIMIT + 1 };
+  const repoOfBoth = (path: string) => (path === REPO_PATH ? REPO : path === OTHER_PATH ? OTHER_REPO : null);
+
+  describe('landFirstClassOf', () => {
+    it('classifies land jobs by tag, namespaced tag and title prefix', () => {
+      for (const tags of [['land'], ['merge'], ['land-pr'], ['merge-pr'], ['land:pr-42'], [' Land ']]) {
+        expect(landFirstClassOf({ title: 'Ship it', tags }), tags.join()).toBe('land');
+      }
+      expect(landFirstClassOf({ title: 'LAND the queue follow-up', tags: [] })).toBe('land');
+      expect(landFirstClassOf({ title: '[land] merge the release PR', tags: [] })).toBe('land');
+    });
+
+    it('classifies fixup jobs by the fleet repair vocabulary', () => {
+      for (const tags of [
+        ['fixup'], ['repair'], ['fixup:ci'], ['repair:lint'],
+        ['self-heal', 'proposal-repair', 'verify'],
+        ['dispatch-capture-repair'], ['rejected-capture-recovery'],
+        ['diagnostic-reslice'], ['dispatch-no-diff-reslice'],
+        ['fleet-task', 'fleet-source:repair'], ['fleet-source:revert'],
+      ]) {
+        expect(landFirstClassOf({ title: 'Repair it', tags }), tags.join()).toBe('fixup');
+      }
+      expect(landFirstClassOf({ title: 'FIXUP the failing lint lane', tags: [] })).toBe('fixup');
+    });
+
+    it('treats unstated work as a feature launch, and a land signal beats a fixup one', () => {
+      expect(landFirstClassOf({ title: 'Add the parser option', tags: ['todo', 'difficulty:low'] })).toBe('feature');
+      expect(landFirstClassOf({ title: 'Land it', tags: ['fixup'] })).toBe('land');
+      expect(landFirstClassOf({ title: 'Do both', tags: ['fixup', 'land'] })).toBe('land');
+    });
+  });
+
+  describe('the 30-PR threshold', () => {
+    it.each([0, 1, LAND_FIRST_OPEN_PR_LIMIT - 1, LAND_FIRST_OPEN_PR_LIMIT])('launches feature work at %s counted open PRs', (open) => {
+      const route = routeWorkItem(item(), LEGACY_LOCAL, ctx([grok(), local()], { openPrsByRepo: { [REPO]: open } }));
+      expect(route.hold).toBeNull();
+      expect(route.lane).not.toBeNull();
+    });
+
+    it.each([LAND_FIRST_OPEN_PR_LIMIT + 1, LAND_FIRST_OPEN_PR_LIMIT + 20])('parks a feature launch at %s counted open PRs', (open) => {
+      const route = routeWorkItem(item(), LEGACY_LOCAL, ctx([grok(), local()], { openPrsByRepo: { [REPO]: open } }));
+      expect(route.hold?.kind).toBe('park');
+      expect(route.hold?.reason).toMatch(new RegExp(`${open} open PRs.*land-first limit ${LAND_FIRST_OPEN_PR_LIMIT}`));
+      expect(route.hold?.reason).toMatch(/land and fixup jobs/);
+      expect(route.lane).toBeNull();
+    });
+
+    it('holds only the saturated repo — another repo launches while one is saturated', () => {
+      const base = policy();
+      const both = { ...base, repos: [...base.repos, { ...base.repos[0]!, nameWithOwner: OTHER_REPO }] };
+      const context = ctx([grok(), local()], { openPrsByRepo: { [OTHER_REPO]: 40 }, policy: both, repoOf: repoOfBoth });
+      expect(routeWorkItem(item(), LEGACY_LOCAL, context).hold).toBeNull();
+      expect(routeWorkItem(item({ repo: OTHER_PATH }), LEGACY_LOCAL, context).hold?.kind).toBe('park');
+    });
+
+    it('compares repo keys case-insensitively', () => {
+      const route = routeWorkItem(item(), LEGACY_LOCAL, ctx([grok()], { openPrsByRepo: { 'ASHLRAI/BINSHIELD': 40 } }));
+      expect(route.hold?.kind).toBe('park');
+    });
+
+    it('keeps land and fixup jobs dispatching while the repo is saturated', () => {
+      const context = ctx([grok(), local()], { openPrsByRepo: SATURATED });
+      for (const work of [
+        item({ tags: ['land'] }),
+        item({ title: 'LAND the docs PR' }),
+        item({ tags: ['fleet-task', 'fleet-source:repair'] }),
+        item({ tags: ['self-heal', 'proposal-repair', 'verify'] }),
+        item({ tags: ['fixup'] }),
+      ]) {
+        const route = routeWorkItem(work, LEGACY_LOCAL, context);
+        expect(route.hold, `${work.title} ${work.tags.join()}`).toBeNull();
+        expect(route.lane).not.toBeNull();
+      }
+    });
+
+    it('fails closed on uncountable PRs — feature launches wait, land and fixup still run', () => {
+      const context = ctx([grok(), local()], { openPrsByRepo: null });
+      const route = routeWorkItem(item(), LEGACY_LOCAL, context);
+      expect(route.hold?.kind).toBe('park');
+      expect(route.hold?.reason).toMatch(/could not be counted/);
+      expect(routeWorkItem(item({ tags: ['land'] }), LEGACY_LOCAL, context).hold).toBeNull();
+      expect(routeWorkItem(item({ tags: ['fixup'] }), LEGACY_LOCAL, context).hold).toBeNull();
+    });
+
+    it('is off when the caller never counted (the field is absent)', () => {
+      const context = ctx([grok(), local()]);
+      expect(routeWorkItem(item(), LEGACY_LOCAL, context).hold).toBeNull();
+      expect(landFirstRefusal({ title: 'x', tags: [] }, REPO, undefined)).toBeNull();
+    });
+  });
+
+  describe('landFirstPriority ordering', () => {
+    it('ranks land, then fixup, then ordinary work, then a saturated feature launch', () => {
+      const context = ctx([grok()], { openPrsByRepo: SATURATED });
+      expect(landFirstPriority(item({ tags: ['land'] }), context)).toBe(0);
+      expect(landFirstPriority(item({ title: 'LAND the queue PR' }), context)).toBe(0);
+      expect(landFirstPriority(item({ tags: ['fleet-source:revert'] }), context)).toBe(1);
+      expect(landFirstPriority(item({ tags: ['fixup'] }), context)).toBe(1);
+      expect(landFirstPriority(item(), context)).toBe(3);
+      // Work on a healthy repo keeps the scheduler's normal rank.
+      const both = { ...context, openPrsByRepo: { ...SATURATED, [OTHER_REPO]: 2 }, repoOf: repoOfBoth };
+      expect(landFirstPriority(item({ repo: OTHER_PATH }), both)).toBe(2);
+      expect(landFirstPriority(item({ repo: OTHER_PATH, tags: ['land'] }), both)).toBe(2);
+    });
+
+    it('orders a saturated repo\'s queue land-first in a stable sort', () => {
+      const both = policy();
+      const context = ctx([grok()], {
+        openPrsByRepo: SATURATED,
+        policy: { ...both, repos: [...both.repos, { ...both.repos[0]!, nameWithOwner: OTHER_REPO }] },
+        repoOf: repoOfBoth,
+      });
+      const feature = item({ id: 'feature' });
+      const normalElsewhere = item({ id: 'normal', repo: OTHER_PATH });
+      const fixupJob = item({ id: 'fixup', tags: ['fixup'] });
+      const landJob = item({ id: 'land', tags: ['land'] });
+      const ordered = [feature, normalElsewhere, fixupJob, landJob]
+        .sort((a, b) => landFirstPriority(a, context) - landFirstPriority(b, context))
+        .map((work) => work.id);
+      expect(ordered).toEqual(['land', 'fixup', 'normal', 'feature']);
+    });
+
+    it('changes nothing while counts are healthy or never taken', () => {
+      for (const counts of [undefined, {}, { [REPO]: LAND_FIRST_OPEN_PR_LIMIT }]) {
+        const context = ctx([grok()], { openPrsByRepo: counts });
+        expect(landFirstPriority(item(), context)).toBe(2);
+        expect(landFirstPriority(item({ tags: ['land'] }), context)).toBe(2);
+      }
+    });
   });
 });

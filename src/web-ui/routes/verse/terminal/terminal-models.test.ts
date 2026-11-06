@@ -84,6 +84,12 @@ describe('ligatures', () => {
 });
 
 describe('ANSI → styled runs', () => {
+  it('clamps RGB bytes and preserves zero defaults for missing or non-finite channels', () => {
+    expect(applySgr({}, [38, 2, -1, 256, 1.6])).toEqual({ fg: 'rgb(0, 255, 2)' });
+    expect(applySgr({}, [48, 2])).toEqual({ bg: 'rgb(0, 0, 0)' });
+    expect(applySgr({}, [38, 2, NaN, Infinity, -Infinity])).toEqual({ fg: 'rgb(0, 0, 0)' });
+  });
+
   it('keeps 16, 256 and RGB colours, bold, and resets', () => {
     const runs = parseAnsi('\x1b[1;31mERR\x1b[0m ok \x1b[38;5;196mhot\x1b[38;2;1;2;3mrgb\x1b[39m');
     expect(runs.map((r) => r.text)).toEqual(['ERR', ' ok ', 'hot', 'rgb']);

@@ -9,8 +9,9 @@ import { useCapacityClock } from '../seat-subscription.js';
  *   local model, whose seat label is the model's own name); the model sits
  *   beside it in the Model picker, so the footer never says the model twice.
  * - The monogram tile (C/X/G/L, never a vendor logo) carries the engine's
- *   identity tick; the ring is the SHORT window's use (5-hour where the
- *   provider reports one, else the binding window), drawn in the quantity
+ *   identity tick; the ring is the SHORT window's use (a provider's 5-hour
+ *   window where one still exists — never Claude's, which is gone — else the
+ *   binding window), drawn in the quantity
  *   ramp — never the accent — and switched to the status colours only past
  *   the tight / limit points, always with words in the tooltip. A seat with
  *   no reading (and every local seat: no limits) draws NO ring — an empty
@@ -37,6 +38,7 @@ import { useSeatHealth } from '../health/useSeatHealth.js';
 import { capacityRowFor, windowSentence } from '../usage/capacity-strip-model.js';
 import type { SeatChoice } from '../SeatSelector.js';
 import { firstRunnableModel, orderSeatsByTier, nativeQuotaCurrent, seatCapacity, SEAT_CAPACITY_WORD, seatWindowLabel } from '../verse-model.js';
+import { visibleWindows } from '../usage/provider-windows.js';
 import styles from './composer.module.css';
 import { usedPercentText } from '../percent-text.js';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
@@ -73,25 +75,27 @@ export interface SeatChipProps {
  * fields). Never invented: a seat with neither has no windows.
  */
 export function seatWindows(seat: VerseSeat | undefined): VerseSeatWindow[] {
-  const fromCapacity = seat?.capacity?.windows ?? [];
-  if (fromCapacity.length > 0) return fromCapacity;
-  return (seat?.health.windows ?? []).map((w) => ({
+  if (seat === undefined) return [];
+  const fromCapacity = seat.capacity?.windows ?? [];
+  if (fromCapacity.length > 0) return visibleWindows(seat.engine, fromCapacity);
+  return visibleWindows(seat.engine, (seat.health.windows ?? []).map((w) => ({
     id: w.id,
     usedPercent: typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent) ? w.usedPercent : null,
     resetsAt: w.resetsAt,
     resetDescription: null,
     limitReached: false,
     measured: typeof w.usedPercent === 'number',
-  }));
+  })));
 }
 
-/** The window the ring draws: the 5-hour one when reported, else the fullest one. */
+/** The window the ring draws: the provider's short window when reported, else the fullest one. */
 export function ringWindow(seat: VerseSeat | undefined, now: number = Date.now()): VerseSeatWindow | null {
   if (seat && !nativeQuotaCurrent(seat, now)) return null;
   const windows = seatWindows(seat).filter((w) => w.usedPercent !== null || w.limitReached);
   const short = windows.find((w) => w.id === 'five_hour');
   if (short) return short;
-  if (seat?.capacity?.binding) return seat.capacity.binding;
+  const served = seat?.capacity?.binding ?? null;
+  if (served !== null && seat !== undefined && visibleWindows(seat.engine, [served]).length > 0) return served;
   return windows.reduce<VerseSeatWindow | null>((top, w) => (top === null || (w.usedPercent ?? 100) > (top.usedPercent ?? 100) ? w : top), null);
 }
 

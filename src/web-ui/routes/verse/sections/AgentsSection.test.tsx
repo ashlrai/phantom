@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import { installFetch, json } from '../context/context-fixtures.test-support.js';
 import { revealAnchor } from '../shell/reveal-anchor.js';
 import { AgentsSection } from './AgentsSection.js';
+// Compile real lazy surfaces before DOM query deadlines; selection still owns all reads.
+import '../proactive/ProactiveAgents.js';
+import '../rooms/AgentRooms.js';
 vi.mock('../agents/AgentsBoard.js', () => ({ AgentsBoard: () => <div>Coding board fixture</div> }));
 beforeEach(() => { evictAll(); });
 afterEach(() => { evictAll(); vi.unstubAllGlobals(); });
@@ -21,7 +24,7 @@ describe('agent views', () => {
     render(<AgentsSection />);
     expect(screen.getByText('Coding board fixture')).toBeInTheDocument();
     expect(calls).toHaveLength(0);
-    fireEvent.click(screen.getByRole('radio', { name: 'Proactive agents' }));
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Proactive agents' })); });
     await screen.findByText('Bring your persistent agents together');
     expect(calls.map(call => [call.method, call.path]).sort()).toEqual([
       ['GET', '/api/verse/proactive-agents'],
@@ -29,6 +32,16 @@ describe('agent views', () => {
     ]);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Proactive agents' })).toHaveAttribute('aria-checked', 'true');
+  });
+  it('opens Rooms from the Agents view switch', async () => {
+    installFetch(call => {
+      if (call.path === '/api/verse/agents') return json({ cards: [] });
+      throw new Error(`Unexpected rooms request: ${call.path}`);
+    });
+    render(<AgentsSection />);
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Rooms' })); });
+    await screen.findByRole('heading', { name: 'Agent rooms' });
+    expect(screen.getByRole('radio', { name: 'Rooms' })).toHaveAttribute('aria-checked', 'true');
   });
   it('accepts the existing Resources navigation intent before its lazy section mounts', async () => {
     installProactiveFetch();

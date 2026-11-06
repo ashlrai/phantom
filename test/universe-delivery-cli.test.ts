@@ -37,20 +37,20 @@ describe('Universe delivery CLI', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    [], ['unknown'], ['deliver'], ['deliveries'], ['deliver', '../escape'],
-    ['deliver', 'calendar', '--trial', 'trial-one'], ['deliver', 'calendar', '--branch', 'codex/fix'],
-    ['deliveries', 'calendar', 'another'], ['deliveries', 'calendar', '--trial', 'trial-one'],
-    ['deliveries', 'calendar', '--branch', 'codex/fix'], ['deliveries', 'calendar', '--root'],
-    ['deliveries', 'calendar', '--root', '-h'], ['deliveries', 'calendar', '--root', '\0'],
-    ['deliveries', 'calendar', '--unknown'], ['deliveries', 'calendar', '--root', '/a', '--root', '/b'],
-    [...deliveryArgs, '--trial', 'trial-two'], [...deliveryArgs, '--branch', 'codex/other'],
-    [...deliveryArgs, '--json'], [...deliveryArgs, 'extra'],
-    ['deliver', 'calendar', '--trial', 'bad/trial', '--branch', 'codex/fix'],
-    ['deliver', 'calendar', '--trial', 'a'.repeat(65), '--branch', 'codex/fix'],
-    ['deliver', 'calendar', '--trial', '', '--branch', 'codex/fix'],
-    ['deliver', 'calendar', '--trial', '--branch', 'codex/fix'],
-    ['deliveries', 'CALENDAR'], ['deliveries', 'a'.repeat(65)],
-  ])('rejects invalid invocation %j before any core operation', async (...args) => {
+    [[]], [['unknown']], [['deliver']], [['deliveries']], [['deliver', '../escape']],
+    [['deliver', 'calendar', '--trial', 'trial-one']], [['deliver', 'calendar', '--branch', 'codex/fix']],
+    [['deliveries', 'calendar', 'another']], [['deliveries', 'calendar', '--trial', 'trial-one']],
+    [['deliveries', 'calendar', '--branch', 'codex/fix']], [['deliveries', 'calendar', '--root']],
+    [['deliveries', 'calendar', '--root', '-h']], [['deliveries', 'calendar', '--root', '\0']],
+    [['deliveries', 'calendar', '--unknown']], [['deliveries', 'calendar', '--root', '/a', '--root', '/b']],
+    [[...deliveryArgs, '--trial', 'trial-two']], [[...deliveryArgs, '--branch', 'codex/other']],
+    [[...deliveryArgs, '--json']], [[...deliveryArgs, 'extra']],
+    [['deliver', 'calendar', '--trial', 'bad/trial', '--branch', 'codex/fix']],
+    [['deliver', 'calendar', '--trial', 'a'.repeat(65), '--branch', 'codex/fix']],
+    [['deliver', 'calendar', '--trial', '', '--branch', 'codex/fix']],
+    [['deliver', 'calendar', '--trial', '--branch', 'codex/fix']],
+    [['deliveries', 'CALENDAR']], [['deliveries', 'a'.repeat(65)]],
+  ])('rejects invalid invocation %j before any core operation', async (args) => {
     expect(await cmdUniverseDelivery([...args, '--json'])).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toHaveProperty('error');
     expect(core.deliverUniverseElite).not.toHaveBeenCalled();

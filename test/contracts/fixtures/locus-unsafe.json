@@ -1,0 +1,30 @@
+{
+  "version": "0.5.0",
+  "ready": false,
+  "status": "unsafe",
+  "mcp_registered": {
+    "claude": true,
+    "cursor": false,
+    "codex": false
+  },
+  "doctor": {
+    "version": "0.5.0",
+    "home": "/contract/locus",
+    "seal_ok": true,
+    "bindings": 1,
+    "verdict": "UNSAFE",
+    "ok": false
+  },
+  "commands": {
+    "enter": "locus enter contract",
+    "whoami": "locus whoami"
+  },
+  "exit_code": 2,
+  "status_oneline": "invalid",
+  "home": "/contract/locus",
+  "required_servers": [
+    "locus",
+    "phantom"
+  ],
+  "mcp_command": "locus-mcp"
+}

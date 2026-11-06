@@ -1,0 +1,243 @@
+/** Shared inbound boundary. Adapters authenticate first and map channel identities
+ * to one canonical sender ID; an asserted ID in a message body is never identity.
+ * Default inbox receipts survive receiver restarts in the shared runs context.
+ */
+import { CHANNEL_RECEIPT_LIMIT, createLocalChannelDedupeStore, type ChannelDedupeStore, type ChannelReceipt } from './channel-dedupe-store.js';
+import { createHash } from 'node:crypto';
+import { inboxChannelSlug } from './inbox-channel-slug.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { CROSS_CHANNEL_WINDOW_MS, decideCrossChannelMerge, normalizeForDedupe } from './cross-channel-dedupe.js';
+import { addInboxSource, appendInboxEntry, INBOX_MAX_CHARS, readRecentChannelEntries, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
+import { publishChannelEnvelope, type ChannelPublishState } from './channel-bus-publish.js';
+import { scrubSecrets } from '../util/scrub.js';
+import { queueCosEnvelope } from '../cos/intake.js';
+
+export type { ChannelPublishState } from './channel-bus-publish.js';
+
+export const INBOUND_CHANNELS = ['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'] as const;
+export type InboundChannel = typeof INBOUND_CHANNELS[number];
+export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+export const CHANNEL_ACK_TIMEOUT_MS = 2_000;
+export const CHANNEL_PUBLISH_TIMEOUT_MS = 2_000;
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** The person-canonical sender id every operator surface shares — the same value
+ * the desktop console already posts as (`CONSOLE_SENDER` in bus-leader-inbox.ts). */
+export const OPERATOR_SENDER_ID = 'mason';
+
+export interface ChannelMessage {
+  /** Adapter-verified originating message or thread, never parsed from body text. */
+  threadId?: string;
+  channel: InboundChannel;
+  /** Authenticated channel identity supplied by the trusted adapter. No credentials. */
+  verifiedSenderId: string;
+  /** Optional adapter-mapped canonical person id. When present it — not
+   * verifiedSenderId — keys the dedupe receipt and cross-channel merge, so the
+   * same person resending on another surface merges instead of duplicating. */
+  canonicalSenderId?: string;
+  body: string;
+}
+export interface ChannelEnvelope extends ChannelMessage {
+  receivedAt: string;
+  dedupeKey: string;
+}
+export interface ChannelAck {
+  channel: InboundChannel;
+  dedupeKey: string;
+  status: 'accepted' | 'duplicate';
+  /** Set when this duplicate joined an existing inbox entry from another channel (that entry's id). */
+  entryId?: string;
+}
+export type ChannelReceiveResult =
+  | { ok: true; envelope: ChannelEnvelope; ack: ChannelAck; publishState?: ChannelPublishState }
+  | { ok: false; reason: 'dedupe-store-unavailable' | 'sender-not-allowed' | 'invalid' | 'full' | 'write-failed' | Exclude<InboxAppendResult, { ok: true }>['reason'] };
+
+export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDir' | 'now'> {
+  /** Custom desktop sinks can opt into the shared durable background queue. */
+  backgroundQueue?: boolean;
+  allowedSenderIds: ReadonlySet<string>;
+  /** Custom sinks without runsDir remain memory-only unless a store is supplied.
+   * Default inbox sinks use a local receipt store under runsDir. */
+  receiptStore?: ChannelDedupeStore;
+  /** Optional sink for another shared context. Must report success only after persistence. */
+  write?: (envelope: ChannelEnvelope) => Promise<InboxAppendResult>;
+  /** Best-effort transport, not durable delivery. Calls wait serially through the
+   * deadline; a timed-out promise can still complete and cannot be cancelled here.
+   * Do not await another receive on this receiver from the callback. Receives only a detached ack. */
+  acknowledge?: (ack: ChannelAck) => Promise<void>;
+  /** Maximum acknowledgement wait in milliseconds, a positive timer-safe integer. */
+  acknowledgementTimeoutMs?: number;
+  /** Mirror of an accepted receipt (or pending duplicate) onto the durable agent bus
+   * (`phm comms bus read`). A function replaces the default sink entirely;
+   * null disables mirroring. When omitted, the default sink publishes through
+   * `publishChannelEnvelope` rooted at `busRoot` — and, to keep test receivers
+   * hermetic, runs only when `busRoot` is set or `runsDir` is unset: a
+   * runsDir-scoped receiver without `busRoot` never creates the canonical
+   * store. Production adapters pass neither option and reach it. The wait is
+   * bounded by `publishTimeoutMs`. */
+  publish?: ((envelope: ChannelEnvelope) => Promise<void>) | null;
+  /** Store root for the default bus publish sink (see `appendBusInbox`). */
+  busRoot?: string;
+  /** Maximum mirror wait in milliseconds, a positive timer-safe integer
+   * (default {@link CHANNEL_PUBLISH_TIMEOUT_MS}). Expiry reports publishState
+   * 'failed' and the receipt proceeds to acknowledgement; the attempt itself is
+   * never cancelled; a duplicate receipt can retry it, so a late publication may still complete. */
+  publishTimeoutMs?: number;
+}
+
+/** Rolling window from first successful receipt, including across clock bucket
+ * boundaries. Retains hashes/times and mirror source/state, never credentials or message bodies.
+ * Failed writes do not reserve a key. Capacity refuses rather than evicting keys.
+ */
+export function createChannelReceiver(options: ChannelReceiverOptions): (input: ChannelMessage) => Promise<ChannelReceiveResult> {
+  const ackTimeoutMs = options.acknowledgementTimeoutMs === undefined ? CHANNEL_ACK_TIMEOUT_MS : options.acknowledgementTimeoutMs;
+  if (!Number.isInteger(ackTimeoutMs) || ackTimeoutMs < 1 || ackTimeoutMs > MAX_TIMER_MS) {
+    throw new RangeError('acknowledgementTimeoutMs must be a positive timer-safe integer');
+  }
+  const publishTimeoutMs = options.publishTimeoutMs === undefined ? CHANNEL_PUBLISH_TIMEOUT_MS : options.publishTimeoutMs;
+  if (!Number.isInteger(publishTimeoutMs) || publishTimeoutMs < 1 || publishTimeoutMs > MAX_TIMER_MS) {
+    throw new RangeError('publishTimeoutMs must be a positive timer-safe integer');
+  }
+  const allowed = new Set(options.allowedSenderIds);
+  const seen = new Map<string, ChannelReceipt>();
+  const publish = options.publish;
+  const mirroringEnabled = typeof publish === 'function' ||
+    (publish === undefined && (options.busRoot !== undefined || options.runsDir === undefined));
+  const store = options.receiptStore ?? (options.write && options.runsDir === undefined
+    ? undefined : createLocalChannelDedupeStore(options.runsDir));
+  let tail = Promise.resolve();
+  let lastTime = 0;
+  async function success(envelope: ChannelEnvelope, status: ChannelAck['status'], original?: ChannelEnvelope, entryId?: string): Promise<ChannelReceiveResult> {
+    if (options.backgroundQueue ?? !options.write) {
+      try { await queueCosEnvelope(envelope, options.runsDir); }
+      catch { return { ok: false, reason: 'write-failed' }; }
+    }
+    const ack: ChannelAck = { channel: envelope.channel, dedupeKey: envelope.dedupeKey, status, ...(entryId ? { entryId } : {}) };
+    // Bus mirroring is best effort and observational: it runs after the durable
+    // write committed, before acknowledge, and outside the ack timeout. Its
+    // outcome is reported as publishState; only mirror-pending state changes.
+    let publishState: ChannelPublishState = 'skipped';
+    if (mirroringEnabled && original) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const attempt: Promise<ChannelPublishState> = typeof publish === 'function'
+          ? Promise.resolve(publish({ ...original })).then((): ChannelPublishState => 'published')
+          : publishChannelEnvelope({ ...original }, { root: options.busRoot, now: () => Date.parse(original.receivedAt) });
+        // Promise.race also observes a publish rejection after the deadline.
+        publishState = await Promise.race([
+          attempt,
+          new Promise<ChannelPublishState>((resolve) => { timer = setTimeout(() => resolve('failed'), publishTimeoutMs); }),
+        ]);
+      } catch { publishState = 'failed'; }
+      finally { if (timer !== undefined) clearTimeout(timer); }
+    }
+    if (publishState === 'published' && original) {
+      // A crash or failed state update leaves pending=true: exact replay is safe.
+      const markPublished = async (receipts: typeof seen, commit: () => void | Promise<void>) => {
+        for (const receipt of receipts.values()) {
+          if (receipt.key === original.dedupeKey && receipt.mirror) {
+            receipt.mirror.pending = false;
+            await commit();
+            break;
+          }
+        }
+      };
+      try {
+        if (store) await store.transaction(markPublished);
+        else await markPublished(seen, () => {});
+      } catch { /* Mirroring cannot invalidate durable acceptance. */ }
+    }
+    if (options.acknowledge) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const transport = options.acknowledge({ ...ack });
+        // Promise.race also observes a transport rejection after the deadline.
+        await Promise.race([transport, new Promise<void>((resolve) => { timer = setTimeout(resolve, ackTimeoutMs); })]);
+      } catch { /* Transport is best-effort. */ }
+      finally { if (timer !== undefined) clearTimeout(timer); }
+    }
+    return { ok: true, envelope, ack, publishState };
+  }
+  async function receive(input: ChannelMessage): Promise<ChannelReceiveResult> {
+    if (typeof input?.verifiedSenderId !== 'string' || !allowed.has(input.verifiedSenderId)) {
+      return { ok: false, reason: 'sender-not-allowed' };
+    }
+    if (!INBOUND_CHANNELS.includes(input.channel) || typeof input.body !== 'string' ||
+        !input.verifiedSenderId.trim() || input.verifiedSenderId.length > 128 ||
+        scrubSecrets(input.verifiedSenderId) !== input.verifiedSenderId) return { ok: false, reason: 'invalid' };
+    if (input.threadId !== undefined && (typeof input.threadId !== 'string' ||
+        !/^[!-~]{1,998}$/.test(input.threadId) || /[<>]/.test(input.threadId) || scrubSecrets(input.threadId) !== input.threadId)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (input.canonicalSenderId !== undefined && (typeof input.canonicalSenderId !== 'string' ||
+        !input.canonicalSenderId.trim() || input.canonicalSenderId.length > 128 ||
+        scrubSecrets(input.canonicalSenderId) !== input.canonicalSenderId)) return { ok: false, reason: 'invalid' };
+    if (input.body.length > INBOX_MAX_CHARS) return { ok: false, reason: 'too-long' };
+    // Check before normalization too: normalization must never hide a credential.
+    if (scrubSecrets(input.body) !== input.body) return { ok: false, reason: 'secret-shaped' };
+    const body = input.body.normalize('NFC').replace(/\r\n?/g, '\n').trim();
+    if (!body) return { ok: false, reason: 'empty' };
+    if (scrubSecrets(body) !== body) return { ok: false, reason: 'secret-shaped' };
+    const now = (options.now ?? (() => new Date()))().getTime();
+    if (!Number.isSafeInteger(now) || now < lastTime || now < 0) return { ok: false, reason: 'invalid' };
+    lastTime = now;
+    const work = async (receipts: typeof seen, commit: () => void | Promise<void>): Promise<
+      { envelope: ChannelEnvelope; status: ChannelAck['status']; entryId?: string; original?: ChannelEnvelope } | Exclude<ChannelReceiveResult, { ok: true }>
+    > => {
+      for (const [hash, receipt] of receipts) {
+        if (now - receipt.at >= CHANNEL_DEDUPE_WINDOW_MS) receipts.delete(hash);
+      }
+      // Normalized text: cross-channel resends differing only in case/spacing are one instruction.
+      // The dedupe domain is the canonical person id when the adapter mapped one.
+      const senderKey = input.canonicalSenderId ?? input.verifiedSenderId;
+      const hash = createHash('sha256').update(JSON.stringify([senderKey, normalizeForDedupe(body)])).digest('hex');
+      const previous = receipts.get(hash);
+      const dedupeKey = previous?.key ?? createHash('sha256').update(JSON.stringify([hash, now])).digest('hex');
+      const envelope: ChannelEnvelope = {
+        channel: input.channel, verifiedSenderId: input.verifiedSenderId,
+        receivedAt: new Date(now).toISOString(), body, dedupeKey,
+        ...(input.threadId ? { threadId: input.threadId } : {}),
+      };
+      let entryId: string | undefined;
+      if (previous && !options.write) {
+        // The receipt proves sender+text; pinning to the receipt time identifies its exact entry.
+        const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+        const decision = decideCrossChannelMerge(
+          { text: body, channel: inboxChannelSlug(envelope.channel), senderId: senderKey, receivedAt: now },
+          readRecentChannelEntries(runsDir, now, CROSS_CHANNEL_WINDOW_MS)
+            .map((entry) => ({ ...entry, senderId: entry.receivedAt === previous.at ? senderKey : undefined })),
+        );
+        if (decision.action === 'merge' && addInboxSource(decision.entryId, decision.addSource, { runsDir })) entryId = decision.entryId;
+      }
+      if (previous) return {
+        envelope, status: 'duplicate', ...(entryId ? { entryId } : {}),
+        // Hash lookup proves this normalized body and sender match the original.
+        original: previous.mirror?.pending ? {
+          ...envelope, channel: previous.mirror.channel, receivedAt: new Date(previous.at).toISOString(),
+        } : undefined,
+      };
+      if (receipts.size >= CHANNEL_RECEIPT_LIMIT) return { ok: false, reason: 'full' };
+      try {
+        const result = options.write
+          ? await options.write({ ...envelope })
+          : await appendInboxEntry(body, { runsDir: options.runsDir, now: () => new Date(now), source: input.channel });
+        if (!result.ok) return { ok: false, reason: result.reason };
+      } catch { return { ok: false, reason: 'write-failed' }; }
+      receipts.set(hash, { at: now, key: dedupeKey, ...(mirroringEnabled ? { mirror: { channel: envelope.channel, pending: true } } : {}) });
+      await commit();
+      return { envelope, status: 'accepted', original: envelope };
+    };
+    try {
+      const result = store ? await store.transaction(work) : await work(seen, () => {});
+      return 'envelope' in result ? success(result.envelope, result.status, result.original, result.entryId) : result;
+    } catch { return { ok: false, reason: 'dedupe-store-unavailable' }; }
+  }
+  return (input) => {
+    // Snapshot before queuing: callers cannot change identity/body while waiting.
+    const snapshot = { channel: input?.channel, verifiedSenderId: input?.verifiedSenderId, canonicalSenderId: input?.canonicalSenderId, body: input?.body, threadId: input?.threadId };
+    const result = tail.then(() => receive(snapshot));
+    tail = result.then(() => undefined, () => undefined);
+    return result;
+  };
+}

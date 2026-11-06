@@ -106,7 +106,24 @@ function preloadSessionGate(): void {
   void importSessionGate().catch(() => undefined);
 }
 
+const DecisionInbox = lazy(() => import('../routes/verse/inbox/DecisionInbox.js').then((m) => ({ default: m.DecisionInbox })));
+
+/**
+ * The "Phantom updated — Reload" banner is a lazy chunk, mounted only once
+ * the signed-in shell renders: like app/sidecar-restart.ts it can only ever
+ * matter long after first paint, so it stays off the critical path the
+ * first-paint budget measures (scripts/check-first-paint-budget.mjs counts
+ * static imports only).
+ */
+const UpdateReloadBanner = lazy(() => import('./UpdateReloadBanner.js').then((m) => ({ default: m.UpdateReloadBanner })));
+
 export function VerseConsoleApp() {
+  const [inboxOpen, setInboxOpen] = useState(() => window.location.hash === '#/inbox');
+  useEffect(() => {
+    const update = () => setInboxOpen(window.location.hash === '#/inbox');
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
   const phase = useAuthPhase();
   const [surface, setSurface] = useState(false);
   useEffect(() => {
@@ -143,7 +160,15 @@ export function VerseConsoleApp() {
   return (
     <ToastProvider>
       <SkipToContent />
-      <div className={styles.shell}><VerseApp /></div>
+      <div className={styles.shell}>
+        <Suspense fallback={null}><UpdateReloadBanner /></Suspense>
+        {inboxOpen ? (
+          <main id="main-content" tabIndex={-1} className={styles.inbox}>
+            <a href="#">Back to workspace</a>
+            <Suspense fallback={<p role="status">Loading inbox…</p>}><DecisionInbox /></Suspense>
+          </main>
+        ) : <VerseApp />}
+      </div>
     </ToastProvider>
   );
 }
