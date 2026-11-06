@@ -28,9 +28,9 @@
       "args": [
         "-y",
         "-p",
-        "@ashlr/stack@0.1.1",
+        "@ashlr/stack@0.3.6",
         "-p",
-        "ashlr-stack-mcp@0.1.1",
+        "ashlr-stack-mcp@0.3.6",
         "-p",
         "phantom-secrets@0.7.9",
         "ashlr-stack-mcp"
