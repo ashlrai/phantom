@@ -2,11 +2,12 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn() }));
+const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawn: ports.spawn, spawnSync: () => ({ status: 0 }) }));
 vi.mock('node:fs', async original => ({ ...await original<typeof import('node:fs')>(), lstatSync: ports.stat }));
 vi.mock('../src/core/drive/script-bridge.js', () => ({ checkDriveExecutable: ports.check }));
 vi.mock('../src/core/drive/nodes/pool-host.js', () => ({ callPool: ports.call }));
+vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: ports.capacity }));
 import { runNodeWorker } from '../src/core/drive/nodes/worker.js';
 
 const config = { role: 'worker' as const, primary: 'main', backup: 'backup', owner: 'mason', node: 'worker' };
@@ -20,6 +21,7 @@ let child: Child;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  ports.capacity.mockReturnValue({ slots: 1, ramBytes: 16 * 1024 ** 3, held: null });
   child = new Child();
   ports.stat.mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
   ports.check.mockResolvedValue(undefined);
@@ -45,6 +47,56 @@ describe('multi-Mac worker lifecycle', () => {
     expect(await result).toEqual({ jobId: 'j', completed: true });
     expect(ports.call.mock.calls.find(c => c[1] === 'complete')?.[2]).toContain('branch:job-j');
     expect(ports.call.mock.calls.at(-1)?.[1]).toBe('leave');
+  });
+  it('holds before acquiring a session when memory or disk is pressured', async () => {
+    ports.capacity.mockReturnValue({ slots: 0, held: 'memory-pressure' });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'memory-pressure' });
+    expect(ports.spawn).not.toHaveBeenCalled();
+    expect(ports.call).not.toHaveBeenCalled();
+  });
+  it('withholds spawn when pressure appears after a claim is acquired', async () => {
+    const clear = { slots: 1, held: null };
+    ports.capacity.mockReturnValueOnce(clear).mockReturnValueOnce(clear)
+      .mockReturnValue({ slots: 0, held: 'memory-pressure' });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'unsupported-job' });
+    expect(ports.call.mock.calls.some(c => c[1] === 'pull')).toBe(true);
+    expect(ports.spawn).not.toHaveBeenCalled();
+    expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('kills work on pressure before admitting another job', async () => {
+    const { result } = await start();
+    ports.capacity.mockReturnValue({ slots: 0, held: 'disk-pressure' });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await result).toMatchObject({ completed: false });
+    expect(child.kill).toHaveBeenCalled();
+    expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('runs both Air slots under one session and leaves only after both finish', async () => {
+    ports.capacity.mockReturnValue({ slots: 2, held: null });
+    const route = ports.call.getMockImplementation()!;
+    let pulls = 0;
+    ports.call.mockImplementation((...args) => {
+      const response = route(...args);
+      if (args[1] === 'pull') {
+        const id = `job-${++pulls}`;
+        return { ...response, result: { ...response.result, job: { ...response.result.job, id },
+          claim: { ...response.result.claim, jobId: id, token: 4 + pulls } } };
+      }
+      return response;
+    });
+    const second = new Child();
+    ports.spawn.mockReturnValueOnce(child).mockReturnValueOnce(second);
+    const { result } = await start();
+    expect(ports.spawn).toHaveBeenCalledTimes(2);
+    child.stdout.write('{"resultRef":"branch:first"}');
+    child.emit('close', 0);
+    await Promise.resolve();
+    expect(ports.call.mock.calls.some(c => c[1] === 'leave')).toBe(false);
+    second.stdout.write('{"resultRef":"branch:second"}');
+    second.emit('close', 0);
+    expect(await result).toMatchObject({ slots: 2, attempts: [{ completed: true }, { completed: true }] });
+    expect(ports.call.mock.calls.filter(c => c[1] === 'join')).toHaveLength(1);
+    expect(ports.call.mock.calls.filter(c => c[1] === 'leave')).toHaveLength(1);
   });
   it('never starts when the host pause sentinel is present', async () => {
     ports.stat.mockReturnValue({});

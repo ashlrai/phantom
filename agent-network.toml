@@ -1,0 +1,11 @@
+# Explicit channel-scoped team identities. No credentials belong in this file.
+# Example: identities = [{ channel = "slack", id = "U123456" }]
+[team]
+identities = []
+
+# Adapter-verified owner identities, matched exactly within each channel.
+# Local CLI/desktop identity: { channel = "bus", id = "local-owner" }.
+# Add the owner to [team] as well to permit replies; local compose also needs
+# { channel = "bus", id = "leader" } in [team]. Empty means disabled.
+[mason]
+identities = []
