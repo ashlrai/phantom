@@ -75,22 +75,48 @@ function duringRead(f: Fixture, effect: (readNumber: number) => void, maximumEff
   return { restore, reads: () => reads, effects: () => effects };
 }
 /** Commit between the initial named-file checks and the real open syscall. */
-function beforeOpen(f: Fixture, effect: () => void, maximumEffects = 1) {
+function aroundOpen(f: Fixture, effect: () => void, maximumEffects = 1, afterOpen = false) {
   const original = fs.openSync; let opens = 0, effects = 0, insideEffect = false;
   const spy = vi.spyOn(fs, 'openSync').mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
-    if (args[0] === f.file && !insideEffect) {
-      opens++;
-      if (effects < maximumEffects) {
+    const target = args[0] === f.file && !insideEffect;
+    if (target) opens++;
+    const apply = () => {
+      if (target && effects < maximumEffects) {
         effects++; insideEffect = true;
         try { effect(); } finally { insideEffect = false; }
       }
-    }
-    return Reflect.apply(original, fs, args);
+    };
+    if (!afterOpen) apply();
+    const fd = Reflect.apply(original, fs, args);
+    if (afterOpen) apply();
+    return fd;
   }) as typeof fs.openSync);
   syncBuiltinESMExports(); let restored = false;
   const restore = () => { if (restored) return; restored = true; spy.mockRestore(); syncBuiltinESMExports(); };
   restores.push(restore);
   return { restore, opens: () => opens, effects: () => effects };
+}
+/** Replace after the real post-read fstat returns, before its caller sees the name. */
+function afterReadStat(f: Fixture, effect: () => void, maximumEffects = 1) {
+  const original = fs.fstatSync; let effects = 0, insideEffect = false;
+  const observations = new Map<string, number>();
+  const spy = vi.spyOn(fs, 'fstatSync').mockImplementation(((...args: Parameters<typeof fs.fstatSync>) => {
+    const stat = Reflect.apply(original, fs, args);
+    const named = fs.lstatSync(f.file);
+    if (!insideEffect && String(stat.dev) === String(named.dev) && String(stat.ino) === String(named.ino)) {
+      const key = `${stat.dev}:${stat.ino}`, count = (observations.get(key) ?? 0) + 1;
+      observations.set(key, count);
+      if (count === 2 && effects < maximumEffects) {
+        effects++; insideEffect = true;
+        try { effect(); } finally { insideEffect = false; }
+      }
+    }
+    return stat;
+  }) as typeof fs.fstatSync);
+  syncBuiltinESMExports(); let restored = false;
+  const restore = () => { if (restored) return; restored = true; spy.mockRestore(); syncBuiltinESMExports(); };
+  restores.push(restore);
+  return { restore, effects: () => effects };
 }
 function publishNext(f: Fixture, expectedRevision = f.initial.revision) {
   return setResourcePoolAllocation(f.root, f.pool, f.bindings, 60, expectedRevision);
@@ -135,7 +161,7 @@ describe.runIf(process.platform === 'darwin')('owned ledger publication during s
   it('reads the fresh production generation when atomic replacement precedes open without poisoning ownership', async () => {
     const f = await fixture(); const lock = identity(fs.lstatSync(join(f.root, '.resource-console.lock')));
     let published: ReturnType<typeof publishNext> | undefined;
-    const hook = beforeOpen(f, () => { published = publishNext(f); });
+    const hook = aroundOpen(f, () => { published = publishNext(f); });
     expect(f.owner!.snapshot()).toMatchObject({ error: null, jobs: [] }); hook.restore();
     expect(hook.effects()).toBe(1); expect(hook.opens()).toBe(2);
     expect(readResourcePoolAllocation(f.root, f.pool, f.bindings)).toEqual(published);
@@ -144,22 +170,52 @@ describe.runIf(process.platform === 'darwin')('owned ledger publication during s
     unchangedPolicies(f);
   });
 
+  it.each(['after-open', 'after-snapshot'] as const)('keeps the owner available for a real atomic commit %s', async phase => {
+    const f = await fixture(); let published: ReturnType<typeof publishNext> | undefined;
+    const effect = () => { published = publishNext(f); };
+    const hook = phase === 'after-open' ? aroundOpen(f, effect, 1, true) : afterReadStat(f, effect);
+    expect(f.owner!.snapshot()).toMatchObject({ error: null, jobs: [] }); hook.restore();
+    expect(hook.effects()).toBe(1);
+    expect(readResourcePoolAllocation(f.root, f.pool, f.bindings)).toEqual(published);
+    expect(f.owner!.snapshot().error).toBeNull(); unchangedPolicies(f);
+  });
+
+  it.each(['after-open', 'after-snapshot'] as const)('keeps immutable refusal and the three-read cap for %s publication', async phase => {
+    const f = await fixture(false); let revision = f.initial.revision;
+    const effect = () => { revision = publishNext(f, revision).revision; };
+    const hook = (count: number) => phase === 'after-open' ? aroundOpen(f, effect, count, true) : afterReadStat(f, effect, count);
+    const immutable = hook(1); expect(() => readResourceJson(f.file)).toThrow(); immutable.restore();
+    expect(immutable.effects()).toBe(1);
+    const repeated = hook(10); expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); repeated.restore();
+    expect(repeated.effects()).toBe(3); expect(revision).toBe(5);
+    expect(readResourcePoolAllocation(f.root, f.pool, f.bindings)).toMatchObject({ revision: 5 });
+  });
+
+  it('never admits an unlinked descriptor without a witnessed installed private replacement', async () => {
+    const f = await fixture(false);
+    const hook = aroundOpen(f, () => fs.unlinkSync(f.file), 1, true);
+    expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); hook.restore();
+    expect(hook.effects()).toBe(1); expect(hook.opens()).toBe(1);
+    expect(fs.existsSync(f.file)).toBe(false);
+  });
+
   it('keeps immutable inputs strict for a pre-open replacement and bounds continued publication to three reads', async () => {
     const f = await fixture(false);
-    const immutable = beforeOpen(f, () => { publishNext(f); });
+    const immutable = aroundOpen(f, () => { publishNext(f); });
     expect(() => readResourceJson(f.file)).toThrow(); immutable.restore();
     expect(immutable.effects()).toBe(1); expect(immutable.opens()).toBe(1);
     let revision = 2;
-    const repeated = beforeOpen(f, () => { revision = publishNext(f, revision).revision; }, 10);
+    const repeated = aroundOpen(f, () => { revision = publishNext(f, revision).revision; }, 10);
     expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); repeated.restore();
     expect(repeated.effects()).toBe(3); expect(repeated.opens()).toBe(3); expect(revision).toBe(5);
     expect(readResourcePoolAllocation(f.root, f.pool, f.bindings)).toMatchObject({ revision: 5 });
   });
 
-  it.each(['mode', 'hardlink', 'symlink', 'oversized', 'malformed', 'schema'] as const)(
-    'refuses unsafe pre-open %s replacement without admitting its bytes', async kind => {
+  it.each((['before-open', 'after-open', 'after-snapshot'] as const).flatMap(phase =>
+    (['mode', 'hardlink', 'symlink', 'oversized', 'malformed', 'schema'] as const).map(kind => [phase, kind] as const)))(
+    'refuses unsafe %s %s replacement without admitting its bytes', async (phase, kind) => {
       const f = await fixture(false);
-      const hook = beforeOpen(f, () => {
+      const effect = () => {
         publishNext(f);
         if (kind === 'mode') fs.chmodSync(f.file, 0o604);
         else if (kind === 'hardlink') fs.linkSync(f.file, join(f.root, 'extra-link'));
@@ -168,16 +224,28 @@ describe.runIf(process.platform === 'darwin')('owned ledger publication during s
         } else if (kind === 'oversized') fs.writeFileSync(f.file, Buffer.alloc(4 * 1024 * 1024 + 1, 32));
         else if (kind === 'malformed') fs.writeFileSync(f.file, '{broken\n');
         else { const state = JSON.parse(fs.readFileSync(f.file, 'utf8')); state.schemaVersion = 99; fs.writeFileSync(f.file, JSON.stringify(state)); }
-      });
+      };
+      const hook = phase === 'after-snapshot' ? afterReadStat(f, effect) : aroundOpen(f, effect, 1, phase === 'after-open');
       expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); hook.restore();
-      expect(hook.effects()).toBe(1); expect(hook.opens()).toBeLessThanOrEqual(2);
+      expect(hook.effects()).toBe(1);
       expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow();
     });
+
+  it.each(['mode', 'size', 'mtime'] as const)('refuses an observed in-place %s change after the descriptor snapshot', async kind => {
+    const f = await fixture(false), before = fs.lstatSync(f.file);
+    const hook = afterReadStat(f, () => {
+      if (kind === 'mode') fs.chmodSync(f.file, 0o604);
+      else if (kind === 'size') fs.appendFileSync(f.file, ' ');
+      else fs.utimesSync(f.file, new Date(), new Date(before.mtimeMs + 2000));
+    });
+    expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); hook.restore();
+    expect(hook.effects()).toBe(1); expect(identity(fs.lstatSync(f.file))).toEqual(identity(before));
+  });
 
   it('does not treat a replaced parent directory as an ordinary ledger publication', async () => {
     const f = await fixture(false);
     const bytes = fs.readFileSync(f.file);
-    const hook = beforeOpen(f, () => {
+    const hook = aroundOpen(f, () => {
       fs.renameSync(f.root, join(f.base, 'retained-ledger')); fs.mkdirSync(f.root, { mode: 0o700 });
       fs.writeFileSync(f.file, bytes, { mode: 0o600 });
     });

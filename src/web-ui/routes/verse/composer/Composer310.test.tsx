@@ -287,6 +287,8 @@ describe('pickers', () => {
     await renderReady();
     act(() => { window.dispatchEvent(new CustomEvent('ashlr:command', { detail: { id: 'composer.cloud' } })); });
     const sheet = await screen.findByRole('dialog', { name: 'Chat settings' });
+    // The dialog commits before its real lazy action chunks have settled.
+    await act(async () => { await vi.dynamicImportSettled(); });
     expect(await within(sheet).findByRole('button', { name: 'Run in cloud' })).toBeInTheDocument();
   });
 });

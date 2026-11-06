@@ -192,6 +192,8 @@ interface Harness {
   resolveBestOfNCount: typeof import('../src/core/run/best-of-n.js').resolveBestOfNCount;
   maxCandidates: number;
   maxConcurrency: number;
+  runTests: ReturnType<typeof vi.fn>;
+  runTestsForProposal: ReturnType<typeof vi.fn>;
   setStatus: ReturnType<typeof vi.fn>;
   recordBestOfN: ReturnType<typeof vi.fn>;
   captureSandboxedProposal?: ReturnType<typeof vi.fn>;
@@ -344,15 +346,15 @@ async function harness(opts: {
   vi.doMock('../src/core/fleet/manager.js', () => ({
     judgeProposal,
   }));
-  if (opts.runTests || opts.runTestsForProposal || opts.draftMode) {
-    const runTests = opts.runTests ?? vi.fn(async () => true);
-    const runTestsForProposal = opts.runTestsForProposal ?? vi.fn(async () => true);
-    const runTestsModule = () => ({
-      runTests,
-      runTestsForProposal,
-    });
-    vi.doMock('../src/core/run/run-tests.js', runTestsModule);
-  }
+  // Every producer/storage boundary in this harness is synthetic, including
+  // proposal IDs and /tmp/fake-repo. Bind its neutral verification result too:
+  // importing the real sandbox verifier here otherwise cold-loads its complete
+  // process/authority graph inside the first fan-out case's 5-second deadline.
+  // Explicit failure, in-memory draft and cancellation verifiers below retain
+  // their own behavior and call assertions.
+  const runTests = opts.runTests ?? vi.fn(async () => true);
+  const runTestsForProposal = opts.runTestsForProposal ?? vi.fn(async () => true);
+  vi.doMock('../src/core/run/run-tests.js', () => ({ runTests, runTestsForProposal }));
   const setStatus = vi.fn();
   vi.doMock('../src/core/inbox/store.js', () => ({
     loadProposal: vi.fn((id: string) => filedProposals.get(id) ?? null),
@@ -384,6 +386,8 @@ async function harness(opts: {
   const mod = await import('../src/core/run/best-of-n.js?m333=' + randomUUID());
   return {
     runBestOfN: mod.runBestOfN,
+    runTests,
+    runTestsForProposal,
     resolveBestOfNCount: mod.resolveBestOfNCount,
     maxCandidates: mod.MAX_BEST_OF_N_CANDIDATES,
     maxConcurrency: mod.MAX_BEST_OF_N_CONCURRENCY,
@@ -457,6 +461,11 @@ describe('M333 — fan-out containment', () => {
     expect(result.candidates).toHaveLength(h.maxCandidates);
     expect(boundedRunner).toHaveBeenCalledTimes(h.maxCandidates);
     expect(maxActive).toBeLessThanOrEqual(h.maxConcurrency);
+    expect(h.runTests).toHaveBeenCalledTimes(h.maxCandidates);
+    for (let i = 0; i < h.maxCandidates; i += 1) {
+      expect(h.runTests).toHaveBeenCalledWith(`proposal-bounded-${i}`, cfg, 'quick', undefined);
+    }
+    expect(h.runTestsForProposal).not.toHaveBeenCalled();
   });
 
   it('fails a malformed direct override closed instead of falling back to config fan-out', async () => {
