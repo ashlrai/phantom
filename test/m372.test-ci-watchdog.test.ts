@@ -5,6 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+import { darwinCapacityDiagnostics } from '../scripts/test-ci-capacity-diagnostics.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const wrapper = resolve(here, '..', 'scripts', 'test-ci.mjs');
 const progressReporter = pathToFileURL(resolve(here, '..', 'scripts', 'vitest-progress-reporter.mjs')).href;
@@ -286,5 +288,33 @@ describe('test-ci watchdog', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(124);
     expect(result.stderr).toContain('idle-timeout');
+  });
+});
+
+
+describe('value-free Darwin capacity observations', () => {
+  it('keeps independently observed counters distinct without counting purgeable twice', () => {
+    const calls: Array<[string, string[]]> = [];
+    const report = darwinCapacityDiagnostics({ cpuCount: 3, totalBytes: 1_000_000,
+      rawFreeBytes: 123, availableBytes: 456, read: (file: string, args: string[]) => {
+        calls.push([file, args]);
+        return file === '/usr/bin/vm_stat'
+          ? 'Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free: 2.\nPages inactive: 3.\nPages speculative: 4.\nPages purgeable: 1.\n'
+          : '1\n';
+      } });
+    expect(report).toEqual({ schema: 'phantom-test-capacity/v1', sample: 'after-worker-policy',
+      cpuCount: 3, totalBytes: 1_000_000, rawFreeBytes: 123, availableBytes: 456,
+      vmFreeBytes: 8192, inactiveBytes: 12288, speculativeBytes: 16384, purgeableBytes: 4096, pressureLevel: 1 });
+    expect(calls).toEqual([['/usr/bin/vm_stat', []], ['/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']]]);
+    expect(Object.keys(report)).not.toContain('allowed');
+  });
+  it('does not expose private command failures or infer capacity from malformed observations', () => {
+    const report = darwinCapacityDiagnostics({ cpuCount: 2, totalBytes: 10, rawFreeBytes: 4, availableBytes: 4,
+      read: () => { throw new Error('PRIVATE-COMMAND-DETAIL'); } });
+    expect(report).toMatchObject({ vmFreeBytes: null, inactiveBytes: null, speculativeBytes: null, purgeableBytes: null, pressureLevel: null });
+    expect(JSON.stringify(report)).not.toContain('PRIVATE');
+    const malformed = darwinCapacityDiagnostics({ totalBytes: 10, read: (file: string) =>
+      file === '/usr/bin/vm_stat' ? '(page size of 4096 bytes)\nPages free: 2.\nPages free: 3.\n' : '0' });
+    expect(malformed).toMatchObject({ vmFreeBytes: null, inactiveBytes: null, speculativeBytes: null, purgeableBytes: null, pressureLevel: null });
   });
 });

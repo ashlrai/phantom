@@ -125,6 +125,7 @@ it('keeps checking a later draft after an unreadable middle one', async () => {
   });
   expect(code).toBe(2);
   expect(c.out).toEqual([
+    'snapshot: origin/master -> unavailable',
     `== ${a}`,
     'src/new.ts missing',
     'verdict: fresh',
@@ -198,7 +199,7 @@ it('keeps single-file syntax, output and exit codes unchanged', async () => {
   const c2 = capture();
   const fresh = draft(dir, 'fresh.md', 'src/new.ts test/new.test.ts\n');
   expect(await cmdFleetJobPrecheck([fresh], { git: fakeGit({}), log: c2.log, error: c2.error })).toBe(0);
-  expect(c2.out).toEqual(['src/new.ts missing', 'test/new.test.ts missing', 'verdict: fresh']);
+  expect(c2.out).toEqual(['snapshot: origin/master -> unavailable', 'src/new.ts missing', 'test/new.test.ts missing', 'verdict: fresh']);
   const c3 = capture();
   expect(await cmdFleetJobPrecheck([join(dir, 'absent.md')], { git: fakeGit({}), log: c3.log, error: c3.error })).toBe(2);
   expect(c3.err[0]).toContain('error: cannot read');

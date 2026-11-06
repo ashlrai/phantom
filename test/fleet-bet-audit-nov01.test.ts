@@ -206,7 +206,7 @@ describe('cmdFleetBetAudit', () => {
   it.each([
     ['--hours'], ['--hours', 'x'], ['--hours', '0'], ['--hours', '-3'], ['--hours', '5', '--hours', '6'],
     ['--runs-dir'], ['--runs-dir', 'relative/path'], ['--wat'], ['positional'], ['--json', '--json', '--bad'],
-  ])('exits 2 on bad usage: %j', async (...args) => {
+  ])('exits 2 on bad usage: %j (%#)', async (...args) => {
     expect(await cmdFleetBetAudit(args)).toBe(2);
   });
 

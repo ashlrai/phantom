@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { assessHostHeadroom, createHostHeadroomGate, parseSwapUsage, parseVmStat,
+import { assessHostHeadroom, createHostHeadroomGate, parsePressureLevel, parseSwapUsage, parseVmStat,
   readMacHostHeadroom } from '../src/core/run/host-headroom.js';
 
 const vm = readFileSync(new URL('./fixtures/host-headroom/vm_stat.txt', import.meta.url), 'utf8');
@@ -40,56 +40,67 @@ describe('recorded macOS memory telemetry', () => {
     expect(parseSwapUsage(text)).toBeNull();
   });
 
-  it('collects both fixed commands with a fixture reader', () => {
-    const read = vi.fn((file: string) => file === '/usr/bin/vm_stat' ? vm : swap);
-    expect(readMacHostHeadroom(read, total)).toEqual({ freePercent: parseVmStat(vm, total), swapGb: 19813 / 1024 });
-    expect(read.mock.calls).toEqual([['/usr/bin/vm_stat', []], ['/usr/sbin/sysctl', ['vm.swapusage']]]);
+  it.each([['1\n', 1], ['2\n', 2], ['4\n', 4]])('parses kernel pressure %j', (text, expected) => {
+    expect(parsePressureLevel(text)).toBe(expected);
+  });
+
+  it.each(['', '0', '3', '5', '-1', '1.0', '1 garbage', '1\n2', 'normal', 'NaN'])(
+    'rejects unknown or malformed kernel pressure %j', (text) => {
+      expect(parsePressureLevel(text)).toBeNull();
+    });
+
+  it('collects fixed bounded telemetry commands with a fixture reader', () => {
+    const read = vi.fn((file: string, args: string[]) => file === '/usr/bin/vm_stat' ? vm
+      : args[0] === 'vm.swapusage' ? swap : '1\n');
+    expect(readMacHostHeadroom(read, total)).toEqual({ freePercent: parseVmStat(vm, total), swapGb: 19813 / 1024, pressureLevel: 1 });
+    expect(read.mock.calls).toEqual([
+      ['/usr/bin/vm_stat', []], ['/usr/sbin/sysctl', ['vm.swapusage']],
+      ['/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']],
+    ]);
   });
 
   it('fails closed on command errors or partial readings without exposing errors', () => {
     expect(readMacHostHeadroom(() => { throw new Error('private process details'); }, total)).toBeNull();
     expect(readMacHostHeadroom(() => vm, total)).toBeNull();
+    const read = (pressure: string) => (file: string, args: string[]) => file === '/usr/bin/vm_stat' ? vm
+      : args[0] === 'vm.swapusage' ? swap : pressure;
+    expect(readMacHostHeadroom(read(''), total)).toBeNull();
+    expect(readMacHostHeadroom(read('1 junk'), total)).toBeNull();
+    expect(readMacHostHeadroom((file, args) => {
+      if (args[0] === '-n') throw new Error('ETIMEDOUT private process details');
+      return file === '/usr/bin/vm_stat' ? vm : swap;
+    }, total)).toBeNull();
   });
 });
 
-describe('launch refusal and hysteresis', () => {
-  it.each([[29.99, 0, false], [60, 8.01, false], [30, 8, true], [100, 0, true]])(
-    'free %s swap %s allows %s', (freePercent, swapGb, allowed) => {
-      expect(assessHostHeadroom({ freePercent, swapGb }).allowed).toBe(allowed);
-    });
-
-  it('holds every lane through the deadband and resumes only when both metrics recover', () => {
-    let reading = { freePercent: 40, swapGb: 9 };
-    const gate = createHostHeadroomGate(() => reading);
-    expect(gate().allowed).toBe(false);
-    for (const next of [{ freePercent: 40, swapGb: 8 }, { freePercent: 40, swapGb: 6.01 },
-      { freePercent: 34.99, swapGb: 6 }]) {
-      reading = next;
-      expect(gate().allowed).toBe(false);
-    }
-    reading = { freePercent: 35, swapGb: 6 };
-    expect(gate().allowed).toBe(true);
-    reading = { freePercent: 30, swapGb: 8 };
-    expect(gate().allowed).toBe(true);
-    reading = { freePercent: 29, swapGb: 0 };
-    expect(gate().allowed).toBe(false);
-    reading = { freePercent: 32, swapGb: 0 };
-    expect(gate().allowed).toBe(false);
-    reading = { freePercent: 35, swapGb: 0 };
-    expect(gate().allowed).toBe(true);
+describe('launch refusal based on kernel pressure', () => {
+  it('admits normal pressure even with 26% raw free and 5.8 GiB historical swap', () => {
+    expect(assessHostHeadroom({ freePercent: 26, swapGb: 5.8, pressureLevel: 1 })).toMatchObject({ allowed: true, reason: null });
   });
 
-  it('keeps the recovery latch through unknown telemetry and reader exceptions', () => {
-    const read = vi.fn().mockReturnValueOnce(null).mockImplementationOnce(() => { throw new Error('unavailable'); })
-      .mockReturnValueOnce({ freePercent: 32, swapGb: 7 }).mockReturnValue({ freePercent: 35, swapGb: 6 });
+  it.each([2, 4] as const)('holds pressure level %s even with ample raw free and no swap', (pressureLevel) => {
+    expect(assessHostHeadroom({ freePercent: 99, swapGb: 0, pressureLevel }).allowed).toBe(false);
+  });
+
+  it('samples each attempt and immediately resumes when kernel pressure returns to normal', () => {
+    const read = vi.fn()
+      .mockReturnValueOnce({ freePercent: 99, swapGb: 0, pressureLevel: 2 })
+      .mockReturnValueOnce(null)
+      .mockImplementationOnce(() => { throw new Error('unavailable'); })
+      .mockReturnValueOnce({ freePercent: 26, swapGb: 5.8, pressureLevel: 1 })
+      .mockReturnValueOnce({ freePercent: 99, swapGb: 0, pressureLevel: 4 });
     const gate = createHostHeadroomGate(read);
-    expect(gate().allowed).toBe(false);
-    expect(gate().allowed).toBe(false);
-    expect(gate().allowed).toBe(false);
-    expect(gate().allowed).toBe(true);
+    expect([gate().allowed, gate().allowed, gate().allowed, gate().allowed, gate().allowed])
+      .toEqual([false, false, false, true, false]);
+    expect(read).toHaveBeenCalledTimes(5);
   });
 
-  it.each([null, { freePercent: NaN, swapGb: 0 }, { freePercent: 101, swapGb: 0 },
-    { freePercent: -1, swapGb: 0 }, { freePercent: 40, swapGb: Infinity }, { freePercent: 40, swapGb: -1 }])(
-    'refuses invalid telemetry %j', (reading) => { expect(assessHostHeadroom(reading).allowed).toBe(false); });
+  it.each([null, { freePercent: NaN, swapGb: 0, pressureLevel: 1 },
+    { freePercent: 101, swapGb: 0, pressureLevel: 1 }, { freePercent: -1, swapGb: 0, pressureLevel: 1 },
+    { freePercent: 40, swapGb: Infinity, pressureLevel: 1 }, { freePercent: 40, swapGb: -1, pressureLevel: 1 },
+    { freePercent: 40, swapGb: 0 }, { freePercent: 40, swapGb: 0, pressureLevel: 0 },
+    { freePercent: 40, swapGb: 0, pressureLevel: 3 }, { freePercent: 40, swapGb: 0, pressureLevel: '1' }])(
+    'refuses invalid telemetry %j', (reading) => {
+      expect(assessHostHeadroom(reading as Parameters<typeof assessHostHeadroom>[0]).allowed).toBe(false);
+    });
 });

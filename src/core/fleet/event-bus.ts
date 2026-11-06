@@ -292,6 +292,11 @@ export function _clearHandlers(): void {
   _registry.clear();
 }
 
+/** Registered-handler count per kind seen so far (removed kinds stay at 0). For testing only. */
+export function _handlerCounts(): Record<string, number> {
+  return Object.fromEntries([..._registry].map(([kind, handlers]) => [kind, handlers.size]));
+}
+
 // ---------------------------------------------------------------------------
 // Built-in handler (a): regression:detected → enqueue a fix goal/work-item
 // ---------------------------------------------------------------------------

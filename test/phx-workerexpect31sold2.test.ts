@@ -115,7 +115,7 @@ describe('fleet workers minimum expectation', () => {
     ...['-1', '+1', '1.0', '1e2', 'NaN', 'Infinity', '9007199254740992', ' 1', '1 ']
       .map(value => ['--json', '--expect-min', value]),
     ['--json', '--expect-min', '1', '--expect-min', '2'],
-  ])('rejects invalid arguments %j before reading processes', async (...args) => {
+  ])('rejects invalid arguments %j before reading processes (%#)', async (...args) => {
     expect(await cmdFleet(['workers', ...args])).toBe(2);
     expect(fake.reads).toBe(0);
     expect(output).toEqual([]);

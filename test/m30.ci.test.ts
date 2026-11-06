@@ -16,6 +16,8 @@ import { dirname, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { parse } from 'yaml';
+// Plain-JS CI proof helper; exercised here as the real contract, not a copy.
+import { proveHistoryFastPath } from '../.github/scripts/ci-history-source.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -351,7 +353,7 @@ describe('M30 CI workflow', () => {
     }
     const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
-    expect(drift.if).toBeUndefined();
+    expect(drift.if).toBe("steps.history.outputs.equal != 'true'");
     expect(drift['continue-on-error']).toBeUndefined();
     expect(drift.env).toBeUndefined();
     expect(drift.run).toBe(
@@ -359,6 +361,125 @@ describe('M30 CI workflow', () => {
       'test/authority-codeowners-310b.test.ts test/authority-tier1-closure-310b.test.ts',
     );
     expect(quick.steps[0].with.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
+  });
+
+  it('gates only the expensive Quick steps on the proven source-identical flag', () => {
+    type Step = { name?: string; id?: string; if?: string; env?: Record<string, string>; run?: string; uses?: string };
+    const quick = (parse(ciYml).jobs as Record<string, { steps: Step[] }>).quick;
+    const step = (name: string) => {
+      const found = quick.steps.find((entry) => entry.name === name);
+      expect(found, `missing step ${name}`).toBeDefined();
+      return found!;
+    };
+    const proof = step('Prove source-identical history fast path');
+    expect(proof.id).toBe('history');
+    expect(proof.env?.GH_TOKEN).toBe('${{ github.token }}');
+    expect(proof.run).toContain('ci-history-source.mjs');
+    expect(proof.run).toContain('github-repository-binding.mjs');
+    expect(proof.run).toContain('GITHUB_OUTPUT');
+    // The proof step itself is PR/merge-group only; master pushes skip it and
+    // therefore always run every expensive step below.
+    const proofIf = (event: string): boolean => Boolean(runInNewContext(
+      `(${proof.if!.replace(/github\.event_name/g, 'event')})`,
+      { event },
+    ));
+    for (const event of ['pull_request', 'merge_group']) expect(proofIf(event), event).toBe(true);
+    for (const event of ['push', 'schedule', 'workflow_dispatch', 'workflow_call']) expect(proofIf(event), event).toBe(false);
+    // Ordering: proof runs after Node setup and before any dependency install.
+    const names = quick.steps.map((entry) => entry.name);
+    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
+    expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
+    // Every expensive step shares the exact same trusted flag — no variant.
+    const expensive = ['Install dependencies', 'Core no-emit type check', 'Check authority drift (hermetic)'];
+    for (const name of expensive) {
+      expect(step(name).if, name).toBe("steps.history.outputs.equal != 'true'");
+    }
+    // Execute the actual workflow predicate: skip only when the flag is the
+    // exact string 'true'; every fallback shape (false, unset, empty) runs.
+    const runs = (condition: string, equal: string | undefined): boolean => Boolean(runInNewContext(
+      `(${condition.replace(/steps\.history\.outputs\.equal/g, JSON.stringify(equal ?? ''))})`,
+    ));
+    for (const name of expensive) {
+      const condition = step(name).if!;
+      expect(runs(condition, 'true'), `${name} skips on proven equality`).toBe(false);
+      for (const fallback of ['false', undefined, '']) {
+        expect(runs(condition, fallback), `${name} runs on ${String(fallback)}`).toBe(true);
+      }
+    }
+    // A tampered or unknown flag spelling must never satisfy the skip either.
+    for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
+      expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
+    }
+    // Only the three expensive steps may key off the proof output — nothing
+    // else in Quick (caches, checkout, setup) may silently join the fast path.
+    const gated = quick.steps
+      .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
+      .map((entry) => entry.name)
+      .sort();
+    expect(gated).toEqual([...expensive].sort());
+  });
+
+  it('executes the real history proof contract for equal and fallback outcomes', async () => {
+    // The helper's git/event/api boundaries are injected; every binding inside
+    // proveHistoryFastPath itself executes for real. Owned-repo git fixtures
+    // for the same contract live in .github/tests/ci-history-source.test.mjs.
+    const base = 'a'.repeat(40); const candidate = 'b'.repeat(40); const tree = 'c'.repeat(40);
+    const eventJson = JSON.stringify({
+      pull_request: {
+        number: 42,
+        head: { sha: candidate, repo: { id: 42 } },
+        base: { sha: base, ref: 'master', repo: { id: 1263526319 } },
+      },
+    });
+    const env = {
+      GITHUB_EVENT_NAME: 'pull_request',
+      GITHUB_SHA: candidate,
+      GITHUB_REF: 'refs/pull/42/merge',
+      ASHLR_HISTORY_PROOF_SOURCE_SHA: base,
+      GITHUB_REPOSITORY: 'ashlrai/phantom',
+      GITHUB_REPOSITORY_ID: '1263526319',
+      GITHUB_REPOSITORY_OWNER_ID: '258113726',
+      GITHUB_EVENT_PATH: 'event.json',
+      GITHUB_WORKSPACE: '/checkout',
+      GH_TOKEN: 'test-token',
+    };
+    const repoRow = {
+      id: 1263526319, node_id: 'R_kgDOS0_hrw', name: 'phantom', full_name: 'ashlrai/phantom',
+      owner: { login: 'ashlrai', id: 258113726 }, default_branch: 'master',
+      private: false, visibility: 'public',
+    };
+    const api = async (path: string) => {
+      if (path === 'repos/ashlrai/phantom') return repoRow;
+      if (path === 'repos/ashlrai/phantom/branches/master') return { name: 'master', protected: true, commit: { sha: base } };
+      if (path === 'repos/ashlrai/phantom/git/ref/heads/master') {
+        return { ref: 'refs/heads/master', object: { sha: base, type: 'commit' } };
+      }
+      if (path === `repos/ashlrai/phantom/git/commits/${base}`) return { sha: base, tree: { sha: tree }, parents: [] };
+      if (path === `repos/ashlrai/phantom/git/commits/${candidate}`) return { sha: candidate, tree: { sha: tree }, parents: [{ sha: base }] };
+      throw new Error(`unexpected API path ${path}`);
+    };
+    const git = (args: string[]) => {
+      const key = args.join(' ');
+      if (key === 'rev-parse HEAD') return candidate;
+      if (key === 'status --porcelain --untracked-files=normal') return '';
+      if (key === 'rev-parse HEAD^{tree}') return tree;
+      throw new Error(`unexpected git invocation ${key}`);
+    };
+    const deps = { env, api, git, readEvent: () => eventJson, root: '/checkout' };
+    // Positive: the exact whole tracked tree equal to the canonical base proves.
+    await expect(proveHistoryFastPath(deps)).resolves.toBe('equal');
+    // Negatives: every mutated binding refuses through the real helper.
+    const driftedApi = async (path: string) =>
+      path === `repos/ashlrai/phantom/git/commits/${candidate}`
+        ? { sha: candidate, tree: { sha: 'f'.repeat(40) }, parents: [{ sha: base }] }
+        : api(path);
+    await expect(proveHistoryFastPath({ ...deps, api: driftedApi })).rejects.toThrow(/tree differs/);
+    const dirtyGit = (args: string[]) => (args.join(' ') === 'status --porcelain --untracked-files=normal' ? '?? stray' : git(args));
+    await expect(proveHistoryFastPath({ ...deps, git: dirtyGit })).rejects.toThrow(/dirty/);
+    const wrongHead = (args: string[]) => (args.join(' ') === 'rev-parse HEAD' ? base : git(args));
+    await expect(proveHistoryFastPath({ ...deps, git: wrongHead })).rejects.toThrow(/candidate revision/);
+    await expect(proveHistoryFastPath({ ...deps, env: { ...env, GITHUB_EVENT_NAME: 'push' } })).rejects.toThrow(/not eligible/);
+    await expect(proveHistoryFastPath({ ...deps, api: async () => { throw new Error('HTTP 503'); } })).rejects.toThrow();
   });
 
   it('checks out the exact candidate and binds its tree to the original event before gates', () => {
@@ -1241,5 +1362,29 @@ describe('M30 CI workflow', () => {
   it('package.json engines field declares the supported Node floor', () => {
     // Keep npm metadata aligned with install.sh, CI, and release workflows.
     expect(pkg.engines?.node).toBe('>=22.15.0');
+  });
+});
+
+
+describe('complete Mac job runtime envelope', () => {
+  it('matches the existing ninety-minute wrapper without changing test bounds or isolated jobs', () => {
+    expect(workflowJob('mac-general')).toMatch(/timeout-minutes: 90/);
+    expect(workflowJob('mac-general')).toContain("ASHLR_TEST_CI_TIMEOUT_MS: '5400000'");
+    expect(workflowJob('mac-general')).toContain("ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'");
+    expect(workflowJob('mac-general')).toContain('shard: [1, 2, 3, 4]');
+    expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
+  });
+});
+
+
+describe('combined Ubuntu authority runtime envelope', () => {
+  it('budgets the complete web and bounded backend producer without widening other roles', () => {
+    const workflow = parse(ciYml);
+    expect(workflow.jobs.ci['timeout-minutes']).toBe("${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}");
+    expect(workflow.jobs.ci.strategy['fail-fast']).toBe(false);
+    expect(workflowJob('ci')).toContain('node .github/scripts/ci-qualification-lane.mjs web');
+    expect(workflowJob('ci')).toContain('npm run test:ci -- ${{ matrix.test_args }}');
+    expect(readFileSync(resolve(repoRoot, 'scripts/test-ci.mjs'), 'utf8')).toContain('const DEFAULT_HARD_TIMEOUT_MS = 30 * 60_000;');
+    expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
   });
 });

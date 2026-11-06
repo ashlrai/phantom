@@ -135,7 +135,7 @@ describe('fleet wait-jobs bounded artifact join', () => {
     ['--job', 'JOB-A', '--timeout-ms', '1', '--interval-ms', '999', '--json'],
     ['--job', 'JOB-A', '--timeout-ms', '1', '--interval-ms', '60001', '--json'],
     [...Array.from({ length: 33 }, (_, i) => ['--job', `JOB-${i}`]).flat(), '--timeout-ms', '1', '--json'],
-  ])('rejects invalid usage %j', async (...argv) => {
+  ])('rejects invalid usage %j (%#)', async (...argv) => {
     const read = vi.fn(injected.deps.read!);
     injected.deps.read = read;
     expect(await cmdFleet(['wait-jobs', ...argv])).toBe(2);

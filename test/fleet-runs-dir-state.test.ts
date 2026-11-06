@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { cp, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,29 @@ describe('dispatchd runs directory', () => {
     expect(s.sourceState).toBe('missing'); expect(s.runsDirPresent).toBe(false);
     for (const key of ['lanes', 'switches', 'publishesLastHour', 'events', 'claimed'] as const) expect(s[key]).toEqual([]);
     for (const key of ['lastTick', 'paused', 'memFreePct', 'diskFreeGb', 'claudeLane'] as const) expect(s[key]).toBeNull();
+  });
+  it.each([[null, false], ['operator pause', true]] as const)('decodes the owned dispatcher v1 pause representation %s', async (paused, expected) => {
+    const dir = await fixture();
+    const path = join(dir, 'queue/status.json');
+    const original = JSON.parse(await readFile(path, 'utf8'));
+    await writeFile(path, JSON.stringify({ ...original, schema: 'dispatchd.status.v1', paused }));
+    const s = await snapshot(dir);
+    expect(s.sources.status).toBe('healthy'); expect(s.paused).toBe(expected);
+    expect(s.lastTick).toBe('2026-10-31T00:30:00Z'); expect(s.lanes).toHaveLength(1);
+    expect(s.lanes[0].running).toBe(1); expect(s.lanes[0].target).toBe(2);
+    if (paused) expect(JSON.stringify(s)).not.toContain(paused);
+  });
+  it.each([
+    { paused: null }, { schema: 'unknown.status.v1', paused: null },
+    { schema: 'dispatchd.status.v1' }, { schema: 'unknown.status.v1', paused: 'held' },
+    ...['', ' ', 'x'.repeat(501), 0, [], {}].map(paused => ({ schema: 'dispatchd.status.v1', paused })),
+  ])('keeps unknown or malformed pause representations unavailable (%#)', async fields => {
+    const dir = await fixture(); const path = join(dir, 'queue/status.json');
+    const original = JSON.parse(await readFile(path, 'utf8')); delete original.paused;
+    await writeFile(path, JSON.stringify({ ...original, ...fields }));
+    const s = await snapshot(dir);
+    expect(s.sources.status).toBe('degraded'); expect(s.paused).toBeNull();
+    expect(s.lastTick).toBeNull(); expect(s.lanes).toEqual([]);
   });
   it('isolates corrupt status and oversized files', async () => {
     const dir = await fixture(); await writeFile(join(dir, 'queue/status.json'), '{');
@@ -68,6 +91,30 @@ describe('dispatchd runs directory', () => {
     const dir = await fixture();
     const row = JSON.stringify({ event: 'finish', job: 'RQ-FAKE-1', lane: 'codex-personal', tokens_total: 7, ts: '2026-10-31T00:20:00Z' });
     await writeFile(join(dir, 'metrics/jobs.jsonl'), `${'x'.repeat(1024 * 1024)}\n${row}\n`);
-    const s = await snapshot(dir); expect(s.sources.metrics).toBe('healthy'); expect(s.lanes[0].tokensLastHour).toBe(7);
+    const s = await snapshot(dir);
+    // The complete suffix remains parseable, but the omitted prefix could have
+    // contained more current-hour usage. It cannot establish an hourly total.
+    expect(parseJobsMetrics(row, nowMs).tokensByLane['codex-personal']).toBe(7);
+    expect(s.sources.metrics).toBe('degraded'); expect(s.lanes[0].tokensLastHour).toBeNull();
+  });
+  it('projects individual recent publications from ledgers larger than the whole-file cap without inventing hourly totals', async () => {
+    const dir = await fixture();
+    const finish = { event: 'finish', job: 'RQ-FAKE-1', lane: 'codex-personal', tokens_total: 7, ts: '2026-10-31T00:20:00Z' };
+    const publication = { event: 'publish', job: 'RQ-FAKE-1', lane: 'codex-personal', class: 'pr', url: 'https://github.com/example/fake/pull/2', ts: finish.ts };
+    await writeFile(join(dir, 'metrics/jobs.jsonl'), `${'x'.repeat(9 * 1024 * 1024)}\n${JSON.stringify(finish)}\n${JSON.stringify(publication)}\n`);
+    const s = await snapshot(dir);
+    expect(s.sources.status).toBe('healthy'); expect(s.sources.metrics).toBe('degraded');
+    expect(s.lanes[0].tokensLastHour).toBeNull();
+    expect(s.publishesLastHour).toEqual([{ job: publication.job, lane: publication.lane, url: publication.url, at: publication.ts }]);
+  });
+  it('reads recent event rows from large logs while retaining whole-file metadata bounds', async () => {
+    const dir = await fixture();
+    await writeFile(join(dir, 'dispatch-events.log'), `${'x'.repeat(9 * 1024 * 1024)}\n2026-10-31 00:20:00 LAUNCH recent\n`);
+    let s = await snapshot(dir);
+    expect(s.sources.events).toBe('healthy'); expect(s.events).toEqual([{ at: '2026-10-31T00:20:00Z', kind: 'LAUNCH', text: 'recent' }]);
+    await writeFile(join(dir, 'dispatch-events.log'), 'x'.repeat(9 * 1024 * 1024));
+    s = await snapshot(dir); expect(s.sources.events).toBe('degraded'); expect(s.events).toEqual([]);
+    await writeFile(join(dir, 'queue/status.json'), ' '.repeat(8 * 1024 * 1024 + 1));
+    s = await snapshot(dir); expect(s.sources.status).toBe('degraded'); expect(s.lanes).toEqual([]);
   });
 });

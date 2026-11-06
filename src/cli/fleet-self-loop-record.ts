@@ -13,6 +13,7 @@ interface Dependencies {
   rename?: typeof renameSync;
 }
 const MAX_BYTES = 64 * 1024;
+export const USAGE = 'Usage: ashlr fleet self-loop-record --result-file <abs> [--live] [self-loop args]';
 
 // All ancestors must be real directories controlled by the user or root. A
 // root-owned sticky directory (such as /tmp) may be shared safely.

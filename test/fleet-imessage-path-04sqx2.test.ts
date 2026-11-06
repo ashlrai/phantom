@@ -48,11 +48,11 @@ describe('fleet iMessage path', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdFleetImessagePath(['--json', '--json'], good)).toBe(2);
   });
-  it('exposes the convention but the actual dispatcher rejects the missing loader', async () => {
+  it('dispatches the registered command and rejects malformed arguments without probing', async () => {
     expect(resolveFleetSubcommand('imessage-path')?.exportName).toBe('cmdFleetImessagePath');
-    expect(Object.hasOwn(FLEET_SUBCOMMAND_LOADERS, 'imessage-path')).toBe(false);
-    const error = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    expect(await cmdFleet(['imessage-path', '--json'])).toBe(2);
-    expect(error.mock.calls.map(call => String(call[0])).join('')).toContain('unknown fleet subcommand');
+    expect(Object.hasOwn(FLEET_SUBCOMMAND_LOADERS, 'imessage-path')).toBe(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await cmdFleet(['imessage-path', '--json', '--json'])).toBe(2);
+    expect(error.mock.calls.map(call => String(call[0])).join('')).toContain('Usage: ashlr fleet imessage-path');
   });
 });

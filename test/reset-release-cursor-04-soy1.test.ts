@@ -126,7 +126,7 @@ it('rejects malformed and duplicate --after flags before reading', async () => {
   expect(read).not.toHaveBeenCalled();
 });
 
-it('fails closed on an invalid core after option without reading', async () => {
+it('reset-release-await fails closed on an invalid core after option without reading', async () => {
   const read = readSpy();
   for (const after of ['not-a-date', '2026-11-01', '2026-11-01T18:06:00', '2026-11-01T18:06:00+24:00']) {
     expect((await awaitResetRelease({ ...opts, after }, { read, now })).outcome).toBe('failed');
@@ -134,7 +134,7 @@ it('fails closed on an invalid core after option without reading', async () => {
   expect(read).not.toHaveBeenCalled();
 });
 
-it.each(['read', 'sleep'])('cancels during %s with --after and cleans listeners', async phase => {
+it.each(['read', 'sleep'])('reset-release-await cancels during %s with --after and cleans listeners', async phase => {
   const before = process.listenerCount('SIGINT');
   const controller = new AbortController();
   const read = phase === 'read'
@@ -163,7 +163,7 @@ it('exits 1 at the deadline with the audit-only human output under --after', asy
   expect(out[0]).not.toContain(dir);
 });
 
-it('help explains the caller-persisted watermark', async () => {
+it('reset-release-await --help explains the caller-persisted watermark', async () => {
   const read = readSpy();
   const out: string[] = [];
   expect(await cmdFleetResetReleaseAwait(['--help'], { read, emit: text => { out.push(text); } })).toBe(0);

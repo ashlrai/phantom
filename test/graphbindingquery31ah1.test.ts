@@ -101,7 +101,7 @@ describe('graph agent binding queries', () => {
     ['neighbors', 'x', '--agent=worker'], ['nodes', '--agent'], ['edges', '--agent='],
     ['nodes', '--agent', '--kind', 'agent'], ['edges', '--agent', 'x', '--agent=y'],
     ['--agent', 'worker', 'nodes'],
-  ])('rejects invalid arguments %j before loading', async (...args) => {
+  ])('rejects invalid arguments %j before loading (%#)', async (...args) => {
     expect(await query(args, 2)).toMatchObject({ status: 'error', error: { code: 'GRAPH_USAGE' } });
     expect(loader.loadGraph).not.toHaveBeenCalled();
   });

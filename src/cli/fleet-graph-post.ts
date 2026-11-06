@@ -4,7 +4,7 @@ import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const HELP = `ashlr fleet graph-post --file <json> [--apply] [--json]
+const USAGE = `ashlr fleet graph-post --file <json> [--apply] [--json]
 Input: {batchId, completed: [taskId], tasks: [{id, dependsOn?: [taskId], envelope}]}.
 Preview is the default. Maximum 256 KiB, 256 tasks, 32 ready messages.
 Apply delivers bus work requests only; it does not execute jobs or mark completion.
@@ -13,7 +13,7 @@ Exit 0 preview/complete delivery, 1 transport refusal, 2 invalid input.`;
 export async function cmdFleetGraphPost(args: string[], options: BusInboxOptions = {},
   deps: { emit?: (text: string) => void } = {}): Promise<number> {
   const emit = deps.emit ?? console.log;
-  if (args.includes('--help') || args.includes('-h')) { emit(HELP); return 0; }
+  if (args.includes('--help') || args.includes('-h')) { emit(USAGE); return 0; }
   let file: string | undefined, apply = false, json = false, valid = true;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];

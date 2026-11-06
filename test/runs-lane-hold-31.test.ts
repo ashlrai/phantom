@@ -41,6 +41,34 @@ it('never releases a hold a person placed', async () => {
   await expect(releaseLaneHold('devin', { runsDir, now })).rejects.toMatchObject({ code: 'manual-hold', status: 422 });
   expect(await readFile(path, 'utf8')).toBe(original);
 });
+it('releases an autobackoff hold with omitted false flags elsewhere and preserves manual holds', async () => {
+  const data = fixture();
+  const unheld = { ...data.claude } as Record<string, unknown>;
+  delete unheld.held;
+  await writeFile(path, JSON.stringify({ ...data, claude: unheld, last_change_by: 'Existing operator attribution' }));
+  expect(await releaseLaneHold('codex-personal', { runsDir, now })).toMatchObject({ sourceState: 'healthy' });
+  const after = JSON.parse(await readFile(path, 'utf8'));
+  expect(after['codex-personal'].held).toBe(false);
+  expect(after.claude).toEqual(unheld);
+  expect(after.devin).toEqual(data.devin);
+  expect(after.last_change_by).toBe('Existing operator attribution');
+  await expect(releaseLaneHold('devin', { runsDir, now })).rejects.toMatchObject({ code: 'manual-hold', status: 422 });
+  await expect(releaseLaneHold('claude', { runsDir, now })).rejects.toMatchObject({ code: 'not-held', status: 422 });
+});
+it.each([null, 0, 1, 'false', {}, []])('refuses an explicitly malformed hold flag before release (%j)', async held => {
+  const data = fixture();
+  Object.assign(data.claude, { held });
+  const original = JSON.stringify(data);
+  await writeFile(path, original);
+  await expect(releaseLaneHold('codex-personal', { runsDir, now })).rejects.toMatchObject({ code: 'unavailable', status: 503 });
+  expect(await readFile(path, 'utf8')).toBe(original);
+});
+it.each([{ last_change_by: {} }, { unknown_metadata: 'not a lane' }])('refuses malformed or unknown global metadata before release (%j)', async extra => {
+  const original = JSON.stringify({ ...fixture(), ...extra });
+  await writeFile(path, original);
+  await expect(releaseLaneHold('codex-personal', { runsDir })).rejects.toMatchObject({ code: 'unavailable' });
+  expect(await readFile(path, 'utf8')).toBe(original);
+});
 it('rejects open and unknown lanes without rewriting', async () => {
   const original = await readFile(path, 'utf8');
   for (const [lane, code] of [['claude', 'not-held'], ['absent', 'unknown-lane']] as const) {

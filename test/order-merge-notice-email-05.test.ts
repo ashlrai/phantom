@@ -26,7 +26,7 @@ it('queues one reply for the single allowed sender, idempotently', async () => {
   const { root, outbox, senders } = setup(['mason@example.test']);
   expect(await sendOrderMergeNotices(root, notices(), senders)).toEqual({ sent: 1, skipped: 0, failed: 0 });
   const listing = readEmailOutbox(outbox);
-  expect(listing.counts).toEqual({ queued: 1, sent: 0, stuck: 0 });
+  expect(listing.counts).toEqual({ queued: 1, sent: 0, stuck: 0, drafted: 0 });
   expect(listing.entries[0]).toMatchObject({ state: 'queued', to: 'mason@example.test', subject: 'Phantom: merged for your order' });
   expect(statSync(join(outbox, listing.entries[0]!.name)).mode & 0o777).toBe(0o600);
   expect(readOrderNoticeLedger(root).has('e-42:RQ-FAKE1')).toBe(true);

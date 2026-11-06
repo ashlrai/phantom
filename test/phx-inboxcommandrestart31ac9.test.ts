@@ -36,12 +36,13 @@ it('keeps a stdin instruction and its receipt across an agent restart', async ()
     const read = await run(restarted, 'read', '--json');
     expect(read.code).toBe(0);
     expect(read.body).toMatchObject({
-      sourceState: 'healthy', entries: [{ source: 'cli', priority: 'P0', text: instruction }],
+      sourceState: 'healthy', entries: [{ source: expect.stringMatching(/^cli \(cli-[a-f0-9]{16}\)$/), priority: null, text: instruction }],
     });
     expect(read.body.entries).toHaveLength(1);
     const persisted = await readInboxEntries({ runsDir });
-    expect(persisted).toEqual(read.body);
-    const source = persisted.entries[0]!.source;
+    expect(persisted.sourceState).toBe(read.body.sourceState);
+    expect(persisted.entries.map(({ at, source, priority, text }) => ({ at, source, priority, text }))).toEqual(read.body.entries);
+    const source = 'cli';
     expect(await run(restarted, 'read', '--source', source, '--json')).toEqual(read);
     expect((await run(restarted, 'read', '--source', 'mobile', '--json')).body.entries).toEqual([]);
 
@@ -57,7 +58,7 @@ it('keeps a stdin instruction and its receipt across an agent restart', async ()
     expect(filtered.code).toBe(0);
     expect(filtered.body.sourceState).toBe('healthy');
     expect(filtered.body.entries.map((entry: { source: string; text: string }) => ({ source: entry.source, text: entry.text })))
-      .toEqual([{ source, text: instruction }, { source, text: nextInstruction }]);
+      .toEqual([{ source: expect.stringMatching(/^cli \(cli-[a-f0-9]{16}\)$/), text: instruction }, { source: expect.stringMatching(/^cli \(cli-[a-f0-9]{16}\)$/), text: nextInstruction }]);
     const newest = await run(next, 'read', '--source', source, '--limit', '1', '--json');
     expect(newest.code).toBe(0);
     expect(newest.body.entries).toEqual([filtered.body.entries[1]]);

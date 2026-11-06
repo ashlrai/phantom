@@ -51,7 +51,9 @@ describe('channel to context example', { timeout: 30_000 }, () => {
     const inbox = await readInboxEntries({ runsDir: join(root, 'runs') });
     expect(inbox.sourceState).toBe('healthy');
     expect(inbox.entries).toHaveLength(1);
-    expect(inbox.entries[0]).toMatchObject({ source: 'desktop', priority: 'P0', text: result.first.envelope.body });
+    expect(inbox.entries[0]).toMatchObject({ channel: 'desktop', id: expect.stringMatching(/^desk-[a-f0-9]{16}$/),
+      source: expect.stringMatching(/^desktop \(desk-[a-f0-9]{16}\)$/), priority: null, text: result.first.envelope.body });
+    expect(inbox.entries[0]!.source).toBe(`desktop (${inbox.entries[0]!.id})`);
     const receipts = JSON.parse(readFileSync(join(root, 'runs/channel-receipts/receipts.json'), 'utf8')) as unknown[];
     expect(receipts).toHaveLength(1);
     const persisted = JSON.parse(readFileSync(join(root, 'bus/bus-inbox/messages.json'), 'utf8')) as

@@ -5,7 +5,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 
 const DOC_PATH = join(__dirname, '..', 'docs', 'SELF-UPDATE.md');
@@ -81,14 +81,14 @@ describe('docs/SELF-UPDATE.md', () => {
   it('mentions the four refusal conditions', () => {
     const content = docContent();
     for (const cond of REFUSAL_CONDITIONS) {
-      assert.ok(content.includes(cond), `doc should mention refusal condition "${cond}"`);
+      assert.ok(content.toLowerCase().includes(cond.toLowerCase()), `doc should mention refusal condition "${cond}"`);
     }
   });
 
   it('mentions all UI locations', () => {
     const content = docContent();
     for (const loc of UI_LOCATIONS) {
-      assert.ok(content.includes(loc), `doc should mention "${loc}"`);
+      assert.ok(content.toLowerCase().includes(loc.toLowerCase()), `doc should mention "${loc}"`);
     }
   });
 

@@ -70,7 +70,7 @@ describe('fleet handoff-pipe', () => {
   it.each([
     Buffer.alloc(64 * 1024 + 1, 65), Buffer.from([0xc3, 0x28]), Buffer.from([0xe2, 0x82]),
     Buffer.from(JSON.stringify({ ...handoff, constraints: [{ rule: 'Keep it', reason: '' }] })),
-  ])('rejects oversized, invalid UTF-8, or invalid handoffs without writing', async bytes => {
+  ])('rejects oversized, invalid UTF-8, or invalid handoffs without writing (%#)', async bytes => {
     expect(await run(Readable.from([bytes]), ['--apply', '--json'])).toBe(1);
     expect(report()).toMatchObject({ valid: false });
     expect(existsSync(root)).toBe(false);
@@ -92,7 +92,7 @@ describe('fleet handoff-pipe', () => {
     ['--id', 'x', '--from', 'a', '--to', 'b'], ['--stdin', '--id', 'x', '--from', 'a'],
     [...args, '--input-timeout-ms', '0'], [...args, '--input-timeout-ms', '60001'],
     [...args, '--input-timeout-ms', '1.5'], [...args, '--input-timeout-ms', '1', '--input-timeout-ms', '2'],
-  ])('rejects invalid arguments before reading', async (...argv) => {
+  ])('rejects invalid arguments before reading (%#)', async (...argv) => {
     const input = new PassThrough();
     expect(await run(input, [], argv)).toBe(2);
     expect(input.listenerCount('data')).toBe(0);
