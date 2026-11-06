@@ -68,6 +68,12 @@ send is never automatically repeated. Pure acknowledgements and artifact-only
 updates produce no reply. Pending and uncertain records are preserved when
 storage is full. A native transport return alone does not prove delivery.
 
+A healthy pass with an empty inbox establishes that the worker ran. Qualify a
+live route with a fresh teammate task question, then inspect the private reply
+receipt for an exact outgoing message match and its sent/delivered flags. Keep
+that evidence tied to the actual responsible native app and source revision;
+a foreground CLI result does not establish desktop background operation.
+
 ## Check it
 
 ```bash
