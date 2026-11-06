@@ -793,6 +793,21 @@ export async function buildPlannerPlan(deps: PlannerPlanDeps = {}): Promise<Plan
 
 export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_LEADER_PATH && !path.startsWith(`${VERSE_LEADER_PATH}/`)) return false;
+  if (path === `${VERSE_LEADER_PATH}/inbox`) {
+    if (method === 'GET') {
+      if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) { sendJson(res, 401, { error: 'A current read session is required.' }); return true; }
+      const { readLeaderInbox } = await import('../agents/leader-network-runtime.js');
+      sendJson(res, 200, await readLeaderInbox()); return true;
+    }
+    if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    const body = await readMutationBody(ctx, req, res, false);
+    if (!body) return true;
+    if (Object.keys(body).some(key => key !== 'text' && key !== 'source') || typeof body.text !== 'string' ||
+        (body.source !== undefined && body.source !== 'Phantom desktop')) { sendInvalid(res, 'invalid inbox body'); return true; }
+    const { composeLeaderInbox } = await import('../agents/leader-network-runtime.js');
+    const result = await composeLeaderInbox(body.text);
+    sendJson(res, result.ok ? 200 : 403, result); return true;
+  }
   const now = hooks.now ?? Date.now;
   try {
     if (path === `${VERSE_LEADER_PATH}/orders`) {
