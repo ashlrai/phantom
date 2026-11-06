@@ -148,7 +148,7 @@ test('an assetless latest falls back to the newest stocked published feed', asyn
   ];
   const feed = { version: '3.30.7' }; const fetched = [];
   const result = await readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
-    read: path => { assert.equal(path, `repos/${repository}/releases?per_page=100&page=1`); return releases; },
+    read: path => { if (path.endsWith('/releases/latest')) return releases[0]; assert.equal(path, `repos/${repository}/releases?per_page=100&page=1`); return releases; },
     fetchImpl: async url => { fetched.push(url); return url === FEED_ENDPOINT ? feedResponse(404) : feedResponse(200, feed); } });
   assert.deepEqual(fetched, [FEED_ENDPOINT, `https://github.com/${repository}/releases/download/v3.30.7/latest.json`]);
   assert.equal(result.served, 'v3.30.7');
@@ -159,17 +159,17 @@ test('the stocked-feed scan pages the release inventory until one is found', asy
   const first = Array.from({ length: 100 }, (_, index) => stockedRow('v3.30.8', { assets: [], created_at: `2026-11-05T00:${String(index).padStart(2, '0')}:00Z` }));
   const feed = { version: '3.30.7' };
   const result = await readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
-    read: path => path.endsWith('page=1') ? first : [stockedRow('v3.30.7')],
+    read: path => path.endsWith('/releases/latest') ? first[0] : path.endsWith('page=1') ? first : [stockedRow('v3.30.7')],
     fetchImpl: async url => url === FEED_ENDPOINT ? feedResponse(404) : feedResponse(200, feed) });
   assert.equal(result.served, 'v3.30.7');
 });
 
 test('the feed check refuses an endpoint that cannot serve and has no stocked fallback', async () => {
   await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
-    read: () => [stockedRow('v3.30.8', { assets: [] })],
+    read: path => path.endsWith('/releases/latest') ? stockedRow('v3.30.8', { assets: [] }) : [stockedRow('v3.30.8', { assets: [] })],
     fetchImpl: async () => feedResponse(404) }), /no stocked updater feed release/);
   await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
-    read: () => [stockedRow('v3.30.7')],
+    read: path => path.endsWith('/releases/latest') ? stockedRow('v3.30.8', { assets: [] }) : [stockedRow('v3.30.7')],
     fetchImpl: async () => feedResponse(404) }), /stocked updater feed unavailable/);
   await assert.rejects(readUpdaterFeed({ endpoint: 'https://example.invalid/feed.json', repository,
     read: () => [], fetchImpl: async () => feedResponse(404) }));
@@ -246,4 +246,19 @@ test('prepared restoration never overwrites an existing dist tree', t => {
   writeFileSync(join(f.root, 'dist/keep'), 'keep');
   assert.throws(() => restorePreparedDist(f), /dist already exists/);
   assert.equal(readFileSync(join(f.root, 'dist/keep'), 'utf8'), 'keep');
+});
+
+for (const status of [401, 403, 429, 500, 503]) test(`feed HTTP ${status} cannot be hidden by a historical feed`, async () => {
+  await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: () => assert.fail('historical lookup must not run'),
+    fetchImpl: async () => feedResponse(status) }), /live updater feed unavailable/);
+});
+
+for (const latest of [stockedRow('v3.30.8'), stockedRow('v3.30.8', { assets: undefined }),
+  stockedRow('v3.30.8', { assets: [], draft: true }), stockedRow('v3.30.8', { assets: [], prerelease: true }),
+  stockedRow('invalid', { assets: [] })]) test('a live 404 requires confirmed assetless stable latest metadata', async () => {
+  let reads = 0;
+  await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: path => { assert.equal(++reads, 1); assert.equal(path, `repos/${repository}/releases/latest`); return latest; },
+    fetchImpl: async () => feedResponse(404) }), /latest release is not confirmed assetless/);
 });

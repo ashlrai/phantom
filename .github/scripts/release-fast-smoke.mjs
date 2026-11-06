@@ -142,6 +142,13 @@ export async function readUpdaterFeed({ endpoint, repository, read = api, fetchI
   const live = await fetchImpl(endpoint, { signal: AbortSignal.timeout(10000) });
   if (live.status === 200) return { feed: await feedBody(live), served: 'latest' };
   await live.body?.cancel();
+  assert.equal(live.status, 404, 'live updater feed unavailable');
+  // Historical contract checks apply only to a confirmed assetless latest.
+  // Outages, auth errors and missing advertised assets must remain failures.
+  const latest = read(`repos/${repository}/releases/latest`);
+  assert.ok(latest?.draft === false && latest.prerelease === false
+    && /^v\d+\.\d+\.\d+$/.test(latest.tag_name ?? '') && Array.isArray(latest.assets)
+    && latest.assets.every(asset => asset.name !== 'latest.json'), 'latest release is not confirmed assetless');
   for (let page = 1; page <= 10; page++) {
     const releases = read(`repos/${repository}/releases?per_page=100&page=${page}`);
     const tag = stockedFeedTag(releases);

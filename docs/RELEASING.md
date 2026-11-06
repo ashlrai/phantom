@@ -192,8 +192,11 @@ to a 404. Leave that release and tag as-is: no unpublish, reversal, tag move or
 hand asset upload. Recover on the next free patch; prefer `3.30.9` only after
 fresh npm, GitHub tag and release checks establish that it is available.
 The fast-gate smoke is repaired repo-side for this state: it verifies the newest
-stocked published feed while `releases/latest` serves none, so exact-source
-qualification no longer fails on the empty release it exists to replace.
+stocked published feed only after a live HTTP 404 and authenticated metadata
+confirm that stable `releases/latest` has no feed asset. Other HTTP failures or
+a missing advertised asset remain failures. Historical contract verification
+does not establish that the configured live updater endpoint works; recovery
+still requires its post-publication HTTP 200 and signed-feed checks.
 Coordinate with `RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, which supersedes
 `RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; this finalizer does not build
 or release desktop binaries and must not bypass signing or quarantine guards.
