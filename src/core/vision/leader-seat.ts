@@ -14,7 +14,8 @@ import { DEFAULT_LOCAL_MODEL_TAG } from '../run/model-catalog.js';
 import { buildGrokCliHeadlessCommand, extractGrokStreamText, restrictClaudeCommand } from '../run/engine-registry.js';
 import { assertPermitted, endpointPermitted, enginePermitted } from '../policy/local-only.js';
 import type { BudgetPolicy, RoutingRequest, SeatDecision } from '../routing/types.js';
-import type { SeatCapacity } from '../routing/headroom.js';
+import { assessSeat, type SeatCapacity } from '../routing/headroom.js';
+import { effectiveSeatPolicy } from '../routing/policy.js';
 import { seatTier } from '../routing/tiers.js';
 import { rankEligibleCapacities } from '../routing/router.js';
 import type { NativeRoleEngine, RoleCompletionMetrics } from '../run/role-completion.js';
@@ -26,6 +27,7 @@ import type { EffectivePolicy } from '../authority/types.js';
 import type { VerseSeat } from '../verse/types.js';
 import type { LeaderRunMode, LeaderSeatAttempt } from './leader-types.js';
 import { leaderCallBudget, type LeaderCallBudget } from './leader-seat-plan.js';
+import { leaderModelTier, leaderTierRank, resolveLeaderModelPreferences, type LeaderModelPreferences, type LeaderModelTier, type LeaderTaskKind } from './leader-model-tiers.js';
 
 export type LeaderComplete = (system: string, user: string, signal?: AbortSignal) => Promise<string>;
 export type LeaderSeatEngine = 'claude' | 'codex' | 'grok' | 'devin' | 'local';
@@ -145,8 +147,10 @@ interface LeaderRouting {
   eligible: LeaderSeatCandidate[];
   decision: SeatDecision;
   policy: BudgetPolicy;
-  /** Seats the Leader's own rules removed before routing (codex, Claude outside its runs, not granted). */
+  /** Accounts excluded by the adapter, local-only or standing-grant gates. */
   ruledOut: LeaderSeatAttempt[];
+  capacity: SeatCapacity[];
+  preferences: LeaderModelPreferences | null;
 }
 
 function skippedSeat(c: LeaderSeatCandidate, reason: string): LeaderSeatAttempt {
@@ -159,9 +163,14 @@ function skippedSeat(c: LeaderSeatCandidate, reason: string): LeaderSeatAttempt 
  */
 async function routeLeader(
   deps: LeaderSeatDeps,
-  opts: { deep: boolean; promptChars: number; mode: LeaderRunMode; localOnly?: boolean; purpose?: LeaderSeatPurpose },
+  opts: { deep: boolean; promptChars: number; mode: LeaderRunMode; localOnly?: boolean; purpose?: LeaderSeatPurpose; inspectOnly?: boolean },
 ): Promise<{ ok: true; routing: LeaderRouting } | { ok: false; reason: string; decision: SeatDecision | null; ruledOut: LeaderSeatAttempt[] }> {
   const nowMs = deps.now();
+  const configured = resolveLeaderModelPreferences(deps.cfg);
+  if (configured.status === 'invalid') return { ok: false, reason: configured.reason, decision: null, ruledOut: [] };
+  const preferences = configured.status === 'configured' ? configured.preferences : null;
+  const task: LeaderTaskKind = opts.purpose === 'reply' ? 'reply' : opts.mode;
+  const localOnly = opts.localOnly === true || preferences?.taskTier[task] === 'local';
   let candidates: LeaderSeatCandidate[];
   try {
     candidates = await deps.candidates();
@@ -169,15 +178,15 @@ async function routeLeader(
     return { ok: false, reason: 'Seat discovery failed.', decision: null, ruledOut: [] };
   }
   const standing = deps.standingPolicy();
-  const engines = new Set<string>(opts.localOnly ? ['local'] : ['grok', 'local']);
-  if (!opts.localOnly && deps.transports.native) for (const engine of ['claude','codex','devin']) engines.add(engine);
+  const engines = new Set<string>(localOnly ? ['local'] : ['grok', 'local']);
+  if (!localOnly && deps.transports.native) for (const engine of ['claude','codex','devin']) engines.add(engine);
   // Older source-qualified text-only Claude hooks remain usable. Native
   // production uses the official account-bound adapter, never a global login.
-  if (!opts.localOnly && deps.claudeCredential) engines.add('claude');
+  if (!localOnly && deps.claudeCredential) engines.add('claude');
   const ruledOut: LeaderSeatAttempt[] = [];
   const eligible = candidates.filter((c) => {
     if (!engines.has(c.seat.engine)) {
-      ruledOut.push(skippedSeat(c, opts.localOnly
+      ruledOut.push(skippedSeat(c, localOnly
         ? 'This run uses local models only.'
         : 'The account-bound role adapter is unavailable.'));
       return false;
@@ -239,15 +248,41 @@ async function routeLeader(
           ? {free:true,costBasis:'free' as const,contextWindow:peekDevinCliExecutionBinding(model.id)!.contextTokens} : {})},
     })).filter(variant => deps.route(request,[variant.capacity],policy,nowMs).seatId !== null);
     const ranked = rankEligibleCapacities(request, variants.map(variant => variant.capacity), policy, { nowMs });
-    const variant = variants.find(row => row.capacity === ranked[0]);
+    const orderedVariants = [...variants].sort((a, b) => preferences
+      ? leaderTierRank(preferences, task, a.candidate.seat.engine, runnableModel(a.candidate.seat) ?? '')
+        - leaderTierRank(preferences, task, b.candidate.seat.engine, runnableModel(b.candidate.seat) ?? '')
+        || ranked.indexOf(a.capacity) - ranked.indexOf(b.capacity)
+      : ranked.indexOf(a.capacity) - ranked.indexOf(b.capacity));
+    const variant = orderedVariants[0];
     if(variant){selected.push(variant.candidate);capacity.push(variant.capacity);}
     else {capacity.push({...base,contextWindow:models[0]?.contextWindow ?? 0});selected.push({...candidate,seat:{...candidate.seat,models:models.slice(0,1)}});}
   }
   eligible.splice(0,eligible.length,...selected);
-  const decision = deps.route(request, capacity, policy, nowMs);
-  try { deps.recordDecision(request, decision); } catch { /* shadow log is best-effort */ }
+  let decision = deps.route(request, capacity, policy, nowMs);
+  if (preferences && decision.seatId) {
+    const capacityById = new Map(capacity.map(value => [value.seatId, value]));
+    const candidateById = new Map(eligible.map(value => [value.seat.id, value]));
+    const original = new Map(decision.candidates.map((id, index) => [id, index]));
+    const remaining = (id: string): number => {
+      const value = capacityById.get(id);
+      return value ? assessSeat(value, effectiveSeatPolicy(policy, id, value.engine), { nowMs }).headroom.autonomyHeadroomPercent ?? -1 : -1;
+    };
+    const preferenceRank = (id: string): number => {
+      const value = candidateById.get(id);
+      return value ? leaderTierRank(preferences, task, value.seat.engine, runnableModel(value.seat) ?? '') : Number.MAX_SAFE_INTEGER;
+    };
+    const ordered = [...decision.candidates].sort((a, b) => preferenceRank(a) - preferenceRank(b)
+      || remaining(b) - remaining(a) || original.get(a)! - original.get(b)!);
+    decision = { ...decision, seatId: ordered[0] ?? null, candidates: ordered,
+      why: localOnly ? 'Selected by the explicit local-only Leader task preference.'
+        : 'Selected by configured Leader task tier, then remaining admitted included usage; local is the backstop.',
+      summary: 'Configured Leader tier and included usage.' };
+  }
+  if (!opts.inspectOnly) {
+    try { deps.recordDecision(request, decision); } catch { /* shadow log is best-effort */ }
+  }
   if (!decision.seatId) return { ok: false, reason: decision.why, decision, ruledOut };
-  return { ok: true, routing: { eligible, decision, policy, ruledOut } };
+  return { ok: true, routing: { eligible, decision, policy, ruledOut, capacity, preferences } };
 }
 
 type BuiltSeat = { ok: true; choice: LeaderSeatChoice; complete: LeaderComplete; budget: LeaderCallBudget } | { ok: false; reason: string };
@@ -344,11 +379,11 @@ function exclusionAttempts(decision: SeatDecision | null, byId: ReadonlyMap<stri
   });
 }
 
-/** Walk the shared router's ranked real accounts. No provider-specific
- * reorder is applied after routing; each step retains its exact chosen model. */
+/** Walk admitted real accounts. Explicit configured task tiers may reorder
+ * the admitted set; no provider-specific model guesses or new quota seats. */
 export async function planLeaderSeats(
   deps: LeaderSeatDeps,
-  opts: { deep: boolean; promptChars: number; mode: LeaderRunMode; localOnly?: boolean },
+  opts: { deep: boolean; promptChars: number; mode: LeaderRunMode; localOnly?: boolean; purpose?: LeaderSeatPurpose },
 ): Promise<LeaderSeatPlan> {
   const routed = await routeLeader(deps, opts);
   if (!routed.ok) {
@@ -372,6 +407,55 @@ export async function planLeaderSeats(
     return { ok: false, reason: last ?? decision.why, skipped: skippedList, decision };
   }
   return { ok: true, steps, skipped: skippedList, decision };
+}
+
+export interface LeaderSeatInspection {
+  schema: 'leader.seat.v1';
+  configured: boolean;
+  taskTier: LeaderModelTier | null;
+  selected: string | null;
+  seats: Array<LeaderSeatChoice & { tier: LeaderModelTier | null; remainingIncludedPercent: number | null }>;
+  skipped: LeaderSeatAttempt[];
+  reason: string;
+}
+
+/** Typed CLI projection. Never invokes a completion or writes a decision log.
+ * Factories are built only to verify the same runtime bindings a run needs. */
+export async function inspectLeaderSeats(
+  deps: LeaderSeatDeps,
+  opts: { deep: boolean; promptChars: number; mode: LeaderRunMode; purpose?: LeaderSeatPurpose },
+): Promise<LeaderSeatInspection> {
+  const configured = resolveLeaderModelPreferences(deps.cfg);
+  const task = opts.purpose === 'reply' ? 'reply' : opts.mode;
+  const result: LeaderSeatInspection = {
+    schema: 'leader.seat.v1', configured: configured.status !== 'absent',
+    taskTier: configured.status === 'configured' ? configured.preferences.taskTier[task] : null,
+    selected: null, seats: [], skipped: [], reason: '',
+  };
+  const routed = await routeLeader(deps, { ...opts, inspectOnly: true });
+  if (!routed.ok) {
+    result.reason = routed.reason;
+    result.skipped = [...routed.ruledOut, ...exclusionAttempts(routed.decision, new Map())];
+    return result;
+  }
+  const { eligible, capacity, policy, preferences, decision, ruledOut } = routed.routing;
+  const byId = new Map(eligible.map(candidate => [candidate.seat.id, candidate]));
+  result.skipped = [...ruledOut, ...exclusionAttempts(decision, byId)];
+  for (const id of decision.candidates) {
+    const candidate = byId.get(id);
+    if (!candidate) continue;
+    const built = buildSeat(deps, candidate, opts);
+    if (!built.ok) { result.skipped.push(skippedSeat(candidate, built.reason)); continue; }
+    const source = capacity.find(value => value.seatId === id);
+    result.seats.push({ ...built.choice,
+      tier: preferences ? leaderModelTier(preferences, built.choice.engine, built.choice.model) : null,
+      remainingIncludedPercent: source && !source.free
+        ? assessSeat(source, effectiveSeatPolicy(policy, id, source.engine), { nowMs: deps.now() }).headroom.autonomyHeadroomPercent : null,
+    });
+  }
+  result.selected = result.seats[0]?.seatId ?? null;
+  result.reason = result.selected ? decision.why : result.skipped.at(-1)?.reason ?? 'No runnable Leader seat.';
+  return result;
 }
 
 // ---------------------------------------------------------------------------
