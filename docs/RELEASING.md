@@ -193,7 +193,9 @@ hand asset upload. Recover on the next free patch; prefer `3.30.9` only after
 fresh npm, GitHub tag and release checks establish that it is available.
 The fast-gate smoke is repaired repo-side for this state: it verifies the newest
 stocked published feed only after a live HTTP 404 and authenticated metadata
-confirm that stable `releases/latest` has no feed asset. Other HTTP failures or
+confirm that stable `releases/latest` has no feed asset. Inventory rows must
+have exact repository/tag URLs, valid bounded identities, timestamps and asset
+counts; a historical feed must report its selected release version. Other HTTP failures or
 a missing advertised asset remain failures. Historical contract verification
 does not establish that the configured live updater endpoint works; recovery
 still requires its post-publication HTTP 200 and signed-feed checks.
