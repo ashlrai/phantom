@@ -161,6 +161,7 @@ describe('operator documentation navigation', () => {
     expect(OPERATOR_DOCUMENTATION).toEqual(expect.arrayContaining([
       'docs/PHANTOM-BRAND.md', 'docs/VERSE.md', 'docs/AUTONOMY-SETUP.md', 'docs/RESIDENT-RUNTIME.md', 'docs/DEVIN.md',
       'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
+      'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md',
     ]));
   });
 

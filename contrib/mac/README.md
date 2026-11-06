@@ -554,3 +554,9 @@ require the host launcher's source and its sandbox review: emit readiness only
 after worktree preparation and an observed first model token, with the model
 endpoint restricted to loopback. A health GET alone is not readiness evidence.
 No production launch-to-ready or post-merge waste result is available locally.
+
+## Bounded process ownership inspection
+
+The dispatcher first lists process IDs and executable names, then reads arguments only for potential engine and shell owners. This avoids a Mac kernel stall while reading unrelated applications' arguments. Both inspection and cleanup have deadlines; a task stuck in uninterruptible sleep cannot hold the controller lock indefinitely.
+
+If a live worker cannot be identified, the tick records `queue/process-snapshot.json` with `known: false` and exits before reaping or claiming any work. A missing argument row counts as an exit only when the OS confirms the process is gone. This preserves active jobs instead of treating an incomplete snapshot as an empty fleet. The installer copies `process_snapshot.py` before its dispatcher consumer.
