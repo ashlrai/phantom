@@ -16,6 +16,15 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.21](https://github.com/ashlrai/phantom/compare/v3.30.20...v3.30.21) (2026-11-06)
+
+
+### Changes
+
+* **RQ-DRAIN-phantom-1017:** BRIDGE_NOTES — RQ-DRAIN-phantom-1017 ([#2826](https://github.com/ashlrai/phantom/issues/2826)) ([c74f380](https://github.com/ashlrai/phantom/commit/c74f380baece0a6ba230558e1b30bb8adea3b14f))
+* **RQ-DRAINPH1245Q7:** RQ-DRAINPH1245Q7 ([#1516](https://github.com/ashlrai/phantom/issues/1516)) ([562bdbc](https://github.com/ashlrai/phantom/commit/562bdbc92baaae790f265ca8946efdf1ac4a3e9f))
+* **RQ-N26-PH-CLI-EXITCODES:** Bridge notes ([#1164](https://github.com/ashlrai/phantom/issues/1164)) ([557c6b7](https://github.com/ashlrai/phantom/commit/557c6b711f3e319e5d929d90723560217696e903))
+
 ## [Unreleased]
 
 ## [3.30.20] — 2026-11-06
