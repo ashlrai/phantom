@@ -1,0 +1,8 @@
+.trend {
+  display: inline-flex;
+  align-items: center;
+}
+
+.muted {
+  opacity: 0.45;
+}

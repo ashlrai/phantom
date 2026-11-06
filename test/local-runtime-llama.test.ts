@@ -943,10 +943,30 @@ describe('launch agent plist', () => {
       expect(shim.match(/-m /g)?.length).toBe(1);
     });
 
-    it('does not second-guess an explicit model path', () => {
+    it('does not second-guess an explicit model path, but still cannot spin', () => {
       const shim = buildLaunchAgentShim({ ...spec, modelRef: null, resolverCommand: null });
       expect(shim).not.toContain('RESOLVED=');
-      expect(shim).toContain('configured model file is missing');
+      // Without a guard argv the shim still must not exec a missing file:
+      // it reports the fix and holds the backoff window before exiting.
+      expect(shim).toContain('model $MODEL is missing and could not be re-resolved');
+      expect(shim).toContain('fix: ashlr local-runtime install');
+      expect(shim).toContain('sleep 1800');
+      expect(shim).toContain('exit 1');
+    });
+
+    it('hands an unresolvable miss to the missing-model guard instead of exec', () => {
+      const shim = buildLaunchAgentShim({
+        ...spec,
+        modelRef: 'qwen3.8:27b-ctx64k',
+        resolverCommand: ['/usr/local/bin/ashlr', 'local-runtime', 'resolve-model'],
+        guardCommand: ['/usr/local/bin/ashlr', 'local-runtime', 'missing-model-guard'],
+      });
+      // The guard's `run` exit falls through to exec; anything else ends the
+      // attempt right there — llama-server is never started on a missing file.
+      expect(shim).toContain(
+        `'local-runtime' 'missing-model-guard' --model-path "$MODEL" --model "$REF" || exit 1`,
+      );
+      expect(shim.match(/exec /g)?.length).toBe(1);
     });
 
     it('quotes every interpolated value so a path cannot become shell syntax', () => {

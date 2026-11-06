@@ -1,0 +1,12 @@
+/*
+ * RunsScreen.module.css — only what ui.module.css / parts.module.css do not
+ * already have: a multi-line clamp, so a Recent inbox entry previews three
+ * lines instead of the whole message.
+ */
+.clamp3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}

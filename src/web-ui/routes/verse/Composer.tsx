@@ -39,7 +39,7 @@
  * ATTACHMENTS: [+] / ⌘U, paste or drop. Each becomes a private copy on the
  * server and an `@path` token in the text, which the engine grants with
  * exactly that folder. `@` fuzzy-finds project files; `/` at the start offers
- * handoff, compact, new, plan, effort, model.
+ * handoff, compact, new, plan, effort, model, fleet, lane, release and pane.
  *
  * At 375px (or a column too narrow for the pickers) the footer folds to
  * [+] [mic] · seat · ⋯ (the pickers in a bottom sheet) · Send.
@@ -52,6 +52,17 @@ import { createPortal } from 'react-dom';
 import type { VerseSeat } from '../../data/api-types.js';
 import type { VerseEffort, VersePermissionMode } from '../../../core/verse/workbench-types.js';
 import { VERSE_QUEUE_MAX } from '../../../core/verse/workbench-types.js';
+import { readFailureReason } from '../../data/client.js';
+import { refetchQuery } from '../../data/cache.js';
+import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './composer/fleet-interject.js';
+import { runBusCommand } from './composer/bus-post-command.js';
+import { parseJobCommand, runJobCommand } from './composer/job-drop-command.js';
+import { runPlanCommand } from './composer/planner-run-command.js';
+import { decidePlannerWake, getLastPlannerWakeAt, wakePlannerForOrder } from './composer/planner-wake.js';
+import { runReleaseCommand } from './composer/lane-release-command.js';
+import { confirmNeeded, runLaneCommand, type LaneConfirmation } from './composer/lane-target-command.js';
+import { laneTargetsQuery } from './ops/lane-targets-queries.js';
+import { opsRunsQuery } from './ops/ops-runs-queries.js';
 import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
 import { IconPlus } from '../../components/primitives/icons.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
@@ -66,6 +77,12 @@ import {
   applyCompletion,
   insertAttachmentRef,
   matchSlashCommands,
+  parseBusCommand,
+  parseFleetCommand,
+  parseLaneCommand,
+  parseReleaseCommand,
+  parsePlanCommand,
+  parsePaneCommand,
   mentionFor,
   removeAttachmentRef,
   type ComposerTrigger,
@@ -80,7 +97,11 @@ import { SuggestMenu, suggestOptionId, type SuggestItem } from './composer/Sugge
 import { useAttachmentDrafts, useFollowUpQueue, useSessionControls } from './composer/useComposerData.js';
 import { FOOTER_FOLD_SHEET, useFooterFold } from './composer/useFooterFold.js';
 import { useTokenGate } from './context/use-token-gate.js';
+import { openDockPane } from './dock/dock-store.js';
+import { setFocusMode } from './shell/focus-mode.js';
+import { setVerseSection } from './verse-ui-store.js';
 import { ComposerSeatBlock } from './health/ComposerSeatBlock.js';
+import { listPanes } from './panes/pane-registry.js';
 import type { SeatChoice } from './SeatSelector.js';
 import { useViewport } from './shell/viewport.js';
 import { getVerseSessionHead } from './verse-store.js';
@@ -235,6 +256,13 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const [listening, setListening] = useState(false);
   const [sentHere, setSentHere] = useState(false);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+  const [fleetStatus, setFleetStatus] = useState<{ text: string; error: boolean; openInbox?: boolean } | null>(null);
+  const laneConfirmation = useRef<LaneConfirmation | null>(null);
+  useEffect(() => {
+    if (!fleetStatus || fleetStatus.error) return;
+    const timer = setTimeout(() => setFleetStatus(null), 8000);
+    return () => clearTimeout(timer);
+  }, [fleetStatus]);
   const [historyAt, setHistoryAt] = useState(-1);
   const [initialHistory] = useState(() => loadHistory(sessionId));
   const history = useRef<string[]>(initialHistory);
@@ -248,6 +276,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const helpId = useId();
   const suggestId = useId();
   const [caret, setCaret] = useState<number | null>(null);
+  const caretRevision = useRef(0);
   const [dismissedTrigger, setDismissedTrigger] = useState<number | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [fileMatches, setFileMatches] = useState<{ query: string; files: VerseFileMatch[]; primaryRoot: string | null } | null>(null);
@@ -276,6 +305,8 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     const node = textarea.current;
     const focused = node !== null && typeof document !== 'undefined' && document.activeElement === node;
     let caretAfter = -1;
+    const revision = ++caretRevision.current;
+    const active = document.activeElement;
     setHistoryAt(-1);
     setDraft((current) => {
       const next = insertDictation(current, chunk, focused ? node.selectionStart : null, focused ? node.selectionEnd : null);
@@ -283,7 +314,9 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       return next.value;
     });
     requestAnimationFrame(() => {
-      if (caretAfter >= 0 && textarea.current) textarea.current.setSelectionRange(caretAfter, caretAfter);
+      if (caretAfter >= 0 && node && textarea.current === node && caretRevision.current === revision && document.activeElement === active) {
+        node.setSelectionRange(caretAfter, caretAfter);
+      }
     });
   }, []);
   // The chat's repo: the lexicon applies that project's terms.
@@ -302,7 +335,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const queueFull = (queue?.items.length ?? 0) >= VERSE_QUEUE_MAX;
   const hasText = text.trim().length > 0;
   const blockedByUpload = attachments.uploading;
-  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (!running || managerMode || (queueAvailable && !queueFull));
+  const canSend = !disabled && !sending && hasText && !tooLong && !blockedByUpload && (/^\/(?:bus|fleet)(?:\s|$)/.test(draft) || !running || managerMode || (queueAvailable && !queueFull));
   const showHint = !hintSeen && !sentHere;
   const showHandoffHelp = handoffDraft && !sentHere && hasText;
   const cost = useMemo(
@@ -498,9 +531,11 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   }
 
   function placeCaret(position: number) {
+    const node = textarea.current;
+    const active = document.activeElement;
+    const revision = ++caretRevision.current;
     requestAnimationFrame(() => {
-      const node = textarea.current;
-      if (!node) return;
+      if (!node || textarea.current !== node || caretRevision.current !== revision || document.activeElement !== active) return;
       const at = Math.min(position, node.value.length);
       node.focus();
       node.setSelectionRange(at, at);
@@ -523,11 +558,19 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       setNote({ text: reason, error: false });
       return;
     }
-    // Every command but /compact consumes its own text.
+    // Bus, fleet, lane, release, plan, pane and compact insert text; other commands consume their token.
     const without = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/^\s+/, '');
     switch (command.id) {
+      case 'job':
+      case 'bus':
+      case 'fleet':
+      case 'lane':
+      case 'plan':
+      case 'release':
+      case 'pane':
       case 'compact': {
-        const next = applyCompletion(draft, trigger, '/compact');
+        if (command.id === 'fleet') setFleetStatus({ text: 'Type what to tell the leaders', error: false });
+        const next = applyCompletion(draft, trigger, command.title);
         setDraft(next.text);
         placeCaret(next.caret);
         return;
@@ -539,11 +582,6 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       case 'handoff':
         setDraft(without);
         onHandoff?.();
-        return;
-      case 'plan':
-        setDraft(without);
-        placeCaret(0);
-        void changePermission('plan');
         return;
       case 'effort':
       case 'model':
@@ -695,6 +733,146 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     if (disabled || sending || tooLong) return;
     const value = text.trim();
     if (!value) return;
+    const pane = parsePaneCommand(text, listPanes());
+    if (pane) {
+      if ('error' in pane) {
+        setFleetStatus({ text: pane.error, error: true });
+      } else {
+        openDockPane(pane.id);
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `Opened ${pane.title}`, error: false });
+      }
+      return;
+    }
+    if (parsePlanCommand(text)) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runPlanCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    const release = parseReleaseCommand(text);
+    if (release) {
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runReleaseCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) {
+          setDraft(current => current === text ? '' : current);
+          await Promise.all([
+            refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+            refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+          ]);
+        }
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    const lane = parseLaneCommand(text);
+    if (lane) {
+      if ('error' in lane) {
+        laneConfirmation.current = null;
+        setFleetStatus({ text: lane.error, error: true });
+        return;
+      }
+      const now = Date.now();
+      if (confirmNeeded(laneConfirmation.current, lane, now)) {
+        laneConfirmation.current = { lane: lane.lane, until: now + 5000 };
+        setFleetStatus({ text: `Press Enter again to set ${lane.lane} to 0`, error: false });
+        return;
+      }
+      laneConfirmation.current = null;
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runLaneCommand(lane);
+        if (!result.ok) {
+          setFleetStatus({ text: result.reason, error: true });
+          return;
+        }
+        setDraft(current => current === text ? '' : current);
+        setFleetStatus({ text: `${result.lane} target ${result.from} → ${result.to}`, error: false });
+        await Promise.all([
+          refetchQuery(laneTargetsQuery.key, () => laneTargetsQuery.fetch(), true),
+          refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true),
+        ]);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    laneConfirmation.current = null;
+    if (parseBusCommand(text)) {
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runBusCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    if (parseJobCommand(text)) {
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const result = await runJobCommand(text);
+        setFleetStatus({ text: result.text, error: !result.ok });
+        if (result.ok) setDraft(current => current === text ? '' : current);
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
+    const fleet = parseFleetCommand(text);
+    if (fleet || /^\/fleet\s*$/.test(text)) {
+      if (!fleet) {
+        setFleetStatus({ text: 'Type what to tell the leaders', error: false });
+        return;
+      }
+      setSending(true);
+      setFleetStatus(null);
+      try {
+        const ack = await postFleetInterjection(fleet.text);
+        setDraft((current) => draftAfterSend(ack.outcome, current, text));
+        const landing = fleetSendLanding(ack);
+        const wake = ack.reply === undefined && decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
+        const wakingText = `${landing.text} · planner waking`;
+        setFleetStatus({ ...landing, text: wake ? wakingText : landing.text, error: false });
+        if (wake) {
+          void wakePlannerForOrder(fleet.text).then(result => {
+            if (result.kind === 'unavailable') {
+              setFleetStatus(current => current?.text === wakingText ? { ...landing, error: false } : current);
+            } else {
+              setFleetStatus({ text: result.text, error: result.kind === 'failed' || result.kind === 'locked' || result.kind === 'no-slate' });
+            }
+          });
+        }
+        await refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true);
+      } catch (error) {
+        setFleetStatus({ text: readFailureReason(error), error: true });
+      } finally {
+        setSending(false);
+        textarea.current?.focus();
+      }
+      return;
+    }
     if (blockedByUpload) {
       setNote({ text: 'Wait for the attachments to finish uploading.', error: false });
       return;
@@ -828,6 +1006,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') caretRevision.current += 1;
     const node = event.currentTarget;
     const collapsed = node.selectionStart === node.selectionEnd;
     const composing = event.nativeEvent.isComposing;
@@ -973,13 +1152,15 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           aria-expanded={suggestOpen ? true : undefined}
           aria-activedescendant={suggestOpen && suggestItems.length > 0 ? suggestOptionId(suggestId, boundedActive) : undefined}
           onChange={(event) => {
+            caretRevision.current += 1;
             setHistoryAt(-1);
+            laneConfirmation.current = null;
             setDraft(event.target.value);
             setDismissedTrigger(null);
             setCaret(event.target.selectionStart === event.target.selectionEnd ? event.target.selectionStart : null);
           }}
-          onSelect={syncCaret} onClick={syncCaret} onKeyUp={(event) => { if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') syncCaret(); }}
-          onBlur={() => setCaret(null)} onFocus={syncCaret}
+          onSelect={syncCaret} onClick={() => { caretRevision.current += 1; syncCaret(); }} onKeyUp={(event) => { if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') syncCaret(); }}
+          onBlur={() => { caretRevision.current += 1; setCaret(null); }} onFocus={syncCaret}
           onPaste={onPaste} onKeyDown={onKeyDown} />
         <input ref={fileInput} type="file" multiple hidden tabIndex={-1} aria-hidden="true"
           onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
@@ -1044,6 +1225,17 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           sending would reach <span className={styles.costFigure}>{cost.projectedPercent}%</span> of the context window.
           {costConsequence(cost)}
           <span className="visually-hidden"> This is an estimate; the provider counts the real total.</span>
+        </p>
+      ) : null}
+      {fleetStatus ? (
+        <p role={fleetStatus.error ? 'alert' : 'status'} className={`${styles.help} ${fleetStatus.error ? styles.helpError : ''}`}>
+          {fleetStatus.text}
+          {fleetStatus.openInbox ? <> <button type="button" aria-label="Open inbox" onClick={() => {
+            // Reveal the inbox even from another section or focus mode.
+            setVerseSection('chat');
+            setFocusMode(false);
+            openDockPane('fleet-inbox');
+          }}>Open inbox</button></> : null}
         </p>
       ) : null}
       <p id={helpId} className={`${styles.help} ${showHint || tooLong || listening || running || disabled || historyAt !== -1 || showHandoffHelp || note || controls.error || controls.loading || controls.pending || controls.unsupported || followUps.error ? '' : styles.helpQuiet}`}>

@@ -53,6 +53,11 @@
   font-size: var(--text-xs-size);
   font-weight: var(--font-weight-medium);
   color: var(--text-link);
+  /* The same class styles the <button> an actionRun renders. */
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
 }
 
 .muteBtn {

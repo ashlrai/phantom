@@ -1,0 +1,63 @@
+import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createChannelReceiver } from '../src/core/fleet/channel-envelope.js';
+import { appendInboxEntry } from '../src/core/fleet/mason-inbox.js';
+
+let runsDir: string;
+const when = new Date('2026-01-02T05:04:05Z');
+const channelEntry = (channel: string, prefix: string, text: string): string =>
+  `\n${when.toISOString()} [src:${channel} id:${prefix}-${createHash('sha256').update(when.toISOString() + text).digest('hex').slice(0, 16)}] ${text}\n`;
+const inboxPath = (): string => join(runsDir, 'leader', 'MASON-INBOX.md');
+
+beforeEach(async () => { runsDir = await mkdtemp(join(tmpdir(), 'inbox-receipt-')); });
+afterEach(async () => { await rm(runsDir, { recursive: true, force: true }); });
+
+describe('primary inbox receipt', () => {
+  it('returns only a generic failure when the primary append fails', async () => {
+    await mkdir(join(runsDir, 'leader'));
+    await mkdir(inboxPath());
+    const result = await appendInboxEntry('fake message', { runsDir, now: () => when });
+    expect(result).toEqual({ ok: false, reason: 'write-failed' });
+    await expect(readFile(join(runsDir, 'dispatch-events.log'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('returns the normal receipt and persists exactly one entry when the event path fails', async () => {
+    await mkdir(join(runsDir, 'dispatch-events.log'));
+    const entry = channelEntry('desktop', 'desk', 'fake message');
+    expect(await appendInboxEntry('fake message', { runsDir, now: () => when })).toEqual({
+      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(entry),
+      id: `desk-${createHash('sha256').update(when.toISOString() + 'fake message').digest('hex').slice(0, 16)}`,
+    });
+    expect(await readFile(inboxPath(), 'utf8')).toBe(entry);
+  });
+
+  it('writes one bounded event on normal success, with a sanitized source', async () => {
+    const source = 'fake source\ninjected';
+    const text = 'fake message';
+    const entry = channelEntry('desktop', 'desk', text);
+    expect(await appendInboxEntry(text, { runsDir, source, now: () => when })).toEqual({
+      ok: true, at: '2026-01-02 00:04', bytes: Buffer.byteLength(entry),
+      id: `desk-${createHash('sha256').update(when.toISOString() + 'fake message').digest('hex').slice(0, 16)}`,
+    });
+    expect(await readFile(inboxPath(), 'utf8')).toBe(entry);
+    expect(await readFile(join(runsDir, 'dispatch-events.log'), 'utf8')).toBe(
+      '2026-01-02 05:04:05 INBOX new entry from Phantom desktop\n',
+    );
+  });
+
+  it('acknowledges a repeated channel message as duplicate after event failure', async () => {
+    await mkdir(join(runsDir, 'dispatch-events.log'));
+    const receive = createChannelReceiver({ runsDir, now: () => when, allowedSenderIds: new Set(['fake-sender']) });
+    const message = { channel: 'email' as const, verifiedSenderId: 'fake-sender', body: 'fake message' };
+    const first = await receive(message);
+    const second = await receive(message);
+    expect(first.ok && first.ack.status).toBe('accepted');
+    expect(second.ok && second.ack).toEqual({
+      channel: 'email', dedupeKey: first.ok && first.ack.dedupeKey, status: 'duplicate',
+    });
+    expect(await readFile(inboxPath(), 'utf8')).toBe(channelEntry('email', 'email', message.body));
+  });
+});

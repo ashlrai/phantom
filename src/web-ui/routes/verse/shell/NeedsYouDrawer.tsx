@@ -36,6 +36,7 @@ import {
   NEEDS_YOU_ACTION_KEYS,
   type NeedsYouActionKind,
   type NeedsYouItem,
+  type NeedsYouSource,
 } from '../../../../core/verse/workbench-types.js';
 import { ApprovalDetail } from '../approvals/ApprovalDetail.js';
 import { useVerseUi } from '../useVerseUi.js';
@@ -51,6 +52,7 @@ import {
   type NeedsYouSplit,
 } from '../verse-ui-store.js';
 import { matchCommand } from './command-catalog.js';
+import { FleetNeedsYouRows, type FleetNeedsYouReport } from './FleetNeedsYouRows.js';
 import { isGuardOpen } from './guarded-action.js';
 import { markResolved, pruneResolved, runNeedsYouAction, useResolvedIds } from './needs-you-actions.js';
 import { requestOpenTerminal } from './open-terminal-request.js';
@@ -133,8 +135,28 @@ export function NeedsYouDrawer() {
   const all = useMemo(() => (liveItems ?? []).filter((i) => !resolved.has(i.id)), [liveItems, resolved]);
   const split = ui.needsYouSplit;
   const items = useMemo(() => itemsForSplit(all, split), [all, split]);
-  const counts = useMemo(() => splitCounts(all), [all]);
-  const coverage = splitCoverage(data?.sources ?? null, split);
+
+  // The fleet running on this Mac answers a different route, so the drawer
+  // derives its items in the browser (FleetNeedsYouRows reports them up).
+  // They count in the All and Fleet splits, and the producer's `answered`
+  // joins the coverage rule: a Mac that is not reporting may never be
+  // counted toward "All clear" (SPEC-310C §1).
+  const [fleetNeeds, setFleetNeeds] = useState<FleetNeedsYouReport>({ answered: false, items: [], silent: null });
+  const reportFleetNeeds = useCallback((report: FleetNeedsYouReport) => setFleetNeeds(report), []);
+  const fleetRows = split === 'all' || split === 'fleet' ? fleetNeeds.items : [];
+  const counts = useMemo(() => {
+    const base = splitCounts(all);
+    const n = fleetNeeds.items.length;
+    return n === 0 ? base : { ...base, all: base.all + n, fleet: base.fleet + n };
+  }, [all, fleetNeeds.items.length]);
+  const coverage = useMemo(() => {
+    const base = splitCoverage(data?.sources ?? null, split);
+    if ((split !== 'all' && split !== 'fleet') || fleetNeeds.answered) return base;
+    return {
+      vouched: false,
+      silent: [...base.silent, { source: 'fleet' as NeedsYouSource, name: 'the fleet on this Mac', state: fleetNeeds.silent ?? 'unavailable' }],
+    };
+  }, [data?.sources, split, fleetNeeds]);
   const dispatchEnabled = (bootstrap.data?.dispatchEnabled ?? true) && !dispatchDenied;
 
   // Cloud and Devin PR verdicts: re-read whenever such an item's text
@@ -484,27 +506,37 @@ export function NeedsYouDrawer() {
               <p className={styles.emptyTitle}>Needs you isn't available on this server</p>
               <p className={styles.emptyBody}>This build does not report activity yet, so nothing here can be vouched for. Approvals still work from the inbox.</p>
             </div>
-          ) : items.length === 0 ? (
-            <EmptySplit coverageText={describeSilence(coverage)} vouched={coverage.vouched} autonomyLabel={data?.autonomy?.label ?? null} split={split} />
           ) : (
-            <NeedsYouList
-              ref={listRef}
-              items={items}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              // A click (or a tap — a phone has no J / K) opens the item;
-              // the keyboard moves the selection without opening.
-              onOpen={(id) => {
-                setSelectedId(id);
-                const item = items.find((i) => i.id === id);
-                if (item) openItem(item);
-              }}
-              now={now}
-              label={`${SPLIT_LABEL[split]} needing you`}
-              picked={picked}
-              onTogglePick={togglePick}
-              chips={chips}
-            />
+            <>
+              {/* "Fleet on this Mac" — the drawer's local producer; renders
+                  its group at the top of the All and Fleet splits, null on
+                  the others (and reports either way). */}
+              <FleetNeedsYouRows split={split} nowMs={now} onResult={reportFleetNeeds} />
+              {items.length === 0 ? (
+                fleetRows.length === 0 ? (
+                  <EmptySplit coverageText={describeSilence(coverage)} vouched={coverage.vouched} autonomyLabel={data?.autonomy?.label ?? null} split={split} />
+                ) : null
+              ) : (
+                <NeedsYouList
+                  ref={listRef}
+                  items={items}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  // A click (or a tap — a phone has no J / K) opens the item;
+                  // the keyboard moves the selection without opening.
+                  onOpen={(id) => {
+                    setSelectedId(id);
+                    const item = items.find((i) => i.id === id);
+                    if (item) openItem(item);
+                  }}
+                  now={now}
+                  label={`${SPLIT_LABEL[split]} needing you`}
+                  picked={picked}
+                  onTogglePick={togglePick}
+                  chips={chips}
+                />
+              )}
+            </>
           )}
           {/* The list holds the initial focus; with no list, the panel does. */}
           {items.length === 0 && !detailItem ? <div ref={listRef} tabIndex={-1} className={styles.focusSink} aria-hidden="true" /> : null}
@@ -522,7 +554,7 @@ export function NeedsYouDrawer() {
             <span><kbd className={styles.key}>H</kbd><kbd className={styles.key}>L</kbd> splits</span>
           </footer>
         ) : null}
-        {!coverage.vouched && items.length > 0 ? (
+        {!coverage.vouched && (items.length > 0 || fleetRows.length > 0) ? (
           <p className={styles.caveat} role="note">{describeSilence(coverage)} — this list may be incomplete.</p>
         ) : null}
       </div>

@@ -29,11 +29,11 @@ function fakeModule(): ResidentCapacityPublisherModule & { ensure: ReturnType<ty
 }
 
 describe('resident capacity publisher lifetime', () => {
-  it('is wanted only for a resident, non-dry run under a standing session', () => {
+  it('is wanted for every resident non-dry run', () => {
     expect(residentCapacityPublisherWanted({ dryRun: false, once: false, standing: true })).toBe(true);
     expect(residentCapacityPublisherWanted({ dryRun: true, once: false, standing: true })).toBe(false);
     expect(residentCapacityPublisherWanted({ dryRun: false, once: true, standing: true })).toBe(false);
-    expect(residentCapacityPublisherWanted({ dryRun: false, once: false, standing: false })).toBe(false);
+    expect(residentCapacityPublisherWanted({ dryRun: false, once: false, standing: false })).toBe(true);
   });
 
   it('starts the publisher with the run config when wanted, and not otherwise', async () => {
@@ -44,8 +44,8 @@ describe('resident capacity publisher lifetime', () => {
 
     const other = fakeModule();
     await expect(startResidentCapacityPublisher(cfg, { dryRun: true, once: false, standing: true }, async () => other)).resolves.toBe(false);
-    await expect(startResidentCapacityPublisher(cfg, { dryRun: false, once: false, standing: false }, async () => other)).resolves.toBe(false);
-    expect(other.ensure).not.toHaveBeenCalled();
+    await expect(startResidentCapacityPublisher(cfg, { dryRun: false, once: false, standing: false }, async () => other)).resolves.toBe(true);
+    expect(other.ensure).toHaveBeenCalledTimes(1);
   });
 
   it('never throws out of daemon start or stop', async () => {
@@ -71,7 +71,8 @@ describe('resident capacity publisher lifetime', () => {
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/core/daemon/loop.ts'), 'utf8');
     const body = src.slice(src.indexOf('async function runDaemonInEnrollmentScope('));
     const start = body.indexOf('await startResidentCapacityPublisher(activationCfg, residentPublisherRun)');
-    const firstTick = body.indexOf('await tick(');
+    const firstTick = body.indexOf('await runResidentBoundedTick(');
+    expect(body.slice(firstTick)).toContain('() => tick(');
     const stop = body.indexOf('await stopResidentCapacityPublisher()');
     const drain = body.indexOf('await cancelDaemonPostTickChildren(');
     expect(start).toBeGreaterThan(0);
@@ -80,6 +81,6 @@ describe('resident capacity publisher lifetime', () => {
     expect(stop).toBeLessThan(drain);
     // The stop is not limited to runs the start covered: a one-shot run's
     // pass-started publisher is stopped too.
-    expect(body.slice(stop - 80, stop)).toContain('if (!opts.dryRun && standing !== null)');
+    expect(body.slice(stop - 80, stop)).toContain('if (!opts.dryRun)');
   });
 });

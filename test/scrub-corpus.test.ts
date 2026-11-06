@@ -61,3 +61,57 @@ describe('scrubSecrets line and encoding edges', () => {
     expect(scrubSecrets(once)).toBe(once);
   });
 });
+
+describe('scrubSecrets exemption boundaries', () => {
+  it.each([
+    ['lowercase bearer', 'Bearer ', ['opaque', 'credential'].join('')],
+    ['capitalized bearer', 'Authorization: Bearer ', ['Opaque', 'credential'].join('')],
+    ['dictionary word in header', 'Authorization: Bearer ', 'refresh'],
+    ['CLI token flag', 'npx tool --token ', ['opaque', 'credential'].join('')],
+    ['dictionary word in CLI flag', 'npx tool --token ', 'refresh'],
+    ['quoted dotted password', 'password=', JSON.stringify(['correct', 'horse', 'battery'].join('.'))],
+    ['quoted call-shaped password', 'DB_PASSWORD=', JSON.stringify(['getToken', '(private)'].join(''))],
+    ['quoted snake password', 'db_password=', JSON.stringify(['getToken', '(private)'].join(''))],
+    ['quoted camel password', 'dbPassword=', JSON.stringify(['correct', 'horse', 'battery'].join('.'))],
+    ['namespaced password', 'password=', ['alpha', 'bravo', 'charlie'].join(':')],
+    ['repeated numeric password', 'DB_PASSWORD=', '1'.repeat(12)],
+    ['repeated letter password', 'password=', 'q'.repeat(12)],
+    ['marker with suffix', 'password=', '[REDACTED]' + ['opaque', 'suffix'].join('')],
+    ['quoted marker with suffix', 'password=', JSON.stringify('[REDACTED]' + ['opaque', 'suffix'].join(''))],
+    ['oversized digest', 'sha256:', 'ab12'.repeat(32)],
+  ])('redacts %s instead of treating it as prose, code or a mask', (_label, prefix, value) => {
+    const once = scrubSecrets(prefix + value);
+    expect(once).not.toContain(value);
+    expect(scrubSecrets(once)).toBe(once);
+  });
+
+  it.each(['call(token=[REDACTED])', 'privateKey=[REDACTED].replace(/\\n/g, "\\n")'])('keeps a scrubbed code expression idempotent (%s)', text => {
+    expect(scrubSecrets(text)).toBe(text);
+  });
+
+  it.each([
+    '{"Authorization":"Bearer refresh"}',
+    "headers = {'Authorization': 'Bearer refresh'}",
+    "Authorization: 'Bearer refresh'",
+    '{"Proxy-Authorization":"Bearer refresh"}',
+    JSON.stringify({ raw: JSON.stringify({ Authorization: 'Bearer refresh' }) }),
+  ])('redacts dictionary-word credentials in quoted authorization headers (%s)', text => {
+    const once = scrubSecrets(text);
+    expect(once).not.toContain('refresh');
+    expect(scrubSecrets(once)).toBe(once);
+  });
+
+  it.each(['u:', ':p', ':', 'user:pass:with:colons', 'd\u00e9ploy:p\u00e4ss'])('redacts valid Basic credentials with empty fields or encoding edges (%s)', value => {
+    const encoded = Buffer.from(value, 'utf8').toString('base64');
+    const once = scrubSecrets(`Authorization: Basic ${encoded}`);
+    expect(once).not.toContain(encoded);
+    expect(scrubSecrets(once)).toBe(once);
+  });
+
+  it.each(['\n', '\r\n'])('keeps empty assignments separate from the following line (%j)', newline => {
+    for (const name of ['password', 'DB_PASSWORD', 'db_password', 'dbPassword']) {
+      const text = `${name} =${newline}REDIS_URL=redis://localhost:6379/0`;
+      expect(scrubSecrets(text)).toBe(text);
+    }
+  });
+});

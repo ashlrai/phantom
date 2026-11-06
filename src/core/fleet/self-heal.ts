@@ -119,6 +119,7 @@ function selfHealId(repo: string, breakageKind: string): string {
 export async function detectBreakage(
   repoDir: string,
   cfg?: Pick<AshlrConfig, 'foundry'>,
+  opts?: { signal?: AbortSignal },
 ): Promise<BreakageResult> {
   try {
     const commands = detectVerifyCommands(repoDir, 'quick');
@@ -135,8 +136,14 @@ export async function detectBreakage(
     const clearedKinds = new Set<'build' | 'test'>();
 
     for (const vc of commands) {
+      if (opts?.signal?.aborted) {
+        return { broken: false, verified: false, reason: 'detect-error' };
+      }
       const kind = kindOf(vc.kind);
-      const result = await runVerifyCommandAsync(vc, repoDir, cfg as AshlrConfig ?? {} as AshlrConfig, { timeoutMs });
+      const result = await runVerifyCommandAsync(vc, repoDir, cfg as AshlrConfig ?? {} as AshlrConfig, {
+        timeoutMs,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
+      });
       if (!result.ok) {
         if (vc.required === false) continue;
         const failureCategory = result.failureCategory ?? 'code';
@@ -636,16 +643,17 @@ async function runSelfHealCycleForRepoList(
   repos: string[],
   cfg?: Pick<AshlrConfig, 'foundry'>,
   authority?: OutwardMutationFence,
+  signal?: AbortSignal,
 ): Promise<SelfHealCycleResult> {
   const broken: string[] = [];
   const healItems: WorkItem[] = [];
   const authorized = (repo: string): boolean =>
-    ownsOutwardMutationFence(authority) && !killSwitchOn() && isEnrolled(repo);
+    ownsOutwardMutationFence(authority) && !killSwitchOn() && isEnrolled(repo) && !signal?.aborted;
 
   for (const repo of repos) {
     try {
       if (!authorized(repo)) continue;
-      const result = await detectBreakage(repo, cfg);
+      const result = await detectBreakage(repo, cfg, signal ? { signal } : undefined);
       if (!authorized(repo)) continue;
       if (result.broken) {
         pruneStaleSelfHealItems(repo, undefined, () => authorized(repo));
@@ -670,6 +678,12 @@ async function runSelfHealCycleForRepoList(
 export interface SelfHealCycleOptions {
   /** Borrow authority from a caller that already owns the outward fence. */
   authority?: OutwardMutationFence;
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: the calling tick phase's signal. Aborting stops the
+   * repo scan and cancels the in-flight verify command (its process group is
+   * killed by the verify runner's own teardown).
+   */
+  signal?: AbortSignal;
 }
 
 function selfHealAuthority(
@@ -705,7 +719,7 @@ export async function runSelfHealCycleForRepos(
       targets.every((repo) => isEnrolled(repo));
     pruneInvalidSelfHealItemsForRepos(targets, enrolled, authorizedTargets);
     if (!authorizedTargets()) return { checked: 0, broken: [], healItems: [] };
-    return await runSelfHealCycleForRepoList(targets, cfg, authority);
+    return await runSelfHealCycleForRepoList(targets, cfg, authority, opts.signal);
   } catch {
     return { checked: 0, broken: [], healItems: [] };
   } finally {
@@ -744,7 +758,7 @@ export async function runSelfHealCycle(
       ownsOutwardMutationFence(lifecycle?.authority) && !killSwitchOn();
     pruneInvalidSelfHealItems(repos, authorizedCycle);
     if (!authorizedCycle()) return { checked: 0, broken: [], healItems: [] };
-    return await runSelfHealCycleForRepoList(repos, cfg, authority);
+    return await runSelfHealCycleForRepoList(repos, cfg, authority, opts.signal);
   } catch {
     return { checked: 0, broken: [], healItems: [] };
   } finally {

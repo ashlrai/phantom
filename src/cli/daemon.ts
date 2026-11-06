@@ -741,7 +741,10 @@ async function cmdDaemonStart(flags: StartFlags): Promise<number> {
       ),
   );
   if (flags.budgetUsd !== undefined) {
-    console.log(col.dim(`  daily budget cap: $${flags.budgetUsd}`));
+    // RQ-DAEMONTICK-UNBLOCK: --budget gates METERED USD spend only — $0
+    // subscription/local work is never stopped by it (RQ-APPBUDGET-2 owns the
+    // richer display work; this line only names the cap correctly).
+    console.log(col.dim(`  legacy --budget metered cap: $${flags.budgetUsd}/day (metered USD spend only)`));
   }
   if (flags.drain !== undefined) {
     console.log(col.dim(`  targeted drain: ${flags.drain}`));
@@ -1022,6 +1025,17 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
           pid: stateKnown ? state.pid : null,
           startedAt: stateKnown ? state.startedAt : null,
           lastTickAt: stateKnown ? state.lastTickAt : null,
+          // RQ-DAEMONTICK-UNBLOCK: the LAST tick's outcome + per-phase ledger —
+          // `phm daemon status --json | jq .tick.phases` shows each phase's
+          // status/duration/error, including on a thrown or timed-out tick.
+          tick: stateKnown
+            ? {
+                lastTickAt: state.lastTickAt ?? null,
+                outcome: state.lastTickOutcome ?? null,
+                lastError: state.lastTickError ?? null,
+                phases: state.lastTickPhases ?? [],
+              }
+            : null,
           // Additive: the tick in progress right now, or null.
           tickInProgress: tickProgress,
           todayDate: stateKnown ? state.todayDate : null,

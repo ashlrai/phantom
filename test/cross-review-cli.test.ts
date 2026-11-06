@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdFleetCrossReview } from '../src/cli/cross-review.js';
 
+import { readPr, readRequiredChecks, readHeadChecks } from '../src/core/fleet/host-merge.js';
+vi.mock('../src/core/fleet/host-merge.js', () => ({
+  defaultHostMergeDeps: vi.fn(() => ({})), readPr: vi.fn(), readRequiredChecks: vi.fn(), readHeadChecks: vi.fn(),
+}));
+
 const SHA = 'c'.repeat(40);
 const MOVED = 'd'.repeat(40);
 const MARKER = 'DIFF_TEXT_MARKER_7f3a';
@@ -55,6 +60,9 @@ async function run(args: string[]): Promise<{ code: number; json: any }> {
 }
 
 beforeEach(() => {
+  vi.mocked(readPr).mockReset().mockResolvedValue({ headSha: SHA, state: 'open', baseRef: 'master' } as Awaited<ReturnType<typeof readPr>>);
+  vi.mocked(readRequiredChecks).mockReset().mockResolvedValue({ required: [{ context: 'CI', appId: '1' }], protectionDigest: 'digest', strict: true, rulesetsUnavailable: false });
+  vi.mocked(readHeadChecks).mockReset().mockResolvedValue({ runs: [{ id: 1, name: 'CI', appId: '1', status: 'completed', conclusion: 'success' }], statuses: [] });
   dir = mkdtempSync(join(tmpdir(), 'xreview-cli-'));
   home = join(dir, 'ashlr-home');
   mkdirSync(home);
@@ -84,6 +92,54 @@ describe('phm fleet xreview', { timeout: 20_000 }, () => {
 
     writeFileSync(join(dir, 'pr.diff'), diffFor('src/strings.ts', 'export const c = 3;'));
     expect((await run(['decide', '--request', request, '--head', SHA, '--json'])).json.decision.codes).toEqual(['diff-changed']);
+  });
+
+  it.each(['missing', 'pending', 'failure', 'stale', 'neutral', 'skipped', 'wrong-app', 'api-error', 'api-throw', 'head-before', 'head-during'])(
+    'holds and logs the reason for %s checks', async (mode) => {
+      const request = setup();
+      await run(['run', '--request', request, '--json']);
+      if (mode === 'missing') vi.mocked(readHeadChecks).mockResolvedValue({ runs: [], statuses: [] });
+      else if (mode === 'api-error') vi.mocked(readHeadChecks).mockResolvedValue('API unavailable');
+      else if (mode === 'api-throw') vi.mocked(readHeadChecks).mockRejectedValue(new Error('private error body'));
+      else if (mode === 'head-before') vi.mocked(readPr).mockResolvedValue({ headSha: MOVED, state: 'open', baseRef: 'master' } as Awaited<ReturnType<typeof readPr>>);
+      else if (mode === 'head-during') vi.mocked(readPr)
+        .mockResolvedValueOnce({ headSha: SHA, state: 'open', baseRef: 'master' } as Awaited<ReturnType<typeof readPr>>)
+        .mockResolvedValueOnce({ headSha: MOVED, state: 'open', baseRef: 'master' } as Awaited<ReturnType<typeof readPr>>);
+      else vi.mocked(readHeadChecks).mockResolvedValue({ runs: [{ id: 2, name: 'CI', appId: mode === 'wrong-app' ? '2' : '1', status: mode === 'pending' ? 'in_progress' : 'completed', conclusion: mode }], statuses: [] });
+      const decision = (await run(['decide', '--request', request, '--head', SHA, '--json'])).json.decision;
+      const code = mode.startsWith('api-') ? 'checks-unreadable' : mode.startsWith('head-') ? 'checks-stale'
+        : ['missing', 'wrong-app'].includes(mode) ? 'checks-missing' : 'checks-not-successful';
+      expect(decision).toMatchObject({ action: 'hold', codes: [code], matchHeadCommit: null });
+      const log = readFileSync(join(home, 'fleet', 'cross-review.jsonl'), 'utf8');
+      expect(JSON.parse(log.trim().split('\n').at(-1)!)).toEqual(decision);
+      expect(log).not.toContain('private error body');
+    },
+  );
+
+  it('requires configured checks and evaluates the latest run on the requested SHA', async () => {
+    const request = setup();
+    await run(['run', '--request', request, '--json']);
+    expect(readHeadChecks).toHaveBeenCalledWith('ashlrai/lexicon', SHA, expect.anything());
+    vi.mocked(readHeadChecks).mockResolvedValue({ runs: [
+      { id: 1, name: 'CI', appId: '1', status: 'completed', conclusion: 'success' },
+      { id: 2, name: 'CI', appId: '1', status: 'in_progress', conclusion: null },
+    ], statuses: [] });
+    expect((await run(['decide', '--request', request, '--head', SHA, '--json'])).json.decision.codes).toEqual(['checks-not-successful']);
+    vi.mocked(readRequiredChecks).mockResolvedValue({ required: [], protectionDigest: 'digest', strict: true, rulesetsUnavailable: false });
+    expect((await run(['decide', '--request', request, '--head', SHA, '--json'])).json.decision.codes).toEqual(['checks-missing']);
+    vi.mocked(readRequiredChecks).mockResolvedValue('API unavailable');
+    expect((await run(['decide', '--request', request, '--head', SHA, '--json'])).json.decision.codes).toEqual(['checks-unreadable']);
+  });
+
+  it('holds if a custom pause arrives during GitHub reads', async () => {
+    const request = setup();
+    await run(['run', '--request', request, '--json']);
+    const pause = join(dir, 'late-pause');
+    vi.mocked(readHeadChecks).mockImplementationOnce(async () => {
+      writeFileSync(pause, '');
+      return { runs: [{ id: 1, name: 'CI', appId: '1', status: 'completed', conclusion: 'success' }], statuses: [] };
+    });
+    expect((await run(['decide', '--request', request, '--head', SHA, '--pause-file', pause, '--json'])).json.decision.codes).toEqual(['paused']);
   });
 
   it('holds when the PAUSE file exists', async () => {

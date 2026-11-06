@@ -343,6 +343,32 @@ describe('Mac bridge dependency preparation', () => {
     expect(await Promise.all(targets.map(async (target) => (await lstat(join(target, 'node_modules'))).isDirectory()))).toEqual(Array(20).fill(true));
   });
 
+  it('keeps the prepared result when its lock has already been removed', async () => {
+    const { source, target } = await fixture();
+    let readings = 0;
+    const freeBytes = async () => {
+      if (++readings === 3) await rm(join(target, '.bridge-dependencies.lock'), { recursive: true, force: true });
+      return FLOOR + 1024 ** 3;
+    };
+    const result = await prepareDependencies({ source, target }, { freeBytes, platform: 'linux' });
+    expect(result.method).toBe('symlink');
+    expect(readings).toBe(3);
+    expect((await lstat(join(target, 'node_modules'))).isSymbolicLink()).toBe(true);
+    await absent(join(target, '.bridge-dependencies.lock'));
+  });
+
+  it('runs the CLI when invoked through a symlink', async () => {
+    const { root } = await fixture();
+    const linked = join(root, 'linked-bridge-worktree.mjs');
+    await symlink(helper, linked);
+    let caught: unknown;
+    try {
+      await run(process.execPath, [linked], { env: { HOME: process.env.HOME }, timeout: 10_000 });
+    } catch (error) { caught = error; }
+    expect(caught).toMatchObject({ code: 2, stdout: '' });
+    expect((caught as { stderr: string }).stderr).toContain('[--require-clone]');
+  });
+
   it('rejects incomplete CLI arguments without starting preparation', async () => {
     let caught: unknown;
     try {

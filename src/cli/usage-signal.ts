@@ -1,25 +1,32 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { statusReaders } from '../core/fabric/status-readings.js';
 import { usageReaderCommands, usageSignalReaders } from '../core/fabric/usage-signal-readers.js';
 import { USAGE_EVENTS, USAGE_POOLS, writeUsageSignal, type UsageEvent, type UsagePool } from '../core/fabric/usage-signal-writer.js';
 
 /** Separate bridge entrypoint: no daemon registration and no timer lifecycle. */
 export async function runUsageSignal(argv: string[]): Promise<void> {
   let directory: string | undefined; let event: string | undefined; let readersPath: string | undefined;
+  let dryRun = false; let builtin = false; let codexHome: string | undefined;
   const pools: UsagePool[] = [];
   for (let i = 0; i < argv.length; i += 2) {
-    const flag = argv[i]; const value = argv[i + 1];
+    const flag = argv[i];
+    if (flag === '--dry-run' && !dryRun) { dryRun = true; i -= 1; continue; }
+    if (flag === '--status-readers' && !builtin) { builtin = true; i -= 1; continue; }
+    const value = argv[i + 1];
     if (!value) throw new Error('Missing usage signal option');
     if (flag === '--directory' && !directory) directory = value;
     else if (flag === '--event' && !event) event = value;
     else if (flag === '--readers' && !readersPath) readersPath = value;
+    else if (flag === '--codex-home' && !codexHome) codexHome = value;
     else if (flag === '--pool' && USAGE_POOLS.includes(value as UsagePool)) pools.push(value as UsagePool);
     else throw new Error('Invalid usage signal option');
   }
   if (!directory || !isAbsolute(directory) || !USAGE_EVENTS.includes(event as UsageEvent)) {
-    throw new Error('Usage: --directory ABS_PATH --event dispatch-start|pr-merge|429|limit-message|manual-reading [--pool POOL] [--readers ABS_PATH]');
+    throw new Error('Usage: --directory ABS_PATH --event dispatch-start|pr-merge|429|limit-message|manual-reading [--pool POOL] [--readers ABS_PATH | --status-readers [--codex-home ABS_PATH]] [--dry-run]');
   }
+  if (builtin && readersPath || codexHome && !builtin) throw new Error('Invalid usage signal option');
   let commands = usageReaderCommands({});
   if (readersPath) {
     if (!isAbsolute(readersPath) || /(?:^|\/)\.codex(?:-2)?(?:\/|$)/.test(resolve(readersPath)) ||
@@ -44,8 +51,11 @@ export async function runUsageSignal(argv: string[]): Promise<void> {
       commands = usageReaderCommands(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
     } finally { closeSync(fd); }
   }
-  const result = await writeUsageSignal({ directory, event: event as UsageEvent,
-    ...(pools.length ? { pools } : {}), readers: usageSignalReaders(commands) });
+  // Built-in readers cover only their own pools; default selection follows them.
+  const readers = builtin ? statusReaders({ ...(codexHome ? { codexHome } : {}) }) : usageSignalReaders(commands);
+  const selected = pools.length ? pools : builtin ? Object.keys(readers) as UsagePool[] : [];
+  const result = await writeUsageSignal({ directory, event: event as UsageEvent, ...(dryRun ? { dryRun } : {}),
+    ...(selected.length ? { pools: selected } : {}), readers });
   console.log(JSON.stringify(result));
 }
 

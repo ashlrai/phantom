@@ -869,19 +869,35 @@ export async function phantomGateway(options, env, box) {
   } else mkdirSync(project, { recursive: true });
 
   const checks = [];
-  const write = await run(options.phm, ['mcp', 'ecosystem', '--write', '--json'], { env: gwEnv, cwd: project, timeoutMs: 30_000 });
-  let report = null;
-  try { report = JSON.parse(write.stdout); } catch { /* reported below */ }
-  const registered = new Set([...(report?.added ?? []), ...(report?.available ?? []).filter(item => item?.registered).map(item => item.name)]);
-  const unregistered = expected.filter(server => !registered.has(server.name)).map(server => server.name);
-  checks.push(['phm:mcp-ecosystem', report && !unregistered.length
-    ? { status: 'pass', detail: `registered ${expected.map(server => server.name).join(', ')}` }
-    : { status: 'fail', detail: report ? `not registered: ${unregistered.join(', ')}; refused ${JSON.stringify(report.refused ?? [])}` : `ecosystem --write exit ${write.code}: ${write.stderr.trim().slice(0, 200)}` }]);
-  if (unregistered.length) return checks;
+  // Discovery scans every PATH directory and refuses distinct same-name binaries.
+  // Keep npm bootstrap wrappers and host installations out of this probe. Node is
+  // needed by the published phm launcher, but its directory may also hold companions.
+  symlinkSync(process.execPath, join(bin, 'node'));
+  const write = await run(options.phm, ['mcp', 'ecosystem', '--write', '--json'], {
+    env: { ...gwEnv, PATH: bin }, cwd: project, timeoutMs: 30_000,
+  });
+  // Published Phantom versions before ecosystem JSON support ignore --json.
+  // Verify the persisted registration instead of parsing human output.
+  const settingsPath = join(env.ASHLR_HOME, 'settings.json');
+  let settings = null;
+  try { settings = JSON.parse(readFileSync(settingsPath, 'utf8')); } catch { /* reported below */ }
+  // Published Phantom 3.29.15 discovers Secrets and Locus only. MD is an
+  // explicit gateway entry until ecosystem discovery ships in a release.
+  const discovered = expected.filter(server => server.name !== 'ashlr-md');
+  const unregistered = discovered.filter(server => !settings?.mcpServers?.[server.name]?.command).map(server => server.name);
+  const registered = write.code === 0 && !write.timedOut && settings && !unregistered.length;
+  checks.push(['phm:mcp-ecosystem', registered
+    ? { status: 'pass', detail: `registered ${discovered.map(server => server.name).join(', ')}` }
+    : { status: 'fail', detail: `ecosystem --write exit ${write.code}${write.timedOut ? ' (timed out)' : ''}; ${settings ? `not registered: ${unregistered.join(', ')}` : 'missing or invalid settings.json'}` }]);
+  if (!registered) return checks;
 
-  const settingsPath = report.settingsPath ?? join(env.ASHLR_HOME, 'settings.json');
+  if (expected.includes(GATEWAY_SERVERS[2])) {
+    settings.mcpServers ??= {};
+    settings.mcpServers['ashlr-md'] ??= { command: options.mdopenerMcp, args: [] };
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  }
+
   if (withSecrets) {
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
     const entry = settings.mcpServers?.['phantom-secrets'];
     if (entry) entry.env = { ...(entry.env ?? {}), PHANTOM_VAULT_PASSPHRASE: passphrase };
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2));

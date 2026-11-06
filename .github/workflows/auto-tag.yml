@@ -1,0 +1,173 @@
+# Auto-tag: create v<version> and its draft GitHub release when the version in
+# package.json on master is untagged and every required check for that exact
+# commit is green. A missing tag is owed even when the bump landed earlier, so
+# this heals a stranded release instead of waiting for the next bump.
+# Tags and releases are created only here, with the ashlr-release GitHub App
+# token. The release starts as a draft: releases/latest keeps resolving to the
+# last fully stocked feed until scripts/publish-desktop-release.mjs attaches
+# the signed artifacts and publishes it. release-please (if present) only opens
+# version PRs and never creates tags or releases.
+#
+# Required checks are discovered at run time from the branch rules API
+# (rulesets) unioned with classic branch protection contexts. Fail closed:
+# - no required checks discovered: fail
+# - only GitHub Actions check runs (app id 15368) count; every latest run with
+#   a required name must be completed + success; commit statuses never count
+# - a required check missing, queued or in progress: bounded wait (~9.5 min),
+#   then no tag (notice on the push trigger, which workflow_run re-evaluates;
+#   failure on workflow_run)
+# - any conclusion other than success: fail at once. skipped and neutral are NOT
+#   green: required checks here use the skip-job pattern (phantom #811),
+#   which reports success, so a skipped required check means it did not run.
+name: Auto-tag
+
+on:
+  push:
+    branches: [master]
+    paths: ["package.json"]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+  schedule:
+    - cron: "22,52 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: auto-tag-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: read     # read check-runs for the exact commit
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      BRANCH: master
+      VERSION_FILE: package.json
+      SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      TRIGGER: ${{ github.event_name }}
+      # Required checks designed to report skipped on push to master (PR-only
+      # jobs). Only these may be skipped; everything else must be success.
+      SKIP_OK: ""
+      ACTIONS_APP_ID: "15368"   # GitHub Actions; other apps' same-named runs never count
+    steps:
+      - name: Detect version change
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          read_version() {
+            gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/$VERSION_FILE?ref=$1" | jq -r .version
+          }
+          parent=$(gh api "repos/$REPO/commits/$SHA" -q '.parents[0].sha')
+          new=$(read_version "$SHA")
+          old=$(read_version "$parent" || echo none)
+          [[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::unexpected version '$new'"; exit 1; }
+          # Existence first: an untagged version on master is owed its tag even
+          # when the bump landed earlier (a merge that carried no checks used
+          # to leave the tag stranded forever). The release leg is owed too: a
+          # tag whose GitHub release was never created (or whose creation step
+          # failed) still owes the draft, so "nothing to do" requires BOTH.
+          # releases/tags/<tag> returns published releases only — drafts 404
+          # here, and this read-only token could not list them anyway. A lone
+          # draft falls through to the tag step, whose script finds it through
+          # the write-scoped list endpoint and reuses it.
+          if git ls-remote --exit-code --tags "https://github.com/$REPO.git" "refs/tags/v$new" >/dev/null && \
+             gh api "repos/$REPO/releases/tags/v$new" >/dev/null 2>&1; then
+            echo "Tag v$new and its release already exist; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$new" = "$old" ]; then
+            echo "Version unchanged ($new) but tag v$new is missing; tagging this commit."
+          else
+            echo "Version bumped $old -> $new; tagging this commit."
+          fi
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Require every required check green on this exact commit
+        id: checks
+        if: steps.version.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=$( {
+            gh api "repos/$REPO/rules/branches/$BRANCH" -q '.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context'
+            gh api "repos/$REPO/branches/$BRANCH" -q '.protection.required_status_checks.contexts[]?'
+          } | sort -u )
+          if [ -z "$required" ]; then
+            echo "::error::no required checks discovered for $BRANCH; refusing to tag"; exit 1
+          fi
+          # One evaluation pass. Check runs: only GitHub Actions (app id
+          # $ACTIONS_APP_ID) counts, and EVERY latest run with the required name
+          # must be completed + success. Commit statuses are ignored: a required
+          # name with no app-15368 check run is missing.
+          evaluate() {
+            runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?filter=latest&app_id=$ACTIONS_APP_ID&per_page=100"               -q '.check_runs[] | select(.app.id == '"$ACTIONS_APP_ID"') | [.name, .status, (.conclusion // "")] | @tsv')
+            pending=0; bad=0
+            while IFS= read -r name; do
+              rows=$(awk -F'	' -v n="$name" '$1==n' <<<"$runs")
+              if [ -n "$rows" ]; then
+                while IFS=$'	' read -r _ status conclusion; do
+                  if [ "$status" != completed ]; then echo "pending: $name ($status)"; pending=1
+                  elif [ "$conclusion" = success ]; then echo "green: $name"
+                  elif [ "$conclusion" = skipped ] && [ -n "$SKIP_OK" ] && [ "$name" = "$SKIP_OK" ]; then echo "skipped by design on push: $name"
+                  else echo "::error::not green: $name ($conclusion)"; bad=1; fi
+                done <<<"$rows"
+                continue
+              fi
+              echo "missing: $name (no GitHub Actions check run; commit statuses never satisfy a required check)"; pending=1
+            done <<<"$required"
+          }
+          # Bounded wait while checks are pending or not yet reported:
+          # about 9.5 minutes total, then decide. Failures stop at once.
+          for delay in 0 20 40 60 90 120 120 120; do
+            sleep "$delay"
+            evaluate
+            if [ "$bad" = 1 ]; then exit 1; fi
+            if [ "$pending" = 0 ]; then echo "green=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          done
+          if [ "$TRIGGER" = push ]; then
+            echo "::notice::required checks still not finished; the workflow_run trigger re-evaluates after CI"
+            echo "green=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "::error::required checks missing or pending after CI completed and a bounded wait; refusing to tag"; exit 1
+
+      - name: Checkout candidate revision
+        if: steps.checks.outputs.green == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
+      - name: Mint ashlr-release App token (contents write, this repo only)
+        id: app
+        if: steps.checks.outputs.green == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.ASHLR_RELEASE_APP_ID }}
+          private-key: ${{ secrets.ASHLR_RELEASE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      # One step creates the tag then the DRAFT GitHub release — the train leg
+      # that used to depend on someone doing it by hand. The release stays a
+      # draft so releases/latest keeps serving the last complete feed until the
+      # sanctioned local publisher attaches the signed artifacts.
+      - name: Create tag v${{ steps.version.outputs.version }} and its draft release
+        if: steps.checks.outputs.green == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node .github/scripts/tag-github-release.mjs
+

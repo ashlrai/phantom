@@ -31,7 +31,7 @@
 import { evictAll, invalidateObserved } from './cache.js';
 // The composer owns its own storage format, so the key names live with it
 // rather than being duplicated here where they could drift.
-import { clearComposerMemory } from '../routes/verse/chat/composer-memory.js';
+import { wipeComposerMemory } from '../routes/verse/chat/composer-wipe.js';
 import { isRemoteMobileMode } from './remote-mode.js';
 
 const READ_CLIENT_STORAGE_KEY = 'ashlr.readClientProof.v1';
@@ -71,7 +71,7 @@ function loadOrCreateClientProof(): string {
   return proof;
 }
 
-let clientProof = loadOrCreateClientProof();
+const clientProof = loadOrCreateClientProof();
 
 /** In-memory only. Never touches storage. Cleared by clearMutationToken(). */
 let mutationToken: string | null = null;
@@ -118,17 +118,6 @@ export function getAuthSnapshot(): AuthState {
 
 export function getReadClientProof(): string {
   if (isRemoteMobileMode()) throw new Error('Local read-client proof is unavailable on the phone gateway.');
-  return clientProof;
-}
-
-/** Regenerate the client proof (e.g. after an explicit "forget this device"). */
-export function resetReadClientProof(): string {
-  clientProof = randomHex64();
-  try {
-    sessionStorage.setItem(READ_CLIENT_STORAGE_KEY, clientProof);
-  } catch {
-    /* best-effort */
-  }
   return clientProof;
 }
 
@@ -188,7 +177,7 @@ function expireNow(): void {
   // session's first paint. The composer's drafts and sent-message history live
   // in localStorage, not in that cache, and they are verbatim prompt text —
   // exactly the kind of content this wipe exists for.
-  clearComposerMemory();
+  wipeComposerMemory();
   setState({ phase: 'unauthenticated', checked: true });
 }
 

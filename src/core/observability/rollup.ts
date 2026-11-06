@@ -10,23 +10,28 @@ import { neutralTokenEvidence, mergeTokenEvidence } from '../run/token-evidence.
  */
 
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve as resolvePath } from 'node:path';
 
 import type {
   AshlrConfig,
   ActivityRollup,
+  JobLaneRollup,
   ProjectActivity,
   DailyUsage,
   ModelUsage,
   UsageEvent,
+  MergedPrCost,
+  MergedPrCostRollup,
+  MergedPrPoolCost,
 } from '../types.js';
 import { collectUsageEvents, dashNormalize } from './usage-source.js';
 import { evalBudget } from './budget-alert.js';
 import { estCostUsd } from '../run/budget.js';
 import { loadIndex } from '../index-engine.js';
 import { localDay } from '../reasoning/insights.js';
+import { fleetHopSpoolPath } from './fleet-hop.js';
 import type { AshlrIndex } from '../types.js';
 
 // ---------------------------------------------------------------------------
@@ -377,6 +382,67 @@ export function rollupDay(ts: string): string {
   return Number.isFinite(ms) ? localDay(ms) : ts.slice(0, 10);
 }
 
+/**
+ * Read ~/.ashlr/jobs.jsonl (or $ASHLR_HOME/jobs.jsonl) outcome snapshots.
+ * Each row has lane, jobId, ts, optional project, startedAt, completedAt,
+ * prUrl and merged. Latest snapshot per lane/job wins, including updates
+ * outside the window. Jobs belong to the window by completedAt, else ts.
+ * Missing files and malformed rows contribute no observations.
+ */
+export function rollupJobLanes(sinceMs: number, now: number, project?: string): JobLaneRollup[] {
+  const latest = new Map<string, Record<string, unknown>>();
+  let contents: string;
+  try {
+    contents = readFileSync(join(process.env['ASHLR_HOME'] || join(homedir(), '.ashlr'), 'jobs.jsonl'), 'utf8');
+  } catch {
+    return [];
+  }
+  for (const line of contents.split('\n')) {
+    try {
+      const row: unknown = JSON.parse(line);
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+      const r = row as Record<string, unknown>;
+      if (typeof r['lane'] !== 'string' || !r['lane'].trim() ||
+          typeof r['jobId'] !== 'string' || !r['jobId'] ||
+          typeof r['ts'] !== 'string' || !Number.isFinite(Date.parse(r['ts']))) continue;
+      if (Date.parse(r['ts']) > now) continue;
+      const key = JSON.stringify([r['lane'], r['jobId']]);
+      const previous = latest.get(key);
+      if (!previous || Date.parse(r['ts']) >= Date.parse(previous['ts'] as string)) latest.set(key, r);
+    } catch {
+      // An interrupted append must not discard the rest of the ledger.
+    }
+  }
+  const lanes = new Map<string, { jobs: number; prs: Map<string, boolean>; durations: number[] }>();
+  for (const row of latest.values()) {
+    const timestamp = typeof row['completedAt'] === 'string' ? Date.parse(row['completedAt']) : Date.parse(row['ts'] as string);
+    if (!Number.isFinite(timestamp) || timestamp < sinceMs || timestamp > now) continue;
+    if (project && (typeof row['project'] !== 'string' ||
+        !(row['project'] === project || basename(row['project']) === project || row['project'].includes(project)))) continue;
+    const lane = row['lane'] as string;
+    const acc = lanes.get(lane) ?? { jobs: 0, prs: new Map<string, boolean>(), durations: [] };
+    lanes.set(lane, acc);
+    acc.jobs++;
+    if (typeof row['prUrl'] === 'string' && row['prUrl'].trim()) {
+      acc.prs.set(row['prUrl'], acc.prs.get(row['prUrl']) === true || row['merged'] === true);
+    }
+    if (typeof row['startedAt'] === 'string' && typeof row['completedAt'] === 'string') {
+      const start = Date.parse(row['startedAt']);
+      const end = Date.parse(row['completedAt']);
+      if (Number.isFinite(start) && Number.isFinite(end) && end >= start) acc.durations.push(end - start);
+    }
+  }
+  return [...lanes].sort(([a], [b]) => a.localeCompare(b)).map(([lane, acc]) => {
+    const merged = [...acc.prs.values()].filter(Boolean).length;
+    return {
+      lane, jobs: acc.jobs, prs: acc.prs.size, merged,
+      mergeRate: acc.prs.size ? merged / acc.prs.size : null,
+      wallTimePerJobMs: acc.durations.length ? acc.durations.reduce((a, b) => a + b, 0) / acc.durations.length : null,
+      prsPerHour: now > sinceMs ? acc.prs.size / ((now - sinceMs) / 3_600_000) : 0,
+    };
+  });
+}
+
 export function buildRollup(
   window: '1d' | '7d' | '30d',
   cfg: AshlrConfig,
@@ -660,6 +726,7 @@ export function buildRollup(
     byProject,
     byDay,
     byModel,
+    byLane: rollupJobLanes(sinceMs, now, projectFilter),
     budget,
   };
 }
@@ -845,4 +912,290 @@ export async function getCachedRollup(
 export function invalidateRollupCache(): void {
   rollupCache.clear();
   invalidateCommitCountCache();
+}
+
+// ---------------------------------------------------------------------------
+// Merged-PR cost rollup (queue.v1 fleet_hop)
+// ---------------------------------------------------------------------------
+//
+// RADAR-OTEL-COST (RQ-PLAN-OTEL-COST-B): tokens and dollars per merged PR by
+// pool, feeding the coding pool cost feed (RQ-PARITY-COST-FEED).
+//
+// Source: the local fleet-hop spool written by emitFleetHop (fleet-hop.ts).
+// The spool retains hops that PostHog delivery could not confirm, so the local
+// view is a floor on spend, not the whole fleet's; the coverage counters
+// (missingTokens, missingUsd, hops) let consumers judge completeness the same
+// way the feed's own missing* fields do.
+//
+// Semantics mirror the feed contract (docs/router/README.md on the feed
+// branch): a PR counts once any hop exits the 'merged' station; ALL of its
+// recorded hops then contribute cost, whenever they happened, because no time
+// filter runs before the PR join. opts.sinceMs filters the merged timestamp
+// only, never the contributing hops. Re-emitted copies of one hop collapse on
+// $insert_id, so identical replays stay idempotent. test:true hops are
+// synthetic traffic and never count as spend. A hop without a pool labels its
+// spend 'unknown' rather than dropping it, matching the feed's explicit
+// 'unknown' dimension.
+//
+// METADATA ONLY in and out: hop properties are already allowlisted ids and
+// counters (fleet-hop.ts); the rollup emits ids, timestamps and sums. No env,
+// no credentials, never throws.
+
+const FLEET_HOP_EVENT_NAME = 'fleet_hop';
+const MERGED_STATION = 'merged';
+const UNKNOWN_POOL = 'unknown';
+/** Cap on spool bytes scanned; a larger spool still contributes its prefix. */
+const FLEET_HOP_SPOOL_MAX_BYTES = 32 * 1024 * 1024;
+/** Same bounded id shape the emitter enforces (fleet-hop.ts ID_RE). */
+const HOP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,119}$/;
+/**
+ * Repo labels additionally allow '/' ('ashlrai/phantom'), matching the coding
+ * pool cost feed's record label charset.
+ */
+const HOP_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._:@/+~-]{0,199}$/;
+
+interface FleetHopCostRow {
+  pr: number | null;
+  station: string;
+  pool: string | null;
+  repo: string | null;
+  jobId: string | null;
+  tokens: number | null;
+  usd: number | null;
+  /** Station exit timestamp; supplies mergedAt for merged hops. */
+  ts: string;
+  dedupKey: string;
+  test: boolean;
+}
+
+interface PoolAcc {
+  hops: number;
+  jobs: Set<string>;
+  tokens: number;
+  usd: number;
+  missingTokens: number;
+  missingUsd: number;
+}
+
+function positiveInt(v: unknown): number | null {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null;
+}
+
+function nonNegNumber(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/**
+ * null and absent both mean unattributed. A present value that is not
+ * id-shaped is malformed, so the whole hop is refused (returns undefined).
+ */
+function idOrAbsent(v: unknown): string | null | undefined {
+  if (v === null || v === undefined) return null;
+  return typeof v === 'string' && HOP_ID_RE.test(v) ? v : undefined;
+}
+
+/** Prefer the station exit time; fall back to the event timestamp. */
+function hopTimestamp(props: Record<string, unknown>, envelopeTs: unknown): string | null {
+  for (const v of [props['exit_ts'], envelopeTs]) {
+    if (typeof v === 'string' && Number.isFinite(Date.parse(v))) return v;
+  }
+  return null;
+}
+
+/**
+ * Fallback dedup key for hops the emitter could not tag ($insert_id absent).
+ * Covers byte-identical re-emits of the same station exit.
+ */
+function stableHopIdentity(props: Record<string, unknown>): string {
+  return JSON.stringify([
+    props['job_id'], props['pr'], props['station'], props['enter_ts'],
+    props['exit_ts'], props['pool'], props['tokens'], props['usd'],
+  ]);
+}
+
+/** Reduce an emitted fleet_hop envelope to cost fields, or null when malformed. */
+function hopCostRow(value: unknown): FleetHopCostRow | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const envelope = value as Record<string, unknown>;
+  if (envelope['event'] !== FLEET_HOP_EVENT_NAME) return null;
+  const props = envelope['properties'];
+  if (!props || typeof props !== 'object' || Array.isArray(props)) return null;
+  const p = props as Record<string, unknown>;
+
+  const station = idOrAbsent(p['station']);
+  const ts = hopTimestamp(p, envelope['timestamp']);
+  if (!station || !ts) return null;
+  const pool = idOrAbsent(p['pool']);
+  const repo = p['repo'] === null || p['repo'] === undefined
+    ? null
+    : typeof p['repo'] === 'string' && HOP_REPO_RE.test(p['repo']) ? p['repo'] : undefined;
+  const jobId = idOrAbsent(p['job_id']);
+  if (pool === undefined || repo === undefined || jobId === undefined) return null;
+  const insertId = p['$insert_id'];
+
+  return {
+    pr: positiveInt(p['pr']),
+    station,
+    pool,
+    repo,
+    jobId,
+    tokens: nonNegNumber(p['tokens']),
+    usd: nonNegNumber(p['usd']),
+    ts,
+    dedupKey: typeof insertId === 'string' && insertId.length > 0
+      ? `i:${insertId}` : `c:${stableHopIdentity(p)}`,
+    test: p['test'] === true,
+  };
+}
+
+/**
+ * Read the local fleet-hop spool as raw parsed rows. Malformed JSON lines
+ * surface as null elements so buildMergedPrCostRollup can count them as
+ * invalidDropped; at most FLEET_HOP_SPOOL_MAX_BYTES are scanned. Never throws.
+ */
+export function collectFleetHopEvents(opts: { spoolPath?: string } = {}): unknown[] {
+  const events: unknown[] = [];
+  try {
+    const path = opts.spoolPath ?? fleetHopSpoolPath();
+    const st = statSync(path);
+    if (!st.isFile()) return events;
+    const size = Math.min(st.size, FLEET_HOP_SPOOL_MAX_BYTES);
+    const fd = openSync(path, 'r');
+    try {
+      const buf = Buffer.alloc(size);
+      let offset = 0;
+      while (offset < size) {
+        const n = readSync(fd, buf, offset, size - offset, null);
+        if (n <= 0) break;
+        offset += n;
+      }
+      for (const line of buf.toString('utf8', 0, offset).split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          events.push(JSON.parse(trimmed));
+        } catch {
+          events.push(null);
+        }
+      }
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // Missing or unreadable spool: an empty feed, never a thrown rollup.
+  }
+  return events;
+}
+
+/**
+ * Tokens and dollars per merged PR by pool, over parsed fleet_hop envelopes.
+ * Pure: callers may pass fixture events directly, or the rows
+ * collectFleetHopEvents returns. A PR joins once a hop exits 'merged' at or
+ * after opts.sinceMs (when given); every attributed hop then counts.
+ */
+export function buildMergedPrCostRollup(
+  input: readonly unknown[],
+  opts: { sinceMs?: number } = {},
+): MergedPrCostRollup {
+  const rollup: MergedPrCostRollup = {
+    schemaVersion: 1,
+    hops: 0,
+    invalidDropped: 0,
+    duplicatesDropped: 0,
+    testDropped: 0,
+    mergedPrs: [],
+  };
+
+  const seen = new Set<string>();
+  const rows: FleetHopCostRow[] = [];
+  for (const value of input) {
+    const row = hopCostRow(value);
+    if (row === null) { rollup.invalidDropped++; continue; }
+    if (seen.has(row.dedupKey)) { rollup.duplicatesDropped++; continue; }
+    seen.add(row.dedupKey);
+    if (row.test) { rollup.testDropped++; continue; }
+    rollup.hops++;
+    rows.push(row);
+  }
+
+  // A PR counts as merged when any hop exits the merged station in window.
+  const mergedAtByPr = new Map<number, string>();
+  for (const row of rows) {
+    if (row.pr === null || row.station !== MERGED_STATION) continue;
+    const ms = Date.parse(row.ts);
+    if (opts.sinceMs !== undefined && ms < opts.sinceMs) continue;
+    const prior = mergedAtByPr.get(row.pr);
+    if (prior === undefined || ms < Date.parse(prior)) mergedAtByPr.set(row.pr, row.ts);
+  }
+  if (mergedAtByPr.size === 0) return rollup;
+
+  const byPr = new Map<number, { repo: string | null; jobs: Set<string>; pools: Map<string, PoolAcc> }>();
+  for (const row of rows) {
+    if (row.pr === null || !mergedAtByPr.has(row.pr)) continue;
+    let pr = byPr.get(row.pr);
+    if (!pr) {
+      pr = { repo: null, jobs: new Set(), pools: new Map() };
+      byPr.set(row.pr, pr);
+    }
+    if (pr.repo === null && row.repo !== null) pr.repo = row.repo;
+    if (row.jobId !== null) pr.jobs.add(row.jobId);
+    const label = row.pool ?? UNKNOWN_POOL;
+    let acc = pr.pools.get(label);
+    if (!acc) {
+      acc = { hops: 0, jobs: new Set(), tokens: 0, usd: 0, missingTokens: 0, missingUsd: 0 };
+      pr.pools.set(label, acc);
+    }
+    acc.hops++;
+    if (row.jobId !== null) acc.jobs.add(row.jobId);
+    if (row.tokens === null) acc.missingTokens++; else acc.tokens += row.tokens;
+    if (row.usd === null) acc.missingUsd++; else acc.usd += row.usd;
+  }
+
+  for (const [prNumber, pr] of byPr) {
+    const byPool: MergedPrPoolCost[] = [...pr.pools.entries()]
+      .map(([pool, a]) => ({
+        pool,
+        hops: a.hops,
+        jobs: [...a.jobs].sort(),
+        tokens: a.tokens,
+        usd: a.usd,
+        missingTokens: a.missingTokens,
+        missingUsd: a.missingUsd,
+      }))
+      .sort((a, b) => a.pool.localeCompare(b.pool));
+    const totals = { hops: 0, tokens: 0, usd: 0, missingTokens: 0, missingUsd: 0 };
+    for (const a of byPool) {
+      totals.hops += a.hops;
+      totals.tokens += a.tokens;
+      totals.usd += a.usd;
+      totals.missingTokens += a.missingTokens;
+      totals.missingUsd += a.missingUsd;
+    }
+    const merged: MergedPrCost = {
+      pr: prNumber,
+      repo: pr.repo,
+      mergedAt: mergedAtByPr.get(prNumber)!,
+      jobs: [...pr.jobs].sort(),
+      totals,
+      byPool,
+    };
+    rollup.mergedPrs.push(merged);
+  }
+  rollup.mergedPrs.sort((a, b) => a.mergedAt.localeCompare(b.mergedAt) || a.pr - b.pr);
+  return rollup;
+}
+
+/**
+ * File-backed entry point: read the fleet-hop spool, then roll up. opts.window
+ * is a convenience for sinceMs = now - windowToMs(window); an explicit
+ * opts.sinceMs wins. With neither, every merged PR in the spool counts.
+ */
+export function mergedPrCostRollupFromSpool(
+  opts: { spoolPath?: string; window?: '1d' | '7d' | '30d'; sinceMs?: number } = {},
+): MergedPrCostRollup {
+  const sinceMs = opts.sinceMs ?? (opts.window ? Date.now() - windowToMs(opts.window) : undefined);
+  return buildMergedPrCostRollup(
+    collectFleetHopEvents(opts),
+    sinceMs === undefined ? {} : { sinceMs },
+  );
 }

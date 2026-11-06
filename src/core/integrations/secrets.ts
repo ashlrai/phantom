@@ -61,6 +61,7 @@ const LOCAL_GIT_COMMANDS = new Set([
   'config', 'branch', 'checkout', 'switch', 'restore', 'add', 'commit', 'reset',
   'revert', 'cherry-pick', 'merge', 'merge-base', 'rebase', 'tag', 'worktree',
   'init', 'apply', 'ls-files', 'ls-tree', 'cat-file', 'hash-object', 'update-ref',
+  'update-index', 'merge-file', 'merge-tree',
   'check-ref-format', 'check-ignore', 'check-attr', 'for-each-ref', 'diff-tree',
   'diff-index', 'diff-files', 'write-tree', 'read-tree', 'reflog', 'stash',
   'clean', 'gc', 'prune', 'fsck', 'describe', 'blame', 'shortlog', 'count-objects',

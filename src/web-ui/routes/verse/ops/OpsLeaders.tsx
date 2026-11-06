@@ -12,6 +12,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { opsLeadersQuery, postLeaderMessage } from './ops-queries.js';
 import type { OpsLeaderMember } from '../../../../core/verse/ops-types.js';
+import { LeaderPulse } from './LeaderPulse.js';
 import styles from './ops.module.css';
 
 function MemberChip({ member }: { member: OpsLeaderMember }) {
@@ -64,6 +65,7 @@ export function OpsLeaders() {
           <Button size="sm" variant="ghost" onClick={refetch}>Refresh</Button>
         </div>
       </div>
+      <LeaderPulse />
       {read.status === 'error' ? <p role="status">The leaders channel is unavailable. Refresh to reconnect.</p>
         : !data ? <p role="status">Reading the channel…</p>
         : <>

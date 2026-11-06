@@ -19,6 +19,7 @@ import uuid
 
 FLOOR = 20 * 1024**3
 CAP = 8 * 1024**3
+SCCACHE_SIZE = 10 * 1024**3
 HELPER = Path(__file__).resolve().parents[1] / "bridge-worktree.mjs"
 
 
@@ -133,6 +134,32 @@ def identity(worktree):
     if top != worktree or common == gitdir or (gitdir / "locked").exists():
         raise Refused("not-unlocked-linked-worktree")
     return worktree, common
+
+
+def local_sccache(env, state):
+    """Opt-in (ASHLR_SCCACHE=1) local-disk-only sccache as RUSTC_WRAPPER.
+
+    Fails closed when sccache is missing. Every inherited SCCACHE_* setting is
+    dropped, so no remote backend, credential or shared config file can leak in;
+    the cache is a private directory under the bridge state. Uses a dedicated
+    server port so an unrelated, differently configured server is never reused.
+    """
+    if env.get("ASHLR_SCCACHE") != "1":
+        return
+    for name in [n for n in env if n.startswith("SCCACHE_")]:
+        del env[name]
+    binary = shutil.which("sccache", path=env.get("PATH"))
+    if binary is None or not os.path.isabs(binary):
+        raise Refused("sccache-unavailable")
+    cache = directory(state / "sccache")
+    config = cache / "config.toml"
+    config.write_text('[cache.disk]\ndir = %s\nsize = %d\n' % (json.dumps(str(cache / "disk")), SCCACHE_SIZE))
+    env.update(RUSTC_WRAPPER=binary, SCCACHE_CONF=str(config), SCCACHE_DIR=str(cache / "disk"),
+               SCCACHE_SERVER_PORT=str(20000 + int(key(cache), 16) % 20000),
+               SCCACHE_IDLE_TIMEOUT="120")
+    # sccache cannot cache incremental artifacts; a user choice is respected.
+    env.setdefault("CARGO_INCREMENTAL", "0")
+    env.pop("CARGO_BUILD_RUSTC_WRAPPER", None)
 
 
 def layout(state, common):
@@ -260,6 +287,7 @@ def launch(source, worktree, state, job, command, cap=CAP):
                 # Cargo's newer separate intermediate-output override could
                 # otherwise bypass this managed target and its measurements.
                 env.pop("CARGO_BUILD_BUILD_DIR", None)
+                local_sccache(env, state)
                 code = supervised(command, worktree, env, cache, cap,
                                   lease_fds=(worktree_lease, cargo_lease))
                 log(state, job, "launch-finished", worktree, cache, exit_code=code)

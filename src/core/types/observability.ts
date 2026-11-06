@@ -109,6 +109,20 @@ export interface BudgetAlert {
   message: string;
 }
 
+/** Job outcomes for one execution lane within the rollup window. */
+export interface JobLaneRollup {
+  lane: string;
+  jobs: number;
+  prs: number;
+  merged: number;
+  /** Merged PRs divided by distinct PRs, or null with no PRs. */
+  mergeRate: number | null;
+  /** Mean completed job duration in milliseconds, or null without valid timings. */
+  wallTimePerJobMs: number | null;
+  /** Distinct PRs divided by the full reporting window in hours. */
+  prsPerHour: number;
+}
+
 /** The full observability roll-up for a window. */
 export interface ActivityRollup {
   /** Window label (e.g. '1d' | '7d' | '30d'). */
@@ -130,8 +144,66 @@ export interface ActivityRollup {
   byDay: DailyUsage[];
   /** Per-model breakdown, sorted by cost/tokens. */
   byModel: ModelUsage[];
+  /** Job outcome metrics from local jobs.jsonl, including the Devin lane. */
+  byLane?: JobLaneRollup[];
   /** Budget evaluation for the window. */
   budget: BudgetAlert;
+}
+
+// ---------------------------------------------------------------------------
+// Merged-PR cost rollup (queue.v1 fleet_hop) - feeds the coding pool cost feed
+// ---------------------------------------------------------------------------
+
+/**
+ * Cost subtotal for one pool inside a merged PR. METADATA ONLY: pool label,
+ * job ids and counters; never bodies, paths or credentials.
+ */
+export interface MergedPrPoolCost {
+  /** Agent pool label; 'unknown' when no hop recorded one. */
+  pool: string;
+  /** Hop events attributed to this pool. */
+  hops: number;
+  /** Distinct router job ids contributing spend, sorted. */
+  jobs: string[];
+  /** Summed reported tokens across hops. */
+  tokens: number;
+  /** Summed reported USD across hops. */
+  usd: number;
+  /** Hops carrying no token figure (coverage signal, not an error). */
+  missingTokens: number;
+  /** Hops carrying no USD figure (coverage signal, not an error). */
+  missingUsd: number;
+}
+
+/** Tokens and dollars attributed to one merged PR, grouped by pool. */
+export interface MergedPrCost {
+  /** Pull request number. */
+  pr: number;
+  /** Repo slug when any hop recorded one, else null. */
+  repo: string | null;
+  /** Earliest observed 'merged' station exit timestamp (ISO). */
+  mergedAt: string;
+  /** Distinct router job ids that produced the PR, sorted. */
+  jobs: string[];
+  /** Whole-PR totals across pools. */
+  totals: Omit<MergedPrPoolCost, 'pool' | 'jobs'>;
+  /** Per-pool breakdown, sorted by pool label. */
+  byPool: MergedPrPoolCost[];
+}
+
+/** Result of rolling up fleet_hop events into per-merged-PR cost by pool. */
+export interface MergedPrCostRollup {
+  schemaVersion: 1;
+  /** Distinct hop events counted after validation, dedup and test filtering. */
+  hops: number;
+  /** Input rows rejected as malformed (not fleet_hop envelopes). */
+  invalidDropped: number;
+  /** Valid rows dropped as re-emitted duplicates. */
+  duplicatesDropped: number;
+  /** Valid hops dropped because they are marked test traffic. */
+  testDropped: number;
+  /** One entry per merged PR, sorted by mergedAt then pr. */
+  mergedPrs: MergedPrCost[];
 }
 
 /** Cost attribution + forward forecast for a recent usage window (M15). */
@@ -156,6 +228,8 @@ export interface CostForecast {
  * shape that both the OTLP emitter and the local-file sink consume.
  */
 export interface GenAiSpan {
+  /** Optional allowlisted memory benchmark metadata; no process content. */
+  memory?: import('../observability/memory-benchmark.js').MemoryMeasurement & { scope: 'job' | 'merged_pr' };
   tokenEvidence?: RunTokenEvidence;
   /** Span name (e.g. the operation/task identifier - metadata, not content). */
   name: string;

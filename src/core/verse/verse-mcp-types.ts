@@ -62,7 +62,6 @@ export function isVerseMcpEndpointPath(path: string): boolean {
  * shows only the tools whose scope the chat's grant holds right now.
  */
 export type VerseMcpScope = 'terminal' | 'browser' | 'browser_act' | 'browser_script' | 'computer';
-export const VERSE_MCP_SCOPES: readonly VerseMcpScope[] = ['terminal', 'browser', 'browser_act', 'browser_script', 'computer'];
 
 /** Terminal: off / agent-owned tabs only / agent tabs plus operator shells shared per tab. */
 export type VerseAgentTerminalMode = 'off' | 'agent' | 'shared';

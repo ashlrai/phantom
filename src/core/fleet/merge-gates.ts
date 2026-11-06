@@ -24,7 +24,10 @@
  *   G7  GitHub       App PR; every required check green on the head SHA; no
  *                    checks ⇒ owner lane; SHA-pinned squash merge. On a
  *                    local-enforcement repo the App's own host-verified
- *                    `ashlr/verify` run must be among the green (3.13).
+ *                    `ashlr/verify` run must be green (3.13) and every GitHub
+ *                    Actions check run blocks — the secret scan included.
+ *                    Other Apps' checks are informational — a red Vercel
+ *                    preview never refuses (verify-check-run.ts).
  *
  * Everything here is PURE (inputs in, verdict out) except `recordGateRow`,
  * which appends to the ledger through an injected sink. The orchestration —
@@ -65,7 +68,7 @@ import {
   type ReviewModelFamily,
 } from './reviewer-independence.js';
 import type { FleetMergeStateV1 } from './fleet-merge-state.js';
-import { ASHLR_VERIFY_CHECK_NAME } from './verify-check-run.js';
+import { ASHLR_VERIFY_CHECK_NAME, GITHUB_ACTIONS_APP_ID, partitionBlockingCheckContexts, type ObservedCheckContext } from './verify-check-run.js';
 import {
   GATE_ORDER,
   MERGE_RISK_RANK,
@@ -1111,7 +1114,12 @@ export function evaluateG7Checks(input: G7ChecksInput): GateEvaluation & { state
     if (!prior || run.id > prior.id) latestRunByKey.set(key, run);
   }
   const latestRuns = [...latestRunByKey.values()];
-  const states: { name: string; state: CheckState }[] = [];
+  // Every check observed on the head, required or not (partition decides which block).
+  const observed: ObservedCheckContext[] = [
+    ...latestRuns.map((run) => ({ name: run.name, appId: run.appId, state: runState(run) })),
+    ...input.statuses.map((status) => ({ name: status.context, appId: null, state: statusState(status) })),
+  ];
+  let blocking: readonly RequiredCheck[];
   if (input.enforcement === 'server') {
     // "Server enforcement declared, but GitHub protects nothing" stays in the
     // OWNER LANE. Deliberately NOT re-read as local enforcement (all green +
@@ -1139,27 +1147,18 @@ export function evaluateG7Checks(input: G7ChecksInput): GateEvaluation & { state
         { enforcement: 'server', required: [] },
       ), 'none');
     }
-    for (const required of input.required) {
-      const runs = latestRuns.filter((run) => run.name === required.context &&
-        (required.appId === null || run.appId === required.appId));
-      const statuses = required.appId === null ? input.statuses.filter((s) => s.context === required.context) : [];
-      const observed = [...runs.map(runState), ...statuses.map(statusState)];
-      const state: CheckState = observed.length === 0
-        ? 'pending'
-        : observed.includes('red') ? 'red' : observed.every((s) => s === 'green') ? 'green' : 'pending';
-      states.push({ name: required.context, state });
-    }
+    blocking = input.required;
   } else {
-    // Local enforcement: GitHub protects nothing here, so every check that
-    // ran must be green AND (3.13) the fleet App's own host-verified
-    // `ashlr/verify` must be one of them. WHY the second half: "every check
-    // that ran is green" alone let a deploy-only check (a Vercel preview)
-    // prove a PR green although no test ran anywhere; a same-named run from
-    // any other App never counts (it is just one more check that must be green).
-    for (const run of latestRuns) states.push({ name: run.name, state: runState(run) });
-    for (const status of input.statuses) states.push({ name: status.context, state: statusState(status) });
+    // Local enforcement: GitHub protects nothing here, so the merge waits on
+    // the fleet App's own host-verified `ashlr/verify` (3.13) — plus whatever
+    // contexts the branch requires anyway and EVERY check run GitHub Actions
+    // reported on the head: nothing names the repo's own CI server-side, so a
+    // red or pending Actions run (the secret scan included) blocks here or it
+    // blocks nowhere. Only another App's check is informational: a deploy-only
+    // green (a Vercel preview) proves nothing and a red one blocks nothing; a
+    // same-named run from any other App satisfies the verify context never.
     const fleetAppId = input.fleetAppId ?? null;
-    if (states.length === 0 && fleetAppId === null) {
+    if (observed.length === 0 && fleetAppId === null) {
       return out(evaluation(
         'owner-lane',
         'no-checks',
@@ -1173,38 +1172,53 @@ export function evaluateG7Checks(input: G7ChecksInput): GateEvaluation & { state
         'no-verify-check',
         `this local-enforcement repo has no host-verified ${ASHLR_VERIFY_CHECK_NAME} check from the ashlr-fleet App on the PR head ` +
           '(other green checks, e.g. a deploy preview, prove no tests ran); it goes to the owner lane',
-        { enforcement: 'local', required: [`${ASHLR_VERIFY_CHECK_NAME}@fleet-app`], states: states.map((s) => `${s.name}:${s.state}`).sort() },
+        { enforcement: 'local', required: [`${ASHLR_VERIFY_CHECK_NAME}@fleet-app`], states: observed.map((s) => `${s.name}:${s.state}`).sort() },
       ), 'none');
     }
-    // Posted but not (yet) listed: pending, under the same 24 h timeout.
-    if (!latestRuns.some((run) => run.name === ASHLR_VERIFY_CHECK_NAME && run.appId === fleetAppId)) {
-      states.push({ name: ASHLR_VERIFY_CHECK_NAME, state: 'pending' });
+    const pinned: RequiredCheck[] = input.required.some((r) => r.context === ASHLR_VERIFY_CHECK_NAME && r.appId === fleetAppId)
+      ? [...input.required]
+      : [...input.required, { context: ASHLR_VERIFY_CHECK_NAME, appId: fleetAppId }];
+    // Every Actions run becomes a required context pinned to the Actions App
+    // unless a required entry already accepts it as a source (context@* or
+    // context@15368 the branch names anyway).
+    for (const run of latestRuns) {
+      if (run.appId !== GITHUB_ACTIONS_APP_ID) continue;
+      if (!pinned.some((r) => r.context === run.name && (r.appId === null || r.appId === GITHUB_ACTIONS_APP_ID))) {
+        pinned.push({ context: run.name, appId: GITHUB_ACTIONS_APP_ID });
+      }
     }
+    blocking = pinned;
   }
+  const partition = partitionBlockingCheckContexts({ required: blocking, observed });
   const inputs = {
     enforcement: input.enforcement,
-    required: input.enforcement === 'local'
-      ? [`${ASHLR_VERIFY_CHECK_NAME}@${input.fleetAppId}`]
-      : input.required.map((r) => `${r.context}@${r.appId ?? '*'}`).sort(),
-    states: states.map((s) => `${s.name}:${s.state}`).sort(),
+    required: blocking.map((r) => `${r.context}@${r.appId ?? '*'}`).sort(),
+    states: partition.blocking.map((s) => `${s.name}:${s.state}`).sort(),
+    informational: partition.informational.map((s) => `${s.name}:${s.state}`).sort(),
   };
-  const red = states.filter((s) => s.state === 'red');
+  const red = partition.blocking.filter((s) => s.state === 'red');
   if (red.length > 0) {
     return out(evaluation('refuse', 'required-check-failed', `check(s) failed on the PR head: ${red.map((s) => s.name).slice(0, 5).join(', ')}`, inputs), 'red');
   }
-  const pending = states.filter((s) => s.state === 'pending');
+  const pending = partition.blocking.filter((s) => s.state === 'pending');
   if (pending.length > 0) {
     if (input.nowMs - input.pendingSinceMs > CHECKS_MAX_PENDING_MS) {
       return out(evaluation('refuse', 'checks-timeout', `check(s) still pending after 24 h: ${pending.map((s) => s.name).slice(0, 5).join(', ')}`, inputs), 'red');
     }
     return out(evaluation('wait', 'checks-pending', `waiting on ${pending.map((s) => s.name).slice(0, 5).join(', ')}`, inputs), 'pending');
   }
+  // A red non-required check never turns the verdict red — it is reported.
+  const informationalRed = partition.informational.filter((s) => s.state === 'red');
+  const informationalNote = informationalRed.length > 0
+    ? `; non-required check(s) red on the head (informational only): ${informationalRed.map((s) => s.name).slice(0, 5).join(', ')}.`
+    : '';
   return out(evaluation(
     'pass',
     'checks-green',
     input.enforcement === 'server'
-      ? 'every required check is green on the head SHA'
-      : `every check is green on the head SHA, including the App's host-verified ${ASHLR_VERIFY_CHECK_NAME}`,
+      ? `every required check is green on the head SHA${informationalNote}`
+      : `the App's host-verified ${ASHLR_VERIFY_CHECK_NAME} is green on the head SHA` +
+        `${blocking.length > 1 ? ' and every other required check is green' : ''}${informationalNote}`,
     inputs,
   ), 'green');
 }

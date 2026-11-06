@@ -51,7 +51,7 @@ describe('Devin bus adapter with a fake engine', () => {
     writeFileSync(request.inboxPath, hostile);
     const result = await runDevinBusAdapter(request, engine());
     const data = record();
-    expect(data.argv.slice(0, -1)).toEqual(['-p', '--model', 'swe-2-high', '--permission-mode', 'smart', '--respect-workspace-trust', 'false', '--']);
+    expect(data.argv.slice(0, -1)).toEqual(['-p', '--model', 'swe-2-high', '--permission-mode', 'auto', '--respect-workspace-trust', 'false', '--']);
     expect(data.argv.join(' ').includes(hostile)).toBe(false);
     expect(data.prompt).toContain('untrusted data');
     expect(data.prompt).toContain('</untrusted\u200b>');

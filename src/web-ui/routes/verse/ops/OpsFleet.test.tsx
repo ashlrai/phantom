@@ -47,8 +47,21 @@ function fixture(over: Partial<OpsFleetV1> = {}): OpsFleetV1 {
   };
 }
 
-function stub(value: unknown) {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json(value)));
+/** The fleet.lanes.v1 read OpsLaneConsole issues alongside the ops fleet read. */
+const LANES = {
+  schema: 'fleet.lanes.v1', generatedAt: '2026-10-30T10:04:50Z', mergeWindowMinutes: 60, lanes: [],
+  sources: {
+    queue: { state: 'healthy', file: 'ready.tsv', rows: 2, dropped: 0 }, queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 1 },
+    ledger: { state: 'healthy', file: 'jobs.jsonl', events: 4, dropped: 0 }, usage: { state: 'healthy', files: ['usage-readings.log'], pools: 1, dropped: 0 },
+    budgets: { state: 'healthy' },
+  },
+};
+
+function stub(value: unknown, lanes: unknown = LANES) {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    return Response.json(url.startsWith('/api/fleet/lanes') ? lanes : value);
+  }));
 }
 
 beforeEach(() => { evictAll(); localStorage.clear(); });
@@ -74,6 +87,14 @@ describe('OpsFleet', () => {
     expect(screen.getByText(/lift \+6\.2 pts/)).toBeInTheDocument();
     expect(screen.getByText('adopt')).toBeInTheDocument();
     expect(screen.getByText(/lift not measured yet/)).toBeInTheDocument();
+  });
+
+  it('mounts the lanes console above the fleet and router section', async () => {
+    stub(fixture());
+    render(<OpsFleet />);
+    const lanesTitle = await screen.findByText('Lanes on this Mac');
+    const fleetTitle = await screen.findByText('Fleet and router');
+    expect(lanesTitle.compareDocumentPosition(fleetTitle) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
   it('says lane state is unknown when the router has never ticked', async () => {

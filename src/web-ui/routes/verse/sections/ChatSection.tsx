@@ -41,7 +41,7 @@ import { useMutationHold, useQuery, useRefresh } from '../../../data/hooks.js';
 import type { NewChatRoutingOptions } from '../NewChatDialog.js';
 import type { DeleteChatDialog as DeleteChatDialogComponent } from '../chat/DeleteChatDialog.js';
 import { insertIntoComposer } from '../chat/composer-bridge.js';
-import { forgetComposerMemory } from '../chat/composer-memory.js';
+import { forgetComposerMemory } from '../chat/composer-forget.js';
 import type { ChatTask } from '../chat/tasks-model.js';
 import { requestTranscriptFind, requestTranscriptStep } from '../chat/transcript-jump.js';
 import { noteSessionSeen, useChatActivity } from '../chat/use-chat-activity.js';
@@ -49,6 +49,7 @@ import { useSessionRoots } from '../chat/use-session-roots.js';
 import { useChatPanelSizing } from '../use-chat-panel-sizing.js';
 import { CHAT_PANEL_RANGES, MIN_TRANSCRIPT_WIDTH, setChatPanelFit } from '../chat-panel-sizing.js';
 import { activateDockChat, clearDockRequests, closeDock, getDockState, openDockPane, requestTerminal, toggleDock, toggleDockPane, toggleDockPlacement, useDockValue } from '../dock/dock-store.js';
+import { jumpToDockTab } from '../dock/tab-jump.js';
 import type { DockPaneId } from '../shell/dock-catalog.js';
 import type { SeatChoice } from '../SeatSelector.js';
 import { clampDockHeight, clampDockWidth, DOCK_LAYOUT, dockPresentation } from '../shell/dock-catalog.js';
@@ -88,16 +89,17 @@ import styles from './ChatSection.module.css';
 // Loaded on first use, not with the chat: the dock starts closed and the
 // new-chat dialog opens on request (SPEC-310C budget: chat critical JS).
 const DockHost = lazy(() => import('../dock/DockHost.js').then((m) => ({ default: m.DockHost })));
-const NewChatDialog = lazy(() => import('../NewChatDialog.js').then((m) => ({ default: m.NewChatDialog })));
+const NewChatDialog = lazy(() => import('../chat/optional-dialog-loaders.js').then((m) => m.loadNewChatDialog()).then((component) => ({ default: component })));
 // 3.15: Stop in a Devin (cloud) chat asks "stop watching or terminate?" — lazy, never first paint.
-const DevinStopDialog = lazy(() => import('../devin/DevinStopDialog.js').then((m) => ({ default: m.DevinStopDialog })));
+const DevinStopDialog = lazy(() => import('../chat/optional-dialog-loaders.js').then((m) => m.loadDevinStopDialog()).then((component) => ({ default: component })));
 
 // Panel widths are needed to paint the grid; drag/key handling can load in
 // parallel with its columns. Keep the resize gap while that control loads.
 const ResizerModule = preloadedModule(() => import('../ChatResizer.js').then((m) => m.ChatResizer));
-const WorkspaceModule = preloadedLazy<ComponentProps<typeof WorkspaceComponent>>(() => import('../Workspace.js').then((m) => m.Workspace));
+// Both columns come through chat/surface-loaders.ts, which keeps their preload lists off this chunk.
+const WorkspaceModule = preloadedLazy<ComponentProps<typeof WorkspaceComponent>>(() => import('../chat/surface-loaders.js').then((m) => m.loadWorkspace()));
 const Workspace = WorkspaceModule.Slot;
-const SidebarModule = preloadedLazy<ComponentProps<typeof SidebarComponent>>(() => import('../Sidebar.js').then((m) => m.Sidebar));
+const SidebarModule = preloadedLazy<ComponentProps<typeof SidebarComponent>>(() => import('../chat/surface-loaders.js').then((m) => m.loadSidebar()));
 const Sidebar = SidebarModule.Slot;
 /**
  * The delete confirmation and the token prompt draw nothing until an
@@ -641,6 +643,15 @@ export function ChatSection() {
     ['chat.turn-prev', () => requestTranscriptStep(-1)],
     ['chat.turn-next', () => requestTranscriptStep(1)],
     ['dock.toggle', toggleDock],
+    ['dock.tab-1', () => jumpToDockTab(1)],
+    ['dock.tab-2', () => jumpToDockTab(2)],
+    ['dock.tab-3', () => jumpToDockTab(3)],
+    ['dock.tab-4', () => jumpToDockTab(4)],
+    ['dock.tab-5', () => jumpToDockTab(5)],
+    ['dock.tab-6', () => jumpToDockTab(6)],
+    ['dock.tab-7', () => jumpToDockTab(7)],
+    ['dock.tab-8', () => jumpToDockTab(8)],
+    ['dock.tab-9', () => jumpToDockTab(9)],
     ['dock.terminal', openTerminal],
     ['dock.terminal-new', newTerminalTab],
     ['dock.preview', () => showOrTogglePane('browser')],
@@ -657,6 +668,15 @@ export function ChatSection() {
   useCommandHandler('chat.turn-prev', handlerMap.get('chat.turn-prev')!);
   useCommandHandler('chat.turn-next', handlerMap.get('chat.turn-next')!);
   useCommandHandler('dock.toggle', handlerMap.get('dock.toggle')!);
+  useCommandHandler('dock.tab-1', handlerMap.get('dock.tab-1')!);
+  useCommandHandler('dock.tab-2', handlerMap.get('dock.tab-2')!);
+  useCommandHandler('dock.tab-3', handlerMap.get('dock.tab-3')!);
+  useCommandHandler('dock.tab-4', handlerMap.get('dock.tab-4')!);
+  useCommandHandler('dock.tab-5', handlerMap.get('dock.tab-5')!);
+  useCommandHandler('dock.tab-6', handlerMap.get('dock.tab-6')!);
+  useCommandHandler('dock.tab-7', handlerMap.get('dock.tab-7')!);
+  useCommandHandler('dock.tab-8', handlerMap.get('dock.tab-8')!);
+  useCommandHandler('dock.tab-9', handlerMap.get('dock.tab-9')!);
   useCommandHandler('dock.terminal', handlerMap.get('dock.terminal')!);
   useCommandHandler('dock.terminal-new', handlerMap.get('dock.terminal-new')!);
   useCommandHandler('dock.preview', handlerMap.get('dock.preview')!);
@@ -846,16 +866,14 @@ export function ChatSection() {
           otherRunning={otherRunning} />
         </Suspense>
       </div>
-      {dockOpen ? (
-        <Suspense fallback={null}>
-          <DockHost presentation={presentation} windowWidth={windowWidth} columnWidth={dockWidth} columnMax={dockColumnMax} columnHeight={chatHeight} session={view.session} seats={seats}
+      <Suspense fallback={null}>
+        <DockHost presentation={presentation} windowWidth={windowWidth} columnWidth={dockWidth} columnMax={dockColumnMax} columnHeight={chatHeight} session={view.session} seats={seats}
             events={view.events} roots={roots.roots} rootsData={roots.data} rootsError={roots.error} turnFiles={turnFiles}
             otherRunning={otherRunning} dispatchEnabled={dispatchEnabled} onOpenSession={setSelectedId}
             onHandoff={setHandoffFor}
             // Accounts & capacity live in Apps & Accounts (C6) since 3.10.
             onOpenAccounts={openAccounts} onSendToChat={sendToChat} onAddToMessage={addToMessage} />
-        </Suspense>
-      ) : null}
+      </Suspense>
 
       {newChat.open ? (
         <Suspense fallback={null}>

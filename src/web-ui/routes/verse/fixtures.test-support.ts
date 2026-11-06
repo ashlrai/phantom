@@ -21,7 +21,8 @@ export const CLAUDE_SEAT: VerseSeat = {
     { id: 'claude-sonnet-5', label: 'Sonnet 5', contextWindow: 200_000, autoCompactAt: 167_000, maxOutputTokens: 64_000, windowSource: 'cli-catalog' },
   ],
   contextWindow: 200_000,
-  health: { state: 'ready', summary: '5h window 12% used', windows: [{ id: '5h', usedPercent: 12, resetsAt: null }], observedAt: null },
+  // Claude's weekly window is the only usage window Anthropic's plan still has.
+  health: { state: 'ready', summary: 'weekly window 12% used', windows: [{ id: 'seven_day', usedPercent: 12, resetsAt: null }], observedAt: null },
 };
 
 export const CODEX_SEAT: VerseSeat = {
@@ -242,7 +243,7 @@ export interface VerseFetchState {
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
-export function verseFetch(initial: Partial<VerseFetchState> = {}): { fetch: ReturnType<typeof vi.fn>; state: VerseFetchState } {
+export function verseFetch(initial: Partial<VerseFetchState> = {}): { fetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>; state: VerseFetchState } {
   const boot = initial.bootstrap ?? bootstrap();
   const state: VerseFetchState = {
     bootstrap: boot,

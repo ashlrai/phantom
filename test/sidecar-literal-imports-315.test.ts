@@ -12,10 +12,11 @@
  * is fine: tsc erases the cast). Only the entries below may load a computed specifier, and
  * each says why that is correct.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { hasComputedImportCandidate, runtimeSourceFiles } from './helpers/sidecar-ast-gate.js';
 
 const ROOT = join(__dirname, '..');
 
@@ -49,16 +50,6 @@ function isInstalledDiskHelper(file: string, node: ts.CallExpression, source: ts
     && printedBody(parent.body, source) === printedBody(diskHelperBody.body!, diskHelperBody.getSourceFile());
 }
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (/\.(ts|tsx|mts)$/.test(entry.name) && !/\.d\.ts$|\.test\.tsx?$/.test(entry.name)) out.push(full);
-  }
-  return out;
-}
-
 function isLiteralSpecifier(node: ts.Expression): boolean {
   let expr = node;
   while (ts.isAsExpression(expr) || ts.isParenthesizedExpression(expr) || ts.isTypeAssertionExpression(expr)) expr = expr.expression;
@@ -84,10 +75,11 @@ function computedImports(file: string, text = readFileSync(file, 'utf8')): strin
 
 describe('the compiled sidecar can bundle every lazy import', () => {
   it('no runtime source loads a computed specifier outside the documented exceptions', { timeout: 30_000 }, () => {
-    const files = [...sourceFiles(join(ROOT, 'src', 'core')), ...sourceFiles(join(ROOT, 'src', 'cli'))];
+    const files = [...runtimeSourceFiles(join(ROOT, 'src', 'core')), ...runtimeSourceFiles(join(ROOT, 'src', 'cli'))];
     expect(files.length).toBeGreaterThan(500);
     const offenders = files
       .filter((file) => !(relative(ROOT, file).split('\\').join('/') in ALLOWED))
+      .filter((file) => hasComputedImportCandidate(readFileSync(file, 'utf8')))
       .flatMap(file => computedImports(file));
     expect(offenders).toEqual([]);
   });

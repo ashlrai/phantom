@@ -19,6 +19,7 @@ import { WorkerAccessControl } from './WorkerAccessControl.js';
 import { QuotaScopeAccessControl, type QuotaScopeAccessSnapshot } from './QuotaScopeAccessControl.js';
 import { TaskInspector, taskOwnership, taskState, taskTone } from './TaskInspector.js';
 import { FleetMap } from './FleetMap.js';
+import { LaneUsagePanel } from './LaneUsagePanel.js';
 import { buildResourceFleet } from './fleet-model.js';
 import { WorkspaceView } from '../workspace/WorkspaceView.js';
 import styles from './ResourcePoolView.module.css';
@@ -259,6 +260,7 @@ export function ResourcePoolView({ scope }: { scope: ResourceConsoleScope }) {
       </section>
       <section id="resource-fleet" tabIndex={-1} className={styles.workspaceGrid} aria-label="Fleet workspace">
         <div className={styles.mainColumn}>
+          <LaneUsagePanel />
           <div ref={fleetMapRegion}><FleetMap snapshot={snapshot} stale={historical} selection={selection} onSelect={inspectSelection} /></div>
           <section className={styles.tasks} aria-labelledby="tasks-title">
             <div className={styles.sectionHeading}><div><h2 id="tasks-title">Task activity</h2><p>Queue ownership and durable receipts, not inferred process liveness.</p></div>

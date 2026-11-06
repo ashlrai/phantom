@@ -181,6 +181,9 @@ describe('the warm-up, end to end through VerseApp', () => {
     // Transform every section once up front (a cold one can outlast findBy's
     // window), THEN start recording: the preload itself is not the shell's.
     await Promise.all(Object.values(SECTION_MODULES).map((load) => load()));
+    // VerseApp also starts this import on mount. Resolve its real module before
+    // mounting so its asynchronous transform cannot outlive the test worker.
+    await import('./ConsoleNotifications.js');
     // Match ChatSection's first-paint fixture: importing the section alone leaves
     // its sidebar/workspace cold. Rail load recording below still starts empty.
     await import('../sections/ChatSection.js').then((module) => module.preloadChatSurface());
@@ -217,6 +220,9 @@ describe('the warm-up, end to end through VerseApp', () => {
 
   it('a first visit to each warmed surface mounts it directly — no skeleton frame', async () => {
     render(<ToastProvider><VerseApp /></ToastProvider>);
+    // Wait for the shell's mount-time import and React update before teardown.
+    await screen.findByRole('button', { name: /Notifications/ });
+    act(() => setVerseSection('chat'));
     await screen.findByRole('navigation', { name: 'Chats' });
     const warmedIds = ['growth', 'mind', 'fleet'] as const;
     const modules = warmedIds.map((id) => `./sections/${landedModule(id)}.tsx`);

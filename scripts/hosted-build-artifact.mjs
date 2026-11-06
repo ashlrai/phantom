@@ -254,7 +254,7 @@ export function captureArtifact({ root, sha: revision, out, snapshot, packageTar
 /** API evidence is freshly fetched by this function. Test seams can provide
  * official-shaped responses; the CLI never accepts a saved PASS JSON as proof. */
 export function auditGithub({ repository, revision, runId, runAttempt, artifactId, artifactName, requiredJobs,
-  eventSha, read = (endpoint) => JSON.parse(command('gh', ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', endpoint])) }) {
+  eventSha, profile, read = (endpoint) => JSON.parse(command('gh', ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', endpoint])) }) {
   assert.match(repository, /^[\w.-]+\/[\w.-]+$/); assert.match(revision, SHA); assert.match(eventSha, SHA);
   for (const id of [runId, runAttempt, artifactId]) assert.ok(Number.isSafeInteger(id) && id > 0);
   assert.ok(Array.isArray(requiredJobs) && requiredJobs.length > 0, 'missing source-owned job policy');
@@ -264,7 +264,12 @@ export function auditGithub({ repository, revision, runId, runAttempt, artifactI
   const run = read(`${base}/actions/runs/${runId}/attempts/${runAttempt}`);
   requireRepositoryReference(repository, run.repository);
   assert.equal(run.id, runId); assert.equal(run.run_attempt, runAttempt); assert.equal(run.repository?.full_name, repository);
+  assert.ok(profile === undefined || profile === 'fast-release-v1', 'unexpected producer policy');
   assert.equal(run.path, '.github/workflows/ci.yml', 'unexpected producer workflow');
+  if (profile === 'fast-release-v1') {
+    assert.ok(['workflow_dispatch', 'schedule'].includes(run.event)); assert.equal(run.head_branch, 'master');
+    assert.equal(eventSha, revision, 'fast producer must check out its exact event revision');
+  }
   assert.equal(run.head_sha, revision); assert.equal(run.status, 'completed'); assert.equal(run.conclusion, 'success');
   // Every event the CI workflow fires; each is either the checked-out revision
   // itself or a GitHub merge that must name it as a parent (verified below).
@@ -360,6 +365,104 @@ export function requiredJobPolicy(root) {
   return jobs;
 }
 
+/** Release cadence reuses only the completed push gate for this exact master
+ * revision. A nightly/manual success or a same-named third-party job cannot
+ * substitute for these source-owned jobs and their successful steps. */
+export function verifyPushCi({ repository, revision, runId, runAttempt, read }) {
+  assert.match(revision, SHA);
+  for (const id of [runId, runAttempt]) assert.ok(Number.isSafeInteger(id) && id > 0, 'invalid push CI identity');
+  const base = `repos/${repository}`;
+  requireRepositoryMetadata(repository, read(base));
+  const run = read(`${base}/actions/runs/${runId}/attempts/${runAttempt}`);
+  requireRepositoryReference(repository, run.repository);
+  assert.equal(run.id, runId); assert.equal(run.run_attempt, runAttempt);
+  assert.equal(run.path, '.github/workflows/ci.yml'); assert.equal(run.event, 'push');
+  assert.equal(run.head_branch, 'master'); assert.equal(run.head_sha, revision);
+  assert.equal(run.status, 'completed'); assert.equal(run.conclusion, 'success');
+  const jobs = []; let total;
+  for (let page = 1; page <= 10; page++) {
+    const result = read(`${base}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`);
+    assert.ok(Array.isArray(result.jobs) && Number.isSafeInteger(result.total_count) && result.total_count > 0 && result.total_count <= 1000, 'invalid push CI job inventory');
+    if (total === undefined) total = result.total_count;
+    assert.equal(result.total_count, total, 'push CI job inventory changed'); jobs.push(...result.jobs);
+    if (jobs.length === total) break;
+    assert.ok(page < 10 && result.jobs.length === 100 && jobs.length < total, 'incomplete push CI jobs');
+  }
+  const required = [
+    ['Secret-shape scan', ['Scan candidate diff (fail closed)']],
+    ['Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)']],
+    ['Classify PR site lane', ['Bind candidate source']],
+    ['Merge Gate', ['Require selected CI lane']],
+  ];
+  for (const [name, steps] of required) {
+    const matches = jobs.filter(job => job.name === name); assert.equal(matches.length, 1, 'push CI job missing or ambiguous');
+    const job = matches[0]; assert.equal(job.run_id, runId); assert.equal(job.head_sha, revision);
+    assert.equal(job.status, 'completed'); assert.equal(job.conclusion, 'success');
+    assert.ok(job.labels?.includes('ubuntu-latest') && !job.labels.includes('self-hosted'), 'unexpected push CI runner');
+    for (const stepName of steps) {
+      const rows = job.steps?.filter(step => step.name === stepName); assert.equal(rows?.length, 1, 'push CI step missing or ambiguous');
+      assert.equal(rows[0].status, 'completed'); assert.equal(rows[0].conclusion, 'success');
+    }
+  }
+  return { runId, runAttempt, revision };
+}
+
+/** A successful named smoke job is the profile discriminator within CI. A
+ * skipped nightly job, absent artifact, or a caller-provided profile never
+ * turns exhaustive CI into fast release evidence. Qualification independently
+ * rechecks this job and the exact green master push before signing/adoption. */
+export function releaseQualificationProfile({ repository, run, read }) {
+  const jobs = []; let total;
+  for (let page = 1; page <= 10; page++) {
+    const result = read(`repos/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100&page=${page}`);
+    assert.ok(Array.isArray(result.jobs) && Number.isSafeInteger(result.total_count) && result.total_count >= 0 && result.total_count <= 1000, 'invalid release job inventory');
+    if (total === undefined) total = result.total_count;
+    assert.equal(result.total_count, total, 'release job inventory changed'); jobs.push(...result.jobs);
+    if (jobs.length === total) break;
+    assert.ok(page < 10 && result.jobs.length === 100 && jobs.length < total, 'incomplete release jobs');
+  }
+  const matches = jobs.filter(job => job.name === 'Desktop release smoke');
+  assert.ok(matches.length <= 1, 'ambiguous desktop smoke job');
+  if (!matches.length || matches[0].conclusion === 'skipped') return undefined;
+  const job = matches[0];
+  assert.equal(run.path, '.github/workflows/ci.yml');
+  assert.ok(['workflow_dispatch', 'schedule'].includes(run.event)); assert.equal(run.head_branch, 'master');
+  assert.equal(job.run_id, run.id); assert.equal(job.head_sha, run.head_sha);
+  assert.equal(job.status, 'completed'); assert.equal(job.conclusion, 'success');
+  assert.ok(job.labels?.includes('macos-15') && !job.labels.includes('self-hosted'), 'unexpected release runner');
+  for (const name of ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff']) {
+    const steps = job.steps?.filter(step => step.name === name); assert.equal(steps?.length, 1, 'release step missing or ambiguous');
+    assert.equal(steps[0].status, 'completed'); assert.equal(steps[0].conclusion, 'success');
+  }
+  return 'fast-release-v1';
+}
+
+export function fastJobPolicy(root) {
+  const workflow = boundedBytes(join(root, '.github/workflows/ci.yml'), 1024 * 1024).toString();
+  const steps = ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff'];
+  assert.ok(workflow.includes('name: Desktop release smoke'), 'fast release job missing');
+  for (const step of steps) assert.ok(workflow.includes(`name: ${step}\n`), 'fast release step missing');
+  return [{ name: 'Desktop release smoke', labels: ['macos-15'], steps }];
+}
+
+function validateFastRelease({ root, bundle, source, producer, read }) {
+  const receiptBytes = boundedBytes(join(bundle, 'fast-release.json'), 1024 * 1024);
+  const receipt = JSON.parse(receiptBytes); assert.equal(receipt.schemaVersion, 1);
+  assert.deepEqual(receipt.source, { revision: source.revision, tree: source.tree });
+  assert.deepEqual(receipt.smoke, { exitCode: 0, feedParsed: true, manifestParsed: true, versionVerified: true });
+  assert.equal(receipt.desktop?.filename, 'desktop-smoke-bin');
+  assert.equal(receipt.desktop.revision, source.revision);
+  assert.equal(receipt.desktop.version, JSON.parse(boundedBytes(join(root, 'package.json'))).version);
+  assert.ok(Number.isSafeInteger(receipt.desktop.bytes) && receipt.desktop.bytes > 0, 'empty desktop smoke binary');
+  assert.match(receipt.desktop.sha256 ?? '', HASH);
+  const binary = boundedBytes(join(bundle, 'desktop-smoke-bin'));
+  assert.equal(binary.length, receipt.desktop.bytes); assert.equal(sha(binary), receipt.desktop.sha256);
+  verifyPushCi({ repository: producer.repository, revision: source.revision,
+    runId: receipt.pushCi?.runId, runAttempt: receipt.pushCi?.runAttempt, read });
+  return [{ path: 'fast-release.json', bytes: receiptBytes.length, sha256: sha(receiptBytes) },
+    { path: 'desktop-smoke-bin', bytes: binary.length, sha256: sha(binary) }];
+}
+
 function officialArtifact(read, repository, runId, revision, expectedName, ref) {
   assert.ok(Number.isSafeInteger(ref.id) && ref.id > 0);
   const actual = read(`repos/${repository}/actions/artifacts/${ref.id}`);
@@ -380,24 +483,28 @@ export function qualifyArtifact({ root, revision, bundle, artifactMap, runId: re
   const repositoryBinding = requireRepositoryMetadata(producer.repository, read(`repos/${producer.repository}`));
   const runId = Number(producer.runId), runAttempt = Number(producer.runAttempt);
   assert.equal(runId, requestedRun); assert.equal(runAttempt, requestedAttempt);
+  const profile = artifactMap.profile; assert.ok(profile === undefined || profile === 'fast-release-v1', 'unknown qualification profile');
+  const fast = profile === 'fast-release-v1';
+  if (fast) assert.equal(manifest.schemaVersion, 2, 'fast qualification requires current repository binding');
   const expectedName = `ashlr-build-${runId}-${runAttempt}`;
   const producerArtifact = officialArtifact(read, producer.repository, runId, revision, expectedName, artifactMap.producer);
   const official = auditGithub({ repository: producer.repository, revision, eventSha: producer.eventSha, runId, runAttempt,
-    artifactId: producerArtifact.artifactId, artifactName: expectedName, requiredJobs: requiredJobPolicy(root), read });
+    artifactId: producerArtifact.artifactId, artifactName: expectedName, requiredJobs: fast ? fastJobPolicy(root) : requiredJobPolicy(root),
+    ...(fast ? { profile: 'fast-release-v1' } : {}), read });
   assert.equal(official.tree, source.tree);
-  assert.deepEqual(artifactMap.lanes.map((r) => r.role).sort(), ROLES.filter((role) => role !== 'web').sort());
-  const lanes = ROLES.map((role) => {
+  assert.deepEqual(artifactMap.lanes.map((r) => r.role).sort(), fast ? [] : ROLES.filter((role) => role !== 'web').sort());
+  const lanes = (fast ? [] : ROLES).map((role) => {
     const path = `coverage/${role}/lane.json`; const bytes = boundedBytes(join(bundle, path), 32 * 1024 * 1024);
     const ref = role === 'web' ? producerArtifact : officialArtifact(read, producer.repository, runId, revision,
       `ashlr-qualification-${role}-${runId}-${runAttempt}`, artifactMap.lanes.find((row) => row.role === role));
     return { role, ...ref, path, sha256: sha(bytes), bytes: bytes.length };
   });
-  const closure = validateCoverage({ root, bundle, source, producer, lanes });
+  const closure = fast ? validateFastRelease({ root, bundle, source, producer, read }) : validateCoverage({ root, bundle, source, producer, lanes });
   for (const file of manifest.coverage) assert.ok(closure.some((row) => row.path === file.path && row.sha256 === file.sha256 && row.bytes === file.bytes), 'producer coverage differs');
   const archive = boundedBytes(join(bundle, 'dist.tar')); assert.equal(sha(archive), manifest.archive.sha256); inspectTar(archive, manifest.archive.entries);
   const tgz = boundedBytes(join(bundle, manifest.package.filename), 128 * 1024 * 1024); assert.equal(sha(tgz), manifest.package.sha256);
   assert.deepEqual(npmMembers(join(bundle, manifest.package.filename)), manifest.package.entries); matchPackage(root, manifest.package.entries, manifest.archive.entries);
-  const qualification = { schemaVersion: manifest.schemaVersion, ...(manifest.schemaVersion === 2 ? { repositoryBinding } : {}), candidate: { revision, tree: source.tree }, producer: { runId, runAttempt, eventSha: producer.eventSha, ...producerArtifact },
+  const qualification = { ...(fast ? { profile } : {}), schemaVersion: manifest.schemaVersion, ...(manifest.schemaVersion === 2 ? { repositoryBinding } : {}), candidate: { revision, tree: source.tree }, producer: { runId, runAttempt, eventSha: producer.eventSha, ...producerArtifact },
     subjects: { manifestSha256: sha(boundedBytes(manifestPath)), archiveSha256: sha(archive), packageSha256: sha(tgz) }, lanes, closure, official };
   assert.deepEqual(sourceBinding(root, revision), source);
   assert.deepEqual(requireRepositoryMetadata(producer.repository, read(`repos/${producer.repository}`)), repositoryBinding, 'repository identity changed during qualification');
@@ -533,12 +640,17 @@ function verifyArtifactBody({ root, revision, bundle, policy, githubRead, attest
   if (manifest.schemaVersion === 2) assert.deepEqual(qualification.repositoryBinding, repositoryBinding, 'qualified repository binding differs');
   assert.equal(Number(producer.runId), policy.runId); assert.equal(Number(producer.runAttempt), policy.runAttempt);
   assert.equal(producer.eventSha, qualification.producer.eventSha);
-  const closure = validateCoverage({ root, bundle, source, producer, lanes: qualification.lanes });
+  assert.ok(qualification.profile === undefined || qualification.profile === 'fast-release-v1', 'unknown qualification profile');
+  const fast = qualification.profile === 'fast-release-v1';
+  if (fast) assert.equal(manifest.schemaVersion, 2, 'fast qualification requires current repository binding');
+  if (fast) assert.deepEqual(qualification.lanes, [], 'fast qualification cannot claim exhaustive coverage');
+  const closure = fast ? validateFastRelease({ root, bundle, source, producer, read }) : validateCoverage({ root, bundle, source, producer, lanes: qualification.lanes });
   assert.deepEqual(closure, qualification.closure);
   for (const file of manifest.coverage) assert.ok(closure.some((row) => row.path === file.path && row.sha256 === file.sha256 && row.bytes === file.bytes));
   const official = auditGithub({ repository: producer.repository, revision, eventSha: producer.eventSha,
     runId: policy.runId, runAttempt: policy.runAttempt, artifactId: qualification.producer.artifactId,
-    artifactName: `ashlr-build-${policy.runId}-${policy.runAttempt}`, requiredJobs: requiredJobPolicy(root), ...(githubRead ? { read: githubRead } : {}) });
+    artifactName: `ashlr-build-${policy.runId}-${policy.runAttempt}`, requiredJobs: fast ? fastJobPolicy(root) : requiredJobPolicy(root),
+    ...(fast ? { profile: 'fast-release-v1' } : {}), ...(githubRead ? { read: githubRead } : {}) });
   assert.deepEqual(official, qualification.official);
   assert.equal(official.tree, source.tree);
   const base = `repos/${producer.repository}`;
@@ -552,7 +664,12 @@ function verifyArtifactBody({ root, revision, bundle, policy, githubRead, attest
   const attestor = read(`${base}/actions/runs/${policy.attestorRun}/attempts/${policy.attestorAttempt}`);
   assert.equal(attestor.id, policy.attestorRun); assert.equal(attestor.run_attempt, policy.attestorAttempt);
   requireRepositoryReference(producer.repository, attestor.repository); assert.equal(attestor.head_sha, policy.attestorSha);
-  assert.equal(attestor.event, 'workflow_dispatch'); assert.equal(attestor.path, '.github/workflows/attest-ci-build.yml');
+  if (fast) {
+    assert.ok(['workflow_dispatch', 'schedule'].includes(attestor.event));
+    if (attestor.event === 'schedule') assert.equal(attestor.head_branch, 'master');
+  }
+  else assert.equal(attestor.event, 'workflow_dispatch');
+  assert.equal(attestor.path, '.github/workflows/attest-ci-build.yml');
   assert.equal(attestor.status, 'completed'); assert.equal(attestor.conclusion, 'success');
   // Parsed policy and the signer must bind the same initial subject bytes;
   // neither a callback nor the final metadata observation may substitute JSON.
@@ -567,10 +684,12 @@ function verifyArtifactBody({ root, revision, bundle, policy, githubRead, attest
   assert.deepEqual(sourceBinding(root, revision), source);
   for (const [path, verifiedHash] of verified) assert.equal(sha(boundedBytes(path, path === manifestPath || path === qualificationPath ? 32 * 1024 * 1024 : MAX_ARCHIVE)), verifiedHash, 'signed subject changed after verification');
   assert.equal(sha(boundedBytes(join(bundle, manifest.package.filename), 128 * 1024 * 1024)), manifest.package.sha256, 'package changed after verification');
+  if (fast) for (const row of closure) { const bytes = boundedBytes(join(bundle, row.path)); assert.equal(bytes.length, row.bytes); assert.equal(sha(bytes), row.sha256, 'smoke evidence changed after verification'); }
   const receipt = { schemaVersion: manifest.schemaVersion, ...(manifest.schemaVersion === 2 ? { repositoryBinding } : {}), source: { revision, tree: source.tree }, official,
     archiveSha256: verified[0][1], manifestSha256: verified[1][1], qualificationSha256: verified[2][1], packageSha256: manifest.package.sha256,
     attestor: { revision: policy.attestorSha, runId: policy.attestorRun, runAttempt: policy.attestorAttempt } };
-  const expected = { manifest: receipt.manifestSha256, qualification: receipt.qualificationSha256, package: receipt.packageSha256 };
+  const expected = { manifest: receipt.manifestSha256, qualification: receipt.qualificationSha256, package: receipt.packageSha256,
+    ...(fast ? { fastClosure: closure } : {}) };
   return { receipt: freeze(receipt), admission: { root, source, archive, entries, revision, bundle, manifest, expected } };
 }
 
@@ -730,6 +849,7 @@ function unchangedBundle(admitted) {
   assert.equal(sha(boundedBytes(join(bundle, 'manifest.json'))), expected.manifest);
   assert.equal(sha(boundedBytes(join(bundle, 'qualification.json'))), expected.qualification);
   assert.equal(sha(boundedBytes(join(bundle, manifest.package.filename))), expected.package);
+  for (const row of expected.fastClosure ?? []) { const bytes = boundedBytes(join(bundle, row.path)); assert.equal(bytes.length, row.bytes); assert.equal(sha(bytes), row.sha256); }
 }
 
 /** Native compilation may reuse only the exact already-adopted JS bytes after

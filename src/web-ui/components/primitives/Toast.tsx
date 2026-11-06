@@ -8,14 +8,17 @@ import styles from './Toast.module.css';
 
 export type ToastTone = 'neutral' | 'success' | 'danger';
 
+export interface ToastAction { label: string; onClick: () => void }
+
 interface ToastItem {
   id: number;
   message: string;
   tone: ToastTone;
+  actions?: readonly ToastAction[];
 }
 
 interface ToastContextValue {
-  show: (message: string, tone?: ToastTone) => void;
+  show: (message: string, tone?: ToastTone, actions?: readonly ToastAction[]) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -37,10 +40,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const show = useCallback(
-    (message: string, tone: ToastTone = 'neutral') => {
+    (message: string, tone: ToastTone = 'neutral', actions?: readonly ToastAction[]) => {
       const id = nextId.current++;
-      setToasts((prev) => [...prev, { id, message, tone }]);
-      setTimeout(() => dismiss(id), AUTO_DISMISS_MS);
+      setToasts((prev) => [...prev, { id, message, tone, actions }]);
+      if (!actions?.length) setTimeout(() => dismiss(id), AUTO_DISMISS_MS);
     },
     [dismiss],
   );
@@ -54,6 +57,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div key={t.id} className={`${styles.toast} ${styles[t.tone]}`}>
             <span>{t.message}</span>
+            {t.actions?.map(action => (
+              <button key={action.label} type="button" className={styles.action} onClick={() => { action.onClick(); dismiss(t.id); }}>
+                {action.label}
+              </button>
+            ))}
             <button type="button" className={styles.dismiss} onClick={() => dismiss(t.id)} aria-label="Dismiss">
               ×
             </button>

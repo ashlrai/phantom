@@ -121,7 +121,7 @@ describe('daemon health and supervisor recommendation', () => {
     expect(readDaemonHealth(clients, { nowMs }).logState).toBe('missing');
   });
 
-  it.each([null, []])('does not claim healthy without resolved frontier clients', (inventory) => {
+  it.each([null, []])('does not claim healthy without resolved frontier clients (%#)', (inventory) => {
     const report = readDaemonHealth(inventory, { nowMs });
     expect(report.healthy).toBe(false);
     expect(report.supervisor).toEqual({

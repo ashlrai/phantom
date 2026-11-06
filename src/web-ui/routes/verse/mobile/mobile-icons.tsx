@@ -67,38 +67,3 @@ export function BackGlyph(props: IconProps) {
     </Icon>
   );
 }
-
-export function ChevronGlyph(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="m6 3.5 4.5 4.5L6 12.5" />
-    </Icon>
-  );
-}
-
-export function MicGlyph(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <rect x="5.75" y="1.75" width="4.5" height="8" rx="2.25" />
-      <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.25" />
-    </Icon>
-  );
-}
-
-export function LockGlyph(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <rect x="3" y="7" width="10" height="7" rx="1.5" />
-      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
-    </Icon>
-  );
-}
-
-export function FleetGlyph(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M8 2.5v11M2.5 8h11" />
-      <circle cx="8" cy="8" r="5.5" />
-    </Icon>
-  );
-}

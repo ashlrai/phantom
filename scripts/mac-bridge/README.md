@@ -43,9 +43,31 @@ contribute to the denominator. Missing history, malformed records, duplicate
 job IDs and jobs with zero measured duration produce unknown values. This
 telemetry cannot establish merge credit.
 
+## Orphaned locus-mcp reaper
+
+Fleet agents spawn `locus-mcp` below a node process. When the supervisor dies
+the node parent is reparented to launchd (ppid 1), leaving the chain running.
+`reap-orphan-locus-mcp.mjs` reaps only those chains: executable `locus-mcp`,
+alive over 12h, whose node parent has ppid 1, and whose own or parent command
+line carries a path under a fleet worktree (`~/Projects/ashlrai/wt`) or
+`~/.ashlr-runs` (override with repeated `--root`). App-launched servers under
+`/Applications` or bare `~/.locus/bin` installs never carry such a path and are
+never matched.
+
+```sh
+# Default dry-run: writes pid/ppid/age/cwd/cmd plus parent context to
+# ~/.ashlr-runs/reap-locus-mcp-dryrun.txt. Signal nothing.
+node scripts/mac-bridge/reap-orphan-locus-mcp.mjs
+# After reviewing the listing, actually reap (SIGTERM, then SIGKILL after a
+# grace window; a second scan re-verifies every chain first):
+node scripts/mac-bridge/reap-orphan-locus-mcp.mjs --apply
+```
+
+The scan uses `ps -x` so it only ever sees the current user's processes.
+
 Verification:
 
 ```sh
-HOME=$(mktemp -d) npx vitest run test/job-memory-accounting.test.ts test/m356.scorecard.test.ts
+HOME=$(mktemp -d) npx vitest run test/job-memory-accounting.test.ts test/m356.scorecard.test.ts test/reap-orphan-locus-mcp.test.ts
 HOME=$(mktemp -d) python3 -B -m unittest discover -s scripts/mac-bridge -p 'test_*.py'
 ```

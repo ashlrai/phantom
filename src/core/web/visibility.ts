@@ -52,8 +52,14 @@ export interface FleetActivity24h {
   totalDispatches: number;
   /** Per-backend dispatch counts last 24h. */
   byBackend: { backend: string; count: number }[];
-  /** Auto-merged proposals today. */
+  /**
+   * PRs merged today (America/New_York) across the fleet: GitHub unioned with
+   * the authority ledger. When `mergeCountUnavailable`, this is only the
+   * recorded (ledger) count and must not be shown as "nothing merged".
+   */
   mergedToday: number;
+  /** GitHub could not be read, so `mergedToday` may be low. */
+  mergeCountUnavailable?: boolean;
   /** Rejected proposals today. */
   rejectedToday: number;
   /** Pending (un-acted-upon) proposals right now. */
@@ -283,6 +289,24 @@ async function buildFleetActivity24h(_cfg: unknown, nowOverride?: number): Promi
       }
     } catch { /* degrade */ }
 
+    // Fleet truth: dispatchd merges never reach the decisions ledger, so the
+    // count above under-reports. Read the shared source (gh + ledger, ET day).
+    let mergeCountUnavailable = false;
+    let truthMergeTitles: string[] = [];
+    try {
+      const { getFleetTruthToday } = await import('../fleet/fleet-truth.js');
+      const truth = await getFleetTruthToday({ nowMs: nowMs(nowOverride) });
+      if (truth.mergeCountState === 'ok') {
+        // max(): a realized merge with no PR (local apply) is in the decisions count but not on GitHub.
+        mergedToday = Math.max(mergedToday, truth.merged.length);
+        truthMergeTitles = truth.merged.filter((m) => m.title).slice(0, 5).map((m) => m.title);
+      } else {
+        mergeCountUnavailable = true;
+      }
+    } catch {
+      mergeCountUnavailable = true;
+    }
+
     const byBackend = Object.entries(backendCounts)
       .map(([backend, count]) => ({ backend, count }))
       .sort((a, b) => b.count - a.count);
@@ -326,10 +350,13 @@ async function buildFleetActivity24h(_cfg: unknown, nowOverride?: number): Promi
         .map(({ proposal }) => proposal.title ?? proposal.id);
     } catch { /* degrade */ }
 
+    if (truthMergeTitles.length > 0) recentMergeTitles = truthMergeTitles;
+
     return {
       totalDispatches,
       byBackend,
       mergedToday,
+      ...(mergeCountUnavailable ? { mergeCountUnavailable } : {}),
       rejectedToday,
       proposalsPending,
       proposalsApplied,

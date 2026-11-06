@@ -99,14 +99,18 @@ describe('MoreScreen — rows and settings', () => {
     expect(screen.getByText(/Notifications require Phantom installed on an iPhone Home Screen/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Enable notifications' })).not.toBeInTheDocument();
   });
-  it('goes to Fleet, New agent and Needs you', () => {
+  it('goes to Live runs, Inbox, Fleet, New agent and Needs you', () => {
     const { context } = mount();
+    fireEvent.click(screen.getByRole('button', { name: /^Live runs/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Inbox/ }));
     fireEvent.click(screen.getByRole('button', { name: /^Fleet/ }));
     fireEvent.click(screen.getByRole('button', { name: /^New agent/ }));
     fireEvent.click(screen.getByRole('button', { name: /^Needs you/ }));
-    expect(context.navigate).toHaveBeenNthCalledWith(1, { screen: 'fleet' });
-    expect(context.navigate).toHaveBeenNthCalledWith(2, { screen: 'new' });
-    expect(context.navigate).toHaveBeenNthCalledWith(3, { screen: 'needs' });
+    expect(context.navigate).toHaveBeenNthCalledWith(1, { screen: 'runs' });
+    expect(context.navigate).toHaveBeenNthCalledWith(2, { screen: 'inbox' });
+    expect(context.navigate).toHaveBeenNthCalledWith(3, { screen: 'fleet' });
+    expect(context.navigate).toHaveBeenNthCalledWith(4, { screen: 'new' });
+    expect(context.navigate).toHaveBeenNthCalledWith(5, { screen: 'needs' });
   });
 
   it('theme chips set the shared theme', () => {
@@ -175,9 +179,9 @@ describe('MoreScreen — connection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign out of this device' }));
     const sheet = await screen.findByRole('alertdialog', { name: 'Sign out of this device?' });
     expect(sheet).toHaveTextContent('Signs this phone out. You’ll need the read token again.');
-    expect(stub.calls).toHaveLength(0);
+    expect(stub.posts()).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
-    await waitFor(() => expect(stub.calls.map((c) => [c.method, c.url])).toEqual([['DELETE', '/api/session']]));
+    await waitFor(() => expect(stub.posts().map((c) => [c.method, c.url])).toEqual([['DELETE', '/api/session']]));
     expect(hasMutationHold()).toBe(false);
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
   });
@@ -188,6 +192,6 @@ describe('MoreScreen — connection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign out of this device' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(stub.calls).toHaveLength(0);
+    expect(stub.posts()).toHaveLength(0);
   });
 });

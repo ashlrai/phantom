@@ -1,0 +1,254 @@
+[
+  {
+    "id": "claude-api-release-notes",
+    "product": "Claude API",
+    "url": "https://docs.claude.com/en/release-notes/overview",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "anthropic-api-release-notes",
+    "product": "Anthropic API",
+    "url": "https://docs.anthropic.com/en/release-notes/api",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "claude-managed-agents-setup",
+    "product": "Claude Managed Agents",
+    "url": "https://platform.claude.com/docs/en/managed-agents/agent-setup",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "claude-managed-agents-environments",
+    "product": "Claude Managed Agents",
+    "url": "https://platform.claude.com/docs/en/managed-agents/environments",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "claude-managed-agents-sessions",
+    "product": "Claude Managed Agents",
+    "url": "https://platform.claude.com/docs/en/managed-agents/sessions",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "claude-managed-agents-reference",
+    "product": "Claude Managed Agents",
+    "url": "https://platform.claude.com/docs/en/managed-agents/reference",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "claude-code-releases",
+    "product": "Claude Code",
+    "url": "https://github.com/anthropics/claude-code/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "claude-code-npm",
+    "product": "Claude Code",
+    "url": "https://registry.npmjs.org/@anthropic-ai/claude-code/latest",
+    "kind": "npm",
+    "verified": true
+  },
+  {
+    "id": "claude-agent-sdk-npm",
+    "product": "Claude Agent SDK",
+    "url": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/latest",
+    "kind": "npm",
+    "verified": true
+  },
+  {
+    "id": "claude-agent-sdk-pypi",
+    "product": "Claude Agent SDK",
+    "url": "https://pypi.org/pypi/claude-agent-sdk/json",
+    "kind": "pypi",
+    "verified": true
+  },
+  {
+    "id": "openai-codex-releases",
+    "product": "OpenAI Codex",
+    "url": "https://github.com/openai/codex/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "openai-codex-npm",
+    "product": "OpenAI Codex",
+    "url": "https://registry.npmjs.org/@openai/codex/latest",
+    "kind": "npm",
+    "verified": true
+  },
+  {
+    "id": "openai-codex-changelog",
+    "product": "OpenAI Codex",
+    "url": "https://developers.openai.com/codex/changelog",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "grok-api-release-notes",
+    "product": "Grok API",
+    "url": "https://docs.x.ai/docs/release-notes",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "grok-bot-changelog",
+    "product": "Grok Bot",
+    "url": "https://x.ai/changelog/bot/rss.xml",
+    "kind": "rss",
+    "verified": true
+  },
+  {
+    "id": "grok-build-changelog",
+    "product": "Grok Build",
+    "url": "https://x.ai/changelog/build/rss.xml",
+    "kind": "rss",
+    "verified": true
+  },
+  {
+    "id": "cursor-changelog",
+    "product": "Cursor",
+    "url": "https://cursor.com/changelog",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "cursor-cli-overview",
+    "product": "Cursor CLI",
+    "url": "https://docs.cursor.com/en/cli/overview",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "cursor-cli-changelog",
+    "product": "Cursor CLI",
+    "url": "https://cursor.com/docs/cli/changelog",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "cursor-cloud-agents-release-notes",
+    "product": "Cursor Cloud Agents",
+    "url": "https://cursor.com/docs/release-notes/cloud-agents",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "devin-release-notes",
+    "product": "Devin",
+    "url": "https://docs.devin.ai/release-notes/overview",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "zai-glm-release-notes",
+    "product": "Z.ai GLM",
+    "url": "https://docs.z.ai/release-notes/new-released",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "gemini-cli-releases",
+    "product": "Gemini CLI",
+    "url": "https://github.com/google-gemini/gemini-cli/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "gemini-cli-npm",
+    "product": "Gemini CLI",
+    "url": "https://registry.npmjs.org/@google/gemini-cli/latest",
+    "kind": "npm",
+    "verified": true
+  },
+  {
+    "id": "antigravity-changelog",
+    "product": "Antigravity",
+    "url": "https://antigravity.google/changelog",
+    "kind": "page",
+    "verified": true
+  },
+  {
+    "id": "omlx-releases",
+    "product": "OMLX",
+    "url": "https://github.com/jundot/omlx/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "mlx-releases",
+    "product": "MLX",
+    "url": "https://github.com/ml-explore/mlx/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "mlx-pypi",
+    "product": "MLX",
+    "url": "https://pypi.org/pypi/mlx/json",
+    "kind": "pypi",
+    "verified": true
+  },
+  {
+    "id": "mlx-lm-pypi",
+    "product": "MLX LM",
+    "url": "https://pypi.org/pypi/mlx-lm/json",
+    "kind": "pypi",
+    "verified": true
+  },
+  {
+    "id": "qwen3-releases",
+    "product": "Qwen3",
+    "url": "https://github.com/QwenLM/Qwen3/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "gh-cli-releases",
+    "product": "GitHub CLI",
+    "url": "https://github.com/cli/cli/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "vercel-cli-npm",
+    "product": "Vercel CLI",
+    "url": "https://registry.npmjs.org/vercel/latest",
+    "kind": "npm",
+    "verified": true
+  },
+  {
+    "id": "supabase-cli-releases",
+    "product": "Supabase CLI",
+    "url": "https://github.com/supabase/cli/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "wrangler-npm",
+    "product": "Wrangler",
+    "url": "https://registry.npmjs.org/wrangler/latest",
+    "kind": "npm",
+    "verified": true
+  },
+  {
+    "id": "context7-releases",
+    "product": "Context7",
+    "url": "https://github.com/upstash/context7/releases.atom",
+    "kind": "atom",
+    "verified": true
+  },
+  {
+    "id": "mcp-sdk-npm",
+    "product": "MCP SDK",
+    "url": "https://registry.npmjs.org/@modelcontextprotocol/sdk/latest",
+    "kind": "npm",
+    "verified": true
+  }
+]

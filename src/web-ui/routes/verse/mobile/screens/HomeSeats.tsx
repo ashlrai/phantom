@@ -10,6 +10,8 @@ import { useCapacityClock } from '../../seat-subscription.js';
  * reset text. A seat with no reading shows "unknown", never an empty 0%;
  * a local model shows readiness, never a quota it does not have.
  */
+import { refetchQuery } from '../../../../data/cache.js';
+import { readFailureReason } from '../../../../data/client.js';
 import { useQuery } from '../../../../data/hooks.js';
 import { cloudCreditsQuery } from '../../resources/resources-queries.js';
 import { usedPercentText } from '../../percent-text.js';
@@ -18,7 +20,7 @@ import { useSeatsRefresh } from '../../useSeatsRefresh.js';
 import { verseBootstrapQuery } from '../../verse-bootstrap-query.js';
 import type { VerseSeat } from '../../../../data/api-types.js';
 import { SkeletonList } from '../ui.js';
-import { Meter, Section, ui } from '../ui-parts.js';
+import { ErrorState, Meter, Section, ui } from '../ui-parts.js';
 import styles from './HomeScreen.module.css';
 
 const ENGINE_ORDER = ['claude', 'codex', 'grok', 'devin', 'local'] as const;
@@ -59,11 +61,18 @@ export function HomeSeats() {
   const cloud = useQuery(cloudCreditsQuery);
   const seats = bootstrap.data ? orderSeats(bootstrap.data.seats) : null;
   const credits = cloud.data?.credits ?? null;
+  // The same read useRefetch(verseBootstrapQuery) issues, kept hook-free so
+  // the block works under this screen's fully stubbed data/hooks.js.
+  const refetch = () => void refetchQuery(verseBootstrapQuery.key, () => verseBootstrapQuery.fetch());
 
   return (
     <Section title="Seats" flat>
       {seats === null ? (
-        <SkeletonList rows={3} label="Loading seats" />
+        bootstrap.status === 'error' ? (
+          <ErrorState title="Couldn’t read seats" reason={readFailureReason(bootstrap.error)} onRetry={refetch} />
+        ) : (
+          <SkeletonList rows={3} label="Loading seats" />
+        )
       ) : (
         <div className={`${ui.card} ${styles.seats}`}>
           {seats.length === 0 ? <p className={ui.muted}>No seats are configured on your Mac.</p> : null}

@@ -30,6 +30,7 @@ import { canShowActions, useMobile } from '../mobile-context.js';
 import { PlusGlyph } from '../mobile-icons.js';
 import { Button, Screen, SkeletonList, cx } from '../ui.js';
 import { Badge, Banner, EmptyState, ErrorState, Row, ui, type Tone } from '../ui-parts.js';
+import { WorkersSection } from '../WorkersSection.js';
 import { shortElapsed } from './agent-transcript-model.js';
 import styles from './AgentsScreen.module.css';
 
@@ -208,6 +209,7 @@ export function AgentsScreen() {
         <Banner tone="warning">Couldn’t refresh the list: {readFailureReason(sessionsQuery.error)}</Banner>
       ) : null}
       {body}
+      <WorkersSection />
     </Screen>
   );
 }

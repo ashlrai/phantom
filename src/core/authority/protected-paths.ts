@@ -106,6 +106,8 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/cli/desktop.ts',
   'scripts/desktop-release-policy.mjs',
   'scripts/finalize-desktop-update.mjs',
+  'scripts/finalize-github-release.mjs',
+  'scripts/publish-desktop-release.mjs',
   'src/core/daemon/activation-permit.ts',
   'src/core/daemon/tick-hooks.ts',
   'src/core/daemon/loop.ts',
@@ -317,6 +319,11 @@ const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
       'scripts/hosted-build-artifact.mjs',
       // These coordinate the owned native app, current release and rollback links.
       'scripts/ship-local.mjs', 'scripts/local-app-transaction.mjs', 'scripts/install-desktop-artifacts.mjs',
+      // The sanctioned local publisher that attaches signed updater assets to a
+      // tag's GitHub release and flips the draft public.
+      'scripts/publish-desktop-release.mjs',
+      // Release-path policy verifier gating npm `latest` on the live publisher.
+      'scripts/verify-release-policy.mjs',
       'tools/custody/**', '**/*.plist', '**/*.entitlements', '**/src-tauri/capabilities/**',
       '**/src-tauri/tauri.conf.json', '**/src-tauri/tauri.*.conf.json',
     ],
@@ -492,9 +499,13 @@ function basenameTokens(path: string): string[] {
   return base.split(/[._-]+/).filter((token) => token.length > 0);
 }
 
-function containsTokenRun(tokens: readonly string[], stem: string): boolean {
-  const run = stem.toLowerCase().split(/[._-]+/).filter((t) => t.length > 0);
-  if (run.length === 0 || run.length > tokens.length) return false;
+/** Each Tier-1 stem split into its token run once (matchProtectedPath runs per path, the stems never change). */
+const TIER1_TEST_STEM_RUNS: readonly (readonly string[])[] = TIER1_TEST_STEMS
+  .map((stem) => stem.toLowerCase().split(/[._-]+/).filter((t) => t.length > 0))
+  .filter((run) => run.length > 0);
+
+function containsTokenRun(tokens: readonly string[], run: readonly string[]): boolean {
+  if (run.length > tokens.length) return false;
   for (let start = 0; start + run.length <= tokens.length; start++) {
     if (run.every((token, offset) => tokens[start + offset] === token)) return true;
   }
@@ -514,7 +525,7 @@ export function isTier1TestPath(path: string, importsTier1 = false): boolean {
   if (importsTier1) return true;
   if (isSafetyTestFile(normalized)) return true;
   const tokens = basenameTokens(lower);
-  return TIER1_TEST_STEMS.some((stem) => containsTokenRun(tokens, stem));
+  return TIER1_TEST_STEM_RUNS.some((run) => containsTokenRun(tokens, run));
 }
 
 // ---------------------------------------------------------------------------

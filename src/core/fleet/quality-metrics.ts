@@ -147,10 +147,10 @@ export function computeQualityMetrics(
       throw new Error('proposal source incomplete');
     }
     let proposals = proposalRead.proposals;
-    // Reviews in the window can belong to proposals created before it.
+    // Review events can be in the window even when their proposal is older.
     const reviewProposals = proposals.filter((p) =>
       (!opts?.repo || p.repo === opts.repo) &&
-      (!opts?.engine || p.engineModel?.startsWith(opts.engine) || p.engineModel === opts.engine),
+      (!opts?.engine || p.engineModel?.startsWith(opts.engine)),
     );
 
     // Operational merge facts belong to the witness observation window.

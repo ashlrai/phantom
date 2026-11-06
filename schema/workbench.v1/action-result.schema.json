@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workbench.v1/action-result.schema.json",
+  "title": "workbench.action-result.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "verb", "dry_run", "result", "command"],
+  "properties": {
+    "schema": {"type": "string", "enum": ["workbench.action-result.v1"]},
+    "verb": {"type": "string", "pattern": "^[a-z]+\\.?[a-z]*$", "maxLength": 40},
+    "dry_run": {"type": "boolean"},
+    "result": {"type": "string", "enum": ["planned", "done", "refused", "error"]},
+    "refusal_reason": {"type": ["string", "null"], "pattern": "^[a-z0-9_]{1,60}$"},
+    "command": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 200}},
+    "confirm": {"type": ["string", "null"], "pattern": "^[a-f0-9]{32}$"},
+    "confirm_expires_at": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:?[0-9]{2}|Z)$"}
+  }
+}

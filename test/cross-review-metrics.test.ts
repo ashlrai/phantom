@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecisionEntry, Proposal } from '../src/core/types.js';
 import { computeCrossReviewShare, selectCrossReviewer } from '../src/core/fleet/cross-review-metrics.js';
-import { computeQualityMetrics } from '../src/core/fleet/quality-metrics.js';
 
 const sources = vi.hoisted(() => ({ proposals: [] as Proposal[], decisions: [] as DecisionEntry[], complete: true }));
 vi.mock('../src/core/inbox/store.js', () => ({
@@ -62,7 +61,8 @@ describe('cross-review share', () => {
 
   beforeEach(() => { sources.proposals = []; sources.decisions = []; sources.complete = true; });
 
-  it('reports reviews within the requested window even when the proposal is older', () => {
+  it('reports reviews within the requested window even when the proposal is older', async () => {
+    const { computeQualityMetrics } = await import('../src/core/fleet/quality-metrics.js');
     const now = Date.now();
     sources.proposals = [{ id: 'a', title: 'A', status: 'pending', repo: 'repo', engineModel: 'codex:gpt-6-sol', createdAt: new Date(now - 40 * 86400000).toISOString() } as Proposal];
     sources.decisions = [

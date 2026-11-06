@@ -1,3 +1,5 @@
+import { reissueJob } from '../fleet/job-reissue.js';
+import { resolveDropJobRoot } from '../fleet/drop-job-writer.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
@@ -22,6 +24,7 @@ const REFUSAL = {
 } as const;
 
 export interface OutcomesApiDeps extends ManagerSessionDeps {
+  reissueJob?: typeof reissueJob;
   engine?: () => Promise<VerseEngineHandle>;
   taskContext?: (input: OutcomeTaskContextRequest) => Promise<OutcomeTaskContextResult>;
 }
@@ -63,6 +66,21 @@ export async function handleOutcomesApiWithDeps(
   try {
     if (new URL(req.url ?? path, 'http://localhost').search) throw new Error();
   } catch { sendJson(res, 400, { error: 'Outcomes do not accept query parameters.' }); return true; }
+  if (method === 'POST' && path === `${OUTCOMES_PATH}/fleet-reissue`) {
+    let input: { id: string; lane?: string };
+    try {
+      input = JSON.parse(await readBody(req, 4096));
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          typeof input.id !== 'string' || !/^RQ-PHX-[A-Z0-9]{3,40}$/.test(input.id) ||
+          input.lane !== undefined && typeof input.lane !== 'string' ||
+          Object.keys(input).some(key => !['id', 'lane'].includes(key))) throw new Error();
+    } catch { sendJson(res, 400, { error: 'Invalid re-issue id or lane.' }); return true; }
+    try {
+      const result = await (deps.reissueJob ?? reissueJob)(input.id, { runsDir: resolveDropJobRoot(), lane: input.lane });
+      sendJson(res, result.outcome === 'written' ? 202 : 409, { ...result, ...(result.outcome === 'refused' ? { error: result.reason } : {}) });
+    } catch { sendJson(res, 409, { error: 'Re-issue could not be confirmed. Check the drop folder before retrying.' }); }
+    return true;
+  }
   if (method === 'GET' && suffixParts.length === 2 && suffixParts[0] === 'session' && isValidSessionId(suffixParts[1]!)) {
     try {
       const engine = await (deps.engine ?? getVerseEngine)();

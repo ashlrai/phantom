@@ -65,6 +65,7 @@ describe('provider endpoint protocol descriptors', () => {
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(expected, {
       method: 'GET',
       headers: { Accept: 'application/json' },
+      redirect: 'error',
       signal: expect.any(AbortSignal),
     });
   });

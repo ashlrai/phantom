@@ -38,6 +38,14 @@ export interface WikiJob {
 
 const jobs = new Map<string, WikiJob>();
 
+function snapshotJob(job: WikiJob): WikiJob {
+  return {
+    ...job,
+    progress: { ...job.progress },
+    summary: job.summary ? { ...job.summary } : null,
+  };
+}
+
 function prune(nowMs: number): void {
   for (const [key, job] of jobs) {
     if (job.state !== 'running' && job.finishedAt && nowMs - Date.parse(job.finishedAt) > JOB_TTL_MS) jobs.delete(key);
@@ -47,7 +55,7 @@ function prune(nowMs: number): void {
 export function wikiJob(key: string): WikiJob | null {
   prune(Date.now());
   const j = jobs.get(key);
-  return j ? { ...j, progress: { ...j.progress } } : null;
+  return j ? snapshotJob(j) : null;
 }
 
 export function runningWikiJobs(): number {
@@ -68,7 +76,7 @@ export interface StartJobOptions extends Omit<BuildWikiOptions, 'repo' | 'onProg
 export function startWikiJob(repo: string, opts: StartJobOptions = {}): StartJobResult {
   const key = wikiKey(repo);
   const existing = jobs.get(key);
-  if (existing?.state === 'running') return { ok: true, job: { ...existing } };
+  if (existing?.state === 'running') return { ok: true, job: snapshotJob(existing) };
   if (runningWikiJobs() >= MAX_CONCURRENT_JOBS) return { ok: false, reason: `Already building ${MAX_CONCURRENT_JOBS} wikis; try again when one finishes.` };
   const job: WikiJob = {
     key,
@@ -94,7 +102,7 @@ export function startWikiJob(repo: string, opts: StartJobOptions = {}): StartJob
       job.finishedAt = new Date().toISOString();
       if (res.ok) {
         job.state = 'done';
-        job.summary = res.summary;
+        job.summary = { ...res.summary };
       } else {
         job.state = 'failed';
         job.error = res.reason;
@@ -107,12 +115,12 @@ export function startWikiJob(repo: string, opts: StartJobOptions = {}): StartJob
     })
     .finally(() => {
       try {
-        onSettled?.({ ...job });
+        onSettled?.(snapshotJob(job));
       } catch {
         // observer is best-effort
       }
     });
-  return { ok: true, job: { ...job } };
+  return { ok: true, job: snapshotJob(job) };
 }
 
 /**
