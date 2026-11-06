@@ -579,6 +579,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/README.md',
       'docs/SIGNALS.md', // PR #3076
       'docs/FLEET-API.md', // PR #2899
+      'docs/model-registry.json', // PR #3585
       'docs/PHANTOM-BRAND.md',
       'docs/COMPANIONS.md',
       'docs/CONNECTORS.md', // PR #3290
