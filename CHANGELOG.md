@@ -16,6 +16,13 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.16](https://github.com/ashlrai/phantom/compare/v3.30.15...v3.30.16) (2026-11-06)
+
+
+### Changes
+
+* RQ-RECUT-V330-CIFIX-6R2-MACMEM-NOV6 ([#3782](https://github.com/ashlrai/phantom/issues/3782)) ([b2cf6a3](https://github.com/ashlrai/phantom/commit/b2cf6a38e00103fbd6b1dbb770027bed2759b2b3))
+
 ## [Unreleased]
 
 ## [3.30.15] — 2026-11-06
