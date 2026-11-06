@@ -9,10 +9,12 @@ import { InboxScreen } from './screens/InboxScreen.js';
 import { NeedsYouScreen } from './screens/NeedsYouScreen.js';
 
 beforeEach(() => {
+  // Snapshot wall-clock labels use an explicit zone, independent of the runner.
+  vi.stubEnv('TZ', 'America/New_York');
   vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-04T12:00:00Z'));
   vi.stubGlobal('innerWidth', 390);
 });
-afterEach(() => { evictAll(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { evictAll(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 // DOM snapshots complement the mobile CSS overflow and touch-target contracts.
 // Keep the viewport wrapper in the snapshot so phone intent is reviewable.
