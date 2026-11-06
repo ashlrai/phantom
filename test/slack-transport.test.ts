@@ -32,6 +32,40 @@ const event = { type: 'message', channel: 'D0LEADER', user: 'U0MASON', ts: '1793
 const socketEnvelope = { type: 'events_api', envelope_id: 'delivery-1', payload: { team_id: 'T0TEAM', event_id: 'Ev1', event } };
 
 describe('Slack authenticated receive and delivery', () => {
+  it('reads portable stream chunks and decodes split UTF-8 only after assembly', async () => {
+    const bytes = Buffer.from(JSON.stringify({ ok: true, text: 'FAKE café' }));
+    const split = bytes.indexOf(0xc3) + 1;
+    const stream = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(bytes.subarray(0, split)); controller.enqueue(bytes.subarray(split)); controller.close();
+    } });
+    Object.defineProperty(stream, Symbol.asyncIterator, { value: undefined });
+    const call = createSlackApi({ config, resolveCredential: () => 'FAKE_EXAMPLE_BOT_CREDENTIAL',
+      fetch: vi.fn(async () => new Response(stream)) as typeof fetch });
+    await expect(call('auth.test')).resolves.toMatchObject({ text: 'FAKE café' });
+    expect(stream.locked).toBe(false);
+  });
+  it('cancels the acquired reader on total size overflow and releases its lock', async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new Uint8Array(600_000)); controller.enqueue(new Uint8Array(600_000));
+    }, cancel });
+    const call = createSlackApi({ config, resolveCredential: () => 'FAKE_EXAMPLE_BOT_CREDENTIAL',
+      fetch: vi.fn(async () => new Response(stream)) as typeof fetch });
+    await expect(call('auth.test')).rejects.toThrow('slack-response-too-large');
+    expect(cancel).toHaveBeenCalledOnce(); expect(stream.locked).toBe(false);
+  });
+  it('keeps the request deadline signal and hides response-reader failures', async () => {
+    const session = new AbortController();
+    let requestSignal: AbortSignal | null | undefined;
+    const stream = new ReadableStream<Uint8Array>({ start(controller) {
+      session.signal.addEventListener('abort', () => controller.error(new Error('FAKE private response')), { once: true });
+    } });
+    const request: typeof fetch = async (_url, init) => { requestSignal = init?.signal; return new Response(stream); };
+    const call = createSlackApi({ config, signal: session.signal, resolveCredential: () => 'FAKE_EXAMPLE_BOT_CREDENTIAL', fetch: request });
+    const pending = call('auth.test'); session.abort();
+    await expect(pending).rejects.toThrow('slack-network-uncertain');
+    expect(requestSignal?.aborted).toBe(true); expect(stream.locked).toBe(false);
+  });
   it('binds real Events API outer workspace and marks origin to suppress echoes', () => {
     const raw = unwrapSlackSocketEnvelope(socketEnvelope);
     expect('event' in raw && raw.event).toMatchObject({ team: 'T0TEAM' });

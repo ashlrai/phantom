@@ -49,14 +49,22 @@ describe('WorkerScreen', () => {
     expect(await screen.findByText('Job detail is not in this build yet')).toBeInTheDocument();
   });
 
-  it.each([401, 403, 404, 503])('explains gateway refusal for HTTP %s', async (status) => {
-    if (status !== 401 && status !== 403) {
-      const meta = document.createElement('meta');
-      meta.name = 'ashlr-remote-gateway'; meta.content = 'v1'; document.head.append(meta);
-    }
+  it.each([403, 404])('explains gateway refusal for HTTP %s', async (status) => {
+    const meta = document.createElement('meta');
+    meta.name = 'ashlr-remote-gateway'; meta.content = 'v1'; document.head.append(meta);
     vi.mocked(apiGet).mockRejectedValue(new ApiError('fake refusal', status, '/api/fleet/job'));
     renderMobile(<WorkerScreen job="RQ-FAKE" />);
     expect(await screen.findByText('Worker logs are not available through this gateway yet. Open Phantom on your Mac.')).toBeInTheDocument();
+  });
+
+  it.each([401, 503])('shows a retryable gateway error for HTTP %s', async (status) => {
+    const meta = document.createElement('meta');
+    meta.name = 'ashlr-remote-gateway'; meta.content = 'v1'; document.head.append(meta);
+    vi.mocked(apiGet).mockRejectedValue(new ApiError('fake refusal', status, '/api/fleet/job'));
+    renderMobile(<WorkerScreen job="RQ-FAKE" />);
+    expect(await screen.findByText('Couldn’t load worker')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.queryByText('Worker logs are not available through this gateway yet. Open Phantom on your Mac.')).toBeNull();
   });
 
   it('retries other errors', async () => {

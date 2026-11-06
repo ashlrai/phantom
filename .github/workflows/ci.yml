@@ -2,7 +2,7 @@ name: CI
 
 on:
   # PRs and the merge queue run only the seconds-fast gate (Mason, Oct 28 2026:
-  # merge fast, test later, fix forward daily). Full suites run once a day on
+  # merge fast, test later, fix forward daily). Full suites run every six hours on
   # master, on manual dispatch, and on reusable workflow_call.
   pull_request:
     branches: ["**"]
@@ -15,11 +15,9 @@ on:
   push:
     branches: [master]
   workflow_call:
-  # Daily full suite on master at 05:03 ET (09:03 UTC). Staggered from the other
-  # six repos' daily runs so its seven macOS jobs never share the org's macOS
-  # concurrency with them (RQ-DAILY-15).
+  # Full suite on master every six hours at 17 minutes past the hour.
   schedule:
-    - cron: "3 9 * * *"
+    - cron: "17 */6 * * *"
     # Release preparation reuses green push CI; it never reruns full suites.
     - cron: "0,30 * * * *"
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
@@ -321,7 +319,10 @@ jobs:
               test/activation-readiness-package.test.ts
               test/activation-readiness-windows.test.ts
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # Ubuntu authority 1/3 runs the complete web suite before its existing
+    # thirty-minute backend wrapper, then verifies and uploads the original pack.
+    # Other matrix roles retain their existing twenty-five-minute outer limit.
+    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}
     env: &node_ci_environment
       ASHLR_VITEST_TEST_TIMEOUT_MS: ${{ matrix.os == 'windows-latest' && '30000' || '5000' }}
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: ${{ matrix.native_launchd || '0' }}
@@ -615,7 +616,9 @@ jobs:
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
-    timeout-minutes: 45
+    # Complete single-worker partitions measured 60–65 minutes. Match the
+    # existing 90-minute hermetic wrapper; individual test bounds stay intact.
+    timeout-minutes: 90
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master

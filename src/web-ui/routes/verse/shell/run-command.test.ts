@@ -242,7 +242,7 @@ describe('intent aliases', () => {
       expect(getVerseUiState().section).toBe('chat');
       expect(executeCatalogCommand('mode.for-me')).toBe(true);
       expect(getVerseUiState().section).toBe('fleet');
-      expect(getVerseUiState().history.entries.map((entry) => entry.section)).toEqual(['chat', 'mind', 'chat', 'fleet']);
+      expect(getVerseUiState().history.entries.map((entry) => entry.section)).toEqual(['live', 'mind', 'chat', 'fleet']);
       expect(received).toEqual([]);
       expect(fetcher).not.toHaveBeenCalled();
     } finally {

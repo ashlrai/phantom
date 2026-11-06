@@ -35,12 +35,12 @@ def build(slots=None, lanes_status=None, finishes=(), publishes=(), ready=(), qu
     for d in (q / 'prompts', q / 'run', r / 'metrics', r / 'bin', home / 'Projects' / 'ashlrai' / 'phantom',
               home / 'Projects' / 'ashlrai' / 'wt', home / 'stubbin'):
         d.mkdir(parents=True, exist_ok=True)
-    stub = home / 'stubbin' / 'ps'   # sandboxed runs cannot exec ps; empty output marks nothing alive
-    stub.write_text('#!/bin/bash\nexit 0\n')
+    stub = home / 'stubbin' / 'ps'   # a nonempty OS inventory with no fleet owners
+    stub.write_text('#!/bin/bash\necho \"1000 /usr/bin/idle\"\nexit 0\n')
     stub.chmod(0o755)
     for command in ('memory_pressure', 'sysctl', 'lsof'):
         stub = home / 'stubbin' / command
-        stub.write_text('#!/bin/bash\nexit 0\n')
+        stub.write_text('#!/bin/bash\necho n/tmp\nexit 0\n' if command == 'lsof' else '#!/bin/bash\nexit 0\n')
         stub.chmod(0o755)
     set_daemon_tick(home, 'now')   # RQ-LOADGATE-1: a healthy host by default: fresh daemon tick, load and ncpu pinned in tick()
     (r / 'LOADGATE_TEST').write_text('')
@@ -769,11 +769,17 @@ class DispatchPriorityTests(unittest.TestCase):
                 queue_job(home, 'RQ-FIX-MAIN-B', 'codex-cmp')
                 queue_job(home, 'RQ-OTHER', 'codex-cmp')
                 self.run_tick(home, env)
-                self.assertEqual(self.claims(home), ['RQ-OTHER'])
-                self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-FIX-MAIN-B'])
+                # Unknown global ownership stops the entire tick, including unrelated launches.
+                self.assertEqual(self.claims(home), [])
+                self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-FIX-MAIN-B', 'RQ-OTHER'])
+                self.assertFalse(json.loads((r / 'queue/process-snapshot.json').read_text())['known'])
                 (r / 'queue/run/RQ-FIX-MAIN-A.rc').write_text('0\n')
                 self.run_tick(home, env)
-                self.assertEqual(self.claims(home), ['RQ-OTHER', 'RQ-FIX-MAIN-B'])
+                self.assertEqual(self.claims(home), [])
+                # Once process inspection is healthy, explicit completion releases the repo.
+                (home / 'stubbin/ps').write_text('#!/bin/sh\necho "1000 /usr/bin/idle"\n')
+                self.run_tick(home, env)
+                self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-B', 'RQ-OTHER'])
 
     def test_deferred_launch_does_not_reserve_repo_forever(self):
         home, env = self.fixture()
@@ -906,3 +912,43 @@ class DispatchPriorityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SnapshotSafetyTests(unittest.TestCase):
+    def preserved_fixture(self, lane='codex-cmp'):
+        tmp = build(slots=held_lanes())
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        job = 'RQ-PRESERVE-ACTIVE'
+        root = home / '.ashlr-runs'
+        wt = home / 'Projects' / 'ashlrai' / 'wt' / job
+        wt.mkdir()
+        (wt / 'unique-work.txt').write_text('must survive unknown process ownership')
+        (root / (job + '.base')).write_text(f'deadbeef branch {wt} {lane}\n')
+        (root / (job + '.log')).write_text('existing work\n')
+        old = time.time() - 1000
+        os.utime(root / (job + '.base'), (old, old))
+        os.utime(root / (job + '.log'), (old, old))
+        queue_job(home, 'RQ-NEXT', 'codex-cmp')
+        return home, root, wt
+
+    def assert_preserved(self, home, root, wt, ready):
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(json.loads((root / 'queue/process-snapshot.json').read_text())['known'])
+        self.assertEqual((root / 'queue/ready.tsv').read_text(), ready)
+        self.assertEqual((wt / 'unique-work.txt').read_text(), 'must survive unknown process ownership')
+        self.assertFalse((root / 'queue/run/RQ-PRESERVE-ACTIVE.reaping').exists())
+        self.assertFalse(dispatched(home, 'RQ-NEXT'))
+        self.assertNotIn('REAP ', events(home))
+        self.assertNotIn('LAUNCH ', events(home))
+
+    def test_unknown_process_inventory_preserves_workers_and_claims(self):
+        home, root, wt = self.preserved_fixture()
+        (home / 'stubbin/ps').write_text('#!/bin/bash\nexit 124\n')
+        self.assert_preserved(home, root, wt, (root / 'queue/ready.tsv').read_text())
+
+    def test_failed_cwd_inspection_preserves_argumentless_claude_worker(self):
+        home, root, wt = self.preserved_fixture('claude')
+        (home / 'stubbin/lsof').write_text('#!/bin/bash\nexit 124\n')
+        self.assert_preserved(home, root, wt, (root / 'queue/ready.tsv').read_text())

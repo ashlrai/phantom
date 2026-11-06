@@ -67,6 +67,17 @@ const heartbeatIntervalMs = readPositiveDuration(
 );
 
 const memoryJob = boundedVitestJob(process.env, process.argv.slice(2));
+// Diagnose hosted Darwin capacity without changing the production policy inputs.
+// Copied watchdog fixtures may omit the optional observer; never expose its errors.
+if (process.platform === 'darwin' && process.env.GITHUB_ACTIONS === 'true') {
+  try {
+    const { darwinCapacityDiagnostics } = await import('./test-ci-capacity-diagnostics.mjs');
+    console.error(`[test-ci-capacity] ${JSON.stringify({ ...darwinCapacityDiagnostics(),
+      selectedMaxWorkers: memoryJob.maxWorkers,
+      selectedUnitWorkers: Number(memoryJob.env.ASHLR_VITEST_UNIT_MAX_WORKERS),
+      policySerializesAllProjects: memoryJob.maxWorkers === 1 })}`);
+  } catch { console.error('[test-ci-capacity] observer unavailable'); }
+}
 const extraArgs = memoryJob.args;
 const home = mkdtempSync(join(tmpdir(), 'ashlr-test-ci-home-'));
 const privateTmp = join(home, 'tmp');

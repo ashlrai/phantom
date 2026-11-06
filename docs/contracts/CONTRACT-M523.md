@@ -92,7 +92,12 @@ The effect job rechecks mutable state immediately before the PATCH and verifies
 that the same release is public, stable and latest afterward, with unchanged
 notes and assets. Its preflight receipt expires after one hour; if protected
 environment approval takes longer, redispatch for fresh verification. It records
-the preflight identity and post-effect evidence.
+the preflight identity and post-effect evidence. After all pre-write checks,
+a bounded attempt records the request and preflight hash. An exit record retains
+phase, status and response size/hash, never raw transport output. Evidence
+uploads run on failure too. An attempt does not prove execution: an ambiguous
+response stays unknown, and a failed postcheck requires reconciliation without
+replay. Successful completion still requires the postverified success receipt.
 There is no npm mutation, OIDC permission, npm token, new secret reference, tag
 write, installation, runtime activation, provider, communication or spend
 authority. The GitHub token's broad `contents: write` capability does not grant

@@ -5,7 +5,11 @@ import { openDockPane, openFleetWorkspace } from '../dock/dock-store.js';
 import { registerPane } from '../panes/pane-registry.js';
 import { FleetHubPane } from './FleetHubPane.js';
 
-vi.mock('../dock/dock-store.js', () => ({ openDockPane: vi.fn(), openFleetWorkspace: vi.fn() }));
+vi.mock('../dock/dock-store.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../dock/dock-store.js')>(),
+  openDockPane: vi.fn(),
+  openFleetWorkspace: vi.fn(),
+}));
 
 let unregister: (() => void)[] = [];
 beforeEach(() => {

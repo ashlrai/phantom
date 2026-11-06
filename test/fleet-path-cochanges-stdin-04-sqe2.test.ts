@@ -61,7 +61,7 @@ describe('fleet path-cochanges stdin', () => {
     ['--stdin', 'file'], ['file', '--stdin'], ['--stdin', '--stdin'],
     ['--stdin', '--json', '--json'], ['--stdin', '--limit', '1', '--limit', '2'],
     ['--stdin', '--unknown'], ['--stdin', '--limit', '0'], ['--stdin', '--limit'],
-  ])('rejects invalid options %j', async (...args) => {
+  ])('rejects invalid options %j (%#)', async (...args) => {
     const deps = setup(stream(bytes('"file"')));
     expect(await cmdFleetPathCochanges(args, deps)).toBe(2);
     expect(deps.read).not.toHaveBeenCalled();

@@ -83,12 +83,34 @@ describe('teammate worker', () => {
     const deps = options(); expect(await runTeammateResponder(cfg, deps)).toMatchObject({ examined: 3, sent: 3 });
     expect(readTeammateTexts({ runsDir }).texts).toHaveLength(2);
   });
-  it('uses only the fixed loopback model and refuses redirects for private message generation', async () => {
-    const fetcher = vi.fn(async (_url: string, _options: RequestInit) => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'The source version is unknown.' }, finish_reason: 'stop' }] }) }));
+  const modelResponse = (finish = 'stop', model = 'fast', content = 'The source version is unknown.') => new Response([
+    `data: ${JSON.stringify({ model, choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] })}\n\n`,
+    `data: ${JSON.stringify({ model, choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\n`,
+    'data: [DONE]\n\n',
+  ].join(''), { headers: { 'Content-Type': 'text/event-stream' } });
+  it('uses the canonical local-only transport without tools, redirects, or credentials', async () => {
+    const fetcher = vi.fn(async () => modelResponse());
     vi.stubGlobal('fetch', fetcher);
-    expect(await generateLocalTeammateReply('Please report?', 'observed context')).toBe('The source version is unknown.');
+    expect(await generateLocalTeammateReply('Please report?', 'observed context', undefined, { foundry: { localOnly: true } } as AshlrConfig)).toBe('The source version is unknown.');
+    expect(fetcher).toHaveBeenCalledOnce();
     expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:8123/v1/chat/completions', expect.objectContaining({ redirect: 'error' }));
-    const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body)) as { chat_template_kwargs: unknown };
+    const request = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(request[1].body)) as Record<string, unknown>;
     expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.max_tokens).toBe(256); expect(body.tools).toBeUndefined();
+    expect(request[1].headers).not.toHaveProperty('Authorization');
+  });
+  it('refuses incomplete or misbound model results without replay', async () => {
+    for (const response of [modelResponse('length'), modelResponse('stop', 'other-model')]) {
+      const fetcher = vi.fn(async () => response); vi.stubGlobal('fetch', fetcher);
+      await expect(generateLocalTeammateReply('private request', 'private context')).rejects.toThrow();
+      expect(fetcher).toHaveBeenCalledOnce();
+    }
+  });
+  it('cancels before contacting the model when its owner has stopped', async () => {
+    const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+    const controller = new AbortController(); controller.abort();
+    await expect(generateLocalTeammateReply('private request', 'private context', controller.signal)).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

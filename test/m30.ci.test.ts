@@ -419,6 +419,7 @@ describe('M30 CI workflow', () => {
       'npm run test:ci -- --maxWorkers=1 --fileParallelism=false',
       'test/m515.release-publish-authority-split.test.ts',
       'test/documentation-navigation.test.ts',
+      'test/package-files-allowlist.test.ts',
       'test/authority-release-truth.test.ts',
       'test/m33.release-meta.test.ts',
       'test/cli-registry-drift.test.ts',
@@ -558,7 +559,7 @@ describe('M30 CI workflow', () => {
       const push = id === 'ci' ? " && !(github.event_name == 'push' && github.ref == 'refs/heads/master')" : " && github.event_name != 'push'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'`);
     }
-    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '3 9 * * *' }, { cron: '0,30 * * * *' }]);
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }, { cron: '0,30 * * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
@@ -1072,6 +1073,7 @@ describe('M30 CI workflow', () => {
       'test/authority-codeowners-310b.test.ts',
       'test/m515.release-publish-authority-split.test.ts',
       'test/documentation-navigation.test.ts',
+      'test/package-files-allowlist.test.ts',
       'test/authority-release-truth.test.ts',
       'test/m33.release-meta.test.ts',
       'test/cli-registry-drift.test.ts',
@@ -1239,5 +1241,29 @@ describe('M30 CI workflow', () => {
   it('package.json engines field declares the supported Node floor', () => {
     // Keep npm metadata aligned with install.sh, CI, and release workflows.
     expect(pkg.engines?.node).toBe('>=22.15.0');
+  });
+});
+
+
+describe('complete Mac job runtime envelope', () => {
+  it('matches the existing ninety-minute wrapper without changing test bounds or isolated jobs', () => {
+    expect(workflowJob('mac-general')).toMatch(/timeout-minutes: 90/);
+    expect(workflowJob('mac-general')).toContain("ASHLR_TEST_CI_TIMEOUT_MS: '5400000'");
+    expect(workflowJob('mac-general')).toContain("ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'");
+    expect(workflowJob('mac-general')).toContain('shard: [1, 2, 3, 4]');
+    expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
+  });
+});
+
+
+describe('combined Ubuntu authority runtime envelope', () => {
+  it('budgets the complete web and bounded backend producer without widening other roles', () => {
+    const workflow = parse(ciYml);
+    expect(workflow.jobs.ci['timeout-minutes']).toBe("${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}");
+    expect(workflow.jobs.ci.strategy['fail-fast']).toBe(false);
+    expect(workflowJob('ci')).toContain('node .github/scripts/ci-qualification-lane.mjs web');
+    expect(workflowJob('ci')).toContain('npm run test:ci -- ${{ matrix.test_args }}');
+    expect(readFileSync(resolve(repoRoot, 'scripts/test-ci.mjs'), 'utf8')).toContain('const DEFAULT_HARD_TIMEOUT_MS = 30 * 60_000;');
+    expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
   });
 });

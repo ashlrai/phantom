@@ -81,7 +81,7 @@ describe('phm comms bus peers — codex-peers behind the Locus peers contract', 
     ['--session-id'],
     ['--bogus'],
     ['--session-id', 'a', '--session-id', 'b'],
-  ])('rejects %j with status invalid before any probe or I/O', async (args) => {
+  ])('rejects %j with status invalid before any probe or I/O (%#)', async (args) => {
     const available = vi.fn(() => true);
     const { code, out } = await runPeers(args, { available });
     expect(code).toBe(2);
@@ -165,7 +165,7 @@ describe('phm comms bus peers — codex-peers behind the Locus peers contract', 
   });
 });
 
-describe.skipIf(process.platform === 'win32')('fake locus command on PATH', () => {
+describe.skipIf(process.platform === 'win32')('fake locus command on PATH (phm comms bus peers)', () => {
   it('probes the codex peers transport through the real locus CLI gate', async () => {
     const dir = fixtureDir();
     installFakeLocus(dir);

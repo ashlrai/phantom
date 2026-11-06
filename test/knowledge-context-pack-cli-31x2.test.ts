@@ -68,7 +68,7 @@ describe('knowledge context-pack CLI', () => {
   it.each([
     [], ['--file'], ['--file', '--json'], ['--file', 'x', '--unknown'],
     ['--file', 'x', '--file', 'y'], ['--json', '--json'], ['--help', '--file', 'x'], ['extra'],
-  ])('rejects invalid arguments %j without reading', async (...args) => {
+  ])('rejects invalid arguments %j without reading (%#)', async (...args) => {
     const spy = vi.spyOn(reader, 'readStableRegularFile');
     expect(await run(...args)).toBe(2);
     expect(spy).not.toHaveBeenCalled();
