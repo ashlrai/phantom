@@ -1243,3 +1243,14 @@ describe('M30 CI workflow', () => {
     expect(pkg.engines?.node).toBe('>=22.15.0');
   });
 });
+
+
+describe('complete Mac job runtime envelope', () => {
+  it('matches the existing ninety-minute wrapper without changing test bounds or isolated jobs', () => {
+    expect(workflowJob('mac-general')).toMatch(/timeout-minutes: 90/);
+    expect(workflowJob('mac-general')).toContain("ASHLR_TEST_CI_TIMEOUT_MS: '5400000'");
+    expect(workflowJob('mac-general')).toContain("ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'");
+    expect(workflowJob('mac-general')).toContain('shard: [1, 2, 3, 4]');
+    expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
+  });
+});

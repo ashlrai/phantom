@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 // artifact-firewall guard scans every scripts/ and bin/ file's literal text
 // for certain test names, and this list's comments name several of them.
 import { REAL_IO_TEST_FILES } from '../test/config/realio-lane-membership.mjs';
+import { SERIAL_CPU_TEST_FILES } from '../test/config/serial-cpu-lane-membership.mjs';
 import { KNOWN_FAST_SPAWN_FILES } from './realio-lane-known-fast-spawns.mjs';
 import { canonicalTestPath, realIoLaneInventory } from './realio-lane-inventory.mjs';
 
@@ -76,7 +77,7 @@ function relPath(absPath) {
 }
 
 const files = findTestFiles(testDir);
-const inventory = realIoLaneInventory(REAL_IO_TEST_FILES, files.map(relPath));
+const inventory = realIoLaneInventory(REAL_IO_TEST_FILES, files.map(relPath), SERIAL_CPU_TEST_FILES);
 const missing = [];
 const softSignals = [];
 
@@ -138,14 +139,19 @@ if (unrecognizedAllowlistEntries.size > 0) {
 }
 
 if (inventory.stale.length > 0) {
-  console.error('[check-realio-lane-membership] stale REAL_IO_TEST_FILES entries (not collected test files)');
+  console.error('[check-realio-lane-membership] stale real-I/O or serial-CPU entries (not collected test files)');
   console.error('— remove from test/config/realio-lane-membership.mjs or add the missing tests:');
   for (const file of inventory.stale) console.error(`  ${file}`);
   console.error('');
 }
 
-if (missing.length > 0 || unrecognizedAllowlistEntries.size > 0 || inventory.stale.length > 0) {
+if (inventory.overlap.length > 0) {
+  console.error('[check-realio-lane-membership] files cannot belong to both real-I/O and serial-CPU lanes:');
+  for (const file of inventory.overlap) console.error(`  ${file}`);
+}
+
+if (missing.length > 0 || unrecognizedAllowlistEntries.size > 0 || inventory.stale.length > 0 || inventory.overlap.length > 0) {
   process.exitCode = 1;
 } else {
-  console.log(`[check-realio-lane-membership] ok — ${inventory.realIoCount} real-io files, ${inventory.unitCount} unit files, no unclassified real-io markers found.`);
+  console.log(`[check-realio-lane-membership] ok — ${inventory.realIoCount} real-io files, ${inventory.serialCpuCount} serial-cpu files, ${inventory.unitCount} unit files, no unclassified real-io markers found.`);
 }
