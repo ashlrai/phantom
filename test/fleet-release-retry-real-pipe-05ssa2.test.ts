@@ -166,6 +166,17 @@ describe('fleet release batch -> retry over the real CLI pipe', () => {
     expect(readdirSync(stateDir)).toEqual([]);
   });
 
+  it('rejects a cancelled partial report before any retry calls', async () => {
+    const first = await firstPass(['--stdin', '--json']);
+    const doc = JSON.parse(first.stdout);
+    doc.cancelled = true;
+    const before = calls.length;
+    const result = await retry(JSON.stringify(doc), ['--stdin', '--json']);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stdout)).toEqual({ version: 1, outcome: 'invalid', reason: 'batch_cancelled' });
+    expect(calls).toHaveLength(before);
+  });
+
   it.each([
     ['unknown outcome', (e: Record<string, unknown>) => { e.outcome = 'published'; }],
     ['stray field', (e: Record<string, unknown>) => { e.notes = 'extra'; }],

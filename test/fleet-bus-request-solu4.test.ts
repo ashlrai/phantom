@@ -20,7 +20,8 @@ function setup() {
     const code = await cmdFleetBusRequest(args, options, { ...deps, output });
     return { code, result: JSON.parse(output.mock.lastCall![0]) };
   };
-  const rows = () => JSON.parse(readFileSync(join(options.root, 'bus-inbox', 'messages.json'), 'utf8')) as unknown[];
+  // Snapshot v2 keeps the retained rows beside a monotonic high-water cursor.
+  const rows = () => (JSON.parse(readFileSync(join(options.root, 'bus-inbox', 'messages.json'), 'utf8')) as { version: 2; highWater: number; rows: unknown[] }).rows;
   return { root, file, options, output, run, rows };
 }
 afterEach(() => { vi.useRealTimers(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

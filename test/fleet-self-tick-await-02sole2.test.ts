@@ -25,7 +25,8 @@ const lastPath = () => join(runsDir, SELF_TICK_LAST);
 const writeRecord = (at: string, mode: 'apply' | 'dry-run', state: 'ran' | 'busy', failed: readonly string[] = []) =>
   writeSelfTickLast(runsDir, {
     v: 1, at, mode, state,
-    steps: STEPS.map((step) => ({
+    // A busy pass never steps, so the writer records none (the reader rejects anything else).
+    steps: (state === 'busy' ? [] : STEPS).map((step) => ({
       step, state: (failed.includes(step) ? 'failed' : 'ok') as 'ok' | 'failed',
       exitCode: failed.includes(step) ? 1 : 0, report: null,
     })),
@@ -86,7 +87,7 @@ describe('fleet self-tick-await', () => {
     ['dry-run', 'ran', []],
     ['dry-run', 'ran', ['planner-tick']],
     ['apply', 'busy', []],
-  ])('a new %s/%s record never satisfies', async (mode, state, failed) => {
+  ])('a new %s/%s record never satisfies (%#)', async (mode, state, failed) => {
     writeRecord(iso(now), mode, state, failed);
     expect(await run(args())).toBe(3);
     expect(report()).toMatchObject({ outcome: 'timed-out',

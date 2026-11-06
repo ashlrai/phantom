@@ -135,6 +135,15 @@ describe('the heavy parts of Chat stay out of its first-paint chunk', () => {
     }
   });
 
+  it('keeps action-only dialog preload maps outside the chat first-paint chunk', () => {
+    const section = read('sections/ChatSection.tsx');
+    const loaders = read('chat/optional-dialog-loaders.ts');
+    expect(section).not.toContain("import('../NewChatDialog.js')");
+    expect(section).not.toContain("import('../devin/DevinStopDialog.js')");
+    expect(loaders).toContain("import('../NewChatDialog.js')");
+    expect(loaders).toContain("import('../devin/DevinStopDialog.js')");
+  });
+
   it('MessageMarkdown keeps marked, DOMPurify and the renderer out of its static graph', () => {
     const imports = staticImports(read('MessageMarkdown.tsx'));
     expect(imports).not.toContain('marked');

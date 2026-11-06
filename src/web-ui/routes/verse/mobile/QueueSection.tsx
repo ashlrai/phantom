@@ -1,6 +1,6 @@
 import { readFailureReason } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
-import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
+import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
 import { explainReason } from '../ops/ops-queue-model.js';
 import { opsQueueQuery } from '../ops/ops-queue-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';

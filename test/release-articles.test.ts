@@ -517,9 +517,15 @@ describe('fresh public facts are data, not saved release authority', () => {
           { name: 'Require selected CI lane', status: 'completed', conclusion: 'success' },
         ] });
       // Seconds-fast topology: the scan always runs, the PR-only typecheck skips.
-      for (const [id, name, conclusion] of [[904, 'Secret-shape scan', 'success'], [905, 'Quick typecheck', 'skipped'], [906, 'Daily fixup queue', 'success']] as const) {
+      for (const [id, name, conclusion] of [[904, 'Secret-shape scan', 'success'], [905, 'Quick typecheck', 'skipped'], [906, 'Daily fixup queue', 'skipped']] as const) {
         jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion, labels: ['ubuntu-latest'], steps: [] });
       }
+      // Complete false/all qualification never executes the separate fast producer.
+      for (const [id, name] of [[907, 'Prepare unsigned desktop release'], [908, 'Desktop release smoke']] as const) {
+        jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion: 'skipped', labels: ['macos-15'], steps: [] });
+      }
+      const scan = jobs.find(job => job['name'] === 'Secret-shape scan')!;
+      scan['steps'] = [{ name: 'Scan candidate diff (fail closed)', status: 'completed', conclusion: 'success' }];
       value['total_count'] = jobs.length;
     }
     return value;
@@ -549,9 +555,35 @@ describe('fresh public facts are data, not saved release authority', () => {
     const reader = fixtureReader(withEraGateJobs, { workflowBytes: qualificationWorkflowBytes() });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
-  it('binds the current fast source Merge Gate while retaining all fifteen full qualification jobs', async () => {
+  it('binds the exact current complete source while retaining all fifteen full qualification jobs', async () => {
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+  });
+  it.each(['full-skipped', 'full-step-skipped', 'full-step-missing', 'scan-skipped', 'scan-step-skipped', 'scan-runner', 'producer-ran', 'smoke-ran', 'excluded-step-ran'])('refuses incomplete current release qualification: %s', async (kind) => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        const full = jobs.find(job => job['name'] === RELEASE_CI_JOBS[0])!;
+        const scan = jobs.find(job => job['name'] === 'Secret-shape scan')!;
+        if (kind === 'full-skipped') for (const job of jobs.filter(job => RELEASE_CI_JOBS.includes(String(job['name'])))) { job['conclusion'] = 'skipped'; job['steps'] = []; }
+        if (kind === 'full-step-skipped') (full['steps'] as Record<string, unknown>[]).find(step => step['name'] === releaseRequiredSteps(String(full['name']))[0])!['conclusion'] = 'skipped';
+        if (kind === 'full-step-missing') full['steps'] = (full['steps'] as Record<string, unknown>[]).filter(step => step['name'] !== releaseRequiredSteps(String(full['name']))[0]);
+        if (kind === 'scan-skipped') scan['conclusion'] = 'skipped';
+        if (kind === 'scan-step-skipped') (scan['steps'] as Record<string, unknown>[])[0]!['conclusion'] = 'skipped';
+        if (kind === 'scan-runner') scan['labels'] = ['ubuntu-latest', 'self-hosted'];
+        if (kind === 'producer-ran') jobs.find(job => job['name'] === 'Prepare unsigned desktop release')!['conclusion'] = 'success';
+        if (kind === 'smoke-ran') jobs.find(job => job['name'] === 'Desktop release smoke')!['conclusion'] = 'success';
+        if (kind === 'excluded-step-ran') jobs.find(job => job['name'] === 'Desktop release smoke')!['steps'] = [{ name: 'fast smoke', status: 'completed', conclusion: 'success' }];
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
+  it('refuses an edited current workflow even when all reported jobs pass', async () => {
+    const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(current + '\n# unreviewed source revision\n') });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each(['docs-ran', 'docs-missing'])('withholds release facts when the docs lane %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {

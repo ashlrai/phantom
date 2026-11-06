@@ -20,12 +20,11 @@
  * and ask the panel for its prompt; the panel does the rest (nothing runs).
  */
 import { requestTerminal } from '../dock/dock-store.js';
+import { TERMINAL_PANE_ID } from '../dock/terminal-id.js';
 import { TerminalGlyph } from '../dock/dock-icons.js';
 import { lazyPane, registerPane } from '../panes/pane-registry.js';
 import { registerCommandHandler } from '../shell/command-bus.js';
 import { getVerseUiState, setVerseSection } from '../verse-ui-store.js';
-
-export const TERMINAL_PANE_ID = 'terminal';
 
 registerPane({
   id: TERMINAL_PANE_ID,
