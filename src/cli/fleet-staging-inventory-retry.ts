@@ -31,7 +31,9 @@ async function readReport(input: Input): Promise<Item[] | null> {
   const batch = value as Record<string, unknown>;
   if (batch.schema !== 'fleet.staging-inventory-batch.v1' || !Array.isArray(batch.reports)
     || batch.reports.length < 1 || batch.reports.length > 8 || batch.requested !== batch.reports.length
-    || batch.interrupted === true) return null;
+    || batch.interrupted === true
+    || (batch.cancelled !== undefined && batch.cancelled !== true)
+    || (batch.cancelled === true && batch.complete !== false)) return null;
   const roots = new Set<string>();
   const reports: Item[] = [];
   for (const value of batch.reports) {
@@ -40,7 +42,7 @@ async function readReport(input: Input): Promise<Item[] | null> {
     if (typeof item.root !== 'string' || item.root.includes('\0') || !isAbsolute(item.root)
       || normalize(item.root) !== item.root || roots.has(item.root) || typeof item.complete !== 'boolean') return null;
     // The batch emits either a scanner report or a minimal failure sentinel.
-    if (item.source === 'failed') {
+    if (item.source === 'failed' || (item.source === 'unattempted' && batch.cancelled === true)) {
       if (item.complete !== false) return null;
     } else if (item.schema !== 'fleet.staging-inventory.v1'
       || typeof item.generatedAt !== 'string' || !Number.isFinite(Date.parse(item.generatedAt))
