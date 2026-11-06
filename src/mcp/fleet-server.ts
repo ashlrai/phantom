@@ -62,6 +62,7 @@ import { CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MAX_POLL_MS, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MIN_POLL_MS } from '../core/fleet/ci-receipt-await.js';
 import { CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS } from '../core/fleet/ci-receipt-await-batch.js';
+import { parseFleetStagingInventoryArgs, readFleetStagingInventory, type FleetStagingInventoryArgs } from './fleet-staging-inventory.js';
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
@@ -99,6 +100,7 @@ export interface FleetReaders {
   ciResumeInputs?: (input: FleetCiResumeInputsArgs) => Promise<unknown>;
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
+  stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -478,12 +480,17 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_staging_inventory',
+      description: 'Inventory the local release-staging directory: listing children (name, modifiedAt, bytes), total measured bytes, completeness flags, skipped symlink count, and an age-and-size disclaimer. The tool *only* reports measured size; measurement does not grant permission to clean, reclaim, or unblock any launch. Root is the fixed ~/.local/share/ashlr/release-staging path — no arbitrary root or command parameter is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch') {
-      throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
+    if (name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_staging_inventory') {
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
@@ -514,6 +521,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    const fleetStagingInventory = name === 'fleet_staging_inventory' ? parseFleetStagingInventoryArgs(args) : null;
     if (name === 'fleet_ci_receipt_await_batch' ? ciReceiptAwaitBatch === null :
         name === 'fleet_ci_receipt_await' ? ciReceiptAwait === null :
         name === 'fleet_ci_resume_inputs' ? ciResumeInputs === null :
@@ -535,6 +543,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_reset_await' ? resetAwait === null :
         name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
         name === 'fleet_reset_follow' ? resetFollow === null :
+        name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_bus_inbox' ? inbox === null :
         name === 'fleet_reset_history' ? history === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
@@ -575,6 +584,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
+        : name === 'fleet_staging_inventory' ? await (readers.stagingInventory ?? readFleetStagingInventory)(fleetStagingInventory as FleetStagingInventoryArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.
