@@ -2,7 +2,7 @@ import { isAbsolute, normalize } from 'node:path';
 import { ELIGIBILITY, inventoryStaging } from '../core/fleet/staging-inventory.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const USAGE = 'usage: ashlr fleet staging-inventory-batch --stdin [--json]';
+const USAGE = 'usage: ashlr fleet staging-inventory-batch --stdin [--json | --ndjson]';
 const MAX_BYTES = 16 * 1024;
 type Input = AsyncIterable<Uint8Array | string> & { isTTY?: boolean };
 type Report = Awaited<ReturnType<typeof inventoryStaging>>;
@@ -42,18 +42,32 @@ async function readRoots(input: Input): Promise<string[] | null> {
 export async function cmdFleetStagingInventoryBatch(args: string[], deps: Deps = {}): Promise<number> {
   const output = deps.output ?? console;
   const flags = new Set(args);
-  if (flags.size !== args.length || !flags.has('--stdin') || [...flags].some((flag) => !['--stdin', '--json'].includes(flag))) {
+  if (flags.size !== args.length || !flags.has('--stdin') || (flags.has('--json') && flags.has('--ndjson')) || [...flags].some((flag) => !['--stdin', '--json', '--ndjson'].includes(flag))) {
     output.error(USAGE); return 2;
   }
   let roots: string[] | null;
   try { roots = await readRoots(deps.input ?? process.stdin); } catch { roots = null; }
   if (!roots) { output.error(USAGE); return 2; }
   const reports: (Report | { root: string; complete: false; source: 'failed'; cleanupEligibility: string })[] = [];
-  for (const root of roots) {
-    try { reports.push(await (deps.scanner ?? inventoryStaging)(root)); }
-    catch { reports.push({ root, complete: false, source: 'failed', cleanupEligibility: ELIGIBILITY }); }
+  let completed = 0;
+  for (const [index, root] of roots.entries()) {
+    let report: (typeof reports)[number];
+    try { report = await (deps.scanner ?? inventoryStaging)(root); }
+    catch { report = { root, complete: false, source: 'failed', cleanupEligibility: ELIGIBILITY }; }
+    if (report.complete) completed++;
+    if (flags.has('--ndjson')) {
+      output.log(JSON.stringify(sanitizePublicJson({
+        schema: 'fleet.staging-inventory-batch-progress.v1', index, requested: roots.length, report,
+      })));
+    } else reports.push(report);
   }
-  const completed = reports.filter((report) => report.complete).length;
+  if (flags.has('--ndjson')) {
+    output.log(JSON.stringify(sanitizePublicJson({
+      schema: 'fleet.staging-inventory-batch-summary.v1', requested: roots.length, completed,
+      complete: completed === roots.length,
+    })));
+    return completed === roots.length ? 0 : 1;
+  }
   const safe = sanitizePublicJson({ schema: 'fleet.staging-inventory-batch.v1', requested: roots.length, completed, reports }) as {
     schema: string; requested: number; completed: number; reports: typeof reports;
   };
