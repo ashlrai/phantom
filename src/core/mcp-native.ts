@@ -287,6 +287,21 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
+    name: 'phantom_fleet_apps_recovery_wait',
+    description: 'Wait for retained recovery evidence for one invocation to become fresh and healthy or terminal.',
+    inputSchema: { type: 'object', properties: {
+      invocationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
+      maxAgeMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
+      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
+    }, required: ['invocationId', 'maxAgeMs', 'timeoutMs'], additionalProperties: false },
+    safety: 'read',
+    handler: async args => (await import('./fleet/apps-recovery-wait.js')).waitAppsRecovery({
+      root: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), invocation: args.invocationId as string,
+      maxAge: args.maxAgeMs as number, duration: args.timeoutMs as number, interval: (args.intervalMs as number | undefined) ?? 1000,
+    }),
+  },
+  {
     name: 'phantom_fleet_apps_ensure',
     description: 'Ensure an explicit group of local managed apps is running under one shared deadline.',
     get inputSchema() { return { type: 'object', properties: {
@@ -1365,7 +1380,7 @@ function auditNativeCall(summary: string, result: 'ok' | 'refused' | 'error'): v
  * surface as isError text results. Every outcome is audited.
  */
 export async function callNativeTool(name: string, rawArgs: unknown): Promise<NativeToolResult> {
-  const fleetObservation = name === 'phantom_fleet_graph' || name === 'phantom_fleet_session' || name === 'phantom_fleet_apps_status' || name === 'phantom_fleet_apps_changes';
+  const fleetObservation = name === 'phantom_fleet_graph' || name === 'phantom_fleet_session' || name === 'phantom_fleet_apps_status' || name === 'phantom_fleet_apps_changes' || name === 'phantom_fleet_apps_recovery_wait';
   const tool = TOOLS.find((t) => t.name === name);
   const args: Record<string, unknown> =
     rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
@@ -1373,7 +1388,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       : {};
   const argKeys = Object.keys(args).sort().join(',') || '(none)';
 
-  if (fleetObservation && name !== 'phantom_fleet_apps_changes' && (Object.keys(args).length > 0 ||
+  if (fleetObservation && name !== 'phantom_fleet_apps_changes' && name !== 'phantom_fleet_apps_recovery_wait' && (Object.keys(args).length > 0 ||
     (name === 'phantom_fleet_apps_status' && (rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs))))) {
     auditNativeCall(`${name} — invalid observation arguments`, 'error');
     return textResult({ error: 'Fleet observation tools accept no arguments' }, true);
@@ -1404,6 +1419,14 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('apps' in args && (!Array.isArray(apps) || apps.length < 1 || apps.length > 8 || new Set(apps).size !== apps.length ||
         apps.some(app => typeof app !== 'string' || !FLEET_APPS.some(allowed => allowed === app))))
       ? 'invalid fleet apps changes arguments' : null;
+  } else if (name === 'phantom_fleet_apps_recovery_wait') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    invalid = !object || Object.keys(args).some(key => !['invocationId', 'maxAgeMs', 'timeoutMs', 'intervalMs'].includes(key)) ||
+      typeof args.invocationId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.invocationId) ||
+      !Number.isSafeInteger(args.maxAgeMs) || (args.maxAgeMs as number) < 1 ||
+      !Number.isSafeInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000 ||
+      ('intervalMs' in args && (!Number.isSafeInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
+      ? 'invalid recovery wait arguments' : null;
   } else if (name === 'phantom_fleet_apps_ensure') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const apps = args.apps;
