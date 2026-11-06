@@ -32,6 +32,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { hasLeaderNetworkConfig } from '../agents/leader-network-config.js';
 import { allowOperatorMessage } from '../fleet/operator-glance.js';
 import { acceptTelegramPair } from '../fleet/operator-glance-read.js';
 import { sendIMessage } from '../integrations/imessage.js';
@@ -358,6 +359,16 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
   }
   // A failed status send is a dispatch failure, not a question for the Leader.
   if (!inbox.ok && inbox.reason === 'status-send-failed') throw new Error('Telegram status reply failed');
+  if (inbox.ok && hasLeaderNetworkConfig()) {
+    const { readLeaderNetworkConfig } = await import('../agents/leader-network-runtime.js');
+    const { parseMasonIdentities } = await import('../agents/leader-network.js');
+    const owners = parseMasonIdentities(readLeaderNetworkConfig().configSource);
+    if (owners.some(owner => owner.channel === 'telegram' && owner.id === inbox.envelope.verifiedSenderId)) {
+      if (inbox.publishState !== 'published') throw new Error('Leader network receipt unavailable; retry retained.');
+      result.resolved++;
+      return;
+    }
+  }
   await converseWithLeader(event, text, cfg);
 }
 
