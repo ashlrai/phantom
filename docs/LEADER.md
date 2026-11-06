@@ -1,5 +1,9 @@
 # Talking to the Leader (3.14+)
 
+The [CEO network endpoint](LEADER-NETWORK.md) bridges verified owner channels,
+the durable inbox/outbox, configured model tiers, and away-mode digests. The
+desktop's **Leader** pane is the shared point of contact.
+
 ## Release-backed articles (successor candidate)
 
 The opt-in `release-articles` maintenance lane follows Phantom's latest stable
