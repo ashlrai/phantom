@@ -81,6 +81,9 @@ export function AboutPanel() {
             Work with agents in chat or delegate fleet outcomes. Sessions use the providers and accounts you connect.
           </p>
           <p className={styles.aboutLine}>
+            Build versions identify this interface and desktop shell; they do not confirm publication.
+          </p>
+          <p className={styles.aboutLine}>
             <a
               className={styles.link}
               href="https://github.com/ashlrai/phantom"

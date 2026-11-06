@@ -1,6 +1,7 @@
 import type { FleetRuns } from '../ops/ops-runs-model.js';
+import { JOB_ID_RE } from './job-id.js';
 
-export const JOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
+export { JOB_ID_RE };
 type State = 'running' | 'published' | 'archived' | 'unknown';
 type Source = 'healthy' | 'missing' | 'degraded';
 
