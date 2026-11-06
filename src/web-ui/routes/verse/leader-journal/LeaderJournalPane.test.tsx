@@ -35,7 +35,8 @@ describe('LeaderJournalPane', () => {
   });
   it('shows loading, the 404 message and refreshes on demand', async () => {
     let resolve!: (response: Response) => void;
-    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; })).mockResolvedValue(Response.json(data()));
+    const journal = vi.fn().mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; })).mockImplementation(async () => Response.json(data()));
+    const fetcher = vi.fn((url: string) => url.includes('leader-journal') ? journal() : Promise.resolve(Response.json({}, { status: 404 })));
     vi.stubGlobal('fetch', fetcher);
     render(<LeaderJournalPane {...props} />);
     expect(screen.getByLabelText('Loading leader journal')).toBeInTheDocument();
@@ -45,7 +46,8 @@ describe('LeaderJournalPane', () => {
     expect(await screen.findByText('2 rejected in the last hour')).toBeInTheDocument();
   });
   it('displays invalid responses and server errors', async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ v: 2 })).mockResolvedValueOnce(Response.json({ error: 'unavailable' }, { status: 500 }));
+    const journal = vi.fn().mockImplementationOnce(async () => Response.json({ v: 2 })).mockImplementationOnce(async () => Response.json({ error: 'unavailable' }, { status: 500 }));
+    const fetcher = vi.fn((url: string) => url.includes('leader-journal') ? journal() : Promise.resolve(Response.json({}, { status: 404 })));
     vi.stubGlobal('fetch', fetcher);
     render(<LeaderJournalPane {...props} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid leader journal response.');
@@ -63,22 +65,22 @@ describe('LeaderJournalPane', () => {
     expect(screen.getByText('No ingest events recorded.')).toBeInTheDocument();
   });
   it('polls every 30 seconds while visible and stops when hidden or unmounted', async () => {
-    const fetcher = vi.fn(async () => Response.json(data()));
+    const fetcher = vi.fn(async (url: string) => url.includes('leader-journal') ? Response.json(data()) : Response.json({}, { status: 404 }));
     vi.stubGlobal('fetch', fetcher);
     vi.useFakeTimers();
     const view = render(<LeaderJournalPane {...props} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(screen.getByText('2 rejected in the last hour')).toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('leader-journal'))).toHaveLength(2);
     view.rerender(<LeaderJournalPane {...props} visible={false} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('leader-journal'))).toHaveLength(2);
     view.rerender(<LeaderJournalPane {...props} visible />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('leader-journal'))).toHaveLength(3);
     view.unmount();
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).includes('leader-journal'))).toHaveLength(3);
   });
 });
