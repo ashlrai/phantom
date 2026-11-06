@@ -262,6 +262,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'slow-prs': () => import('./fleet-slow-prs.js'),
   'staging-inventory': () => import('./fleet-staging-inventory.js'),
   'staging-inventory-batch': () => import('./fleet-staging-inventory-batch.js'),
+  'staging-inventory-retry': () => import('./fleet-staging-inventory-retry.js'),
   'standby': () => import('./fleet-standby.js'),
   'standby-await': () => import('./fleet-standby-await.js'),
   'standby-config': () => import('./fleet-standby-config.js'),
