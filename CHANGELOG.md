@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.9 |
-| Latest dated changelog release (2026-11-05) | 3.30.9 |
+| Source package | 3.30.10 |
+| Latest dated changelog release (2026-11-06) | 3.30.10 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.10](https://github.com/ashlrai/phantom/compare/v3.30.9...v3.30.10) (2026-11-06)
+## [Unreleased]
+
+## [3.30.10] — 2026-11-06
 
 
 ### Features
@@ -61,8 +63,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-V330-CIFIX-22:** BRIDGE_NOTES: RQ-V330-CIFIX-22 ([#3698](https://github.com/ashlrai/phantom/issues/3698)) ([b8a82fe](https://github.com/ashlrai/phantom/commit/b8a82fe2625288f39c4e497c626b4c6065941c16))
 * **RQ-V330-CIFIX-23:** BRIDGE_NOTES - RQ-V330-CIFIX-23 ([#3701](https://github.com/ashlrai/phantom/issues/3701)) ([fb60409](https://github.com/ashlrai/phantom/commit/fb60409191a8dc2600e4d151e52cb38de4a10999))
 * **RQ-V330-CIFIX-24:** RQ-V330-CIFIX-24 ([#3699](https://github.com/ashlrai/phantom/issues/3699)) ([1cb7fd5](https://github.com/ashlrai/phantom/commit/1cb7fd55f34e8450a23e44c95fa3e6cc182be37d))
-
-## [Unreleased]
 
 ## [3.30.9] — 2026-11-05
 
