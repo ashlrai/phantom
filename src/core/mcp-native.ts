@@ -55,6 +55,8 @@ import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 // Each is wrapped in a lazy async import inside the handler so module-level
 // import failures never crash mcp-native at load time.
 // (Types only — runtime imports done lazily in handlers below.)
+// phantom_fleet_apps_recovery_check uses lazy async imports from
+// apps-recovery-invocations.js and apps-recovery-verdict.js inside the handler.
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -335,6 +337,22 @@ const TOOLS: NativeToolImpl[] = [
       timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
       intervalMs: (args.intervalMs as number | undefined) ?? 1000,
     }),
+  },
+  {
+    name: 'phantom_fleet_apps_recovery_check',
+    description: 'Check whether one recovery invocation retains fresh, healthy evidence in the local runs store. Reads only; never queries or launches apps. Returns stale, terminal, unhealthy, or unknown evidence outcomes without substituting healthy.',
+    inputSchema: { type: 'object', properties: {
+      invocationId: { type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' },
+      maxAgeMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    }, required: ['invocationId', 'maxAgeMs'], additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const { readAppsRecoveryInvocations } = await import('./fleet/apps-recovery-invocations.js');
+      const { appsRecoveryVerdict } = await import('./fleet/apps-recovery-verdict.js');
+      const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+      const projection = readAppsRecoveryInvocations(root);
+      return appsRecoveryVerdict(projection, args.invocationId as string, args.maxAgeMs as number, Date.now());
+    },
   },
   {
     name: 'phantom_fleet_orders',
@@ -1422,6 +1440,15 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000)) ||
       ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
       ? 'invalid fleet apps await arguments' : null;
+  } else if (name === 'phantom_fleet_apps_recovery_check') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const id = args.invocationId;
+    const age = args.maxAgeMs;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    invalid = !object || Object.keys(args).some(key => !['invocationId', 'maxAgeMs'].includes(key)) ||
+      typeof id !== 'string' || !uuidPattern.test(id) ||
+      !Number.isSafeInteger(age) || (age as number) < 1 || (age as number) > Number.MAX_SAFE_INTEGER
+      ? 'invalid recovery check arguments' : null;
   } else if (name === 'phantom_fleet_drop_job') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => !['id', 'lane', 'tier', 'body'].includes(key)) ||
@@ -1524,6 +1551,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     if (name === 'phantom_fleet_apps_ensure') {
       auditNativeCall(`${tool.name} keys=${argKeys} — recovery unavailable`, 'error');
       return textResult({ error: 'Fleet recovery unavailable' }, true);
+    }
+    if (name === 'phantom_fleet_apps_recovery_check') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — recovery check unavailable`, 'error');
+      return textResult({ error: 'Recovery check unavailable' }, true);
     }
     if (name === 'phantom_fleet_apps_await') {
       auditNativeCall(`${tool.name} keys=${argKeys} — await unavailable`, 'error');
