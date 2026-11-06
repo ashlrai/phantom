@@ -71,10 +71,10 @@ describe('app-watch', () => {
     const sleep = vi.fn(() => new Promise<void>(resolve => { finishSleep = resolve; }));
     const pending = cmdFleetAppWatch(['Cursor', '--duration-ms', '100', '--json'], { runChild: runner, sleep });
     await vi.advanceTimersByTimeAsync(100);
-    expect(await pending).toBe(0);
+    expect(await pending).toBe(stage === 'child' ? 1 : 0);
     if (stage === 'child') finish(success('launched')); else finishSleep();
     await Promise.resolve();
     expect(runner).toHaveBeenCalledTimes(1);
-    expect(report()).toMatchObject({ outcome: 'completed', recoveries: 0, lastObservedState: stage === 'child' ? null : 'running' });
+    expect(report()).toMatchObject({ outcome: stage === 'child' ? 'failed' : 'completed', recoveries: 0, lastObservedState: stage === 'child' ? null : 'running' });
   });
 });
