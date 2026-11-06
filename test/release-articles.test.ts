@@ -580,6 +580,15 @@ describe('fresh public facts are data, not saved release authority', () => {
     }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
+  it('retains the exact legacy complete topology and refuses unreviewed outer limits', async () => {
+    const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const legacy = current.replace('    # Complete single-worker partitions measured 60–65 minutes. Match the\n    # existing 90-minute hermetic wrapper; individual test bounds stay intact.\n    timeout-minutes: 90', '    timeout-minutes: 45');
+    expect(createHash('sha256').update(legacy).digest('hex')).toBe('ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390');
+    expect(await verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(legacy) }), NOW))
+      .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+    const edited = current.replace('    timeout-minutes: 90', '    timeout-minutes: 91');
+    await expect(verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(edited) }), NOW)).rejects.toThrow();
+  });
   it('refuses an edited current workflow even when all reported jobs pass', async () => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(current + '\n# unreviewed source revision\n') });
