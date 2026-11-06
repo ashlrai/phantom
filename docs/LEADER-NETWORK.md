@@ -13,7 +13,7 @@ message after policy checks. The existing scheduled `leader tick` processes
 verified pending requests before its normal planning work; the comms poller
 wakes it for pending input. No new daemon or host installation is required.
 
-Merge the `foundry` block in [the model-tier example](../examples/leader-model-tiers.json)
+Merge the `foundry` block in [the model-tier example](https://github.com/ashlrai/phantom/blob/master/examples/leader-model-tiers.json)
 into `~/.ashlr/config.json`. Use exact model IDs reported by configured seats;
 the example labels are not availability claims. `modelTiers` holds the model
 lists for `elite`, `workhorse`, `fast`, and `local`; `taskTier` chooses the first
@@ -55,7 +55,7 @@ For the local authenticated desktop and terminal, add
 `{ channel = "bus", id = "leader" }` to `[team].identities`. Telegram identities
 use the trusted receiver's `telegram:<numeric-owner-id>` form; email identities
 use `email:<allowlisted-address>`. These identifiers stay local. The shipped
-empty [configuration](../agent-network.toml) does not authorize any channel.
+empty [configuration](https://github.com/ashlrai/phantom/blob/master/agent-network.toml) does not authorize any channel.
 
 `~/.ashlr/comms.toml` must explicitly contain `confirmedByMason = true`. Every reply and
 away digest checks the shared send policy before calling its channel adapter.
