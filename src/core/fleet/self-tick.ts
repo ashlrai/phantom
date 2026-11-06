@@ -1,16 +1,18 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Six one-shot verbs run
+ * agent or a host timer with no desktop app open. Seven one-shot verbs run
  * together, including same-channel inbox acknowledgements and merged-order notices.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
  *
  *   1. reset-release  — first, so a lane it frees counts as a free slot for
  *      the planner step's decision in the same pass.
  *   2. lane-autohold  — places the bounded burning-lane holds.
- *   3. planner-tick   — the autorun decision over the post-release picture.
- *   4. inbox-acks     — send pending same-channel acknowledgements.
- *   5. order-notices  — tell Mason when a merged job served one of his orders.
- *   6. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *   3. stray-stop     — SIGTERM re-proven stray processes (finished jobs that
+ *      still hold a lane slot), at most 5 per pass, so freed slots count too.
+ *   4. planner-tick   — the autorun decision over the post-release picture.
+ *   5. inbox-acks     — send pending same-channel acknowledgements.
+ *   6. order-notices  — tell Mason when a merged job served one of his orders.
+ *   7. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -29,11 +31,14 @@ import {
 } from './local-store-lock.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep';
+export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'stray-stop' | 'planner-tick' | 'inbox-acks' | 'order-notices' | 'landed-sweep';
 /** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
   'reset-release',
   'lane-autohold',
+  // Before the planner: a slot freed from a stray must count as free in the
+  // planner's decision in this same pass.
+  'stray-stop',
   'planner-tick',
   'inbox-acks',
   'order-notices',
@@ -50,7 +55,13 @@ export interface SelfTickStepRun {
 }
 /** A step seam gets the shared argv (--json, maybe --apply, --runs-dir). */
 export type SelfTickStep = (args: string[]) => Promise<SelfTickStepRun>;
-export type SelfTickSteps = Record<SelfTickStepName, SelfTickStep>;
+/**
+ * Every step seam. 'stray-stop' alone is optional so an embedder built before
+ * it existed keeps running; an unbound seam is skipped (no record), while the
+ * CLI always binds it.
+ */
+export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'stray-stop'>, SelfTickStep> &
+  Partial<Record<'stray-stop', SelfTickStep>>;
 
 export interface SelfTickStepResult {
   step: SelfTickStepName;
@@ -119,8 +130,10 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   const argv = ['--json', ...(options.apply === true ? ['--apply'] : []), '--runs-dir', runsDir];
   try {
     for (const step of SELF_TICK_STEP_ORDER) {
+      const run = options.steps[step];
+      if (run === undefined) continue;
       try {
-        const { exitCode, output } = await options.steps[step](argv);
+        const { exitCode, output } = await run(argv);
         report.steps.push({
           step,
           state: exitCode === 0 ? 'ok' : 'failed',

@@ -29,7 +29,8 @@ describe('self-tick landed-sweep step', () => {
     const calls: string[] = [];
     const { report, exitCode } = await runSelfTick({ runsDir: tmp(), steps: steps(calls), now: () => 0 });
     const order = ['reset-release', 'lane-autohold', 'planner-tick', 'inbox-acks', 'order-notices', 'landed-sweep'];
-    expect([...SELF_TICK_STEP_ORDER]).toEqual(order);
+    // These fakes predate stray-stop and leave it unbound, so it is skipped.
+    expect([...SELF_TICK_STEP_ORDER].filter(n => n !== 'stray-stop')).toEqual(order);
     expect(calls).toEqual(order);
     expect(report.steps.map(s => [s.step, s.state])).toEqual(order.map(n => [n, 'ok']));
     expect(exitCode).toBe(0);
