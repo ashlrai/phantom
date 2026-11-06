@@ -319,7 +319,10 @@ jobs:
               test/activation-readiness-package.test.ts
               test/activation-readiness-windows.test.ts
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # Ubuntu authority 1/3 runs the complete web suite before its existing
+    # thirty-minute backend wrapper, then verifies and uploads the original pack.
+    # Other matrix roles retain their existing twenty-five-minute outer limit.
+    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}
     env: &node_ci_environment
       ASHLR_VITEST_TEST_TIMEOUT_MS: ${{ matrix.os == 'windows-latest' && '30000' || '5000' }}
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: ${{ matrix.native_launchd || '0' }}

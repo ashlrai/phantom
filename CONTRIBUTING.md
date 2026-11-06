@@ -200,6 +200,12 @@ serialized real-I/O lanes defined in [vitest.config.ts](vitest.config.ts).
 
 The complete synthetic memory performance file runs in the `serial-cpu` Vitest project after the unit and real-I/O groups. It keeps one worker and the same five-second case bound; all 1,024 events, alternating raw/prepared observations and receipts remain. Raw Ubuntu shards and Mac collection include this project automatically. `lint:realio-lane` accounts for the separate manifest and refuses overlapping or missing members.
 
+The Ubuntu authority 1/3 producer has a 60-minute outer job limit: it runs the
+complete web suite before the existing 30-minute backend wrapper, then verifies
+and uploads the original package. Measured setup/build took three minutes and
+web took eleven minutes; a 25-minute combined job cancelled healthy backend work.
+Other matrix roles retain their 25-minute limits. Test and worker bounds are unchanged.
+
 Hosted Mac general jobs use a 90-minute outer limit, matching their existing
 90-minute hermetic wrapper. Complete measured single-worker partitions took
 60–65 minutes; a 45-minute outer job could not finish them. Per-test deadlines,

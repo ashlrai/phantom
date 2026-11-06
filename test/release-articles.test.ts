@@ -582,12 +582,18 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it('retains the exact legacy complete topology and refuses unreviewed outer limits', async () => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
-    const legacy = current.replace('    # Complete single-worker partitions measured 60–65 minutes. Match the\n    # existing 90-minute hermetic wrapper; individual test bounds stay intact.\n    timeout-minutes: 90', '    timeout-minutes: 45');
+    const macEnvelope = current.replace("    # Ubuntu authority 1/3 runs the complete web suite before its existing\n    # thirty-minute backend wrapper, then verifies and uploads the original pack.\n    # Other matrix roles retain their existing twenty-five-minute outer limit.\n    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}", '    timeout-minutes: 25');
+    expect(createHash('sha256').update(macEnvelope).digest('hex')).toBe('5d88a822dabe4b188e44683991cd921623470c0fa0e20fb96df883cb4f173444');
+    expect(await verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(macEnvelope) }), NOW))
+      .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+    const legacy = macEnvelope.replace('    # Complete single-worker partitions measured 60–65 minutes. Match the\n    # existing 90-minute hermetic wrapper; individual test bounds stay intact.\n    timeout-minutes: 90', '    timeout-minutes: 45');
     expect(createHash('sha256').update(legacy).digest('hex')).toBe('ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390');
     expect(await verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(legacy) }), NOW))
       .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
-    const edited = current.replace('    timeout-minutes: 90', '    timeout-minutes: 91');
-    await expect(verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(edited) }), NOW)).rejects.toThrow();
+    for (const edited of [current.replace('    timeout-minutes: 90', '    timeout-minutes: 91'),
+      current.replace("matrix.label == 'ubuntu, authority 1/3' && 60 || 25", "matrix.label == 'ubuntu, authority 1/3' && 61 || 25")]) {
+      await expect(verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(edited) }), NOW)).rejects.toThrow();
+    }
   });
   it('refuses an edited current workflow even when all reported jobs pass', async () => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
