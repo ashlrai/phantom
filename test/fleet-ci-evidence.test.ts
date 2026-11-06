@@ -107,7 +107,7 @@ describe('fleet ci-evidence', () => {
     ['--repo', 'ashlrai/phantom', '--run', '1.1', '--job', '42'],
     ['--repo', 'ashlrai/phantom', '--run', '10'],
     [...args, '--job', '42'],
-  ])('rejects bad arguments without gh: %j', async (...bad) => {
+  ])('rejects bad arguments without gh: %j (%#)', async (...bad) => {
     const f = fake([]);
     expect(await cmdFleetCiEvidence(bad, f)).toBe(2);
     expect(f.calls).toHaveLength(0);

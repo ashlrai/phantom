@@ -91,7 +91,7 @@ describe('knowledge context-pack stdin', () => {
   it.each([
     [], ['--stdin', '--file', 'snapshot.json'], ['--file', 'snapshot.json', '--stdin'],
     ['--stdin', '--stdin'], ['--stdin', '--unknown'], ['--help', '--stdin'],
-  ])('rejects incompatible arguments %j without consuming input or reading files', async (...args) => {
+  ])('rejects incompatible arguments %j without consuming input or reading files (%#)', async (...args) => {
     const stream = new Readable({ read() { throw new Error('unexpected read'); } });
     const spy = vi.spyOn(reader, 'readStableRegularFile');
     expect(await runKnowledgeContextPack(args, stream)).toBe(2);
