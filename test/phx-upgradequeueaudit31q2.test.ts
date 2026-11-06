@@ -73,7 +73,7 @@ describe('queue upgrade audit', () => {
     expect(result.code).toBe(3);
     expect(result.report).toMatchObject({ sources: { status: 'missing' }, findings: { unknownReady: 0, unconfirmedReady: 3 } });
     expect(result.report.lanes.every((row: { relation: string; target: number | null }) => row.relation === 'unconfirmed' && row.target === null)).toBe(true);
-    await writeFile(join(dir, 'queue/status.json'), status({ 'codex-local': lane(), 'future-lane': lane() }));
+    await writeFile(join(dir, 'queue/status.json'), status({ 'codex-local': lane(), 'future-lane': { ...lane(), running: -1 } }));
     result = await execute(dir);
     expect(result.code).toBe(3);
     expect(result.report).toMatchObject({ sources: { status: 'degraded' }, findings: { unknownReady: 0, unconfirmedReady: 2 } });
@@ -82,7 +82,7 @@ describe('queue upgrade audit', () => {
 
   it('reports confirmed held work even if another status lane is invalid', async () => {
     const dir = await fixture();
-    await writeFile(join(dir, 'queue/status.json'), status({ 'codex-personal': lane(true), 'future-lane': lane() }));
+    await writeFile(join(dir, 'queue/status.json'), status({ 'codex-personal': lane(true), 'future-lane': { ...lane(), running: -1 } }));
     const { code, report } = await execute(dir);
     expect(code).toBe(1);
     expect(report).toMatchObject({ verdict: 'mismatch', sources: { status: 'degraded' }, findings: { heldReady: 1, unknownReady: 0, unconfirmedReady: 2 } });
