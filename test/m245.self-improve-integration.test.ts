@@ -105,7 +105,8 @@ const {
   mockGitPush: vi.fn(),
 }));
 
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  DEFAULT_STALE_GOAL_MILESTONE_MS: (await importOriginal<typeof import('../src/core/goals/store.js')>()).DEFAULT_STALE_GOAL_MILESTONE_MS,
   createGoal: mockCreateGoal,
   listGoals: mockListGoals,
   loadGoal: vi.fn().mockReturnValue(null),

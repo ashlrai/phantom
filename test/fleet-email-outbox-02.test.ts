@@ -134,6 +134,13 @@ describe('email outbox sender', () => {
   });
 });
 
+/** Spoof only the mocked native transport call; keep filesystem custody on the host OS. */
+async function withDarwinTransport<T>(run: () => Promise<T>): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { ...original, value: 'darwin' });
+  try { return await run(); } finally { Object.defineProperty(process, 'platform', original); }
+}
+
 describe('macMailTransport', () => {
   it('passes a hostile subject only as an argv item, never in script source', async () => {
     const hostile = 'quotes "inside" do shell script "danger"';
@@ -142,7 +149,7 @@ describe('macMailTransport', () => {
       seen.push({ argv, timeoutMs });
       return { code: 0 };
     };
-    const result = await macMailTransport(runner)({ to: sender, subject: hostile, body: 'ack body' });
+    const result = await withDarwinTransport(() => macMailTransport(runner)({ to: sender, subject: hostile, body: 'ack body' }));
     expect(result.ok).toBe(true);
     const { argv, timeoutMs } = seen[0]!;
     expect(argv[0]).toBe('osascript');
@@ -157,9 +164,9 @@ describe('macMailTransport', () => {
 
   it('returns a failure on a non-zero exit and never throws', async () => {
     const transport = macMailTransport(async () => ({ code: 1, stderr: 'Mail error' }));
-    expect(await transport({ to: sender, subject: 's', body: 'b' })).toEqual({ ok: false, error: 'Mail error' });
+    expect(await withDarwinTransport(() => transport({ to: sender, subject: 's', body: 'b' }))).toEqual({ ok: false, error: 'Mail error' });
     const thrown = macMailTransport(async () => { throw new Error('spawn died'); });
-    expect((await thrown({ to: sender, subject: 's', body: 'b' })).ok).toBe(false);
+    expect((await withDarwinTransport(() => thrown({ to: sender, subject: 's', body: 'b' }))).ok).toBe(false);
   });
 
   it('fails without spawning on non-darwin', async () => {

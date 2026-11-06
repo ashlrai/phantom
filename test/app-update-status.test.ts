@@ -1,4 +1,4 @@
-import {describe, expect, spyOn, test} from 'bun:test';
+import {describe, expect, vi, test} from 'vitest';
 import {mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -35,7 +35,7 @@ describe('app update status', () => {
     try {
       expect(readAppUpdateStatus(deps)).toEqual({current: null, available: '3.31.0', deferredReason: 'work-active-or-unknown', runningJobs: null, runningJobCount: 2, unknownJobs: 1});
       expect(await cmdApp(['update', 'status', '--apply'], deps)).toBe(2);
-      const output = spyOn(console, 'log').mockImplementation(() => {});
+      const output = vi.spyOn(console, 'log').mockImplementation(() => {});
       try {
         expect(await cmdApp(['update', 'status', '--json'], deps)).toBe(0);
         expect(JSON.parse(output.mock.calls[0]![0] as string)).toEqual(readAppUpdateStatus(deps));

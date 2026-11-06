@@ -613,7 +613,9 @@ jobs:
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
-    timeout-minutes: 45
+    # Complete single-worker partitions measured 60–65 minutes. Match the
+    # existing 90-minute hermetic wrapper; individual test bounds stay intact.
+    timeout-minutes: 90
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
