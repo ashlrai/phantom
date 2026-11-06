@@ -12,6 +12,21 @@
   max-height: none;
 }
 
+.overview {
+  flex: none;
+  max-height: 35%;
+  overflow: auto;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
+.overview h2 { margin: 0 0 var(--space-2); font-size: var(--text-sm-size); }
+.overview p { margin: var(--space-2) 0; }
+.overview ul { margin: var(--space-2) 0; padding-left: var(--space-4); }
+.overview summary { cursor: pointer; }
+
 /* A line of Mason's own words (inbox or thread): a rail on the left edge marks it his. */
 .masonLine {
   border-left: 2px solid var(--accent-500);

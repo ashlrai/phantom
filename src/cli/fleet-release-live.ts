@@ -1,9 +1,10 @@
+import { createInstalledReleaseReader } from '../core/fleet/installed-release-evidence.js';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../core/fleet/local-store-lock.js';
 import { fetchLatestRelease, planReleaseNotices, readReleaseLedger, validReleaseRepo, writeReleaseNotices,
-  milestoneKey, observeMilestones, readMilestoneLedger, validMilestoneTag, writeMilestoneNotices,
+  milestoneKey, observeMilestones, readMilestoneLedger, readPublicReleaseFeed, validMilestoneTag, writeMilestoneNotices,
   type MilestoneReader, type ReleaseRunner } from '../core/fleet/release-live-notice.js';
 
 const usage = 'Usage: ashlr fleet release-live [--repo owner/name]... [--tag TAG] [--dry-run] [--json] [--runs-dir DIR]';
@@ -37,8 +38,12 @@ export async function cmdFleetReleaseLive(args: string[], deps: FleetReleaseLive
     if (lock && lock.state !== 'acquired') throw new Error('lock unavailable');
     try {
       if (tag) {
+        const read = async (reader: MilestoneReader) => {
+          try { return await reader(repos[0]!, tag); } catch { return null; }
+        };
+        const [feed, installed] = await Promise.all([read(deps.feed ?? readPublicReleaseFeed), read(deps.installed ?? createInstalledReleaseReader())]);
         const now = (deps.now ?? (() => new Date()))();
-        const observations = await observeMilestones(repos[0]!, tag, facts[0] ?? null, now, deps.feed, deps.installed);
+        const observations = await observeMilestones(repos[0]!, tag, facts[0] ?? null, now, async () => feed, async () => installed);
         const sent = readMilestoneLedger(root);
         const notices = observations.filter(row => row.status === 'observed' && !sent.has(milestoneKey(row)));
         if (!dryRun) writeMilestoneNotices(notices, root, now);
