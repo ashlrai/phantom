@@ -24,6 +24,7 @@ import { rejectUnknownOptions } from './args.js';
 import { createSlackApi, deliverSlackEnvelope, openSlackSocket, verifySlackIdentity, type SlackSocketSession } from '../core/agents/slack-transport.js';
 import { loadAgentNetworkConfig, loadCommsConfirmation } from '../core/agents/slack-network.js';
 import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
+import { flushSlackLeaderReplies, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../core/agents/slack-leader.js';
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
@@ -162,26 +163,42 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
     return 1;
   }
   const config = parsed.slack;
+  const controller = new AbortController();
+  const deadline = run ? Date.now() + seconds * 1000 : Infinity;
   const call = createSlackApi({ config, resolveCredential: reference => {
     if (!/^phm_SLACK_(?:AGENTNET_)?(?:BOT|APP)_TOKEN$/.test(reference)) return undefined;
     return process.env[reference.slice(4)];
-  } });
+  }, signal: controller.signal });
   let socket: SlackSocketSession | undefined;
   let stopped = false;
   let disconnected = false;
-  const stop = (): void => { stopped = true; socket?.close(); };
+  const stop = (): void => { stopped = true; controller.abort(); socket?.close(); };
+  const deadlineTimer = run ? setTimeout(stop, seconds * 1000) : undefined;
+  const sleep = (): Promise<void> => new Promise(resolve => {
+    if (controller.signal.aborted) { resolve(); return; }
+    const done = (): void => { clearTimeout(timer); controller.signal.removeEventListener('abort', done); resolve(); };
+    const timer = setTimeout(done, 1000); controller.signal.addEventListener('abort', done, { once: true });
+  });
   const counts = { sent: 0, duplicate: 0, uncertain: 0, refused: 0 };
   try {
     await verifySlackIdentity(call, config);
     if (run) {
       socket = await openSlackSocket({ call, config, ingest: { config, teamIdentities: parsed.teamIdentities },
+        signal: controller.signal,
+        owner: envelope => ingestSlackLeaderEnvelope(envelope, { call, signal: controller.signal }),
+        readIngest: () => {
+          const current = readSlackDeliveryPolicy();
+          return current && JSON.stringify(current.config) === JSON.stringify(config) ? { config, teamIdentities: current.teamIdentities } : undefined;
+        },
         connect: url => new WebSocket(url) as unknown as SlackSocketSession });
-      socket.addEventListener('close', () => { disconnected = true; stopped = true; });
-      socket.addEventListener('error', () => { disconnected = true; stopped = true; });
+      socket.addEventListener('close', () => { if (!stopped) { disconnected = true; stop(); } });
+      socket.addEventListener('error', () => { if (!stopped) { disconnected = true; stop(); } });
       process.once('SIGTERM', stop); process.once('SIGINT', stop);
-      const deadline = Date.now() + seconds * 1000;
       let cursor = 0;
       while (!stopped && Date.now() < deadline) {
+        const owners = await flushSlackLeaderReplies({ call, signal: controller.signal });
+        if (owners.state !== 'completed') throw new Error('leader-slack-unavailable');
+        counts.sent += owners.sent;
         // The existing bus owns body persistence and TTL. Do not mirror private
         // iMessage/email input: the planner accepts only authored local results.
         const page = listBusInboxAfter(cursor, 100);
@@ -194,13 +211,13 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
           const ttl = row.envelope.ttl - Math.max(0, Date.now() - row.receivedAt);
           if (ttl <= 0) continue;
           const result = await deliverSlackEnvelope(row.envelope, { config, teamIdentities: parsed.teamIdentities,
-            confirmedByMason: loadCommsConfirmation(), call });
+            confirmedByMason: loadCommsConfirmation(), call, signal: controller.signal, readPolicy: () => readSlackDeliveryPolicy() });
           counts[result.status]++;
           // The channel API permits roughly one post/second. Never spin on an
           // uncertain outcome; a future pass performs read-only reconciliation.
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await sleep();
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await sleep();
       }
       if (disconnected) throw new Error('slack-socket-disconnected');
     }
@@ -208,9 +225,14 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
       mode: run ? 'socket-session' : 'authenticated-probe', ...counts, observedAt: new Date().toISOString() }));
     return 0;
   } catch {
+    if (run && controller.signal.aborted && !disconnected && (stopped || Date.now() >= deadline)) {
+      console.log(JSON.stringify({ ok: true, mode: 'socket-session', stopped: 'bounded-stop', ...counts, observedAt: new Date().toISOString() }));
+      return 0;
+    }
     console.log(JSON.stringify({ ok: false, reason: 'transport-unavailable-or-identity-mismatch', ...counts, observedAt: new Date().toISOString() }));
     return 1;
   } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
     stop(); process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop);
   }
 }

@@ -7,7 +7,7 @@ import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../flee
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import { evaluateSlackAudience, slackOutboundPlan, slackSendDecision, type SlackAudienceSnapshot, type SlackMemberSnapshot } from './slack-audience.js';
-import { ingestSlackSocketMessage, type SlackIngestContext } from './slack-inbound.js';
+import { ingestSlackSocketMessage, slackEventToBus, unwrapSlackSocketEnvelope, type SlackIngestContext } from './slack-inbound.js';
 import { isSlackChannelId, isSlackTs, type SlackBridgeConfig } from './slack-network.js';
 import type { TeamIdentity } from './channel-policy.js';
 
@@ -22,20 +22,26 @@ export function createSlackApi(input: {
   config: SlackBridgeConfig;
   resolveCredential: (reference: string) => string | undefined;
   fetch?: typeof fetch;
+  signal?: AbortSignal;
 }): SlackCall {
   return async (method, body = {}, credential = 'bot') => {
+    if (input.signal?.aborted) throw new Error('slack-session-expired');
     if (!['auth.test', 'apps.connections.open', 'conversations.info', 'conversations.members', 'users.info', 'chat.postMessage', 'conversations.history', 'conversations.replies'].includes(method)) {
       throw new Error('slack-method-refused');
     }
     const ref = credential === 'app' ? input.config.appTokenRef : input.config.botTokenRef;
     const token = ref ? input.resolveCredential(ref) : undefined;
     if (!token) throw new Error('slack-credential-unavailable');
+    const json = method === 'chat.postMessage';
+    const encoded = json ? JSON.stringify(body) : new URLSearchParams(Object.entries(body)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)])).toString();
     let response: Response;
     try {
       response = await (input.fetch ?? fetch)(`https://slack.com/api/${method}`, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify(body),
+        method: 'POST', redirect: 'error', signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': json ? 'application/json; charset=utf-8' : 'application/x-www-form-urlencoded; charset=utf-8' },
+        body: encoded,
       });
     } catch { throw new Error('slack-network-uncertain'); }
     if (response.status === 429) throw new Error('slack-rate-limited');
@@ -95,6 +101,7 @@ export async function observeSlackAudience(call: SlackCall, channel: string): Pr
 interface SendReceipt { digest: string; clientId: string; channel: string; thread?: string; state: 'attempted' | 'sent'; expiresAt: number; ts?: string }
 interface SendStore { version: 1; messages: Record<string, SendReceipt> }
 export interface SlackDelivery { status: 'sent' | 'duplicate' | 'uncertain' | 'refused'; reason: string; ts?: string }
+export interface SlackDeliveryPolicy { config: SlackBridgeConfig; teamIdentities: readonly TeamIdentity[]; confirmedByMason: boolean }
 function readSendStore(path: string): SendStore {
   if (!existsSync(path)) return { version: 1, messages: {} };
   const read = readPrivateFileCapped(path, MAX_REPLY_BYTES);
@@ -115,7 +122,10 @@ function readSendStore(path: string): SendStore {
 export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
   config: SlackBridgeConfig; teamIdentities: readonly TeamIdentity[]; confirmedByMason: boolean;
   call: SlackCall; stateRoot?: string;
+  readPolicy?: () => SlackDeliveryPolicy | undefined;
+  signal?: AbortSignal;
 }): Promise<SlackDelivery> {
+  if (input.signal?.aborted) return { status: 'refused', reason: 'session-expired' };
   const checked = validateBusEnvelope(envelope);
   if (!checked.ok) return { status: 'refused', reason: 'invalid-envelope' };
   const planned = slackOutboundPlan(checked.value, input.config);
@@ -154,10 +164,13 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
     }
     if (Object.keys(store.messages).length >= 1024) return { status: 'refused', reason: 'delivery-store-full' };
     const audience = await observeSlackAudience(input.call, planned.plan.channel);
-    const verdict = evaluateSlackAudience(input.config, input.teamIdentities, planned.plan.channel, audience);
+    // Membership observation can take time. Revocations must win over its old policy snapshot.
+    const current = input.readPolicy ? input.readPolicy() : input;
+    if (!current || JSON.stringify(current.config) !== JSON.stringify(input.config) || input.signal?.aborted) return { status: 'refused', reason: 'policy-changed-or-session-expired' };
+    const verdict = evaluateSlackAudience(current.config, current.teamIdentities, planned.plan.channel, audience);
     if (verdict.status !== 'postable') return { status: 'refused', reason: verdict.reason ?? 'audience-unproved' };
     const policy = slackSendDecision({ recipients: audience.members.filter(member => member.id !== input.config.ownUserId).map(member => member.id),
-      teamIdentities: input.teamIdentities, external: verdict.external, confirmedByMason: input.confirmedByMason });
+      teamIdentities: current.teamIdentities, external: verdict.external, confirmedByMason: current.confirmedByMason });
     if (policy.status !== 'sent') return { status: 'refused', reason: 'communication-not-approved' };
     const expiresAt = Date.now() + checked.value.ttl;
     if (!Number.isSafeInteger(expiresAt)) return { status: 'refused', reason: 'invalid-message-lifetime' };
@@ -192,24 +205,48 @@ export interface SlackSocketSession {
 export async function openSlackSocket(input: {
   call: SlackCall; config: SlackBridgeConfig; ingest: SlackIngestContext;
   connect: (url: string) => SlackSocketSession;
+  signal?: AbortSignal;
+  readIngest?: () => SlackIngestContext | undefined;
+  owner?: (envelope: BusEnvelope) => Promise<{ owned: boolean; durable: boolean }>;
 }): Promise<SlackSocketSession> {
+  if (input.signal?.aborted) throw new Error('slack-session-expired');
   await verifySlackIdentity(input.call, input.config);
   const result = await input.call('apps.connections.open', {}, 'app');
   if (typeof result.url !== 'string') throw new Error('slack-socket-url-invalid');
   const url = new URL(result.url);
   if (url.protocol !== 'wss:' || !(url.hostname === 'wss-primary.slack.com' || url.hostname.endsWith('.slack.com')) || url.username || url.password) throw new Error('slack-socket-url-invalid');
+  if (input.signal?.aborted) throw new Error('slack-session-expired');
   const socket = input.connect(result.url);
+  input.signal?.addEventListener('abort', () => socket.close(), { once: true });
   socket.addEventListener('message', event => {
+    if (input.signal?.aborted) return;
     if (typeof event.data !== 'string' || Buffer.byteLength(event.data) > MAX_REPLY_BYTES) return;
     try {
       const raw: unknown = JSON.parse(event.data);
       if (record(raw) && raw.type === 'disconnect') { socket.close(); return; }
-      receiveSlackSocketEnvelope(raw, input.ingest, id => socket.send(JSON.stringify({ envelope_id: id })));
+      const ctx = input.readIngest ? input.readIngest() : input.ingest;
+      if (!ctx) return;
+      const ack = (id: string): void => { if (!input.signal?.aborted) socket.send(JSON.stringify({ envelope_id: id })); };
+      if (input.owner) {
+        // Owner input is written once by the existing Leader network, rather
+        // than first appending a competing raw peer envelope to the bus.
+        const unwrapped = unwrapSlackSocketEnvelope(raw);
+        const decision = 'event' in unwrapped ? slackEventToBus(unwrapped.event, ctx) : null;
+        if (decision?.status === 'ingest') {
+          void input.owner(decision.envelope).then(result => {
+            if (result.owned) { if (result.durable && 'envelopeId' in unwrapped && unwrapped.envelopeId !== 'unknown') ack(unwrapped.envelopeId); }
+            else receiveSlackSocketEnvelope(raw, ctx, ack);
+          }).catch(() => {});
+          return;
+        }
+      }
+      receiveSlackSocketEnvelope(raw, ctx, ack);
     } catch { /* No acknowledgement after an unproved append; Slack can redeliver. */ }
   });
   if (socket.readyState !== 1) {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => { socket.close(); reject(new Error('slack-socket-timeout')); }, 15_000);
+      input.signal?.addEventListener('abort', () => { clearTimeout(timer); socket.close(); reject(new Error('slack-session-expired')); }, { once: true });
       socket.addEventListener('open', () => { clearTimeout(timer); resolve(); });
       socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('slack-socket-unavailable')); });
       socket.addEventListener('close', () => { clearTimeout(timer); reject(new Error('slack-socket-unavailable')); });
