@@ -1,6 +1,6 @@
 {
   "name": "ashlr-desktop",
-  "version": "3.30.17",
+  "version": "3.30.19",
   "private": true,
   "description": "Tauri desktop wrapper for Phantom by AshlrAI",
   "scripts": {
