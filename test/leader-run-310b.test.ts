@@ -350,6 +350,19 @@ describe('cadence', () => {
     expect(third).toMatchObject({ started: true, due: { trigger: 'merges' } });
     expect(calls).toHaveLength(2);
   });
+  it('drives the CEO network from resident ticks even when no new memo is due', async () => {
+    const root = join(home.home(), '.ashlr');
+    ensurePrivateDirectory(root);
+    writePrivateFileAtomic(join(root, 'agent-network.toml'), '[mason]\nidentities = [{channel="bus",id="local-owner"}]\n[team]\nidentities=[]');
+    const { deps } = world({ now: () => T0 });
+    await leaderTick(deps, { awaitRun: true });
+    const path = join(home.home(), '.ashlr-runs/leader/network-state.json');
+    const initial = JSON.parse(readFileSync(path, 'utf8')) as { startedAt: number };
+    expect(initial.startedAt).toBeGreaterThan(0);
+    const next = await leaderTick(deps, { awaitRun: true });
+    expect(next.started).toBe(false);
+    expect(JSON.parse(readFileSync(path, 'utf8')).startedAt).toBe(initial.startedAt);
+  });
 });
 
 describe('accountability', () => {
