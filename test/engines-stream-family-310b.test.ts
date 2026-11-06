@@ -20,7 +20,7 @@ import { nodeFixtureHeader } from './helpers/node-fixture.js';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEngineOutputNormaliser, engineStreamFamily, spawnEngine } from '../src/core/run/engines.js';
 import { runEngineSandboxed, isTransientAbort } from '../src/core/run/sandboxed-engine.js';
@@ -30,6 +30,15 @@ import { loadProposal } from '../src/core/inbox/store.js';
 import { listSandboxes } from '../src/core/sandbox/worktree.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
+
+// The synthetic stream tests exercise stall/process semantics, independently of
+// the real host's current pressure. The production gate is tested separately.
+vi.mock('../src/core/run/host-headroom.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/core/run/host-headroom.js')>();
+  return { ...actual, checkHostHeadroom: () => actual.assessHostHeadroom({
+    freePercent: 50, swapGb: 0, pressureLevel: 1,
+  }) };
+});
 const GROK_ARGS = ['--no-auto-update', '--output-format', 'streaming-messages-json', '--cwd', '/w', '--permission-mode', 'dontAsk', '--single=goal'];
 
 describe('engineStreamFamily', () => {
@@ -174,7 +183,7 @@ describe('spawnEngine stall monitor on a grok stream', () => {
   it('a grok run that only reads is stopped as no-diff-stall', async () => {
     const lines = Array.from({ length: 16 }, (_, i) => toolUse(`r${i}`, 'read_file', { path: `f${i}.ts` }));
     const res = await run(fakeGrok(lines), 12);
-    expect(res.terminationReason).toBe('no-diff-stall');
+    expect(res.terminationReason, JSON.stringify(res)).toBe('no-diff-stall');
   });
 });
 

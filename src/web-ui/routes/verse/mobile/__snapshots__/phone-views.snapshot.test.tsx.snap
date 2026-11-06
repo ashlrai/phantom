@@ -351,10 +351,10 @@ exports[`390px fleet status 1`] = `
             <div>
               <span>
                 <span>
-                  Hold all dispatch
+                  Saved lane holds
                 </span>
                 <span>
-                  The dispatcher sends nothing new until the hold lifts.
+                  Individual lane holds are preserved. Disable the queue to pause all new launches.
                 </span>
               </span>
               <span>

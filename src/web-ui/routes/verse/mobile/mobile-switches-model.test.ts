@@ -106,12 +106,12 @@ describe('confirmText', () => {
 
   it('has a distinct resume wording for the off direction', () => {
     expect(confirmText('PAUSE', false).title).toBe('Resume workers on your Mac?');
-    expect(confirmText('HOLD', true).title).toBe('Hold all dispatch on your Mac?');
-    expect(confirmText('HOLD', false).title).toBe('Lift the dispatch hold?');
+    expect(() => confirmText('HOLD', true)).toThrow('read-only');
+    expect(() => confirmText('HOLD', false)).toThrow('read-only');
   });
 
   it('covers every known switch in both directions', () => {
-    for (const k of KNOWN_SWITCHES) {
+    for (const k of KNOWN_SWITCHES.filter(row => row.id !== 'HOLD')) {
       for (const on of [true, false]) {
         const text = confirmText(k.id, on);
         expect(text.title.endsWith('?')).toBe(true);
