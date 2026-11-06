@@ -1093,7 +1093,7 @@ export const FLEET_MCP_CONFIG_FILENAME = '.ashlr-fleet.mcp.json';
 /**
  * Companion MCP servers a confined run may start from the repo's tracked
  * `.mcp.json`: the exact npx specs of the reviewed releases in
- * companion-types.ts (test/fleet-companion-mcp.test.ts keeps the two in step;
+ * companion-inventory.ts (test/fleet-companion-mcp.test.ts keeps the two in step;
  * it is not imported here so the Tier-1 closure does not grow). A server is
  * taken only when its entry matches one spec exactly; anything else in the
  * file is ignored, because a repo file must not choose what runs unconfined
@@ -1101,10 +1101,9 @@ export const FLEET_MCP_CONFIG_FILENAME = '.ashlr-fleet.mcp.json';
  */
 export const FLEET_COMPANION_MCP_SPECS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   'phantom-secrets': Object.freeze(['-y', 'phantom-secrets-mcp@0.7.9']),
-  // locus-mcp versions independently of the reviewed locus CLI: 0.6.2 carries
-  // the npm-shim fork-bomb fix while the CLI review stays at 0.5.0.
-  locus: Object.freeze(['-y', '@ashlrai/locus-mcp@0.6.2']),
-  lexicon: Object.freeze(['-y', '-p', '@ashlr/lexicon@0.5.4', 'lexicon-mcp']),
+  // These exact MCP releases have their own reviewed published-byte closure.
+  locus: Object.freeze(['-y', '@ashlrai/locus-mcp@0.7.0']),
+  lexicon: Object.freeze(['-y', '-p', '@ashlr/lexicon@0.5.9', 'lexicon-mcp']),
 });
 
 /** The reviewed companion servers the worktree's `.mcp.json` declares; {} when none or unreadable. Never throws. */
