@@ -111,6 +111,125 @@ export function checkFeed(feed, parseManifest, trust) {
   return manifest;
 }
 
+async function feedBody(response, asset) {
+  const chunks = []; let size = 0;
+  for await (const chunk of response.body) { size += chunk.length; assert.ok(size <= 128 * 1024, 'oversized updater feed'); chunks.push(chunk); }
+  const bytes = Buffer.concat(chunks);
+  if (asset) assert.ok(bytes.length === asset.size && `sha256:${digest(bytes)}` === asset.digest, 'stocked feed bytes differ from asset');
+  return JSON.parse(bytes.toString('utf8'));
+}
+
+const stableTag = /^v\d+\.\d+\.\d+$/;
+const timestamp = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)
+  && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value.replace('Z', '.000Z');
+function releaseIdentity(release, repository) {
+  assert.ok(release && !Array.isArray(release) && positive(release.id), 'invalid release identity');
+  assert.ok(typeof release.tag_name === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(release.tag_name), 'invalid release tag');
+  assert.equal(release.url, `https://api.github.com/repos/${repository}/releases/${release.id}`, 'release repository differs');
+  assert.equal(release.html_url, `https://github.com/${repository}/releases/tag/${release.tag_name}`, 'release tag differs');
+  assert.equal(release.assets_url, `${release.url}/assets`, 'release asset endpoint differs');
+  assert.ok(typeof release.draft === 'boolean' && typeof release.prerelease === 'boolean', 'unknown release state');
+  assert.ok(timestamp(release.created_at) && (release.draft ? release.published_at === null : timestamp(release.published_at)), 'invalid release timestamps');
+  assert.ok(Array.isArray(release.assets) && release.assets.length < 100, 'incomplete release asset inventory');
+  const assets = release.assets.map(asset => {
+    assert.ok(asset && positive(asset.id) && typeof asset.name === 'string'
+      && /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(asset.name), 'invalid release asset identity');
+    assert.equal(asset.state, 'uploaded', 'incomplete release asset state');
+    assert.ok(Number.isSafeInteger(asset.size) && asset.size > 0, 'invalid release asset size');
+    assert.equal(asset.url, `https://api.github.com/repos/${repository}/releases/assets/${asset.id}`, 'release asset repository differs');
+    assert.equal(asset.browser_download_url, `https://github.com/${repository}/releases/download/${release.tag_name}/${asset.name}`, 'release asset download differs');
+    return { id: asset.id, name: asset.name, state: asset.state, size: asset.size, digest: asset.digest,
+      url: asset.url, browser_download_url: asset.browser_download_url };
+  }).sort((a, b) => a.id - b.id);
+  assert.equal(new Set(assets.map(asset => asset.id)).size, assets.length, 'duplicate release asset identity');
+  assert.equal(new Set(assets.map(asset => asset.name)).size, assets.length, 'ambiguous release asset name');
+  return { id: release.id, tag: release.tag_name, draft: release.draft, prerelease: release.prerelease,
+    createdAt: release.created_at, publishedAt: release.published_at, assets };
+}
+
+function completeRelease(release, repository, read) {
+  const identity = releaseIdentity(release, repository);
+  const assets = read(`repos/${repository}/releases/${identity.id}/assets?per_page=100&page=1`);
+  // Fail closed at the page boundary: embedded arrays alone cannot prove absence.
+  assert.deepEqual(releaseIdentity({ ...release, assets }, repository), identity, 'release asset inventory changed or incomplete');
+  return identity;
+}
+
+/** Select only from a complete bounded inventory; duplicate identities and tied
+ * newest timestamps are ambiguous, not permission to use a convenient old feed. */
+export function stockedFeedTag(releases, repository = 'ashlrai/phantom') {
+  assert.ok(Array.isArray(releases) && releases.length <= 1000, 'invalid release inventory');
+  for (const row of releases) assert.ok(row && positive(row.id)
+    && typeof row.draft === 'boolean' && typeof row.prerelease === 'boolean', 'unknown release state');
+  assert.equal(new Set(releases.map(row => row.id)).size, releases.length, 'duplicate release identity');
+  // GitHub legitimately uses untagged HTML URLs for drafts. Only published
+  // stable candidates can supply this fallback, so never admit those drafts.
+  const rows = releases.filter(row => !row.draft && !row.prerelease).map(row => releaseIdentity(row, repository));
+  assert.equal(new Set(rows.map(row => row.id)).size, rows.length, 'duplicate release identity');
+  assert.equal(new Set(rows.map(row => row.tag)).size, rows.length, 'duplicate release tag');
+  const stocked = rows.filter(row => !row.draft && !row.prerelease && stableTag.test(row.tag)
+    && row.assets.some(asset => asset.name === 'latest.json'));
+  stocked.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  if (!stocked.length) return null;
+  assert.ok(stocked.length === 1 || stocked[0].createdAt !== stocked[1].createdAt, 'ambiguous newest stocked release');
+  return stocked[0].tag;
+}
+
+/** A previous feed can exercise the parser contract, never prove live updater
+ * health. Only a repeated 404 bracketed by unchanged, independently complete
+ * zero-asset latest metadata admits this narrow recovery path. */
+export async function readUpdaterFeed({ endpoint, repository, read = api, fetchImpl = fetch }) {
+  assert.equal(repository, 'ashlrai/phantom', 'unreviewed updater repository');
+  assert.equal(endpoint, 'https://github.com/ashlrai/phantom/releases/latest/download/latest.json');
+  const request = url => fetchImpl(url, { signal: AbortSignal.timeout(10000) });
+  const missing = async (response, expectedUrl) => {
+    await response.body?.cancel();
+    assert.equal(response.status, 404, 'updater feed unavailable: expected missing-asset 404');
+    if (expectedUrl) assert.equal(response.url, expectedUrl, 'missing feed redirect differs from latest release');
+  };
+  const live = await request(endpoint);
+  if (live.status === 200) return { feed: await feedBody(live), served: 'latest', liveStatus: 200 };
+  await missing(live);
+  requireRepositoryMetadata(repository, read(`repos/${repository}`));
+  const latest = () => {
+    const row = completeRelease(read(`repos/${repository}/releases/latest`), repository, read);
+    assert.ok(!row.draft && !row.prerelease && stableTag.test(row.tag), 'latest is not a published stable release');
+    assert.equal(row.assets.length, 0, 'latest is not assetless; unavailable feed must not fall back');
+    return row;
+  };
+  const before = latest();
+  const missingUrl = `https://github.com/${repository}/releases/download/${before.tag}/latest.json`;
+  assert.equal(live.url, missingUrl, 'missing feed redirect differs from latest release');
+  const releases = [];
+  for (let page = 1; page <= 10; page++) {
+    const rows = read(`repos/${repository}/releases?per_page=100&page=${page}`);
+    assert.ok(Array.isArray(rows) && rows.length <= 100, 'invalid release inventory');
+    releases.push(...rows);
+    if (rows.length < 100) break;
+    assert.ok(page < 10, 'incomplete release inventory');
+  }
+  const tag = stockedFeedTag(releases, repository);
+  const observedLatest = releases.find(row => row.id === before.id);
+  assert.deepEqual(observedLatest && releaseIdentity(observedLatest, repository), before, 'latest release inventory changed or incomplete');
+  assert.ok(tag !== null, 'no stocked updater feed release');
+  const selected = releases.find(row => row.tag_name === tag);
+  const stocked = completeRelease(read(`repos/${repository}/releases/${selected.id}`), repository, read);
+  assert.deepEqual(stocked, releaseIdentity(selected, repository), 'stocked release changed');
+  assert.ok(stocked.id !== before.id && Date.parse(stocked.createdAt) < Date.parse(before.createdAt), 'stocked release is not prior to assetless latest');
+  const response = await request(`https://github.com/${repository}/releases/download/${tag}/latest.json`);
+  assert.equal(response.status, 200, 'stocked updater feed unavailable');
+  const asset = stocked.assets.find(asset => asset.name === 'latest.json');
+  assert.ok(asset.size <= 128 * 1024 && /^sha256:[a-f0-9]{64}$/.test(asset.digest ?? ''), 'invalid stocked feed asset');
+  const feed = await feedBody(response, asset);
+  assert.equal(feed?.version, tag.slice(1), 'stocked feed version differs');
+  // Recheck after reading fallback bytes. A recovered pointer, metadata failure,
+  // newly uploaded asset or changed release refuses instead of claiming recovery.
+  await missing(await request(endpoint), missingUrl);
+  assert.deepEqual(latest(), before, 'latest release changed during fallback');
+  assert.deepEqual(completeRelease(read(`repos/${repository}/releases/${stocked.id}`), repository, read), stocked, 'stocked release changed during fallback');
+  return { feed, served: tag, liveStatus: 404, latestRelease: { id: before.id, tag: before.tag } };
+}
+
 /** Restore only canonical producer dist bytes; artifact ZIPs discard POSIX modes. */
 export function restorePreparedDist({ root, prepared, manifest }) {
   root = realpathSync(root); prepared = realpathSync(prepared);
@@ -167,12 +286,7 @@ async function smoke() {
   } finally { rmSync(isolatedHome, { recursive: true, force: true }); }
   assert.deepEqual(readFileSync(binary), binaryBytes, 'launched binary changed');
   const endpoint = JSON.parse(readFileSync(join(root, 'desktop/src-tauri/tauri.conf.json'))).plugins.updater.endpoints[0];
-  assert.equal(endpoint, 'https://github.com/ashlrai/phantom/releases/latest/download/latest.json');
-  const response = await fetch(endpoint, { signal: AbortSignal.timeout(10000) });
-  assert.equal(response.status, 200, 'updater feed unavailable');
-  const chunks = []; let size = 0;
-  for await (const chunk of response.body) { size += chunk.length; assert.ok(size <= 128 * 1024, 'oversized updater feed'); chunks.push(chunk); }
-  const feed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const { feed, served, liveStatus, latestRelease } = await readUpdaterFeed({ endpoint, repository });
   const { parseCompatibleUpdateManifest } = await import(pathToFileURL(join(root, 'dist/core/desktop/update-manifest.js')));
   const { getDesktopUpdateTrustForProfile } = await import(pathToFileURL(join(root, 'dist/core/desktop/update-trust.js')));
   checkFeed(feed, parseCompatibleUpdateManifest, getDesktopUpdateTrustForProfile('canonical-v2'));
@@ -183,14 +297,15 @@ async function smoke() {
   assert.deepEqual(captured.archive, prebuilt.archive, 'prepared dist bytes differ');
   assert.deepEqual(captured.package, prebuilt.package, 'prepared npm bytes differ');
   copyFileSync(binary, join(bundle, 'desktop-smoke-bin')); chmodSync(join(bundle, 'desktop-smoke-bin'), 0o400);
+  // This existing receipt attests parser/launch checks, not live updater health.
   const receipt = { schemaVersion: 1, source: { revision, tree: git('rev-parse', 'HEAD^{tree}') }, pushCi,
     desktop: { filename: 'desktop-smoke-bin', sha256: digest(binaryBytes), bytes: binaryBytes.length, version, revision },
     smoke: { exitCode: 0, feedParsed: true, manifestParsed: true, versionVerified: true } };
   writeFileSync(join(bundle, 'fast-release.json'), `${JSON.stringify(receipt)}\n`, { flag: 'wx', mode: 0o400 });
   const elapsedMs = Math.round(performance.now() - start);
   assert.ok(elapsedMs < 60000, 'release smoke exceeded the 60-second budget');
-  appendFileSync(process.env.GITHUB_OUTPUT, `bundle=${bundle}\nelapsed_ms=${elapsedMs}\n`);
-  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Release smoke: ${elapsedMs} ms; candidate ${revision}; reused push CI ${pushCi.runId}/${pushCi.runAttempt}. Cold build and signing are separate prerequisites.\n`);
+  appendFileSync(process.env.GITHUB_OUTPUT, `bundle=${bundle}\nelapsed_ms=${elapsedMs}\nupdater_live_http_status=${liveStatus}\nupdater_contract_source=${served}\n`);
+  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Release smoke: ${elapsedMs} ms; candidate ${revision}; reused push CI ${pushCi.runId}/${pushCi.runAttempt}; feed/manifest contract parsed from ${served === 'latest' ? 'releases/latest (HTTP 200)' : `stocked release ${served}; live endpoint remains unavailable (HTTP 404), latest ${latestRelease.tag} (${latestRelease.id}) is assetless; this is not updater recovery`}. Cold build, publication signature verification, signing and installed-app acceptance remain separate prerequisites.\n`);
 }
 
 async function main() {

@@ -193,7 +193,7 @@ function probeValue(name: string, prop: SpecSchema): unknown {
 }
 
 /** One candidate body per documented request shape (every oneOf branch). */
-function candidateBodies(operation: SpecOperation): unknown[] {
+function candidateBodies(operation: SpecOperation, path: string): unknown[] {
   let body = operation.requestBody;
   while (body?.$ref) {
     const name = body.$ref.split('/').pop()!;
@@ -206,6 +206,12 @@ function candidateBodies(operation: SpecOperation): unknown[] {
     const resolved = resolveSchema(branch);
     const out: Record<string, unknown> = {};
     for (const [key, prop] of Object.entries(resolved.properties ?? {})) out[key] = probeValue(key, prop);
+    // These routes use overlapping field names with distinct wire contracts.
+    if (path === '/api/verse/fleet/live/drop-jobs') Object.assign(out, { id: 'JOB123', lane: 'claude', tier: 'work', body: 'Review the queue.' });
+    if (path === '/api/verse/agent-bus') {
+      for (const key of ['channel', 'channel_ref', 'sender', 'external', 'origin_bridge']) delete out[key];
+      Object.assign(out, { id: 'msg1', from: 'agent1', to: 'agent2', priority: 'P1', ttl: 1000, body: {} });
+    }
     return out;
   });
 }
@@ -286,7 +292,7 @@ describe('fleet-openapi.json', () => {
         if (!op) continue;
         const decision = classifyRemoteRoute(method.toUpperCase(), probePath(path));
         if (decision.kind !== 'write') continue;
-        for (const body of candidateBodies(op)) {
+        for (const body of candidateBodies(op, path)) {
           if (!validateRemoteMutation(decision, body)) {
             failures.push(`${method.toUpperCase()} ${path} body ${JSON.stringify(body)}`);
           }
