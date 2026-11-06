@@ -1,0 +1,112 @@
+/**
+ * RQ-PHX-TEAMMATETEXTS25: allowlisted non-Mason iMessages land in the local
+ * teammate inbox instead of being dropped.
+ *
+ * Hermetic: node:child_process is mocked (no osascript/sqlite3), HOME and
+ * runsDir are tmp dirs, handles are placeholders, and the platform is patched
+ * to darwin exactly the way the existing imessage bridge tests do.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFile: (file: string, args: string[], _opts: unknown, cb: (e: Error | null, out: string, err: string) => void) => {
+      cb(null, '', '');
+      return {} as ReturnType<typeof actual.execFile>;
+    },
+  };
+});
+
+import { ingestIMessages, senderIdFor } from '../src/core/comms/imessage-inbox-bridge.js';
+import { readCursor, writeCursor, type IntakeMsg } from '../src/core/integrations/imessage.js';
+import type { AshlrConfig } from '../src/core/types.js';
+
+const MASON = 'mason@example.test';
+const TEAMMATE = 'teammate@example.test';
+const now = () => new Date('2026-11-04T23:46:00Z');
+const cfg = (): AshlrConfig =>
+  ({ comms: { enabled: true, imessageHandle: MASON, imessageAllow: [MASON, TEAMMATE] } }) as AshlrConfig;
+const row = (rowid: number, handle: string, text: string): IntakeMsg => ({ rowid, handle, text, ts: 1 });
+
+let home = '';
+let runsDir = '';
+let previousHome: string | undefined;
+let platform: PropertyDescriptor;
+
+const ingest = (messages: IntakeMsg[]) =>
+  ingestIMessages(cfg(), { runsDir, now, poll: async () => ({ ok: true, messages }) });
+const inboxPath = () => join(runsDir, 'leader', 'MASON-INBOX.md');
+const teammateRows = () =>
+  readFileSync(join(runsDir, 'imessage', 'teammates.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+
+beforeEach(() => {
+  previousHome = process.env['HOME'];
+  home = mkdtempSync(join(tmpdir(), 'imsg-home-'));
+  runsDir = mkdtempSync(join(tmpdir(), 'imsg-runs-'));
+  process.env['HOME'] = home;
+  mkdirSync(join(home, 'Library', 'Messages'), { recursive: true });
+  writeFileSync(join(home, 'Library', 'Messages', 'chat.db'), '');
+  platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  writeCursor(10, runsDir, now);
+});
+
+afterEach(() => {
+  Object.defineProperty(process, 'platform', platform);
+  if (previousHome === undefined) delete process.env['HOME']; else process.env['HOME'] = previousHome;
+  rmSync(home, { recursive: true, force: true });
+  rmSync(runsDir, { recursive: true, force: true });
+});
+
+describe('teammate intake', () => {
+  it('does not advance the cursor when the teammate ledger cannot persist', async () => {
+    writeFileSync(join(runsDir, 'imessage', 'teammates.jsonl'), '');
+    rmSync(join(runsDir, 'imessage', 'teammates.jsonl'));
+    mkdirSync(join(runsDir, 'imessage', 'teammates.jsonl'));
+    const result = await ingest([row(11, TEAMMATE, 'Please preserve this artifact')]);
+    expect(result).toMatchObject({ ok: false, deferred: true, cursor: 10, teammate: 0 });
+    expect(readCursor(runsDir)).toBe(10);
+  });
+  it('keeps a teammate text in the local inbox, never in MASON-INBOX.md or the queue', async () => {
+    const result = await ingest([row(11, TEAMMATE, 'hey ashlr, the gate is red')]);
+    expect(result).toMatchObject({ ok: true, state: 'ingested', scanned: 1, accepted: 0, notMason: 1, teammate: 1, cursor: 11 });
+    expect(readCursor(runsDir)).toBe(11);
+
+    const rows = teammateRows();
+    expect(rows).toEqual([{ v: 1, at: now().toISOString(), rowid: 11, senderId: senderIdFor(TEAMMATE), text: 'hey ashlr, the gate is red' }]);
+    expect(JSON.stringify(rows)).not.toContain(TEAMMATE);
+
+    expect(existsSync(inboxPath())).toBe(false);
+    expect(existsSync(join(runsDir, 'queue'))).toBe(false);
+    expect(existsSync(join(runsDir, 'agent-bus'))).toBe(false);
+    expect(existsSync(join(runsDir, 'imessage', 'acks.jsonl'))).toBe(false);
+  });
+
+  it("keeps Mason's path unchanged in a mixed batch", async () => {
+    const result = await ingest([row(11, TEAMMATE, 'teammate ping'), row(12, MASON, 'mason order'), row(13, TEAMMATE, 'teammate followup')]);
+    expect(result).toMatchObject({ scanned: 3, accepted: 1, notMason: 2, teammate: 2, cursor: 13 });
+
+    const inbox = readFileSync(inboxPath(), 'utf8');
+    expect(inbox).toContain('mason order');
+    expect(inbox).not.toContain('teammate ping');
+    expect(inbox).not.toContain('teammate followup');
+    expect(teammateRows().map((r) => r.rowid)).toEqual([11, 13]);
+  });
+
+  it('still baselines and reports disabled/unsupported the old way', async () => {
+    rmSync(join(runsDir, 'imessage', 'cursor.json'));
+    const result = await ingestIMessages(cfg(), {
+      runsDir, now,
+      poll: async () => ({ ok: true, messages: [row(99, TEAMMATE, 'late')] }),
+      maxRowId: async () => ({ ok: true, rowid: 42 }),
+    });
+    expect(result).toMatchObject({ ok: true, state: 'baselined', teammate: 0 });
+    expect(existsSync(join(runsDir, 'imessage', 'teammates.jsonl'))).toBe(false);
+  });
+});
