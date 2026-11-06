@@ -16,6 +16,35 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.20](https://github.com/ashlrai/phantom/compare/v3.30.19...v3.30.20) (2026-11-06)
+
+
+### Fixes
+
+* **desktop:** adopt delayed first sidecar tokens ([#3796](https://github.com/ashlrai/phantom/issues/3796)) ([eae9c22](https://github.com/ashlrai/phantom/commit/eae9c2283d529a8a729592b1eaa52cdc373246c5))
+* **desktop:** verify admitted large runtime entries ([#3792](https://github.com/ashlrai/phantom/issues/3792)) ([ac2b366](https://github.com/ashlrai/phantom/commit/ac2b366e65f45cb11eecf6b05438279901abf232))
+
+
+### Changes
+
+* RQ-APP-DISKUTIL-LOOP ([#3276](https://github.com/ashlrai/phantom/issues/3276)) ([93666a4](https://github.com/ashlrai/phantom/commit/93666a41b06e815afaa094e5e30290beedebecbf))
+* RQ-CI-ZERO-TREE-HISTORY-NOV6 ([#3795](https://github.com/ashlrai/phantom/issues/3795)) ([d71bc1d](https://github.com/ashlrai/phantom/commit/d71bc1dd3ece960dbf502f1eb4a4a114d8d845cc))
+* **RQ-CI-ZERO-TREE-HISTORY-NOV6:** History-only PRs and merge groups with the exact protected s ([#3791](https://github.com/ashlrai/phantom/issues/3791)) ([3a4074f](https://github.com/ashlrai/phantom/commit/3a4074f5257dca66cc20290a56cde030062420e1))
+* **RQ-CONS-STALE-CLOSEPACK-1:** RQ-CONS-STALE-CLOSEPACK-1 handoff ([#3725](https://github.com/ashlrai/phantom/issues/3725)) ([692f8b8](https://github.com/ashlrai/phantom/commit/692f8b811debe75ece2f9dd2e56d5c2f8bc2bc0e))
+* **RQ-DOTREPLYQ8:** RQ-DOTREPLYQ8 ([#3709](https://github.com/ashlrai/phantom/issues/3709)) ([3e56a5b](https://github.com/ashlrai/phantom/commit/3e56a5b93022c5d0d9313343455bdedaf0710dfd))
+* **RQ-GUARDIANHEALTHQ8:** RQ-GUARDIANHEALTHQ8 handoff ([#3721](https://github.com/ashlrai/phantom/issues/3721)) ([202d2ca](https://github.com/ashlrai/phantom/commit/202d2ca42c4fc6e041047fd355ae6b6de55a56e6))
+* **RQ-OSS-AGGREGATE-1:** RQ-OSS-AGGREGATE-1 bridge notes ([#3727](https://github.com/ashlrai/phantom/issues/3727)) ([db130e3](https://github.com/ashlrai/phantom/commit/db130e39e72f0d793dffe6afc2599ee8aee5e362))
+* **RQ-OSS-MCP-SKILLS-1:** BRIDGE_NOTES — RQ-OSS-MCP-SKILLS-1 ([#3730](https://github.com/ashlrai/phantom/issues/3730)) ([47d86cd](https://github.com/ashlrai/phantom/commit/47d86cdd2ec07ff9483e009d0aa86d1d4376c072))
+* **RQ-OSS-MULTINODE-1:** Bridge notes — RQ-OSS-MULTINODE-1 ([#3728](https://github.com/ashlrai/phantom/issues/3728)) ([cbbfedc](https://github.com/ashlrai/phantom/commit/cbbfedcb44f998c203d6ced6601cf85e87a946ea))
+* **RQ-OSS-SPEED-LOCAL-1:** RQ-OSS-SPEED-LOCAL-1 bridge notes ([#3726](https://github.com/ashlrai/phantom/issues/3726)) ([bc46637](https://github.com/ashlrai/phantom/commit/bc4663781ec62573b7d40b474146298c36f67250))
+* **RQ-PHX-RECONCILECANDIDATEMCP05STH1:** BRIDGE_NOTES — RQ-PHX-RECONCILECANDIDATEMCP05STH1 ([#3720](https://github.com/ashlrai/phantom/issues/3720)) ([955aa6d](https://github.com/ashlrai/phantom/commit/955aa6dc46d17d74b515d341bfd1b05b278c0bf3))
+* **RQ-PHX-RECONCILEDISCOVERY05STK2:** BRIDGE_NOTES — RQ-PHX-RECONCILEDISCOVERY05STK2 ([#3734](https://github.com/ashlrai/phantom/issues/3734)) ([17b26b1](https://github.com/ashlrai/phantom/commit/17b26b1633b81abd9ceb0535ec013aeb25b63d38))
+* **RQ-PHX-RECONCILELITERAL06STL2:** PR [#3479](https://github.com/ashlrai/phantom/issues/3479) preservation bridge ([#3732](https://github.com/ashlrai/phantom/issues/3732)) ([92be5c4](https://github.com/ashlrai/phantom/commit/92be5c405d21cb47764bef23a0492ac2343bc3cd))
+* **RQ-PHX-RECONCILEPLANWAIT05STK1:** Receipt wait preservation bridge ([#3724](https://github.com/ashlrai/phantom/issues/3724)) ([2ce2ad6](https://github.com/ashlrai/phantom/commit/2ce2ad6bc16f46fc89439034a4659bd8143de794))
+* **RQ-PHX-RECONCILERECEIPTSLICE05STG1:** PR [#3663](https://github.com/ashlrai/phantom/issues/3663) reconciliation handoff ([#3713](https://github.com/ashlrai/phantom/issues/3713)) ([3462cdb](https://github.com/ashlrai/phantom/commit/3462cdbc9e0a9105f456be5d029d4c19ce7ffa16))
+* **RQ-PHX-STAGINGSTOPROOTS05STC2:** BRIDGE_NOTES: RQ-PHX-STAGINGSTOPROOTS05STC2 ([#3710](https://github.com/ashlrai/phantom/issues/3710)) ([a74f820](https://github.com/ashlrai/phantom/commit/a74f820b1bc2ccd8c730f9e91c521eebb76acf02))
+* RQ-RECUT-V330-CIFIX-10R3-ONBOARD-NOV6 ([#3794](https://github.com/ashlrai/phantom/issues/3794)) ([6db19f6](https://github.com/ashlrai/phantom/commit/6db19f63d96cd6f3599ee4329309c0900fe19d21))
+
 ## [Unreleased]
 
 ## [3.30.19] — 2026-11-06
