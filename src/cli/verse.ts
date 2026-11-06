@@ -185,6 +185,7 @@ export interface VerseBackgroundDeps {
   loadWiki?: () => Promise<{ scheduleWikiAutoRefresh: (cfg: AshlrConfig) => (() => void) | null }>;
   loadAutomations?: () => Promise<{ scheduleAutomationsTick: () => (() => void) | null }>;
   loadRetroSweep?: () => Promise<{ scheduleRetroSweep: (cfg: AshlrConfig) => (() => void) | null }>;
+  loadTeammateComms?: () => Promise<{ scheduleTeammateMessages: (cfg: AshlrConfig) => (() => void) | null }>;
   /**
    * Run the services that probe or publish ACCOUNT state (health sweep,
    * budget capacity publisher). False under `--no-accounts`: that flag says
@@ -284,6 +285,12 @@ export async function startVerseBackgroundServices(
   if (accountServices) await attempt('retro-sweep', async () => {
     const mod = await (deps.loadRetroSweep ?? (() => import('../core/learn/retro/sweep-timer.js')))();
     return mod.scheduleRetroSweep(cfg);
+  });
+  // Native iMessage permissions follow the desktop's sidecar responsibility.
+  // Keep its worker in this existing live process; a launchd copy may lack FDA.
+  if (accountServices && cfg.comms?.enabled === true) await attempt('teammate-comms', async () => {
+    const mod = await (deps.loadTeammateComms ?? (() => import('../core/comms/imessage-teammate-worker.js')))();
+    return mod.scheduleTeammateMessages(cfg);
   });
 
   let stopped = false;
