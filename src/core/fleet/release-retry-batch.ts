@@ -161,7 +161,10 @@ function parseRetryReport(doc: Record<string, unknown>): ReleaseRetryBatchParse 
 }
 
 function parseBatchReport(doc: Record<string, unknown>): ReleaseRetryBatchParse {
-  if (!keysExactly(doc, REPORT_KEYS)) return { ok: false, reason: 'unknown_or_missing_fields' };
+  if (!keysExactly(doc, REPORT_KEYS) && !keysExactly(doc, [...REPORT_KEYS, 'cancelled'])) return { ok: false, reason: 'unknown_or_missing_fields' };
+  // Partial cancelled batches contain untouched identities and cannot safely be
+  // interpreted as a complete retry selection.
+  if (Object.hasOwn(doc, 'cancelled') && doc.cancelled !== false) return { ok: false, reason: 'batch_cancelled' };
   if (doc.version !== 1) return { ok: false, reason: 'unsupported_version' };
   const { apply, total, succeeded, unsuccessful, counts, completed, remaining, entries } = doc;
   if (typeof apply !== 'boolean' || !Array.isArray(entries)) return { ok: false, reason: 'field_invalid' };
