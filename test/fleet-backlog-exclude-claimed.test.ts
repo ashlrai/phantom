@@ -92,7 +92,7 @@ describe('fleet backlog claimed PR exclusions', () => {
   it.each([
     ['--pr', '101', '--exclude-pr', '0101'],
     ['--exclude-pr', '101', '--pr', '0101'],
-  ])('rejects overlapping selection and exclusion in either order', async (...args) => {
+  ])('rejects overlapping selection and exclusion in either order (%#)', async (...args) => {
     const deps = fixture([]);
     expect(await cmdFleetBacklog(args, deps)).toBe(2);
     expect(errors).toContain('PR #101 cannot be both selected and excluded');

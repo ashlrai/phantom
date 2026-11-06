@@ -154,7 +154,7 @@ it('retries retryable reads within the deadline and still expires cleanly', asyn
   expect(messages(records).map(row => row.envelope.id)).toEqual(['ok']);
 });
 
-it('rejects invalid arguments before touching the store', async () => {
+it('bus-follow rejects invalid arguments before touching the store', async () => {
   const emitted: string[] = [], list = vi.fn(listBusInboxAfter);
   const emit = (json: string) => { emitted.push(json); };
   const good = ['--after', '0', '--duration-ms', '300', '--root', root, '--json'];

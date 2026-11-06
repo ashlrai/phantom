@@ -151,7 +151,7 @@ describe('bounded Vitest job', () => {
     expect(() => boundedVitestJob({}, [`--maxWorkers=${value}`], 65536 * MiB, 8)).toThrow('maxWorkers');
   });
 
-  it.each([['--pool'], ['--pool='], ['--pool', '--shard=1/2']])('refuses a missing pool value (%s)', (...args) => {
+  it.each([['--pool'], ['--pool='], ['--pool', '--shard=1/2']])('refuses a missing pool value (%s) (%#)', (...args) => {
     expect(() => boundedVitestJob({}, args, 65536 * MiB, 8)).toThrow('pool requires a value');
   });
 });

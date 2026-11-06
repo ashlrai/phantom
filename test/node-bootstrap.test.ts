@@ -66,7 +66,7 @@ describe('node bootstrap dry-run', () => {
     ['bootstrap', '--dry-run', '--execute'], ['bootstrap', '--dry-run', '--token=private'],
     ['bootstrap', '--dry-run', '--dry-run'], ['bootstrap', '--dry-run', 'unexpected'],
     ['bootstrap', '--dry-run', '--json', '--json'],
-  ])('refuses unsupported invocation %j without echoing arguments', async (...args: string[]) => {
+  ])('refuses unsupported invocation %j without echoing arguments (%#)', async (...args: string[]) => {
     const { log, error, fetch } = capture();
     expect(await cmdNode(args)).toBe(2);
     expect([...log.mock.calls, ...error.mock.calls].flat().join(' ')).not.toContain('private');
@@ -82,7 +82,7 @@ describe('node bootstrap dry-run', () => {
   });
 
   it.each([['--help'], ['bootstrap', '-h'], ['bootstrap', '--execute', '--help']])(
-    'help never acts: %j', async (...args: string[]) => {
+    'help never acts: %j (%#)', async (...args: string[]) => {
       const { log, error, fetch } = capture();
       expect(await cmdNode(args)).toBe(0);
       expect(log).toHaveBeenCalledWith(expect.stringContaining('Usage: phm node bootstrap --dry-run'));

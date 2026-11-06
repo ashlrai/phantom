@@ -68,7 +68,7 @@ describe('graph upstream example', () => {
     ['--node', 'root', '--depth', '0'], ['--node', 'root', '--depth', '5'],
     ['--node', 'root', '--depth', '1.0'], ['--node', 'root', '--depth', '1', '--depth', '2'],
     ['--node', 'root', '--node', 'other'], ['--node', 'root', '--other'],
-  ])('rejects invalid arguments %j before loading', async (...args) => {
+  ])('rejects invalid arguments %j before loading (%#)', async (...args) => {
     const load = vi.fn(async () => graph);
     expect(await query(args, load)).toMatchObject({ exit: 2, result: { status: 'error', error: { code: 'GRAPH_USAGE' } } });
     expect(load).not.toHaveBeenCalled();
