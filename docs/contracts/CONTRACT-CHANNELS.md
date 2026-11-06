@@ -23,7 +23,7 @@ desktop, page, cli.
 
 ## Slack bridge subcommands
 
-`phm channels slack` inspects the agent-network Slack bridge offline; it is not
+`phm channels slack` inspects and runs the agent-network Slack bridge; it is not
 one of `INBOUND_CHANNELS` and shares none of the `add` paths.
 
 - `slack status [--json]` parses `~/.ashlr/agent-network.toml` and
@@ -34,8 +34,9 @@ one of `INBOUND_CHANNELS` and shares none of the `add` paths.
   verdict for an operator-supplied `{conversation, members}` snapshot.
 - Neither verb opens a socket, calls a Slack API, reads or resolves a
   credential, or posts anything. Exit codes: 0 report, 1 input error, 2 usage.
-- The Socket Mode connection, token injection and `chat.postMessage` path ship
-  only in the separately security-reviewed `-sec` change.
+- `slack probe [--json]` authenticates the exact configured workspace/user/bot using host-injected credential references. Reports observation time without tokens.
+- `slack run --seconds <1-300> [--json]` opens a bounded Socket Mode session, appends receive events to the existing durable bus, and acknowledges only after persistence or deliberate policy refusal. Outbound delivery verifies current audience and human approval, persists intent before one post, and reconciles uncertain sends without automatic replay. Private iMessage/email bodies stay local.
+- Offline `ready` is configuration readiness, not a live transport claim. Dot's signed HTTP peer-ingress adapter remains opt-in; it opens no listener.
 
 ## Verify
 

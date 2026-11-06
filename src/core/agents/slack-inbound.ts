@@ -87,7 +87,14 @@ export function unwrapSlackSocketEnvelope(raw: unknown): SlackSocketEnvelope | {
   return {
     envelopeId: boundedId(raw['envelope_id']) ?? 'unknown',
     ...(boundedId(raw['payload']['event_id']) ? { eventId: boundedId(raw['payload']['event_id']) } : {}),
-    event: raw['payload']['event'],
+    // Slack binds the workspace on the Events API callback, not every inner
+    // message. Preserve that authenticated scope without accepting a conflict.
+    event: {
+      ...raw['payload']['event'],
+      team: raw['payload']['team_id'] !== undefined && raw['payload']['event']['team'] !== undefined &&
+        raw['payload']['team_id'] !== raw['payload']['event']['team']
+        ? undefined : raw['payload']['team_id'] ?? raw['payload']['event']['team'],
+    },
   };
 }
 
@@ -155,6 +162,7 @@ export function slackEventToBus(
     channel_ref: threadRef,
     sender: { agent_id: author.id, vendor: 'slack', human: author.human, team: true },
     external: false,
+    origin_bridge: config.bridgeId,
   };
   const checked = validateBusEnvelope(candidate);
   return checked.ok ? { status: 'ingest', envelope: checked.value } : { status: 'ignore', reason: 'malformed-event' };

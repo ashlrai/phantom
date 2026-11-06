@@ -63,6 +63,8 @@ export interface SlackAudienceSnapshot {
   conversation: SlackConversationSnapshot;
   /** Fully paginated membership. Over {@link SLACK_MEMBER_CAP} is unprovable. */
   members: SlackMemberSnapshot[];
+  /** Authenticated API pagination ended, not merely a caller's first page. */
+  complete?: boolean;
 }
 
 export const SLACK_MEMBER_CAP = 512;
@@ -92,7 +94,7 @@ export interface SlackAudienceResult {
 }
 
 function memberBinding(member: SlackMemberSnapshot): string | undefined {
-  return member.enterprise_id ?? member.team_id;
+  return member.team_id;
 }
 
 function memberVerdict(
@@ -130,7 +132,7 @@ export function evaluateSlackAudience(
   if (conversation.id !== undefined && conversation.id !== channelId) {
     return { status: 'refused', reason: 'mismatched-channel', memberCount: snapshot.members.length, external: false };
   }
-  if (conversation.is_im === true || conversation.is_mpim === true) {
+  if ((conversation.is_im === true || conversation.is_mpim === true) && !channelId.startsWith('D')) {
     return { status: 'refused', reason: 'direct-message', memberCount: snapshot.members.length, external: false };
   }
   if (conversation.is_shared === true || conversation.is_ext_shared === true || conversation.is_pending_ext_shared === true) {
@@ -140,6 +142,9 @@ export function evaluateSlackAudience(
     return { status: 'refused', reason: 'wrong-workspace', memberCount: snapshot.members.length, external: true };
   }
   const members = snapshot.members;
+  if (snapshot.complete === false) {
+    return { status: 'uncertain', reason: 'membership-incomplete', memberCount: members.length, external: false };
+  }
   if (members.length === 0) {
     return { status: 'uncertain', reason: 'empty-membership', memberCount: 0, external: false };
   }
@@ -198,6 +203,7 @@ export interface SlackOutboundPlan {
 
 export type SlackOutboundRefusal =
   | 'invalid-envelope'
+  | 'private-source'
   | 'own-bridge'
   | 'external-envelope'
   | 'unmapped-topic'
@@ -224,6 +230,9 @@ export function slackOutboundPlan(
   config: SlackBridgeConfig,
 ): SlackOutboundDecision {
   if (envelope === null || typeof envelope !== 'object') return { ok: false, reason: 'invalid-envelope' };
+  // iMessage bodies remain local. Only an explicitly authored local result or
+  // summary may be posted; connecting channels is not permission to mirror mail.
+  if (envelope.channel === 'imessage' || envelope.channel === 'email') return { ok: false, reason: 'private-source' };
   if (!shouldIngestFromBridge(envelope, config.bridgeId)) return { ok: false, reason: 'own-bridge' };
   if (envelope.external === true) return { ok: false, reason: 'external-envelope' };
   const channel = slackChannelForTopic(config, envelope.to);

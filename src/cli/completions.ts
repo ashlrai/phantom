@@ -127,7 +127,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   connectors: ['add', 'list', 'remove', 'show', 'import', 'run', '--json', '--help'],
-  channels: ['add', 'status', 'slack', '--json', '--help'],
+  channels: ['add', 'status', 'slack', 'map', 'probe', 'run', '--seconds', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
   ecosystem: ['doctor'],
   roadmap: ['run', 'resume', 'status'],

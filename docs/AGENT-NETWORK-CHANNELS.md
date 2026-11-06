@@ -13,9 +13,7 @@ does not explicitly confirm `confirmedByMason = true`. A `sent` result means the
 
 ## Slack bridge configuration
 
-The `[slack]` table configures the bridge adapter (mapping and inbound parsing
-are live; the socket, token injection and post path ship in a separately
-reviewed `-sec` change):
+The `[slack]` table configures the bridge adapter (offline mapping plus authenticated Socket Mode receive/send commands):
 
 ```toml
 [slack]
@@ -49,10 +47,10 @@ phm channels slack map --topic leaders --snapshot ./audience.json --json
 
 `status` and `map` are read-only: no socket, no Slack API call, no credential
 IO. `map --snapshot` evaluates a saved `{conversation, members}` JSON through
-the audience gates (no shared/Connect/DM, fully-paginated members, every member
+the audience gates (no shared/Connect audience, fully-paginated members, every member
 team-bound, non-guest, non-deleted, allowlisted or the bridge itself) and the
 shared send policy. See [the Slack bridge section](AGENT-NETWORK.md#slack-bridge)
-for the full app-scope list Mason grants.
+for scopes, host credential injection, authenticated `probe`/`run` commands and uncertain-send reconciliation. Configuration readiness is not live health.
 
 The following commands inspect the channel contract offline. No adapters are
 registered by this change, and testing reports a refusal without sending or

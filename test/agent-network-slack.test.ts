@@ -124,7 +124,6 @@ describe('agent-network.toml [slack]', () => {
       ['missing team_id', TOML.replace('team_id = "T0WORKSPACE"\n', '')],
       ['lowercase team_id', TOML.replace('T0WORKSPACE', 't0workspace')],
       ['bad channel id', TOML.replace('C0AGENTNET', 'channel-name')],
-      ['dm channel id', TOML.replace('C0AGENTNET', 'D0DMCHANNEL')],
       ['non-phm ref', TOML.replace('phm_SLACK_AGENTNET_BOT_TOKEN', 'xoxb-not-a-ref')],
       ['duplicate topic', `${TOML}\n[[slack.map]]\ntopic = "leaders"\nchannel = "C0ANOTHER"\n`],
       ['duplicate channel', `${TOML}\n[[slack.map]]\ntopic = "another"\nchannel = "C0AGENTNET"\n`],
@@ -134,6 +133,11 @@ describe('agent-network.toml [slack]', () => {
       const { path } = tomlDir(text);
       expect(loadAgentNetworkConfig({ path }).slack, name).toBe('invalid');
     }
+  });
+
+  it('allows an explicitly mapped direct conversation for authenticated audience verification', () => {
+    const { path } = tomlDir(TOML.replace('C0AGENTNET', 'D0DMCHANNEL'));
+    expect(loadAgentNetworkConfig({ path }).slack).toMatchObject({ map: [{ topic: 'leaders', channel: 'D0DMCHANNEL' }] });
   });
 
   it('reads comms.toml confirmation only as a strict boolean', () => {
@@ -175,7 +179,7 @@ describe('slackEventToBus', () => {
     expect(env.channel_ref).toBe('slack:T0WORKSPACE:C0AGENTNET:1712345678.000100');
     expect(env.sender).toEqual({ agent_id: 'U0TEAMHUMAN', vendor: 'slack', human: true, team: true });
     expect(env.external).toBe(false);
-    expect(env.origin_bridge).toBeUndefined();
+    expect(env.origin_bridge).toBe(CONFIG.bridgeId);
     const body = env.body as Record<string, unknown>;
     expect(body['kind']).toBe('note');
     expect(body['text']).toBe('ship it');

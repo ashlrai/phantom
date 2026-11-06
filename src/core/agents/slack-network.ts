@@ -26,7 +26,7 @@ export const SLACK_DEFAULT_BRIDGE_ID = 'slack';
 // Slack-side grammars. Ids are uppercase-alnum with a fixed type letter; ts is
 // the canonical `<seconds>.<microseconds>` string and is stored verbatim.
 const SLACK_TEAM_ID = /^[TE][A-Z0-9]{2,32}$/;
-const SLACK_CHANNEL_ID = /^[CG][A-Z0-9]{2,32}$/;
+const SLACK_CHANNEL_ID = /^[CDG][A-Z0-9]{2,32}$/;
 const SLACK_USER_ID = /^[UW][A-Z0-9]{2,32}$/;
 const SLACK_BOT_ID = /^B[A-Z0-9]{2,32}$/;
 const SLACK_TS = /^\d{1,20}\.\d{1,10}$/;

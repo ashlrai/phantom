@@ -13,17 +13,22 @@
  *                                               snapshot -- the audience gates
  *                                               and send-policy verdict
  *
- * Read-only: no Socket Mode connection, no Slack Web API call, no credential
- * is read or resolved. Posting ships in the separately reviewed -sec change.
+ * status/map are read-only. probe/run authenticate a host-injected bot and
+ * run the bounded existing-bus transport without accepting token arguments.
  * Exit codes: 0 report printed, 1 input error, 2 bad usage.
  */
 import { buildSlackBridgeStatus, buildSlackMapReport, type SlackBridgeStatus } from '../core/agents/slack-status.js';
 import type { SlackAudienceSnapshot } from '../core/agents/slack-audience.js';
 import { readPrivateFileCapped } from '../core/verse/preferences.js';
 import { rejectUnknownOptions } from './args.js';
+import { createSlackApi, deliverSlackEnvelope, openSlackSocket, verifySlackIdentity, type SlackSocketSession } from '../core/agents/slack-transport.js';
+import { loadAgentNetworkConfig, loadCommsConfirmation } from '../core/agents/slack-network.js';
+import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
-       phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]`;
+       phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
+       phm channels slack probe [--json]
+       phm channels slack run --seconds <1-300> [--json]`;
 
 const SNAPSHOT_MAX_BYTES = 1024 * 1024;
 
@@ -144,16 +149,84 @@ async function cmdSlackMap(args: string[]): Promise<number> {
   return 0;
 }
 
+/** Credentials are supplied to this host process, never accepted in CLI arguments. */
+async function cmdSlackTransport(args: string[], run: boolean): Promise<number> {
+  const bad = rejectUnknownOptions(args, { flags: ['--json'], values: run ? ['--seconds'] : [] });
+  if (bad) return badUsage(bad.message);
+  const at = args.indexOf('--seconds');
+  const seconds = run ? Number(at >= 0 ? args[at + 1] : 60) : 0;
+  if (run && (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 300)) return badUsage('--seconds must be 1 through 300');
+  const parsed = loadAgentNetworkConfig();
+  if (parsed.state !== 'ok' || !parsed.slack || parsed.slack === 'invalid') {
+    console.log(JSON.stringify({ ok: false, reason: 'slack-not-configured', observedAt: new Date().toISOString() }));
+    return 1;
+  }
+  const config = parsed.slack;
+  const call = createSlackApi({ config, resolveCredential: reference => {
+    if (!/^phm_SLACK_(?:AGENTNET_)?(?:BOT|APP)_TOKEN$/.test(reference)) return undefined;
+    return process.env[reference.slice(4)];
+  } });
+  let socket: SlackSocketSession | undefined;
+  let stopped = false;
+  let disconnected = false;
+  const stop = (): void => { stopped = true; socket?.close(); };
+  const counts = { sent: 0, duplicate: 0, uncertain: 0, refused: 0 };
+  try {
+    await verifySlackIdentity(call, config);
+    if (run) {
+      socket = await openSlackSocket({ call, config, ingest: { config, teamIdentities: parsed.teamIdentities },
+        connect: url => new WebSocket(url) as unknown as SlackSocketSession });
+      socket.addEventListener('close', () => { disconnected = true; stopped = true; });
+      socket.addEventListener('error', () => { disconnected = true; stopped = true; });
+      process.once('SIGTERM', stop); process.once('SIGINT', stop);
+      const deadline = Date.now() + seconds * 1000;
+      let cursor = 0;
+      while (!stopped && Date.now() < deadline) {
+        // The existing bus owns body persistence and TTL. Do not mirror private
+        // iMessage/email input: the planner accepts only authored local results.
+        const page = listBusInboxAfter(cursor, 100);
+        if (page.status !== 'ok') throw new Error('bus-unavailable');
+        for (const row of page.messages) {
+          if (stopped || Date.now() >= deadline) break;
+          cursor = row.cursor;
+          if (!config.map.some(mapping => mapping.topic === row.envelope.to) || row.envelope.origin_bridge === config.bridgeId ||
+              row.envelope.channel === 'imessage' || row.envelope.channel === 'email') continue;
+          const ttl = row.envelope.ttl - Math.max(0, Date.now() - row.receivedAt);
+          if (ttl <= 0) continue;
+          const result = await deliverSlackEnvelope(row.envelope, { config, teamIdentities: parsed.teamIdentities,
+            confirmedByMason: loadCommsConfirmation(), call });
+          counts[result.status]++;
+          // The channel API permits roughly one post/second. Never spin on an
+          // uncertain outcome; a future pass performs read-only reconciliation.
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      if (disconnected) throw new Error('slack-socket-disconnected');
+    }
+    console.log(JSON.stringify({ ok: true, teamId: config.teamId, userId: config.ownUserId, botId: config.ownBotId,
+      mode: run ? 'socket-session' : 'authenticated-probe', ...counts, observedAt: new Date().toISOString() }));
+    return 0;
+  } catch {
+    console.log(JSON.stringify({ ok: false, reason: 'transport-unavailable-or-identity-mismatch', ...counts, observedAt: new Date().toISOString() }));
+    return 1;
+  } finally {
+    stop(); process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop);
+  }
+}
+
 export async function cmdChannelsSlack(args: string[]): Promise<number> {
   const sub = args[0];
   if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
     console.log(SLACK_USAGE);
     console.log('');
-    console.log('  Offline inspection only. Token values stay in Phantom Secrets custody;');
-    console.log('  the socket, token injection and post path ship in the -sec change.');
+    console.log('  status/map inspect offline. probe/run require host-injected credentials,');
+    console.log('  matching workspace/bot identity and explicitly approved team recipients.');
     return 0;
   }
   if (sub === 'status') return cmdSlackStatus(args.slice(1));
   if (sub === 'map') return cmdSlackMap(args.slice(1));
+  if (sub === 'probe') return cmdSlackTransport(args.slice(1), false);
+  if (sub === 'run') return cmdSlackTransport(args.slice(1), true);
   return badUsage(`unknown slack subcommand: ${sub}`);
 }

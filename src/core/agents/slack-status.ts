@@ -30,6 +30,8 @@ export interface SlackBridgeStatus {
   comms: { confirmedByMason: boolean };
   journal: { state: SlackJournalRead['state']; ingested: number; ignored: number; lastAt: string | null };
   ready: boolean;
+  /** Offline configuration does not establish a connected bot or receive route. */
+  transport: { health: 'unknown'; observedAt: null; probeCommand: string };
   next?: string;
 }
 
@@ -56,7 +58,7 @@ function nextStep(state: AgentNetworkConfig['state'], slack: AgentNetworkConfig[
   }
   if (bridge.map.length === 0) return 'add at least one [[slack.map]] { topic, channel } binding';
   if (slackIds === 0) return 'add [team] identities entries with channel = "slack" for the allowlisted members and agents';
-  return 'mapping is ready -- token injection, the socket and the post path ship in the -sec change';
+  return 'mapping is ready; run phm channels slack probe --json for authenticated identity, then phm channels slack run --seconds 60 --json';
 }
 
 export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): SlackBridgeStatus {
@@ -66,7 +68,10 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const journal = readSlackJournal({ ...(options.runsDir ? { runsDir: options.runsDir } : {}), limit: 4096 });
   let ingested = 0;
   let ignored = 0;
-  for (const entry of journal.entries) (entry.decision === 'ingested' ? ingested++ : ignored++);
+  for (const entry of journal.entries) {
+    if (entry.decision === 'ingested') ingested++;
+    else ignored++;
+  }
   const confirmedByMason = loadCommsConfirmation({ ...(options.commsPath ? { path: options.commsPath } : {}), ...(options.home ? { home: options.home } : {}) });
   const slackIds = slackIdentityCount(config);
   const ready = config.state === 'ok' && bridge !== undefined &&
@@ -94,6 +99,7 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
       lastAt: journal.entries[0]?.at ?? null,
     },
     ready,
+    transport: { health: 'unknown', observedAt: null, probeCommand: 'phm channels slack probe --json' },
     next: nextStep(config.state, config.slack, bridge, slackIds),
   };
 }
@@ -121,7 +127,7 @@ export interface SlackMapReport {
   note: string;
 }
 
-const MAP_NOTE = 'dry run only -- no socket, no Slack API call, no post; token injection and the outbound post path ship in the separately reviewed -sec change';
+const MAP_NOTE = 'dry run only -- no socket, no Slack API call, no post; authenticated probe/run commands verify the actual execution lane separately';
 
 export function buildSlackMapReport(options: SlackBridgeStatusOptions & {
   topic?: string;

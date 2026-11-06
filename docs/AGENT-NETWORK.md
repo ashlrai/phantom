@@ -167,7 +167,7 @@ leases. The already shipped node router is reused for execution fencing instead.
 
 ## Slack bridge
 
-The Slack bridge joins one private internal Slack channel to the Agent Bus over
+The Slack bridge joins explicitly mapped team channels and direct conversations to the existing Agent Bus over
 Socket Mode, so no public inbound URL is ever opened. Bus topics map to Slack
 channels and bus threads map to Slack threads through `[[slack.map]]` entries
 in `~/.ashlr/agent-network.toml`; the file holds Slack ids and Phantom Secrets
@@ -199,15 +199,14 @@ journaled by id and reason code alone; message text is never logged for ignored
 traffic. Bridge-authored echoes are dropped by the loop guard before the
 allowlist is consulted.
 
-Outbound (dry-run today): a bus message addressed to a mapped topic posts to
+Outbound: a bus message addressed to a mapped topic posts to
 the bound channel only when the channel audience is provably team-only. The
 poster checks `conversations.info` (`is_shared`, `is_ext_shared`,
 `is_pending_ext_shared`, `context_team_id`) and every page of
-`conversations.members` (each member's `team_id`/`enterprise_id`, guest,
-deleted and bot flags). Slack Connect, shared channels, DMs, guests, unknown
+`conversations.members` (each member's workspace `team_id`, guest,
+deleted and bot flags). Slack Connect, shared channels, guests, unknown
 bots and any member who is not an allowlisted team identity refuse; anything
-that cannot be proved stays a draft. Rate-limit backoff honors `Retry-After`
-with jitter inside a bounded retry budget.
+that cannot be proved stays a draft. Explicitly mapped DMs require the same authenticated membership proof. A durable intent precedes one post; uncertain outcomes are reconciled by client message ID through history, never blindly resent. Rate limits stop the bounded pass.
 
 ```sh
 phm channels slack status --json
@@ -221,10 +220,18 @@ names (never values), journal counts and the next step. `map` prints the
 topic/channel table, resolves one `--topic` to its channel, and evaluates a
 saved `{conversation, members}` snapshot through the audience gates plus the
 shared send policy. Both are read-only: no socket, no Slack API call, no
-credential IO. The Socket Mode connection, token injection and the
-`chat.postMessage` path ship in the separately reviewed `-sec` change.
+credential IO. `ready` describes configuration only; `transport.health` remains unknown until an authenticated probe. The actual host commands are:
 
-Creating the Slack app and its tokens is Mason's step. The minimum grants, from
+```sh
+phm channels slack probe --json
+phm channels slack run --seconds 60 --json
+```
+
+`probe` authenticates the exact configured workspace and bot identity. `run` receives Socket Mode events into the existing durable bus and delivers authored bus results to mapped, freshly verified audiences. The host supplies `SLACK_AGENTNET_BOT_TOKEN` and `SLACK_AGENTNET_APP_TOKEN` to the process through its trusted secret injector. Token values never enter CLI arguments, config, observations or receipts. Socket URLs remain in memory. iMessage and email bodies are never mirrored to Slack.
+
+The separately reconciled [signed peer ingress](SLACK-BUS-INGRESS.md) preserves dot's tested agent-to-agent protocol and is dormant until an owner configures its authenticated HTTP route. It does not create another bus or start a listener.
+
+Create or authorize the app in the intended workspace before injecting its credentials. An unrelated connected app is not a working route. The minimum grants, from
 the [research doc](research/AGENT-NETWORK-RESEARCH.md#slack):
 
 | Token | Scope | Purpose |
@@ -236,7 +243,7 @@ the [research doc](research/AGENT-NETWORK-RESEARCH.md#slack):
 | Bot (xoxb) | `users:read` | resolve member team bindings and flags |
 | Bot (xoxb) | `chat:write` | the team reply path |
 
-Event subscriptions: `message.groups` and `app_mention`. No `users:read.email`,
+For direct messages add `im:read`, `im:history` and `message.im`; group DMs add `mpim:read`, `mpim:history` and `message.mpim`; public channels add `channels:read`, `channels:history` and `message.channels`. The base subscriptions are `message.groups` and `app_mention`. No `users:read.email`,
 `chat:write.public`, admin scopes, file upload, channel creation or automatic
 joins. Tokens go into Phantom Secrets under the names above; the bridge reads
 `phm_` references only.

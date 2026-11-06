@@ -353,6 +353,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'SlackMapReport {v:1, dryRun:true, mappings[], route?, audience?, sendPolicy?, comms, note}',
   },
   {
+    usage: 'phm channels slack probe [--json]',
+    description: 'Authenticate the configured Slack workspace and bot through host-injected credentials. No sends or token output; reports actual identity and observation time.',
+    safety: 'read',
+    jsonShape: '{ok, teamId?, userId?, botId?, observedAt, reason?}',
+  },
+  {
+    usage: 'phm channels slack run --seconds <1-300> [--json]',
+    description: 'Run a bounded authenticated Slack Socket Mode session on the existing durable bus. Requires approved team audience; persists outbound intent before sending and reconciles uncertain sends. Private iMessage/email bodies stay local.',
+    safety: 'append',
+    jsonShape: '{ok, mode?, sent, duplicate, uncertain, refused, observedAt, reason?}',
+  },
+  {
     usage: 'ashlr ask "<question>" [--json] | ashlr ask status [--jobs <path>] [--json]',
     description: 'Local RAG over the indexed portfolio; cites repo/file:line. Local models only unless --allow-cloud. status prints the ask.status.v1 stream derived from the metrics jobs ledger.',
     safety: 'read',
