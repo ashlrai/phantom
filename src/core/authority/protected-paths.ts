@@ -100,6 +100,8 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'desktop/src-tauri/src/main.rs',
   'desktop/src-tauri/src/lib.rs',
   'src/core/run/desktop-metadata-launch-trust.ts',
+  // Fixed worker is an authority validator even though Worker URLs are not imports.
+  'src/core/resources/quota-evidence-worker.ts',
   // Governed-client gateway target validation decides where a provider key may be sent (#880).
   'src/core/run/gateway-target.ts',
   'src/cli/desktop-update.ts',

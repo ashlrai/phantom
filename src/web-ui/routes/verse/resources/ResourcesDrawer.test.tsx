@@ -1187,6 +1187,7 @@ describe('ResourcesDrawer — equal partners (3.15)', () => {
     devin = DEVIN_OVERVIEW;
     cloud = CLOUD;
     render(<ResourcesBar expanded />);
+    fireEvent.click(screen.getByRole('button', { name: /Usage sources and budgets/ }));
     const devinButton = await screen.findByRole('button', { name: 'Devin tracked budget: 38 ACUs of 50 ACUs left. Open Resources' });
     expect(within(devinButton).getByText('38 ACUs budget')).toBeInTheDocument();
     expect(devinButton.querySelector('svg[data-provider="devin"]')).toHaveAttribute('viewBox', '0 0 425 425');

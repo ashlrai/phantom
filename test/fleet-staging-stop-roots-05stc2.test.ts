@@ -42,7 +42,7 @@ describe('staging batch interrupted scan retains all requested roots', () => {
     const lines: string[] = [];
     // Scanner emits signal from within, resolves normally. The next
     // iteration checks stopped and breaks, leaving r2/r3 as sentinels.
-    let scannerCalls: string[] = [];
+    const scannerCalls: string[] = [];
     const input = (async function* () { yield envelope(threeRoots); })();
     const status = await cmdFleetStagingInventoryBatch(['--stdin', '--json'], {
       signals, input,
@@ -79,7 +79,7 @@ describe('staging batch interrupted scan retains all requested roots', () => {
   it('returns exit 143 for SIGTERM and keeps all roots in JSON order', async () => {
     const signals = new EventEmitter();
     const lines: string[] = [];
-    let scannerCalls: string[] = [];
+    const scannerCalls: string[] = [];
     const input = (async function* () { yield envelope(threeRoots); })();
     const status = await cmdFleetStagingInventoryBatch(['--stdin', '--json'], {
       signals, input,
@@ -101,7 +101,7 @@ describe('staging batch interrupted scan retains all requested roots', () => {
   it('retains all roots in NDJSON when interrupted during first scan', async () => {
     const signals = new EventEmitter();
     const lines: string[] = [];
-    let scannerCalls: string[] = [];
+    const scannerCalls: string[] = [];
     const input = (async function* () { yield envelope(threeRoots); })();
     await cmdFleetStagingInventoryBatch(['--stdin', '--ndjson'], {
       signals, input,
@@ -131,7 +131,7 @@ describe('staging batch interrupted scan retains all requested roots', () => {
   it('skipped roots show as "skipped (unattempted)" in text mode', async () => {
     const signals = new EventEmitter();
     const lines: string[] = [];
-    let scannerCalls: string[] = [];
+    const scannerCalls: string[] = [];
     const input = (async function* () { yield envelope(threeRoots); })();
     await cmdFleetStagingInventoryBatch(['--stdin'], {
       signals, input,
