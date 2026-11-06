@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /**
  * 3.10 Track B unit U7 — engines & judges (SPEC-310B §3, §7 U7).
  *
@@ -94,8 +95,7 @@ const SUPPORTS_PROFILES = process.platform !== 'win32' && typeof process.execve 
 
 /** Inert "grok": records argv/env/cwd into GROK_HOME, prints GROK_HOME/response.ndjson. */
 function inertGrokSource(): string {
-  return `#!${process.execPath}
-const fs = require('fs'); const path = require('path');
+  return `${nodeFixtureHeader(process.execPath)}const fs = require('fs'); const path = require('path');
 const home = process.env.GROK_HOME;
 fs.writeFileSync(path.join(home, 'last-call.json'), JSON.stringify({
   args: process.argv.slice(2), env: process.env, cwd: process.cwd(), cwdEntries: fs.readdirSync(process.cwd()),
