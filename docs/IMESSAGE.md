@@ -37,7 +37,16 @@ and your Apple ID email, for example). When it is unset or empty the allowlist i
 `phm imessage respond --apply --json` polls intake and processes at most three
 teammate records per pass. It never prints handles or message bodies. A host
 supervisor can schedule this explicit command; ordinary polling alone does not
-activate teammate delivery.
+activate teammate delivery. The live desktop sidecar schedules the same worker
+after startup, then thirty seconds after each completed pass. The existing
+resident Leader tick invokes it too; private work locks serialize both paths.
+The sidecar stops its timer and cancels generation on server shutdown.
+
+Full Disk Access belongs to the actual responsible native process. A successful
+foreground CLI check from an authorized app does not qualify a launchd runner.
+When `imessage/teammate-status.json` reports `blocked_full_disk_access`, grant
+Full Disk Access to the responsible app shown by `imessage doctor` and restart
+that app. Phantom never edits the TCC database or works around this permission.
 
 Sending requires all three current local facts: the peer is in
 `comms.imessageAllow`, its hashed `imessage:<sha256-16>` identity is explicitly

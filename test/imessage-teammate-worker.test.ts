@@ -53,6 +53,7 @@ describe('teammate worker', () => {
     expect(await runTeammateResponder(cfg, deps)).toMatchObject({ suppressed: 1 });
     expect(deps.generate).not.toHaveBeenCalled(); expect(deps.send).not.toHaveBeenCalled();
     expect(teammateNeedsReply('Artifact commit abc1234 is ready.')).toBe(false);
+    expect(teammateNeedsReply('Ashlr. SLACK PATCH 2/33 (concatenate body after newline):\n+const value = question ? yes : no;')).toBe(false);
     expect(teammateNeedsReply('Please review artifact commit abc1234?')).toBe(true);
   });
   it('keeps drafts on local model failure and never sends secret-shaped model output', async () => {
@@ -70,6 +71,12 @@ describe('teammate worker', () => {
     writeFileSync(join(runsDir, 'imessage/teammate-replies.json'), '{broken');
     expect(await runTeammateResponder(cfg, deps)).toMatchObject({ state: 'unavailable' });
     expect(deps.send).not.toHaveBeenCalled(); expect(readTeammateTexts({ runsDir }).texts).toHaveLength(1);
+  });
+  it('shutdown cancellation after generation preserves a draft without native side effects', async () => {
+    seed(); const controller = new AbortController(); const deps = options();
+    deps.generate.mockImplementation(async () => { controller.abort(); return 'Observed work is pending.'; });
+    expect(await runTeammateResponder(cfg, { ...deps, signal: controller.signal })).toMatchObject({ pending: 1 });
+    expect(deps.send).not.toHaveBeenCalled(); expect(state().replies[0]?.state).toBe('drafted');
   });
   it('caps a pass at three messages and preserves every remaining inbox item', async () => {
     for (let rowid = 1; rowid <= 5; rowid++) recordTeammateText({ rowid, handle: 'agent@example.test', text: 'Please report the current blocker?' }, runsDir, new Date(now()));
