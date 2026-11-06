@@ -36,7 +36,10 @@ describe('graph neighbors CLI', () => {
     expect(result).toEqual({ schemaVersion: 1, command: 'neighbors', status: 'ready', nodeId: 'a',
       direction: 'both', depth: 1, truncated: false,
       nodes: [graph.nodes[0], graph.nodes[1], graph.nodes[2], graph.nodes[3]],
-      edges: [graph.edges[1], graph.edges[0], graph.edges[2], graph.edges[3], graph.edges[4]] });
+      edges: [graph.edges[1], graph.edges[0], graph.edges[2], graph.edges[3], graph.edges[4]],
+      // Each depth-1 node was reached directly from the start node (d via its d->a edge).
+      traversal: [{ id: 'a', distance: 0, predecessor: null }, { id: 'b', distance: 1, predecessor: 'a' },
+        { id: 'c', distance: 1, predecessor: 'a' }, { id: 'd', distance: 1, predecessor: 'a' }] });
     expect(loader.loadGraph).toHaveBeenCalledExactlyOnceWith();
   });
 
@@ -115,7 +118,7 @@ describe('graph neighbors CLI', () => {
     ['neighbors', 'a', '--depth', '1', '--depth', '2'],
     ['neighbors', 'a', '--direction', 'in', '--direction', 'out'],
     ['neighbors', 'a', 'b'], ['nodes', '--depth', '1'],
-  ])('rejects invalid arguments %j without loading', async (...args) => {
+  ])('rejects invalid arguments %j without loading (%#)', async (...args) => {
     expect(await query(args, 2)).toMatchObject({ status: 'error', error: { code: 'GRAPH_USAGE' } });
     expect(loader.loadGraph).not.toHaveBeenCalled();
   });

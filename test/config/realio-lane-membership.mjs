@@ -148,6 +148,7 @@ export const REAL_IO_TEST_FILES = [
   'test/phx-usagemotionrecipe31sold9.test.ts', // execFileSync runs the usage-motion-incident example as a real child
   'test/phx-usagevalidationreport31solc5.test.ts', // spawnSync runs the usage validate CLI as real children
   'test/resolve-remote-branch-head.test.ts', // execSync runs git commands in a real child
+  'test/node-fixture.test.ts', // executes an inert fixture through a quoted Node path
   'test/realio-lane-guard-green.test.ts', // execFileSync runs the real lane guard in a Node child
   'test/fleet-ci-daily-plan-nov01.test.ts', // Applies generated patches with real git in a temporary repo.
   'test/fleet-ci-resume-inputs-05-srf1.test.ts', // Builds real temp git repos and runs ls-tree/diff-tree through the CLI.

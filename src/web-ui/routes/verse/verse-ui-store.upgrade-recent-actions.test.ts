@@ -81,7 +81,7 @@ describe('3.29.15 desktop recent actions upgrade', () => {
 
   it('keeps a fresh store empty', async () => {
     const ui = await import('./verse-ui-store.js');
-    expect(ui.loadVerseUi()).toMatchObject({ section: 'chat', recentActions: [], recentChats: [] });
-    expect(JSON.parse(localStorage.getItem(UI_KEY)!)).toMatchObject({ section: 'chat', recentActions: [], recentChats: [] });
+    expect(ui.loadVerseUi()).toMatchObject({ section: 'live', recentActions: [], recentChats: [] });
+    expect(JSON.parse(localStorage.getItem(UI_KEY)!)).toMatchObject({ section: 'live', recentActions: [], recentChats: [] });
   });
 });

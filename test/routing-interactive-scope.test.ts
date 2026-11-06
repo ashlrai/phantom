@@ -31,6 +31,10 @@ vi.mock('../src/core/observability/codex-source.js', () => ({
   CODEX_PROVIDER_KEY: 'codex',
   collectCodexEvents: () => [],
 }));
+vi.mock('../src/core/fleet/codex-session-usage.js', () => ({
+  collectCodexSessionUsages: () => [],
+  publishCodexFleetUsage: () => undefined,
+}));
 
 // Pass-through wrapper so one test can make the subscription check THROW.
 let throwFromSubscriptionAllows = false;
@@ -39,7 +43,7 @@ vi.mock('../src/core/fleet/subscription-usage.js', async (importOriginal) => {
   return {
     ...real,
     subscriptionAllows: (...args: Parameters<typeof real.subscriptionAllows>) => {
-      if (throwFromSubscriptionAllows) throw new Error('simulated reader bug');
+      if (throwFromSubscriptionAllows && args[0] === 'claude') throw new Error('simulated reader bug');
       return real.subscriptionAllows(...args);
     },
   };
@@ -53,17 +57,22 @@ import type { AshlrConfig, EngineId, WorkItem } from '../src/core/types.js';
 
 let home: string;
 let savedHome: string | undefined;
+let savedAshlrHome: string | undefined;
 
 beforeEach(() => {
   mockRateLimitsReturn = null;
   throwFromSubscriptionAllows = false;
   savedHome = process.env['HOME'];
+  savedAshlrHome = process.env['ASHLR_HOME'];
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'ib2-routing-scope-'));
   process.env['HOME'] = home;
+  process.env['ASHLR_HOME'] = path.join(home, '.ashlr');
 });
 
 afterEach(() => {
   process.env['HOME'] = savedHome;
+  if (savedAshlrHome === undefined) delete process.env['ASHLR_HOME'];
+  else process.env['ASHLR_HOME'] = savedAshlrHome;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -174,6 +183,7 @@ describe('autonomous routing fails closed and applies the budget', () => {
 
   it('the balanced default permits Codex autonomy with a fresh eligible reading', () => {
     mockRateLimitsReturn = codexReading(5);
+    expect(subscriptionAllows('codex', { autonomous: true })).toMatchObject({ allowed: true });
     const d = routeTask(hardItem('feature'), cfg(), ctx(['codex', 'builtin'], true));
     expect(d.engine).toBe('codex');
     updateBudgetPolicy({ seatId: 'codex-personal', policy: { enabled: false } });
@@ -207,7 +217,7 @@ describe('the subscription gate itself defaults to autonomous', () => {
 describe('engineAvailable: a THROWING check closes the engine in both modes', () => {
   it('interactive and autonomous both fall back off claude when the check throws', () => {
     throwFromSubscriptionAllows = true;
-    expect(routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'])).engine).not.toBe('claude');
-    expect(routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'], true)).engine).not.toBe('claude');
+    expect(routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'])).engine).toBe('builtin');
+    expect(routeTask(hardItem(), cfg(), ctx(['claude', 'builtin'], true)).engine).toBe('builtin');
   });
 });

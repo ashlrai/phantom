@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DOCK_PANES, type DockPaneCatalogEntry } from '../shell/dock-catalog.js';
+import { DOCK_PANES, type DockPaneCatalogEntry } from '../shell/dock-pane-catalog.js';
 import { groupDockPanes, matchesPaneQuery } from './dock-add-menu-model.js';
 
 const panes: DockPaneCatalogEntry[] = [
