@@ -4,7 +4,7 @@ import type { RunsSwitch } from './runs-switches-queries.js';
 
 describe('fleet switches model', () => {
   it.each([
-    ['ORCH_OFF', 'Leader passes'], ['OPUS_LEADER_OFF', 'Opus leader'], ['PAUSE', 'Launches'],
+    ['ORCH_OFF', 'Scheduled planning passes'], ['OPUS_LEADER_OFF', 'Claude planning loop'], ['PAUSE', 'Launches'],
     ['PUBLISH_HOLD', 'Publishing'], ['HOLD', 'Saved lane holds'], ['QUEUE_DISABLE', 'Queue'], ['NEW_FLAG', 'NEW_FLAG'], ['toString', 'toString'],
   ])('labels %s', (id, label) => expect(switchLabel(id)).toBe(label));
 

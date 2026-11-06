@@ -385,10 +385,10 @@ exports[`390px fleet status 1`] = `
             <div>
               <span>
                 <span>
-                  Stop leader passes
+                  Stop scheduled planning passes
                 </span>
                 <span>
-                  New Claude and Sol leader passes stop; workers keep running.
+                  Scheduled Claude and Sol planning pauses; workers keep running. The Leader uses its own schedule.
                 </span>
               </span>
               <span>
@@ -402,10 +402,10 @@ exports[`390px fleet status 1`] = `
             <div>
               <span>
                 <span>
-                  Stop the Opus leader
+                  Stop the Claude planning loop
                 </span>
                 <span>
-                  The hourly Opus leader does not run.
+                  The supplementary hourly Opus loop pauses. The Leader can use any available provider.
                 </span>
               </span>
               <span>

@@ -42,7 +42,9 @@ afterEach(() => {
 
 function mount(snapshot: FleetRuns = fleetRuns) {
   installFetch(call => call.path === '/api/verse/fleet/runs' ? json(snapshot) : json({}));
-  return render(<SectionVisibilityProvider visible><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
+  const view = render(<SectionVisibilityProvider visible><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
+  fireEvent.click(within(view.container).getByRole('button', { name: /Usage sources and budgets/ }));
+  return view;
 }
 
 const personalRow = (container: HTMLElement) =>
