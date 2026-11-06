@@ -10,6 +10,7 @@ import { URL } from 'node:url';
 // Vite must not traverse this tool's optional built-artifact imports on config load.
 const sourceToolingUrl = new URL('../../scripts/hosted-build-artifact.mjs', import.meta.url).href;
 import { REAL_IO_TEST_FILES } from './realio-lane-membership.mjs';
+import { orderFeedback } from '../../.github/scripts/ci-test-feedback.mjs';
 
 export const CALIBRATION_INPUTS = Object.freeze([
   'package-lock.json', 'vitest.config.ts', 'test/config/realio-lane-membership.mjs',
@@ -55,6 +56,31 @@ export async function calibrationInventory(root, specs) {
 }
 
 export class WeightedCalibrationSequencer extends BaseSequencer {
+  async sort(specs) {
+    const baseline = await super.sort(specs);
+    if (process.env.ASHLR_TEST_CI_FAILURE_FIRST !== '1') return baseline;
+    try {
+      const snapshot = readJson(process.env.ASHLR_TEST_CI_FEEDBACK_SNAPSHOT);
+      assert.deepEqual(Object.keys(snapshot).sort(), ['events', 'schema']);
+      assert.equal(snapshot.schema, 'phantom-ci-test-feedback-snapshot/v1');
+      const fileOf = (spec) => relative(this.ctx.config.root, spec.moduleId).replaceAll('\\', '/');
+      // Vitest already prioritizes locally cached failures. Historical CI must
+      // not displace that fresher ordering; only fill slots without local results.
+      const uncached = baseline.filter((spec) => !this.ctx.cache.getFileTestResults(`${spec.project.name}:${fileOf(spec)}`));
+      const { ordered } = orderFeedback(uncached, snapshot.events, {
+        role: process.env.ASHLR_TEST_CI_FEEDBACK_ROLE,
+        fileOf,
+        projectOf: (spec) => spec.project.name,
+      });
+      const slots = new Set(uncached); let index = 0;
+      return baseline.map((spec) => slots.has(spec) ? ordered[index++] : spec);
+    } catch {
+      // Metadata cannot make a test disappear or turn an unavailable hint into a CI failure.
+      console.error('[test-ci-feedback] unavailable or incompatible history; preserving collected order');
+      return baseline;
+    }
+  }
+
   async shard(specs) {
     const { shard, root } = this.ctx.config;
     // The actual default sequencer owns every unsupported/default path.

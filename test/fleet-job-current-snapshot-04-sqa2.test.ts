@@ -104,7 +104,7 @@ it('reports no matching commit honestly at the pinned snapshot', async () => {
   } finally { process.chdir(cwd); log.mockRestore(); repo.cleanup(); }
 });
 
-it('rejects usage errors exit 2 before any git call, including outside a repository', async () => {
+it('job-current-snapshot rejects usage errors exit 2 before any git call, including outside a repository', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'job-current-snapshot-nogit-'));
   const cwd = process.cwd();
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -140,7 +140,7 @@ it('rejects usage errors exit 2 before any git call, including outside a reposit
   } finally { process.chdir(cwd); error.mockRestore(); log.mockRestore(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-it('refuses non-ancestor, missing, blob and tree objects with a scrubbed exit 1 and no evidence', async () => {
+it('job-current-snapshot refuses non-ancestor, missing, blob and tree objects with a scrubbed exit 1 and no evidence', async () => {
   const repo = fixture();
   const cwd = process.cwd();
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -166,7 +166,7 @@ it('refuses non-ancestor, missing, blob and tree objects with a scrubbed exit 1 
   } finally { process.chdir(cwd); log.mockRestore(); error.mockRestore(); repo.cleanup(); }
 });
 
-it('never mutates the repository and only issues allowlisted read-only git argv', async () => {
+it('job-current-snapshot never mutates the repository and only issues allowlisted read-only git argv', async () => {
   const repo = fixture();
   try {
     const bridge = repo.commit('bridge(RQ-AAA-1): first job (#11)', { 'a.ts': 'a' });
@@ -192,7 +192,7 @@ it('never mutates the repository and only issues allowlisted read-only git argv'
   } finally { repo.cleanup(); }
 });
 
-it('surfaces injected git failures as rejections and reports bounded scan truncation', async () => {
+it('job-current-snapshot surfaces injected git failures as rejections and reports bounded scan truncation', async () => {
   const oid = sha(7);
   const ok = async (args: string[]) => {
     if (args[0] === 'cat-file') return 'commit\n';
@@ -226,7 +226,7 @@ it('surfaces injected git failures as rejections and reports bounded scan trunca
   expect(seen.filter(args => args[0] === 'log')[0]!.at(-2)).toBe(oid);
 });
 
-it('resolves the convention verb name for dispatcher discoverability', async () => {
+it('job-current-snapshot resolves the convention verb name for dispatcher discoverability', async () => {
   const resolved = resolveFleetSubcommand('job-current-snapshot');
   expect(resolved).toEqual({
     module: './fleet-job-current-snapshot.js', exportName: 'cmdFleetJobCurrentSnapshot',

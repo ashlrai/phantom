@@ -7,7 +7,7 @@ Phantom's source-checkout self-update keeps your local Hub up to date with `orig
 - **Settings ▸ Updates** row: status headline, "Fast-forward ready / Needs local changes" readiness, "Update now" button.
 - **About pane** (`/settings/about`): running commit, committed time, origin, last fetch, process uptime, last apply outcome.
 - **Gear badge** (topbar 🔔): unread count, urgent red overlay, accessible name `Notifications, N open, M urgent`.
-- **Bell notifications**: five update IDs from `deriveUpdateNotifications.ts` — `update-ready`, `update-held`, `update-failed`, `update-restart-needed`, `update-applied`.
+- **Bell notifications** (`NotificationBell`): five update IDs from `deriveUpdateNotifications.ts` — `update-ready`, `update-held`, `update-failed`, `update-restart-needed`, `update-applied`.
 
 ## The reading
 

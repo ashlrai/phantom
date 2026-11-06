@@ -50,7 +50,7 @@ describe('job-precheck exact job identity', () => {
     ['draft.md', '--job-id'], ['draft.md', '--job-id', '--json'],
     ['draft.md', '--job-id', 'invalid'], ['draft.md', '--job-id', 'RQ-A', '--job-id', 'RQ-B'],
     ['--batch', 'draft.md', '--job-id', 'RQ-A'],
-  ])('rejects malformed arguments without file or git I/O: %j', async (...args) => {
+  ])('rejects malformed arguments without file or git I/O: %j (%#)', async (...args) => {
     const h = harness({});
     expect(await cmdFleetJobPrecheck(args, h.deps)).toBe(2);
     expect(h.readFile).not.toHaveBeenCalled();

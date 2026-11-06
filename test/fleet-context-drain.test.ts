@@ -145,7 +145,7 @@ it('bounds enumeration when the directory overflows with unexpected entries', as
   expect(report()).toMatchObject({ status: 'ok', scanned: 2048, overflow: true });
 });
 
-it('never prints reply ids, bodies or filesystem paths', async () => {
+it('context-drain never prints reply ids, bodies or filesystem paths', async () => {
   expect(spool(reply('secret-reply-id-alpha'))).toBe('saved');
   await writeFile(join(spoolDir, `reply-${'f'.repeat(32)}.json`), 'not json', { mode: 0o600 });
   expect(await cmdFleetContextDrain(drainArgs('--apply'), io(), { root: busRoot })).toBe(2);
@@ -169,14 +169,14 @@ it.each([
   ['--spool-dir', '/tmp/spool', '--json', '--apply', '--apply'],
   ['--apply'],
   [],
-] as const)('rejects invalid invocation %j', async (...args) => {
+] as const)('rejects invalid invocation %j (%#)', async (...args) => {
   expect(await cmdFleetContextDrain([...args], io(), { root: busRoot })).toBe(2);
   expect(out).toBe('');
   expect(err).toContain('Usage:');
   err = '';
 });
 
-it('prints usage for --help', async () => {
+it('context-drain prints usage for --help', async () => {
   expect(await cmdFleetContextDrain(['--help'], io(), { root: busRoot })).toBe(0);
   expect(out).toContain('context-drain');
 });

@@ -65,7 +65,11 @@ export async function run(args: string[], deps: Dependencies = {}): Promise<numb
     const accepted = acks.filter(ack => ack.status === 'accepted').length;
     const duplicate = acks.filter(ack => ack.status === 'duplicate').length;
     const sameReceipt = first.ack.dedupeKey === second.ack.dedupeKey;
-    const firstSourceRetained = inbox.entries.length === 1 && inbox.entries[0]?.source === 'desktop';
+    const firstEntry = inbox.entries[0];
+    const firstSourceRetained = inbox.entries.length === 1 && ((firstEntry?.source === 'desktop' &&
+      firstEntry.channel === undefined && firstEntry.id === undefined) ||
+      (firstEntry?.channel === 'desktop' && typeof firstEntry.id === 'string' && /^desk-[a-f0-9]{16}$/.test(firstEntry.id) &&
+        firstEntry.source === `desktop (${firstEntry.id})`));
     const verified = first.ack.status === 'accepted' && second.ack.status === 'duplicate' &&
       first.ack.channel === 'desktop' && second.ack.channel === 'mobile' && sameReceipt &&
       firstSourceRetained && inbox.entries[0]?.text === BODY;

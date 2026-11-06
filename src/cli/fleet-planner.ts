@@ -1,10 +1,10 @@
 import { executePlannerPass, defaultPlannerPassDeps, type PlannerPassDeps } from '../core/fleet/planner-pass.js';
-const HELP = `Usage: ashlr fleet planner [--run --prompt-file PATH] [--runs-root PATH] [--json]
+const USAGE = `Usage: ashlr fleet planner [--run --prompt-file PATH] [--runs-root PATH] [--json]
 Select the first declared runner not usage-limited, without spawning by default.
 Reads queue/planner-candidates.json under ~/.ashlr-runs (or --runs-root).
 --run executes one pass through runPlannerPass; ORCH_OFF gates execution.`;
 export async function cmdFleetPlanner(args: string[], deps: PlannerPassDeps = defaultPlannerPassDeps): Promise<number> {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(HELP); return 0; }
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
   const json = args.includes('--json');
   const values = new Map<string, string>();
   const flags = new Set<string>();

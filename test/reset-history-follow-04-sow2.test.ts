@@ -41,7 +41,7 @@ const seqRead = (seq: ResetReleaseRecord[][]) => { let i = 0; return vi.fn(async
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-it('resolves through the fleet convention without registry edits', async () => {
+it('reset-follow resolves through the fleet convention without registry edits', async () => {
   expect(resolveFleetSubcommand('reset-follow')).toEqual({ module: './fleet-reset-follow.js', exportName: 'cmdFleetResetFollow' });
   expect(typeof (await import('../src/cli/fleet-reset-follow.js')).cmdFleetResetFollow).toBe('function');
 });

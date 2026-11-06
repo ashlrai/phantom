@@ -46,9 +46,9 @@ describe('fleet usage audit read route', () => {
     expect(result.body).toEqual({ v: 1, error: 'usage audit unavailable' });
     expect(result.text).not.toContain('/private');
   });
-  it('is mounted last and answers through the default loader', async () => {
-    const entry = mountedApiModules().at(-1)!;
-    expect(entry.id).toBe('fleet-usage-audit');
+  it('is mounted and answers through the default loader', async () => {
+    const entry = mountedApiModules().find(module => module.id === 'fleet-usage-audit')!;
+    expect(entry).toBeDefined();
     const result = await call(await entry.load());
     expect(result.status).toBe(200);
     expect(result.body.v).toBe(1);

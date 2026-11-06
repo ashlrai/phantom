@@ -5,6 +5,9 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readFleetLeaderHealth } from './fleet-leader-health.js';
 import { readLoginHealth } from './fleet-login-health.js';
 
+const usage = `Usage: ashlr fleet verdict [--json]
+Read leader, login, admission and held lanes. Missing evidence is unknown. Overall: ok, warn or down. Exit 0 for ok, 1 otherwise.`;
+
 export type VerdictState = 'ok' | 'warn' | 'down';
 export interface FleetVerdictOptions {
   read?: (path: string) => Promise<string>;
@@ -57,7 +60,7 @@ export async function readFleetVerdict(opts: FleetVerdictOptions = {}): Promise<
 
 export async function cmdFleetVerdict(args: string[], opts: FleetVerdictOptions = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('Usage: ashlr fleet verdict [--json]\nRead leader, login, admission and held lanes. Missing evidence is unknown. Overall: ok, warn or down. Exit 0 for ok, 1 otherwise.');
+    console.log(usage);
     return 0;
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;

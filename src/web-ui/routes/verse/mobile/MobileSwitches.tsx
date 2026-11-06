@@ -2,7 +2,8 @@
  * routes/verse/mobile/MobileSwitches.tsx — the "Switches on the Mac" card on
  * the Fleet screen: the runs-directory switch files (HOLD, PAUSE, ORCH_OFF,
  * OPUS_LEADER_OFF, PUBLISH_HOLD, queue/DISABLE) the Mac observes, and — when
- * this build has the control route — the way to flip them.
+ * this build has the control route — the way to flip boolean flags. Saved
+ * lane holds remain inspection-only because HOLD contains individual lane IDs.
  *
  * Reads, both the workbench's own cache keys:
  *   snapshot   verse-fleet-runs                    GET /api/verse/fleet/runs
@@ -73,7 +74,7 @@ export function MobileSwitches() {
   const loading = nothingYet && (runs.status === 'idle' || runs.status === 'loading' || controlPending);
 
   const flip = (row: SwitchRow) => {
-    if (row.on === null) return;
+    if (row.id === 'HOLD' || row.on === null) return;
     const next = !row.on;
     const text = confirmText(row.id, next);
     runMobileAction({
@@ -113,7 +114,7 @@ export function MobileSwitches() {
     body = (
       <div className={ui.group} role="group" aria-label="Switches on the Mac">
         {view.rows.map((row) => {
-          if (!view.writable || !canAct || row.on === null) {
+          if (row.id === 'HOLD' || !view.writable || !canAct || row.on === null) {
             return <div key={row.id} className={ui.row}><SwitchLine row={row} /></div>;
           }
           return (

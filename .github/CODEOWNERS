@@ -885,6 +885,7 @@
 /test/m571.local-production-gate.test.ts @masonwyatt23
 /test/m66.mcp-ecosystem.test.ts @masonwyatt23
 /test/m71.onboard-stack.test.ts @masonwyatt23
+/test/m75.fleet-watch.test.ts @masonwyatt23
 /test/m78.titrr.test.ts @masonwyatt23
 /test/m80.subscription-usage.test.ts @masonwyatt23
 /test/m84.goal-direct.test.ts @masonwyatt23
@@ -1048,6 +1049,7 @@
 /test/resource-spark-enrollment-cli.test.ts @masonwyatt23
 /test/resource-spark-enrollment-files.test.ts @masonwyatt23
 /test/resource-spark-enrollment.test.ts @masonwyatt23
+/test/resource-volume-polling.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23

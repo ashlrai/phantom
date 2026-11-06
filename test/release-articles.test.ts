@@ -517,9 +517,15 @@ describe('fresh public facts are data, not saved release authority', () => {
           { name: 'Require selected CI lane', status: 'completed', conclusion: 'success' },
         ] });
       // Seconds-fast topology: the scan always runs, the PR-only typecheck skips.
-      for (const [id, name, conclusion] of [[904, 'Secret-shape scan', 'success'], [905, 'Quick typecheck', 'skipped'], [906, 'Daily fixup queue', 'success']] as const) {
+      for (const [id, name, conclusion] of [[904, 'Secret-shape scan', 'success'], [905, 'Quick typecheck', 'skipped'], [906, 'Daily fixup queue', 'skipped']] as const) {
         jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion, labels: ['ubuntu-latest'], steps: [] });
       }
+      // Complete false/all qualification never executes the separate fast producer.
+      for (const [id, name] of [[907, 'Prepare unsigned desktop release'], [908, 'Desktop release smoke']] as const) {
+        jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion: 'skipped', labels: ['macos-15'], steps: [] });
+      }
+      const scan = jobs.find(job => job['name'] === 'Secret-shape scan')!;
+      scan['steps'] = [{ name: 'Scan candidate diff (fail closed)', status: 'completed', conclusion: 'success' }];
       value['total_count'] = jobs.length;
     }
     return value;
@@ -549,9 +555,112 @@ describe('fresh public facts are data, not saved release authority', () => {
     const reader = fixtureReader(withEraGateJobs, { workflowBytes: qualificationWorkflowBytes() });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
-  it('binds the current fast source Merge Gate while retaining all fifteen full qualification jobs', async () => {
+  it('binds the exact current complete source while retaining all fifteen full qualification jobs', async () => {
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+  });
+  it.each(['full-skipped', 'full-step-skipped', 'full-step-missing', 'scan-skipped', 'scan-step-skipped', 'scan-runner', 'producer-ran', 'smoke-ran', 'excluded-step-ran'])('refuses incomplete current release qualification: %s', async (kind) => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        const full = jobs.find(job => job['name'] === RELEASE_CI_JOBS[0])!;
+        const scan = jobs.find(job => job['name'] === 'Secret-shape scan')!;
+        if (kind === 'full-skipped') for (const job of jobs.filter(job => RELEASE_CI_JOBS.includes(String(job['name'])))) { job['conclusion'] = 'skipped'; job['steps'] = []; }
+        if (kind === 'full-step-skipped') (full['steps'] as Record<string, unknown>[]).find(step => step['name'] === releaseRequiredSteps(String(full['name']))[0])!['conclusion'] = 'skipped';
+        if (kind === 'full-step-missing') full['steps'] = (full['steps'] as Record<string, unknown>[]).filter(step => step['name'] !== releaseRequiredSteps(String(full['name']))[0]);
+        if (kind === 'scan-skipped') scan['conclusion'] = 'skipped';
+        if (kind === 'scan-step-skipped') (scan['steps'] as Record<string, unknown>[])[0]!['conclusion'] = 'skipped';
+        if (kind === 'scan-runner') scan['labels'] = ['ubuntu-latest', 'self-hosted'];
+        if (kind === 'producer-ran') jobs.find(job => job['name'] === 'Prepare unsigned desktop release')!['conclusion'] = 'success';
+        if (kind === 'smoke-ran') jobs.find(job => job['name'] === 'Desktop release smoke')!['conclusion'] = 'success';
+        if (kind === 'excluded-step-ran') jobs.find(job => job['name'] === 'Desktop release smoke')!['steps'] = [{ name: 'fast smoke', status: 'completed', conclusion: 'success' }];
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
+  it('retains the exact legacy complete topology and refuses unreviewed outer limits', async () => {
+    const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    // The previously pinned revision is recoverable by removing exactly the
+    // reviewed source-identical fast-path wiring; any other drift fails loudly.
+    const previous = current
+      .replace(/ {6}# Source-identical fast path[\s\S]*?(?= {6}- name: Install dependencies)/, '')
+      .replaceAll("        if: steps.history.outputs.equal != 'true'\n", '');
+    expect(createHash('sha256').update(previous).digest('hex')).toBe('95714a1fd967c9a5b072761c1aff68ec9ea3792ac5e7058a62e0cde2a18bbd21');
+    const macEnvelope = previous.replace("    # Ubuntu authority 1/3 runs the complete web suite before its existing\n    # thirty-minute backend wrapper, then verifies and uploads the original pack.\n    # Other matrix roles retain their existing twenty-five-minute outer limit.\n    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}", '    timeout-minutes: 25');
+    expect(createHash('sha256').update(macEnvelope).digest('hex')).toBe('5d88a822dabe4b188e44683991cd921623470c0fa0e20fb96df883cb4f173444');
+    expect(await verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(macEnvelope) }), NOW))
+      .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+    const legacy = macEnvelope.replace('    # Complete single-worker partitions measured 60–65 minutes. Match the\n    # existing 90-minute hermetic wrapper; individual test bounds stay intact.\n    timeout-minutes: 90', '    timeout-minutes: 45');
+    expect(createHash('sha256').update(legacy).digest('hex')).toBe('ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390');
+    expect(await verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(legacy) }), NOW))
+      .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+    for (const edited of [current.replace('    timeout-minutes: 90', '    timeout-minutes: 91'),
+      current.replace("matrix.label == 'ubuntu, authority 1/3' && 60 || 25", "matrix.label == 'ubuntu, authority 1/3' && 61 || 25")]) {
+      await expect(verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(edited) }), NOW)).rejects.toThrow();
+    }
+  });
+  it('refuses an edited current workflow even when all reported jobs pass', async () => {
+    const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(current + '\n# unreviewed source revision\n') });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
+  it.each([
+    ['proof-condition-inverted', (y: string) => y.replaceAll("steps.history.outputs.equal != 'true'", "steps.history.outputs.equal == 'true'")],
+    ['proof-condition-renamed', (y: string) => y.replaceAll('steps.history.outputs.equal', 'steps.history.outputs.fastpath')],
+    ['proof-step-widened-to-push', (y: string) => y.replace("        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'\n", '        if: always()\n')],
+    ['proof-step-deleted', (y: string) => y.replace(/ {6}- name: Prove source-identical history fast path[\s\S]*?(?= {6}- name: Install dependencies)/, '')],
+    ['mutated-secret-scan', (y: string) => y.replace('Scan candidate diff (fail closed)', 'Scan candidate diff')],
+    ['mutated-classifier-command', (y: string) => y.replace('node .github/scripts/ci-site-lane.mjs', 'node .github/scripts/ci-site-lane-mutated.mjs')],
+    ['mutated-merge-gate-needs', (y: string) => y.replace('secret-shape, classify, quick,', 'secret-shape, classify,')],
+    ['mutated-full-role-condition', (y: string) => y.replace("needs.classify.outputs.lane == 'full'", "needs.classify.outputs.lane == 'site'")],
+  ])('refuses release facts for an unreviewed workflow mutation: %s', async (_kind, mutate) => {
+    const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const mutated = mutate(current);
+    expect(mutated).not.toBe(current);
+    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(mutated) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
+  it.each([
+    ['quick-reported-success', (jobs: Record<string, unknown>[]) => {
+      jobs.find((job) => job['name'] === 'Quick typecheck')!['conclusion'] = 'success';
+    }],
+    ['quick-skipped-with-steps', (jobs: Record<string, unknown>[]) => {
+      jobs.find((job) => job['name'] === 'Quick typecheck')!['steps'] = [
+        { name: 'Core no-emit type check', status: 'completed', conclusion: 'skipped' },
+      ];
+    }],
+    ['quick-compiler-step-claimed', (jobs: Record<string, unknown>[]) => {
+      const quick = jobs.find((job) => job['name'] === 'Quick typecheck')!;
+      quick['conclusion'] = 'success';
+      quick['steps'] = [
+        { name: 'Install dependencies', status: 'completed', conclusion: 'success' },
+        { name: 'Core no-emit type check', status: 'completed', conclusion: 'success' },
+        { name: 'Check authority drift (hermetic)', status: 'completed', conclusion: 'success' },
+      ];
+    }],
+  ])('refuses a skipped or claimed compiler fast-path outcome in release facts: %s', async (_kind, mutate) => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        mutate(value['jobs'] as Record<string, unknown>[]);
+        value['total_count'] = (value['jobs'] as unknown[]).length;
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
+  it('refuses workflow evidence bound to the wrong source path', async () => {
+    const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    const wrongPath = fixtureReader((endpoint, raw) => {
+      const value = raw as Record<string, unknown>;
+      if (endpoint === `repos/${REPO}/contents/.github/workflows/ci.yml?ref=${SOURCE}`) {
+        return { ...(value as Record<string, unknown>), path: '.github/workflows/other.yml' };
+      }
+      return value;
+    }, { workflowBytes: Buffer.from(current) });
+    await expect(verifyPublishedRelease(proposed, wrongPath, NOW)).rejects.toThrow();
   });
   it.each(['docs-ran', 'docs-missing'])('withholds release facts when the docs lane %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {

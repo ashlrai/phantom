@@ -37,7 +37,7 @@ describe('bus HTTP leader inbox bridge', () => {
     expect(await post(handler, message)).toMatchObject({ status: 200, wire: { inbox: { appended: false } } });
     expect(await post(handler, { ...message, id: 'agent-id', from: 'agent' })).toMatchObject({ wire: { inbox: { appended: false } } });
     expect(await post(handler, { ...message, id: 'other-id', to: 'agent' })).toMatchObject({ wire: { inbox: { appended: false } } });
-    expect((await readInboxEntries({ runsDir })).entries).toMatchObject([{ source: 'desktop', text: '[bus→leaders] hello' }]);
+    expect((await readInboxEntries({ runsDir })).entries).toMatchObject([{ channel: 'desktop', source: expect.stringMatching(/^desktop \(desk-[a-f0-9]{16}\)$/), text: '[bus→leaders] hello' }]);
   });
   it('returns success and logs once when inbox writing fails, then allows a retry', async () => {
     const dir = root(), runsDir = join(dir, 'runs');

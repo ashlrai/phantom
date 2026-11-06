@@ -47,10 +47,14 @@ export async function readFleetLoad(read: NonNullable<FleetLoadOptions['read']> 
   return sanitizePublicJson(result) as FleetLoad;
 }
 
+const usage = `Usage: ashlr fleet load [--json]
+Read queue load, running jobs and admission warnings.
+`;
+
 export async function cmdFleetLoad(args: string[], options: FleetLoadOptions = {}): Promise<number> {
   const write = options.write ?? (text => process.stdout.write(text));
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    write('Usage: ashlr fleet load [--json]\nRead queue load, running jobs and admission warnings.\n');
+    write(usage);
     return 0;
   }
   if (args.some(arg => arg !== '--json') || args.length > 1) return 2;

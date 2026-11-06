@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryView, FLEET_MEMORY_STALE_MS } from '../src/core/fleet/memory-view.js';
 import { cmdFleetMemory } from '../src/cli/fleet-memory.js';
-import { ENGINE_ADMISSION_THRESHOLDS, type EngineAdmissionView } from '../src/core/fleet/engine-admission-view.js';
+import { ENGINE_ADMISSION_POLICY, type EngineAdmissionView } from '../src/core/fleet/engine-admission-view.js';
 
 const now = Date.parse('2026-11-01T19:30:00Z');
 const memstat = { free_pct: 42.5, swap_gb: 1.2, swapouts_per_min: 0.25, disk_gb: 118.4, ts: '2026-11-01T19:29:30Z' };
@@ -71,8 +71,8 @@ describe('memoryView', () => {
 
 describe('cmdFleetMemory', () => {
   const ADMISSION: EngineAdmissionView = {
-    gated: true, allowed: true, free_pct: 61.5, swap_gb: 0.5, reason: null,
-    thresholds: ENGINE_ADMISSION_THRESHOLDS,
+    gated: true, allowed: true, pressure_level: 1, free_pct: 61.5, swap_gb: 0.5, reason: null,
+    policy: ENGINE_ADMISSION_POLICY,
   };
   const readAdmission = () => ADMISSION;
 
@@ -91,7 +91,7 @@ describe('cmdFleetMemory', () => {
       'stale: no',
       'memguard_level: normal',
       'memguard_stopped: RQ-PHX-A, RQ-PHX-B',
-      'engine launch: allowed (61.5% free, 0.50 GiB swap)',
+      'engine launch: allowed (pressure 1, 61.5% raw free, 0.50 GiB swap)',
     ].join('\n'));
   });
 
@@ -135,7 +135,7 @@ describe('cmdFleetMemory', () => {
       'stale: unknown',
       'memguard_level: unknown',
       'memguard_stopped: unknown',
-      'engine launch: allowed (61.5% free, 0.50 GiB swap)',
+      'engine launch: allowed (pressure 1, 61.5% raw free, 0.50 GiB swap)',
     ].join('\n'));
   });
 

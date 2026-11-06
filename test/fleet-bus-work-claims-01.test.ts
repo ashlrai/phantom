@@ -102,12 +102,20 @@ describe('fleet bus work claims through exported CLI and real stores', () => {
     const first = await acquire();
     await settle('complete', first.token!);
     const path = join(root, 'bus-inbox', 'messages.json');
-    const rows = JSON.parse(readFileSync(path, 'utf8'));
-    rows[0].receivedAt += 1;
+    const snapshot = JSON.parse(readFileSync(path, 'utf8'));
+    expect(snapshot).toMatchObject({ version: 2, highWater: 1 });
+    expect(snapshot.rows).toHaveLength(1);
+    const originalCursor = snapshot.rows[0].cursor;
+    const completed = readFileSync(state(), 'utf8');
+    snapshot.rows[0].receivedAt += 1;
     now += 1;
-    writeFileSync(path, JSON.stringify(rows), { mode: 0o600 });
+    writeFileSync(path, JSON.stringify(snapshot), { mode: 0o600 });
+    expect(snapshot.rows[0].cursor).toBe(originalCursor);
     expect(await settle('renew', first.token!)).toMatchObject({ status: 'lost', code: 1 });
-    expect((await acquire()).status).toBe('acquired');
+    expect(readFileSync(state(), 'utf8')).toBe(completed);
+    const replacement = await acquire();
+    expect(replacement.status).toBe('acquired');
+    expect(replacement.token).not.toBe(first.token);
   }, 60_000);
   it('refuses oversized and structurally invalid state without replacing it', async () => {
     await acquire();

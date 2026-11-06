@@ -9,7 +9,7 @@ export const RUNS_SWITCHES = [
   { id: 'OPUS_LEADER_OFF', file: 'OPUS_LEADER_OFF', effect: 'Stops the hourly Opus leader.' },
   { id: 'PAUSE', file: 'PAUSE', effect: 'No new jobs launch. Running jobs finish.' },
   { id: 'PUBLISH_HOLD', file: 'PUBLISH_HOLD', effect: 'Finished jobs are not published as pull requests.' },
-  { id: 'HOLD', file: 'HOLD', effect: 'Holds the dispatcher.' },
+  { id: 'HOLD', file: 'HOLD', effect: 'Saved individual lane holds. Use Queue to pause all new launches.' },
   { id: 'QUEUE_DISABLE', file: 'queue/DISABLE', effect: 'Disables the job queue.' },
   { id: 'MAIN_GUARDIAN_OFF', file: 'queue/MAIN_GUARDIAN_OFF', effect: 'Stops the main guardian. Red default branches are not repaired until it is cleared.' },
 ] as const;
@@ -34,7 +34,9 @@ async function directory(path: string): Promise<void> {
 export function parseSwitchAction(body: unknown): { id: RunsSwitchId; on: boolean } | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const { id, on } = body as Record<string, unknown>;
-  if (!RUNS_SWITCHES.some((row) => row.id === id) || typeof on !== 'boolean') return null;
+  // HOLD contains lane IDs, not an existence flag. Boolean writes would either
+  // create a nonfunctional hold or erase a person's selected lane holds.
+  if (id === 'HOLD' || !RUNS_SWITCHES.some((row) => row.id === id) || typeof on !== 'boolean') return null;
   return { id: id as RunsSwitchId, on };
 }
 
@@ -69,6 +71,7 @@ export async function setRunsSwitch(id: RunsSwitchId, on: boolean, opts: RunsSwi
   const entry = RUNS_SWITCHES.find((row) => row.id === id);
   // Validate before even resolving a filesystem path, including for untyped callers.
   if (!entry || typeof on !== 'boolean') return { v: 1, sourceState: 'degraded', switches: RUNS_SWITCHES.map(({ id, effect }) => ({ id, effect, on: false, since: null })) };
+  if (id === 'HOLD') return { ...await readRunsSwitches(opts), sourceState: 'degraded' };
   let failed = false;
   try {
     const dir = runsDirectory(opts);

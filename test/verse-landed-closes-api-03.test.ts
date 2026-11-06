@@ -21,7 +21,7 @@ it('returns the reader report on GET', async () => {
   const r = await call('/api/verse/fleet/landed-closes', 'GET');
   expect(r).toMatchObject({ handled: true, status: 200, seen: now, json: report });
 });
-it('answers 405 on POST and ignores other paths', async () => {
+it('landed-closes answers 405 on POST and ignores other paths', async () => {
   expect(await call('/api/verse/fleet/landed-closes', 'POST')).toMatchObject({ handled: true, status: 405 });
   expect((await call('/api/verse/fleet/other', 'GET')).handled).toBe(false);
 });
