@@ -122,6 +122,7 @@ describe('G1 — ashlr-hub Tier-1 (self repo only)', () => {
   it.each([
     'src/core/authority/standing-grant.ts',
     'src/core/authority/protected-paths.ts',
+    'scripts/finalize-github-release.mjs',
     'src/core/daemon/activation-permit.ts',
     'src/core/daemon/tick-hooks.ts',
     'src/core/daemon/loop.ts',
@@ -173,6 +174,13 @@ describe('G1 — ashlr-hub Tier-1 (self repo only)', () => {
     expect(hits).toHaveLength(3); expect(hits.every(hit => hit.ruleId === 'tier1-authority-code')).toBe(true);
     expect(protectedPathHits(changes, OTHER)).toEqual([]);
     expect(isTier1SourcePath(changes[0]!)).toBe(true);
+  });
+
+  it('protects the GitHub stable finalizer as release authority', () => {
+    const path = 'scripts/finalize-github-release.mjs';
+    expect(isTier1SourcePath(path)).toBe(true);
+    expect(matchProtectedPath(path, SELF)?.ruleId).toBe('tier1-authority-code');
+    expect(matchProtectedPath(path, OTHER)).toBeNull();
   });
 
   it('non-authority ashlr-hub code stays mergeable (merge-non-authority)', () => {
