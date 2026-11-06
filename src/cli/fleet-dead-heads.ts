@@ -6,6 +6,9 @@ import { join, resolve } from 'node:path';
 import { queueDeadHeads } from '../core/fleet/queue-dead-heads.js';
 import { parseReadyTsv } from '../core/fleet/lane-console.js';
 
+const usage = `ashlr fleet dead-heads [--json] [--root PATH] [--cap N]
+Read-only skip evidence; positions are one-based per lane. Default cap: 4 launchable lines.`;
+
 async function readText(path: string, limit: number): Promise<string> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -20,7 +23,7 @@ async function readText(path: string, limit: number): Promise<string> {
 
 export async function cmdFleetDeadHeads(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet dead-heads [--json] [--root PATH] [--cap N]\nRead-only skip evidence; positions are one-based per lane. Default cap: 4 launchable lines.');
+    console.log(usage);
     return 0;
   }
   let root = join(homedir(), '.ashlr-runs');

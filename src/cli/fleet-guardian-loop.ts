@@ -12,6 +12,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 // cancelled/observer-error, 4 deadline, 5 refused.
 const MAX_RECORD_BYTES = 8192;
 const DAY_MS = 86_400_000;
+export const usage = 'Usage: ashlr fleet guardian-loop --manifest <abs> --source-state <abs> --output-dir <abs> --duration-ms <1..86400000> --interval-ms <1000..86400000> --max-retries <1..20> --timeout-ms <1..86400000> [--idle-backoff-max-ms <ms>] [--max-passes <1..1000>] [--stop-file <abs>] [--apply] [--json] [--stream]';
 const FLAGS = ['--manifest', '--source-state', '--output-dir', '--duration-ms', '--interval-ms', '--idle-backoff-max-ms', '--max-retries', '--max-passes', '--timeout-ms', '--stop-file'];
 
 export const cmdFleetGuardianLoop = async (

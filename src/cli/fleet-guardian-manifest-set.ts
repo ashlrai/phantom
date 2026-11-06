@@ -13,6 +13,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 // Exit codes: 0 manifest written, 1 git failure / a repo with zero eligible
 // entries / write failure, 2 invalid arguments or repos-file content. Errors
 // are fixed text only: never file contents, commit subjects or user input.
+export const usage = 'Usage: ashlr fleet guardian-manifest-set --repos-file <abs> --out <abs> [--limit-per-repo <n>] [--json]';
+
 export async function cmdFleetGuardianManifestSet(
   args: string[],
   deps: GuardianManifestSetDeps = {},
