@@ -565,7 +565,7 @@ If a live worker cannot be identified, the tick records `queue/process-snapshot.
 # Existing PR and worktree recovery helpers
 
 These Bash 3.2 helpers integrate with the operator's external bridge scripts.
-Those scripts are not tracked in this repository. They need Git and an existing
+The host launcher remains external; `publish.sh` is its reviewable publisher mirror. They need Git and an existing
 Locus-authorized `gh` context, with credentials supplied through Phantom Secrets
 when needed. They do not acquire tokens, switch accounts, push, or merge.
 
@@ -623,3 +623,50 @@ HOME="$bridge_test_home" node --test contrib/mac/bridge.test.mjs
 The tests use fake `gh` and `sleep` executables and disposable Git repositories.
 They never contact GitHub or use the operator's credentials. The helper scripts
 are invoked with `bash`, so no installation or executable-bit change is needed.
+
+
+## Reconciling an already-integrated original PR
+
+The host-owned `publish.sh <job> --integrated-merge` mode preserves a reviewed
+two-parent merge on the existing `codex-bridge/<job>` fork branch. It reuses the
+original open PR and requests its ordinary required CI and merge queue. It does
+not create a replacement PR. The default publisher behavior is unchanged.
+
+Use this only when reconciliation establishes that every original contribution
+is already present in current main. A final tree equal to main is necessary,
+but does not by itself establish that contributions were retained. The operator
+records per-path original changes, concrete main-source evidence and verification
+for every path changed between the original head and its merge base with main.
+Ambiguous or missing functionality must be repaired through the normal publisher.
+
+`integrated-merge.py` validates a short-lived, private operator receipt under
+`~/.ashlr-runs/integrated-merge/<job>.json`, bound by SHA-256 to the corresponding
+`evidence/<job>.json` reconciliation record. Both directories must be owned by the
+operator with mode700, and proof files must be regular, single-link mode600 files.
+The receipt pins schema1, job, repository, original PR number, original head,
+current main head, authored merge head, reviewed tree, creation/expiry times
+and evidence digest. Its lifetime cannot exceed30 minutes. The merge must have
+exactly the original head followed by current main as parents, and its committed
+and indexed trees must exactly equal reviewed current main. Extra worktree
+changes, links, stale records, missing path evidence and new deltas are refused.
+
+The existing publisher retains its Git-safe, G1, protected-path, secret-shape and
+fork checks. The helper uses the same pinned Git-safe implementation and literal
+GitHub.com upstream/fork identities. Before the ordinary non-force fork push, it
+rechecks the exact original PR state, owner/ref/head and current default-branch
+head. Probe timeouts stop only their freshly created process group, with bounded
+cleanup even when a grandchild retains stdout; unrelated workers are never signaled.
+A per-job publication claim prevents concurrent use; successful push
+consumes the receipt. A failure after push is reconciled against the existing PR,
+without resubmitting a new branch or inventing changes. No tag/default-branch
+push, CI override or protection bypass is introduced.
+
+The reviewable publisher mirror and helper are host-installed together only
+after independent review and digest pinning; neither is copied by `install.sh`.
+The host publisher pins its helper digest. Preserve the previous host publisher
+for rollback and inspect any partial push before retrying.
+
+```sh
+python3 -m unittest contrib/mac/tests/test_integrated_merge.py -v
+bash -n contrib/mac/publish.sh
+```
