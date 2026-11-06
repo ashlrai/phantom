@@ -368,6 +368,7 @@
 /test/fixtures/queue/router-queue.md @masonwyatt23
 /test/fixtures/top-pools/capacity.ts @masonwyatt23
 /test/fleet-apps-ensure-wall-budget-03.test.ts @masonwyatt23
+/test/fleet-apps-watch-attempt-budget-03-sonz1.test.ts @masonwyatt23
 /test/fleet-backlog-cli-31.test.ts @masonwyatt23
 /test/fleet-backlog-exclude-claimed.test.ts @masonwyatt23
 /test/fleet-backlog-recut-drop-nov01.test.ts @masonwyatt23
