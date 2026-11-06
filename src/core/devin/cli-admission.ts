@@ -11,7 +11,8 @@ const METADATA_MAX_AGE_MS = 60_000;
 const RETRY_MS = 10 * 60_000;
 const issued = new WeakSet<object>();
 const entries = new Map<string, DevinCliExecutionBinding>();
-const flights = new Map<string, Promise<DevinCliExecutionBinding | null>>();
+const flights = new Map<string, Promise<readonly DevinCliExecutionBinding[]>>();
+const catalogs = new Map<string, readonly DevinCliExecutionBinding[]>();
 const failures = new Map<string, number>();
 let selected: DevinCliExecutionBinding | null = null;
 
@@ -125,61 +126,96 @@ export function peekDevinCliExecutionBinding(model: string, now = Date.now()): D
 }
 
 /** One same-tuple native auth/catalog refresh. Failed/unknown/fallback evidence cannot admit a spawn. */
-export async function refreshDevinCliExecutionBinding(model: string, opts: DevinCliAdmissionOptions = {}): Promise<DevinCliExecutionBinding | null> {
+async function refreshBindings(model: string | null, opts: DevinCliAdmissionOptions): Promise<readonly DevinCliExecutionBinding[]> {
   const now = opts.now ?? Date.now;
   // Tests must supply a hermetic metadata transport; never probe the operator's native account.
-  if (!admitted(opts) || (process.env['VITEST'] && !opts.runMetadata)) return null;
+  if (!admitted(opts) || (process.env['VITEST'] && !opts.runMetadata)) return [];
   try {
     const selectedPath = opts.cliPath ?? (await probeDevinCli()).cliPath;
-    if (!selectedPath) return null;
+    if (!selectedPath) return [];
     const executable = realpathSync(selectedPath);
     const credentialsPath = opts.credentialsPath ?? devinCliCredentialsPath();
-    if (basename(credentialsPath) !== 'credentials.toml' || basename(dirname(credentialsPath)) !== 'devin') return null;
+    if (basename(credentialsPath) !== 'credentials.toml' || basename(dirname(credentialsPath)) !== 'devin') return [];
     const executableEpoch = epoch(executable, true); const credentialsEpoch = epoch(credentialsPath, false);
-    const key = JSON.stringify([selectedPath, executable, executableEpoch, credentialsPath, credentialsEpoch, model]);
-    const cached = entries.get(key);
-    if (!opts.forceRefresh && cached && devinCliBindingCurrent(cached, model, now()) && admitted(opts)) { selected = cached; return cached; }
-    const failed = failures.get(key);
-    if (failed !== undefined && now() >= failed && now() - failed < RETRY_MS) return null;
-    if (!flights.has(key)) {
+    const tuple = [selectedPath, executable, executableEpoch, credentialsPath, credentialsEpoch];
+    const key = JSON.stringify([...tuple, model]);
+    const tupleKey = JSON.stringify(tuple);
+    const cached = model === null ? catalogs.get(tupleKey) : entries.has(key) ? [entries.get(key)!] : undefined;
+    if (!opts.forceRefresh && cached?.length && cached.every(binding => devinCliBindingCurrent(binding, binding.model, now())) && admitted(opts)) { selected = cached[0]!; return cached; }
+    const failed = failures.get(key) ?? failures.get(tupleKey);
+    if (failed !== undefined && now() >= failed && now() - failed < RETRY_MS) return [];
+    if (!flights.has(tupleKey)) {
+      // Catalog discovery and selected-model renewal share the SAME tuple flight.
+      // A later denial cannot race an older independent Free result.
       const flight = (async () => {
         const startedAt = now();
         const env: NodeJS.ProcessEnv = {};
         for (const name of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'SYSTEMROOT', 'WINDIR']) if (process.env[name] !== undefined) env[name] = process.env[name];
         env['XDG_DATA_HOME'] = dirname(dirname(credentialsPath)); env['NO_COLOR'] = '1';
         const run = opts.runMetadata ?? ((bin, args, e) => nativeMetadata(bin, args, e, opts.signal));
-        if (!admitted(opts)) return null;
+        if (!admitted(opts)) return [];
         const principal = parseDevinCliPrincipal(await run(executable, ['auth', 'status'], env));
-        if (!principal || !admitted(opts) || epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch) return null;
+        if (!principal || !admitted(opts) || epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch) return [];
         // UI parsing normally de-duplicates IDs. Admission must retain contradictions.
         const catalog = parseDevinModelsList(await run(executable, ['models', 'list'], env), { retainDuplicateIds:true });
-        if (catalog.declaredFamilyCount === null || catalog.declaredFamilyCount !== catalog.families.length) return null;
-        const rows = catalog.families.flatMap(f => f.models).filter(m => m.id === model);
-        if (rows.length !== 1 || !admitted(opts) || epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch) return null;
+        if (catalog.declaredFamilyCount === null || catalog.declaredFamilyCount !== catalog.families.length) return [];
+        const allRows = catalog.families.flatMap(f => f.models);
+        const counts = new Map<string, number>();
+        for (const row of allRows) counts.set(row.id, (counts.get(row.id) ?? 0) + 1);
+        const rows = allRows.filter(row => counts.get(row.id) === 1);
+        if (!admitted(opts) || epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch) return [];
         const afterPrincipal = parseDevinCliPrincipal(await run(executable, ['auth', 'status'], env));
-        if (!afterPrincipal || JSON.stringify(afterPrincipal) !== JSON.stringify(principal)) return null;
-        const row = rows[0];
+        if (!afterPrincipal || JSON.stringify(afterPrincipal) !== JSON.stringify(principal)) return [];
         const observedAt = now();
-        if (!admitted(opts) || !row?.pricing.free || [row.pricing.inPerM, row.pricing.outPerM, row.pricing.cachedPerM].some(n => n !== null && n !== 0) ||
-          !row.contextTokens || !Number.isSafeInteger(row.contextTokens) || observedAt < startedAt ||
-          epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch || realpathSync(selectedPath) !== executable) return null;
+        if (!admitted(opts) || !Number.isFinite(observedAt) || observedAt < startedAt ||
+          epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch || realpathSync(selectedPath) !== executable) return [];
         const validUntil = observedAt + METADATA_MAX_AGE_MS;
-        if (!Number.isFinite(observedAt) || observedAt >= validUntil) return null;
+        if (!Number.isFinite(validUntil) || observedAt >= validUntil) return [];
+        const eligible = rows.filter(row => row.pricing.free &&
+          [row.pricing.inPerM, row.pricing.outPerM, row.pricing.cachedPerM].every(n => n === null || n === 0) &&
+          row.contextTokens !== null && Number.isSafeInteger(row.contextTokens) && row.contextTokens > 0);
+        if (!eligible.length) return [];
         const executableSha256 = createHash('sha256').update(readFileSync(executable)).digest('hex');
-        if (epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch) return null;
-        const binding: DevinCliExecutionBinding = Object.freeze({ selectedPath, executable, executableSha256, executableEpoch,
-          credentialsPath, credentialsEpoch, ...principal, model, contextTokens: row.contextTokens, observedAt, validUntil });
-        issued.add(binding); entries.set(key, binding); return binding;
-      })().catch(() => null).then(binding => {
-        if (!binding && admitted(opts)) failures.set(key, now());
-        return binding;
-      }).finally(() => { flights.delete(key); });
-      flights.set(key, flight);
+        if (!admitted(opts) || epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch) return [];
+        const bindings = eligible.map(row => {
+          const binding: DevinCliExecutionBinding = Object.freeze({ selectedPath, executable, executableSha256, executableEpoch,
+            credentialsPath, credentialsEpoch, ...principal, model: row.id, contextTokens: row.contextTokens!, observedAt, validUntil });
+          issued.add(binding);
+          entries.set(JSON.stringify([selectedPath, executable, executableEpoch, credentialsPath, credentialsEpoch, row.id]), binding);
+          return binding;
+        });
+        return bindings;
+      })().catch(() => [] as readonly DevinCliExecutionBinding[]).then(bindings => {
+        // A fresh denial or changed catalog must not leave older evidence
+        // selectable from this same native tuple, even inside its old TTL.
+        catalogs.delete(tupleKey);
+        const retained = new Set(bindings.map(binding => binding.model));
+        for (const [entryKey, binding] of entries) {
+          if (entryKey === JSON.stringify([...tuple, binding.model]) && !retained.has(binding.model)) entries.delete(entryKey);
+        }
+        if (bindings.length) catalogs.set(tupleKey, Object.freeze(bindings));
+        else if (admitted(opts)) failures.set(tupleKey, now());
+        return bindings;
+      }).finally(() => { flights.delete(tupleKey); });
+      flights.set(tupleKey, flight);
     }
-    const binding = await flights.get(key)!;
-    if (!binding || !admitted(opts) || !devinCliBindingCurrent(binding, model, now())) return null;
-    selected = binding; return binding;
-  } catch { return null; }
+    const observed = await flights.get(tupleKey)!;
+    const bindings = model === null ? observed : observed.filter(binding => binding.model === model);
+    if (!bindings.length && admitted(opts)) failures.set(key, now());
+    if (!bindings.length || !admitted(opts) || !bindings.every(binding => devinCliBindingCurrent(binding, binding.model, now()))) return [];
+    selected = bindings[0]!; return bindings;
+  } catch { return []; }
 }
 
-export function resetDevinCliAdmissionForTest(): void { entries.clear(); flights.clear(); failures.clear(); selected = null; }
+/** Renew one selected model through the same native account/catalog checks. */
+export async function refreshDevinCliExecutionBinding(model: string, opts: DevinCliAdmissionOptions = {}): Promise<DevinCliExecutionBinding | null> {
+  return (await refreshBindings(model, opts))[0] ?? null;
+}
+
+/** Discover native included models using ONE auth → catalog → auth tuple.
+ * Cloud/chat discovery and cached fallback catalogs never enter this path. */
+export async function refreshDevinCliExecutionBindings(opts: DevinCliAdmissionOptions = {}): Promise<readonly DevinCliExecutionBinding[]> {
+  return refreshBindings(null, opts);
+}
+
+export function resetDevinCliAdmissionForTest(): void { entries.clear(); catalogs.clear(); flights.clear(); failures.clear(); selected = null; }
