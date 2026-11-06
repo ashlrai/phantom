@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.19 |
-| Latest dated changelog release (2026-11-06) | 3.30.19 |
+| Source package | 3.30.20 |
+| Latest dated changelog release (2026-11-06) | 3.30.20 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.20](https://github.com/ashlrai/phantom/compare/v3.30.19...v3.30.20) (2026-11-06)
+## [Unreleased]
+
+## [3.30.20] — 2026-11-06
 
 
 ### Fixes
@@ -44,8 +46,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-PHX-RECONCILERECEIPTSLICE05STG1:** PR [#3663](https://github.com/ashlrai/phantom/issues/3663) reconciliation handoff ([#3713](https://github.com/ashlrai/phantom/issues/3713)) ([3462cdb](https://github.com/ashlrai/phantom/commit/3462cdbc9e0a9105f456be5d029d4c19ce7ffa16))
 * **RQ-PHX-STAGINGSTOPROOTS05STC2:** BRIDGE_NOTES: RQ-PHX-STAGINGSTOPROOTS05STC2 ([#3710](https://github.com/ashlrai/phantom/issues/3710)) ([a74f820](https://github.com/ashlrai/phantom/commit/a74f820b1bc2ccd8c730f9e91c521eebb76acf02))
 * RQ-RECUT-V330-CIFIX-10R3-ONBOARD-NOV6 ([#3794](https://github.com/ashlrai/phantom/issues/3794)) ([6db19f6](https://github.com/ashlrai/phantom/commit/6db19f63d96cd6f3599ee4329309c0900fe19d21))
-
-## [Unreleased]
 
 ## [3.30.19] — 2026-11-06
 
