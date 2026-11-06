@@ -1,0 +1,117 @@
+/**
+ * Detection and false-alarm corpus for scrubSecrets, written by a separate agent that did not read the scrubber
+ * (test/fixtures/scrub). True positives must stay redacted and idempotent; ordinary prose, credential variable
+ * names, code references, public digests and placeholders must pass through unchanged.
+ */
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { scrubSecrets } from '../src/core/util/scrub.js';
+
+interface Positive { id: string; family: string; parts: string[]; secretParts: number[] }
+interface Negative { id: string; family: string; text: string }
+const load = <T>(name: string): T[] => (JSON.parse(readFileSync(new URL(`./fixtures/scrub/${name}`, import.meta.url), 'utf8')) as { cases: T[] }).cases;
+const positives = load<Positive>('true-positives.json').filter(entry => entry.family !== 'home-path'); // home paths: scrubPrivateText, not scrubSecrets
+const negatives = load<Negative>('false-positives.json');
+const heldOut = load<Positive>('held-out-positives.json');
+
+// Known false alarms, kept visible so a later fix can remove them. Never add to this list; every credential must be caught.
+const KNOWN_FALSE_ALARMS = new Set(['fp-prose-token-003', 'fp-code-reference-011', 'fp-code-reference-025', 'fp-config-without-values-004',
+  'fp-config-without-values-010', 'fp-config-without-values-027']);
+
+// Credentials from the first held-out batch the scrubber still misses (178/183 caught): bare lowercase hex next to a
+// credential word, a lowercase-only app password, and one random value that reads like two capitalized words. That
+// batch was used to tune the prose and quoted-literal rules, so 178/183 is a tuning result; no untuned batch exists yet.
+const KNOWN_HELD_OUT_MISSES = ['misc-058', 'name-suffix-017', 'name-suffix-022', 'prose-disclosure-008', 'prose-disclosure-020'];
+
+describe('scrubSecrets corpus', () => {
+  it('redacts every credential, idempotently', () => {
+    expect(positives.length).toBeGreaterThan(180);
+    for (const entry of positives) {
+      const text = entry.parts.join(''); const once = scrubSecrets(text);
+      const leaked = entry.secretParts.some(index => once.includes(entry.parts[index]!));
+      expect(leaked, entry.id).toBe(false);
+      expect(scrubSecrets(once), entry.id).toBe(once);
+    }
+  });
+  it('redacts held-out credentials except the known misses, idempotently', () => {
+    expect(heldOut.length).toBeGreaterThan(180);
+    const missed = heldOut.filter(entry => {
+      const text = entry.parts.join(''); const once = scrubSecrets(text);
+      expect(scrubSecrets(once), entry.id).toBe(once);
+      return entry.secretParts.some(index => once.includes(entry.parts[index]!));
+    }).map(entry => entry.id).sort();
+    expect(missed).toEqual(KNOWN_HELD_OUT_MISSES);
+  });
+  it('leaves prose, credential variable names, code references, public digests and placeholders unchanged', () => {
+    expect(negatives.length).toBeGreaterThan(120);
+    const flagged = negatives.filter(entry => scrubSecrets(entry.text) !== entry.text).map(entry => entry.id).sort();
+    expect(flagged).toEqual([...KNOWN_FALSE_ALARMS].sort());
+  });
+});
+
+describe('scrubSecrets line and encoding edges', () => {
+  it('does not swallow the next line after an empty secret assignment', () => {
+    const text = 'DB_PASSWORD=\nREDIS_URL=redis://localhost:6379/0';
+    expect(scrubSecrets(text)).toBe(text);
+  });
+  it('redacts Basic credentials whose password is non-ASCII UTF-8', () => {
+    const encoded = Buffer.from(['deploy', ':', 'p\u00e4ss', 'w\u00f6rd', '-42'].join(''), 'utf8').toString('base64');
+    const once = scrubSecrets(`Authorization: Basic ${encoded}`);
+    expect(once).not.toContain(encoded);
+    expect(scrubSecrets(once)).toBe(once);
+  });
+});
+
+describe('scrubSecrets exemption boundaries', () => {
+  it.each([
+    ['lowercase bearer', 'Bearer ', ['opaque', 'credential'].join('')],
+    ['capitalized bearer', 'Authorization: Bearer ', ['Opaque', 'credential'].join('')],
+    ['dictionary word in header', 'Authorization: Bearer ', 'refresh'],
+    ['CLI token flag', 'npx tool --token ', ['opaque', 'credential'].join('')],
+    ['dictionary word in CLI flag', 'npx tool --token ', 'refresh'],
+    ['quoted dotted password', 'password=', JSON.stringify(['correct', 'horse', 'battery'].join('.'))],
+    ['quoted call-shaped password', 'DB_PASSWORD=', JSON.stringify(['getToken', '(private)'].join(''))],
+    ['quoted snake password', 'db_password=', JSON.stringify(['getToken', '(private)'].join(''))],
+    ['quoted camel password', 'dbPassword=', JSON.stringify(['correct', 'horse', 'battery'].join('.'))],
+    ['namespaced password', 'password=', ['alpha', 'bravo', 'charlie'].join(':')],
+    ['repeated numeric password', 'DB_PASSWORD=', '1'.repeat(12)],
+    ['repeated letter password', 'password=', 'q'.repeat(12)],
+    ['marker with suffix', 'password=', '[REDACTED]' + ['opaque', 'suffix'].join('')],
+    ['quoted marker with suffix', 'password=', JSON.stringify('[REDACTED]' + ['opaque', 'suffix'].join(''))],
+    ['oversized digest', 'sha256:', 'ab12'.repeat(32)],
+  ])('redacts %s instead of treating it as prose, code or a mask', (_label, prefix, value) => {
+    const once = scrubSecrets(prefix + value);
+    expect(once).not.toContain(value);
+    expect(scrubSecrets(once)).toBe(once);
+  });
+
+  it.each(['call(token=[REDACTED])', 'privateKey=[REDACTED].replace(/\\n/g, "\\n")'])('keeps a scrubbed code expression idempotent (%s)', text => {
+    expect(scrubSecrets(text)).toBe(text);
+  });
+
+  it.each([
+    '{"Authorization":"Bearer refresh"}',
+    "headers = {'Authorization': 'Bearer refresh'}",
+    "Authorization: 'Bearer refresh'",
+    '{"Proxy-Authorization":"Bearer refresh"}',
+    JSON.stringify({ raw: JSON.stringify({ Authorization: 'Bearer refresh' }) }),
+  ])('redacts dictionary-word credentials in quoted authorization headers (%s)', text => {
+    const once = scrubSecrets(text);
+    expect(once).not.toContain('refresh');
+    expect(scrubSecrets(once)).toBe(once);
+  });
+
+  it.each(['u:', ':p', ':', 'user:pass:with:colons', 'd\u00e9ploy:p\u00e4ss'])('redacts valid Basic credentials with empty fields or encoding edges (%s)', value => {
+    const encoded = Buffer.from(value, 'utf8').toString('base64');
+    const once = scrubSecrets(`Authorization: Basic ${encoded}`);
+    expect(once).not.toContain(encoded);
+    expect(scrubSecrets(once)).toBe(once);
+  });
+
+  it.each(['\n', '\r\n'])('keeps empty assignments separate from the following line (%j)', newline => {
+    for (const name of ['password', 'DB_PASSWORD', 'db_password', 'dbPassword']) {
+      const text = `${name} =${newline}REDIS_URL=redis://localhost:6379/0`;
+      expect(scrubSecrets(text)).toBe(text);
+    }
+  });
+});

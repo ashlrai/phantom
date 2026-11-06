@@ -14,10 +14,11 @@ import { createPortal } from 'react-dom';
 import { useTheme } from '../../../data/hooks.js';
 import type { ThemePreference } from '../../../data/theme-store.js';
 import { useVerseUi } from '../useVerseUi.js';
-import { AppsIcon, AutomationsIcon, PlaybooksIcon, SettingsIcon, UsageIcon, WikiIcon } from '../verse-icons.js';
+import { AppsIcon, AutomationsIcon, OpsIcon, PlaybooksIcon, SettingsIcon, UsageIcon, WikiIcon } from '../verse-icons.js';
 import { IconKeyboard } from '../../../components/primitives/icons.js';
 import { openVerseOverlay, setVerseSection, toggleVerseRail } from '../verse-ui-store.js';
 import { detectKeyPlatform, findCommand, formatChord } from './command-catalog.js';
+import { useSelfUpdateBadge } from './self-update-badge.js';
 import styles from './GearTray.module.css';
 
 export interface GearTrayProps {
@@ -49,22 +50,26 @@ const THEMES: ReadonlyArray<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: 'Match system' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
+  { value: 'high-contrast', label: 'High contrast' },
 ];
 
 export function GearTray({ open, anchorRef, onClose, compact }: GearTrayProps) {
   const ui = useVerseUi();
   const theme = useTheme();
+  const update = useSelfUpdateBadge();
   const menuRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [position, setPosition] = useState<{ left: number; bottom: number } | null>(null);
 
   const entries: Entry[] = [
+    ...(update ? [{ key: 'update', role: 'menuitem' as const, label: update.label, icon: <SettingsIcon />, run: () => setVerseSection('settings') }] : []),
     { key: 'settings', role: 'menuitem', label: 'Settings', icon: <SettingsIcon />, shortcut: shortcutOf('section.settings'), run: () => setVerseSection('settings') },
     { key: 'apps', role: 'menuitem', label: 'Apps & Accounts', icon: <AppsIcon />, run: () => setVerseSection('apps') },
     { key: 'usage', role: 'menuitem', label: 'Usage', icon: <UsageIcon />, run: () => setVerseSection('usage') },
     { key: 'wiki', role: 'menuitem', label: 'Repo wiki', icon: <WikiIcon />, run: () => setVerseSection('wiki') },
     { key: 'playbooks', role: 'menuitem', label: 'Playbooks', icon: <PlaybooksIcon />, run: () => setVerseSection('playbooks') },
     { key: 'automations', role: 'menuitem', label: 'Automations', icon: <AutomationsIcon />, run: () => setVerseSection('automations') },
+    { key: 'ops', role: 'menuitem', label: 'Ops', icon: <OpsIcon />, run: () => setVerseSection('ops') },
     { key: 'shortcuts', role: 'menuitem', label: 'Keyboard shortcuts', icon: <IconKeyboard />, shortcut: shortcutOf('shortcuts.open'), run: () => openVerseOverlay('shortcuts') },
     ...(compact
       ? []

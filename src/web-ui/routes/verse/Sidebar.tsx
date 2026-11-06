@@ -66,9 +66,13 @@ import { PlusIcon, SearchIcon, SidebarIcon } from './verse-icons.js';
 import { seatSubscription, type SeatSubscriptionView } from './seat-subscription.js';
 import { formatRelative, seatPillLabel } from './verse-model.js';
 import { SavedProjects } from './workspaces/SavedProjects.js';
+import { SidebarResources } from './SidebarResources.js';
 import { findCommand, formatChord } from './shell/command-catalog.js';
 import { pulse } from '../../components/motion/pulse.js';
 import styles from './Sidebar.module.css';
+import { agentWorkspaceEnabled } from './agents/agent-workspace-flag.js';
+
+const AgentChatRoster = lazy(() => import('./agents/AgentChatRoster.js').then(m => ({ default: m.AgentChatRoster })));
 
 export interface SidebarProps {
   sessions: readonly VerseSession[];
@@ -190,6 +194,9 @@ export function Sidebar(props: SidebarProps) {
 
       <div ref={scrollRef} className={styles.scroll} onKeyDown={onRowsKeyDown}>
         <SavedProjects />
+        {agentWorkspaceEnabled() ? <Suspense fallback={null}>
+          <AgentChatRoster selectedId={selectedId} onSelect={onSelect} query={query} />
+        </Suspense> : null}
         {loading ? (
           <div className={styles.skeleton} aria-busy="true">
             <SkeletonLine width="48%" /><SkeletonLine width="86%" /><SkeletonLine width="74%" />
@@ -221,6 +228,7 @@ export function Sidebar(props: SidebarProps) {
             <SessionSearch query={query} onOpenSession={onSelect} selectedId={selectedId} />
           </Suspense>
         ) : null}
+        <SidebarResources />
       </div>
 
       <footer className={styles.footer}>

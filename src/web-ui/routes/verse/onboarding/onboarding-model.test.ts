@@ -60,8 +60,8 @@ describe('onboarding steps', () => {
     expect(clampStep(Number.NaN)).toBe(0);
   });
 
-  it('covers the six things a first-time operator is blocked on', () => {
-    expect(ONBOARDING_STEPS.map((s) => s.id)).toEqual(['welcome', 'accounts', 'local', 'autonomy', 'stops', 'finish']);
+  it('covers the seven things a first-time operator is blocked on', () => {
+    expect(ONBOARDING_STEPS.map((s) => s.id)).toEqual(['welcome', 'accounts', 'local', 'autonomy', 'fleet', 'stops', 'finish']);
   });
 });
 

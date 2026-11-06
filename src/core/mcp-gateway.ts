@@ -8,19 +8,22 @@
  *      startup failures, timeouts, and crashes surface in the returned health
  *      object (ok:false + error). Used by `ashlr mcp doctor` and gateway startup.
  *
- *   2. startGateway(registry): run a stdio MCP server (this process) that starts
- *      every discovered downstream as a child, namespaces their tools as
+ *   2. startGateway(registry): run a stdio MCP server (this process) that lazily starts
+ *      downstreams with cached inventories on their first tool call, namespaces their tools as
  *      `<server>__<tool>`, and proxies tools/list + tools/call to the correct
  *      downstream. ROBUST: per-downstream startup timeout; a downstream that
  *      fails to start is skipped with a stderr warning and never crashes the
  *      gateway. Point ANY agent at `ashlr mcp` to get every discovered tool.
  *
- * This module is the ONLY place (besides mcp-registry) allowed to depend on
+ * This module and its inventory cache (besides mcp-registry) depend on
  * @modelcontextprotocol/sdk.
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport, getDefaultEnvironment, type StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
+import type { ChildProcess } from 'node:child_process';
+import { Writable } from 'node:stream';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -35,14 +38,117 @@ import {
 
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
 import { loadConfig } from './config.js';
+import { loadGatewayPolicy, checkGatewayPolicy } from './mcp-gateway-policy.js';
+import {
+  endGatewaySession, isGatewaySessionAllowed, recordGatewayActivity, registerGatewaySession, rotateGatewayActivity,
+  type GatewayVerdict,
+} from './gateway-sessions.js';
+import { toolCachePath, readToolCache, writeToolCache } from './mcp-tool-cache.js';
 import { withToolEnv } from './env-bridge.js';
 import { withHeal, defaultHealPolicy } from './run/self-heal.js';
 import { listNativeTools, isNativeTool, callNativeTool } from './mcp-native.js';
 import { listFirmResources, listFirmResourceTemplates, readFirmResource } from './mcp-firm-resources.js';
 import { hasSecretLikeArgv, redactedCommand } from './mcp-argv-safety.js';
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { scrubSecrets } from './util/scrub.js';
 import { getLocusJobEnv, hasInheritedLocusSession, hasLocusJobEnv, withLocusJobChildEnv } from './integrations/locus-job-env.js';
+import { spawnSessionChild } from './verse/process-registry.js';
+
+/** JSON-RPC message type — aliased from serializeMessage to avoid duplicate imports across SDK paths. */
+type McpJsonRpcMessage = Parameters<typeof serializeMessage>[0];
+
+/** SDK-compatible stdio with session-owned process groups and parent-death cleanup. */
+export class SessionStdioClientTransport extends StdioClientTransport {
+  private sessionProcess: ChildProcess | null = null;
+  private readonly sessionBuffer: ReadBuffer;
+  private closing: Promise<void> | null = null;
+  private started = false;
+  private closed = false;
+
+  constructor(private readonly sessionParams: StdioServerParameters, private readonly owningSessionId = 'mcp') {
+    super(sessionParams);
+    this.sessionBuffer = new ReadBuffer({ maxBufferSize: sessionParams.maxBufferSize });
+  }
+
+  override get pid(): number | null { return this.sessionProcess?.pid ?? null; }
+
+  override async start(): Promise<void> {
+    if (this.started || this.closed) throw new Error('SessionStdioClientTransport already started or closed');
+    this.started = true;
+    const child = spawnSessionChild(this.sessionParams.command, this.sessionParams.args ?? [], {
+      env: { ...getDefaultEnvironment(), ...this.sessionParams.env },
+      cwd: this.sessionParams.cwd,
+      stdio: ['pipe', 'pipe', this.sessionParams.stderr ?? 'inherit'],
+      shell: false,
+      windowsHide: process.platform === 'win32',
+    }, this.owningSessionId);
+    this.sessionProcess = child;
+    const stderr = super.stderr;
+    if (stderr instanceof Writable && child.stderr) child.stderr.pipe(stderr);
+    child.once('close', () => {
+      this.sessionProcess = null;
+      this.sessionBuffer.clear();
+      this.onclose?.();
+    });
+    child.stdin?.on('error', (error: Error) => this.onerror?.(error));
+    child.stdout?.on('error', (error: Error) => this.onerror?.(error));
+    child.stdout?.on('data', (chunk: Buffer) => {
+      try {
+        this.sessionBuffer.append(chunk);
+        for (;;) {
+          const message = this.sessionBuffer.readMessage();
+          if (message === null) break;
+          this.onmessage?.(message);
+        }
+      } catch (error) {
+        this.onerror?.(error instanceof Error ? error : new Error(String(error)));
+        void this.close();
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.on('error', (error: Error) => { reject(error); this.onerror?.(error); });
+    });
+  }
+
+  override async send(message: McpJsonRpcMessage): Promise<void> {
+    const stdin = this.sessionProcess?.stdin;
+    if (!stdin || this.closing) throw new Error('Not connected');
+    await new Promise<void>((resolve, reject) => {
+      stdin.write(serializeMessage(message), (error) => error ? reject(error) : resolve());
+    });
+  }
+
+  override close(): Promise<void> {
+    this.closed = true;
+    this.closing ??= this.closeSession();
+    return this.closing;
+  }
+
+  private async closeSession(): Promise<void> {
+    const child = this.sessionProcess;
+    if (!child) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = new Promise<void>((resolve) => child.once('close', resolve));
+    child.stdin?.end();
+    // Only Phantom holds the other end of this descriptor. Closing it asks the
+    // watchdog to reap the entire owned group, including stubborn descendants.
+    child.stdio[3]?.destroy();
+    try {
+      await Promise.race([closed, new Promise<void>((resolve) => { timer = setTimeout(resolve, 1_000); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
+    this.sessionBuffer.clear();
+  }
+}
 
 /**
  * Phantom's package version for MCP serverInfo/clientInfo, so clients and
@@ -280,18 +386,28 @@ function safeChildBase(): NodeJS.ProcessEnv {
 /**
  * True when a spec resolves to THIS aggregation gateway — i.e. running it as a
  * downstream would recurse (`ashlr mcp install` writes exactly such an entry:
- * name "ashlr", command <bin>/ashlr, args ['mcp']). We detect it structurally
- * (no path resolution needed): the canonical installed entry is `args`
- * containing 'mcp' AND the command basename being `ashlr`, OR the conventional
- * name 'ashlr' paired with an 'mcp' arg. Skipping these prevents an unbounded
- * fan-out of nested gateways.
+ * name "ashlr", command <bin>/ashlr, args ['mcp']). Recognize installed aliases
+ * and Node wrappers without resolving user-controlled executable paths. The
+ * legacy `phantom` name and executable belong to Phantom Secrets, so neither
+ * alone identifies this gateway. Inherited markers cover opaque wrappers.
  */
 export function isSelfGateway(spec: McpServerSpec): boolean {
-  const hasMcpArg = spec.args.includes('mcp');
-  if (!hasMcpArg) return false;
-  // basename of the command (handles absolute paths like /…/bin/ashlr)
-  const base = spec.command.split('/').pop() ?? spec.command;
-  return base === 'ashlr' || spec.name === 'ashlr';
+  const mcpIndex = spec.args.indexOf('mcp');
+  if (mcpIndex < 0) return false;
+  const executableName = (value: string): string =>
+    (value.split(/[\\/]/).pop() ?? value).replace(/\.(?:cmd|exe)$/i, '').toLowerCase();
+  const gatewayNames = new Set(['ashlr', 'phm']);
+  if (gatewayNames.has(spec.name.toLowerCase())) return true;
+  const command = executableName(spec.command);
+  if (command === 'ashlr' || command === 'phm') return true;
+  // `node /path/bin/phm mcp` must be excluded just like `phm mcp`.
+  return (command === 'node' || command === 'bun' || command === 'tsx')
+    && spec.args.slice(0, mcpIndex).some((arg) => {
+      const name = executableName(arg);
+      return name === 'ashlr' || name === 'phm'
+        || resolve(arg) === fileURLToPath(new URL('../../dist/cli/index.js', import.meta.url))
+        || resolve(arg) === fileURLToPath(new URL('../../src/cli/index.ts', import.meta.url));
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -343,21 +459,23 @@ function safeErrorMessage(err: unknown): string {
  * Throws on failure (caller wraps).
  */
 async function connectDownstream(spec: McpServerSpec, timeoutMs: number, cfg?: ReturnType<typeof loadConfig>, capturedEnv?: Record<string, string>): Promise<Client> {
+  // Probes do not pass through startGateway's registry filter.
+  if (isSelfGateway(spec)) throw new Error('MCP gateway self-spawn refused: would recurse');
   if (hasSecretLikeArgv(spec.args)) {
     throw new Error(
       `unsafe MCP argv refused for "${spec.name}": ${redactedCommand(spec.command, spec.args)} ` +
       '(move credentials to env, Phantom, or a wrapper/config file)',
     );
   }
-  const transport = new StdioClientTransport({
+  const transport = new SessionStdioClientTransport({
     command: spec.command,
     args: spec.args,
     // Persistent recovery reuses the exact captured startup environment. One-off
     // job probes validate the final configured override against their snapshot.
-    env: capturedEnv ? { ...capturedEnv } : downstreamEnv(spec, cfg),
+    env: { ...(capturedEnv ?? downstreamEnv(spec, cfg)), [GATEWAY_ENV_MARKER]: '1' },
     // Surface child stderr to our stderr for debugging; never pollutes stdio JSON-RPC.
     stderr: 'inherit',
-  });
+  }, `mcp:${spec.name}`);
 
   const client = new Client(
     { name: 'ashlr-gateway', version: gatewayVersion() },
@@ -489,6 +607,8 @@ interface DownstreamTool {
 /** Keep failed configured servers too; discovery may recover them later. */
 interface Downstream {
   spec: McpServerSpec;
+  cachePath?: string;
+  lazy: boolean;
   env: Record<string, string>;
   client: Client | null;
   tools: DownstreamTool[];
@@ -501,7 +621,9 @@ interface Downstream {
 }
 
 /**
- * Persistent stdio aggregation. Read-only tools/list may reconnect a failed
+ * Persistent stdio aggregation. Fresh cached inventories start without a child;
+ * their first tool call shares one connection/discovery attempt. Cold inventories
+ * use eager discovery. Read-only tools/list may reconnect a failed
  * configured server once after bounded backoff; effectful calls are never
  * retried. Recovery preserves the captured command, args and child environment.
  * Inventories are replaced only after bounded, complete pagination. Failed
@@ -514,7 +636,22 @@ export async function startGateway(
   registry: McpRegistry,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<void> {
+  const startupParent = process.ppid;
+  // This also catches aliases and opaque executable wrappers that structural
+  // registry filtering cannot recognize. Check before any downstream starts.
+  if (process.env[GATEWAY_ENV_MARKER] !== undefined) {
+    throw new Error('Nested MCP gateway refused: inherited gateway marker would recurse');
+  }
   refuseSharedJobGateway();
+  const policy = loadGatewayPolicy();
+  const identity = { agent: process.env.ASHLR_MCP_AGENT, groups: (process.env.ASHLR_MCP_GROUPS ?? '').split(',').filter(Boolean) };
+  // Registration is best effort; once it succeeds, revoking the id blocks the next call.
+  let session: { id: string } | undefined;
+  try { rotateGatewayActivity(); session = registerGatewaySession(identity); } catch { /* read-only home: run without a revoke switch */ }
+  const caller = identity.agent ?? 'unknown';
+  const audit = (tool: string, verdict: GatewayVerdict, args: unknown): void => {
+    if (session) recordGatewayActivity({ session: session.id, caller, tool, verdict, args });
+  };
   let gatewayCfg: ReturnType<typeof loadConfig> | undefined;
   try { gatewayCfg = loadConfig(); } catch { /* non-fatal; retain narrow child env */ }
 
@@ -527,9 +664,12 @@ export async function startGateway(
     Object.freeze(spec.args);
     if (spec.env) Object.freeze(spec.env);
     Object.freeze(spec);
-    return { spec, env: downstreamEnv(spec, gatewayCfg), client: null, tools: [], hasInventory: false, generation: 0, failures: 0, retryAfter: 0 };
+    const env = downstreamEnv(spec, gatewayCfg);
+    const cachePath = toolCachePath(spec, env);
+    const tools = readToolCache(cachePath);
+    return { spec, env, cachePath, lazy: tools !== undefined, client: null, tools: tools ?? [], hasInventory: tools !== undefined, generation: 0, failures: 0, retryAfter: 0 };
   });
-  interface Route { downstream: Downstream; client: Client; original: string }
+  interface Route { downstream: Downstream; client: Client | null; original: string }
   const routes = new Map<string, Route>();
   const rejectedRoutes = new Set<string>();
   let closed = false;
@@ -548,7 +688,7 @@ export async function startGateway(
       else owners.set(key, d);
     }
     for (const d of downstreams) {
-      if (!d.client || d.discoveryError !== undefined || !d.hasInventory) continue;
+      if ((!d.client && !d.lazy) || (!d.lazy && d.discoveryError !== undefined) || !d.hasInventory) continue;
       for (const tool of d.tools) {
         const key = `${d.spec.name}${NS}${tool.name}`;
         if (rejectedRoutes.has(key)) continue;
@@ -573,7 +713,7 @@ export async function startGateway(
   const refresh = (d: Downstream, startup = false): Promise<void> => {
     if (closed) return Promise.resolve();
     if (d.inFlight) return d.inFlight;
-    if (!d.client && Date.now() < d.retryAfter) return Promise.resolve();
+    if (!d.lazy && !d.client && Date.now() < d.retryAfter) return Promise.resolve();
     const generation = d.generation;
     const operation = (async (): Promise<void> => {
       let client = d.client;
@@ -592,6 +732,8 @@ export async function startGateway(
         }
         const tools = await discoverTools(client, d.spec.name, timeoutMs);
         if (closed || generation !== d.generation || d.client !== client) return;
+        writeToolCache(d.cachePath, tools);
+        d.lazy = false;
         d.tools = tools;
         d.hasInventory = true;
         d.discoveryError = undefined;
@@ -611,7 +753,8 @@ export async function startGateway(
     return operation;
   };
 
-  await Promise.all(downstreams.map((d) => refresh(d, true)));
+  await Promise.all(downstreams.filter((d) => !d.lazy).map((d) => refresh(d, true)));
+  rebuildRoutes();
   const server = new Server({ name: 'ashlr', version: gatewayVersion() }, { capabilities: { tools: {}, resources: {} } });
   const assertUsable = (): void => {
     refuseSharedJobGateway();
@@ -625,11 +768,11 @@ export async function startGateway(
     assertUsable();
     const tools: { name: string; description?: string; inputSchema: unknown }[] = listNativeTools()
       .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }));
-    await Promise.all(downstreams.map((d) => refresh(d)));
+    await Promise.all(downstreams.filter((d) => !d.lazy).map((d) => refresh(d)));
     assertUsable();
     // Completion order never changes route precedence or response order.
     for (const d of downstreams) {
-      if (!d.client || d.discoveryError !== undefined || !d.hasInventory) continue;
+      if ((!d.client && !d.lazy) || (!d.lazy && d.discoveryError !== undefined) || !d.hasInventory) continue;
       for (const tool of d.tools) {
         const key = `${d.spec.name}${NS}${tool.name}`;
         if (rejectedRoutes.has(key)) {
@@ -660,9 +803,35 @@ export async function startGateway(
   server.setRequestHandler(CallToolRequestSchema, unknownToolAsInvalidParams(async (request) => {
     assertUsable();
     const requested = request.params.name;
-    if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
-    const route = routes.get(requested);
-    if (!route || route.downstream.client !== route.client) {
+    if (session && !isGatewaySessionAllowed(session.id)) {
+      audit(requested, 'revoked', request.params.arguments);
+      return { isError: true, content: [{ type: 'text', text: `Session ${session.id} was revoked. Start a new gateway session.` }] };
+    }
+    if (isNativeTool(requested)) {
+      audit(requested, 'allow', request.params.arguments);
+      return callNativeTool(requested, request.params.arguments ?? {});
+    }
+    const blocked = checkGatewayPolicy(policy, identity, requested);
+    if (blocked) {
+      audit(requested, blocked.endsWith('approval_required') ? 'approval_required' : 'deny', request.params.arguments);
+      return { isError: true, content: [{ type: 'text', text: blocked }] };
+    }
+    audit(requested, 'allow', request.params.arguments);
+    let route = routes.get(requested);
+    if (route?.downstream.lazy) {
+      const d = route.downstream;
+      await refresh(d);
+      if (!d.client || d.discoveryError !== undefined) {
+        const error = d.discoveryError ?? 'Downstream unavailable';
+        // A failed lazy connection keeps its cached routes and can retry immediately.
+        d.discoveryError = undefined;
+        d.retryAfter = 0;
+        rebuildRoutes();
+        return { isError: true, content: [{ type: 'text', text: error }] };
+      }
+      route = routes.get(requested);
+    }
+    if (!route || !route.client || route.downstream.client !== route.client) {
       const live = [...routes].filter(([, r]) => r.downstream.client === r.client).map(([name, r]) => ({ name, original: r.original }));
       throw new Error(unknownToolMessage(requested, live));
     }
@@ -677,12 +846,20 @@ export async function startGateway(
   let closing: Promise<void> | undefined;
   const onSigint = (): void => onSignal('SIGINT');
   const onSigterm = (): void => onSignal('SIGTERM');
+  const onSighup = (): void => onSignal('SIGHUP');
+  let finish!: () => void;
+  const onDisconnect = (): void => finish();
+  let parentWatch: ReturnType<typeof setInterval> | undefined;
   let onSignal: (signal: NodeJS.Signals) => void;
   const closeAll = (): Promise<void> => {
     if (closing) return closing;
     closed = true;
     process.removeListener('SIGINT', onSigint);
     process.removeListener('SIGTERM', onSigterm);
+    process.removeListener('SIGHUP', onSighup);
+    process.stdin.removeListener('end', onDisconnect);
+    process.stdin.removeListener('close', onDisconnect);
+    clearInterval(parentWatch);
     const clients = downstreams.flatMap((d) => {
       d.generation++;
       const client = d.client;
@@ -703,7 +880,13 @@ export async function startGateway(
     return closing;
   };
   const finished = new Promise<void>((resolve) => {
-    const finish = (): void => { void closeAll().then(resolve, resolve); };
+    finish = (): void => {
+      if (closing) return;
+      // Bound teardown even if an in-flight connection or SDK close hangs.
+      const deadline = setTimeout(() => process.exit(0), 3_000);
+      deadline.unref();
+      void closeAll().finally(() => clearTimeout(deadline)).then(resolve, resolve);
+    };
     server.onclose = finish;
     onSignal = (signal): void => {
       process.stderr.write(`[ashlr mcp] received ${signal} — shutting down\n`);
@@ -711,12 +894,21 @@ export async function startGateway(
     };
     process.once('SIGINT', onSigint);
     process.once('SIGTERM', onSigterm);
+    process.once('SIGHUP', onSighup);
+    process.stdin.once('end', onDisconnect);
+    process.stdin.once('close', onDisconnect);
+    parentWatch = setInterval(() => {
+      if (process.ppid !== startupParent) finish();
+    }, 5_000);
+    parentWatch.unref();
   });
   try {
     await server.connect(new StdioServerTransport());
     if (!closed) process.stderr.write(`[ashlr mcp] gateway ready — ${listNativeTools().length} native ashlr tool(s) + ${routes.size} downstream tool(s) from ${downstreams.filter((d) => d.client).length}/${downstreams.length} server(s)\n`);
+    if (process.stdin.readableEnded || process.stdin.destroyed) finish();
     await finished;
   } finally {
     await closeAll();
+    if (session) endGatewaySession(session.id);
   }
 }

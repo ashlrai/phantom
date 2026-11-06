@@ -8,12 +8,16 @@ import type { AshlrConfig, ChatMessage, RunTask } from '../src/core/types.js';
 import type { FreshClaudeApiGrantProof } from '../src/core/resources/claude-api-grant-types.js';
 import { createClaudeApiGrantAdmission, CLAUDE_API_GRANT_LEDGER_FILE } from '../src/core/resources/claude-api-grant.js';
 import { buildAnthropicMessagesClient, type ClaudeApiExecutionBinding } from '../src/core/run/provider-client.js';
+import { runApiModelSandboxed } from '../src/core/run/sandboxed-engine.js';
 import { runTask } from '../src/core/run/agent-loop.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../src/core/run/engine-registry.js';
 
 const key = 'disposable-loopback-api-key';
 const secret = vi.hoisted(() => ({ read: vi.fn() }));
-vi.mock('../src/core/integrations/secrets.js', () => ({ resolveProviderKey: secret.read }));
+vi.mock('../src/core/integrations/secrets.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/core/integrations/secrets.js')>()),
+  resolveProviderKey: secret.read,
+}));
 const model = 'claude-sonnet-4-6';
 const endpoint = 'https://api.anthropic.com/v1/messages';
 const messages: ChatMessage[] = [{ role: 'system', content: 'test system' }, { role: 'user', content: 'test goal' }];
@@ -204,7 +208,6 @@ describe('guarded first-party Claude Messages', () => {
     expect(() => buildAnthropicMessagesClient({ ...cfg(), foundry: { allowedBackends: ['claude-api'], localOnly: true } }, model, binding)).toThrow(); expect(secret.read).not.toHaveBeenCalled();
   });
   it('holds an absent runtime binding before sandbox or any credential/contact', async () => {
-    const { runApiModelSandboxed } = await import('../src/core/run/sandboxed-engine.js');
     const fetch = vi.spyOn(globalThis, 'fetch');
     const result = await runApiModelSandboxed('claude-api', 'inert goal', cfg(), { sourceRepo: root, budget: { allowCloud: true }, deferTerminalAction: true });
     expect(result.proposalOutcome?.reason).toContain('source-owned grant binding'); expect(result.state.status).toBe('failed');

@@ -50,9 +50,10 @@ export type WorkbenchSurfaceId = (typeof WORKBENCH_SURFACES)[number];
  * than as a sixth rail slot: it is a reference you open, not a surface you watch.
  * Playbooks (3.15) join it for the same reason: a library you open and edit.
  * Automations (3.15) sit here too: standing instructions you set up and check
- * on, not a live surface.
+ * on, not a live surface. Ops is the desktop command center: the board, the
+ * router's choices, releases and the leaders' channel, watched not worked.
  */
-export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations'] as const;
+export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops', 'live'] as const;
 export type WorkbenchTraySectionId = (typeof WORKBENCH_TRAY_SECTIONS)[number];
 
 export type WorkbenchSectionId = WorkbenchSurfaceId | WorkbenchTraySectionId;
@@ -185,10 +186,6 @@ export const NEEDS_YOU_KIND_CATEGORY: Readonly<Record<NeedsYouKind, NeedsYouCate
   repin: 'accounts',
 };
 
-export function needsYouCategory(item: Pick<NeedsYouItem, 'kind'>): NeedsYouCategory {
-  return NEEDS_YOU_KIND_CATEGORY[item.kind];
-}
-
 /** Same vocabulary as ReasoningInsight severity. */
 export type NeedsYouSeverity = 'info' | 'warn' | 'high';
 
@@ -275,15 +272,6 @@ export interface NeedsYouItem {
   target: NeedsYouTarget;
   actions: NeedsYouAction[];
 }
-
-/**
- * R1: `export function needsYouItems(): NeedsYouItem[]`. PURE and served from
- * the producer's own cache: activity calls it on every poll (Rust every 5 s),
- * so it must return in well under a millisecond and never do I/O on the
- * caller's stack. A producer that cannot answer throws — activity then reports
- * `sources.<source>: 'error'` rather than an all-clear it cannot vouch for.
- */
-export type NeedsYouItemsProvider = () => NeedsYouItem[];
 
 /**
  * Where C1's activity route lazy-imports each Track B producer from: the
@@ -741,16 +729,6 @@ export interface VerseQueueRequest {
   text: string;
   sendNow?: boolean;
 }
-/**
- * POST /api/verse/queue/:sessionId (and POST …/:sessionId/:qid/send) answer
- * with the queue PLUS the turn they started, if any — null when the text was
- * only queued behind a running turn.
- */
-export interface VerseQueueSendResponse extends VerseQueueResponse {
-  sentTurnId: string | null;
-}
-/** Additional queue route (C3): send one queued item now. */
-export const VERSE_QUEUE_SEND_SUFFIX = '/send';
 /** Enter during a running turn queues server-side, at most this many. */
 export const VERSE_QUEUE_MAX = 3;
 
@@ -771,14 +749,6 @@ export interface VerseFilesResponse {
    * older server omits it and every match is shown with its root.
    */
   primaryRoot?: string | null;
-}
-/*
- * Attachment routes beyond the upload (C3 additions; same family):
- *   GET  /api/verse/attachments/:sessionId            → { attachments: VerseAttachment[] }
- *   POST /api/verse/attachments/:sessionId/:aid/delete → { ok: true }
- */
-export interface VerseAttachmentListResponse {
-  attachments: VerseAttachment[];
 }
 
 // ===========================================================================
@@ -995,10 +965,6 @@ export interface VerseTerminalCreateRequest {
  * Terminal.app", and the pane's fallback where no Bun PTY exists).
  */
 export const VERSE_TERMINAL_OPEN_EXTERNAL_PATH = '/api/verse/terminal/open-external';
-export interface VerseTerminalOpenExternalRequest {
-  sessionId: string;
-  root?: string;
-}
 
 /** POST /api/verse/terminal/:id/input */
 export interface VerseTerminalInputRequest {
@@ -1281,12 +1247,6 @@ export const VERSE_PREVIEW_TICKET_PATH = '/api/verse/preview/ticket';
 export const VERSE_PREVIEW_FRAME_PATH = '/api/verse/preview/frame';
 /** The frame path's exact shape — the one server.ts lets past the read boundary. */
 export const VERSE_PREVIEW_FRAME_PATH_RE = /^\/api\/verse\/preview\/frame\/([A-Za-z0-9_-]{43})$/;
-export interface VersePreviewTicketResponse {
-  /** The frame URL carrying the ticket (`/api/verse/preview/frame/<ticket>`). */
-  url: string;
-  expiresAt: string;
-  kind: VersePreviewArtifactKind;
-}
 
 /**
  * Loopback http only — the one rule the Preview URL bar, the iframe and the
@@ -1318,8 +1278,6 @@ export const VERSE_GIT_PATCH_MAX_BYTES = 256 * 1024;
 export const VERSE_GIT_STATUS_CACHE_MS = 5_000;
 /** Every git/gh subprocess: async execFile, this timeout. */
 export const VERSE_GIT_TIMEOUT_MS = 60_000;
-/** "Isolate in worktree": ~/.ashlr-worktrees/<repo>/<name> on branch verse/<name>. */
-export const VERSE_WORKTREE_DIR = '~/.ashlr-worktrees';
 export const VERSE_WORKTREE_BRANCH_PREFIX = 'verse/';
 
 /** The branch bar's primary button (SPEC-310C §2). `merge` only with green checks and a mergeable branch. */
@@ -1563,24 +1521,6 @@ export interface VerseAppToggleRequest {
   confirm: true;
 }
 
-/**
- * POST /api/verse/apps/:id/launch (C6 addition) — opens the agent in a
- * visible Terminal.app window at `root` (a chat folder or discovered
- * project). The command is resolved server-side from the catalog and the
- * installed binaries; `model` is an installed Ollama tag and implies Ollama.
- */
-export interface VerseAppLaunchRequest {
-  root: string;
-  via?: VerseTerminalLaunchVia;
-  model?: string;
-}
-export interface VerseAppLaunchResponse {
-  ok: true;
-  opened: 'terminal-app';
-  /** The command as the operator would type it (bare argv[0]). */
-  command: string[];
-}
-
 // ===========================================================================
 // §9 Route families C0 mounts (verse-api.ts WORKBENCH mount table)
 // ===========================================================================
@@ -1597,6 +1537,7 @@ export interface VerseAppLaunchResponse {
  * V2.2 control route: Track B's live fleet is `/api/verse/fleet/live` ONLY.
  */
 export const WORKBENCH_ROUTE_FAMILIES = [
+  { id: 'agent-bus', owner: 'agent-bus', module: 'src/core/verse/agent-bus-api.ts', handler: 'handleAgentBusApi', prefixes: ['/api/verse/agent-bus'] },
   {
     id: 'outcomes',
     owner: 'outcome-editor',
@@ -1655,6 +1596,11 @@ export const WORKBENCH_ROUTE_FAMILIES = [
     handler: 'handleFleetLiveApi',
     prefixes: ['/api/verse/fleet/live'],
   },
+  { id: 'fleet-runs', owner: 'desktop-command', module: 'src/core/verse/fleet-runs-api.ts', handler: 'handleFleetRunsApi', prefixes: ['/api/verse/fleet/runs'] },
+  { id: 'fleet-cos', owner: 'desktop-command', module: 'src/core/verse/fleet-cos-api.ts', handler: 'handleFleetCosApi', prefixes: ['/api/verse/fleet/cos'] },
+  { id: 'cos-memory', owner: 'desktop-command', module: 'src/core/verse/cos-memory-api.ts', handler: 'handleCosMemoryApi', prefixes: ['/api/verse/cos/memory'] },
+  { id: 'team', owner: 'desktop-command', module: 'src/core/verse/team-api.ts', handler: 'handleTeamApi', prefixes: ['/api/verse/team'] },
+  { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },
   {
     // 3.15: the Fleet tab's control surface (Start / Pause / Resume / Stop,
     // per-run stop and interject, task and goal edits). Its own prefix, so it
@@ -1764,6 +1710,13 @@ export const WORKBENCH_ROUTE_FAMILIES = [
     module: 'src/core/verse/proactive-agents-api.ts',
     handler: 'handleProactiveAgentsApi',
     prefixes: ['/api/verse/proactive-agents'],
+  },
+  {
+    id: 'ops',
+    owner: 'desktop-command',
+    module: 'src/core/verse/ops-api.ts',
+    handler: 'handleOpsApi',
+    prefixes: ['/api/verse/ops'],
   },
 ] as const satisfies readonly {
   id: string;

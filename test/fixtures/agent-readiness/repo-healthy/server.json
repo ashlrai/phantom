@@ -1,0 +1,8 @@
+{
+  "name": "com.example/acme-widget",
+  "description": "MCP server exposing Acme Widget tools.",
+  "version": "1.2.0",
+  "remotes": [
+    { "type": "streamable-http", "url": "https://mcp.widget.example.com/" }
+  ]
+}

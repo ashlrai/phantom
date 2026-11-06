@@ -17,6 +17,7 @@
  *   ashlr local-runtime uninstall
  *   ashlr local-runtime logs    [--lines N]
  *   ashlr local-runtime resolve-model [--model REF]
+ *   ashlr local-runtime missing-model-guard --model-path PATH [--model REF]
  *
  * SAFETY INVARIANTS enforced at this layer:
  *
@@ -45,6 +46,10 @@
 import { readFileSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { loadConfigReadOnly } from '../core/config.js';
+import {
+  checkMissingModel,
+  waitMissingModelBackoff,
+} from '../core/local-runtime/missing-model-guard.js';
 import { readKillSwitch } from '../core/sandbox/policy.js';
 import {
   RUNTIME_SHAPES,
@@ -80,7 +85,7 @@ import type {
 } from '../core/local-runtime/llama/index.js';
 import { makeColors, isTty } from './ui.js';
 
-const USAGE = `usage: ashlr local-runtime <status|start|stop|restart|reshape|install|uninstall|logs|resolve-model> [options]
+const USAGE = `usage: ashlr local-runtime <status|start|stop|restart|reshape|install|uninstall|logs|resolve-model|missing-model-guard> [options]
 
   status                 Health, model, slots, uptime. --json for the typed snapshot.
   start                  Launch llama-server (or adopt one already on the port).
@@ -95,6 +100,10 @@ const USAGE = `usage: ashlr local-runtime <status|start|stop|restart|reshape|ins
   resolve-model          Print the current GGUF blob path for a model reference.
                          Used by the launch agent's shim, so a re-pulled model
                          does not leave a 24/7 job pointed at a collected blob.
+  missing-model-guard    The launch agent's one blocked state: when the model
+                         blob is gone and cannot be re-resolved, report it once
+                         and hold the attempt inside the backoff window so
+                         KeepAlive cannot spin. Shim-facing, like resolve-model.
 
 options:
   --port N               TCP port (default 8080)
@@ -400,7 +409,10 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
     stderrLog: logs.stderr,
     workingDirectory: process.env['HOME'] ?? '/',
     modelRef: explicitModelPath ? null : runtime.modelRef,
-    resolverCommand: explicitModelPath ? null : selfResolverCommand(),
+    resolverCommand: explicitModelPath ? null : selfLocalRuntimeCommand('resolve-model'),
+    // The guard is passed even for an explicit --model-path: the operator's
+    // own file can go missing too, and the job must still not spin.
+    guardCommand: selfLocalRuntimeCommand('missing-model-guard'),
   });
 
   // The Anthropic lane gets its OWN job. Without it a launchd-managed runtime
@@ -448,26 +460,28 @@ async function cmdInstall(flags: ParsedFlags, runtime: LlamaRuntimeConfig): Prom
 /**
  * How to invoke THIS hub again from a login-time shell.
  *
- * The launch agent's shim calls it to re-resolve the model blob. `argv[1]` is
- * the script entry point for a normal Node run and is absent for a packaged
+ * The launch agent's shim calls it to re-resolve the model blob and to reach
+ * the missing-model guard when the blob is gone for good. `argv[1]` is the
+ * script entry point for a normal Node run and is absent for a packaged
  * single-file binary, where `execPath` is the CLI itself — both spellings are
  * absolute, which matters because launchd gives the job a minimal PATH.
  * Returns null when neither can be trusted, which makes the shim fall back to
- * the frozen path instead of running something unexpected.
+ * the frozen path (resolver) or an inline sleep (guard) instead of running
+ * something unexpected.
  */
-function selfResolverCommand(): readonly string[] | null {
+function selfLocalRuntimeCommand(verb: 'resolve-model' | 'missing-model-guard'): readonly string[] | null {
   const exec = process.execPath;
   if (typeof exec !== 'string' || !isAbsolute(exec)) return null;
   const entry = process.argv[1];
   if (typeof entry === 'string' && isAbsolute(entry)) {
     try {
-      if (statSync(entry).isFile()) return [exec, entry, 'local-runtime', 'resolve-model'];
+      if (statSync(entry).isFile()) return [exec, entry, 'local-runtime', verb];
     } catch {
       // Fall through to the bare executable.
     }
   }
   // A packaged binary: `execPath` IS ashlr, so it takes the subcommand itself.
-  return entry === undefined ? [exec, 'local-runtime', 'resolve-model'] : null;
+  return entry === undefined ? [exec, 'local-runtime', verb] : null;
 }
 
 /**
@@ -504,6 +518,38 @@ function cmdResolveModel(flags: ParsedFlags, runtime: LlamaRuntimeConfig): numbe
   }
   console.log(resolved.blobPath);
   return 0;
+}
+
+/**
+ * `missing-model-guard` — the launch agent's one blocked state.
+ *
+ * Shim-facing, like `resolve-model`: the generated shim calls this only when
+ * the configured blob is absent AND could not be re-resolved, so `resolvable`
+ * is always false here — a resolution that worked never reaches the verb.
+ * The guard stamps the failure in its state file, reports the single
+ * operator-facing line on a fresh `blocked`, then holds the attempt inside
+ * the backoff window (polling for the file's return) so launchd's KeepAlive
+ * restarts into `retry-after` instead of respawning llama-server every
+ * ThrottleInterval.
+ *
+ * Exit 0 means `run` — the file exists and the shim may `exec`. Exit 1 means
+ * the window was held and the model is still absent. Nothing prints on
+ * stdout; the one blocked line goes to stderr, which is the job's error log.
+ */
+async function cmdMissingModelGuard(flags: ParsedFlags): Promise<number> {
+  const modelPath = flags.modelPath;
+  if (modelPath === undefined) {
+    console.error('missing-model-guard needs --model-path PATH');
+    return 2;
+  }
+  const check = checkMissingModel({
+    modelPath,
+    resolvable: false,
+    modelName: flags.model ?? null,
+  });
+  if (check.decision === 'run') return 0;
+  if (check.line !== null) console.error(check.line);
+  return (await waitMissingModelBackoff({ modelPath, waitMs: check.waitMs })) === 'run' ? 0 : 1;
 }
 
 /** `uninstall` — boot the job out and delete the plist. */
@@ -583,6 +629,7 @@ export async function cmdLocalRuntime(args: string[]): Promise<number> {
       case 'uninstall': return cmdUninstall(flags);
       case 'logs': return cmdLogs(flags);
       case 'resolve-model': return cmdResolveModel(flags, runtime);
+      case 'missing-model-guard': return await cmdMissingModelGuard(flags);
       default:
         console.error(`unknown subcommand "${subcommand}"\n\n${USAGE}`);
         return 2;

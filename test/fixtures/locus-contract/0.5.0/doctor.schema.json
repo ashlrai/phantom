@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ashlrai/locus/schema/doctor.schema.json",
+  "title": "Locus DoctorReport",
+  "description": "Machine contract for `locus doctor --json`. Mission-control readiness pane. Never contains resolved secret values. Exit codes: SAFE=0, WARN=1, UNSAFE=2.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "home",
+    "seal_ok",
+    "bindings",
+    "runtime",
+    "approvals",
+    "pending_approvals",
+    "dual_control_waiting",
+    "phantom_on_path",
+    "unresolved_phm",
+    "autopin",
+    "workspace",
+    "audit",
+    "near_miss_count",
+    "near_miss",
+    "findings",
+    "issues",
+    "verdict",
+    "ok"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Locus crate/CLI version."
+    },
+    "home": {
+      "type": "string",
+      "description": "Effective LOCUS_HOME path."
+    },
+    "seal_ok": {
+      "type": "boolean",
+      "description": "Daemon seal key readable."
+    },
+    "bindings": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pinned": {
+      "type": ["string", "null"],
+      "description": "Active binding alias when pinned (backward-compatible)."
+    },
+    "pin": {
+      "$ref": "#/$defs/doctorPin"
+    },
+    "pin_seal_ok": {
+      "type": ["boolean", "null"]
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtimeDrift"
+    },
+    "approvals": {
+      "$ref": "#/$defs/approvalsHealth"
+    },
+    "pending_approvals": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dual_control_waiting": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "phantom_on_path": {
+      "type": "boolean"
+    },
+    "unresolved_phm": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/credentialResolutionIssue" },
+      "description": "Safe resolution issues. Credential locator names, values, and provider stderr are absent."
+    },
+    "autopin": {
+      "$ref": "#/$defs/autopinStatus"
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "audit": {
+      "$ref": "#/$defs/auditSummary"
+    },
+    "near_miss_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of scope_freeze + require_approval audit events in the last 24 hours."
+    },
+    "near_miss": {
+      "$ref": "#/$defs/nearMiss"
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "issues": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["SAFE", "WARN", "UNSAFE"]
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "True only when verdict is SAFE."
+    }
+  },
+  "$defs": {
+    "doctorPin": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "alias",
+        "tenant",
+        "binding_id",
+        "expires_at",
+        "seal_ok",
+        "expired"
+      ],
+      "properties": {
+        "alias": { "type": "string" },
+        "tenant": { "type": "string" },
+        "binding_id": { "type": "string" },
+        "expires_at": { "type": "string" },
+        "seal_ok": { "type": "boolean" },
+        "principal": { "type": ["string", "null"] },
+        "client": { "type": ["string", "null"] },
+        "expired": { "type": "boolean" }
+      }
+    },
+    "runtimeDrift": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "pinned",
+        "seal_ok",
+        "authority_anchor_ok",
+        "backing_ok",
+        "binding_present",
+        "binding_id_match",
+        "tenant_match",
+        "providers_match",
+        "frozen",
+        "expired",
+        "providers",
+        "issues",
+        "ok"
+      ],
+      "properties": {
+        "pinned": { "type": "boolean" },
+        "seal_ok": { "type": "boolean" },
+        "authority_anchor_ok": { "type": "boolean" },
+        "backing_ok": { "type": "boolean" },
+        "backing_type": { "type": ["string", "null"], "enum": ["active", "run", "ci", null] },
+        "backing_path": { "type": ["string", "null"] },
+        "authority": { "type": ["string", "null"], "enum": ["local_control", "delegated", "legacy_untrusted", null] },
+        "binding_present": { "type": "boolean" },
+        "binding_id_match": { "type": "boolean" },
+        "tenant_match": { "type": "boolean" },
+        "providers_match": { "type": "boolean" },
+        "frozen": { "type": "boolean" },
+        "expired": { "type": "boolean" },
+        "session_id": { "type": ["string", "null"] },
+        "binding_alias": { "type": ["string", "null"] },
+        "binding_id_session": { "type": ["string", "null"] },
+        "binding_id_file": { "type": ["string", "null"] },
+        "tenant_session": { "type": ["string", "null"] },
+        "tenant_file": { "type": ["string", "null"] },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/providerView" }
+        },
+        "issues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ok": { "type": "boolean" }
+      }
+    },
+    "providerView": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["provider", "account", "credential", "orgs"],
+      "properties": {
+        "provider": { "type": "string" },
+        "account": { "type": "string" },
+        "credential": { "$ref": "#/$defs/credentialMetadata" },
+        "project_ref": { "type": ["string", "null"] },
+        "team_id": { "type": ["string", "null"] },
+        "account_id": { "type": ["string", "null"] },
+        "read_only": { "type": ["boolean", "null"] },
+        "orgs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "credentialMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["present", "source"],
+      "properties": {
+        "present": { "type": "boolean" },
+        "source": { "type": "string" }
+      }
+    },
+    "credentialResolutionIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "source", "code"],
+      "properties": {
+        "provider": { "type": "string" },
+        "source": { "type": "string" },
+        "code": { "type": "string" }
+      }
+    },
+    "approvalsHealth": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "dir",
+        "exists",
+        "writable",
+        "total",
+        "pending",
+        "approved_valid",
+        "expired_grants",
+        "untrusted_approved",
+        "denied",
+        "corrupt",
+        "approval_authority",
+        "authoritative_path_enabled",
+        "ok"
+      ],
+      "properties": {
+        "dir": { "type": "string" },
+        "exists": { "type": "boolean" },
+        "writable": { "type": "boolean" },
+        "total": { "type": "integer", "minimum": 0 },
+        "pending": { "type": "integer", "minimum": 0 },
+        "approved_valid": { "type": "integer", "minimum": 0 },
+        "expired_grants": { "type": "integer", "minimum": 0 },
+        "untrusted_approved": { "type": "integer", "minimum": 0 },
+        "denied": { "type": "integer", "minimum": 0 },
+        "corrupt": { "type": "integer", "minimum": 0 },
+        "approval_authority": { "const": "local_advisory" },
+        "authoritative_path_enabled": { "const": false },
+        "ok": { "type": "boolean" }
+      }
+    },
+    "autopinStatus": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "path",
+        "present",
+        "remote_autopin_enabled",
+        "remote_rules",
+        "ok"
+      ],
+      "properties": {
+        "path": { "type": "string" },
+        "present": { "type": "boolean" },
+        "auto_pin": { "type": ["string", "null"] },
+        "remote_autopin_enabled": { "type": "boolean" },
+        "remote_rules": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "boolean" },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["found", "allowed_bindings", "require_pin"],
+      "properties": {
+        "found": { "type": "boolean" },
+        "path": { "type": ["string", "null"] },
+        "default_binding": { "type": ["string", "null"] },
+        "allowed_bindings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "require_pin": { "type": "boolean" },
+        "pin_allowed": { "type": ["boolean", "null"] }
+      }
+    },
+    "auditSummary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["path", "total", "last", "scope_freeze", "deny"],
+      "properties": {
+        "path": { "type": "string" },
+        "total": { "type": "integer", "minimum": 0 },
+        "last": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/auditEvent" }
+        },
+        "scope_freeze": { "type": "integer", "minimum": 0 },
+        "deny": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "nearMiss": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["window_hours", "count", "scope_freeze", "require_approval"],
+      "properties": {
+        "window_hours": { "type": "integer", "minimum": 0 },
+        "count": { "type": "integer", "minimum": 0 },
+        "scope_freeze": { "type": "integer", "minimum": 0 },
+        "require_approval": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "auditEvent": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["ts", "op", "binding"],
+      "properties": {
+        "ts": { "type": "string" },
+        "op": { "type": "string" },
+        "binding": { "type": "string" },
+        "detail": {}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["severity", "code", "message"],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["warn", "unsafe"]
+        },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

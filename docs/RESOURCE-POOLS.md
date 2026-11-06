@@ -1436,7 +1436,7 @@ not model discovery, an entitlement claim, or a new concurrency identity:
 
 | Exact model | Worker `quotaScope` | Collector `bucketIds` |
 | --- | --- | --- |
-| `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | `codex-general-v1` | `["codex"]` |
+| `gpt-6.1-terra`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | `codex-general-v1` | `["codex"]` |
 | `gpt-5.3-codex-spark` | `codex-spark-v1` | `["codex_bengalfox"]` |
 
 General and Spark workers for one account must retain the **same `capacityKey`**,
@@ -2629,6 +2629,7 @@ fields to make an older reader accept it.
 | `worker-cli-upgrade-required` | The configured model was rejected because the native CLI needs an upgrade. Select or update a compatible CLI, then recheck the enrolled account and quota before a new attempt. Hub does not change the CLI or model automatically. |
 | `worker-exit-failed` / `worker-process-failed` | Check the configured launcher, executable, CLI/model compatibility, and private account environment. Exit status alone does not establish an authentication or quota cause. |
 | `worker-terminal-failed` / `worker-terminal-missing` / `worker-invalid-events` | Check the supported native event format and task scope. Partial output or process exit `0` is not sufficient completion evidence. |
+| `worker-service-tier-unavailable` | The provider refused the requested service tier. This reason is returned by the worker, not recorded on a receipt: the never-completed reservation is released back to admission as unavailable capacity (with a bounded retry hint), so the queued task reroutes to another worker instead of settling as failed. Check provider tier capacity or the enrolled worker list; the job itself does not need a new attempt. |
 | `worker-output-truncated` / `worker-output-token-limit` | Review task scope and configured response budget before a deliberate new attempt; do not accept the failed response. |
 | `worker-timed-out` | Review the deadline and task scope, confirm cleanup, and refresh capacity evidence. |
 | `worker-termination-uncertain` | Stop the affected pool and reconcile process ownership and private receipt evidence. The slot remains occupied; do not delete the ledger to release it. |
@@ -2666,6 +2667,14 @@ fresh-observation requirements still apply; portfolio concurrency does not add
 an automatic capacity-waiting queue or retry.
 `ashlr runtime run` still forwards Universe commands only; it does not forward
 the standalone resource-pool CLI.
+
+## Z.ai GLM Coding Lite lane
+
+Phantom runs coding tasks on Z.ai models through a lane mapped to queue
+tiers. The lane exposes two models, glm-5.3 (work) and glm-5.3-flash
+(fast). See [Z.ai GLM Coding Lite lane](lanes/zai.md) for models, credit
+formula, included allowance, rolling-window pacing, error classes, and test
+fixtures.
 
 ## Provider research and billing boundaries
 

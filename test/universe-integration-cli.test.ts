@@ -128,16 +128,16 @@ describe('Universe integration CLI', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    [], ['unknown'], ['plan'], ['evaluate'], ['inspect'], ['deliver'], ['plan', 'extra'], ['evaluate', 'extra'], ['inspect', 'extra'], ['deliver', 'extra'],
-    ['plan', '--manifest'], ['evaluate', '--manifest'], ['inspect', '--manifest'], ['deliver', '--manifest'], ['plan', '--manifest', 'relative.json'],
-    ['plan', '--manifest', '/'], ['plan', '--manifest', '/private/one/../two'], ['plan', '--manifest=private.json'],
-    ['plan', '--manifest', manifest, '--manifest', '/private/other.json'], ['plan', '--manifest', manifest, '--json', '--json'],
-    ['plan', '--manifest', manifest, '--root'], ['plan', '--manifest', manifest, '--root', 'relative'],
-    ['plan', '--manifest', manifest, '--root', '/private/store/'], ['plan', '--manifest', manifest, '--root', '/', '--json'],
-    ['plan', '--manifest', manifest, '--branch', 'codex/fix'], ['evaluate', '--manifest', manifest, '--branch', 'codex/fix'],
-    ['inspect', '--manifest', manifest, '--branch', 'codex/fix'], ['deliver', '--manifest', manifest, '--branch', 'main'],
-    ['plan', '--manifest', manifest, '--unknown'], ['plan', '--manifest', '/private/a\n.json'], ['plan', '--manifest', '/private/a\u0085.json'],
-  ])('rejects invalid invocation before reading or planning %j', async (...args) => {
+    [[]], [['unknown']], [['plan']], [['evaluate']], [['inspect']], [['deliver']], [['plan', 'extra']], [['evaluate', 'extra']], [['inspect', 'extra']], [['deliver', 'extra']],
+    [['plan', '--manifest']], [['evaluate', '--manifest']], [['inspect', '--manifest']], [['deliver', '--manifest']], [['plan', '--manifest', 'relative.json']],
+    [['plan', '--manifest', '/']], [['plan', '--manifest', '/private/one/../two']], [['plan', '--manifest=private.json']],
+    [['plan', '--manifest', manifest, '--manifest', '/private/other.json']], [['plan', '--manifest', manifest, '--json', '--json']],
+    [['plan', '--manifest', manifest, '--root']], [['plan', '--manifest', manifest, '--root', 'relative']],
+    [['plan', '--manifest', manifest, '--root', '/private/store/']], [['plan', '--manifest', manifest, '--root', '/', '--json']],
+    [['plan', '--manifest', manifest, '--branch', 'codex/fix']], [['evaluate', '--manifest', manifest, '--branch', 'codex/fix']],
+    [['inspect', '--manifest', manifest, '--branch', 'codex/fix']], [['deliver', '--manifest', manifest, '--branch', 'main']],
+    [['plan', '--manifest', manifest, '--unknown']], [['plan', '--manifest', '/private/a\n.json']], [['plan', '--manifest', '/private/a\u0085.json']],
+  ])('rejects invalid invocation before reading or planning %j', async (args) => {
     expect(await cmdUniverseIntegration([...args, '--json'])).toBe(2);
     expect(JSON.parse(output.mock.calls[0]![0] as string)).toHaveProperty('error');
     expect(files.readResourceJson).not.toHaveBeenCalled();
@@ -151,15 +151,15 @@ describe('Universe integration CLI', () => {
 
   describe.each(['inspect-delivery', 'handoff'] as const)('%s request boundary', (command) => {
     it.each([
-      [], ['extra'], ['--manifest'], ['--manifest', 'relative.json'], ['--manifest', '/private/one/../two'],
-      ['--manifest', '/private/input.json', '--root', 'relative'],
-      ['--manifest', '/private/input.json', '--root', '/'],
-      ['--manifest', '/private/input.json', '--manifest', '/private/other.json'],
-      ['--manifest', '/private/input.json', '--json', '--json'],
-      ['--manifest', '/private/input.json', '--branch', 'codex/next'],
-      ['--manifest', '/private/input.json', '--run'], ['--manifest', '/private/a\n.json'],
-      ['--manifest', '/private/input.json', '--root=/private/store'],
-    ])('rejects invalid invocation before any file or runtime access %j', async (...args) => {
+      [[]], [['extra']], [['--manifest']], [['--manifest', 'relative.json']], [['--manifest', '/private/one/../two']],
+      [['--manifest', '/private/input.json', '--root', 'relative']],
+      [['--manifest', '/private/input.json', '--root', '/']],
+      [['--manifest', '/private/input.json', '--manifest', '/private/other.json']],
+      [['--manifest', '/private/input.json', '--json', '--json']],
+      [['--manifest', '/private/input.json', '--branch', 'codex/next']],
+      [['--manifest', '/private/input.json', '--run']], [['--manifest', '/private/a\n.json']],
+      [['--manifest', '/private/input.json', '--root=/private/store']],
+    ])('rejects invalid invocation before any file or runtime access %j', async (args) => {
       expect(await cmdUniverseIntegration([command, ...args, '--json'])).toBe(2);
       expect(files.readResourceJson).not.toHaveBeenCalled();
       expect(core.readUniverseIntegrationDelivery).not.toHaveBeenCalled();

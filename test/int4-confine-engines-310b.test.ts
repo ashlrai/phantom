@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /**
  * V3.10 integration INT4 — confinement / engines / mirrors / worktrees.
  *
@@ -32,6 +33,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// These inert subprocess fixtures test engine I/O, not the runner's live RAM.
+// Host admission thresholds and hysteresis have their own host-headroom suite.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: () => ({ allowed: true, reading: { freePercent: 50, swapGb: 0 }, reason: null }),
+}));
 
 const hoisted = vi.hoisted(() => ({ standing: null as null | { grantId: string }, repairChecks:null as null | number }));
 
@@ -141,8 +148,7 @@ function grokAuth(refresh: string, user = 'user-1'): string {
  * then probes what the sandbox must deny, and reports as Anthropic-wire NDJSON.
  */
 function standInGrokSource(): string {
-  return `#!${process.execPath}
-const fs = require('fs'); const path = require('path');
+  return `${nodeFixtureHeader()}const fs = require('fs'); const path = require('path');
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const probe = (fn) => { try { fn(); return 'allowed'; } catch (e) { return 'denied:' + (e.code || e.message); } };
 const gh = process.env.GROK_HOME;
@@ -628,7 +634,7 @@ describe.runIf(DARWIN && SUPPORTS_PROFILES)('runEngineSandboxed: autonomous grok
       const previous = process.env.ASHLR_TEST_ALLOW_ANY_REPO;
       process.env.ASHLR_TEST_ALLOW_ANY_REPO = '1';
       const seat = makeSeat();const repo = fx.makeRepo();repo.enroll();
-      writeFileSync(seat.executable,`#!${process.execPath}\nprocess.stdout.write('network error\\n');process.exit(1);\n`,{mode:0o700});
+      writeFileSync(seat.executable,`${nodeFixtureHeader()}process.stdout.write('network error\\n');process.exit(1);\n`,{mode:0o700});
       seat.cfg.foundry!.dispatchRetries = 1;
       hoisted.standing = {grantId:'grant-int4'};
       let attempts = 0;

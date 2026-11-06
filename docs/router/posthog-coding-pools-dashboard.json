@@ -1,0 +1,59 @@
+{
+  "name": "Coding pool routing",
+  "description": "Station throughput, per-pool utilization (rho), and time-to-green.",
+  "filters": {},
+  "tiles": [
+    {
+      "title": "Station dispatches",
+      "query": {
+        "kind": "InsightVizNode",
+        "source": {
+          "kind": "EventsQuery",
+          "select": ["count()", "properties.station_id"],
+          "event": "coding_station_dispatched",
+          "math": "total",
+          "math_property": null,
+          "properties": [],
+          "after": "-30d",
+          "interval": "day"
+        },
+        "viz_type": "ActionsLineGraph"
+      }
+    },
+    {
+      "title": "Per-pool rho",
+      "query": {
+        "kind": "InsightVizNode",
+        "source": {
+          "kind": "EventsQuery",
+          "select": ["avg(properties.rho)", "properties.pool_id"],
+          "event": "coding_pool_capacity_observed",
+          "math": "avg",
+          "math_property": "rho",
+          "properties": [],
+          "after": "-30d",
+          "interval": "day"
+        },
+        "viz_type": "ActionsLineGraph"
+      }
+    },
+    {
+      "title": "Time-to-green (median seconds)",
+      "query": {
+        "kind": "InsightVizNode",
+        "source": {
+          "kind": "EventsQuery",
+          "select": ["median(properties.time_to_green_seconds)", "properties.pool_id"],
+          "event": "coding_station_completed",
+          "math": "median",
+          "math_property": "time_to_green_seconds",
+          "properties": [{"key": "status", "value": "green", "operator": "exact"}],
+          "after": "-30d",
+          "interval": "day"
+        },
+        "viz_type": "ActionsLineGraph",
+        "display": "ActionsLineGraph"
+      }
+    }
+  ]
+}

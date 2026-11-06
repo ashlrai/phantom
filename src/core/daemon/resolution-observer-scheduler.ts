@@ -186,7 +186,8 @@ export function scheduleResolutionObserverChild(
 
   const spawnChild = options.deps?.spawn ?? ((command, args, spawnOptions) =>
     spawn(command, args, spawnOptions));
-  const scheduleTimeout = options.deps?.setTimeout ?? setTimeout;
+  const scheduleTimeout: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout> =
+    options.deps?.setTimeout ?? setTimeout;
   const cancelTimeout = options.deps?.clearTimeout ?? clearTimeout;
   const parentTimeoutMs = positiveInteger(options.parentTimeoutMs, DEFAULT_PARENT_TIMEOUT_MS);
   const killConfirmTimeoutMs = positiveInteger(options.killConfirmTimeoutMs, DEFAULT_KILL_CONFIRM_TIMEOUT_MS);

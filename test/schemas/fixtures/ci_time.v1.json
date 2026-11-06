@@ -1,0 +1,28 @@
+{
+  "schema": "ci_time.v1",
+  "generated_at": "2026-10-26T12:00:00.000Z",
+  "repository": "ashlrai/phantom",
+  "revision": "a6f3c32339411eb2d57cb35d4c78c33127bbb8e7",
+  "run": {
+    "id": "9007199254740993",
+    "attempt": 1
+  },
+  "jobs": [
+    {
+      "id": "9007199254740995",
+      "name": "schema validation",
+      "startedAt": "2026-10-26T11:59:58.000Z",
+      "finishedAt": "2026-10-26T12:00:00.000Z",
+      "durationMs": 2000,
+      "conclusion": "success"
+    },
+    {
+      "id": "9007199254740996",
+      "name": "pending observation",
+      "startedAt": null,
+      "finishedAt": null,
+      "durationMs": null,
+      "conclusion": null
+    }
+  ]
+}

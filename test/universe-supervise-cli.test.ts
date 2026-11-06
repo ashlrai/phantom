@@ -23,26 +23,26 @@ describe('Universe supervision CLI', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    [], ['first'], ['first', '--root', '/private/experiments'],
-    ['../escape', '--root', '/private/experiments', '--max-duration-ms', '60000'],
-    [...valid, 'first'], [...valid, '--unknown'], [...valid, '--json', '--json'],
-    [...valid, '--max-duration-ms', '60000'], [...valid, '--resource-runtime', 'relative'],
-    [...valid, '--resource-runtime', '/private/a/../runtime'], [...valid, '--resource-runtime', '/private/secret\nunsafe'],
-    [...valid, '--delivery-plan', 'relative'], [...valid, '--delivery-plan'],
-    [...valid, '--delivery-plan', '/private/a', '--delivery-plan', '/private/b'],
-    [...valid, '--max-concurrent', '0'], [...valid, '--max-concurrent', '5'],
-    [...valid, '--max-concurrent', '1.5'], [...valid, '--max-concurrent', '1e0'],
-    [...valid, '--poll-interval-ms', '49'], [...valid, '--poll-interval-ms', '60001'],
-    ['first', '--root', '/', '--max-duration-ms', '60000'],
-    ['first', '--root', 'relative', '--max-duration-ms', '60000'],
-    ['first', '--root', '/private/store/', '--max-duration-ms', '60000'],
-    ['first', '--root', '/private/store\u0085hidden', '--max-duration-ms', '60000'],
-    ['first', '--root', '/private/store', '--max-duration-ms', '0'],
-    ['first', '--root', '/private/store', '--max-duration-ms', '86400001'],
-    ['first', '--root', '/private/store', '--max-duration-ms', 'Infinity'],
-    ['first', '--root', '/private/store', '--max-duration-ms', '01'],
-    [...Array.from({ length: 33 }, (_, i) => `campaign-${i}`), '--root', '/private/store', '--max-duration-ms', '1000'],
-  ])('rejects malformed arguments before dispatch %j', async (...args) => {
+    [[]], [['first']], [['first', '--root', '/private/experiments']],
+    [['../escape', '--root', '/private/experiments', '--max-duration-ms', '60000']],
+    [[...valid, 'first']], [[...valid, '--unknown']], [[...valid, '--json', '--json']],
+    [[...valid, '--max-duration-ms', '60000']], [[...valid, '--resource-runtime', 'relative']],
+    [[...valid, '--resource-runtime', '/private/a/../runtime']], [[...valid, '--resource-runtime', '/private/secret\nunsafe']],
+    [[...valid, '--delivery-plan', 'relative']], [[...valid, '--delivery-plan']],
+    [[...valid, '--delivery-plan', '/private/a', '--delivery-plan', '/private/b']],
+    [[...valid, '--max-concurrent', '0']], [[...valid, '--max-concurrent', '5']],
+    [[...valid, '--max-concurrent', '1.5']], [[...valid, '--max-concurrent', '1e0']],
+    [[...valid, '--poll-interval-ms', '49']], [[...valid, '--poll-interval-ms', '60001']],
+    [['first', '--root', '/', '--max-duration-ms', '60000']],
+    [['first', '--root', 'relative', '--max-duration-ms', '60000']],
+    [['first', '--root', '/private/store/', '--max-duration-ms', '60000']],
+    [['first', '--root', '/private/store\u0085hidden', '--max-duration-ms', '60000']],
+    [['first', '--root', '/private/store', '--max-duration-ms', '0']],
+    [['first', '--root', '/private/store', '--max-duration-ms', '86400001']],
+    [['first', '--root', '/private/store', '--max-duration-ms', 'Infinity']],
+    [['first', '--root', '/private/store', '--max-duration-ms', '01']],
+    [[...Array.from({ length: 33 }, (_, i) => `campaign-${i}`), '--root', '/private/store', '--max-duration-ms', '1000']],
+  ])('rejects malformed arguments before dispatch %j', async (args) => {
     expect(await cmdUniverseSupervise(args)).toBe(2);
     expect(core.superviseUniverseCampaigns).not.toHaveBeenCalled();
   });

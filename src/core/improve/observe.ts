@@ -11,7 +11,7 @@
  * into a feature branch has not landed yet. A revert of the revert re-lands
  * the change, and the outcome earns its credit back.
  */
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import type { CloudTaskV1 } from '../cloud/types.js';
 import type { LedgerEvent, ProposalOutcome } from './outcomes.js';
 
@@ -25,13 +25,18 @@ function onBranch(exec: ObserveExec, cwd: string, sha: string, ref: string): boo
   try { exec('git', [...GIT, 'merge-base', '--is-ancestor', sha, ref], cwd); return true; } catch { return false; }
 }
 
+/** Whether one commit body reverts `mergeSha` (or, with a repository, its PR `number`). */
+export function revertsCommitBody(body: string, mergeSha: string, repository: string, number: number): boolean {
+  const byPr = repository === '' ? null : new RegExp(`\\bReverts ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}#${number}\\b`, 'i');
+  return body.includes(`This reverts commit ${mergeSha}`) || byPr?.test(body) === true;
+}
+
 /** The first commit in `log` that reverts `mergeSha` (or, with a repository, its PR `number`). */
 export function revertOf(log: string, mergeSha: string, repository: string, number: number): string | null {
-  const byPr = repository === '' ? null : new RegExp(`\\bReverts ${repository.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}#${number}\\b`, 'i');
   for (const entry of log.split('\x1e')) {
     const [sha, body = ''] = entry.trim().split('\x1f');
     if (!sha || !SHA.test(sha)) continue;
-    if (body.includes(`This reverts commit ${mergeSha}`) || byPr?.test(body)) return sha;
+    if (revertsCommitBody(body, mergeSha, repository, number)) return sha;
   }
   return null;
 }

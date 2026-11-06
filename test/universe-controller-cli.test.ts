@@ -40,14 +40,14 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('Universe persisted controller CLI', () => {
   it.each([
-    [], ['unknown'], ['run'], ['run', manifest], ['run', '--manifest', manifest, 'extra'], ['status'],
-    ['status', '../work'], ['status', 'Uppercase'], ['status', 'a'.repeat(65)], ['status', 'one', 'two'],
-    ['status', 'one', '--manifest', manifest], ['status', 'one', '--resource-runtime', '/private/runtime.json'],
-    ['status', 'one', '--delivery-plan', '/private/config/delivery.json'],
-    ['run', '--manifest', manifest, '--json', '--json'], ['--help', '-h'], ['run', '--bad-flag'],
-    ['run', '--manifest', manifest, '--manifest', manifest], ['run', '--manifest=' + manifest],
-    ['status', 'one', '--root=/private/root'], ['status', 'one\n'],
-  ])('rejects invalid arguments %j before reading files or attaching signals', async (...args) => {
+    [[]], [['unknown']], [['run']], [['run', manifest]], [['run', '--manifest', manifest, 'extra']], [['status']],
+    [['status', '../work']], [['status', 'Uppercase']], [['status', 'a'.repeat(65)]], [['status', 'one', 'two']],
+    [['status', 'one', '--manifest', manifest]], [['status', 'one', '--resource-runtime', '/private/runtime.json']],
+    [['status', 'one', '--delivery-plan', '/private/config/delivery.json']],
+    [['run', '--manifest', manifest, '--json', '--json']], [['--help', '-h']], [['run', '--bad-flag']],
+    [['run', '--manifest', manifest, '--manifest', manifest]], [['run', '--manifest=' + manifest]],
+    [['status', 'one', '--root=/private/root']], [['status', 'one\n']],
+  ])('rejects invalid arguments %j before reading files or attaching signals', async (args) => {
     const before = listeners();
     expect(await cmdUniverseController([...args, '--json'])).toBe(2);
     expect(files.readResourceJson).not.toHaveBeenCalled();
@@ -122,18 +122,18 @@ describe('Universe persisted controller CLI', () => {
   });
 
   it.each([
-    ['drain'], ['drain', 'work'], ['drain', '../work', '--root', '/private/store'],
-    ['drain', 'work', '--root', '/private/store', '--drain-sequence', '3'],
-    ['drain', 'work', '--root', '/private/store', '--manifest', manifest],
-    ['drain', 'work', '--root', '/private/store', '--resource-runtime', '/private/runtime.json'],
-    ['resume', 'work', '--root', '/private/store'],
-    ['resume', 'work', '--drain-sequence', '3'],
-    ['resume', 'work', '--root', '/private/store', '--delivery-plan', '/private/delivery.json', '--drain-sequence', '3'],
-    ...['0', '-1', '1.5', '01', '1e2', '512', '999999999999999999', 'NaN', '3\n'].map((sequence) =>
-      ['resume', 'work', '--root', '/private/store', '--drain-sequence', sequence]),
-    ['resume', 'work', '--root', '/private/store', '--drain-sequence', '3', '--drain-sequence', '3'],
-    ['status', 'work', '--drain-sequence', '3'], ['run', '--manifest', manifest, '--drain-sequence', '3'],
-  ])('rejects invalid control invocation %j without effects', async (...args) => {
+    [['drain']], [['drain', 'work']], [['drain', '../work', '--root', '/private/store']],
+    [['drain', 'work', '--root', '/private/store', '--drain-sequence', '3']],
+    [['drain', 'work', '--root', '/private/store', '--manifest', manifest]],
+    [['drain', 'work', '--root', '/private/store', '--resource-runtime', '/private/runtime.json']],
+    [['resume', 'work', '--root', '/private/store']],
+    [['resume', 'work', '--drain-sequence', '3']],
+    [['resume', 'work', '--root', '/private/store', '--delivery-plan', '/private/delivery.json', '--drain-sequence', '3']],
+    ...(['0', '-1', '1.5', '01', '1e2', '512', '999999999999999999', 'NaN', '3\n'].map((sequence) =>
+      ['resume', 'work', '--root', '/private/store', '--drain-sequence', sequence])).map((argv) => [argv]),
+    [['resume', 'work', '--root', '/private/store', '--drain-sequence', '3', '--drain-sequence', '3']],
+    [['status', 'work', '--drain-sequence', '3']], [['run', '--manifest', manifest, '--drain-sequence', '3']],
+  ])('rejects invalid control invocation %j without effects', async (args) => {
     const before = listeners();
     expect(await cmdUniverseController([...args, '--json'])).toBe(2);
     expect(core.requestUniversePortfolioControllerControl).not.toHaveBeenCalled();

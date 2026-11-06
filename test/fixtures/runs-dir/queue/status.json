@@ -1,0 +1,1 @@
+{"last_tick":"2026-10-31T00:30:00Z","paused":false,"mem_free_pct":42,"lanes":{"codex-personal":{"running":1,"target":2,"floor":1,"ceiling":3,"held":false,"queued":4}},"autopilot":{"disk":{"free_gb":123}},"rollup_24h":{"by_lane":{"codex-personal":{"merged":2,"merge_rate":0.5}}}}

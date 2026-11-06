@@ -261,6 +261,7 @@ function isSession(value: unknown): value is VerseSession {
     && (usage['contextWindow'] === null || isFiniteNumber(usage['contextWindow']))
     && isV39UsageValid(usage)
     && (value['lastError'] === null || typeof value['lastError'] === 'string')
+    && (value['lastResult'] === undefined || typeof value['lastResult'] === 'string')
     && isV39SessionValid(value);
 }
 
@@ -302,6 +303,9 @@ function isEvent(value: unknown): value is VerseEvent {
   const turnId = value['turnId'];
   if (VERSE_TRANSIENT_EVENT_TYPES.has(value['type'] as VerseEvent['type'])) return false;
   switch (value['type']) {
+    case 'assistant-status':
+      return typeof turnId === 'string' && typeof value['text'] === 'string'
+        && (value['phase'] === 'acknowledgement' || value['phase'] === 'result');
     case 'manager-message':
     case 'manager-result':
       return isPersistedManagerEvent(value);
@@ -431,7 +435,7 @@ function readJsonFile(path: string): unknown {
  * renders folded and raw logs with the client's own buildTranscript and fails
  * the moment they diverge.
  */
-const FOLD_FLUSH_TYPES = new Set<VerseEvent['type']>(['user-message', 'manager-message', 'manager-result', 'thinking', 'tool-use', 'error', 'cancelled', 'turn-done']);
+const FOLD_FLUSH_TYPES = new Set<VerseEvent['type']>(['user-message', 'manager-message', 'manager-result', 'assistant-status', 'thinking', 'tool-use', 'error', 'cancelled', 'turn-done']);
 
 type TextDelta = Extract<VerseEvent, { type: 'text-delta' }>;
 

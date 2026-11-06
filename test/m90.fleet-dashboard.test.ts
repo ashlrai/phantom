@@ -12,7 +12,7 @@
  * no real binaries are required.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +24,7 @@ import {
 } from '../src/core/web/control.js';
 import { buildSnapshot } from '../src/core/dashboard.js';
 import { recordAgentAction } from '../src/core/fleet/agent-action-ledger.js';
+import * as toolRegistry from '../src/core/tools-registry.js';
 
 // ---------------------------------------------------------------------------
 // Config helpers (mirror m61 pattern)
@@ -32,7 +33,8 @@ import { recordAgentAction } from '../src/core/fleet/agent-action-ledger.js';
 function baseConfig(): AshlrConfig {
   return {
     version: 1,
-    roots: ['/tmp'],
+    // Scan only test-owned projects, never other suites' temporary repositories.
+    roots: [join(tmpHome, 'projects')],
     editor: 'cursor',
     staleDays: 30,
     categories: {},
@@ -59,6 +61,7 @@ let prevAshlrHome: string | undefined;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'ashlr-m90-'));
+  mkdirSync(join(tmpHome, 'projects'));
   prevHome = process.env.HOME;
   prevUserProfile = process.env.USERPROFILE;
   prevAshlrHome = process.env.ASHLR_HOME;
@@ -69,6 +72,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   if (prevHome === undefined) delete process.env.HOME;
   else process.env.HOME = prevHome;
   if (prevUserProfile === undefined) delete process.env.USERPROFILE;
@@ -88,8 +92,12 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('buildFleetActivity — shape on empty state', () => {
+  // Reuse the real empty-state result for these read-only shape assertions.
+  let emptyActivity: ReturnType<typeof buildFleetActivity> | undefined;
+  const snapshot = () => emptyActivity ??= buildFleetActivity(baseConfig());
+
   it('returns all required top-level keys', async () => {
-    const snap = await buildFleetActivity(baseConfig());
+    const snap = await snapshot();
     expect(snap).toHaveProperty('ts');
     expect(snap).toHaveProperty('repos');
     expect(snap).toHaveProperty('totalProposed');
@@ -108,13 +116,13 @@ describe('buildFleetActivity — shape on empty state', () => {
   });
 
   it('ts is a valid ISO string', async () => {
-    const snap = await buildFleetActivity(baseConfig());
+    const snap = await snapshot();
     expect(typeof snap.ts).toBe('string');
     expect(Date.parse(snap.ts)).not.toBeNaN();
   });
 
   it('arrays are empty on fresh ~/.ashlr', async () => {
-    const snap = await buildFleetActivity(baseConfig());
+    const snap = await snapshot();
     expect(snap.repos).toBeInstanceOf(Array);
     expect(snap.recentMerges).toBeInstanceOf(Array);
     expect(snap.recentActions).toBeInstanceOf(Array);
@@ -132,7 +140,7 @@ describe('buildFleetActivity — shape on empty state', () => {
   });
 
   it('numeric totals are 0 on empty state', async () => {
-    const snap = await buildFleetActivity(baseConfig());
+    const snap = await snapshot();
     expect(snap.totalProposed).toBe(0);
     expect(snap.totalAutoMerged).toBe(0);
     expect(snap.totalPending).toBe(0);
@@ -143,6 +151,9 @@ describe('buildFleetActivity — shape on empty state', () => {
 
 describe('dashboard source quality', () => {
   it('keeps degraded proposal and decision sources distinguishable from zero', async () => {
+    // This case exercises corrupt-store aggregation, not installed CLI probes.
+    // Tool discovery is covered separately by m3.tools-registry.test.ts.
+    vi.spyOn(toolRegistry, 'getToolsRegistry').mockReturnValue({ tools: [], installedCount: 0 });
     const inboxDir = join(tmpHome, '.ashlr', 'inbox');
     const decisionsDir = join(tmpHome, '.ashlr', 'decisions');
     mkdirSync(inboxDir, { recursive: true });

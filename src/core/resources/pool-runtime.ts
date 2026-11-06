@@ -15,7 +15,8 @@ import { fsyncDirectory } from '../util/durability.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { MAX_RESOURCE_OBSERVATION_WINDOWS, RESOURCE_OBSERVATION_OVERFLOW, planResourceAssignment, validateResourceObservations, validateResourcePool,
   type ResourceAssignmentPlan, type ResourceObservation, type ResourcePool } from './pool-policy.js';
-import { executeResourceWorker, validateResourceBindings, type ResourceBinding, type ResourceWorkerTask, type ResourceWorkerResult } from './worker.js';
+import { executeResourceWorker, resourceServiceTierObservation, validateResourceBindings,
+  type ResourceBinding, type ResourceWorkerTask, type ResourceWorkerResult } from './worker.js';
 import { resourceUsageScopeForProvider, validResourceExecutionDuration, validResourceExecutionMeasurement, type ResourceExecutionMeasurement } from './performance.js';
 import { RESOURCE_NATIVE_PROCESS_SIGNALS, validResourceNativeProcessForReceipt, type ResourceNativeProcessDiagnostic } from './native-diagnostics.js';
 import { assertResourcePoolCommissioningCustody, commissioningPresent } from './pool-commissioning-custody.js';
@@ -182,6 +183,7 @@ function readResourceJsonSnapshot(file: string, maxBytes: number): unknown {
   }
   let fd: number | undefined;
   try {
+    const parent = lstatSync(dirname(file));
     const named = lstatSync(file);
     if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || realpathSync(file) !== file ||
       named.size < 2 || named.size > maxBytes || (named.mode & 0o777) !== 0o600 ||
@@ -189,8 +191,24 @@ function readResourceJsonSnapshot(file: string, maxBytes: number): unknown {
       !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: dirname(file) }).ok) throw new Error();
     fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     const opened = fstatSync(fd);
-    if (opened.dev !== named.dev || opened.ino !== named.ino || opened.size !== named.size ||
-      opened.uid !== named.uid || opened.mode !== named.mode || opened.nlink !== 1) throw new Error();
+    if (opened.dev !== named.dev || opened.ino !== named.ino) {
+      // A committed ledger can replace the initial named generation before
+      // open. Admit no bytes from this descriptor: retry only the same witnessed
+      // private-file publication that the post-read check already recognizes.
+      const installed = lstatSync(file); const currentParent = lstatSync(dirname(file));
+      if (!parent.isDirectory() || parent.isSymbolicLink() || !currentParent.isDirectory() || currentParent.isSymbolicLink() ||
+        parent.dev !== currentParent.dev || parent.ino !== currentParent.ino || parent.uid !== currentParent.uid || parent.mode !== currentParent.mode ||
+        !opened.isFile() || opened.nlink !== 1 || opened.uid !== named.uid || opened.mode !== named.mode ||
+        opened.size < 2 || opened.size > maxBytes || !installed.isFile() || installed.isSymbolicLink() ||
+        installed.dev !== opened.dev || installed.ino !== opened.ino || installed.uid !== opened.uid || installed.mode !== opened.mode ||
+        installed.nlink !== 1 || installed.size !== opened.size || installed.mtimeMs !== opened.mtimeMs || installed.ctimeMs !== opened.ctimeMs ||
+        realpathSync(file) !== file || !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: dirname(file) }).ok) throw new Error();
+      throw new ResourceFileReplacedDuringRead(RESOURCE_FILE_UNAVAILABLE);
+    }
+    // A rename can unlink the old descriptor immediately after open. It may
+    // proceed only to the post-read replacement proof below, never to a return.
+    if (opened.size !== named.size || opened.uid !== named.uid || opened.mode !== named.mode ||
+      (opened.nlink !== 1 && opened.nlink !== 0)) throw new Error();
     const bytes = Buffer.alloc(named.size);
     if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw new Error();
     const after = fstatSync(fd); const installed = lstatSync(file);
@@ -202,13 +220,21 @@ function readResourceJsonSnapshot(file: string, maxBytes: number): unknown {
       // old one. The open old descriptor keeps its bytes, but unlink changes
       // its ctime and link count. Distinguish only that valid replacement from
       // in-place edits or unsafe files; mutable-ledger reads may start afresh.
-      if (after.nlink !== 0 || after.ctimeMs < named.ctimeMs || !installed.isFile() || installed.isSymbolicLink() ||
-        installed.nlink !== 1 || installed.uid !== named.uid || (installed.mode & 0o777) !== 0o600 ||
+      // Publication may occur between the earlier fstat and this lstat. Observe
+      // the retired descriptor afresh instead of trusting its pre-unlink count.
+      const retired = fstatSync(fd); const currentParent = lstatSync(dirname(file));
+      if (!parent.isDirectory() || parent.isSymbolicLink() || !currentParent.isDirectory() || currentParent.isSymbolicLink() ||
+        parent.dev !== currentParent.dev || parent.ino !== currentParent.ino || parent.uid !== currentParent.uid || parent.mode !== currentParent.mode ||
+        retired.dev !== named.dev || retired.ino !== named.ino || retired.size !== named.size || retired.mtimeMs !== named.mtimeMs ||
+        retired.uid !== named.uid || retired.mode !== named.mode || retired.nlink !== 0 || retired.ctimeMs < named.ctimeMs ||
+        !installed.isFile() || installed.isSymbolicLink() || installed.nlink !== 1 || installed.uid !== named.uid || (installed.mode & 0o777) !== 0o600 ||
         installed.size < 2 || installed.size > maxBytes || realpathSync(file) !== file ||
         !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: dirname(file) }).ok) throw new Error();
       throw new ResourceFileReplacedDuringRead(RESOURCE_FILE_UNAVAILABLE);
     }
-    if (after.ctimeMs !== named.ctimeMs || after.nlink !== 1) throw new Error();
+    if (after.ctimeMs !== named.ctimeMs || after.nlink !== 1 || !installed.isFile() || installed.isSymbolicLink() ||
+      installed.size !== after.size || installed.uid !== after.uid || installed.mode !== after.mode || installed.nlink !== 1 ||
+      installed.mtimeMs !== after.mtimeMs || installed.ctimeMs !== after.ctimeMs) throw new Error();
     return value;
   } catch (error) {
     if (error instanceof ResourceFileReplacedDuringRead) throw error;
@@ -228,7 +254,7 @@ export function readResourceJson(file: string, maxBytes = 2 * 1024 * 1024): unkn
 
 function readMutablePoolState(file: string): unknown {
   // Other owners can commit this ledger while a supervisor observes it. Retry
-  // only a witnessed post-read atomic replacement, with at most three complete
+  // only a witnessed atomic replacement, with at most three complete
   // fresh reads. Never retry a mutation, invalid data or commissioning custody.
   for (let attempt = 0; attempt < 3; attempt++) {
     try { return readResourceJsonSnapshot(file, MAX_STATE_BYTES); }
@@ -751,6 +777,28 @@ export async function runResourceTask(options: { root: string; pool: ResourcePoo
       timeoutMs: task.timeoutMs, maxOutputTokens: task.maxOutputTokens, mode: task.mode }, signal)
     : { status: 'failed', output: '', inputTokens: null, outputTokens: null, reason: 'worker-dispatch-precondition-failed' };
   const elapsed = performance.now() - executionStarted;
+  if (result.reason === 'worker-service-tier-unavailable') {
+    // The provider refused the requested service tier: pool capacity, not task
+    // failure. Release this task's own never-completed reservation (its durable
+    // identity lives in the caller's queue, not in an attempt row) and persist
+    // the bounded recheck observation so the next plan excludes this worker
+    // until its retry hint elapses or fresher evidence supersedes. Returning no
+    // receipt is the existing "no eligible capacity" path; the caller requeues
+    // the same durable task rather than settling a failure.
+    const releasedPlan = transaction(root, pool, bindings, poolDigest, (state) => {
+      const index = state.attempts.findIndex((row) => row.id === reserved.id);
+      if (index < 0 || canonical(state.attempts[index]) !== canonical(reserved)) {
+        throw new Error('Resource assignment changed before settlement');
+      }
+      state.attempts.splice(index, 1);
+      const observation = result.observation ?? resourceServiceTierObservation(reserved.workerId, null, Date.now());
+      state.observations = mergeResourceObservations(state.observations,
+        qualifyResourceCommissioningObservations(root, state, pool, bindings,
+          validateResourceObservations([observation], pool)).observations);
+      return plan(root, state, pool, bindings, task.allowedWorkerIds, Date.now(), unavailable, quotaUnavailable);
+    });
+    return { receipt: null, plan: releasedPlan, replayed: false, output: null };
+  }
   const finishedAt = new Date(Math.max(Date.now(), Date.parse(reserved.startedAt))).toISOString();
   const knownUsage = count(result.inputTokens) && count(result.outputTokens) && count(result.inputTokens + result.outputTokens);
   const receipt: ResourceTaskReceipt = { ...reserved, status: result.status, finishedAt,

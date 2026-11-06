@@ -232,8 +232,9 @@ describe('UsageSection — accounts', () => {
     expect(within(claude).getByText('Binding constraint')).toBeInTheDocument();
     const binding = within(claude).getByRole('meter', { name: /Claude Max Week · Fable used/ });
     expect(binding).toHaveAttribute('aria-valuenow', '100');
-    // The other two windows stay on the card as secondary detail.
-    expect(within(claude).getByRole('meter', { name: /Session · rolling 5h used/ })).toHaveAttribute('aria-valuenow', '47');
+    // Anthropic removed the 5-hour limit: the session window is filtered even
+    // when the server still sends it, and only the weekly windows stay on.
+    expect(within(claude).queryByRole('meter', { name: /Session · rolling 5h used/ })).toBeNull();
     expect(within(claude).getByRole('meter', { name: /Week · all models used/ })).toHaveAttribute('aria-valuenow', '58');
   });
 
@@ -720,7 +721,7 @@ describe('UsageSection — per-account depth on demand', () => {
     render(<UsageSection />);
     await waitFor(() => expect(card('Claude Max')).toBeInTheDocument());
     await userEvent.click(within(card('Claude Max')).getByRole('button', { name: /Claude Max/ }));
-    expect(await screen.findByText('All windows (3)')).toBeInTheDocument();
+    expect(await screen.findByText('All windows (2)')).toBeInTheDocument();
     expect(screen.getByText('Probe evidence')).toBeInTheDocument();
   });
 

@@ -1,0 +1,9 @@
+# Acme Widget repo
+
+> Agent entry point for the Acme Widget repository.
+
+## Sections
+
+- [Agent guide](AGENTS.md): build and test commands
+- [Install](INSTALL.md): local install
+- [Capabilities](capabilities.json): machine-readable manifest

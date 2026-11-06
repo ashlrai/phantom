@@ -1,0 +1,8 @@
+{"job":"RQ-MERGED-A","event":"finish","ts":"2026-10-01T00:00:00Z"}
+{"job":"RQ-MERGED-A","event":"outcome","state":"MERGED","ts":"2026-10-01T00:05:00Z"}
+{"job":"RQ-OPEN-B","event":"outcome","state":"OPEN","ts":"2026-10-01T01:00:00Z"}
+{"job":"RQ-EMPTY-E","event":"finish","ts":"2026-10-01T00:00:00Z","empty":true}
+{"job":"RQ-KEPT-C","event":"finish","ts":"2026-10-01T00:00:00Z"}
+{"job":"RQ-KEPT-C","event":"outcome","state":"MERGED","ts":"2026-10-01T00:05:00Z"}
+{"job":"RQ-FRESH-F","event":"finish","ts":"2026-10-02T11:30:00Z"}
+{"job":"RQ-FRESH-F","event":"outcome","state":"MERGED","ts":"2026-10-02T11:31:00Z"}

@@ -198,8 +198,8 @@ function ageHours(iso: string | null, generatedAt: string): number | null {
   if (!iso) return null;
   const ts = Date.parse(iso);
   const now = Date.parse(generatedAt);
-  if (!Number.isFinite(ts) || !Number.isFinite(now)) return null;
-  return Math.max(0, Math.round(((now - ts) / (60 * 60 * 1000)) * 10) / 10);
+  if (!Number.isFinite(ts) || !Number.isFinite(now) || ts > now) return null;
+  return Math.round(((now - ts) / (60 * 60 * 1000)) * 10) / 10;
 }
 
 function contextRetrievalPosture(
@@ -208,7 +208,8 @@ function contextRetrievalPosture(
 ): FleetContextEfficiencyStatus['signals']['retrievalPosture'] {
   if (!genome) return 'unknown';
   if (genome.totalEntries <= 0) return 'empty';
-  if (memoryAgeHours !== null && memoryAgeHours > 24 * 7) return 'stale';
+  if (memoryAgeHours === null) return 'unknown';
+  if (memoryAgeHours > 24 * 7) return 'stale';
   return 'available';
 }
 

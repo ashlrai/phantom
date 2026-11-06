@@ -1,0 +1,23 @@
+# Acme Widget repo, full context
+
+> Expanded agent context for the Acme Widget repository.
+
+## Project
+
+Widget manifest formatting tools. TypeScript ESM on Node 22.
+
+## Layout
+
+- `src/` holds the implementation.
+- `test/` holds hermetic vitest suites.
+- `docs/` holds operator documentation.
+
+## Verify
+
+Run `npm run typecheck && npm run lint` plus the touched vitest suites.
+
+## Links
+
+- [Agent guide](AGENTS.md)
+- [Install](INSTALL.md)
+- [Capabilities](capabilities.json)

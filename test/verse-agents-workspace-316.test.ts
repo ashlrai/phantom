@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +19,14 @@ import { blankAgent, createAgentStore } from '../src/core/verse/agents/store.js'
 import { ARCHIVE_REF_PREFIX, archiveWorkspace, createAgentWorkspace, restoreWorkspace } from '../src/core/verse/agents/workspace-ops.js';
 import type { AgentRecord } from '../src/core/verse/agents/types.js';
 import { invalidateGitCaches } from '../src/core/verse/git-ops.js';
+import { DEFAULT_WORKTREE_FREE_BYTES, type WorktreeDiskOptions } from '../src/core/worktree-disk.js';
+
+// Physical disk refusals are covered by the fake-fs disk suites. Keep these
+// real-git lifecycle checks deterministic when concurrent jobs fill the host.
+const disk: WorktreeDiskOptions = {
+  minFreeBytes: DEFAULT_WORKTREE_FREE_BYTES,
+  fs: { ...fs, statfs: (async () => ({ bsize: 1n, bavail: BigInt(DEFAULT_WORKTREE_FREE_BYTES) })) as typeof fs.statfs },
+};
 
 let home: string;
 let savedHome: string | undefined;
@@ -50,7 +59,7 @@ afterEach(() => {
 
 describe('agent workspaces (real git)', () => {
   it('makes a worktree on verse/<slug>, copies gitignored files, and picks a fresh slug for a repeat', async () => {
-    const one = await createAgentWorkspace(repo, 'fix-login', ['.env', 'missing.env']);
+    const one = await createAgentWorkspace(repo, 'fix-login', ['.env', 'missing.env'], { disk });
     expect(one.workspace.path).toBe(join(home, '.ashlr-worktrees', 'repo', 'fix-login'));
     expect(one.workspace.branch).toBe('verse/fix-login');
     expect(one.copied).toEqual(['.env']);
@@ -59,13 +68,13 @@ describe('agent workspaces (real git)', () => {
     expect(git(one.workspace.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('verse/fix-login');
     expect(one.workspace.baseSha).toBe(git(repo, 'rev-parse', 'HEAD'));
 
-    const two = await createAgentWorkspace(repo, 'fix-login', []);
+    const two = await createAgentWorkspace(repo, 'fix-login', [], { disk });
     expect(two.workspace.name).toBe('fix-login-2');
     expect(two.workspace.branch).toBe('verse/fix-login-2');
   });
 
   it('snapshots uncommitted and untracked work before removing the worktree, and restores it unstaged', async () => {
-    const made = await createAgentWorkspace(repo, 'feature', []);
+    const made = await createAgentWorkspace(repo, 'feature', [], { disk });
     const ws = { ...made.workspace, portBase: 41000, portCount: 10 };
     writeFileSync(join(ws.path, 'b.txt'), 'committed on the branch\n');
     git(ws.path, 'add', 'b.txt');
@@ -85,7 +94,7 @@ describe('agent workspaces (real git)', () => {
     // Private: not a branch, not a tag.
     expect(git(repo, 'branch', '--list', 'verse/feature')).toBe('');
 
-    await restoreWorkspace(ws, archived);
+    await restoreWorkspace(ws, archived, { disk });
     expect(existsSync(ws.path)).toBe(true);
     expect(git(ws.path, 'rev-parse', 'HEAD')).toBe(head);
     expect(git(ws.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('verse/feature');
@@ -98,21 +107,21 @@ describe('agent workspaces (real git)', () => {
   });
 
   it('refuses to restore over something that is already there', async () => {
-    const made = await createAgentWorkspace(repo, 'clash', []);
+    const made = await createAgentWorkspace(repo, 'clash', [], { disk });
     const ws = { ...made.workspace, portBase: 41000, portCount: 10 };
     const archived = await archiveWorkspace(ws, 'manual');
     mkdirSync(ws.path, { recursive: true });
-    await expect(restoreWorkspace(ws, archived)).rejects.toThrow(/already exists/);
+    await expect(restoreWorkspace(ws, archived, { disk })).rejects.toThrow(/already exists/);
   });
 
   it('keeps live workspaces under the cap by archiving the oldest idle, unpinned agent (restorable)', async () => {
     let clock = '2026-01-01T00:00:00Z';
     const store = createAgentStore({ file: () => join(home, '.ashlr', 'verse', 'agents', 'agents.json'), now: () => new Date(clock) });
     const launcher: ScriptLauncher = { start: async () => ({ via: 'process', tabId: null }), status: () => null, log: () => null, stop: () => undefined };
-    const deps: ActionDeps = { store, engine: () => null, launcher, priceOf: () => null };
+    const deps: ActionDeps = { store, engine: () => null, launcher, priceOf: () => null, ops: { disk } };
     const make = async (id: string, name: string, at: string, pinned = false): Promise<AgentRecord> => {
       clock = at;
-      const made = await createAgentWorkspace(repo, name, []);
+      const made = await createAgentWorkspace(repo, name, [], { disk });
       return store.put({ ...blankAgent({ id, title: name, at }), pinned, workspace: { ...made.workspace, portBase: 41000, portCount: 10 } });
     };
     const pinned = await make('ag_1111111111111111', 'pinned', '2026-01-01T00:00:00Z', true);

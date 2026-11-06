@@ -1,0 +1,5 @@
+.form, .fields { display: grid; gap: 16px; min-width: 0; }
+.fields { border: 0; padding: 0; margin: 0; }
+.fields label { display: grid; gap: 8px; }
+.fields input, .fields textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 12px; border-radius: 8px; color: inherit; background: var(--bg-surface-raised); border: 1px solid var(--border-default); }
+.header { overflow-wrap: anywhere; }

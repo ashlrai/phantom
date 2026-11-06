@@ -21,7 +21,8 @@
  *   2  bad usage / invalid name
  */
 
-import { execSync, execFileSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../core/integrations/secrets.js';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve, join, sep } from 'node:path';

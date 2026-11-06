@@ -1,0 +1,114 @@
+{
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "name",
+    "command",
+    "version",
+    "protocols",
+    "capabilities",
+    "health",
+    "edits",
+    "receipts"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ashlr.handshake"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "name": {
+      "const": "lexicon"
+    },
+    "command": {
+      "const": "lexicon"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.+-]+)?$"
+    },
+    "protocols": {
+      "type": "object",
+      "required": [
+        "ashlr.handshake"
+      ],
+      "properties": {
+        "ashlr.handshake": {
+          "type": "integer",
+          "const": 1
+        }
+      },
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      },
+      "uniqueItems": true
+    },
+    "health": {
+      "type": "object",
+      "required": [
+        "status",
+        "checks"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "degraded",
+            "unknown"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+              },
+              "status": {
+                "enum": [
+                  "ok",
+                  "missing",
+                  "absent"
+                ]
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "edits": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)"
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lexicon Ashlr discovery handshake v1"
+}

@@ -113,7 +113,7 @@ const actionCommands: Command[] = [
   {
     id: 'action:toggle-theme',
     title: 'Toggle theme',
-    subtitle: 'Cycle system → light → dark',
+    subtitle: 'Cycle system → light → dark → high contrast',
     group: 'Actions',
     keywords: ['dark mode', 'light mode', 'appearance', 'dark', 'light'],
     run: () => {

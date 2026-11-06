@@ -43,6 +43,7 @@
  * arrive as VERSE_ANCHOR_EVENT and are revealed by shell/reveal-anchor.ts
  * (listened for by shell/anchor-requests.ts).
  */
+import { FrictionFeedback } from './feedback/FrictionFeedback.js';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { reportThemeToShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
@@ -52,15 +53,18 @@ import { useToast } from '../../components/primitives/Toast.js';
 import { getMutationToken } from '../../data/auth-store.js';
 import { queryGateStats } from '../../data/cache.js';
 import { apiPost } from '../../data/client.js';
-import { useTheme } from '../../data/hooks.js';
+import { useQuery, useRefetch, useTheme } from '../../data/hooks.js';
 import { VERSE_ACTIVITY_SEEN_PATH, type VerseActivityCompletion } from '../../../core/verse/workbench-types.js';
 import { useResourcesUi } from './resources/resources-store.js';
 import { commandChord, detectKeyPlatform, formatChord, matchKey } from './shell/command-keys.js';
 import { useGuardState } from './shell/guard-store.js';
+import { gearUpdateSpoken } from './shell/gear-update-dot.js';
 import type { RailBadge } from './shell/RailStatus.js';
 import { subscribeAnchorRequests } from './shell/anchor-requests.js';
 import { executeCatalogCommand, useShellCommands } from './shell/run-command.js';
-import { SectionVisibilityProvider } from './shell/section-visibility.js';
+import { SectionVisibilityProvider, usePollWhileVisible } from './shell/section-visibility.js';
+import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './shell/fleet-ci-runs-query.js';
+import { ciNeedsYouCount } from './shell/ci-runs-facts.js';
 import { preloadedLazy } from './shell/preloaded.js';
 import { SECTION_MODULES, sectionImporter } from './shell/section-modules.js';
 import { SurfaceNotInBuild, SurfaceSkeleton } from './shell/skeletons.js';
@@ -172,6 +176,7 @@ const importPalette = () => import('./shell/CommandPalette.js');
 const importDrawer = () => import('./shell/NeedsYouDrawer.js');
 const importShortcuts = () => import('./shell/ShortcutsOverlay.js');
 const importGearTray = () => import('./shell/GearTray.js');
+const importConsoleNotifications = () => import('./shell/ConsoleNotifications.js');
 // The first-run tour's store and its flow: the gate reads the one and loads the other.
 const importOnboarding = () => import('./onboarding/OnboardingGate.js');
 const importRailStatus = () => import('./shell/RailStatus.js');
@@ -185,8 +190,12 @@ const Palette = preloadedLazy(() => importPalette().then((m) => m.CommandPalette
 const Drawer = preloadedLazy(() => importDrawer().then((m) => m.NeedsYouDrawer), false);
 const Shortcuts = preloadedLazy(() => importShortcuts().then((m) => m.ShortcutsOverlay), false);
 const GearTray = lazy(() => importGearTray().then((m) => ({ default: m.GearTray })));
+const GearUpdateDot = lazy(() => import('./shell/GearUpdateDot.js').then((m) => ({ default: m.GearUpdateDot })));
+const ConsoleBell = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleBell })));
+const ConsoleNotificationCenter = lazy(() => importConsoleNotifications().then((m) => ({ default: m.ConsoleNotificationCenter })));
 const ReviewMenu = lazy(() => import('./shell/ReviewMenu.js'));
 const PowerStatus = lazy(() => import('./power/PowerStatus.js').then((module) => ({ default: module.PowerStatus })));
+const InterjectDialog = lazy(() => import('./fleet/InterjectDialog.js').then((m) => ({ default: m.InterjectDialog })));
 
 const OnboardingGate = lazy(() => importOnboarding().then((m) => ({ default: m.OnboardingGate })));
 const ResourcesChrome = lazy(() => importResources().then((m) => ({ default: m.ResourcesChrome })));
@@ -305,12 +314,19 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
   if (paneId) openPaneInChat(paneId, sessionId);
 }
 
+const ShellUpdates = lazy(() => import('./shell/ShellUpdates.js'));
+const WindowTitle = lazy(() => import('./shell/WindowTitle.js'));
+
 export function VerseApp() {
   const guardOpen = useGuardState().request !== null;
   const ui = useVerseUi();
   const theme = useTheme();
   const toast = useToast();
   const activity = useActivity();
+  const ciRead = useQuery(fleetCiRunsQuery, { freshMs: FLEET_CI_RUNS_POLL_MS });
+  const refetchCi = useRefetch(fleetCiRunsQuery);
+  usePollWhileVisible(refetchCi, FLEET_CI_RUNS_POLL_MS);
+  const [updateLabel, setUpdateLabel] = useState<string | null>(null);
   const { compact } = useViewport();
   const platform = useMemo(() => detectKeyPlatform(), []);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -338,6 +354,16 @@ export function VerseApp() {
     void importGearTray().then(
       () => { if (alive) setGearReady(true); },
       (err) => console.error('[verse] settings tray failed to load', err),
+    );
+    return () => { alive = false; };
+  }, []);
+
+  const [notificationsReady, setNotificationsReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void importConsoleNotifications().then(
+      () => { if (alive) setNotificationsReady(true); },
+      (err) => console.error('[verse] notifications failed to load', err),
     );
     return () => { alive = false; };
   }, []);
@@ -409,10 +435,14 @@ export function VerseApp() {
   // URL carries one.
   useEffect(() => {
     if (typeof window === 'undefined' || !/[?&](?:chat|pane|terminal)=/.test(window.location.search)) return;
-    void import('./shell/deep-link.js').then(({ consumeDeepLink }) => {
+    void import('./shell/deep-link.js').then(async ({ consumeDeepLink, resolveDeepLinkPane }) => {
       const link = consumeDeepLink();
       if (link?.terminal) window.dispatchEvent(new CustomEvent(VERSE_OPEN_TERMINAL_EVENT, { detail: { ...link.terminal, sessionId: link.sessionId } }));
-      else if (link) openWorkbenchLink(link.sessionId, link.paneId);
+      else if (link) {
+        const registry = link.paneId ? await import('./panes/index.js') : null;
+        const paneId = resolveDeepLinkPane(link.paneId, (id) => registry?.getPane(id) != null);
+        openWorkbenchLink(link.sessionId, paneId);
+      }
     }, () => undefined);
   }, []);
   // "Go to that card": whoever raises it (drawer, Command, Mind), the shell reveals it.
@@ -458,7 +488,8 @@ export function VerseApp() {
   }, [ui.section, data?.mind?.unseen, latestMemoAt]);
 
   const expanded = ui.railExpanded && !compact;
-  const needsYouCount = data ? data.counts.needsYou : null;
+  const ciCount = ciNeedsYouCount(ciRead.status === 'error' ? undefined : ciRead.data, Date.now());
+  const needsYouCount = data ? data.counts.needsYou + ciCount : ciCount || null;
   // Settings, Apps & Accounts and Usage open from the gear, so on those pages
   // the gear IS the current rail item — for assistive tech too (aria-current,
   // and the page's name, since one gear stands for three pages), not only
@@ -479,6 +510,7 @@ export function VerseApp() {
       data-resources={resources.open && resources.pinned && !compact ? 'docked' : undefined}
       data-focus={focus ? 'on' : undefined}
     >
+      <Suspense fallback={null}><WindowTitle /></Suspense>
       <nav className={styles.rail} data-rail={expanded ? 'expanded' : 'collapsed'} aria-label={`${PRODUCT_NAME} sections`}>
         {/*
           Desktop shell: the window's top 48px is overlaid by the OS title bar
@@ -527,6 +559,7 @@ export function VerseApp() {
           })}
         </ul>
         <div className={styles.railFoot}>
+          <FrictionFeedback surface={ui.section} className={styles.railButton} />
           <Tooltip label="Needs you" shortcut={shortcut('needs-you.open')} placement="right" disabled={expanded || compact}>
             <button
               type="button"
@@ -555,12 +588,15 @@ export function VerseApp() {
               <ResourcesBar expanded={expanded} />
             </Suspense>
           ) : rail ? <RailCapacityButton rail={rail} expanded={expanded} /> : null}
+          <Suspense fallback={null}>
+            {notificationsReady ? <ConsoleBell expanded={expanded} compact={compact} /> : null}
+          </Suspense>
           <Tooltip label="Settings and more" placement="right" disabled={expanded || compact || trayOpen}>
             <button
               ref={gearRef}
               type="button"
               className={styles.railButton}
-              aria-label={gearPage ? `Settings and more (${gearPage.label} open)` : 'Settings and more'}
+              aria-label={`${gearPage ? `Settings and more (${gearPage.label} open)` : 'Settings and more'}${gearUpdateSpoken(updateLabel)}`}
               aria-haspopup="menu"
               aria-expanded={trayOpen}
               aria-current={gearPage ? 'page' : undefined}
@@ -568,7 +604,7 @@ export function VerseApp() {
               data-active={gearPage ? true : undefined}
               onClick={() => setTrayOpen((v) => !v)}
             >
-              <span className={styles.railIcon}><GearIcon /></span>
+              <span className={styles.railIcon}><GearIcon /><Suspense fallback={null}><ShellUpdates onLabel={setUpdateLabel} /><GearUpdateDot /></Suspense></span>
               {expanded || compact ? <span className={styles.railLabel}>{compact ? 'More' : 'Settings'}</span> : null}
             </button>
           </Tooltip>
@@ -604,6 +640,9 @@ export function VerseApp() {
         ))}
       </main>
 
+      <Suspense fallback={null}>
+        {notificationsReady ? <ConsoleNotificationCenter /> : null}
+      </Suspense>
       {/* Lazy chunks (see "Off the first-paint path"); each mounts only while it can draw. */}
       <Suspense fallback={null}>
         {gearReady || trayOpen ? <GearTray open={trayOpen} anchorRef={gearRef} onClose={() => setTrayOpen(false)} compact={compact} /> : null}
@@ -619,6 +658,7 @@ export function VerseApp() {
         {ui.overlay === 'needs-you' ? <Drawer.Slot /> : null}
         {ui.overlay === 'shortcuts' ? <Shortcuts.Slot /> : null}
       </Suspense>
+      <Suspense fallback={null}><InterjectDialog /></Suspense>
       {voiceHud ? <Suspense fallback={null}><VoiceHud /></Suspense> : null}
       {guardOpen ? <Suspense fallback={null}><GuardHost /></Suspense> : null}
       {computerUse ? (

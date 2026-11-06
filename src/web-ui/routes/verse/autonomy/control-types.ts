@@ -26,7 +26,6 @@
  * aliases of the real types so call sites read the same.
  */
 import type { FrontierEngineUsage } from '../../../../core/usage/frontier-usage.js';
-import type { VerseFoundryLimit } from '../../../data/api-types.js';
 
 export type {
   AuditEntry,
@@ -126,14 +125,6 @@ export function engineQuotaStanding(row: FrontierEngineUsage): VerseQuotaStandin
   if (used >= limit) return 'over';
   if (used >= limit * 0.8) return 'warn';
   return 'ok';
-}
-
-/** The configured foundry limit matching a quota row, when there is one. */
-export function limitForEngine(
-  engine: string,
-  limits: readonly VerseFoundryLimit[] | undefined,
-): VerseFoundryLimit | null {
-  return limits?.find((l) => l.engine === engine) ?? null;
 }
 
 export { VERSE_UNCAPPED_COUNT_KEYS } from '../../../../core/verse/control-types.js';

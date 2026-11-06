@@ -60,6 +60,19 @@ describe('ship refuses a path that is not a project directory', () => {
     expect(out.join('')).toBe('');
   });
 
+  it('gate-only JSON preserves the result and suppresses deployment', async () => {
+    const { cmdShip } = await import('../src/cli/ship.js');
+    expect(await cmdShip([dir, '--gate', '--deploy', 'vercel', '--json'])).toBe(0);
+    expect(JSON.parse(out.join(''))).toMatchObject({
+      gate: { passed: true },
+      deployTarget: null,
+      deployDryRun: true,
+      deployRan: false,
+      deployDetail: 'gate-only mode',
+    });
+    expect(err.join('')).toContain('GATE PASSED');
+  });
+
   it('an existing directory still runs the gate', async () => {
     const { cmdShip } = await import('../src/cli/ship.js');
     expect(await cmdShip([dir])).toBe(0);

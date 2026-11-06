@@ -12,6 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,6 +44,7 @@ import {
 } from '../src/core/verse/git-ops.js';
 import { createWorktree, isValidWorktreeName, worktreeRepoSegment } from '../src/core/verse/worktrees.js';
 import { VERSE_GIT_PATCH_MAX_BYTES, type VerseGitPr } from '../src/core/verse/workbench-types.js';
+import { DEFAULT_WORKTREE_FREE_BYTES, type WorktreeDiskOptions } from '../src/core/worktree-disk.js';
 
 // ===========================================================================
 // A scripted repository
@@ -613,6 +615,10 @@ describe('merge', () => {
     await mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA, requiredChecks: ['CI'] }, green.opts);
     expect(green.calls.some((c) => c.bin === 'gh' && c.args[1] === 'merge')).toBe(true);
     for (const checks of [
+      [],
+      [{ name: 'CI', status: 'IN_PROGRESS', conclusion: '' }],
+      [{ name: 'CI', status: 'COMPLETED', conclusion: 'FAILURE' }],
+      [{ name: 'CI', status: 'COMPLETED', conclusion: 'SKIPPED' }],
       [{ name: 'Vercel', status: 'COMPLETED', conclusion: 'SUCCESS' }],
       [{ name: 'CI', status: 'COMPLETED', conclusion: 'NEUTRAL' }],
       [{ name: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS' }, { name: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS' }],
@@ -621,6 +627,20 @@ describe('merge', () => {
       await expect(mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA, requiredChecks: ['CI'] }, f.opts)).rejects.toThrow(/Required code check/);
       expect(f.calls.some((c) => c.bin === 'gh' && c.args[1] === 'merge')).toBe(false);
     }
+  });
+
+  it('uses required evidence while preserving the exact-head merge fence', async () => {
+    const statusCheckRollup = [
+      { name: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { name: 'optional', status: 'COMPLETED', conclusion: 'FAILURE' },
+      { name: 'post-merge', status: 'IN_PROGRESS', conclusion: '' },
+    ];
+    const f = fakeGit(scenario({ ghView: view({ statusCheckRollup }) }));
+    await mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA, requiredChecks: ['CI'] }, f.opts);
+    expect(f.calls.find((c) => c.bin === 'gh' && c.args[1] === 'merge')?.args).toContain(HEAD_SHA);
+    const stale = fakeGit(scenario({ ghView: view({ statusCheckRollup, headRefOid: 'b'.repeat(40) }) }));
+    await expect(mergePullRequest(REPO, { number: 463, headSha: HEAD_SHA, requiredChecks: ['CI'] }, stale.opts)).rejects.toThrow(/new commits/);
+    expect(stale.calls.some((c) => c.bin === 'gh' && c.args[1] === 'merge')).toBe(false);
   });
 
   const refusals: Array<[string, Partial<Record<string, unknown>>, string, string]> = [
@@ -712,6 +732,12 @@ describe('guards', () => {
 // ===========================================================================
 
 describe('createWorktree', () => {
+  // Physical disk refusals are covered by the fake-fs disk suites. These
+  // lifecycle fixtures must not depend on free space left by concurrent jobs.
+  const disk: WorktreeDiskOptions = {
+    minFreeBytes: DEFAULT_WORKTREE_FREE_BYTES,
+    fs: { ...fs, statfs: (async () => ({ bsize: 1n, bavail: BigInt(DEFAULT_WORKTREE_FREE_BYTES) })) as typeof fs.statfs },
+  };
   let home: string;
   let savedHome: string | undefined;
   beforeEach(() => {
@@ -727,7 +753,7 @@ describe('createWorktree', () => {
   it('adds ~/.ashlr-worktrees/<repo>/<name> on verse/<name>, from HEAD', async () => {
     const f = fakeGit(scenario());
     const made: string[] = [];
-    const out = await createWorktree(REPO, 'fix-login', { ...f.opts, pathExists: () => false, makeDir: async (p) => { made.push(p); } });
+    const out = await createWorktree(REPO, 'fix-login', { ...f.opts, disk, pathExists: () => false, makeDir: async (p) => { made.push(p); } });
     expect(out).toEqual({ path: join(home, '.ashlr-worktrees', 'ashlr-hub', 'fix-login'), branch: 'verse/fix-login' });
     expect(made).toEqual([join(home, '.ashlr-worktrees', 'ashlr-hub')]);
     const add = f.calls.find((c) => bare(c.args)[0] === 'worktree')!;
@@ -736,10 +762,10 @@ describe('createWorktree', () => {
 
   it('refuses an existing directory or branch, and a bad name', async () => {
     const f = fakeGit(scenario());
-    await expect(createWorktree(REPO, 'x', { ...f.opts, pathExists: () => true, makeDir: async () => {} })).rejects.toThrow('already exists');
+    await expect(createWorktree(REPO, 'x', { ...f.opts, disk, pathExists: () => true, makeDir: async () => {} })).rejects.toThrow('already exists');
     const taken = fakeGit(scenario({ refs: new Set(['origin/main', 'refs/heads/verse/x']) }));
-    await expect(createWorktree(REPO, 'x', { ...taken.opts, pathExists: () => false, makeDir: async () => {} })).rejects.toThrow('verse/x already exists');
-    await expect(createWorktree(REPO, '../escape', f.opts)).rejects.toMatchObject({ code: 'VERSE_INVALID' });
+    await expect(createWorktree(REPO, 'x', { ...taken.opts, disk, pathExists: () => false, makeDir: async () => {} })).rejects.toThrow('verse/x already exists');
+    await expect(createWorktree(REPO, '../escape', { ...f.opts, disk })).rejects.toMatchObject({ code: 'VERSE_INVALID' });
     expect(isValidWorktreeName('a'.repeat(64))).toBe(false);
     expect(isValidWorktreeName('fix.lock')).toBe(false);
     expect(worktreeRepoSegment('/x/..hidden repo')).toBe('hidden-repo');

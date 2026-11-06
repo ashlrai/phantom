@@ -29,7 +29,8 @@
  * repo under ~/Desktop can park the thread behind a macOS privacy prompt.
  */
 
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -79,10 +80,24 @@ export const EMPTY_STEERING: WikiSteering = Object.freeze({
 
 async function readJsonCapped(file: string): Promise<{ raw: string; value: unknown } | null> {
   try {
-    const buf = await readFile(file);
-    if (buf.byteLength > MAX_STEERING_BYTES) return null;
-    const raw = buf.toString('utf8');
-    return { raw, value: JSON.parse(raw) as unknown };
+    // Nonblocking open also prevents a FIFO in place of wiki.json from parking
+    // the sidecar before we can reject non-regular files.
+    const handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      if (!(await handle.stat()).isFile()) return null;
+      const buf = Buffer.allocUnsafe(MAX_STEERING_BYTES + 1);
+      let size = 0;
+      while (size < buf.length) {
+        const { bytesRead } = await handle.read(buf, size, buf.length - size, null);
+        if (bytesRead === 0) break;
+        size += bytesRead;
+      }
+      if (size > MAX_STEERING_BYTES) return null;
+      const raw = buf.toString('utf8', 0, size);
+      return { raw, value: JSON.parse(raw) as unknown };
+    } finally {
+      await handle.close();
+    }
   } catch {
     return null;
   }

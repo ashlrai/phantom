@@ -8,18 +8,22 @@ import { randomBytes } from 'node:crypto';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createRemoteAccessVerifier } from '../src/core/web/remote-access.js';
 import { createRemoteDeviceStore, type RemoteDevice } from '../src/core/web/remote-device-store.js';
+import { handleVerseApi, type VerseApiContext } from '../src/core/verse/verse-api.js';
 import { startRemoteReadGateway } from '../src/core/web/remote-gateway.js';
+import { createRemotePairing } from '../src/core/web/remote-pairing.js';
 
 const ORIGIN = 'https://phone.example.com';
 const SUBJECT = '7335d417-61da-459d-899c-0a01c76a2f94';
 const DEVICE_ID = '6335d417-61da-459d-899c-0a01c76a2f94';
 const TOKEN = 'a'.repeat(64);
+const MTOKEN = 'c'.repeat(64);
 const CONFIG = { publicOrigin: ORIGIN, teamDomain: 'https://team.cloudflareaccess.com', audience: 'b'.repeat(64), allowedSubjects: [SUBJECT] };
 const active = new Set<Server>();
 const dirs: string[] = [];
 afterEach(async () => {
   for (const server of active) { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
   active.clear();
+  Reflect.deleteProperty(globalThis, Symbol.for('ashlr.build-identity.v1'));
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   dirs.length = 0;
 });
@@ -31,26 +35,51 @@ function device(): RemoteDevice {
     deviceType: 'multiDevice', backedUp: true, createdAt: 1, lastUsedAt: null, revokedAt: null };
 }
 
-async function fixture() {
+async function fixture(opts: { writes?: boolean; mobileAssets?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ashlr-remote-http-'));
   dirs.push(root);
   const devices = createRemoteDeviceStore(root);
   devices.add(device());
   const received: { path: string; headers: Record<string, unknown> }[] = [];
-  const control = { rejectNextSse: false };
+  const control = {
+    rejectNextSse: false,
+    assetBody: 'desktop-build-one',
+    assetStatus: 200,
+    /** When set, the activity handler embeds this string in its JSON reply. */
+    leakJson: null as string | null,
+    /** When set, the SSE handler writes exactly these chunks instead of a tick. */
+    ssePayload: null as string[] | null,
+    /** When set, the mutation handler embeds this string in its JSON reply. */
+    leakMutation: null as string | null,
+  };
   const hub = createServer((req, res) => {
     received.push({ path: req.url ?? '', headers: { ...req.headers } });
+    if (req.url === '/api/verse/version') {
+      void handleVerseApi({} as VerseApiContext, req, res, req.url, req.method ?? 'GET'); return;
+    }
+    if (req.url === '/verse/m/' || req.url === '/next/assets/app-abcdefgh.js') {
+      const html = req.url === '/verse/m/';
+      res.writeHead(control.assetStatus, { 'Content-Type': html ? 'text/html; charset=utf-8' : 'application/javascript' });
+      res.end(html ? `<html><head></head><body>${control.assetBody}</body></html>` : control.assetBody); return;
+    }
+
     if (req.url === '/api/session' && req.method === 'POST' && req.headers['x-ashlr-token'] === TOKEN) {
       res.writeHead(204, { 'Set-Cookie': `ashlr_read_session=${'z'.repeat(80)}; Path=/api/; HttpOnly` }); res.end(); return;
     }
     if (req.url?.startsWith('/api/events?topics=verse-sessions&client=') && req.headers.cookie?.startsWith('ashlr_read_session=')) {
       if (control.rejectNextSse) { control.rejectNextSse = false; res.writeHead(401, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (control.ssePayload) { for (const chunk of control.ssePayload) res.write(chunk); return; }
       res.write(`event: tick\ndata: ${'x'.repeat(128)}\n\n`); return;
     }
     if ((req.url === '/api/verse/activity' || req.url === '/api/verse/activity?since=v1.aaaaaaaa.t.1')
       && req.headers['x-ashlr-token'] === TOKEN) {
-      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true })); return;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, ...(control.leakJson ? { debug: control.leakJson } : {}) })); return;
+    }
+    if (req.url === '/api/verse/activity/seen' && req.method === 'POST' && req.headers['x-ashlr-token'] === MTOKEN) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ seen: true, ...(control.leakMutation ? { echo: control.leakMutation } : {}) })); return;
     }
     if (req.url === '/api/verse/sessions/long' && req.headers['x-ashlr-token'] === TOKEN) {
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ events: 'x'.repeat(3 * 1024 * 1024) })); return;
@@ -74,7 +103,11 @@ async function fixture() {
     .setSubject(subject).setIssuedAt(Math.floor(Date.now() / 1000) - 1).setNotBefore(Math.floor(Date.now() / 1000) - 1)
     .setExpirationTime(expiry).sign(privateKey);
   const jwt = await sign(Math.floor(Date.now() / 1000) + 600);
-  const gateway = await startRemoteReadGateway({ access: CONFIG, hub: { port: hubPort, readToken: TOKEN }, devices, verifier });
+  const gateway = await startRemoteReadGateway({
+    access: CONFIG, devices, verifier, mobileAssetsEnabled: opts.mobileAssets,
+    hub: opts.writes ? { port: hubPort, readToken: TOKEN, mutationToken: MTOKEN } : { port: hubPort, readToken: TOKEN },
+    pairing: opts.writes ? createRemotePairing(CONFIG, devices) : undefined,
+  });
   const identity = { subject: SUBJECT, email: 'owner@example.com', expiresAt: Date.now() + 600_000 };
   const session = gateway.issueDeviceSession(identity, DEVICE_ID);
   if (!session) throw new Error('fixture session missing');
@@ -90,10 +123,71 @@ async function fixture() {
       outgoing.end();
     });
   }
-  return { gateway, devices, received, headers, get, sign, session, control };
+  async function post(path: string, body: unknown, overrides: Record<string, string> = {}) {
+    const payload = body === undefined ? '' : JSON.stringify(body);
+    return new Promise<Response>((resolve, reject) => {
+      const outgoing = httpRequest(`${gateway.url}${path}`, {
+        method: 'POST',
+        headers: {
+          ...headers, 'content-type': 'application/json', origin: ORIGIN,
+          'x-ashlr-remote-csrf': session.csrfToken, ...overrides,
+        },
+      }, (incoming) => {
+        resolve(new Response(Readable.toWeb(incoming) as ReadableStream<Uint8Array>, {
+          status: incoming.statusCode, headers: incoming.headers as HeadersInit,
+        }));
+      });
+      outgoing.on('error', reject);
+      outgoing.end(payload);
+    });
+  }
+  return { gateway, devices, received, headers, get, post, sign, session, control, hubPort };
 }
 
 describe('dormant remote read gateway HTTP boundary', () => {
+  it('returns the running desktop version verbatim through the authenticated remote', async () => {
+    const build = { schemaVersion: 1, packageVersion: '3.29.17', revision: 'd'.repeat(40), dirty: false, provenance: 'git' };
+    Reflect.set(globalThis, Symbol.for('ashlr.build-identity.v1'), JSON.stringify(build));
+    const f = await fixture();
+    const desktop = await fetch(`http://127.0.0.1:${f.hubPort}/api/verse/version`);
+    const remote = await f.get('/api/verse/version');
+    expect(desktop.status).toBe(200);
+    expect(remote.status).toBe(200);
+    const identity = await desktop.json();
+    expect(identity).toEqual(build);
+    expect(await remote.json()).toEqual(identity);
+  });
+
+  it('serves the current desktop shell and hashed assets, never a separate installed build', async () => {
+    const f = await fixture({ mobileAssets: true });
+    for (const build of ['desktop-build-one', 'desktop-build-two']) {
+      f.control.assetBody = build;
+      const shell = await f.get('/verse/m/');
+      expect(shell.status).toBe(200);
+      expect(await shell.text()).toBe(`<html><head><meta name="ashlr-remote-gateway" content="v1"></head><body>${build}</body></html>`);
+      const asset = await f.get('/next/assets/app-abcdefgh.js');
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toBe(build);
+    }
+    f.control.assetStatus = 302;
+    expect((await f.get('/verse/m/')).status).toBe(503);
+    const count = f.received.length;
+    expect((await f.get('/next/assets/../private')).status).toBe(404);
+    expect(f.received).toHaveLength(count);
+  });
+
+  it('never forwards fleet, inbox, usage or version reads without both authentication layers', async () => {
+    const f = await fixture();
+    for (const path of ['/api/verse/fleet/runs', '/api/verse/fleet/runs/inbox', '/api/verse/leader/resources', '/api/verse/version']) {
+      for (const headers of [{ 'cf-access-jwt-assertion': '' }, { cookie: '' }]) {
+        const response = await f.get(path, headers);
+        expect([401, 403]).toContain(response.status);
+        expect(await response.text()).not.toContain('packageVersion');
+      }
+    }
+    expect(f.received).toEqual([]);
+  });
+
   it('keeps raw Hub credentials off the browser and allows only reviewed reads', async () => {
     const f = await fixture();
     try {
@@ -203,6 +297,65 @@ describe('dormant remote read gateway HTTP boundary', () => {
       expect(response.status).toBe(200);
       await response.body?.cancel();
       expect(f.received.filter((r) => r.path === '/api/session')).toHaveLength(2);
+    } finally { await f.gateway.close(); }
+  });
+
+  it('rejects a proxied JSON body containing a Hub credential instead of relaying it', async () => {
+    const f = await fixture();
+    try {
+      f.control.leakJson = TOKEN;
+      const response = await f.get('/api/verse/activity');
+      expect(response.status).toBe(502);
+      const body = await response.text();
+      expect(body).not.toContain(TOKEN);
+      expect(JSON.parse(body)).toMatchObject({ code: 'HUB_BAD_RESPONSE' });
+    } finally { await f.gateway.close(); }
+  });
+
+  it('aborts an SSE stream whose Hub credential is split across chunks', async () => {
+    const f = await fixture();
+    try {
+      // The credential arrives straddling a chunk boundary; the gateway holds
+      // a token-length tail precisely so this cannot slip through.
+      f.control.ssePayload = [`event: t\ndata: ${TOKEN.slice(0, 20)}`, `${TOKEN.slice(20)}\n\n`];
+      const response = await f.get('/api/events?topics=verse-sessions');
+      expect(response.status).toBe(200);
+      const reader = response.body!.getReader();
+      let receivedText = '';
+      const decoder = new TextDecoder();
+      for (;;) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 3_000)),
+        ]);
+        expect(chunk).not.toBe('timeout');
+        const part = chunk as ReadableStreamReadResult<Uint8Array>;
+        if (part.done) break;
+        receivedText += decoder.decode(part.value);
+      }
+      expect(receivedText).not.toContain(TOKEN);
+    } finally { await f.gateway.close(); }
+  });
+
+  it('rejects a mutation reply containing a Hub credential and never relays it', async () => {
+    const f = await fixture({ writes: true });
+    try {
+      // Happy path first: a clean mutation response passes through untouched.
+      const clean = await f.post('/api/verse/activity/seen', { sessionId: 's1', turnCount: 0 });
+      expect(clean.status).toBe(200);
+      expect(await clean.json()).toEqual({ seen: true });
+      expect(f.received.at(-1)?.headers['x-ashlr-token']).toBe(MTOKEN);
+
+      // Hub replies embedding EITHER credential are dropped behind a 502.
+      for (const leaked of [MTOKEN, TOKEN]) {
+        f.control.leakMutation = leaked;
+        const response = await f.post('/api/verse/activity/seen', { sessionId: 's1', turnCount: 0 });
+        expect(response.status).toBe(502);
+        const body = await response.text();
+        expect(body).not.toContain(MTOKEN);
+        expect(body).not.toContain(TOKEN);
+        expect(JSON.parse(body)).toMatchObject({ code: 'HUB_UNAVAILABLE' });
+      }
     } finally { await f.gateway.close(); }
   });
 });

@@ -1,6 +1,6 @@
 /**
- * routes/verse/onboarding/OnboardingPanel.tsx — the Settings row that brings
- * the first-run tour back.
+ * routes/verse/onboarding/OnboardingPanel.tsx — the Settings rows that bring
+ * the first-run tour and the "What's new" card back.
  *
  * It lives here rather than in sections/ so the whole onboarding feature is
  * one folder; SettingsSection.tsx imports it the same way it imports its own
@@ -9,14 +9,18 @@
  *
  * The description states what the tour actually covers, and — because this
  * is the only place the stored answer is visible — whether it has been seen.
+ * The second row does the same for the release card: a "Later" or Escape on
+ * day one of a release otherwise loses the only summary of what changed.
  */
 import { Button } from '../../../components/primitives/index.js';
 import { Panel, SettingRow } from '../sections/SettingRow.js';
 import { relativePhrase } from '../context/context-model.js';
-import { replayOnboarding } from './onboarding-store.js';
+import { APP_VERSION } from '../sections/app-version.js';
+import { replayOnboarding, replayWhatsNew, whatsNewPending, whatsNewSeen } from './onboarding-store.js';
 import { useOnboarding } from './useOnboarding.js';
 import { FirstResultGuide } from './FirstResultGuide.js';
 import styles from './onboarding.module.css';
+import { TeamPanel } from './TeamPanel.js';
 
 /**
  * What the stored answer says, in the app's one relative wording ("5m ago",
@@ -33,9 +37,12 @@ export function describeOnboardingState(completedAt: string | null, dismissedAt:
 }
 
 export function OnboardingPanel() {
-  const { completedAt, dismissedAt, open } = useOnboarding();
+  const onboarding = useOnboarding();
+  const { completedAt, dismissedAt, open } = onboarding;
+  const cardPending = whatsNewPending(onboarding, APP_VERSION);
 
   return (
+    <>
     <Panel title="Onboarding">
       <SettingRow
         label="Replay the first-run tour"
@@ -43,6 +50,14 @@ export function OnboardingPanel() {
       >
         <Button variant="subtle" size="sm" onClick={replayOnboarding} disabled={open}>
           {open ? 'Showing' : 'Replay'}
+        </Button>
+      </SettingRow>
+      <SettingRow
+        label="Show what's new again"
+        description={`The 'What's new in Phantom ${APP_VERSION}' card, with the fleet panes, the inbox and the mobile remote. ${whatsNewSeen(onboarding, APP_VERSION) ? 'Seen.' : 'Not dismissed yet.'}`}
+      >
+        <Button variant="subtle" size="sm" onClick={replayWhatsNew} disabled={cardPending || open}>
+          Show
         </Button>
       </SettingRow>
       <FirstResultGuide />
@@ -92,5 +107,7 @@ export function OnboardingPanel() {
         </a>
       </details>
     </Panel>
+    <TeamPanel />
+    </>
   );
 }

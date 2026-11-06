@@ -78,8 +78,6 @@ import {
 } from './agent-os-epoch-source-ledger.js';
 import { isAgentOsEpochStorePlatformSupportedV1 } from './agent-os-epoch-store.js';
 
-export const AGENT_OS_EPOCH_SOURCE_STORE_PROTOCOL_V1 =
-  'ashlr-agent-os-epoch-source-store-v1' as const;
 export const AGENT_OS_EPOCH_SOURCE_DIRECTORY_V1 = 'sources' as const;
 
 const PRIVATE_DIRECTORY_MODE = 0o700;

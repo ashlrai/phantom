@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
+import { isRateLimitText, isUsageLimitText } from '../classify/engine-errors.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import { ashlrHome, cloudHome } from './store.js';
 import { CLOUD_LAUNCH_TIMEOUT_MS, CLOUD_SEAT_ID, type CloudLaunchFailureCode } from './types.js';
@@ -212,7 +213,7 @@ function classifyFailure(text: string): keyof typeof FAILURE_MESSAGES | null {
   const lower = text.toLowerCase();
   if (lower.includes('requires authentication with a claude.ai account') || lower.includes('require authentication with a claude.ai account')) return 'auth';
   if (lower.includes('not enabled')) return 'not-enabled';
-  if (lower.includes('rate limit') || lower.includes('usage limit') || lower.includes('out of credits')) return 'rate-limited';
+  if (isRateLimitText(lower) || isUsageLimitText(lower)) return 'rate-limited';
   if (lower.includes('not a git repository') || lower.includes('no remote') || /\bpush/.test(lower)) return 'no-remote';
   return null;
 }

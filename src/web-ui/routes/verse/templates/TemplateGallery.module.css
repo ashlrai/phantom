@@ -1,0 +1,4 @@
+.gallery { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+.gallery summary { cursor: pointer; }
+.list { list-style: none; padding: 0; display: grid; gap: var(--space-3); }
+.preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 8rem; overflow: auto; }

@@ -44,6 +44,7 @@ import {
   resolveSelectedEngineModel,
   type ModelEntry,
   type ModelCapability,
+  type ModelRoutingTier,
 } from './model-catalog.js';
 import { withinLimit } from '../fleet/quota.js';
 import { subscriptionAllows } from '../fleet/subscription-usage.js';
@@ -58,8 +59,13 @@ import {
   sortEnginesByScore,
   operationalProducerScoresForRouting,
   selectCostAwareModel,
+  codexModelForTier,
+  explicitModelTier,
+  modelTierForTask,
+  codexDefaultForTask,
   type EngineScoreMap,
 } from './learned-router.js';
+export { modelTierForTask } from './learned-router.js';
 // LOCAL-ONLY: the ONE predicate. No parallel mechanism lives in this file.
 import {
   ALWAYS_PERMITTED_ENGINE,
@@ -70,6 +76,17 @@ import {
   providerPermitted,
   resolveLocalOnlyMode,
 } from '../policy/local-only.js';
+// RQ-OT-P1-BANDIT: contextual Thompson sampler over the routing arm registry
+// (routing/arms.ts). Selection only; outcome recording is caller-driven via
+// routing/bandit.ts recordOutcome. Everything is gated on cfg.router.bandit.
+import { loadArmRegistry, type ArmKey } from '../routing/arms.js';
+import {
+  banditContextLabel,
+  createSeededRng,
+  selectArm,
+  type BanditContext,
+  type DiffSizeClass,
+} from '../routing/bandit.js';
 
 // ---------------------------------------------------------------------------
 // Cloud provider env-key map — detection only, values are NEVER read/logged.
@@ -258,6 +275,12 @@ export interface RoutingContext {
 const FRONTIER_EFFORT_THRESHOLD = 4;
 const FRONTIER_SCORE_THRESHOLD = 8;
 
+// Legacy routing signals are optional enrichments, absent from the base contracts.
+type RoutingWorkItem = WorkItem & {
+  localizedScope?: { fileCount?: number; symbolCount?: number };
+};
+type CascadeFoundry = AshlrConfig['foundry'] & { cascade?: boolean };
+
 /** True when a WorkItem is "hard" by effort/score/source. */
 function isHardItem(item: WorkItem): boolean {
   if ((item.source as string) === 'escalation') return true;
@@ -273,6 +296,7 @@ function isTrivialItem(item: WorkItem): boolean {
   return effort <= 1 && score <= 3;
 }
 
+/** Queue tiers select a model within an admitted engine, never an engine tier. */
 /** Capability required by a WorkItem's source type. */
 function capabilityForSource(source: string): ModelCapability | null {
   switch (source) {
@@ -325,10 +349,7 @@ export const SUBSTANTIVE_SOURCES = new Set([
 export function isSubstantiveItem(item: WorkItem): boolean {
   if (SUBSTANTIVE_SOURCES.has(item.source as string)) return true;
   if (isHardItem(item)) return true;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const scope = (item as any).localizedScope as
-    | { fileCount?: number; symbolCount?: number }
-    | undefined;
+  const scope = (item as RoutingWorkItem).localizedScope;
   if ((scope?.fileCount ?? 0) > 5 || (scope?.symbolCount ?? 0) > 20) return true;
   return false;
 }
@@ -426,10 +447,16 @@ function learnedEntryForEngine(
   excludes: ReadonlySet<string>,
   scores: EngineScoreMap | null,
   minShipRate: number,
+  modelTier: ModelRoutingTier,
 ): ModelEntry | null {
   if (!scores || scores.size === 0) return null;
   const candidates = KNOWN_MODELS.filter((entry) =>
     !entry.historical && entry.engine === engine &&
+    // Work promotion needs a complete TERRA-AB-1 comparison, which legacy
+    // producer scores cannot attest. Preserve work/frontier until that proof
+    // can pass the existing operational learning authority gate.
+    (engine !== 'codex' || (modelTier !== 'work' && modelTier !== 'frontier') ||
+      entry.apiModelId === codexModelForTier(modelTier)) &&
     (!capability || entry.capabilities.includes(capability)) &&
     entry.minEffort <= effortCap && !excludes.has(entry.id));
   return selectCostAwareModel(candidates, scores, { minShipRate });
@@ -457,10 +484,12 @@ export function modelForSelectedEngine(item: WorkItem, engine: EngineId, cfg: As
         (engine === 'claude' || engine === 'codex') ? 5 : effort;
       const entry = learnedEntryForEngine(engine, capabilityForSource(item.source), effortCap,
         claude5ExcludeIds(cfg), operationalProducerScoresForRouting(item.source),
-        typeof learnedConfig.minShipRate === 'number' ? learnedConfig.minShipRate : 0.6);
+        typeof learnedConfig.minShipRate === 'number' ? learnedConfig.minShipRate : 0.6,
+        modelTierForTask(item));
       if (entry) return { engine, model: decisionModelFor(entry), catalogEntry: entry,
         reason: 'M323 qualified learned model for the selected engine.' };
     }
+    if (engine === 'codex') return codexDefaultForTask(item, cfg);
     const model = resolveSelectedEngineModel({ engine, spec: resolveEngineSpec(engine, cfg) });
     return { engine, model, catalogEntry: model ? KNOWN_MODELS.find(entry => entry.engine === engine &&
       (entry.id === `${engine}:${model}` || entry.apiModelId === model)) ?? null : null,
@@ -538,6 +567,167 @@ function permittedRoutingContext(
   };
 }
 
+// ---------------------------------------------------------------------------
+// RQ-OT-P1-BANDIT: contextual Thompson sampling over the routing arm registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Engines routeTask's own strategy can reach. When a RoutingContext does not
+ * name its admitted set, the bandit's candidate pool stays inside this list.
+ */
+const BANDIT_CANDIDATE_ENGINES: readonly EngineId[] = [
+  'claude' as EngineId,
+  'codex' as EngineId,
+  'nim' as EngineId,
+  'local-coder' as EngineId,
+  'builtin' as EngineId,
+];
+
+function banditRoutingEnabled(cfg: AshlrConfig): boolean {
+  return cfg.router?.bandit === true;
+}
+
+/**
+ * Estimated diff-size class for the bandit context: the M154 localized scope
+ * when the item carries one (same thresholds routeTaskCascade uses), else the
+ * effort estimate. Deterministic and side-effect free.
+ */
+function diffSizeClassFor(item: WorkItem): DiffSizeClass {
+  const scope = (item as RoutingWorkItem).localizedScope;
+  const files = scope?.fileCount ?? 0;
+  const symbols = scope?.symbolCount ?? 0;
+  if (files > 5 || symbols > 20) return 'large';
+  if (files > 1 || symbols > 5) return 'medium';
+  if (scope !== undefined) return 'small';
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  return effort >= 4 ? 'large' : effort >= 2 ? 'medium' : 'small';
+}
+
+/** Execution-effort label stamped into the arm key (WorkItem.effort 1-5). */
+function banditArmEffort(item: WorkItem): string {
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  return effort >= 4 ? 'high' : effort >= 2 ? 'medium' : 'low';
+}
+
+/** The bandit's discrete context: routing tier, repo basename, diff-size class. */
+function banditContextFor(item: WorkItem): BanditContext {
+  const tail = item.repo.split(/[\\/]/).filter(Boolean).pop();
+  return {
+    tier: modelTierForTask(item),
+    repo: tail ?? item.repo,
+    diffClass: diffSizeClassFor(item),
+  };
+}
+
+interface BanditCandidate {
+  arm: ArmKey;
+  /** The catalog entry behind the arm, or null for a bare-engine arm. */
+  entry: ModelEntry | null;
+}
+
+/**
+ * The arms the bandit may pick: every catalog model that clears the same hard
+ * gates routeTask's own branches apply (engine availability via quota and
+ * subscription, local-only permission, capability, effort cap, Claude 5
+ * exclusions), plus a bare-engine arm when an admitted engine has no eligible
+ * catalog entry (builtin, or a roster engine outside the catalog). The sampler
+ * only reorders inside this set; it cannot reach a route the policy could not
+ * produce, and it never bypasses the post-decision local-only backstop.
+ */
+function banditCandidateArms(
+  item: WorkItem,
+  cfg: AshlrConfig,
+  ctx: RoutingContext,
+  c5Excludes: ReadonlySet<string>,
+): BanditCandidate[] {
+  const capability = capabilityForSource(item.source);
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  const effortLabel = banditArmEffort(item);
+  // The quality-policy substantive fast-path lifts the cap to 5 so frontier
+  // flagships stay reachable; mirror that here per engine.
+  const effortCap =
+    cfg.foundry?.routingPolicy === 'quality' && isSubstantiveItem(item) ? 5 : effort;
+  const engines = ctx.availableEngines ?? BANDIT_CANDIDATE_ENGINES;
+  const candidates: BanditCandidate[] = [];
+  for (const engine of engines) {
+    if (!engineAvailable(engine, cfg, ctx)) continue;
+    if (!enginePermitted(engine, cfg).permitted) continue;
+    const entries = KNOWN_MODELS.filter(
+      (m) =>
+        m.engine === engine &&
+        !m.historical &&
+        !m.explicitOnly &&
+        !c5Excludes.has(m.id) &&
+        (!capability || m.capabilities.includes(capability)) &&
+        m.minEffort <= effortCap,
+    );
+    if (entries.length === 0) {
+      candidates.push({ arm: { provider: engine, model: 'default', effort: effortLabel }, entry: null });
+      continue;
+    }
+    for (const entry of entries) {
+      candidates.push({
+        arm: { provider: engine, model: modelTagFrom(entry.id), effort: effortLabel },
+        entry,
+      });
+    }
+  }
+  return candidates;
+}
+
+/**
+ * The bandit route, or null to defer to the static policy. Null when the flag
+ * is off, when no candidate clears the hard gates, or on ANY error (including
+ * an unreadable/corrupt arm registry) - routeTask never throws, so a broken
+ * store degrades to today's routing instead of breaking dispatch.
+ *
+ * Selection is seeded by the work item id: the same item under the same
+ * registry always samples the same arm, which is what keeps the flag-on path
+ * deterministic and the decision stable across routeTask calls.
+ */
+function routeTaskBandit(
+  item: WorkItem,
+  cfg: AshlrConfig,
+  ctx: RoutingContext,
+): TaskRouteDecision | null {
+  if (!banditRoutingEnabled(cfg)) return null;
+  try {
+    const registry = loadArmRegistry();
+    const banditCtx = banditContextFor(item);
+    const candidates = banditCandidateArms(item, cfg, ctx, claude5ExcludeIds(cfg));
+    const selection = selectArm(
+      registry,
+      banditCtx,
+      candidates.map((c) => c.arm),
+      createSeededRng(item.id),
+    );
+    if (!selection) return null;
+    const entry =
+      candidates.find((c) => c.arm === selection.arm)?.entry ??
+      KNOWN_MODELS.find(
+        (m) => m.engine === selection.arm.provider && modelTagFrom(m.id) === selection.arm.model,
+      ) ??
+      null;
+    const p = selection.posterior;
+    return {
+      engine: selection.arm.provider as EngineId,
+      model:
+        entry !== null
+          ? decisionModelFor(entry)
+          : selection.arm.model === 'default'
+            ? null
+            : selection.arm.model,
+      catalogEntry: entry,
+      reason:
+        `bandit[${banditContextLabel(banditCtx)}] sampled ${selection.arm.provider}:${selection.arm.model} ` +
+        `(merge a=${p.merge.alpha.toFixed(1)} b=${p.merge.beta.toFixed(1)}, ` +
+        `cost s=${p.cost.shape.toFixed(1)} r=${p.cost.rate.toFixed(1)}, score=${selection.score.toFixed(3)})`,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Route a WorkItem to a concrete {engine, model}, respecting difficulty, source
  * type, cost policy, quota/subscription availability, AND the local-only mode.
@@ -545,6 +735,10 @@ function permittedRoutingContext(
  * Under local-only the candidate set is narrowed to permitted engines and the
  * final decision is enforced (see `enforceLocalOnlyTaskDecision`). With the mode
  * off both steps are no-ops and routing is byte-identical to pre-local-only.
+ *
+ * RQ-OT-P1-BANDIT: when cfg.router.bandit === true the unenforced decision may
+ * come from the contextual Thompson sampler instead of the static policy. The
+ * same narrowing, enforcement and never-throws contract apply either way.
  *
  * Never throws.
  */
@@ -555,7 +749,7 @@ export function routeTask(
 ): TaskRouteDecision {
   const narrowed = permittedRoutingContext(ctx, cfg);
   const decision = enforceLocalOnlyTaskDecision(
-    routeTaskUnenforced(item, cfg, narrowed.ctx),
+    routeTaskBandit(item, cfg, narrowed.ctx) ?? routeTaskUnenforced(item, cfg, narrowed.ctx),
     cfg,
   );
   if (narrowed.removed.length === 0 || decision.reason.includes('local-only')) return decision;
@@ -585,8 +779,7 @@ function routeTaskUnenforced(
 ): TaskRouteDecision {
   try {
     const policy: RoutingPolicy =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ((cfg.foundry as any)?.routingPolicy as RoutingPolicy | undefined) ?? 'balanced';
+      cfg.foundry?.routingPolicy ?? 'balanced';
 
     const effort = typeof item.effort === 'number' ? item.effort : 3;
     const score = typeof item.score === 'number' ? item.score : 3;
@@ -620,10 +813,7 @@ function routeTaskUnenforced(
     // entries by proposalId) drive a cheapest-model-that-ships pick inside
     // tryEngine/tryFrontier. Flag off / cold start / thin samples ⇒ null ⇒
     // the static policy pick below — byte-identical behavior.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mgCfg = (cfg.foundry as any)?.modelGranularRouting as
-      | { enabled?: boolean; minShipRate?: number }
-      | undefined;
+    const mgCfg = cfg.foundry?.modelGranularRouting;
     const producerScores: EngineScoreMap | null =
       mgCfg?.enabled === true ? operationalProducerScoresForRouting(item.source) : null;
     const minShipRate = typeof mgCfg?.minShipRate === 'number' ? mgCfg.minShipRate : 0.6;
@@ -634,13 +824,14 @@ function routeTaskUnenforced(
       effortCap: number,
       overrideReason: string,
     ): TaskRouteDecision | null => {
-      const learned = learnedEntryForEngine(engine, capability, effortCap, c5Excludes, producerScores, minShipRate);
+      const learned = learnedEntryForEngine(engine, capability, effortCap, c5Excludes, producerScores, minShipRate,
+        modelTierForTask(item));
       if (!learned) return null;
       return {
         engine,
         model: decisionModelFor(learned),
         catalogEntry: learned,
-        reason: `${overrideReason} (M323 learned: ship-rate ≥ ${minShipRate}, cheapest)`,
+        reason: `${overrideReason} (M323 learned: ship-rate >= ${minShipRate}, cost-aware)`,
       };
     };
 
@@ -672,6 +863,10 @@ function routeTaskUnenforced(
       // is on and this engine has a sampled model clearing the ship-rate bar.
       const learnedPick = tryLearnedModel(engine, capability, effort, overrideReason);
       if (learnedPick) return learnedPick;
+      if (engine === 'codex') {
+        const decision = codexDefaultForTask(item, cfg);
+        return { ...decision, reason: `${overrideReason} (${decision.reason})` };
+      }
       const entry = pickForEngine(engine, capability, preferCheap && !preferQuality, effort, {
         preferStrong: preferQuality,
         excludeIds: c5Excludes,
@@ -711,6 +906,13 @@ function routeTaskUnenforced(
 
     // ── Strategy ─────────────────────────────────────────────────────────
 
+    // An explicit model tier is a queue hint, subordinate to existing engine
+    // availability, quota, subscription and local-only checks.
+    if (explicitModelTier(item)) {
+      const explicit = tryEngine('codex', cap, `Explicit model tier ${modelTierForTask(item)}`);
+      if (explicit) return explicit;
+    }
+
     // M164: QUALITY-POLICY SUBSTANTIVE FAST-PATH
     // When routingPolicy === 'quality' AND the item is substantive (high-value
     // source, high effort/score, or large localizedScope), route immediately to
@@ -746,6 +948,10 @@ function routeTaskUnenforced(
         // M323: learned cost-aware pick first (flag-gated; null ⇒ static).
         const learnedPick = tryLearnedModel(engine, capability, 5, reason);
         if (learnedPick) return learnedPick;
+        if (engine === 'codex') {
+          const decision = codexDefaultForTask(item, cfg);
+          return { ...decision, reason: `${reason} (${decision.reason})` };
+        }
         // Use effort=5 to bypass minEffort filtering — we always want the strongest
         // model. M321: preferStrong sorts by qualityRank so the quality fast-path
         // reaches Fable 5 (when claude5.fable is on) over the cheaper Sonnet 5.
@@ -1331,7 +1537,7 @@ const CASCADE_CHEAP_EFFORT_THRESHOLD = 3;
  *     cheapFirst=false always (flag-off parity).
  *
  * Optional M154 localized-scope signal: if `item` has a
- * `(item as any).localizedScope` with `fileCount` and/or `symbolCount`, the
+ * `localizedScope` enrichment with `fileCount` and/or `symbolCount`, the
  * cheap-first decision uses those as an additional difficulty input — a large
  * localized scope (fileCount > 5 or symbolCount > 20) nudges toward skipping
  * the cheap-first step.
@@ -1350,8 +1556,7 @@ export function routeTaskCascade(
   attempt = 1,
 ): CascadeDecision {
   // ── Flag gate ──────────────────────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cascadeEnabled = (cfg.foundry as any)?.cascade === true;
+  const cascadeEnabled = (cfg.foundry as CascadeFoundry | undefined)?.cascade === true;
 
   if (!cascadeEnabled) {
     // FLAG-OFF: delegate byte-identically to the base routeTask.
@@ -1401,10 +1606,7 @@ export function routeTaskCascade(
   const hard = isHardItem(item);
 
   // M154 localized-scope signal (tolerate absence).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const localizedScope = (item as any).localizedScope as
-    | { fileCount?: number; symbolCount?: number }
-    | undefined;
+  const localizedScope = (item as RoutingWorkItem).localizedScope;
   const largeScope =
     (localizedScope?.fileCount ?? 0) > 5 || (localizedScope?.symbolCount ?? 0) > 20;
 
@@ -1440,8 +1642,7 @@ export function routeTaskCascade(
       ...cfg.foundry,
       // Bias toward cost/local for cheap-first attempt; cap effort signal at threshold
       // so routeTask's hard-item fast-path doesn't fire.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      routingPolicy: effort <= CASCADE_CHEAP_EFFORT_THRESHOLD ? 'cost' : (cfg.foundry as any)?.routingPolicy ?? 'balanced',
+      routingPolicy: effort <= CASCADE_CHEAP_EFFORT_THRESHOLD ? 'cost' : cfg.foundry?.routingPolicy ?? 'balanced',
     } as AshlrConfig['foundry'],
   };
 

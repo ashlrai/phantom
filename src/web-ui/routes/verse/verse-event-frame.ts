@@ -14,6 +14,7 @@ const EVENT_TYPES = [
   'turn-started',
   'text-delta',
   'assistant-message',
+  'assistant-status',
   'thinking',
   'tool-use',
   'tool-result',
@@ -61,6 +62,9 @@ const stringFields = (record: Record<string, unknown>, keys: readonly string[]):
  */
 function frameFieldsValid(e: Record<string, unknown>): boolean {
   switch (e.type) {
+    case 'assistant-status':
+      return typeof e.turnId === 'string' && typeof e.text === 'string'
+        && (e.phase === 'acknowledgement' || e.phase === 'result');
     case 'context':
       return count(e.contextTokens) &&
         typeof e.exact === 'boolean' && nullableCount(e.contextWindow) &&
@@ -86,7 +90,7 @@ function frameFieldsValid(e: Record<string, unknown>): boolean {
         (e.tool === undefined || typeof e.tool === 'string') &&
         optionalCount(e.outTokens) && optionalCount(e.tokPerSec);
     case 'status':
-      return (e.kind === 'retry' || e.kind === 'preflight' || e.kind === 'watchdog') && typeof e.message === 'string';
+      return (e.kind === 'retry' || e.kind === 'preflight' || e.kind === 'watchdog' || e.kind === 'model-switch') && typeof e.message === 'string';
     case 'history-truncated':
       return typeof e.droppedBefore === 'number' && Number.isFinite(e.droppedBefore);
     case 'source': {

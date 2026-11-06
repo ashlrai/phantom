@@ -1,5 +1,6 @@
 /** Real evaluator child processes; fixture-only candidate copies, no provider or host state. */
-import { execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,13 +11,9 @@ import { parseEvaluation } from '../src/core/universe/store.js';
 const exec = promisify(execFile);
 const SCRIPT = resolve('scripts/evaluators/backlog-marker-paths.mjs');
 const TARGET = 'src/core/portfolio/value-filter.ts';
-// Intentional historical seed dependency: this commit must be present in the
-// test checkout. Never substitute today's candidate when testing baseline loss.
-const BASELINE_SHA = '1a57744bd43ea5668f469bd8eaa394808a7f9bea';
-const original = execFileSync('git', ['show', `${BASELINE_SHA}:${TARGET}`], {
-  cwd: resolve('.'), encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024,
-  env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0' },
-});
+// Exact historical seed, vendored so shallow checkouts need no Git history.
+// Base64 preserves the original source bytes without treating it as test code.
+const original = Buffer.from(readFileSync(resolve('test/fixtures/backlog-marker/value-filter.ts.b64'), 'utf8'), 'base64').toString('utf8');
 const untouched = readFileSync(resolve(TARGET), 'utf8');
 let base: string; let candidate: string;
 beforeEach(() => {
@@ -25,10 +22,10 @@ beforeEach(() => {
 });
 afterEach(() => { rmSync(base, { recursive: true, force: true }); });
 function save(source: string | Buffer) { writeFileSync(join(candidate, TARGET), source); }
-async function evaluate(root: string | undefined = candidate) {
+async function evaluate(root: string | null = candidate) {
   const result = await exec(process.execPath, ['--experimental-vm-modules', '--no-warnings', SCRIPT], {
     env: { PATH: process.env.PATH, HOME: base, TMPDIR: base, NODE_DISABLE_COMPILE_CACHE: '1',
-      ...(root === undefined ? {} : { ASHLR_UNIVERSE_CANDIDATE: root }) },
+      ...(root === null ? {} : { ASHLR_UNIVERSE_CANDIDATE: root }) },
     cwd: base, timeout: 5000, maxBuffer: 24 * 1024,
   });
   expect(result.stderr).toBe(''); expect(result.stdout.trim().split('\n')).toHaveLength(1);
@@ -55,6 +52,17 @@ function constants(value: string) {
 }
 
 describe('fixed Hub backlog marker evaluator', () => {
+  it('preserves the exact historical seed source', () => {
+    expect(createHash('sha256').update(original).digest('hex'))
+      .toBe('439bba673ce05b6d20993b7ffdfa35f7347d5f1842422625a4361d1cf657b6a1');
+  });
+
+  it('refuses an absent candidate variable instead of using cwd', async () => {
+    save(fixedCandidate());
+    expect(await evaluate(null)).toMatchObject({ passed: false, score: 0,
+      diagnostics: [expect.objectContaining({ code: 'CANDIDATE_SOURCE_UNAVAILABLE' })] });
+  });
+
   it('rejects the actual unchanged baseline and emits shareable diagnostics', async () => {
     save(original); const result = await evaluate();
     expect(result).toMatchObject({ passed: false, score: 0 });
@@ -81,6 +89,7 @@ describe('fixed Hub backlog marker evaluator', () => {
     ['malformed source', 'export function {'],
     ['static runtime import', 'import fs from "node:fs"; export const unused = fs'],
     ['dynamic runtime import', 'await import("node:fs")'],
+    ['network access', 'await fetch("https://example.invalid")'],
   ])('emits a fixed failed verdict for %s', async (_name, source) => {
     save(source); const result = await evaluate();
     expect(result).toMatchObject({ passed: false, score: 0 });

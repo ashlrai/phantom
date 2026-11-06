@@ -101,9 +101,10 @@ function session(overrides: Partial<VerseSession> = {}): VerseSession {
 }
 
 function launch(overrides: Partial<VerseSeatLaunch> = {}): VerseSeatLaunch {
+  // Keep missing-profile probes inside the fixture, away from host automounts.
   return {
     seat: SEAT,
-    launcher: ['/usr/local/bin/node', '/home/u/.ashlr/native-profiles/claude-max/launcher.mjs'],
+    launcher: ['/usr/local/bin/node', join(tmpRoot, 'native-profiles', 'claude-max', 'launcher.mjs')],
     ollamaBaseUrl: 'http://127.0.0.1:11434',
     ...overrides,
   };

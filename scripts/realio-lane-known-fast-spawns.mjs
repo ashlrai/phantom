@@ -17,6 +17,11 @@
  * move to REAL_IO_TEST_FILES instead.
  */
 export const KNOWN_FAST_SPAWN_FILES = [
+  'test/resources-local-omlx-probe.test.ts', // Bounded loopback fixture; slowest case is the 2s timeout.
+  'test/resources-local-omlx-probe-undefined-req-31.test.ts', // Bounded loopback fixture; single sub-second case.
+  'test/cycle-emit.test.ts', // Three offline Node children, each bounded to 1s and isolated HOME.
+  'test/changelog-sync.test.ts', // 1.22s slowest test, 2026-10-26 JSON fixture run; local Node/git only, no network
+  'test/grokbot-lane.test.ts', // 0.37s max on 2026-10-26; bounded loopback webhook, mocked Secrets child
   'test/m81.engine-readiness.test.ts', // 0.04s on 2026-10-10; one bounded loopback fixture and system curl probe
   'test/m396.automerge-canary-classifier.test.ts', // 2.8s
   'test/m49.fleet-status.test.ts', // 2.5s
@@ -65,6 +70,11 @@ export const KNOWN_FAST_SPAWN_FILES = [
   // `spawn(` the guard matches is text inside a source scan of
   // verse/session-engine.ts; the file spawns nothing. 0.08s slowest test (2026-09-24).
   'test/local-only-dispatch-paths.test.ts', // <0.1s
+  // Marker false positive like local-only-dispatch-paths above: the matched
+  // `execSync(`/`spawn` tokens are string literals in the it.each injection-scan
+  // table (lines the scanner must flag as process-exec), not calls. The file
+  // spawns nothing. 0.00s slowest test (2026-10-28).
+  'test/cross-review.test.ts', // <0.1s
   // 3.10 fix pass (P5): three `node <shim> --flag` children fed a small JSON
   // request on stdin — no git, no network, no waiting on another process's
   // output. 0.08s for the one test that spawns (2026-09-24).

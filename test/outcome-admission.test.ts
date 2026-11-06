@@ -11,7 +11,7 @@ const task = (): RunTask => ({ id: 'task', goal: 'Improve the fixture', deps: []
 const budget = { maxTokens: 1000000, maxSteps: 40, allowCloud: false };
 
 describe('Caller-owned outcome admission', () => {
-  it.each([() => false, () => { throw new Error('private callback detail'); }])('holds before reserving or contacting the first model', async selectedOutcomeAdmission => {
+  it.each([() => false, () => { throw new Error('private callback detail'); }])('holds before reserving or contacting the first model (%#)', async selectedOutcomeAdmission => {
     const chat = vi.fn(); const reserveModelStep = vi.fn(); const work = task();
     await runTask(work, { id: 'fake', supportsTools: false, chat }, { budget, usage: newUsage(),
       onStep: () => {}, reserveModelStep, selectedOutcomeAdmission });

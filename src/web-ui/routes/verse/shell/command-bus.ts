@@ -85,10 +85,6 @@ export function registerCommandHandler(id: string, handler: CommandHandler): () 
   };
 }
 
-export function hasCommandHandler(id: string): boolean {
-  return (handlers.get(id)?.length ?? 0) > 0;
-}
-
 /** Run `id` now. True when a handler took it. */
 export function runCommand(id: string, invocation: CommandInvocation = {}): boolean {
   const list = handlers.get(id);

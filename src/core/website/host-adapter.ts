@@ -6,6 +6,7 @@ import { killSwitchOn } from '../sandbox/policy.js';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { homedir, userInfo } from 'node:os';
+import type { CheckRunObservation, RequiredCheck, StatusObservation } from '../fleet/merge-gates.js';
 import { defaultHostMergeDeps, readHeadChecks, readRequiredChecks } from '../fleet/host-merge.js';
 import { evaluateG7Checks } from '../fleet/merge-gates.js';
 import { ensureMirror, mirrorPathFor } from '../fleet/mirrors.js';
@@ -59,6 +60,42 @@ function assertToolchain(commission: WebsiteCommission): void {
   if (pkg['name'] !== 'vercel' || pkg['version'] !== WEBSITE_PROFILE.cliVersion) throw new Error('Website publisher CLI version changed');
 }
 /** Inventory executable dependencies too; a package.json version alone never pins a publisher. */
+
+/** The ashlr-fleet App's host-verified check; mandatory for every website qualification. */
+export const WEBSITE_VERIFY_CHECK = WEBSITE_PROFILE.requiredChecks[0]!;
+
+/** Paths whose edits can change how required Actions checks run on the PR head. */
+export function touchesWorkflows(paths: readonly string[]): boolean {
+  return paths.some((p) => p === '.github' || p.startsWith('.github/'));
+}
+
+/**
+ * Website source qualification on the exact PR head SHA. Fails closed unless:
+ * the ruleset is strict, readable and non-empty; it requires every check pinned
+ * in WEBSITE_PROFILE.requiredChecks (always including `ashlr/verify` from the
+ * fleet App) with the pinned App; every required check is green
+ * (evaluateG7Checks pins each check to its integration); and, when the head
+ * touches `.github/` (or its changed paths are unknown), `ashlr/verify` itself
+ * is green from the fleet App, since Actions checks run from the PR head.
+ */
+export function websiteChecksQualify(
+  rules: { rulesetsUnavailable?: boolean; strict?: boolean | null; required: readonly RequiredCheck[] },
+  checks: { runs: readonly CheckRunObservation[]; statuses: readonly StatusObservation[] },
+  nowMs = Date.now(),
+  headPaths: readonly string[] | null = null,
+): boolean {
+  if (rules.rulesetsUnavailable || rules.strict !== true || rules.required.length === 0) return false;
+  for (const pin of WEBSITE_PROFILE.requiredChecks) {
+    const live = rules.required.filter((r) => r.context === pin.context);
+    if (live.length === 0 || !live.every((r) => r.appId === pin.appId)) return false;
+  }
+  if (headPaths === null || touchesWorkflows(headPaths)) {
+    const verify = evaluateG7Checks({ enforcement: 'server', required: [WEBSITE_VERIFY_CHECK], runs: checks.runs, statuses: checks.statuses, pendingSinceMs: nowMs, nowMs });
+    if (verify.state !== 'green') return false;
+  }
+  return evaluateG7Checks({ enforcement: 'server', required: rules.required, runs: checks.runs, statuses: checks.statuses, pendingSinceMs: nowMs, nowMs }).state === 'green';
+}
+
 export function inventoryToolTree(root: string): string {
   // The same no-symlink complete inventory is reused; tooling has no output config requirement.
   const inventory = (path: string): unknown => {
@@ -232,9 +269,11 @@ export function createWebsiteHostAdapter(commission: WebsiteCommission, signal?:
     if (sha(object(headCommit['tree'])['sha']) !== tree) throw new Error('Merged website tree differs from its qualified PR head');
     const rules = await readRequiredChecks(WEBSITE_PROFILE.repo, WEBSITE_PROFILE.branch, host);
     const checks = await readHeadChecks(WEBSITE_PROFILE.repo, headSha, host);
-    if (typeof rules === 'string' || typeof checks === 'string' || rules.rulesetsUnavailable || rules.strict !== true ||
-        !rules.required.some((r) => r.context === 'ashlr/verify' && r.appId === '5089472') ||
-        evaluateG7Checks({ enforcement: 'server', required: rules.required, runs: checks.runs, statuses: checks.statuses, pendingSinceMs: Date.now(), nowMs: Date.now() }).state !== 'green') throw new Error('Website required checks and App identity are not green');
+    const compare = object(await gh(`/compare/${baseSha}...${headSha}`));
+    const changed = compare['files'];
+    // GitHub truncates compare file lists at 300; unknown paths are treated as workflow-touching.
+    const headPaths = Array.isArray(changed) && changed.length < 300 ? changed.map((f) => string(object(f)['filename'])) : null;
+    if (typeof rules === 'string' || typeof checks === 'string' || !websiteChecksQualify(rules, checks, Date.now(), headPaths)) throw new Error('Website required checks and App identity are not green');
     const rawRules = await gh(`/rules/branches/${WEBSITE_PROFILE.branch}?per_page=100`);
     if (!Array.isArray(rawRules) || rawRules.length === 100) throw new Error('Website effective rule definitions are incomplete');
     const definitions: unknown[] = [];

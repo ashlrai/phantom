@@ -42,6 +42,7 @@
  *   - Bounded fetch timeouts so a hung server never blocks a tick.
  */
 
+import { readEnvironmentCredential } from './secrets.js';
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -185,13 +186,13 @@ function endpointBase(cfg: PulseExporterConfig): string {
 
 /** Resolve the ingest PAT (explicit arg → env). Returns null when absent. */
 function resolvePat(explicit?: string): string | null {
-  const pat = explicit ?? process.env[PAT_ENV];
+  const pat = explicit ?? readEnvironmentCredential(PAT_ENV);
   return pat && pat.length > 0 ? pat : null;
 }
 
 /** Resolve the read-scoped PAT for polling (READ env → ingest PAT → explicit). */
 function resolveReadPat(explicit?: string): string | null {
-  const pat = explicit ?? process.env[READ_PAT_ENV] ?? process.env[PAT_ENV];
+  const pat = explicit ?? readEnvironmentCredential(READ_PAT_ENV) ?? readEnvironmentCredential(PAT_ENV);
   return pat && pat.length > 0 ? pat : null;
 }
 
@@ -526,47 +527,6 @@ export async function shipDepEdges(
 // ---------------------------------------------------------------------------
 // Public: connectivity probe
 // ---------------------------------------------------------------------------
-
-/**
- * POST a single tiny probe span to verify endpoint + PAT. NEVER throws.
- * exitCode: 0=ok, 1=error, 2=unconfigured — mirrors the M89 `pulse-test` shape.
- */
-export async function pingPulse(
-  cfg: PulseExporterConfig,
-  opts?: { pat?: string; signal?: AbortSignal; authority?: OutwardMutationFence },
-): Promise<{ ok: boolean; status: number | null; label: string; exitCode: number }> {
-  if (!cfg.pulse?.enabled) {
-    return { ok: false, status: null, label: 'not configured (set cfg.pulse.enabled + ' + PAT_ENV + ')', exitCode: 2 };
-  }
-  const pat = resolvePat(opts?.pat);
-  if (!pat) {
-    return { ok: false, status: null, label: 'not configured (' + PAT_ENV + ' not set)', exitCode: 2 };
-  }
-
-  const probe = wrapSpans([
-    buildFleetSpan(
-      { event: 'tick', refId: 'probe:ashlr-fleet:connectivity', outcome: 'probe' },
-      resolveOwner(cfg),
-    ),
-  ]);
-
-  const url = `${endpointBase(cfg)}/api/otlp/v1/traces`;
-  const res = await fencedPulseFetch(url, {
-    method: 'POST',
-    pat,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(probe),
-    signal: opts?.signal,
-    authority: opts?.authority,
-  });
-
-  if (!res) return { ok: false, status: null, label: `endpoint unreachable (${url})`, exitCode: 1 };
-  if (res.ok) return { ok: true, status: res.status, label: `connected (HTTP ${res.status})`, exitCode: 0 };
-  if (res.status === 401 || res.status === 403) {
-    return { ok: false, status: res.status, label: `${res.status} — PAT rejected (check ${PAT_ENV})`, exitCode: 1 };
-  }
-  return { ok: false, status: res.status, label: `HTTP ${res.status}`, exitCode: 1 };
-}
 
 // ---------------------------------------------------------------------------
 // Public: command POLLER (cloud queues → local executes)

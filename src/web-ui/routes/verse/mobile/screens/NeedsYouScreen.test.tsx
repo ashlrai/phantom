@@ -241,13 +241,15 @@ describe('NeedsYouScreen — actions', () => {
   it('Hide hides on this phone only — no request — and Undo brings it back', async () => {
     const stub = stubFetch({});
     renderMobile(<Harness />, { activity: withItems() });
+    await waitFor(() => expect(stub.calls.some((call) => call.url.includes('/fleet/ci-runs'))).toBe(true));
+    const readsBeforeHide = stub.calls.length;
     await userEvent.click(screen.getByRole('button', { name: 'Hide on this phone: fix the flaky snapshot test' }));
     expect(screen.queryByRole('heading', { name: 'fix the flaky snapshot test' })).not.toBeInTheDocument();
     expect(screen.getByText('Hidden on this phone. It stays on your Mac.')).toBeInTheDocument();
     // Not "All clear": something is only hidden here.
     expect(screen.queryByText('All clear')).not.toBeInTheDocument();
     expect(screen.getByText(/1 hidden on this phone/)).toBeInTheDocument();
-    expect(stub.calls).toHaveLength(0);
+    expect(stub.calls).toHaveLength(readsBeforeHide);
 
     await userEvent.click(screen.getByRole('button', { name: 'Undo hide: fix the flaky snapshot test' }));
     expect(screen.getByRole('heading', { name: 'fix the flaky snapshot test' })).toBeInTheDocument();
@@ -343,6 +345,17 @@ describe('NeedsYouScreen — swipe', () => {
     renderMobile(<NeedsYouScreen />, { activity: withItems([failedChat]) });
     act(() => swipe(screen.getByRole('article', { name: /migrate the store/ }), -140));
     expect(screen.queryByRole('article', { name: /migrate the store/ })).not.toBeInTheDocument();
+  });
+
+  it('abandons a swipe when vertical scrolling starts first', () => {
+    const stub = stubFetch({});
+    renderMobile(<Harness />, { activity: withItems() });
+    fireEvent.pointerDown(card(), { pointerId: 1, clientX: 150, clientY: 100, button: 0 });
+    fireEvent.pointerMove(card(), { pointerId: 1, clientX: 152, clientY: 140 });
+    fireEvent.pointerMove(card(), { pointerId: 1, clientX: 290, clientY: 140 });
+    fireEvent.pointerUp(card(), { pointerId: 1, clientX: 290, clientY: 140 });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(stub.posts()).toHaveLength(0);
   });
 
   it('has no swipe under reduced motion (the buttons remain)', () => {

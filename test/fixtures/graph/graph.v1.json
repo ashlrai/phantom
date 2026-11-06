@@ -1,0 +1,122 @@
+{
+  "schema": "graph.v1",
+  "readOnly": true,
+  "complete": true,
+  "sources": {
+    "fleet": "loaded",
+    "seats": "loaded"
+  },
+  "nodes": [
+    {
+      "id": "agent:producer",
+      "kind": "agent",
+      "agentId": "producer"
+    },
+    {
+      "id": "agent:reviewer",
+      "kind": "agent",
+      "agentId": "reviewer"
+    },
+    {
+      "id": "engine-account:claude/work",
+      "kind": "engine-account",
+      "engine": "claude",
+      "accountId": "work",
+      "seatIds": [
+        "claude-work"
+      ]
+    },
+    {
+      "id": "engine-account:codex/work",
+      "kind": "engine-account",
+      "engine": "codex",
+      "accountId": "work",
+      "seatIds": [
+        "codex-work"
+      ]
+    },
+    {
+      "id": "mcp:locus",
+      "kind": "mcp",
+      "serverId": "locus"
+    },
+    {
+      "id": "model:claude/shared",
+      "kind": "model",
+      "engine": "claude",
+      "modelId": "shared"
+    },
+    {
+      "id": "model:codex/shared",
+      "kind": "model",
+      "engine": "codex",
+      "modelId": "shared"
+    }
+  ],
+  "edges": [
+    {
+      "id": "can-delegate:agent%3Areviewer/agent%3Aproducer",
+      "kind": "can-delegate",
+      "from": "agent:reviewer",
+      "to": "agent:producer",
+      "source": "fleet"
+    },
+    {
+      "id": "can-message:agent%3Aproducer/agent%3Areviewer",
+      "kind": "can-message",
+      "from": "agent:producer",
+      "to": "agent:reviewer",
+      "source": "fleet"
+    },
+    {
+      "id": "reviews:agent%3Areviewer/agent%3Aproducer",
+      "kind": "reviews",
+      "from": "agent:reviewer",
+      "to": "agent:producer",
+      "source": "fleet"
+    },
+    {
+      "id": "routes-to:agent%3Aproducer/engine-account%3Acodex%2Fwork",
+      "kind": "routes-to",
+      "from": "agent:producer",
+      "to": "engine-account:codex/work",
+      "source": "fleet"
+    },
+    {
+      "id": "routes-to:agent%3Aproducer/mcp%3Alocus",
+      "kind": "routes-to",
+      "from": "agent:producer",
+      "to": "mcp:locus",
+      "source": "fleet"
+    },
+    {
+      "id": "routes-to:agent%3Aproducer/model%3Acodex%2Fshared",
+      "kind": "routes-to",
+      "from": "agent:producer",
+      "to": "model:codex/shared",
+      "source": "fleet"
+    },
+    {
+      "id": "routes-to:agent%3Areviewer/engine-account%3Aclaude%2Fwork",
+      "kind": "routes-to",
+      "from": "agent:reviewer",
+      "to": "engine-account:claude/work",
+      "source": "fleet"
+    },
+    {
+      "id": "routes-to:engine-account%3Aclaude%2Fwork/model%3Aclaude%2Fshared",
+      "kind": "routes-to",
+      "from": "engine-account:claude/work",
+      "to": "model:claude/shared",
+      "source": "seats"
+    },
+    {
+      "id": "routes-to:engine-account%3Acodex%2Fwork/model%3Acodex%2Fshared",
+      "kind": "routes-to",
+      "from": "engine-account:codex/work",
+      "to": "model:codex/shared",
+      "source": "seats"
+    }
+  ],
+  "issues": []
+}

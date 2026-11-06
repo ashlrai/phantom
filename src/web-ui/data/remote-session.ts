@@ -279,6 +279,7 @@ export function directCsrfWrite(path: string): boolean {
     || path === '/api/verse/sessions'
     || path === '/api/verse/leader/thread'
     || path === '/api/verse/leader/directives'
+    || path === '/api/verse/fleet/runs/inbox'
     || /^\/api\/verse\/sessions\/[^/?#]+\/turns$/.test(path)
     || /^\/api\/verse\/queue\/[^/?#]+$/.test(path)
     || /^\/api\/verse\/leader\/questions\/[^/?#]+\/answer$/.test(path)

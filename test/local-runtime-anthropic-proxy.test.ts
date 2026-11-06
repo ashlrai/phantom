@@ -210,7 +210,7 @@ async function fixture(
 describe('anthropic proxy — numeric request attribution', () => {
   it.each([{ system: 'private system 🌍' },
     { system: [{ type: 'text', text: 'private system 🌍' }] }])(
-    'measures final model-facing serialized characters with one parse', ({ system }) => {
+    'measures final model-facing serialized characters with one parse (%j)', ({ system }) => {
       const original = {
         system,
         messages: [{ role: 'system', content: 'folded secret' },

@@ -1,0 +1,308 @@
+/** Bounded local desktop app control; no phone gateway mutations. */
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
+import { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
+import { awaitAppState, type AppAwaitTarget } from '../fleet/app-await.js';
+import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
+import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import type { ApiModule } from './api-modules.js';
+
+export const FLEET_APPS = ['Phantom', 'Codex', 'Claude', 'Grok Bot', 'ChatGPT', 'Cursor', 'Safari', 'Google Chrome'] as const;
+const PATH = '/api/verse/fleet/apps';
+// One finite budget covers the action and any running confirmation; waitRunningMs only caps the confirmation part.
+const ACTION_BUDGET_MS = 30_000;
+const MAX_WAIT_RUNNING_MS = 30_000;
+const CONFIRM_INTERVAL_MS = 200;
+const execAsync = promisify(execFile);
+export interface FleetAppsApiDeps {
+  exec?: FleetAppExec;
+  locateScript?: () => string | null;
+  now?: () => number;
+  runsDir?: string;
+  readRecoveryInvocations?: typeof readAppsRecoveryInvocations;
+}
+interface AppsView {
+  v: 1;
+  generatedAt: string;
+  available: boolean;
+  apps: Array<{ app: string; running: boolean | null; checkedAt: string }>;
+}
+const UNAVAILABLE = { code: 'unavailable', error: 'fleet apps unavailable' } as const;
+// Known script refusals (ok:false); anything else is reported as generic unavailable.
+const REFUSALS: Record<string, string> = {
+  permission_denied: 'app control permission required',
+  quit_timeout: 'app did not quit in time',
+  not_running: 'app is not running',
+  automatic_termination_denied: 'automatic termination denied',
+  unknown_action: 'unknown app action',
+  unknown_app: 'unknown app',
+};
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+type Report = Record<string, unknown>;
+/** Hard bound on one pending child call, so a hung dependency cannot outlive the budget. */
+function bounded(work: Promise<Report | undefined>, ms: number): Promise<Report | undefined> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(undefined), Math.max(0, ms));
+    work.then(resolve, () => resolve(undefined)).finally(() => clearTimeout(timer));
+  });
+}
+export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
+  const now = deps.now ?? Date.now;
+  const root = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const locate = deps.locateScript ?? (() => findAppControlScript() ?? findInstalledAppControlScript(root));
+  const exec: FleetAppExec = deps.exec ?? (async (file, argv, options) => execAsync(file, argv, options));
+  // Settled inventory lives 30 s from its completion; pending inventory is shared whatever its age.
+  const settled = new Map<string, { at: number; view: AppsView }>();
+  const pending = new Map<string, Promise<AppsView>>();
+  // Bumped when an accepted action begins and when it settles. An inventory started under an older epoch
+  // may still answer its waiting callers, but it never populates the settled cache.
+  let epoch = 0;
+  const inFlight = new Set<string>();
+  const invalidate = (): void => { epoch += 1; settled.clear(); pending.clear(); };
+  async function run(script: string, action: string, app: string, timeout: number): Promise<Record<string, unknown>> {
+    let stdout: string;
+    try {
+      ({ stdout } = await exec('python3', ['-I', script, action, app, '--output-dir', root], {
+        encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, windowsHide: true,
+      }));
+    } catch (error) {
+      const e = error as { code?: unknown; stdout?: unknown; killed?: unknown; signal?: unknown };
+      // Script refusals exit nonzero but still return the JSON contract.
+      if (typeof e.code !== 'number' || e.killed || e.signal || typeof e.stdout !== 'string') throw new Error('app control unavailable');
+      stdout = e.stdout;
+    }
+    const parsed: unknown = JSON.parse(stdout);
+    if (!record(parsed)) throw new Error('app control unavailable');
+    return parsed;
+  }
+  /**
+   * Probes two rows at a time under one wall budget. A row keeps its reading only when no action was accepted
+   * since this inventory started and none is in flight when the probe settles; otherwise it stays unknown,
+   * so no row mixes a pre-action and a post-action observation.
+   */
+  async function snapshot(started: number, selection: readonly string[]): Promise<AppsView> {
+    const generatedAt = new Date(now()).toISOString();
+    const script = locate();
+    if (!script) return { v: 1, generatedAt, available: false, apps: [] };
+    const apps: AppsView['apps'] = selection.map(app => ({ app, running: null, checkedAt: generatedAt }));
+    const deadline = Date.now() + 20_000;
+    const quiet = (): boolean => epoch === started && inFlight.size === 0;
+    let next = 0;
+    async function worker() {
+      while (next < apps.length && quiet()) {
+        const row = apps[next++]!;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return;
+        // Wall-clock bound against the shared deadline: a probe that never settles leaves the row unknown
+        // (running:null) and frees this worker; control() swallows failures and late rejections.
+        const running = reading(await control(script!, 'status', row.app, remaining));
+        if (!quiet()) return;
+        row.running = running;
+        row.checkedAt = new Date(now()).toISOString();
+      }
+    }
+    await Promise.all([worker(), worker()]);
+    return { v: 1, generatedAt, available: true, apps };
+  }
+  /**
+   * Shares one pending inventory among concurrent GETs. Only an inventory that completes in the epoch it started
+   * in, with no action in flight, becomes the settled cache, with its TTL counted from completion.
+   */
+  function observe(key: string, selection: readonly string[]): Promise<AppsView> {
+    const existing = pending.get(key);
+    if (existing) return existing;
+    const started = epoch;
+    const work = snapshot(started, selection)
+      .then(view => {
+        if (started === epoch && inFlight.size === 0) {
+          settled.delete(key);
+          settled.set(key, { at: now(), view });
+          if (settled.size > 16) settled.delete(settled.keys().next().value!);
+        }
+        return view;
+      })
+      .finally(() => { if (pending.get(key) === work) pending.delete(key); });
+    pending.set(key, work);
+    return work;
+  }
+  /** Resolves undefined when the work fails or the budget runs out; an injected exec may ignore its own timeout option. */
+  const control = (script: string, action: 'status' | 'launch', app: string, budgetMs: number): Promise<Report | undefined> =>
+    bounded(run(script, action, app, Math.max(1, Math.ceil(budgetMs))).catch(() => undefined), budgetMs);
+  /** Only a valid ok:true boolean is a reading; anything else is unknown. */
+  const reading = (report: Report | undefined): boolean | null =>
+    report?.ok === true && typeof report.running === 'boolean' ? report.running : null;
+  /**
+   * Idempotent "ensure running" on one app within one 30 s budget. One status probe; launch is requested
+   * at most once and only after an ok:true running:false reading; then running is confirmed with the remaining budget.
+   *
+   * Response body (never child stdout/stderr or paths; `code`/`error` only from the REFUSALS allowlist):
+   *   200 {app, action:"ensure", outcome:"already_running"|"launched", launchRequested, running:true, at}
+   *   422 {app, action:"ensure", outcome:"unavailable", launchRequested, running, at, code, error[, needsMason:true]}
+   *       a known refusal from the status or launch report
+   *   503 {app, action:"ensure", outcome:"unavailable", launchRequested, running, at, code:"unavailable", error}
+   *       unknown or malformed status, a launch that was not accepted, or a child failure
+   *   504 {app, action:"ensure", outcome:"timeout", launchRequested, running, at, code:"VERSE_ENSURE_TIMEOUT", error}
+   *       budget spent without observing running; running is the last valid observation (true|false|null)
+   */
+  async function ensure(script: string, app: string, wait: number | undefined): Promise<{ http: number; body: Record<string, unknown> }> {
+    const deadline = Date.now() + ACTION_BUDGET_MS;
+    const left = (): number => deadline - Date.now();
+    const at = new Date(now()).toISOString();
+    const respond = (outcome: 'already_running' | 'launched' | 'unavailable' | 'timeout', running: boolean | null, launchRequested: boolean, failed?: Report) => {
+      const base = { app, action: 'ensure', outcome, launchRequested, running, at };
+      if (outcome === 'already_running' || outcome === 'launched') return { http: 200, body: base };
+      if (outcome === 'timeout') return { http: 504, body: { ...base, code: 'VERSE_ENSURE_TIMEOUT', error: 'running not confirmed in time' } };
+      const refusal = failed?.ok === false && typeof failed.code === 'string' && Object.hasOwn(REFUSALS, failed.code) ? failed.code : undefined;
+      if (refusal) {
+        const needsMason = refusal === 'permission_denied' && failed?.needs_mason_written === true;
+        return { http: 422, body: { ...base, code: refusal, error: REFUSALS[refusal], ...(needsMason ? { needsMason: true } : {}) } };
+      }
+      return { http: 503, body: { ...base, ...UNAVAILABLE } };
+    };
+    const first = await control(script, 'status', app, left());
+    const initial = reading(first);
+    if (initial === true) return respond('already_running', true, false);
+    if (initial === null) return respond('unavailable', null, false, first);
+    // Definitively stopped: the single launch. Never retried, whatever its report.
+    const launch = await control(script, 'launch', app, left());
+    if (launch === undefined && left() <= 0) return respond('timeout', false, true);
+    if (launch?.ok !== true || typeof launch.code !== 'string') return respond('unavailable', false, true, launch);
+    // Observe only: sequential status probes, capped by waitRunningMs when given.
+    const seen = await awaitAppState({
+      target: 'running',
+      timeoutMs: Math.max(0, Math.min(wait ?? Infinity, left())),
+      intervalMs: CONFIRM_INTERVAL_MS,
+      probe: async budget => reading(await control(script, 'status', app, budget)),
+    });
+    return seen.outcome === 'reached' ? respond('launched', true, true) : respond('timeout', seen.running, true);
+  }
+  return async (ctx, req, res, path, method) => {
+    if (path === `${PATH}/history`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      try {
+        const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+        const keys = ['after', 'limit', 'invocationId'];
+        const decimal = (value: string): boolean => /^\d+$/.test(value) && Number.isSafeInteger(Number(value));
+        const after = params.get('after') ?? '0', limit = params.get('limit') ?? '100';
+        const id = params.get('invocationId');
+        if ([...params.keys()].some(key => !keys.includes(key) || params.getAll(key).length !== 1) ||
+          !decimal(after) || !decimal(limit) || Number(limit) < 1 || Number(limit) > 100 ||
+          (id !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+          sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid history query' }); return true;
+        }
+        const { readAppsRecoveryHistory } = await import('../fleet/apps-recovery-history.js');
+        const page = readAppsRecoveryHistory(root, Number(after), Number(limit), id ?? undefined);
+        if (page.availability === 'unavailable') sendJson(res, 503, { error: 'fleet apps history unavailable' });
+        else sendJson(res, page.availability === 'invalid-cursor' ? 400 : 200, page);
+      } catch { sendJson(res, 503, { error: 'fleet apps history unavailable' }); }
+      return true;
+    }
+    if (path === PATH && method === 'GET') {
+      try {
+        const requested = new URL(req.url ?? '/', 'http://localhost').searchParams.getAll('app');
+        if (requested.some(name => !FLEET_APPS.some(app => app === name))) {
+          sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app selection' }); return true;
+        }
+        const selection = requested.length ? FLEET_APPS.filter(app => requested.includes(app)) : FLEET_APPS;
+        const key = selection.join('\0');
+        const cached = settled.get(key);
+        const view = cached && now() - cached.at < 30_000 ? cached.view : await observe(key, selection);
+        sendJson(res, 200, view);
+      }
+      catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
+      return true;
+    }
+    if (path === `${PATH}/recovery/check`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const invocation = params.get('invocation') ?? '';
+      const age = params.get('maxAgeMs') ?? '';
+      const maxAgeMs = /^\d+$/.test(age) ? Number(age) : 0;
+      if ([...params.keys()].some(key => key !== 'invocation' && key !== 'maxAgeMs') ||
+        params.getAll('invocation').length !== 1 || params.getAll('maxAgeMs').length !== 1 ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invocation) ||
+        !Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid recovery check' }); return true;
+      }
+      try {
+        const projection = (deps.readRecoveryInvocations ?? readAppsRecoveryInvocations)(root);
+        if (!projection || projection.availability !== 'available') throw new Error('unavailable');
+        sendJson(res, 200, appsRecoveryVerdict(projection, invocation, maxAgeMs, now()));
+      } catch { sendJson(res, 503, { error: 'recovery evidence unavailable' }); }
+      return true;
+    }
+    if (path !== `${PATH}/action`) return false;
+    if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+    if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+    if (!passesMutationGate(req, res, ctx.token)) return true;
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket?.remoteAddress ?? '') || req.headers['x-ashlr-channel'] === 'mobile') {
+      sendJson(res, 403, { error: 'local request required' }); return true;
+    }
+    let body: unknown;
+    try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+    if (!record(body) || Object.keys(body).some(k => k !== 'app' && k !== 'action' && k !== 'waitRunningMs') ||
+      !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart', 'ensure', 'quit'].includes(body.action))) {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
+    }
+    // Phantom hosts this server: quitting it would drop the answer mid-request.
+    if (body.app === 'Phantom' && body.action === 'quit') {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'Phantom cannot quit itself from here' }); return true;
+    }
+    // Validated before anything runs; focus never has a running state to wait for.
+    const wait = body.waitRunningMs;
+    if (wait !== undefined && (body.action === 'focus' || typeof wait !== 'number' || !Number.isInteger(wait) || wait < 1 || wait > MAX_WAIT_RUNNING_MS)) {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
+    }
+    const app = body.app as string;
+    // A busy app rejects all actions until its current action settles.
+    if (inFlight.has(app)) { sendJson(res, 409, { code: 'VERSE_APP_BUSY', error: 'app action in progress' }); return true; }
+    const script = locate();
+    if (!script) { sendJson(res, 503, { error: 'fleet apps unavailable' }); return true; }
+    inFlight.add(app);
+    invalidate();
+    try {
+      if (body.action === 'ensure') {
+        const answer = await ensure(script, app, typeof wait === 'number' ? wait : undefined);
+        sendJson(res, answer.http, answer.body);
+        return true;
+      }
+      const deadline = Date.now() + ACTION_BUDGET_MS;
+      const result = await bounded(run(script, body.action as string, app, ACTION_BUDGET_MS), ACTION_BUDGET_MS);
+      if (Date.now() >= deadline) {
+        sendJson(res, 504, { code: 'VERSE_ACTION_TIMEOUT', error: 'app action not accepted in time' });
+        return true;
+      }
+      if (!result) throw new Error('app control unavailable');
+      if (result.ok === true && typeof result.code === 'string') {
+        const accepted = { app, action: body.action, code: result.code };
+        let confirmation: { target: AppAwaitTarget; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
+        if (typeof wait === 'number') {
+          // Observe only: sequential status probes, never a second action or retry of it.
+          const target: AppAwaitTarget = body.action === 'quit' ? 'stopped' : 'running';
+          const seen = await awaitAppState({
+            target,
+            timeoutMs: Math.min(wait, Math.max(0, deadline - Date.now())),
+            intervalMs: CONFIRM_INTERVAL_MS,
+            probe: async budget => reading(await control(script, 'status', app, Math.min(budget, Math.max(0, deadline - Date.now())))),
+          });
+          const confirmed = Date.now() < deadline && seen.outcome === 'reached' && seen.running === (target === 'running');
+          confirmation = { target, outcome: seen.outcome === 'reached' && !confirmed ? 'timeout' : seen.outcome, attempts: seen.attempts, running: seen.running, confirmed };
+        }
+        sendJson(res, 202, { ...accepted, at: new Date(now()).toISOString(), ...(confirmation ? { confirmation } : {}) });
+      } else if (result.ok === false && typeof result.code === 'string' && Object.hasOwn(REFUSALS, result.code)) {
+        const needsMason = result.code === 'permission_denied' && result.needs_mason_written === true;
+        sendJson(res, 422, { code: result.code, error: REFUSALS[result.code], ...(needsMason ? { needsMason: true } : {}) });
+      } else if (result.ok === false && result.code === 'unavailable') {
+        sendJson(res, 503, UNAVAILABLE);
+      } else throw new Error('unreadable result');
+    } catch { sendJson(res, 503, UNAVAILABLE); }
+    finally { inFlight.delete(app); invalidate(); }
+    return true;
+  };
+}
+export const handleFleetAppsApi: ApiModule = createFleetAppsApi();

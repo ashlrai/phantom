@@ -1,0 +1,9 @@
+{
+  "object": "list",
+  "has_more": false,
+  "data": [
+    { "id": "fixture-new", "object": "model", "created": 1700000100, "owned_by": "fixture-provider", "capabilities": ["completion"] },
+    { "id": "fixture-general", "object": "model", "created": 1700000000, "owned_by": "fixture-provider" },
+    { "id": "fixture-coder-v1", "object": "model", "created": 1700000000, "owned_by": "fixture-provider", "capabilities": ["vision", "tools", "completion"] }
+  ]
+}

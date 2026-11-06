@@ -313,7 +313,7 @@ function printRecallHuman(hits: RecallHit[], query: string): void {
  * Exit codes: 0 success, 1 module/runtime error, 2 bad usage.
  */
 export async function cmdRecall(args: string[]): Promise<number> {
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  if (args[0] === 'help' || wantsGenomeHelp(args)) {
     printRecallHelp();
     return 0;
   }
@@ -460,7 +460,9 @@ function parseLearnArgs(args: string[]): ParsedLearnArgs {
  * Exit codes: 0 success, 1 module/I-O error, 2 bad usage.
  */
 export async function cmdLearn(args: string[]): Promise<number> {
-  if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
+  // Help anywhere outside a flag value: `learn --json -h` used to store "-h"
+  // in the genome.
+  if (args[0] === 'help' || wantsGenomeHelp(args)) {
     printLearnHelp();
     return 0;
   }

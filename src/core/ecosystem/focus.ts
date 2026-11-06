@@ -73,7 +73,7 @@ export const DEFAULT_ECOSYSTEM_FOCUS: EcosystemFocus = {
   }],
 };
 
-const TIER_RANK: Record<StrategicTier, number> = {
+export const STRATEGIC_TIER_RANK: Readonly<Record<StrategicTier, number>> = {
   'core-fleet': 0,
   'force-multiplier': 1,
   inventory: 2,
@@ -207,10 +207,6 @@ function loadFocus(): { focus: EcosystemFocus; byName: Map<string, StrategicTier
   }
 }
 
-export function resetEcosystemFocusCacheForTests(): void {
-  focusCache = null;
-}
-
 export function loadEcosystemFocus(): EcosystemFocus {
   return loadFocus().focus;
 }
@@ -233,5 +229,5 @@ export function strategicRepoMultiplier(repo: string): number {
 }
 
 export function compareReposByStrategicFocus(a: string, b: string): number {
-  return TIER_RANK[strategicTierOfRepo(a)] - TIER_RANK[strategicTierOfRepo(b)];
+  return STRATEGIC_TIER_RANK[strategicTierOfRepo(a)] - STRATEGIC_TIER_RANK[strategicTierOfRepo(b)];
 }

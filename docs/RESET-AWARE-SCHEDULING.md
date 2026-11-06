@@ -174,3 +174,31 @@ Regression tests use offline fake clocks and provider metadata. Explicit online
 coding runs use `ashlr benchmark run`; saved report comparison remains offline.
 See [the harness guide](AGENT-HARNESS-EVOLUTION.md) and the
 [recorded local qualification](https://github.com/ashlrai/ashlr-hub/blob/master/benchmarks/local-qualification-2026-10-01.json).
+
+## Standalone included-usage waste projection
+
+`projectWasteRisk` in `src/core/resources/waste-risk.ts` is a pure advisory
+projection for callers with a qualified fixed window. Supply an explicit clock,
+used/limit in matching units, the six-hour job EWMA in usage units per hour,
+running job count, average per-job cost and a concurrency ceiling. Unknown or
+expired windows stay unknown. High risk means projected unused allowance exceeds
+15% with less than 40% of the window remaining; medium means more than 5% unused.
+Projected usage is capped at included allowance.
+
+The target aims at 97% usage by reset. Worker throughput comes from live burn
+per running worker, or an explicit measured job duration. Zero burn without a
+measured duration leaves the target unknown. Held and exhausted lanes target zero.
+Targets include current running jobs, respect the ceiling and require enough
+allowance for whole jobs. They do not authorize dispatch. Paid-overage lanes,
+including `claude-api`, additionally require an explicit remaining prepaid
+`credit_guard`; their target is rounded down to stay within that guard over the
+remaining window. No reset purchase is recommended or performed. Estimates do
+not replace admission checks as real job costs change.
+
+The feed contract `fleet-usage.v1` is absent in this revision, so the projection
+is exported standalone. `notifyWasteRiskTransition` is the companion hook for
+feed producers: retain the previous lane snapshot and call it with the new one.
+It uses existing opt-in desktop notifications on entry into high risk under
+24 hours, including crossing the 24-hour boundary while already high. Repeated
+high snapshots in the same window are silent. The hook performs no polling or
+notification configuration changes.

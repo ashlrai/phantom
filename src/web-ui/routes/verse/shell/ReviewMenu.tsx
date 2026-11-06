@@ -36,6 +36,7 @@ export function ReviewMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: 
     { id: 'decisions', label: 'Fleet decisions', description: 'Recorded decisions when available; otherwise view Fleet status.',
       onSelect: () => setVerseSection('fleet', 'shadow-decisions') },
   ];
+  items.push({ id: 'decision-inbox', label: 'Decision inbox', onSelect: () => { window.location.hash = '/inbox'; } });
   items.push({ id: 'wiki', label: 'Module map', separated: true, onSelect: command('section.wiki') });
   return <ActionMenu label="Review work" items={items} anchor={anchorBelow(anchor)} returnFocus={anchor} onClose={onClose} />;
 }

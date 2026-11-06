@@ -1,0 +1,2 @@
+ok personal (personal)  <SESSION_ID>
+  expires  <COUNTDOWN>

@@ -36,9 +36,12 @@ import { useCommandHandler } from '../shell/command-bus.js';
 import { detectKeyPlatform, formatChord } from '../shell/command-catalog.js';
 import { commandChord } from '../shell/command-keys.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { homeRunsQuery } from '../mobile/home-runs-query.js';
+import { dispatchdLine, dispatchdWorking } from './dispatchd-headline.js';
 import { darkSinceLabel } from './dark-since.js';
 import { fleetControlQuery, postFleetControl, refreshFleetControlReads } from './fleet-control-queries.js';
 import { nativeFleetAvailable, runNativeFleetOp, type NativeFleetEvent, type NativeFleetOp } from './native-fleet.js';
+import { RunsSwitches } from './RunsSwitches.js';
 import styles from './fleet-control.module.css';
 
 export const FLEET_CONTROL_POLL_MS = 5_000;
@@ -114,12 +117,14 @@ export interface FleetControlProps {
 
 export function FleetControl({ actions, grantFlow, darkSince = null, setupShownBelow = false }: FleetControlProps) {
   const read = useQuery(fleetControlQuery, { freshMs: 4_000 });
+  const runsRead = useQuery(homeRunsQuery, { freshMs: FLEET_CONTROL_POLL_MS });
   const refetch = useRefetch(fleetControlQuery);
   const refresh = useRefresh(fleetControlQuery);
   // A slow/queued read must finish before the next automatic poll replaces it.
   // Native completion still forces a newer read through refreshFleetControlReads.
   usePollWhileVisible(() => {
     void runQuery(fleetControlQuery.key, () => fleetControlQuery.fetch());
+    void runQuery(homeRunsQuery.key, () => homeRunsQuery.fetch());
   }, FLEET_CONTROL_POLL_MS);
   const [did, setDid] = useState<string[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -240,6 +245,11 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
     );
   }
 
+  const runs = runsRead.error === undefined && runsRead.data
+    ? { ...runsRead.data, runsDirPresent: true } : null;
+  const now = Date.now();
+  const dispatchWorking = dispatchdWorking(runs, now);
+  const dispatchLine = dispatchdLine(runs, now);
   const blocker = state.blocker;
   const nativeCapable = nativeFleetAvailable();
   const g = state.grant;
@@ -267,7 +277,7 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
             )}
           </span>
           <span className={styles.stateWord}>{lastKnown ? 'Last known:' : ''} {preparing ? 'Preparing work' : STATE_WORD[state.state]}</span>
-          <span>{preparing ? `0 agents working · ${tickProgress.phase}${stage ? ` · stage ${stage}` : ''}` : state.headline.replace(/^[A-Z][a-z]+ · /u, '')}</span>
+          <span>{preparing ? `${dispatchWorking !== null && dispatchWorking > 0 ? `Phantom daemon idle · dispatchd ${dispatchWorking} working` : '0 agents working'} · ${tickProgress.phase}${stage ? ` · stage ${stage}` : ''}` : state.headline.replace(/^[A-Z][a-z]+ · /u, '')}</span>
         </p>
         <div className={styles.buttons} role="group" aria-label="Fleet controls">
           {state.paused ? (
@@ -281,6 +291,8 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
           <ControlButton label="Stop" icon={<IconStop />} keyId="fleet.halt" availability={state.controls.stop} onClick={stop} busy={actions.busy} readOnly={actions.readOnly} danger />
         </div>
       </div>
+
+      {dispatchLine ? <p className={styles.muted}>{dispatchLine}</p> : null}
 
       {lastKnown ? (
         <p className={styles.muted} role="status">
@@ -398,6 +410,7 @@ export function FleetControl({ actions, grantFlow, darkSince = null, setupShownB
           </dd>
         </div>
       </dl>
+      <RunsSwitches readOnly={actions.readOnly} />
     </section>
   );
 }

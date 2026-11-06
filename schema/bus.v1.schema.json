@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ashlr.ai/schema/bus.v1.schema.json",
+  "title": "Phantom Bus Envelope v1",
+  "description": "Transport-neutral envelope. P0 is highest priority. Routing labels convey no authentication or authority. The body is opaque JSON, without event or command interpretation.",
+  "$comment": "JSON Schema cannot enforce serialized UTF-8 byte size or nesting depth. Receivers MUST also use parseBusEnvelope/validateBusEnvelope from src/core/fleet/bus-envelope.ts (or equivalent enforcement). The complete compact JSON envelope is limited to 65536 bytes and depth 32 (root depth 0). Received JSON text, including whitespace, must also fit the byte cap before parsing. JavaScript callers must supply plain, acyclic, finite, dense, enumerable data-only JSON; getters, hooks, proxies, symbols and class instances are rejected. No implicit defaults or coercion.",
+  "x-maxBytes": 65536,
+  "x-maxDepth": 32,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "from", "to", "priority", "ttl", "body"],
+  "properties": {
+    "id": {
+      "$ref": "#/definitions/token",
+      "description": "Sender-assigned identity for transport-level deduplication."
+    },
+    "from": {
+      "$ref": "#/definitions/token",
+      "description": "Sender routing label; not a verified principal."
+    },
+    "to": {
+      "$ref": "#/definitions/token",
+      "description": "Destination routing label; no wildcard or fanout semantics are implied."
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["P0", "P1", "P2", "P3"],
+      "description": "P0 is highest priority; P3 is lowest."
+    },
+    "ttl": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "Remaining lifetime in milliseconds. Transport tracks elapsed time externally, decrements before forwarding, and discards at zero. This field alone cannot establish expiry; never reset the lifetime on forwarding."
+    },
+    "body": {
+      "description": "Any JSON value, including null. Its domain schema is owned by the sender and recipient."
+    }
+  },
+  "definitions": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[!-~]+(?![\\s\\S])",
+      "description": "Printable ASCII token, without spaces or control characters."
+    }
+  },
+  "examples": [
+    { "id": "msg-1", "from": "codex-cmp", "to": "fleet", "priority": "P1", "ttl": 60000, "body": { "kind": "anomaly", "payload": { "detail": "worker unavailable" } } },
+    { "id": "msg-2", "from": "agent:a", "to": "agent:b", "priority": "P3", "ttl": 1000, "body": null }
+  ]
+}

@@ -36,6 +36,7 @@ import type {
   Proposal,
   RunActionCounts,
   RunEstimate,
+  RunUsage,
   WorkItem,
 } from '../types.js';
 import { routeBackend, type RouteDecision } from '../fleet/router.js';
@@ -53,7 +54,13 @@ import {
 import { verifyProducerProvenanceV2 } from '../foundry/provenance.js';
 import { engineTierOf as _engineTierOf } from './sandboxed-engine.js';
 import { engineInstalled } from './engines.js';
-import { canonicalModelTag, type ModelEntry } from './model-catalog.js';
+import {
+  canonicalModelTag, CODEX_TERRA_MODEL_ID, CODEX_ASTRA_MODEL_ID,
+  resolveSelectedEngineModel, DEFAULT_CODEX_MODEL_ID, KNOWN_MODELS, type ModelEntry, type ModelRoutingTier,
+} from './model-catalog.js';
+import { resolveEngineSpec } from './engine-registry.js';
+import type { TaskRouteDecision } from './router.js';
+import { completeReportedTokens } from './token-evidence.js';
 import {
   currentAuthoritativeDispatchProductionLearningLabel,
   readDispatchProductionEventsDetailed,
@@ -78,12 +85,196 @@ export type {
   CascadeRunEntry,
   EscalationSignal,
   TaskResult,
+  TaskRouteDecision,
 } from './router.js';
 export {
   shouldEscalate,
   escalationRate,
   routeTaskCascade,
 } from './router.js';
+
+// ---------------------------------------------------------------------------
+// Codex arm priors. Allowance weights are comparative estimates, not admission.
+// ---------------------------------------------------------------------------
+
+export const TERRA_EXPERIMENT_ID = 'TERRA-AB-1';
+export const TERRA_PROMOTION_MIN_JOBS = 10;
+
+/** Observations for a complete work-tier comparison, never execution authority. */
+export interface TerraExperimentJob {
+  jobId: string;
+  experiment: string;
+  tier: ModelRoutingTier;
+  arm: 'terra' | 'sol';
+  completed: boolean;
+  merged: boolean;
+  usage: Pick<RunUsage, 'tokensIn' | 'tokensOut' | 'tokenEvidence'>;
+}
+
+export interface TerraArmResult {
+  jobs: number;
+  merges: number;
+  tokens: number;
+  mergeRate: number;
+  tokensPerMerge: number | null;
+}
+
+export interface TerraPromotion {
+  eligible: boolean;
+  reason: 'invalid-evidence' | 'insufficient-jobs' | 'no-merges' |
+    'merge-rate-not-better' | 'tokens-per-merge-worse' | 'promote';
+  terra: TerraArmResult;
+  sol: TerraArmResult;
+}
+
+/**
+ * Evaluate the preregistered comparison without mutating policy or storage.
+ * Both arms need ten completed jobs; failed jobs consume tokens too. Exact
+ * duplicate observations count once. Missing, estimated or conflicting usage
+ * cannot improve a prior. Callers must supply the entire experiment cohort.
+ * This observational result is not causal assignment or merge authentication.
+ */
+export function evaluateTerraPromotion(jobs: readonly TerraExperimentJob[]): TerraPromotion {
+  const empty = (): TerraArmResult => ({ jobs: 0, merges: 0, tokens: 0, mergeRate: 0, tokensPerMerge: null });
+  const terra = empty();
+  const sol = empty();
+  const seen = new Map<string, string>();
+  const result = (reason: TerraPromotion['reason']): TerraPromotion => {
+    for (const arm of [terra, sol]) {
+      arm.mergeRate = arm.jobs > 0 ? arm.merges / arm.jobs : 0;
+      arm.tokensPerMerge = arm.merges > 0 ? arm.tokens / arm.merges : null;
+    }
+    return { eligible: reason === 'promote', reason, terra, sol };
+  };
+  for (const job of jobs) {
+    if (job.experiment !== TERRA_EXPERIMENT_ID || job.tier !== 'work') continue;
+    if (typeof job.jobId !== 'string' || !job.jobId.trim() ||
+      (job.arm !== 'terra' && job.arm !== 'sol') || job.completed !== true ||
+      typeof job.merged !== 'boolean' || !job.usage || !completeReportedTokens(job.usage)) {
+      return result('invalid-evidence');
+    }
+    const tokens = job.usage.tokensIn + job.usage.tokensOut;
+    if (!Number.isSafeInteger(tokens) || tokens <= 0) return result('invalid-evidence');
+    const signature = JSON.stringify([job.arm, job.merged, job.usage.tokensIn, job.usage.tokensOut]);
+    const previous = seen.get(job.jobId);
+    if (previous !== undefined) {
+      if (previous !== signature) return result('invalid-evidence');
+      continue;
+    }
+    seen.set(job.jobId, signature);
+    const arm = job.arm === 'terra' ? terra : sol;
+    arm.jobs += 1;
+    arm.merges += Number(job.merged);
+    arm.tokens += tokens;
+    if (!Number.isSafeInteger(arm.tokens)) return result('invalid-evidence');
+  }
+  if (terra.jobs < TERRA_PROMOTION_MIN_JOBS || sol.jobs < TERRA_PROMOTION_MIN_JOBS) return result('insufficient-jobs');
+  if (terra.merges === 0 || sol.merges === 0) return result('no-merges');
+  if (BigInt(terra.merges) * BigInt(sol.jobs) <= BigInt(sol.merges) * BigInt(terra.jobs)) return result('merge-rate-not-better');
+  if (BigInt(terra.tokens) * BigInt(sol.merges) > BigInt(sol.tokens) * BigInt(terra.merges)) return result('tokens-per-merge-worse');
+  return result('promote');
+}
+
+export interface CodexArmPrior {
+  model: string;
+  reward: number;
+  planAllowanceWeight: number;
+  rewardPerAllowance: number;
+}
+
+/**
+ * Source-owned cold-start priors; experiment updates are advisory projections.
+ * Current V1 assignment receipts lack causal identifiability, so production
+ * learned routing still requires inspectRoutingLearningAuthority and never
+ * treats these observations as a substitute for that firewall.
+ */
+export function codexArmPriors(
+  tier: ModelRoutingTier,
+  jobs: readonly TerraExperimentJob[] = [],
+): CodexArmPrior[] {
+  const promoted = tier === 'work' && evaluateTerraPromotion(jobs).eligible;
+  const rewards = tier === 'frontier' ? [0.02, 0.1, 0.8]
+    : tier === 'work' ? [promoted ? 0.8 : 0.25, 0.75, 0.8] : [0.8, 0.75, 0.8];
+  return [CODEX_TERRA_MODEL_ID, DEFAULT_CODEX_MODEL_ID, CODEX_ASTRA_MODEL_ID].map((model, index) => {
+    const weight = KNOWN_MODELS.find(entry => entry.id === `codex:${model}`)?.planAllowanceWeight ?? 1;
+    const reward = rewards[index]!;
+    return { model, reward, planAllowanceWeight: weight, rewardPerAllowance: reward / weight };
+  }).sort((left, right) => right.rewardPerAllowance - left.rewardPerAllowance);
+}
+
+/** Default model only; availability, quota, local-only and config remain caller gates. */
+export function codexModelForTier(tier: ModelRoutingTier): string {
+  return codexArmPriors(tier)[0]!.model;
+}
+
+
+// ---------------------------------------------------------------------------
+// Codex-tier routing helpers (moved from router.ts to co-locate with
+// KNOWN_MODELS). These are re-exported so router.ts can import them here
+// without a separate model-catalog dependency.
+// ---------------------------------------------------------------------------
+
+/** Frontier difficulty thresholds (mirror fleet/router.ts so they stay in sync). */
+const FRONTIER_EFFORT_THRESHOLD = 4;
+const FRONTIER_SCORE_THRESHOLD = 8;
+
+/** True when a WorkItem is "hard" by effort/score/source. */
+function isHardItem(item: WorkItem): boolean {
+  if ((item.source as string) === 'escalation') return true;
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  const score = typeof item.score === 'number' ? item.score : 3;
+  return effort >= FRONTIER_EFFORT_THRESHOLD || score >= FRONTIER_SCORE_THRESHOLD;
+}
+
+/** True when a WorkItem is trivial (effort 1, score ≤ 3). */
+function isTrivialItem(item: WorkItem): boolean {
+  const effort = typeof item.effort === 'number' ? item.effort : 3;
+  const score = typeof item.score === 'number' ? item.score : 3;
+  return effort <= 1 && score <= 3;
+}
+
+/** Queue tiers select a model within an admitted engine, never an engine tier. */
+export function explicitModelTier(item: WorkItem): ModelRoutingTier | null {
+  const tiers = new Set<ModelRoutingTier>();
+  for (const tag of item.tags ?? []) {
+    const match = /^tier[:=](fast|mid|computer|work|frontier)$/i.exec(tag.trim());
+    if (match) tiers.add(match[1].toLowerCase() as ModelRoutingTier);
+  }
+  // Conflicting tags do not silently downgrade a frontier/work request.
+  for (const tier of ['frontier', 'work', 'computer', 'mid', 'fast'] as const) {
+    if (tiers.has(tier)) return tier;
+  }
+  return null;
+}
+
+/** Infer the model routing tier for a WorkItem. */
+export function modelTierForTask(item: WorkItem): ModelRoutingTier {
+  const explicit = explicitModelTier(item);
+  if (explicit) return explicit;
+  const tags = new Set((item.tags ?? []).map(tag => tag.trim().toLowerCase()));
+  if (['computer', 'computer-use', 'gui', 'browser-use'].some(tag => tags.has(tag)) ||
+      /\b(computer[ -]use|GUI|browser automation)\b/i.test(item.title)) return 'computer';
+  if (item.source === 'doc' || item.source === 'test' ||
+      ['verify', 'test', 'fixup', 'pr-body', 'docs', 'triage'].some(tag => tags.has(tag)) ||
+      /^(?:\[?FIXUP\b|verify\b|run (?:the )?(?:tests?|verification)\b|triage\b|(?:write|draft|update) (?:the )?(?:PR|pull request) (?:body|description)\b)/i.test(item.title)) {
+    return 'fast';
+  }
+  if ((item.source as string) === 'escalation' || isHardItem(item)) return 'work';
+  if (isTrivialItem(item)) return 'fast';
+  // Ordinary implementation remains Sol; mid is an explicit queue choice.
+  return 'work';
+}
+
+/** Codex model default for a task, respecting custom engine config. */
+export function codexDefaultForTask(item: WorkItem, cfg: AshlrConfig): TaskRouteDecision {
+  const custom = cfg.foundry?.engines?.codex;
+  const model = custom
+    ? resolveSelectedEngineModel({ engine: 'codex', spec: resolveEngineSpec('codex', cfg) })
+    : codexModelForTier(modelTierForTask(item));
+  return { engine: 'codex', model,
+    catalogEntry: KNOWN_MODELS.find(entry => entry.id === `codex:${model}`) ?? null,
+    reason: custom ? 'Configured Codex engine default.' : `Codex ${modelTierForTask(item)} model default.` };
+}
 
 // ---------------------------------------------------------------------------
 // Local type definitions (avoid importing merge.ts)
@@ -1282,20 +1473,6 @@ export function buildOperationalEngineScores(
   };
 }
 
-export function buildOperationalProducerScores(
-  taskClass: string,
-  nowMs?: number,
-  sinceMs?: number,
-): OperationalLearningScores {
-  const observational = buildProducerScores(taskClass, nowMs, sinceMs);
-  const authority = inspectRoutingLearningAuthority(taskClass, nowMs);
-  return {
-    authority,
-    observational,
-    operational: authority.operationalSteering ? observational : new Map(),
-  };
-}
-
 export function operationalEngineScoresForRouting(taskClass: string): EngineScoreMap {
   const authority = inspectRoutingLearningAuthority(taskClass);
   return authority.operationalSteering ? buildEngineScores(taskClass) : new Map();
@@ -1684,8 +1861,10 @@ export function buildProducerScores(
 }
 
 /**
- * M323: choose the CHEAPEST candidate whose learned producer ship-rate is
- * ≥ opts.minShipRate with ≥ LEARNED_ROUTING_MIN_SAMPLES samples.
+ * Choose a candidate whose learned producer ship-rate meets opts.minShipRate
+ * with at least LEARNED_ROUTING_MIN_SAMPLES samples. Fully weighted Codex
+ * candidate sets rank by reward per allowance unit; other sets retain the
+ * cheapest API-price ordering.
  *
  * Returns null (→ caller falls back to the static pick, byte-identically)
  * when NO candidate has enough samples. When sampled candidates exist but
@@ -1702,15 +1881,34 @@ export function selectCostAwareModel(
   opts: { minShipRate: number },
 ): ModelEntry | null {
   if (candidates.length === 0 || scores.size === 0) return null;
-  const byCost = [...candidates].sort(
-    (a, b) => a.costPerMTokIn + a.costPerMTokOut - (b.costPerMTokIn + b.costPerMTokOut),
-  );
+  const scoreFor = (entry: ModelEntry): EngineScore | undefined => {
+    const tag = canonicalModelTag(entry.engine, entry.id.slice(entry.id.indexOf(':') + 1));
+    return scores.get(`${entry.engine}:${tag}`);
+  };
+  // Compare allowance units only within a fully weighted Codex candidate set.
+  // Mixed engines retain API-price ordering because their units are unrelated.
+  const allowanceComparable = candidates.every(entry => entry.engine === 'codex' &&
+    typeof entry.planAllowanceWeight === 'number' && Number.isFinite(entry.planAllowanceWeight) &&
+    entry.planAllowanceWeight > 0);
+  const byCost = [...candidates].sort((a, b) => {
+    if (allowanceComparable) {
+      const reward = (entry: ModelEntry): number => {
+        const score = scoreFor(entry);
+        return score && score.samples >= LEARNED_ROUTING_MIN_SAMPLES && Number.isFinite(score.score)
+          ? score.score / entry.planAllowanceWeight! : 0;
+      };
+      const difference = reward(b) - reward(a);
+      if (difference !== 0) return difference;
+    }
+    return a.costPerMTokIn + a.costPerMTokOut - (b.costPerMTokIn + b.costPerMTokOut);
+  });
   let bestSampled: { entry: ModelEntry; score: number } | null = null;
   for (const entry of byCost) {
     const tag = canonicalModelTag(entry.engine, entry.id.slice(entry.id.indexOf(':') + 1));
     const s = scores.get(`${entry.engine}:${tag}`);
-    if (!s || s.samples < LEARNED_ROUTING_MIN_SAMPLES) continue;
-    if (s.score >= opts.minShipRate) return entry; // cheapest clearing the bar
+    if (!s || !Number.isFinite(s.samples) || s.samples < LEARNED_ROUTING_MIN_SAMPLES ||
+      !Number.isFinite(s.score) || s.score < 0 || s.score > 1) continue;
+    if (s.score >= opts.minShipRate) return entry; // best allowance reward or cheapest API price
     if (!bestSampled || s.score > bestSampled.score) bestSampled = { entry, score: s.score };
   }
   if (bestSampled && bestSampled.score >= 0.5) return bestSampled.entry;

@@ -71,7 +71,7 @@ describe('CapacityStrip', () => {
   it('prints reset prose verbatim and names each bar for assistive tech', () => {
     render(<CapacityStrip seats={[CLAUDE]} />);
     expect(screen.getAllByText('resets Sep 25 at 7pm (America/New_York)').length).toBeGreaterThan(0);
-    expect(screen.getByRole('img', { name: 'Claude Max 5-hour window: 15% used, resets Sep 21 at 1:40am (America/New_York)' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Claude Max weekly window: 85% used, resets Sep 25 at 7pm (America/New_York)' })).toBeInTheDocument();
   });
 
   it('shows "Reserved for you 40%" with the autonomy word, and marks the kept band on the binding bar', () => {

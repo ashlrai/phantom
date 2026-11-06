@@ -224,6 +224,13 @@ done-when:
 
 The documentation describes the code as it is today: commands, options, defaults and examples are accurate.
 
+When the task explicitly requests a read-only report (such as a morning summary
+or weekly review), the report is the documentation outcome. Verify its claims
+against available repository, task, PR, CI and journal evidence. Cite sources,
+mark unavailable data as unknown, and return the report in the task result.
+In this mode, do not edit files, open a PR, dispatch work, merge, spend money or
+send external messages; the edit and PR steps below apply only to sync tasks.
+
 ## Procedure
 
 1. Identify the docs in scope and the code they describe.

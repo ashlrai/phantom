@@ -72,9 +72,9 @@ export async function buildWikiGraph(repo: string): Promise<WikiGraphView> {
   const policy = JSON.stringify(steering.ignorePaths);
   const key = `${repo}\0${policy}`;
   const cached = cache.get(repo);
-  if (cached && cached.policy === policy && Date.now() - cached.at < CACHE_MS) return cached.graph;
+  if (cached && cached.policy === policy && Date.now() - cached.at < CACHE_MS) return structuredClone(cached.graph);
   const pending = inFlight.get(key);
-  if (pending) return pending;
+  if (pending) return structuredClone(await pending);
   const task = (async () => {
     const scan = await scanRepo(repo, steering.ignorePaths);
     const graph = graphFromFacts(wikiKey(repo), await extractFacts(scan));
@@ -87,5 +87,5 @@ export async function buildWikiGraph(repo: string): Promise<WikiGraphView> {
     return graph;
   })();
   inFlight.set(key, task);
-  try { return await task; } finally { inFlight.delete(key); }
+  try { return structuredClone(await task); } finally { inFlight.delete(key); }
 }

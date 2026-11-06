@@ -39,6 +39,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+// Load the real export during collection, outside individual test deadlines.
+// Mocked dispatch cases below import fresh modules after installing their doubles.
+import { runApiModelSandboxed as runUnmockedApiModelSandboxed } from '../src/core/run/sandboxed-engine.js';
 import type { InboxStore } from '../src/core/seams/inbox.js';
 import type { Proposal } from '../src/core/types.js';
 import {
@@ -105,6 +108,7 @@ describe('M117 — KNOWN_ENGINE_IDS', () => {
 // ---------------------------------------------------------------------------
 describe('M117 — engineInstalled Node-http probe', () => {
   afterEach(() => {
+    vi.doUnmock('node:child_process');
     vi.resetModules();
   });
 
@@ -172,8 +176,7 @@ describe('M117 — engineInstalled Node-http probe', () => {
 // ---------------------------------------------------------------------------
 describe('M117 — runApiModelSandboxed export', () => {
   it('is exported from sandboxed-engine', async () => {
-    const mod = await import('../src/core/run/sandboxed-engine.js');
-    expect(typeof mod.runApiModelSandboxed).toBe('function');
+    expect(typeof runUnmockedApiModelSandboxed).toBe('function');
   });
 });
 
@@ -182,8 +185,7 @@ describe('M117 — runApiModelSandboxed export', () => {
 // ---------------------------------------------------------------------------
 describe('M117 — runApiModelSandboxed rejects cli-agent', () => {
   it('returns status:failed for a cli-agent engine (no api spec)', async () => {
-    const { runApiModelSandboxed } = await import('../src/core/run/sandboxed-engine.js');
-    const result = await runApiModelSandboxed('claude', 'test goal', {} as never, {
+    const result = await runUnmockedApiModelSandboxed('claude', 'test goal', {} as never, {
       sourceRepo: '/tmp/fake',
     });
     expect(result.state.status).toBe('failed');

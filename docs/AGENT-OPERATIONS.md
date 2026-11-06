@@ -14,18 +14,22 @@ either name.
 | Need | Command |
 | --- | --- |
 | Node version | `>=22.15.0` (`package.json` `engines`) |
-| Install dependencies | `npm ci` |
+| Install dependencies in a trusted local worktree | `npm run install:worktree` (pnpm 10.28.2; shared same-volume store; see [setup](../CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)) |
+| Install dependencies in CI or for release packaging | `npm ci` |
 | Build `dist/` (CLI, assets, web console, build identity) | `npm run build` |
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
 | Type check (backend + web) | `npm run typecheck` |
+| Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
+| Fast unit lane with per-file timing | `npm run test:fast` (report: `.ashlr-gate/test-fast-durations.json`) |
 | Backend tests with isolated homes and a runtime cap | `npm run test:ci -- <files>` |
 | Web console tests | `npm run test:web` |
 | Safety invariant suites | `npm run test:invariants` |
 | Documentation links and anchors (offline) | `npm run check:docs` |
+| Duplicate test names across `test/` (describe path + title) | `node scripts/check-test-names.mjs` |
 | Fast local gate: build, static checks, related tests, smoke set | `npm run gate` (`-- --base <ref>`, `-- --json`) |
 | Full gate: complete backend and web suites | `npm run gate:full` |
 | Release-readiness subset | `npm run check:release` |
@@ -35,14 +39,21 @@ the import graph, so a test that reads a changed file as text is not selected;
 name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** `Merge Gate` fails unless every job in the selected CI lane
-succeeded. On a pull request the four `Mac exhaustive (N/4)` shards are skipped
-unless the PR carries the `ci:full-mac` label, and `Merge Gate` counts them as
-deferred to post-merge; they always run on master pushes. `Mac exhaustive
-(isolated)` and the other macOS checks run on every pull request that is ready
-for review. A draft pull request skips those until it is marked ready, which
-starts a full run; a draft cannot merge, so open drafts while iterating
-and mark the PR ready once Linux is green (`.github/workflows/ci.yml`).
+**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
+the secret-shape scan, lane classification, and — unless the change is
+docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
+required check and fails unless exactly that selection ran and every full lane
+was skipped. No pull request or merge-queue commit may occupy a macOS or
+Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+(`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
+native-broker lanes, and the Windows service authority run only in the daily
+scheduled run on master, on manual dispatch (optionally sliced by `mac_shard`),
+or on the reusable release call — where the caller's push event still defers
+the macOS and Windows-service legs to the daily run while the `ci` matrix,
+including its Windows portability legs, stays the release's native gate
+(`.github/workflows/ci.yml`).
+
+**Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
 **Tests.** Backend suites live in `test/` and are named after the milestone or
 release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
@@ -64,6 +75,101 @@ those (except `README.md`) must also appear in `package.json` `files`
 (`test/documentation-navigation.test.ts`). A packaged guide must link to an
 unpackaged one through a `https://github.com/ashlrai/phantom/blob/master/...`
 source link, which the checker resolves locally.
+
+### Merged-PR router queue
+
+`phm fleet queue` supplies the RQ bridge with follow-up work. It does not run
+jobs or grant review/merge authority. The bridge must deliver **every** verified
+GitHub merge (including manual and external merges), retry failed ingestion,
+and replay missed events after downtime. The internal `merge:shipped` event
+also enqueues authenticated inbox merges when configured; that event is best
+effort and is not a complete GitHub event feed.
+
+The operator provisions `~/.ashlr/router-queue/` (0700) and `config.json`
+(0600) in the supervisor's HOME, outside every job HOME. Configuration has
+exactly the keys `v: 1` and `repositories`, an array of exactly seven unique,
+lowercase `ashlrai/<repo>` names from the owner's approved scope. There is no
+inferred/default repository list, and forks are not queue targets. Keep this
+configuration and the queue's metadata sidecars inaccessible to jobs. Do not
+give workers this HOME or the supervisor's environment/credentials.
+
+After independently verifying a PR is merged, the bridge pipes a JSON object
+to `phm fleet queue merged --json` on stdin, with exactly these fields:
+
+```json
+{
+  "v": 1,
+  "state": "MERGED",
+  "prUrl": "https://github.com/ashlrai/phantom/pull/42",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "mergeSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "mergedAt": "2026-01-01T00:00:00.000Z"
+}
+```
+
+This is an example envelope, not evidence that this PR merged. The stdin
+adapter validates shape and scope; it cannot authenticate a GitHub event by
+itself. Only the trusted bridge should call it with verified metadata.
+An accepted PR creates one deterministic follow-up asking for the next bounded,
+evidence-supported improvement. Replay is idempotent, even after completion;
+conflicting SHA/time metadata for the same PR is refused.
+
+### Outcome learning
+
+`phm fleet outcomes --events <log> --json` reads a dispatch event log and
+prints, for each resource, model, job type, and repo, the merge rate, time to
+merge, usage, and breakage rate. It also lists improvement jobs for recurring
+failures. `phm fleet outcomes route` adds the next assignment and a
+plain-language reason. The same types are exported from
+`src/core/routing/outcome-learning.ts` for the desktop app. There is no
+routing setting to tune: the log is the memory. Critical jobs are never held
+for an exhausted resource, and allowance that resets soon is still spent when
+that resource can finish the job.
+
+### Selector
+
+`phm select --json` ranks candidates in `~/.ashlr-runs/selector/candidates.jsonl`
+by value x leverage / (time + usage), using the outcome log for what a candidate
+leaves out. It prints the top five as `READY` lines, appends them with their
+predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
+twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
+hourly launchd agent on the Mac. See
+[the selector contract](contracts/CONTRACT-SELECTOR.md).
+
+`phm fleet queue ask --json` reads one `ask.v1` record on stdin —
+`{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
+as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
+2, frontier 3) over the first N listed repos. Every repo must be one of the
+seven configured `ashlrai/<repo>` names; a malformed or out-of-scope ask fails
+whole. The projection is deterministic, so replayed asks dedupe by job id at
+the queue store, and it mutates nothing: no receipts, queue file or audit log
+are written. `task` stays untrusted prompt data on each emitted job.
+
+`phm fleet queue read --json` returns `{v:1,jobs:[{jobId,repo,prompt}]}`.
+The bridge passes `prompt` only as untrusted model input, never as shell,
+command arguments, configuration, an execution path, or authority. It must
+not copy prompts into `fleet.json` or logs. This command is a snapshot, not a
+worker lease: the existing supervisor must serialize assignment/claim work
+before dispatch. When work finishes, the trusted supervisor acknowledges it
+with `phm fleet queue complete <job-id> --json`.
+
+`router-queue.md` holds JSON data in Markdown job sections. Operators can edit
+task strings; identities, repositories and SHAs must still match durable
+receipts in `state.json`. Every successful read records an ordered, hash-only
+replacement hunk in `read-diffs.jsonl` before any task is returned, including
+unchanged reads and malformed edits within the size bound. No task/model/diff
+text or environment is written to metadata or audit logs. Invalid or unreadable
+state fails closed. Queue reads and mutations share the existing process lock;
+atomic writes and write-ahead receipts recover an interrupted queue write on
+the next read/replay. Deleted outstanding entries are restored; use `complete`
+to acknowledge work. Completed receipts are retained for deduplication.
+
+The queue is bounded to 2 MiB and 10,000 lifetime PR receipts; capacity errors
+require operator attention, not silent eviction. Missing audit/deduplication
+state, unsupported pre-existing Markdown, and scope changes affecting retained
+receipts require operator reconciliation. Do not reset sidecars to bypass a
+refusal. Review isolation, sensitive-path checks, PAUSE, rate limits, CI/revert
+halts and credentials remain the supervisor's independent gates.
 
 ## 2. Installing and running Phantom
 
@@ -92,6 +198,28 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   exist, and there are no tidy rules without a `~/Desktop`.
 - `phm status [--json]` is the attention board (dirty, off-sync and stale
   repos). `--json` prints one object (`schemaVersion: 1`) with no ANSI.
+  In a GitHub repository, status also lists advisory per-PR merge ETA ranges
+  (JSON: `github.mergeEtas`). It reads up to ten oldest open PRs and their
+  actual GitHub merge-queue positions; PRs outside the queue show `unknown`.
+  Supply historical **required** check durations in
+  `~/.ashlr/merge-check-history.json`, a JSON array such as
+  `[{"repo":"ashlrai/phantom","name":"Merge Gate","durationMs":300000},
+  {"repo":"ashlrai/phantom","name":"Merge Gate","durationMs":480000}]`.
+  Use completed-check timestamps from your CI history exporter; status never
+  writes history or changes a PR. Each currently required check needs at least
+  two samples from that repository. The range uses the slowest parallel
+  check's observed 10th–90th percentile durations, multiplied by queue position
+  under a conservative serial-slot assumption. Reviews, reruns and queue
+  batching can change actual timing; these ranges are estimates, not deadlines.
+  Missing/malformed history, unavailable required checks, or an unknown queue
+  position yields `unknown`. History is bounded to 1 MiB / 10,000 rows.
+  Each row also attributes the PR's merge-queue wait (`waitingOn`): `position`
+  when entries ahead must land first, `checks` when the head entry waits on
+  the merge-group's required checks, or `conflict` when GitHub reports the PR
+  conflicting; `waitingMs` is the observed queue time from `enqueuedAt`.
+  A conflicting PR carries exactly one idempotent recut request,
+  `RQ-RECUT-<repo>-<pr>-<head7>` — the same conflicting head re-read yields
+  the same key, so consumers dedupe by it; a moved head makes a new request.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `--json` never prompts and prints one object.
@@ -115,6 +243,23 @@ stderr.
 
 For the desktop app and the first useful turn, follow the
 [Quickstart](QUICKSTART.md) and [desktop/README.md](../desktop/README.md).
+
+### Inspecting a router job session
+
+`phm fleet session <job> --json [--follow] [--queue-dir <abs>]` reads
+`jobs.jsonl` in `~/.ashlr-runs/queue` (or the supplied queue directory).
+It combines matching transitions into a `fleet.session.v1` snapshot with
+job id, lane, status, repository, tier, timestamp, PR URL, provider session
+URLs and the last 64 KiB of log text. Missing links are null; a missing log
+is empty. It reads `logPath`, `log_file`, `logFile` or `log` from the ledger,
+falling back to `<queue-dir>/logs/<job>.log`. Recognized secret patterns in
+log text are redacted. Ledger reads cover the latest 4 MiB.
+
+`--follow` emits complete JSON Lines snapshots whenever the metadata or log
+tail changes, polling every 500 ms, and exits on a terminal job status or
+SIGINT/SIGTERM. Finished jobs emit once. Unknown jobs return a JSON error
+and exit 1; malformed arguments exit 2. This command is read-only and
+never contacts providers.
 
 ### MCP server
 
@@ -190,6 +335,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 
 | Group | Purpose (from `phm help`) |
 | --- | --- |
+| `phm sweep report [--repo <dir>]` | Weekly, local deletion review report; see [DELETION-SWEEP.md](https://github.com/ashlrai/phantom/blob/master/docs/DELETION-SWEEP.md) |
 | `phm orient [--repo <r>] [--json]` | Read-only session-start context: memory hits, health, backlog, pending proposals |
 | `phm enroll list\|add\|remove\|kill` | Repos open to autonomous work, plus the global kill switch (`enroll add <repo> --json` never prompts) |
 | `phm backlog [refresh]` | Scored work queue across enrolled repos |
@@ -197,13 +343,14 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm goals add\|plan\|advance\|status\|pause\|resume` | Objectives decomposed into milestones; `advance` runs a sandboxed, proposal-only swarm on an enrolled repo |
 | `phm goal "<objective>" --project <repo>` | One owner-invoked plan plus one proposal-only advance on an enrolled repo (`--plan-only` plans without advancing and needs no repo) |
 | `phm run "<goal>"` / `phm swarm "<goal>"` | Local agent run / contracts-first multi-agent run (`run --engine <id>`; both accept `--allow-cloud`) |
-| `phm fleet status\|watch\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, direction report, engine readiness and quality metrics |
+| `phm fleet status\|watch\|lanes\|direction\|doctor\|scorecard\|oversight` | Read-only fleet snapshot, per-lane engineering console, direction report, engine readiness and quality metrics |
 | `phm manager [--apply-rejects]` | Judges pending proposals; shadow mode by default, never merges |
 | `phm leader show\|run\|tick\|say\|thread\|approve\|veto\|directives` | The Leader: memos, actions, directives and veto ([LEADER.md](LEADER.md)) |
 | `phm improve propose [--open-pr --repo <dir>]` | Evidence-backed self-improvement proposals; `--open-pr` opens draft PRs from an isolated worktree and never merges or deploys |
 | `phm cloud ...` / `phm devin ...` | Claude Code cloud and Devin lanes ([CLOUD.md](CLOUD.md), [DEVIN.md](DEVIN.md)) |
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
+| `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
@@ -267,6 +414,160 @@ Phase 0. Agents do not sign grants. The policy reserved for the owner is in
 [AGENTS.md](../AGENTS.md). Design and procedures:
 [STANDING-AUTHORITY.md](STANDING-AUTHORITY.md) and [AUTHORITY.md](AUTHORITY.md).
 
+### Offline router backlog planning
+
+`phm backlog plan` (RQ-BACKLOG-GEN) proposes READY jobs from captured VISION
+checklists, open issues and repository scanner findings. Invoke it after each
+bridge queue refresh. Below three READY jobs per active slot it refills toward
+five per slot; at or above three it emits nothing. Zero slots emits nothing.
+Existing excess work is preserved. If sources run out, it emits the available
+jobs and reports the remaining gap rather than inventing work.
+
+```sh
+phm backlog plan --config rq-config.json --input rq-sources.json \
+  --queue router-queue.md --previous-queue previous-queue.md
+```
+
+The command is offline and read-only: no model, GitHub, subprocess, credential
+access, queue writes or dispatch. The bridge supplies fresh source snapshots
+and the active slot count, invokes the planner repeatedly, and applies output
+under its own queue lock only if the current queue SHA-256 matches the `sha`
+in the stderr `rq-plan` record. If the queue changed, replan. READY here means
+available work data; it grants no execution, review or merge authority. The
+supervisor still owns isolated review, exact-head checks, denylist/sensitive-path
+checks, credential isolation, merge caps, PAUSE and post-merge stop controls.
+
+Configuration is separate from untrusted queue/source data. Its allowlist must
+contain exactly the bridge's seven approved `ashlrai/<repo>` identities. The
+following names are illustrative; replace all seven with the approved list.
+The command cannot discover or expand that authority:
+
+```json
+{
+  "v": 1,
+  "activeSlots": 2,
+  "allowedRepos": [
+    "ashlrai/repo-0", "ashlrai/repo-1", "ashlrai/repo-2", "ashlrai/repo-3",
+    "ashlrai/repo-4", "ashlrai/repo-5", "ashlrai/repo-6"
+  ]
+}
+```
+
+Source snapshots have this shape (repositories may be an approved subset):
+
+```json
+{
+  "v": 1,
+  "repositories": [{
+    "repo": "ashlrai/repo-0",
+    "vision": "# VISION\n- [ ] Restore offline search",
+    "issues": [{
+      "number": 42, "state": "open", "title": "Fix search pagination",
+      "body": "Reproduce duplicate results on the second page."
+    }],
+    "scans": [{
+      "id": "search:test:pagination", "source": "test",
+      "title": "Cover empty search pages", "detail": "Add a regression case.",
+      "value": 4, "effort": 2
+    }]
+  }]
+}
+```
+
+`vision`, `issues` and `scans` are required; use empty text/arrays for a known
+empty source. Collectors must surface failed or incomplete discovery themselves,
+never replace unknown evidence with empty arrays. VISION accepts explicit
+unchecked `- [ ]`, `* [ ]` or `+ [ ]` tasks outside fenced code; narrative and
+completed tasks do not generate jobs. Issues require a unique positive number,
+`open`/`closed` state, title and body (empty body allowed); closed issues are
+excluded. Scans accept the existing `WorkItem` fields shown above (extra fields
+are ignored), with a unique ID, a backlog source and integer value/effort 1–5.
+Ranking reuses portfolio value/effort and source weighting, with stable ID order
+for ties. VISION uses value 5/effort 2 and goal weighting; issues use 3/2.
+
+stdout contains **only new jobs as JSON Lines** with fields `v:1`, `id`, `repo`,
+`status:"READY"`, `source` (`vision`, `issue`, `scan`), `sourceId`, `title` and
+`prompt`. The queue uses that same row schema, with status one of `READY`,
+`RUNNING`, `BLOCKED`, `DONE`, `FAILED`, `CANCELLED`; initialize it as an empty
+file. Despite its `.md` name, `router-queue.md` contains JSON Lines, without
+Markdown fences or headings. Escaped prompt newlines remain within one row.
+All source/task text is untrusted model prompt data and must never enter shell
+commands. The planner does not approve paths or interpret source instructions.
+
+Stable IDs, source identities and normalized per-repo titles prevent duplicate
+work, including against every terminal and in-progress queue status. Keep queue
+history (or equivalent tombstones); removing history permits replay. Existing
+READY capacity counts distinct source identities and titles rather than copied
+rows with different IDs; the bridge owns stale-job reconciliation.
+
+A READY row whose ID belongs to the `REFILL-*-SALVA` or `REFILL-*-TEST` family
+is **parked** until the row's title or prompt names both an absolute
+(multi-segment) worktree path and a `*.test.*` file. These families repeatedly
+produced empty runs from unanchored task text. A parked row is not READY
+capacity and does not suppress refill, but it remains valid queue history and
+still deduplicates its ID, source objective and title — unpin it by editing
+the row to name the concrete worktree and test file, not by appending a
+duplicate. The `rq-plan` record reports the count as `parked`.
+stderr is JSON Lines too: each successful queue read emits `rq-queue-read`,
+with before/after hashes and added/removed/changed row identities, states and
+hashes. Task and diff text never appear in audit logs. Supply `--previous-queue`
+to compare against the last read; without it, the baseline is empty. A malformed
+queue produces a rejection hash record and no work. Invalid UTF-8, oversized,
+missing or symlinked files are refused. File reads are capped at 8 MiB, queue
+rows at 20,000, slots at 1,000, and issues/scans at 1,000 each per repo. Titles
+are capped at 240 characters, issue bodies/scan details at 16,000, VISION at
+128,000, and queue prompts at 20,000.
+
+Exit 0 means no refill needed or target reached; exit 1 means source exhaustion
+with possibly usable partial rows; exit 2 means bad usage or invalid snapshots
+and no rows. Bridge collectors and the supervisor are separate components;
+this command does not install or activate either.
+
+### Restock/queuegen admission lint
+
+`phm backlog lint` gates the Markdown router queue that the bridge's restocker
+and queue generator admit work from. This is the `- READY` line format, not the
+JSON Lines schema used by `phm backlog plan` above:
+
+```sh
+phm backlog lint --queue router-queue.md [--landed landed.txt] \
+  [--repos-root ~/Projects/ashlrai] [--pools devin,codex-personal] [--json]
+```
+
+A candidate line `- READY <job-id> (<attrs>): <task>` is admitted only when all
+of the following hold: the id starts with an uppercase letter and is unique
+among candidates; `repo=` (or the `LAND-<repo>-<n>` id fallback) names one of
+the seven fleet repositories — `phantom`, `phantom-secrets`, `locus`, `lexicon`,
+`ashlr-stack`, `ashlr-plugin`, `ashlr-md`; the repo's folder exists under the
+repos root; the task names a concrete file path (a `name.ext` token, a slash
+path, or a known extensionless basename — schema handles like `queue.v1` do not
+count); the task names a test or acceptance command (a package/verification
+script, a test runner, a test-file reference, or an `Acceptance:`/`Tests:`
+label); every `after`/`depends` reference is landed; and `pool=`, when
+`--pools` is supplied, is in the allowlist (`pool=any` is always allowed).
+`.github/` references outside an explicit negation are rejected.
+
+Dependencies are job ids or PR references (`pull` URLs, `<repo>#<n>`, `PR#<n>`,
+`#<n>` bound to the line's repo); a trailing `-<LETTER>` dep reuses the job's
+own suffix base. `esc=<pool> after <N> failed` is parsed as an escalation spec,
+never as a dependency. `--landed` supplies evidence one token per line: job
+ids, or PR refs as a full URL, `ashlrai/<repo>/pull/<n>`, `<repo>#<n>`, or a
+bare `#<n>` matching any repo. A job dep also counts as landed when the same
+document marks it DONE, MERGED or LANDED. Anything else — including unmerged
+PRs — is `unlanded-dep`.
+
+Every rejected candidate is logged: one `rq-lint-drop` JSON event per line on
+stderr with `line`, `job`, `reasons` and a SHA-256 of the line — never the
+untrusted task text — followed by an `rq-lint` summary. Drop reasons:
+`unparseable`, `bad-id`, `dup-line`, `no-repo`, `bad-repo`,
+`repo-folder-missing`, `github-protected`, `no-file-path`, `no-test-command`,
+`bad-dep`, `unlanded-dep`, `unknown-pool`. stdout carries only the admitted
+lines verbatim (or the full report object with `--json`), so a restock or
+queuegen step can pipe `phm backlog lint --queue q.md > admitted.md`. The
+command is offline and read-only: no model, GitHub, subprocess, credential
+access or queue writes. Exit 0 means no drops, exit 1 means at least one drop,
+exit 2 means bad usage or an unreadable/oversized input.
+
 ## 4. Native engines
 
 There are two registries:
@@ -320,6 +621,8 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
+| Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
+| Rebuildable disk growth (logs, sessions, staging, worktrees) | `phm disk-maint` (dry run: bytes reclaimable per class; `--apply` frees them; `phm disk-maint schedule --install` installs the daily job; the protect-list keeps `~/.codex*`, model weights, Docker, client trees and secrets always) |
 | Log roots using too much disk | `phm steward disk` (dry run; `--apply` deletes expired or over-quota plain logs and gzip-archives cold Codex and Claude sessions to `~/.ashlr/archive`; files modified in the last 24 hours are untouched) |
 | Ledger integrity questions | `phm authority ledger verify` |
 | Safety invariants | `phm verify-safety` |
@@ -328,3 +631,112 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 
 For more failure modes and their recovery, see
 [RELIABILITY.md](RELIABILITY.md#failure-modes--recovery).
+
+## Per-pool budget ledger
+
+`phm budget show --json` returns `{ "budgets": ... }`; fleet status includes the
+same `budgets` projection. Its schema is `fleet.budgets.v1`. It is an advisory
+observation ledger, with no dispatch or spending authority. Pools are
+`codex-cmp`, `codex-personal`, `devin`, `claude`, `grok-build`, `local-omlx`, and
+`grok-ultra`. Claude remains `held`; local oMLX reports capacity only.
+
+```sh
+phm budget add codex-cmp --bucket weeklyPct --remaining 0 --reset-at 2026-11-01T12:00:00Z --json
+phm budget add codex-cmp --bucket credits --remaining 42 --json
+phm budget add devin --bucket acus --remaining 12.5 --json
+phm budget add local-omlx --bucket capacity --remaining 2 --json
+phm budget add codex-cmp --source log --input ./quota.log --json
+phm budget show --json
+```
+
+Manual is the default source. `--at` sets an observation's UTC ISO timestamp;
+future readings are rejected. Manual readings override later automatic readings
+in the same pool and bucket until their explicit reset. Without a reset, that
+manual override persists until another manual reading. Record a new manual
+reading to correct it. A reset makes an old balance unknown until a new reading
+arrives; it never assumes a full refill. Weekly percentages and credit balances
+are independent, including when the weekly allowance is exhausted.
+
+Automatic imports accept `--source cli|log --input <file|->` (`-` is stdin).
+The caller supplies the pool explicitly, so personal and company accounts cannot
+be inferred from account identifiers. Input is limited to 1 MiB. Supported
+labelled lines are `weekly remaining: 25% reset: 2026-11-01T12:00:00Z`,
+`weekly used: 75%`, `credits remaining: 42`, `acus remaining: 12.5`, and
+`capacity remaining: 2`, optionally prefixed with `rate-limit`. Codex native
+`event_msg` / `token_count` JSONL rate-limit records are also supported: only
+10080-minute windows, finite credit balances, and observation/reset times are
+kept. Unknown output is ignored; an import with no recognized readings fails.
+No provider CLI is launched, no authentication file is read, and no raw log,
+transcript, account identifier, or credential is stored.
+
+Records are immutable batches under `~/.ashlr/fleet/budgets/`. Concurrent
+imports cannot overwrite each other's batches. Unreadable or malformed records
+make the snapshot `unavailable`, with unknown balances. Bucket projections
+include remaining amount, source, timestamp, reset, last-two and trailing-12-hour
+burn per hour, and projected exhaustion. Rates use observations in the current
+uninterrupted window; refills and resets break the series. The 12-hour rate uses
+the earliest available reading within that interval, so it can cover less than
+12 hours. Projection uses the last-two rate from the observation timestamp and
+is unknown if exhaustion would occur after reset. Capacity has no burn estimate.
+
+The router queue's external `fleet.v1` and `dispatchd/status.json` producers are
+not present in this repository. Their consumer contract is to embed the same
+`budgets` object from `phm budget show --json`; this change does not create or
+replace those external files. The core reader is `readPoolBudgets` in
+`src/core/fleet/pool-budget-store.ts`.
+
+## Engineering lanes console
+
+`phm fleet lanes [--json] [--queue-dir <abs>]` prints the `fleet.lanes.v1`
+projection — one row per router lane (pool) with credit left, ready-queue
+depth, live jobs and merges per hour — and the same projection is served on
+the loopback console at `GET /api/fleet/lanes` and rendered in the Fleet
+view. It is strictly read-only: bounded file reads, no writes, no spawned
+readers, no provider calls, no secrets.
+
+Inputs are the existing readers' artifacts. From the router queue directory
+(`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
+`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
+`queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
+(merge outcomes and transitions in the trailing hour), and `usage-readings.log`.
+The merge rate counts a GitHub PR once across repeated observations and jobs;
+legacy transitions without a PR URL deduplicate by job, including LAND rows in
+`ready.tsv`. Rows with neither identifier remain separate observations. Event
+timestamps must include a timezone; the trailing window includes both endpoints
+and uses the event timestamp, not reconciliation time. The bounded ledger is
+read in full because backfilled events need not be ordered by event time. Credit
+comes from the pool-budget ledger; a queue-local `budgets/` directory or the
+usage journal fill pools the ledger has not observed.
+
+Every input degrades independently: a missing file reports `missing`, a
+corrupt one `degraded`, and the affected cells come back null/`unknown` rather
+than fabricated zeros. `test/fixtures/fleet-lanes/` is a captured queue
+directory covering every source.
+
+Proposal apply cleanup and crash-leftover reaping use plain `git worktree remove`,
+which also reclaims ignored build directories such as `node_modules` and `target`. Dirty or locked
+checkouts remain available for recovery. To retain an inbox checkout for a
+FIXUP, put its absolute path in the JSON array at
+`~/.ashlr/kept-worktrees.json`. Exact paths and their filesystem aliases match;
+entries are not glob patterns. A missing file means no pins, while a malformed,
+unreadable or symlinked file stops inbox reaping. These pins apply to proposal
+apply cleanup and the crash-leftover reaper; sandbox and merge terminal cleanup
+have separate retention controls.
+
+The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
+excluding pinned checkouts and symlink targets. It does not delete files or
+measure shared repository objects. A bounded or failed scan reports an unknown
+total; reported logical bytes are not a promise of physical disk space freed.
+
+`phm fleet repo-rate --json` reads merged PR outcomes from
+`~/.ashlr-runs/metrics/jobs.jsonl` for the last six hours. It reports each repo's
+merge count, median time to merge in seconds, and newest merge time. Each PR
+counts once; missing durations remain unknown. `--hours N` changes the window.
+The default target is 20 merges for `ashlrai/phantom`; `--target N` changes it
+and `--all` checks every observed repo. Exit 1 means a checked repo is below
+target or the ledger could not be read. No work is launched or changed.
+
+`phm fleet slow-prs [--json]` lists open PRs at least 30 minutes old, measured
+against the newest timestamp in the last 3000 lines of the jobs ledger. Plain
+output shows one line per repository with its count and PR URLs; JSON returns
+the typed `fleet.slow-prs.v1` report. This command only reads the local ledger.

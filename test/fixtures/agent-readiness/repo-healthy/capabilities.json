@@ -1,0 +1,7 @@
+{
+  "name": "acme-widget",
+  "version": "1.2.0",
+  "description": "Formats widget manifests.",
+  "capabilities": ["format", "validate"],
+  "install": "npm install -g acme-widget"
+}

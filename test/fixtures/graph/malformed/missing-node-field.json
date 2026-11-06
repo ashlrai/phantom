@@ -1,0 +1,17 @@
+{
+  "schema": "graph.v1",
+  "readOnly": true,
+  "complete": true,
+  "sources": {
+    "fleet": "loaded",
+    "seats": "loaded"
+  },
+  "nodes": [
+    {
+      "id": "agent:producer",
+      "kind": "agent"
+    }
+  ],
+  "edges": [],
+  "issues": []
+}

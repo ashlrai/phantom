@@ -18,7 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   resolveNpmCliLaunch,
   removeExactEmptySnapshotContainer,
@@ -30,6 +30,13 @@ import {
   PRIVATE_STORAGE_TEST_CONTROL,
 } from '../src/core/util/private-storage.js';
 import { canSymlink } from './helpers/platform.js';
+
+// Exercise current source, including the same private-storage test controls,
+// without requiring generated dist artifacts from an earlier build.
+vi.mock('../dist/core/daemon/runtime-release-dependency-inventory.js', async () =>
+  import('../src/core/daemon/runtime-release-dependency-inventory.js'));
+vi.mock('../dist/core/util/private-storage.js', async () =>
+  import('../src/core/util/private-storage.js'));
 
 const tempDirs: string[] = [];
 

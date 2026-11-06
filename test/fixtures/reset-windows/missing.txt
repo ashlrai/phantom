@@ -1,0 +1,3 @@
+# No reset deadline reported for these pools.
+pool=codex-personal window=weekly usedPercent=25
+{"pool":"claude-work","window":"daily","resetAt":null}

@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -471,6 +471,7 @@ function remoteBranchEvidence(
   try {
     const ref = `refs/heads/${handoff.branch}`;
     const raw = execFileSync('git', ['-C', repo, 'ls-remote', '--heads', authority.pushUrl, ref], {
+      cwd: repo,
       timeout: HOST_READ_TIMEOUT_MS,
       stdio: 'pipe',
       encoding: 'utf8',

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ashlr.router</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__ROUTER_BIN__</string>
+    <string>run</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>WorkingDirectory</key>
+  <string>__ROUTER_HOME__</string>
+  <key>StandardOutPath</key>
+  <string>__ROUTER_HOME__/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__ROUTER_HOME__/logs/launchd.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+    <key>DEVIN_ORG_ID</key>
+    <string>__DEVIN_ORG_ID__</string>
+  </dict>
+</dict>
+</plist>

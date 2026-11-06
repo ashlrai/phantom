@@ -345,7 +345,9 @@ describe('§A dispatch-path inventory', () => {
 
     const bodyStart = src.indexOf('function startTurn');
     expect(bodyStart, 'startTurn not found').toBeGreaterThan(-1);
-    const spawnAt = src.indexOf('spawn(bin, args', bodyStart);
+    // The child is launched through process-registry's spawnSessionChild
+    // (#987), which calls the raw spawn; the gate must still come first.
+    const spawnAt = src.indexOf('spawnSessionChild(bin, args', bodyStart);
     expect(spawnAt, 'the raw spawn call moved — re-point this assertion').toBeGreaterThan(-1);
 
     const beforeSpawn = src.slice(bodyStart, spawnAt);

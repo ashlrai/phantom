@@ -1,3 +1,4 @@
+import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { AgentsReadClient } from '../core/openai-agents/client.js';
 import { AgentsReadError, validResourceId } from '../core/openai-agents/contracts.js';
 import { loadConfigReadOnly, type AshlrConfigWithGateways } from '../core/config.js';
@@ -63,7 +64,7 @@ export async function runOpenaiAgentsCli(args: string[], deps?: AgentsCliDeps): 
   }
   if (command !== 'sessions' && !sessionId) return rejectUsage();
   const client = deps?.client ?? new AgentsReadClient({
-    readApiKey: () => process.env.OPENAI_API_KEY,
+    readApiKey: () => readEnvironmentCredential('OPENAI_API_KEY'),
     gateways: (loadConfigReadOnly() as AshlrConfigWithGateways).gateways,
   });
   const via = client instanceof AgentsReadClient ? client.via : undefined;

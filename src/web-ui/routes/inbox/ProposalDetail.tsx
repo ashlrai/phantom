@@ -10,7 +10,7 @@
  * judgment, and is rendered with its own distinct label/tone — never folded
  * into a genuine judge-review (see JUDGE_REASON_DISPLAY below).
  */
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { DecisionEntry, JudgeDecisionReasonCode } from '../../data/api-types.js';
 import { proposalDetailQuery } from '../../data/queries.js';
 import { useQuery } from '../../data/hooks.js';
@@ -23,6 +23,7 @@ import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.j
 import { SkeletonLine } from '../../components/primitives/Skeleton.js';
 import { MutationTokenDialog } from '../../components/auth/MutationTokenDialog.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
+const ApprovalCard = lazy(() => import('./ApprovalCard.js').then((module) => ({ default: module.ApprovalCard })));
 import { DiffViewer } from './DiffViewer.js';
 import styles from './ProposalDetail.module.css';
 
@@ -245,7 +246,11 @@ export function ProposalDetail({ id, onDispatchDisabled }: { id: string; onDispa
         <DiffViewer diff={p.diff} proposalKind={p.kind} />
       </section>
 
-      {canDecide ? (
+      {new URLSearchParams(window.location.search).get('agentWorkspace') === '1' ? (
+        <Suspense fallback={<p role="status">Loading approval request…</p>}>
+          <ApprovalCard key={`${id}:${p.approvalRequest?.revision}:${p.status}`} proposal={p} request={p.approvalRequest} onDispatchDisabled={onDispatchDisabled} />
+        </Suspense>
+      ) : canDecide ? (
         <footer className={styles.actions}>
           {actionError && !confirmOpen ? (
             <p className={styles.actionError} role="alert">

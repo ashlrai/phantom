@@ -307,7 +307,7 @@ describe('GET /api/agent-os', () => {
       sourceState: 'degraded', complete: false, reason: 'broken-predecessor',
       snapshot: null, authentication: 'authenticated',
     }),
-  ])('returns the bounded read envelope with HTTP 200', async (body) => {
+  ])('returns the bounded read envelope with HTTP 200 (%#)', async (body) => {
     runtimeReadMocks.read.mockReturnValue(body);
     const { req, res, captured } = request();
 

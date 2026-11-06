@@ -21,7 +21,7 @@ describe('documented organization daily consumption', () => {
     { ...wire, consumption_by_date: [{ ...wire.consumption_by_date[0], acus: NaN }] },
     { ...wire, consumption_by_date: [{ ...wire.consumption_by_date[0], acus_by_product: { review: 'unknown' } }] },
     { ...wire, consumption_by_date: [wire.consumption_by_date[0], wire.consumption_by_date[0]] },
-  ])('refuses malformed or ambiguous consumption without inferring zero', value => {
+  ])('refuses malformed or ambiguous consumption without inferring zero (%#)', value => {
     expect(parseDevinDailyConsumption(value)).toBeNull();
   });
 

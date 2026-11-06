@@ -5,7 +5,7 @@
  *  1. LOCAL-ONLY: embeddings run against local Ollama only. Never send chunks
  *     to a cloud endpoint — this file has no allowCloud path at all.
  *  2. READ-ONLY: never mutates any enrolled repo. Writes go to knowledgeDir()
- *     only (~/.ashlr/knowledge/<repo-hash>/).
+ *     only (~/.ashlr/knowledge/<repo-hash>/ or knowledge/agents/ for memory).
  *  3. ENROLLMENT-SCOPED: default repo set is listEnrolled() (DEFAULT EMPTY →
  *     returns {repos:0, chunks:0}; never scans arbitrary paths).
  *  4. BOUNDED: caps file count, total bytes read, and wall-clock time per repo;
@@ -13,7 +13,8 @@
  *  5. NO SECRETS: skips .env* / *.pem / *.key / *.p12 files outright; scrubs
  *     secret-shaped tokens from chunk text before storing or embedding.
  *  6. INCREMENTAL: re-indexes only files whose mtime > last index timestamp.
- *     Never throws — all errors are silently swallowed per the contract.
+ *     Indexing never throws — errors are swallowed per the index contract.
+ *     Explicit agent-memory reads/writes throw on unsafe or failed storage.
  */
 
 import fs from 'node:fs';
@@ -77,6 +78,14 @@ const EMBED_TEXT_LIMIT = 2000;
 
 /** Timeout for a single Ollama embedding request (ms). */
 const EMBED_TIMEOUT_MS = 10_000;
+
+/** Upper bound on the number of components in a local embedding. */
+const MAX_VECTOR_DIMENSIONS = 16_384;
+
+function isValidVector(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= MAX_VECTOR_DIMENSIONS &&
+    value.every((component: unknown) => typeof component === 'number' && Number.isFinite(component));
+}
 
 // ---------------------------------------------------------------------------
 // Skip lists
@@ -189,6 +198,121 @@ export function scrubSecrets(text: string): string {
 /** Root on-disk directory for the knowledge index: ~/.ashlr/knowledge */
 export function knowledgeDir(): string {
   return path.join(homedir(), '.ashlr', 'knowledge');
+}
+
+/** A caller-selected agent namespace, never inferred from chat text. */
+export interface AgentMemory {
+  readonly agentId: string;
+  readonly text: string;
+  readonly updatedAt: string;
+}
+
+/** UTF-8 bytes, before JSON escaping. Replacement is whole-document, last writer wins. */
+export const MAX_AGENT_MEMORY_BYTES = 64 * 1024;
+
+function validateAgentId(agentId: string): void {
+  if (typeof agentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(agentId) ||
+      scrubSecrets(agentId) !== agentId) {
+    throw new Error('Invalid agent memory identity');
+  }
+}
+
+function validateMemoryText(text: string): void {
+  if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > MAX_AGENT_MEMORY_BYTES) {
+    throw new Error('Agent memory must be text of at most 65536 UTF-8 bytes');
+  }
+  // Reject rather than silently changing a user's remembered instructions.
+  // Reuse BOTH the shared provider patterns and the stricter knowledge corpus.
+  if (scrubSecrets(text) !== text) {
+    throw new Error('Agent memory contains a secret pattern; use a Phantom Secrets reference');
+  }
+}
+
+function agentMemoryPath(agentId: string, create: boolean): string | null {
+  validateAgentId(agentId);
+  const root = path.join(homedir(), '.ashlr');
+  const dirs = [root, knowledgeDir(), path.join(knowledgeDir(), 'agents')];
+  for (const dir of dirs) {
+    if (create) {
+      try { fs.mkdirSync(dir, { mode: 0o700 }); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+    }
+    try {
+      // Never follow a redirected store into another agent's or user's files.
+      if (!fs.lstatSync(dir).isDirectory()) throw new Error('Unsafe agent memory directory');
+    } catch (error) {
+      if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+  const id = crypto.createHash('sha256').update(agentId).digest('hex');
+  return path.join(dirs[2]!, `${id}.json`);
+}
+
+/**
+ * Read local memory for exactly one agent. Missing memory returns null; corrupt,
+ * secret-bearing or inaccessible storage throws without echoing stored text.
+ * No enrollment, source scan, model call, or cross-agent fallback occurs.
+ * The caller must authorize the agent identity before exposing this API remotely.
+ */
+export function readAgentMemory(agentId: string): AgentMemory | null {
+  validateAgentId(agentId);
+  let fd: number | undefined;
+  try {
+    const file = agentMemoryPath(agentId, false);
+    if (file === null) return null;
+    // lstat also covers platforms without O_NOFOLLOW.
+    try {
+      if (!fs.lstatSync(file).isFile()) throw new Error('Unsafe agent memory file');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_AGENT_MEMORY_BYTES * 6 + 1024) {
+      throw new Error('Invalid agent memory file');
+    }
+    const raw = Buffer.alloc(stat.size + 1);
+    let size = 0;
+    while (size < raw.length) {
+      const count = fs.readSync(fd, raw, size, raw.length - size, size);
+      if (count === 0) break;
+      size += count;
+    }
+    if (size !== stat.size) throw new Error('Agent memory changed during read');
+    const value: unknown = JSON.parse(raw.subarray(0, size).toString('utf8'));
+    if (typeof value !== 'object' || value === null) throw new Error('Invalid agent memory');
+    const record = value as Record<string, unknown>;
+    if (record['version'] !== 1 || record['agentId'] !== agentId ||
+        typeof record['text'] !== 'string' || typeof record['updatedAt'] !== 'string' ||
+        !Number.isFinite(Date.parse(record['updatedAt']))) throw new Error('Invalid agent memory');
+    validateMemoryText(record['text']);
+    return { agentId, text: record['text'], updatedAt: record['updatedAt'] };
+  } catch {
+    throw new Error('Unable to read agent memory safely');
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/**
+ * Replace one agent's local memory atomically (0600). Validate before any I/O;
+ * rejected writes preserve existing memory. Empty text explicitly clears it.
+ * Failures throw a value-blind error; they are never reported as a saved memory.
+ */
+export function writeAgentMemory(agentId: string, text: string): AgentMemory {
+  validateAgentId(agentId);
+  validateMemoryText(text);
+  const memory: AgentMemory = { agentId, text, updatedAt: new Date().toISOString() };
+  try {
+    const file = agentMemoryPath(agentId, true)!;
+    writePrivateFileAtomically(path.dirname(file), file, JSON.stringify({ version: 1, ...memory }));
+  } catch {
+    throw new Error('Unable to write agent memory safely');
+  }
+  return memory;
 }
 
 /**
@@ -404,8 +528,7 @@ async function fetchEmbedding(
       return null;
     }
     const embedding = (body as { embedding: unknown[] }).embedding;
-    if (!embedding.every((v) => typeof v === 'number')) return null;
-    return embedding as number[];
+    return isValidVector(embedding) ? embedding : null;
   } catch {
     return null;
   } finally {
@@ -464,7 +587,7 @@ export function loadChunks(repo?: string): KnowledgeChunk[] {
 }
 
 /** Parse a single JSONL chunks file. Returns [] on any error. */
-function readChunksFile(file: string): KnowledgeChunk[] {
+function readChunksFile(file: string, onInvalidVector?: () => void): KnowledgeChunk[] {
   const chunks: KnowledgeChunk[] = [];
   try {
     const raw = fs.readFileSync(file, 'utf8');
@@ -474,7 +597,15 @@ function readChunksFile(file: string): KnowledgeChunk[] {
       try {
         const parsed = JSON.parse(trimmed) as unknown;
         if (isKnowledgeChunk(parsed)) {
-          chunks.push(parsed);
+          // Keep searchable text from older or corrupt records, but never expose
+          // an invalid vector to retrieval or write it back during indexing.
+          if (parsed.vector !== undefined && !isValidVector(parsed.vector)) {
+            const { vector: _vector, ...lexicalChunk } = parsed;
+            onInvalidVector?.();
+            chunks.push(lexicalChunk);
+          } else {
+            chunks.push(parsed);
+          }
         }
       } catch {
         // skip malformed lines
@@ -491,10 +622,10 @@ function isKnowledgeChunk(v: unknown): v is KnowledgeChunk {
   if (typeof v !== 'object' || v === null) return false;
   const obj = v as Record<string, unknown>;
   return (
-    typeof obj['repo'] === 'string' &&
-    typeof obj['file'] === 'string' &&
-    typeof obj['startLine'] === 'number' &&
-    typeof obj['endLine'] === 'number' &&
+    typeof obj['repo'] === 'string' && obj['repo'].trim().length > 0 &&
+    typeof obj['file'] === 'string' && obj['file'].trim().length > 0 &&
+    typeof obj['startLine'] === 'number' && Number.isInteger(obj['startLine']) && obj['startLine'] > 0 &&
+    typeof obj['endLine'] === 'number' && Number.isInteger(obj['endLine']) && obj['endLine'] >= obj['startLine'] &&
     typeof obj['text'] === 'string'
   );
 }
@@ -508,6 +639,8 @@ async function indexFile(
   filePath: string,
   embedModel: { available: false } | { available: true; model: string },
   ollamaBase: string,
+  dimensions: { value?: number },
+  previousChunks: KnowledgeChunk[],
 ): Promise<KnowledgeChunk[]> {
   // Read file with byte cap
   let raw: string;
@@ -524,6 +657,13 @@ async function indexFile(
 
   const textChunks = chunkText(raw);
   const result: KnowledgeChunk[] = [];
+  const previousVectors = new Map<string, number[][]>();
+  for (const chunk of previousChunks) {
+    if (!isValidVector(chunk.vector)) continue;
+    const vectors = previousVectors.get(chunk.text) ?? [];
+    vectors.push(chunk.vector);
+    previousVectors.set(chunk.text, vectors);
+  }
 
   for (const tc of textChunks) {
     const scrubbedText = scrubSecrets(tc.text);
@@ -531,8 +671,15 @@ async function indexFile(
     let vector: number[] | undefined;
     if (embedModel.available) {
       const vec = await fetchEmbedding(ollamaBase, embedModel.model, scrubbedText);
-      if (vec !== null) vector = vec;
+      if (vec !== null && (dimensions.value === undefined || vec.length === dimensions.value)) vector = vec;
     }
+    // An old embedding is safe to reuse only for exactly the same scrubbed
+    // text. Changed text remains searchable without a stale embedding.
+    if (vector === undefined) {
+      vector = previousVectors.get(scrubbedText)?.find((v) =>
+        dimensions.value === undefined || v.length === dimensions.value);
+    }
+    if (vector !== undefined) dimensions.value ??= vector.length;
 
     const chunk: KnowledgeChunk = {
       repo: repoPath,
@@ -607,12 +754,13 @@ export async function buildKnowledge(
 
   let totalChunks = 0;
   let indexedRepos = 0;
+  const dimensions: { value?: number } = {};
 
   for (let i = 0; i < repos.length; i++) {
     const repoPath = repos[i]!;
     let repoChunks = 0;
     try {
-      repoChunks = await indexRepo(repoPath, embedModel, ollamaBase);
+      repoChunks = await indexRepo(repoPath, embedModel, ollamaBase, dimensions);
       totalChunks += repoChunks;
       if (repoChunks >= 0) indexedRepos++;
     } catch {
@@ -636,6 +784,7 @@ async function indexRepo(
   repoPath: string,
   embedModel: { available: false } | { available: true; model: string },
   ollamaBase: string,
+  dimensions: { value?: number },
 ): Promise<number> {
   const deadline = Date.now() + REPO_BUDGET_MS;
 
@@ -657,24 +806,20 @@ async function indexRepo(
     }
   });
 
-  const existingChunks = loadChunks(repoPath);
+  let invalidVectorFound = false;
+  const existingChunks = readChunksFile(chunksFile(repoPath), () => { invalidVectorFound = true; });
   const liveFiles = new Set(allFiles.map((f) => path.relative(repoPath, f)));
 
   if (changedFiles.length === 0) {
     // Absence proves deletion only after a complete listing, never after an
     // unreadable directory or a capped walk. Preserve survivor values/vectors
     // and the incremental timestamp; deletion itself adds no new chunks.
-    if (collection.complete) {
-      const survivors = existingChunks.filter((c) => liveFiles.has(c.file));
-      if (survivors.length !== existingChunks.length) writeChunks(repoPath, survivors);
-    }
+    const survivors = collection.complete ? existingChunks.filter((c) => liveFiles.has(c.file)) : existingChunks;
+    if (invalidVectorFound || survivors.length !== existingChunks.length) writeChunks(repoPath, survivors);
     return 0;
   }
 
-  const reindexedFiles = new Set(changedFiles.map((f) => path.relative(repoPath, f)));
-  const keptChunks = existingChunks.filter(
-    (c) => !reindexedFiles.has(c.file) && (!collection.complete || liveFiles.has(c.file)),
-  );
+  const reindexedFiles = new Set<string>();
 
   let newChunks: KnowledgeChunk[] = [];
   let totalRepoBytesRead = 0;
@@ -710,11 +855,17 @@ async function indexRepo(
     }
     totalRepoBytesRead += size;
 
-    const fileChunks = await indexFile(repoPath, filePath, embedModel, ollamaBase);
+    const relFile = path.relative(repoPath, filePath);
+    const fileChunks = await indexFile(repoPath, filePath, embedModel, ollamaBase, dimensions,
+      existingChunks.filter((c) => c.file === relFile));
+    reindexedFiles.add(relFile);
     newChunks = newChunks.concat(fileChunks);
   }
 
   // Write all chunks (kept + new) back atomically
+  const keptChunks = existingChunks.filter(
+    (c) => !reindexedFiles.has(c.file) && (!collection.complete || liveFiles.has(c.file)),
+  );
   const allChunks = [...keptChunks, ...newChunks];
   writeChunks(repoPath, allChunks);
 

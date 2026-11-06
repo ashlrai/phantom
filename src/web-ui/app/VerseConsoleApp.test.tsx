@@ -14,16 +14,17 @@ const READ = 'c'.repeat(64);
 const MUT = 'd'.repeat(64);
 
 /**
- * Authentication reaches the shell's fresh Chat workspace, not the gate.
+ * Authentication reaches the shell's fresh Home workspace, not the gate.
  * This fixture explicitly resets the module-level UI store as well as storage.
- * Fresh installs use Work with me; adopting tokens does not force Command.
+ * Fresh installs start on Home; adopting tokens does not force a work mode.
  */
-async function expectShellOnChat(): Promise<void> {
+async function expectShellOnHome(): Promise<void> {
   const rail = await screen.findByRole('navigation', { name: 'Phantom sections' });
-  expect(within(rail).getByRole('button', { name: /^Chat/ })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('main')).toHaveAttribute('data-section', 'live');
+  expect(within(rail).getByRole('button', { name: /^Chat/ })).not.toHaveAttribute('aria-current');
   expect(within(rail).getByRole('button', { name: /^Command/ })).not.toHaveAttribute('aria-current');
   const modes = screen.getByRole('navigation', { name: 'How you work' });
-  expect(within(modes).getByRole('button', { name: 'Work with me' })).toHaveAttribute('aria-pressed', 'true');
+  expect(within(modes).getByRole('button', { name: 'Work with me' })).toHaveAttribute('aria-pressed', 'false');
   expect(within(modes).getByRole('button', { name: 'Work for me' })).toHaveAttribute('aria-pressed', 'false');
 }
 
@@ -56,6 +57,22 @@ afterEach(() => {
 });
 
 describe('VerseConsoleApp', () => {
+  it('opens the decision inbox by desktop deep link and returns to the workspace', async () => {
+    window.history.replaceState(null, '', '/verse/#/inbox');
+    const net = verseFetch();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === '/api/inbox' ? Response.json({ pending: 0, proposals: [] }) : (net.fetch as typeof fetch)(input, init)));
+    markCheckComplete(true);
+    render(<VerseConsoleApp />);
+    expect(await screen.findByRole('heading', { name: 'Decision inbox' })).toBeInTheDocument();
+    expect(await screen.findByText(/No pending decisions/)).toBeInTheDocument();
+    act(() => {
+      window.history.replaceState(null, '', '/verse/');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    await expectShellOnHome();
+  });
+
   it('is a scoped console on /verse', () => {
     expect(isVerseConsolePath('/verse')).toBe(true);
     expect(isVerseConsolePath('/verse/')).toBe(true);
@@ -80,7 +97,7 @@ describe('VerseConsoleApp', () => {
     vi.stubGlobal('fetch', fetch);
     window.__ASHLR_TOKENS__ = { readToken: READ, token: MUT };
     render(<VerseConsoleApp />);
-    await expectShellOnChat();
+    await expectShellOnHome();
     expect(screen.queryByRole('heading', { name: 'Connect to Phantom' })).not.toBeInTheDocument();
     const sessionCall = state.calls.find((c) => c.path === '/api/session')!;
     expect(sessionCall.method).toBe('POST');
@@ -153,7 +170,7 @@ describe('font preloads (no "preloaded but not used" on the connect screen)', ()
     vi.stubGlobal('fetch', fetch);
     window.__ASHLR_TOKENS__ = { readToken: READ, token: MUT };
     render(<VerseConsoleApp />);
-    await expectShellOnChat();
+    await expectShellOnHome();
     const hrefs = [...document.head.querySelectorAll('link[rel="preload"]')].map((l) => l.getAttribute('href') ?? '');
     expect(hrefs.some((h) => /SpaceGrotesk-latin/.test(h))).toBe(true);
   });
@@ -240,7 +257,7 @@ describe('listenForSidecarRestart (desktop sidecar restart → immediate re-adop
     expect(await screen.findByRole('heading', { name: 'Connect to Phantom' })).toBeInTheDocument();
     window.__ASHLR_TOKENS__ = { readToken: READ2, token: MUT2 };
     act(() => { window.dispatchEvent(new CustomEvent(SIDECAR_RESTARTED_EVENT)); });
-    await expectShellOnChat();
+    await expectShellOnHome();
     expect(screen.queryByRole('heading', { name: 'Connect to Phantom' })).not.toBeInTheDocument();
   });
 });

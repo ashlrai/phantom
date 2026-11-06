@@ -63,10 +63,6 @@ const MAX_AGGREGATE_BYTES = 128 * 1024 * 1024;
 const MAX_LOCK_WAIT_MS = 2_000;
 const MAX_AGGREGATE_COUNT = 1_000_000;
 
-export const LOCUS_WORKSPACE_IDENTITY_LEDGER_PROTOCOL = PROTOCOL;
-export const LOCUS_WORKSPACE_IDENTITY_LEDGER_MAX_RECORDS = MAX_RECORDS;
-export const LOCUS_WORKSPACE_IDENTITY_LEDGER_GENESIS_RECORD_DIGEST = GENESIS_RECORD_DIGEST;
-
 export interface LocusWorkspaceIdentityChainV1 {
   audienceDigest: string;
   workspaceDigest: string;
@@ -684,10 +680,6 @@ function config(
     codecForWrite: () => dependencies.key?.length === 32 ? codec(dependencies.key) : null,
     codecForRead: () => dependencies.key?.length === 32 ? codec(dependencies.key) : null,
   };
-}
-
-export function locusWorkspaceIdentityLedgerRootPathV1(): string {
-  return resolve(join(homedir(), '.ashlr', 'locus-workspace-identity-ledger-v1'));
 }
 
 /** Uses only the strict read-only key path for reads and writes; never provisions a key. */

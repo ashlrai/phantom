@@ -7,7 +7,7 @@ name: Companion Smoke
 
 on:
   schedule:
-    - cron: "41 6 * * *"
+    - cron: "0 10 * * *"
   workflow_dispatch:
 
 permissions:

@@ -28,7 +28,7 @@ describe('native subprocess diagnostic normalization', () => {
     { patch: { exitCode: 0, error: 'termination authority lost: PRIVATE_DETAILS' }, status: 'uncertain', reason: 'worker-termination-uncertain', exitCode: null, signal: null },
     { patch: { exitCode: 0, error: 'termination deadline elapsed with process-group exit unconfirmed' }, status: 'uncertain', reason: 'worker-termination-uncertain', exitCode: null, signal: null },
     { patch: { stdout: 'PRIVATE_INVALID_EVENTS' }, status: 'failed', reason: 'worker-invalid-events', exitCode: 0, signal: null },
-  ])('retains process facts independently from fixed reason: $reason / $exitCode / $signal', async ({ patch, status, reason, exitCode, signal }) => {
+  ])('retains process facts independently from fixed reason: $reason / $exitCode / $signal (patch $patch)', async ({ patch, status, reason, exitCode, signal }) => {
     vi.mocked(runVerifySubprocessAsync).mockResolvedValue({ stdout: transcript, stderr: 'PRIVATE_STDERR', exitCode: 0,
       signal: null, timedOut: false, cancelled: false, ...patch } as VerifySubprocessResult);
     const result = await run();

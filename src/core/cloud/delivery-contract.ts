@@ -19,6 +19,15 @@ const MAX_SUMMARY_CHARS = 2_000;
 const MAX_LIST_ITEMS = 50;
 const MAX_LIST_ITEM_CHARS = 500;
 
+/** Bump the version when the job prompt rules change. */
+export const CONSTITUTION_PROMPT_RULES_V1 = [
+  'CONSTITUTION PROMPT RULES v1',
+  '- Never print secrets, tokens, or environment variable values.',
+  '- Use Phantom Secrets for secrets; never put secret values in context.',
+  '- Use Locus for MCP access. If required access is unavailable, report the blocker.',
+  '- Do not use em dashes.',
+].join('\n');
+
 /**
  * Companion MCP servers a repo's `.mcp.json` may declare, and when a cloud
  * session should call each. A cloud session sees the file like any Claude Code
@@ -91,6 +100,8 @@ export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '
   }, null, 2);
   return [
     task.prompt.trim(),
+    '',
+    CONSTITUTION_PROMPT_RULES_V1,
     // 3.15: the playbook this task runs under (playbooks/), before lessons and the contract.
     ...(playbook.trim() ? ['', playbook.trim()] : []),
     // 3.15: approved lessons for this repo / kind of task (learn/retro/inject.ts), before the contract.

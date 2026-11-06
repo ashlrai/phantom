@@ -23,6 +23,8 @@ import { MobileContext, type MobileContextValue } from './mobile-context.js';
 import type { MobileRoute, NavigateOptions } from './mobile-router.js';
 import { MobileToasts } from './mobile-toast.js';
 import styles from './MobileShell.module.css';
+import { useAppBadge } from './app-badge.js';
+import { BuildFooter } from './BuildFooter.js';
 
 /**
  * The confirmation / unlock sheet draws nothing until an action starts; its
@@ -65,6 +67,8 @@ export function MobileRuntime({ navigate, children }: MobileRuntimeProps) {
   }, [activity.data, resolved]);
   const workingCount = activity.data?.counts.running ?? null;
 
+  // The home-screen badge is a runtime fact: the frame's boot context has no count to show.
+  useAppBadge(needsCount);
   const context = useMemo<MobileContextValue>(
     () => ({ ready: true, permissions, reachability, activity, navigate, needsCount, workingCount, refreshActivity }),
     [permissions, reachability, activity, navigate, needsCount, workingCount],
@@ -72,6 +76,7 @@ export function MobileRuntime({ navigate, children }: MobileRuntimeProps) {
 
   const overlays = (
     <>
+      <BuildFooter />
       <ReachStrip state={reachability} updatedAt={activity.updatedAt} />
       {guardOpen ? <Suspense fallback={null}><GuardSheet /></Suspense> : null}
       <MobileToasts />

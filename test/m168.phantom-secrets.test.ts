@@ -26,7 +26,7 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); exec.mockClear(); });
 
 describe('existing callback environment compatibility', () => {
-  it.each([cfgOff(), cfgNoFoundry(), cfgOn()])('executes without credential subprocesses', async cfg => {
+  it.each([cfgOff(), cfgNoFoundry(), cfgOn()])('executes without credential subprocesses (%#)', async cfg => {
     vi.stubEnv('ANTHROPIC_API_KEY', FAKE_SECRET_VALUE);
     await withPhantomSecrets({ cfg, keys: ['ANTHROPIC_API_KEY'] }, async env => {
       expect(env.ANTHROPIC_API_KEY).toBe(FAKE_SECRET_VALUE);

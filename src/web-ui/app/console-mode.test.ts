@@ -6,11 +6,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   autoSelectVerseMobile,
+  CONSOLE_LAYOUT_BREAKPOINTS,
+  CONSOLE_LAYOUT_QUERIES,
+  consoleLayoutForWidth,
   isScopedConsolePath,
   isVerseConsolePath,
   isVerseMobilePath,
   prefersVerseMobile,
   readVerseLayoutPreference,
+  syncConsoleLayout,
   VERSE_LAYOUT_STORAGE_KEY,
   VERSE_MOBILE_MEDIA_QUERY,
   VERSE_MOBILE_PATH,
@@ -96,6 +100,74 @@ describe('prefersVerseMobile', () => {
   it('ignores a garbage stored value', () => {
     window.localStorage.setItem(VERSE_LAYOUT_STORAGE_KEY, 'tablet');
     expect(readVerseLayoutPreference()).toBe('auto');
+  });
+});
+
+/** A window whose matchMedia reports the layout held by `state.current`, with change events the test fires. */
+function layoutWindow(state: { current: 'compact' | 'regular' | 'wide' }, opts: { innerWidth?: number; matchMedia?: boolean } = {}) {
+  const listeners = new Set<() => void>();
+  const win = {
+    innerWidth: opts.innerWidth ?? 0,
+    addEventListener: (_t: string, cb: () => void) => listeners.add(cb),
+    removeEventListener: (_t: string, cb: () => void) => listeners.delete(cb),
+    ...(opts.matchMedia === false
+      ? {}
+      : {
+          matchMedia: (query: string) => ({
+            get matches() {
+              return query === CONSOLE_LAYOUT_QUERIES.compact
+                ? state.current === 'compact'
+                : query === CONSOLE_LAYOUT_QUERIES.wide
+                  ? state.current === 'wide'
+                  : false;
+            },
+            addEventListener: (_t: string, cb: () => void) => listeners.add(cb),
+            removeEventListener: (_t: string, cb: () => void) => listeners.delete(cb),
+          }),
+        }),
+  } as unknown as Window;
+  return { win, fireChange: () => [...listeners].forEach((cb) => cb()) };
+}
+
+function layoutTarget() {
+  return { dataset: {} as Record<string, string> } as unknown as HTMLElement;
+}
+
+describe('console layout breakpoints', () => {
+  it('classifies phone, laptop and wide-monitor widths at the shared edges', () => {
+    expect(CONSOLE_LAYOUT_BREAKPOINTS).toEqual({ compact: 720, wide: 1920 });
+    expect(CONSOLE_LAYOUT_QUERIES.compact).toBe('(max-width: 719.98px)');
+    expect(CONSOLE_LAYOUT_QUERIES.wide).toBe('(min-width: 1920px)');
+    expect(consoleLayoutForWidth(390)).toBe('compact');
+    expect(consoleLayoutForWidth(719.98)).toBe('compact');
+    expect(consoleLayoutForWidth(720)).toBe('regular');
+    expect(consoleLayoutForWidth(1440)).toBe('regular');
+    expect(consoleLayoutForWidth(1919.98)).toBe('regular');
+    expect(consoleLayoutForWidth(1920)).toBe('wide');
+    expect(consoleLayoutForWidth(2560)).toBe('wide');
+  });
+
+  it('stamps data-console-layout from matchMedia and keeps it true across changes', () => {
+    const state = { current: 'wide' as 'compact' | 'regular' | 'wide' };
+    const { win, fireChange } = layoutWindow(state);
+    const target = layoutTarget();
+    const stop = syncConsoleLayout(target, win);
+    expect(target.dataset.consoleLayout).toBe('wide');
+    state.current = 'compact';
+    fireChange();
+    expect(target.dataset.consoleLayout).toBe('compact');
+    stop();
+    state.current = 'regular';
+    fireChange();
+    expect(target.dataset.consoleLayout).toBe('compact');
+  });
+
+  it('falls back to the window width when matchMedia is missing', () => {
+    const state = { current: 'regular' as const };
+    const target = layoutTarget();
+    const stop = syncConsoleLayout(target, layoutWindow(state, { innerWidth: 390, matchMedia: false }).win);
+    expect(target.dataset.consoleLayout).toBe('compact');
+    stop();
   });
 });
 

@@ -28,4 +28,8 @@ if (!existsSync(src)) {
 mkdirSync(dirname(dest), { recursive: true });
 cpSync(src, dest, { recursive: true });
 
+const toolgraphDest = join(repoRoot, 'dist', 'core', 'toolgraph');
+mkdirSync(toolgraphDest, { recursive: true });
+cpSync(join(repoRoot, 'src', 'core', 'toolgraph', 'graph.json'), join(toolgraphDest, 'graph.json'));
+
 console.log(`[copy-assets] copied ${src} -> ${dest}`);

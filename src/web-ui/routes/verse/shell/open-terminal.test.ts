@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VerseTerminalListResponse, VerseTerminalTab } from '../../../data/api-types.js';
 import { activateDockChat, clearDockRequests, getDockSnapshot, resetDockStore } from '../dock/dock-store.js';
-import { getVerseUiState, openVerseNeedsYou, resetVerseUi, setVerseActiveSession } from '../verse-ui-store.js';
+import { getVerseUiState, openVerseNeedsYou, resetVerseUi, setVerseActiveSession, setVerseSection } from '../verse-ui-store.js';
 import { openTerminalTarget, SWITCH_WAIT_MS, TERMINAL_GONE_MESSAGE } from './open-terminal.js';
 import {
   normalizeOpenTerminalRequest,
@@ -101,6 +101,7 @@ describe('openTerminalTarget', () => {
 
   it('with a chat on screen, waits for the switch so the chat surface cannot drop the request', async () => {
     vi.useFakeTimers();
+    setVerseSection('chat');
     activateDockChat('vs_old');
     setVerseActiveSession('vs_old');
     expect(getVerseUiState().mounted).toContain('chat');
@@ -118,6 +119,7 @@ describe('openTerminalTarget', () => {
 
   it('raises the request anyway if the switch never reports', async () => {
     vi.useFakeTimers();
+    setVerseSection('chat');
     activateDockChat('vs_old');
     setVerseActiveSession('vs_old');
     await openTerminalTarget({ tabId: 't-c3', blockId: 'b-1' }, { toast: vi.fn(), list: listing(tab('t-c3', 'vs_new')) });

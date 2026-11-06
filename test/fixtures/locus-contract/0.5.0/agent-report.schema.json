@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ashlrai/locus/schema/agent-report.schema.json",
+  "title": "Locus AgentReport",
+  "description": "Machine contract for `locus agent report --json` (and `locus agent doctor --json`). Never contains resolved secret values — only aliases, CredentialRef names, scopes, and issue codes. Consumed by ashlr-hub and similar orchestrators.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "ready",
+    "status",
+    "mcp_registered",
+    "doctor",
+    "commands",
+    "exit_code",
+    "status_oneline",
+    "home",
+    "required_servers",
+    "mcp_command"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Locus crate/CLI version (semver)."
+    },
+    "ready": {
+      "type": "boolean",
+      "description": "True only when status is ready."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ready", "protected", "unsafe"],
+      "description": "Identity-plane ladder. CLI exit: ready=0, protected=1, unsafe=2."
+    },
+    "pin": {
+      "$ref": "#/$defs/doctorPin"
+    },
+    "mcp_registered": {
+      "$ref": "#/$defs/mcpRegistered"
+    },
+    "doctor": {
+      "type": "object",
+      "description": "Full DoctorReport — see schema/doctor.schema.json",
+      "additionalProperties": true,
+      "required": ["version", "home", "seal_ok", "bindings", "verdict", "ok"]
+    },
+    "commands": {
+      "$ref": "#/$defs/commands"
+    },
+    "findings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Agent-plane setup gaps (human-readable)."
+    },
+    "next_steps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [0, 1, 2]
+    },
+    "status_oneline": {
+      "type": "string",
+      "description": "Same tokens as `locus status --oneline`: unpinned | alias:tenant | frozen | invalid"
+    },
+    "home": {
+      "type": "string",
+      "description": "Effective LOCUS_HOME path."
+    },
+    "env_session_id": {
+      "type": ["string", "null"],
+      "description": "Value of LOCUS_SESSION_ID if set when report was built (session id, not a secret)."
+    },
+    "required_servers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 2,
+      "description": "Always [\"locus\", \"phantom\"]. Register only these MCP servers for identity+secrets."
+    },
+    "mcp_command": {
+      "type": "string",
+      "const": "locus-mcp",
+      "description": "Single multiplexor command — not raw supabase/vercel MCP binaries."
+    }
+  },
+  "$defs": {
+    "doctorPin": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "alias",
+        "tenant",
+        "binding_id",
+        "expires_at",
+        "seal_ok",
+        "expired"
+      ],
+      "properties": {
+        "alias": { "type": "string" },
+        "tenant": { "type": "string" },
+        "binding_id": { "type": "string" },
+        "expires_at": { "type": "string" },
+        "seal_ok": { "type": "boolean" },
+        "principal": { "type": ["string", "null"] },
+        "client": { "type": ["string", "null"] },
+        "expired": { "type": "boolean" }
+      }
+    },
+    "mcpRegistered": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["claude", "cursor", "codex"],
+      "properties": {
+        "claude": { "type": "boolean" },
+        "cursor": { "type": "boolean" },
+        "codex": { "type": "boolean" }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["enter", "whoami"],
+      "properties": {
+        "enter": { "type": "string" },
+        "whoami": { "type": "string" },
+        "pin": { "type": ["string", "null"] },
+        "doctor": { "type": ["string", "null"] },
+        "setup": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

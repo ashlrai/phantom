@@ -1,0 +1,5 @@
+.surface { padding: var(--space-5); overflow: auto; height: 100%; }
+.form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); margin-block: var(--space-4); }
+.list { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-4); }
+.conversation { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr)); gap: var(--space-4); margin-top: var(--space-3); }
+.member { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-3); }

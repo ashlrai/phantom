@@ -124,6 +124,8 @@ async function cmdMcpRun(): Promise<number> {
     const registry = discoverRegistryForMcpHost(discoverMcpServers);
     process.stderr.write(`[ashlr mcp] starting gateway with ${registry.servers.length} discovered server(s)\n`);
     await startGateway(registry);
+    // The CLI dispatcher only sets exitCode; unrelated handles may still exist.
+    setTimeout(() => process.exit(0), 100).unref();
     return 0;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -163,8 +165,6 @@ async function cmdMcpList(args: string[]): Promise<number> {
           tools: toolsReg,
           native: native.map(t => ({ name: t.name, safety: t.safety })),
         },
-        null,
-        2,
       ) + '\n',
     );
     return 0;
@@ -306,7 +306,7 @@ async function cmdMcpDoctor(args: string[]): Promise<number> {
   });
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(healths, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(healths) + '\n');
   } else {
     // Clear the "probing…" lines were written to stderr; now print table to stdout
     const nameW  = Math.max(8, ...healths.map(h => h.name.length));
@@ -880,7 +880,7 @@ async function cmdMcpEcosystem(args: string[]): Promise<number> {
 }
 
 function writeEcosystemJson(payload: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+  process.stdout.write(JSON.stringify(payload) + '\n');
 }
 
 /**
@@ -950,6 +950,9 @@ function printHelp(): void {
 
   const cmds: [string, string][] = [
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
+    ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop, fleet_bus_hops, fleet_host_runs, fleet_bus_inbox; no companion probes).'],
+    ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records; unread P0/P1 bus notices for the node join best-effort).'],
+    ['docs',                            'Read-only docs MCP on stdio (search, list_pages, get_page over the shipped Markdown docs; no network).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
     ['doctor [--json]',                 'Probe each server; exit 1 if required servers (ashlr/phantom/locus) are down.'],
     ['install <claude|ashlrcode>',      'Idempotently add the ashlr gateway to a target config (backs up first).'],
@@ -968,6 +971,12 @@ function printHelp(): void {
   console.log('');
   console.log(`    ${dim('# Run as MCP server (stdio)')}`)
   console.log(`    ashlr mcp`);
+  console.log('');
+  console.log(`    ${dim('# Read-only fleet server for any MCP client: command "phm", args ["mcp", "fleet"]')}`);
+  console.log('    phm mcp fleet');
+  console.log('');
+  console.log(`    ${dim('# Read-only context-pack server for any MCP client: command "phm", args ["mcp", "context"]')}`);
+  console.log('    phm mcp context');
   console.log('');
   console.log(`    ${dim('# List what would be aggregated')}`);
   console.log(`    ashlr mcp list`);
@@ -1006,6 +1015,72 @@ export async function cmdMcp(args: string[]): Promise<number> {
   if (sub === '--help' || sub === '-h' || sub === 'help') {
     printHelp();
     return 0;
+  }
+
+  // `mcp <verb> --help` prints usage and never runs the verb: `mcp run --help`
+  // used to start the stdio gateway, `mcp list --help` scanned the registry,
+  // and `mcp ecosystem --write --help` would have merged servers into
+  // ~/.ashlr/settings.json.
+  if (sub !== 'fleet' && sub !== 'context' && sub !== 'docs' && (args.slice(1).includes('--help') || args.slice(1).includes('-h'))) {
+    printHelp();
+    return 0;
+  }
+
+  if (sub === 'fleet') {
+    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
+      console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}, fleet_bus_hops {limit?: 1..50}, fleet_host_runs {}, fleet_bus_inbox {after?: >=0, limit?: 1..100, to?: <label>, from?: <label>}.');
+      return 0;
+    }
+    if (args.length !== 1) {
+      process.stderr.write('Usage: phm mcp fleet\n');
+      return 2;
+    }
+    try {
+      const { startFleetServer } = await import('../mcp/fleet-server.js');
+      await startFleetServer();
+      return 0;
+    } catch {
+      process.stderr.write('[phm mcp fleet] server unavailable\n');
+      return 1;
+    }
+  }
+
+  if (sub === 'context') {
+    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
+      console.log('Usage: phm mcp context\nRead-only stdio MCP: node_context_pack {node, tasks, outputs, byteBudget}; unread P0/P1 bus notices for the node join best-effort.');
+      return 0;
+    }
+    if (args.length !== 1) {
+      process.stderr.write('Usage: phm mcp context\n');
+      return 2;
+    }
+    try {
+      const { startContextServer } = await import('../mcp/context-server.js');
+      await startContextServer();
+      return 0;
+    } catch {
+      process.stderr.write('[phm mcp context] server unavailable\n');
+      return 1;
+    }
+  }
+
+  if (sub === 'docs') {
+    if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
+      console.log('Usage: phm mcp docs\nRead-only stdio MCP over the Markdown docs: search {query, limit?: 1..50}, list_pages {prefix?}, get_page {slug}.');
+      return 0;
+    }
+    if (args.length !== 1) {
+      process.stderr.write('Usage: phm mcp docs\n');
+      return 2;
+    }
+    try {
+      const { startDocsServer } = await import('../mcp/docs-server.js');
+      await startDocsServer();
+      return 0;
+    } catch {
+      process.stderr.write('[phm mcp docs] server unavailable\n');
+      return 1;
+    }
   }
 
   // Default / explicit "run"
