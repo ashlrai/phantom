@@ -14,12 +14,13 @@ vi.mock('../routes/verse/VerseApp.js', () => ({
 }));
 
 import { firstPaintSurface } from './verse-first-paint.js';
-import { setVerseSection } from '../routes/verse/verse-ui-store.js';
+import { resetVerseUi, setVerseSection } from '../routes/verse/verse-ui-store.js';
 
 beforeEach(() => setVerseSection('chat'));
 
 afterEach(() => {
   vi.useRealTimers();
+  resetVerseUi();
   loads.section.mockReset();
   loads.chatSurface.mockReset();
 });

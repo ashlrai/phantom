@@ -1,4 +1,4 @@
-.feed { min-width: 0; font-size: 12px; }
+.feed { min-width: 0; font-size: var(--text-xs-size); }
 .header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .list { list-style: none; padding: 0; margin: 8px 0 0; max-height: 360px; overflow: auto; }
 .row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 0; }
