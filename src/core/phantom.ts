@@ -295,7 +295,7 @@ export function buildPhantomCapabilitySnapshot(
 // ---------------------------------------------------------------------------
 
 /**
- * Validate the closed, values-free schema v1 shipped by Secrets v0.7.9.
+ * Validate the closed, values-free legacy v0.7.9 and identified v0.8.7 profiles.
  * Unsupported or malformed reports are unknown; no legacy text inference.
  * See phantom-secrets/docs/hub-status-contract.md.
  */
@@ -306,9 +306,15 @@ function parseMetadataStatus(raw: string): { initialized: boolean; configUnavail
   } catch {
     return null;
   }
-  if (!hasExactKeys(parsed, [
+  const legacyKeys = [
     'schema_version', 'initialized', 'inspection', 'managed_dotenv', 'vault', 'proxy', 'issues',
-  ])) return null;
+  ];
+  if (!hasExactKeys(parsed, legacyKeys)) {
+    // v0.8.7 adds a coherent schema alias and exact kind discriminator. Eight
+    // fields or arbitrary extra metadata remain unsupported, not optional keys.
+    if (!hasExactKeys(parsed, [...legacyKeys, 'schemaVersion', 'kind']) ||
+        parsed['schemaVersion'] !== 1 || parsed['kind'] !== 'phantom.status') return null;
+  }
   if (parsed['schema_version'] !== 1 || typeof parsed['initialized'] !== 'boolean' ||
       parsed['inspection'] !== 'metadata-only') return null;
   const dotenv = parsed['managed_dotenv'];

@@ -7,7 +7,7 @@ import { PublishFunnel } from './PublishFunnel.js';
 
 const fixture = {
   v: 1, generatedAt: '2026-10-31T10:00:00Z', lastTick: null, paused: false, claudeLane: null,
-  workers: [{ job: 'RQ-RUN', ageSeconds: 180 }], events: [],
+  workers: [{ job: 'RQ-RUN', ageSeconds: 180 }], events: [], leaders: [], switches: [], lanes: [], inbox: [], diskFreeGb: null, memFreePct: null,
   publishesLastHour: [
     { job: 'RQ-MERGED', lane: 'codex', url: 'https://github.com/example/repo/pull/1', at: '2026-10-31T09:30:00Z' },
     { job: 'RQ-WAIT', lane: null, url: 'https://example.com/pull/2', at: '2026-10-31T09:40:00Z' },

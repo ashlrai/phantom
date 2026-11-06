@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
-import { readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
+import { leaderInboxAppender, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
@@ -46,7 +46,7 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
         user.is_bot !== false || user.is_app_user === true || user.deleted === true || user.is_stranger === true ||
         user.is_restricted === true || user.is_ultra_restricted === true || options.signal?.aborted) return { owned: true, durable: false };
   } catch { return { owned: true, durable: false }; }
-  const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), busRoot: options.busRoot, now: options.now });
+  const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) });
   const result = await network.ingest({ message: {
     // A namespaced 128-bit receipt avoids secret-value heuristics on raw digests.
     ...checked.value, id: `slack-owner-${createHash('sha256').update(message.id).digest('hex').slice(0, 32)}`, from: 'mason',
@@ -98,7 +98,7 @@ export async function flushSlackLeaderReplies(options: SlackLeaderOptions = {}):
   try {
     const sources = readLeaderNetworkConfig(options);
     const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
-      busRoot: options.busRoot, now: options.now, deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options) });
+      busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options) });
     let sent = 0;
     for (const pending of (await network.pending()).filter(row => row.envelope.channel === 'slack').slice(0, 5)) {
       if (options.signal?.aborted) break;

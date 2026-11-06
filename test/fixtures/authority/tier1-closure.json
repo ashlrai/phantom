@@ -242,6 +242,7 @@
     "src/cli/website.ts",
     "src/core/agents/bus-v2-schema.ts",
     "src/core/agents/channel-policy.ts",
+    "src/core/agents/leader-inbox-writer.ts",
     "src/core/agents/leader-network-config.ts",
     "src/core/agents/leader-network-runtime.ts",
     "src/core/agents/leader-network.ts",

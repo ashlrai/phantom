@@ -33,7 +33,7 @@ describe('bus leader inbox bridge', () => {
     expect(await mirrorLeaderPostToInbox({ ...message, id: 'other-id' }, { runsDir: root })).toMatchObject({ ok: true, ack: { status: 'accepted' } });
     const inbox = await readInboxEntries({ runsDir: root });
     expect(inbox.entries).toHaveLength(2);
-    expect(inbox.entries.every(entry => entry.source === 'desktop' && entry.text === '[bus→leaders] hello')).toBe(true);
+    expect(inbox.entries.every(entry => entry.channel === 'desktop' && /^desktop \(desk-[a-f0-9]{16}\)$/.test(entry.source) && entry.text === '[bus→leaders] hello')).toBe(true);
     expect(existsSync(join(root, 'bus-inbox'))).toBe(false);
   });
   it('ignores ineligible envelopes without creating a store', async () => {

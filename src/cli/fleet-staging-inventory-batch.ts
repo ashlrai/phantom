@@ -76,7 +76,7 @@ export async function cmdFleetStagingInventoryBatch(args: string[], deps: Deps =
     let roots: string[] | null;
     try { roots = await readRoots(deps.input ?? process.stdin); } catch { roots = null; }
     if (!roots) { output.error(USAGE); return 2; }
-    const reports: (Report | { root: string; complete: false; source: 'failed'; cleanupEligibility: string })[] = [];
+    const reports: (Report | { root: string; complete: false; source: 'failed' | 'unattempted'; cleanupEligibility: string })[] = [];
     let completed = 0;
     let attempted = 0;
     for (const [index, root] of roots.entries()) {
@@ -91,6 +91,14 @@ export async function cmdFleetStagingInventoryBatch(args: string[], deps: Deps =
           schema: 'fleet.staging-inventory-batch-progress.v1', index, requested: roots.length, report,
         })));
       } else reports.push(report);
+      // Check signal after the scanner completes; break before
+      // the next iteration to keep the signal response non-speculative.
+      if (stopped) break;
+    }
+    if (stopped) {
+      for (const unattempted of roots.slice(attempted)) {
+        reports.push({ root: unattempted, complete: false, source: 'unattempted', cleanupEligibility: ELIGIBILITY });
+      }
     }
     const interruption = stopped ? { interrupted: true, signal: stopped, attempted, remaining: roots.length - attempted } : {};
     const status = stopped ? (stopped === 'SIGINT' ? 130 : 143) : (completed === roots.length ? 0 : 1);
@@ -107,7 +115,10 @@ export async function cmdFleetStagingInventoryBatch(args: string[], deps: Deps =
     if (flags.has('--json')) output.log(JSON.stringify(safe));
     else {
       output.log(`Staging inventories: ${safe.completed}/${safe.requested} complete`);
-      for (const report of safe.reports) output.log(`${JSON.stringify(report.root)}: ${report.complete ? 'complete' : 'incomplete'}; source: ${report.source}`);
+      for (const report of safe.reports) {
+        if (report.source === 'unattempted') output.log(`${JSON.stringify(report.root)}: skipped (unattempted)`);
+        else output.log(`${JSON.stringify(report.root)}: ${report.complete ? 'complete' : 'incomplete'}; source: ${report.source}`);
+      }
       if (stopped) output.log(`Interrupted by ${stopped}: ${attempted} attempted, ${roots.length - attempted} remaining`);
       output.log(ELIGIBILITY);
     }

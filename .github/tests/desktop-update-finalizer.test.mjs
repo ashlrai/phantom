@@ -10,12 +10,59 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import process from 'node:process';
 import ts from 'typescript';
 import {gunzipSync} from 'node:zlib';
-import {desktopFinalizationFailurePhase, desktopNativeBundleConfiguration, desktopPublisherGithub, finalizeDesktopUpdate, packDesktopAppArchive, parseFinalizeArguments, prepareDesktopAppIdentity, restoreFreshDesktopSidecar, signAndAcceptDesktopSea, verifyUpdateAudit} from '../../scripts/finalize-desktop-update.mjs';
+import {buildTrackedDesktopBundle, desktopFinalizationFailurePhase, desktopNativeBundleConfiguration, desktopPublisherGithub, finalizeDesktopUpdate, packDesktopAppArchive, parseFinalizeArguments, prepareDesktopAppIdentity, restoreFreshDesktopSidecar, signAndAcceptDesktopSea, verifyUpdateAudit} from '../../scripts/finalize-desktop-update.mjs';
 import {inspectTar} from '../../scripts/hosted-build-artifact.mjs';
 
 const hash = data => createHash('sha256').update(data).digest('hex');
 const repository = {fullName: 'ashlrai/ashlr-hub', repositoryId: 1263526319, repositoryNodeId: 'R_kgDOS0_hrw', ownerLogin: 'ashlrai', ownerId: 258113726, ownerNodeId: 'O_kgDOD2KAvg'};
 const metadata = {full_name: repository.fullName, id: repository.repositoryId, node_id: repository.repositoryNodeId, owner: {id: repository.ownerId, login: repository.ownerLogin}, default_branch: 'master', private: false, visibility: 'public'};
+function trackedIconFixture(t) {
+  const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'phantom-native-icon-inputs-')));
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const configPath = 'desktop/src-tauri/tauri.conf.json';
+  const config = JSON.parse(fs.readFileSync(new URL(`../../${configPath}`, import.meta.url)));
+  const icons = [...config.bundle.icon, config.app.trayIcon.iconPath];
+  for (const path of [configPath, ...icons.map(path => `desktop/src-tauri/${path}`)]) {
+    const target = join(root, path); fs.mkdirSync(dirname(target), {recursive: true});
+    fs.copyFileSync(new URL(`../../${path}`, import.meta.url), target);
+  }
+  fs.writeFileSync(join(root, '.gitignore'), 'desktop/src-tauri/target/\n');
+  const nullPath = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  const env = {...process.env, GIT_CONFIG_GLOBAL: nullPath, GIT_CONFIG_SYSTEM: nullPath, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: '0'};
+  const git = args => execFileSync('git', args, {cwd: root, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
+  git(['init', '--template=']); git(['add', '--', '.']);
+  git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'pin actual tracked icon inputs']);
+  return {root, icon: join(root, 'desktop/src-tauri', icons[0]), status: () => git(['status', '--porcelain', '--untracked-files=normal'])};
+}
+test('native bundle uses actual HEAD icon bytes and leaves its qualified source clean', t => {
+  const f = trackedIconFixture(t); let builds = 0;
+  const tools = {tauri: {path: '/private/test-tauri'}, appleSigner: 'A'.repeat(40)}, env = {PATH: '/usr/bin:/bin'};
+  buildTrackedDesktopBundle({root: f.root, tools, env}, (bin, args, cwd, childEnv, timeout) => {
+    builds++; assert.equal(bin, tools.tauri.path); assert.equal(args[0], 'build');
+    assert.equal(cwd, join(f.root, 'desktop')); assert.equal(childEnv, env); assert.equal(timeout, 30 * 60_000);
+    assert.equal(f.status(), '');
+    const target = join(f.root, 'desktop/src-tauri/target'); fs.mkdirSync(target);
+    fs.writeFileSync(join(target, 'test-only-compiled-output'), 'compiler output');
+  });
+  assert.equal(builds, 1); assert.equal(f.status(), '');
+});
+test('native bundle refuses changed tracked icons before invoking the compiler', t => {
+  const f = trackedIconFixture(t); fs.appendFileSync(f.icon, 'controlled changed input'); let builds = 0;
+  assert.throws(() => buildTrackedDesktopBundle({root: f.root, tools: {}, env: {}}, () => {builds++;}), /differs from HEAD/);
+  assert.equal(builds, 0);
+});
+test('a compiler icon mutation is refused by the finalizer before updater signatures or feed', async t => {
+  const icons = trackedIconFixture(t), f = await fixture(t); let builds = 0;
+  f.dependencies.build = async () => {
+    buildTrackedDesktopBundle({root: icons.root, tools: {tauri: {path: '/private/test-tauri'}, appleSigner: 'A'.repeat(40)}, env: {}}, () => {
+      builds++; fs.appendFileSync(icons.icon, 'controlled compiler mutation');
+    });
+    throw new Error('changed icons must never reach artifact output');
+  };
+  await assert.rejects(finalizeDesktopUpdate(f.input, f.dependencies), /differs from HEAD/);
+  assert.equal(builds, 1); assert.equal(f.calls.includes('sign'), false);
+  for (const path of fs.readdirSync(f.input.outputParent)) assert.equal(fs.existsSync(join(f.input.outputParent, path, 'latest.json')), false);
+});
 async function fixture(t, profileName = 'legacy-v1') {
   const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'phantom-update-finalizer-test-'))); t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
   fs.writeFileSync(join(dir, 'package.json'), JSON.stringify({type: 'module', name: profileName === 'canonical-v2' ? '@ashlr/phantom' : '@ashlr/hub', version: '3.25.1'}));

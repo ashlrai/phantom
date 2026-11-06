@@ -94,7 +94,47 @@ jobs:
         with:
           node-version: '22.22.3'
           cache: npm
+      # Source-identical fast path (pull_request and merge_group only): the
+      # exact whole tracked tree of the checked-out candidate is compared with
+      # the authenticated current canonical base. The proof code is fetched
+      # from the canonical base tip, never from candidate bytes; every unknown,
+      # malformed, drifted or unavailable input falls back to the unchanged
+      # normal steps below, and master pushes never reach this step.
+      - name: Prove source-identical history fast path
+        id: history
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          verdict=fallback
+          case "${GITHUB_REPOSITORY:-}:${GITHUB_REPOSITORY_ID:-}:${GITHUB_REPOSITORY_OWNER_ID:-}" in
+            ashlrai/phantom:1263526319:258113726|ashlrai/ashlr-hub:1263526319:258113726) ;;
+            *) echo "equal=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          dir="${RUNNER_TEMP}/ci-history-source"
+          rm -rf -- "$dir"
+          mkdir -p -- "$dir"
+          api() { timeout 20 gh api --hostname github.com "$1" 2>/dev/null || true; }
+          decode() {
+            node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);if(r.type!=="file"||r.encoding!=="base64"||typeof r.content!=="string"||r.content.length>700000)process.exit(1);process.stdout.write(Buffer.from(r.content.replace(/[^A-Za-z0-9+/=]/g,""),"base64"))}catch{process.exit(1)}})'
+          }
+          tip="$(api "repos/${GITHUB_REPOSITORY}/git/ref/heads/master" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s).object?.sha;process.stdout.write(/^[0-9a-f]{40}$/.test(v??"")?v:"")}catch{}})')"
+          if [ -n "$tip" ]; then
+            ok=1
+            for f in ci-history-source.mjs github-repository-binding.mjs; do
+              api "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/${f}?ref=${tip}" | decode > "$dir/$f" || ok=0
+            done
+            if [ "$ok" = 1 ] && [ -s "$dir/ci-history-source.mjs" ] && [ -s "$dir/github-repository-binding.mjs" ]; then
+              out="$(ASHLR_HISTORY_PROOF_SOURCE_SHA="$tip" timeout 75 node "$dir/ci-history-source.mjs" 2>"$dir/helper.log" || true)"
+              case "$out" in equal) verdict=equal ;; esac
+              cat "$dir/helper.log" >&2 2>/dev/null || true
+            fi
+          fi
+          if [ "$verdict" = equal ]; then echo "equal=true" >> "$GITHUB_OUTPUT"; else echo "equal=false" >> "$GITHUB_OUTPUT"; fi
+          exit 0
       - name: Install dependencies
+        if: steps.history.outputs.equal != 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Restore protected-branch compiler state
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -104,6 +144,7 @@ jobs:
           key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
           restore-keys: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-
       - name: Core no-emit type check
+        if: steps.history.outputs.equal != 'true'
         run: npx tsc --noEmit -p tsconfig.json
       - name: Save protected-branch compiler state
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -113,6 +154,7 @@ jobs:
           key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
       # Full authority shards are deferred; drift must still fail the required gate.
       - name: Check authority drift (hermetic)
+        if: steps.history.outputs.equal != 'true'
         run: >-
           HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
           test/authority-codeowners-310b.test.ts
@@ -319,7 +361,10 @@ jobs:
               test/activation-readiness-package.test.ts
               test/activation-readiness-windows.test.ts
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # Ubuntu authority 1/3 runs the complete web suite before its existing
+    # thirty-minute backend wrapper, then verifies and uploads the original pack.
+    # Other matrix roles retain their existing twenty-five-minute outer limit.
+    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}
     env: &node_ci_environment
       ASHLR_VITEST_TEST_TIMEOUT_MS: ${{ matrix.os == 'windows-latest' && '30000' || '5000' }}
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: ${{ matrix.native_launchd || '0' }}
@@ -613,7 +658,9 @@ jobs:
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
-    timeout-minutes: 45
+    # Complete single-worker partitions measured 60–65 minutes. Match the
+    # existing 90-minute hermetic wrapper; individual test bounds stay intact.
+    timeout-minutes: 90
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master

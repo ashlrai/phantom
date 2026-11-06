@@ -83,7 +83,7 @@ it('replays an overlap finding identically after origin/master advances, while l
   } finally { process.chdir(cwd); log.mockRestore(); repo.cleanup(); }
 });
 
-it('rejects usage errors exit 2 before any git call, including outside a repository', async () => {
+it('job-overlap-snapshot rejects usage errors exit 2 before any git call, including outside a repository', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'job-overlap-snapshot-nogit-'));
   const cwd = process.cwd();
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -171,7 +171,7 @@ it('keeps literal paths and reports truncation honestly through the CLI', async 
   } finally { process.chdir(cwd); log.mockRestore(); repo.cleanup(); }
 });
 
-it('never mutates the repository and only issues allowlisted read-only git argv', async () => {
+it('job-overlap-snapshot never mutates the repository and only issues allowlisted read-only git argv', async () => {
   const repo = fixture();
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   try {
@@ -194,7 +194,7 @@ it('never mutates the repository and only issues allowlisted read-only git argv'
   } finally { log.mockRestore(); repo.cleanup(); }
 });
 
-it('surfaces injected git failures as rejections and reports bounded scan truncation', async () => {
+it('job-overlap-snapshot surfaces injected git failures as rejections and reports bounded scan truncation', async () => {
   const oid = sha(7);
   const ids = ['RQ-A-1', 'RQ-B-2'];
   const ok = async (args: string[]) => {

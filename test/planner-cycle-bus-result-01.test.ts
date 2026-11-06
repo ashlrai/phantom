@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,8 +8,14 @@ import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import type { PlannerCycleDeps } from '../src/core/fleet/planner-cycle.js';
 import type { PlannerRunResult } from '../src/core/fleet/planner-run.js';
 
-let dir: string, busRoot: string;
-beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'cycle-bus-')); busRoot = join(dir, 'bus'); });
+let dir: string, busRoot: string, base: string[];
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), 'cycle-bus-')); busRoot = join(dir, 'bus');
+  // Apply mode takes the real single-flight lock under the runs root, so it must be a real private directory.
+  const runsRoot = join(dir, 'runs');
+  await mkdir(runsRoot, { mode: 0o700 });
+  base = ['--prompt-file', '/private/prompt', '--runs-root', runsRoot, '--json'];
+});
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
 function fixture(exitCode = 0, pending = 1) {
@@ -30,7 +36,6 @@ function fixture(exitCode = 0, pending = 1) {
   });
   return { executePass, readOutput };
 }
-const base = ['--prompt-file', '/private/prompt', '--runs-root', '/private/runs', '--json'];
 const route = ['--run-id', 'run-1', '--from', 'leader', '--to', 'next'];
 async function run(args: string[], deps = fixture(), root = busRoot) {
   let out = '', err = '';
@@ -135,7 +140,7 @@ describe('planner cycle bus result', () => {
     ['--run-id', 'bad/id', '--from', 'leader', '--to', 'next'],
     ['--run-id', 'run-1', '--from', 'bad address', '--to', 'next'],
     [...route, '--root', 'relative'], [...route, '--from', 'again'],
-  ])('rejects partial or invalid routing before any side effects: %s', async (...args) => {
+  ])('rejects partial or invalid routing before any side effects: %s (%#)', async (...args) => {
     const r = await run([...base, ...args, '--apply']);
     expect(r.code).toBe(2);
     expect(r.deps.executePass).not.toHaveBeenCalled();

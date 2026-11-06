@@ -3,6 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
+const usage = `Usage: ashlr fleet login-health [--json]
+Show expired-login holds and later nonempty finishes. Unread metrics are unknown.`;
+
 export type LoginHealthReader = (path: string) => Promise<string>;
 export interface LoginHealthLane {
   lane: string;
@@ -44,7 +47,7 @@ export async function readLoginHealth(reader: LoginHealthReader = path => readFi
 
 export async function cmdFleetLoginHealth(args: string[], reader?: LoginHealthReader): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('Usage: ashlr fleet login-health [--json]\nShow expired-login holds and later nonempty finishes. Unread metrics are unknown.');
+    console.log(usage);
     return 0;
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;

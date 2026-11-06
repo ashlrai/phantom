@@ -18,7 +18,7 @@ const entry = (at: string) => ({ at, source: 'desktop', text: 'hello' });
 describe('leader overdue', () => {
   it('reports an absent leader and counts the inbox', () => {
     expect(item({ leaders: [], inbox: [entry('2026-10-31 07:50')] })).toEqual({
-      id: 'leader-overdue', severity: 'urgent', title: 'No leader process is running',
+      id: 'leader-overdue', severity: 'urgent', title: 'No leader process is running', open: { kind: 'pane', paneId: 'leader-journal' },
       detail: '1 inbox entries are waiting on a leader',
       nextStep: 'Check the leaders in Ops and restart the leader loop if it stopped', target: 'ops',
     });
