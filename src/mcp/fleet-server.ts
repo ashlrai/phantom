@@ -554,7 +554,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
     try {
-      const value = name === 'fleet_staging_inventory_batch' ? await readStagingBatch(stagingRoots as string[], readers.stagingScanner)
+      const value = name === 'fleet_staging_inventory_batch' ? await readStagingBatch(stagingRoots as string[], readers.stagingScanner, extra.signal)
         : name === 'fleet_status' ? await readers.status()
         : name === 'fleet_loop' ? await readers.loop(limit as number)
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
