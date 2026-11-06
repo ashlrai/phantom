@@ -17,6 +17,19 @@ GS="$R/bin/git-safe-env.sh"; GS_SHA=234fb12a57a51fdfed81da8702a0b452c183f2726582
 { [ -f "$GS" ] && [ ! -L "$GS" ] && [ "$( { /usr/bin/shasum -a 256 "$GS" 2>/dev/null || sha256sum "$GS" 2>/dev/null; } | awk 'NR==1{print $1}')" = "$GS_SHA" ] && . "$GS" && gs_init; } || { echo "RESULT ABORT git-safe-unavailable"; exit 1; }
 GSWHY=$(gs_check "$WT") || { echo "RESULT ABORT git-unsafe $GSWHY"; exit 1; }
 git(){ gs_git "$WT" "$@"; }
+# >>> DEPENDENCY_LINK_GUARD
+# A trailing-slash node_modules ignore rule does not ignore a symlink with
+# that name. Reject staged dependency-directory links before any publication;
+# ordinary checked-in package fixtures inside node_modules remain valid.
+verify_dependency_links() (
+  set -o pipefail
+  git ls-files --stage -z | perl -0ne '
+    chomp;
+    $bad ||= /\A120000 [0-9a-f]{40,64} [0-3]\t(?:.*\/)?node_modules\z/s;
+    END { exit($bad ? 1 : 0) }
+  '
+)
+# <<< DEPENDENCY_LINK_GUARD
 # commit identity: read (runs nothing, no includes) from the user's ~/.gitconfig as a plain file, passed explicitly as -c; global config is otherwise off
 GUN=$("$GS_GIT" config --file "$HOME/.gitconfig" --get user.name 2>/dev/null); GUE=$("$GS_GIT" config --file "$HOME/.gitconfig" --get user.email 2>/dev/null)
 # rev3 P1: NAME and REPO come only from dispatchd's own job record ($R/queue/run/<J>.line, the ready.tsv line:
@@ -107,6 +120,7 @@ PD=".github .envrc .vscode .husky"; { [ -n "$G1T" ] || [ "$G1OK" = 1 ]; } && PD=
 NOTES=""; [ -f BRIDGE_NOTES.md ] && { NOTES=$(cat BRIDGE_NOTES.md); mv BRIDGE_NOTES.md $R/$J.notes.md; }
 GD=$(git status --porcelain -uall -- $PD | cut -c4-); [ -n "$GD" ] && { echo "NOTE PROTECTED_DRIFT reverted: $(echo $GD)"; for d in $PD; do git checkout "$BASE" -- $d 2>/dev/null; git clean -fdq -- $d; done; echo "$GD" | grep -q "^\.github/workflows" && { echo "RESULT ABORT workflow-drift"; exit 1; }; }
 git add -A
+verify_dependency_links || { echo "RESULT ABORT dependency-directory-link-or-index-unavailable"; exit 1; }
 FILES=$(git diff --cached --name-only "$BASE"); [ -z "$FILES" ] && [ "$IM" = 0 ] && { echo "RESULT EMPTY"; exit 0; }
 [ "$IM" = 0 ] || [ -z "$FILES" ] || { echo "RESULT ABORT integrated-unreviewed-delta"; exit 1; }
 SKIP=$(git ls-files -v | grep -c '^S')
