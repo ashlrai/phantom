@@ -264,6 +264,7 @@ const COMPLETE_CI_WORKFLOW_SHA256 = new Set([
   'ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390',
   '5d88a822dabe4b188e44683991cd921623470c0fa0e20fb96df883cb4f173444',
   '95714a1fd967c9a5b072761c1aff68ec9ea3792ac5e7058a62e0cde2a18bbd21',
+  'ce859f45ba3f0dc32eb307bfb7e7f77dc664eaecb99273e53820d875b892dffc',
 ]);
 const COMPLETE_SKIPPED_JOBS = Object.freeze(['Prepare unsigned desktop release', 'Desktop release smoke', 'Daily fixup queue']);
 const FAST_SUFFIX = " && github.event_name != 'pull_request' && github.event_name != 'merge_group'";

@@ -1,0 +1,4 @@
+number	class	reason	suggested_comment
+3648	KEEP	Open; ci-receipt-batch.ts is absent from live master e68b89ebe68247f2a4f6fdc70441842c813479c3. Semantic equivalence to the merged receipt stream has not been established.	
+3663	KEEP	Open; per-target timeout changes are absent from live master e68b89ebe68247f2a4f6fdc70441842c813479c3. Semantic equivalence has not been established.	
+3667	KEEP	Open; retry-batch implementation is absent from live master e68b89ebe68247f2a4f6fdc70441842c813479c3. Related batch-replan functionality does not prove a subset.	
