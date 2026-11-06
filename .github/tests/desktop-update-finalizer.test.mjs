@@ -4,13 +4,13 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import {dirname, join} from 'node:path';
 import {tmpdir, userInfo} from 'node:os';
-import {pathToFileURL, URL} from 'node:url';
+import {fileURLToPath, pathToFileURL, URL} from 'node:url';
 import {createHash, generateKeyPairSync, sign} from 'node:crypto';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import process from 'node:process';
 import ts from 'typescript';
 import {gunzipSync} from 'node:zlib';
-import {desktopNativeBundleConfiguration, desktopPublisherGithub, finalizeDesktopUpdate, packDesktopAppArchive, parseFinalizeArguments, prepareDesktopAppIdentity, restoreFreshDesktopSidecar, signAndAcceptDesktopSea, verifyUpdateAudit} from '../../scripts/finalize-desktop-update.mjs';
+import {desktopFinalizationFailurePhase, desktopNativeBundleConfiguration, desktopPublisherGithub, finalizeDesktopUpdate, packDesktopAppArchive, parseFinalizeArguments, prepareDesktopAppIdentity, restoreFreshDesktopSidecar, signAndAcceptDesktopSea, verifyUpdateAudit} from '../../scripts/finalize-desktop-update.mjs';
 import {inspectTar} from '../../scripts/hosted-build-artifact.mjs';
 
 const hash = data => createHash('sha256').update(data).digest('hex');
@@ -77,6 +77,30 @@ for (const guard of ['verify', 'audit', 'surface', 'archive', 'build']) test(`pr
   await assert.rejects(finalizeDesktopUpdate(f.input, dependencies)); assert.equal(f.calls.includes('sign'), false);
   for (const directory of fs.readdirSync(f.input.outputParent)) assert.equal(fs.existsSync(join(f.input.outputParent, directory, 'latest.json')), false);
 });
+
+for (const [hook, phase] of [['source', 'source'], ['verify', 'hosted-proof'], ['audit', 'audit'], ['adopt', 'adopt'], ['defaults', 'defaults'], ['validateTools', 'tools'], ['build', 'build'], ['sign', 'sign-app']]) {
+  test(`private ${hook} errors retain the failed boundary without reaching the CLI diagnostic`, async t => {
+    const f = await fixture(t), failure = new Error('/private/fixture/not-for-cli: actual private tool output');
+    const dependencies = {...f.dependencies, [hook]: () => {throw failure;}};
+    await assert.rejects(finalizeDesktopUpdate(f.input, dependencies), error => {
+      assert.equal(error, failure); assert.equal(desktopFinalizationFailurePhase(error), phase); return true;
+    });
+    for (const directory of fs.readdirSync(f.input.outputParent)) assert.equal(fs.existsSync(join(f.input.outputParent, directory, 'latest.json')), false);
+  });
+}
+
+test('unknown, accessor and private phase labels never enter diagnostics', () => {
+  assert.equal(desktopFinalizationFailurePhase(new Error('/private/fixture')), 'arguments');
+  assert.equal(desktopFinalizationFailurePhase({desktopFinalizationPhase: '/private/fixture'}), 'arguments');
+  assert.equal(desktopFinalizationFailurePhase({get desktopFinalizationPhase() {throw new Error('must not execute accessor');}}), 'arguments');
+});
+
+test('CLI failures expose only the fixed phase, with no private argument or assertion values', () => {
+  const script = new URL('../../scripts/finalize-desktop-update.mjs', import.meta.url);
+  const result = spawnSync(process.execPath, [fileURLToPath(script), '--private-fixture', '/private/not-for-cli'], {encoding: 'utf8', timeout: 10_000});
+  assert.equal(result.status, 1); assert.equal(result.stdout, '');
+  assert.equal(result.stderr.trim(), 'Desktop update finalization held; no feed was published. Phase: arguments');
+});
 test('compiler result cannot substitute a different package or source after await', async t => {
   const f = await fixture(t); f.dependencies.build = async () => {fs.writeFileSync(join(f.input.bundle, 'ashlr-hub-3.25.1.tgz'), 'repacked'); return {bytes: Buffer.from('test app'), inventorySha256: '2'.repeat(64), signer: 'A'.repeat(40)};};
   await assert.rejects(finalizeDesktopUpdate(f.input, f.dependencies)); assert.equal(f.calls.includes('sign'), false);
@@ -123,9 +147,13 @@ test('GitHub API and attestation use the fixed executable with only normal profi
   assert.deepEqual(calls[0].args, ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', 'repos/ashlrai/ashlr-hub']);
   assert.deepEqual(calls[1].args, ['attestation', 'verify', '/private/subject']);
 });
-test('public CLI accepts only complete exact identity and has no tool/key/publication override', () => {
-  const args = ['--revision', 'a'.repeat(40), '--bundle', '/private/bundle', '--run', '10', '--attempt', '1', '--attestor-sha', 'b'.repeat(40), '--attestor-run', '11', '--attestor-attempt', '1', '--audit-run', '12', '--audit-attempt', '1', '--output-parent', '/private/output'];
-  assert.equal(parseFinalizeArguments(args).policy.runId, 10);
+test('public CLI accepts only complete exact identity and has no tool/key/publication override', t => {
+  const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'phantom-finalizer-arguments-')));
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const bundle = join(root, 'bundle'), output = join(root, 'output'); fs.mkdirSync(bundle); fs.mkdirSync(output);
+  const args = ['--revision', 'a'.repeat(40), '--bundle', bundle, '--run', '10', '--attempt', '1', '--attestor-sha', 'b'.repeat(40), '--attestor-run', '11', '--attestor-attempt', '1', '--audit-run', '12', '--audit-attempt', '1', '--output-parent', output];
+  const parsed = parseFinalizeArguments(args);
+  assert.equal(parsed.policy.runId, 10); assert.equal(parsed.bundle, bundle); assert.equal(parsed.outputParent, output);
   for (const extra of ['--force', '--tool', '--private-key', '--receipt', '--publish']) assert.throws(() => parseFinalizeArguments([...args, extra, 'yes']));
   assert.throws(() => parseFinalizeArguments([...args, '--run', '10'])); assert.throws(() => parseFinalizeArguments(args.slice(2)));
 });
