@@ -2,7 +2,7 @@
  * app/verse-first-paint.test.ts — the signed-in shell waits for its opening
  * section and the chat's columns, never longer than its bound.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const loads = vi.hoisted(() => ({
   section: vi.fn<(id: string) => Promise<unknown>>(),
@@ -14,6 +14,9 @@ vi.mock('../routes/verse/VerseApp.js', () => ({
 }));
 
 import { firstPaintSurface } from './verse-first-paint.js';
+import { setVerseSection } from '../routes/verse/verse-ui-store.js';
+
+beforeEach(() => setVerseSection('chat'));
 
 afterEach(() => {
   vi.useRealTimers();
