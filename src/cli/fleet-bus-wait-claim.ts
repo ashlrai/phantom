@@ -1,9 +1,12 @@
 import { validBusWaitClaimRequest, waitClaimBusWork, type BusWaitClaimRequest } from '../core/fleet/bus-wait-claim.js';
 
+const usage = `Usage: ashlr fleet bus-wait-claim --to <exact-address> --owner <label> --lease-ms <1..3600000> --wait-ms <1..300000> [--root <absolute>] --json
+Local coordination only; labels are not identity or authority.`;
+
 /** Waits for one real claim; message bodies are never executed. */
 export async function cmdFleetBusWaitClaim(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('Usage: ashlr fleet bus-wait-claim --to <exact-address> --owner <label> --lease-ms <1..3600000> --wait-ms <1..300000> [--root <absolute>] --json\nLocal coordination only; labels are not identity or authority.');
+    console.log(usage);
     return 0;
   }
   const values = new Map<string, string>();

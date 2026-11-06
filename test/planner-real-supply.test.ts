@@ -140,8 +140,8 @@ describe('collectRealSupply', () => {
         workflow_runs: [run(7, 'Nightly', 'failure'), run(7, 'Nightly', 'success'), run(3, 'Audit', 'success')],
       },
     }));
-    const supply = await collectRealSupply({ gh, now: clock });
-    expect(supply).toMatchObject({ v: 1, generatedAt: NOW.toISOString() });
+    const supply = await collectRealSupply({ gh, now: clock, local: false });
+    expect(supply).toMatchObject({ v: 1, generatedAt: NOW.toISOString(), local: { status: 'skipped' } });
     expect(supply.repos).toEqual(QUEUEGEN_REPOS.map(repo => ({ repo, status: 'ok' })));
     expect(supply.candidates.map(c => `${c.kind}:${c.repo}:${c.target}`)).toEqual([
       'dependabot-critical:ashlrai/phantom:package-lock.json (crit-dep -> 7.7.7)',
@@ -158,7 +158,7 @@ describe('collectRealSupply', () => {
       if (repo === 'ashlrai/locus') return { ok: false, reason: 'gh api repos/ashlrai/locus failed (HTTP 403)' };
       return { ok: true, facts: facts() };
     };
-    const supply = await collectRealSupply({ reader, now: clock });
+    const supply = await collectRealSupply({ reader, now: clock, local: false });
     expect(supply.candidates).toEqual([]);
     expect(supply.repos).toHaveLength(QUEUEGEN_REPOS.length);
     const lexicon = supply.repos.find(r => r.repo === 'ashlrai/lexicon')!;
@@ -174,7 +174,7 @@ describe('collectRealSupply', () => {
       'repos/ashlrai/phantom/dependabot/alerts': { raw: '<html>rate limited</html>' },
       'repos/ashlrai/phantom-secrets/actions/runs': { nope: 1 },
     }));
-    const supply = await collectRealSupply({ gh, repos: ['ashlrai/phantom', 'ashlrai/phantom-secrets'], now: clock });
+    const supply = await collectRealSupply({ gh, repos: ['ashlrai/phantom', 'ashlrai/phantom-secrets'], now: clock, local: false });
     expect(supply.repos).toEqual([
       { repo: 'ashlrai/phantom', status: 'unknown', reason: 'gh api repos/ashlrai/phantom/dependabot/alerts?state=open&per_page=100 did not return JSON' },
       { repo: 'ashlrai/phantom-secrets', status: 'unknown', reason: 'gh api actions/runs for ashlrai/phantom-secrets returned an invalid listing' },
@@ -194,6 +194,7 @@ describe('realSupplyBriefLines', () => {
       ...Array.from({ length: unknown }, (_, i) => ({ repo: `ashlrai/unread-${i}`, status: 'unknown' as const, reason: 'gh offline' })),
       { repo: 'ashlrai/phantom', status: 'ok' },
     ],
+    local: { status: 'ok' },
     candidates: candidates(count),
   });
 
@@ -211,7 +212,7 @@ describe('realSupplyBriefLines', () => {
       'ashlrai/unread-1: supply unread (gh offline)',
     ]);
     expect(realSupplyBriefLines(supply(0, 0))).toEqual([
-      '(all repos read; no open alerts, red scheduled suites or issues)',
+      '(all sources read; no open alerts, red scheduled suites, issues or registry/doc drift)',
     ]);
   });
 });
@@ -226,6 +227,7 @@ describe('planner brief real supply section', () => {
     const realSupply = async (): Promise<RealSupplyV1> => ({
       v: 1, generatedAt: NOW.toISOString(),
       repos: [{ repo: 'ashlrai/ashlr-plugin', status: 'ok' }],
+      local: { status: 'ok' },
       candidates: candidates(20, 'ashlrai/ashlr-plugin'),
     });
     const brief = await buildPlannerBrief({ runsRoot: root, git: (_p, _a, _o, done) => done(null, ''), realSupply });

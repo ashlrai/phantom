@@ -24,6 +24,20 @@ intermediate-output overrides cannot silently bypass accounting. Explicit
 `cargo --target-dir` or command-local overrides must not be used by the bridge.
 Real `CARGO_HOME` and `RUSTUP_HOME` are preserved.
 
+### Optional local sccache (flag-off)
+
+Set `ASHLR_SCCACHE=1` on the launch to run Rust jobs (Locus, Stack) with
+`RUSTC_WRAPPER` pointing at the absolute `sccache` found on `PATH`. The launch
+is refused (`sccache-unavailable`) if it is missing; nothing is installed.
+The cache is local-disk only, in `<state-dir>/sccache` (10 GiB limit, outside
+the per-repo target cap and never pruned by the reaper). The launcher deletes
+every inherited `SCCACHE_*` variable and `CARGO_BUILD_RUSTC_WRAPPER`, points
+`SCCACHE_CONF` at its own generated config, and uses a private
+`SCCACHE_SERVER_PORT`, so no remote backend, credential or already-running
+differently configured server can be used. `CARGO_INCREMENTAL=0` is set unless
+the caller already chose a value, because sccache cannot cache incremental
+artifacts.
+
 For Node projects, source and target manifests/lockfiles must match. The
 dependency helper from RQ-MAC-WTCLONE clones files through macOS `clonefile(2)`.
 This supplies APFS copy-on-write semantics without `cp -c`'s possible ordinary

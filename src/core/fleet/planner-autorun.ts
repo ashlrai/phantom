@@ -14,19 +14,27 @@
  * The trigger is the leader's hand rule: the queue of Phantom jobs (ids
  * starting RQ-PHX-) in queue/ready.tsv has fallen under 24 across lanes
  * while some lane still has free slots, and the last pass is at least 25
- * minutes old. The queued supply comes from ready-supply.ts — the canonical
- * summary that already knows every parked-row form ready.tsv carries
- * (headered status, `status=` cell, dotted pool, and the dispatcher's native
- * five-column `id repo PARKED-lane work /path` via normalizeLegacyRows). The
- * checks run in a fixed order and each yields one reason:
+ * minutes old — or, under the stricter critical floor (default 6), even with
+ * every lane full: real Phantom supply nearly gone must not wait on a slot.
+ * The queued supply comes from ready-supply.ts — the canonical summary that
+ * already knows every parked-row form ready.tsv carries (headered status,
+ * `status=` cell, dotted pool, and the dispatcher's native five-column
+ * `id repo PARKED-lane work /path` via normalizeLegacyRows). The checks run
+ * in a fixed order and each yields one reason:
  *   orch-off → planner-failing → no-free-slots → enough-supply → too-soon
- *   → low-supply (run).
+ *   → low-supply | supply-floor (run).
+ *
+ * no-free-slots yields to the floor: when every lane is full but the queue
+ * was readable and its Phantom count is under the critical floor, the check
+ * falls through instead of skipping — enough-supply and too-soon still
+ * apply, and a run lands on 'supply-floor'.
  *
  * Biases: a missing or unreadable ready.tsv counts as 0 queued Phantom jobs —
  * a tick that cannot see the queue runs a pass rather than starving the
- * lanes. A last pass that cannot be proven recent (no LEADER rows, an
- * unparseable stamp) is never "too soon". Non-finite or negative numbers
- * count as 0 everywhere.
+ * lanes, but with no free slot the floor never rescues an unreadable queue:
+ * a pass with no real count and no slot would be a guess. A last pass that
+ * cannot be proven recent (no LEADER rows, an unparseable stamp) is never
+ * "too soon". Non-finite or negative numbers count as 0 everywhere.
  */
 import { readPlannerHealth, type PlannerHealth } from './planner-failover.js';
 import { readReadySupply } from './ready-supply.js';
@@ -47,12 +55,14 @@ export interface PlannerAutorunInput {
   minGapMinutes?: number;
   /** Queued Phantom supply below which a pass is due. Default 24. */
   lowSupply?: number;
+  /** Critical floor: full lanes may not silence a readable queue under it. Default 6. */
+  supplyFloor?: number;
   /** Set by readPlannerAutorunInput when ready.tsv was missing or unreadable. */
   queueUnreadable?: boolean;
 }
 
 export type PlannerAutorunReason =
-  'low-supply' | 'enough-supply' | 'too-soon' | 'planner-failing' | 'orch-off' | 'no-free-slots';
+  'low-supply' | 'supply-floor' | 'enough-supply' | 'too-soon' | 'planner-failing' | 'orch-off' | 'no-free-slots';
 
 export interface PlannerAutorunDecision {
   v: 1;
@@ -68,6 +78,7 @@ export interface PlannerAutorunDecision {
 
 const DEFAULT_MIN_GAP_MINUTES = 25;
 const DEFAULT_LOW_SUPPLY = 24;
+const DEFAULT_SUPPLY_FLOOR = 6;
 
 /** "Non-finite or negative numbers count as 0." */
 const nonneg = (value: number): number => (Number.isFinite(value) && value > 0 ? value : 0);
@@ -81,6 +92,7 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
     ?? { status: 'unknown', failingSince: null, lastGoodPassAt: null, resetAt: null, reason: null };
   const phxReady = nonneg(input.phxReady);
   const lowSupply = input.lowSupply === undefined ? DEFAULT_LOW_SUPPLY : nonneg(input.lowSupply);
+  const supplyFloor = input.supplyFloor === undefined ? DEFAULT_SUPPLY_FLOOR : nonneg(input.supplyFloor);
   const minGap = input.minGapMinutes === undefined ? DEFAULT_MIN_GAP_MINUTES : nonneg(input.minGapMinutes);
   const freeSlots = (input.lanes ?? [])
     .filter((lane) => !lane.held)
@@ -101,7 +113,11 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
     return done(false, 'planner-failing',
       `The planner is already failing (${health.reason ?? 'no reason recorded'}), so another pass would pile onto a dead login.`);
   }
-  if (freeSlots === 0) {
+  // The leader's hand rule: full lanes must not starve a readable queue
+  // already under the critical floor — fall through to the supply and gap
+  // checks so a run lands on 'supply-floor'.
+  const floorEscape = freeSlots === 0 && !unreadable && phxReady < supplyFloor;
+  if (freeSlots === 0 && !floorEscape) {
     return done(false, 'no-free-slots',
       'No lane has a free slot — every lane is at target or held — so a new slate could not dispatch.');
   }
@@ -113,6 +129,10 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
   if (minutesSince !== null && minutesSince < minGap) {
     return done(false, 'too-soon',
       `The last pass is only ${minutesSince} minute(s) old, inside the ${minGap}-minute gap, so this tick skips.`);
+  }
+  if (floorEscape) {
+    return done(true, 'supply-floor',
+      `Only ${phxReady} Phantom jobs are queued — under the ${supplyFloor}-job critical floor — so a pass runs even with every lane full.`);
   }
   return done(true, 'low-supply', unreadable
     ? 'The ready queue was unreadable, so a pass runs rather than starving the lanes.'

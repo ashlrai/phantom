@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import type { FleetJobTextV1 } from '../../../../core/fleet/runs-job-texts.js';
 import { closesRefs, notesHeadline, notesPreview } from './job-notes-model.js';
 
-const notes: FleetJobTextV1 = { v: 1, job: 'RQ-PHX-FOO', kind: 'notes', state: 'ok', bytes: 10, truncated: false, text: 'First\nSecond\n\n' };
+const notes: FleetJobTextV1 = { v: 1, job: 'RQ-PHX-FOO', kind: 'notes', source: 'notes', state: 'ok', bytes: 10, truncated: false, text: 'First\nSecond\n\n' };
 
 it('finds distinct closing references in order without partial numbers or URLs', () => {
   expect(closesRefs('Closes #1234\nfixes: #7\nRESOLVES #1234\nCloses #12abc\nhttps://example.com/Closes#42')).toEqual([1234, 7]);

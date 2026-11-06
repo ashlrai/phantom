@@ -11,6 +11,10 @@ installation and serves this directory as static files. The ecosystem chart uses
 the checked-in `assets/star-history.js` snapshot
 and works when opened from disk. It never embeds a GitHub credential.
 `robots.txt`, `sitemap.xml`, and `llms.txt` list the public canonical pages for crawlers and AI agents.
+Every page under `docs/` is also served as Markdown at `/docs/<page>.md`, with
+`/docs/llms.txt` and `/docs/llms-full.txt`. These are generated at deploy time by
+`node scripts/generate-docs-llms.mjs --out site` into `site/docs/`, which is not
+checked in.
 
 ```sh
 open site/index.html

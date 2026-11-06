@@ -420,6 +420,12 @@ export function runtimeDependencyPackageNameFromPath(path: string): string {
   return first.startsWith('@') ? `${first}/${segments[start + 1] ?? ''}` : first;
 }
 
+function isPortablePackageMemberPath(value: unknown): value is string {
+  return isBoundedText(value) && !value.includes('\\') && !value.startsWith('/') &&
+    !/^[A-Za-z]:/u.test(value) &&
+    value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+
 function packageIsPortable(packageJson: Record<string, unknown>, files: string[], label: string): void {
   for (const field of ['os', 'cpu', 'libc', 'optionalDependencies']) {
     const value = packageJson[field];
@@ -490,9 +496,14 @@ function rootPackageIsPortable(
     'CHANGELOG.md',
     'bin',
     'dist',
+    'radar/sources.json',
     'docs/README.md',
+    'docs/SIGNALS.md',
+    'docs/FLEET-API.md',
     'docs/PHANTOM-BRAND.md',
     'docs/COMPANIONS.md',
+    'docs/CONNECTORS.md',
+    'docs/lanes/zai.md',
     'docs/MEMORY-FOUNDATION.md',
     'docs/MEMORY-EVALUATION.md',
     'docs/QUICKSTART.md',
@@ -507,6 +518,8 @@ function rootPackageIsPortable(
     'docs/STANDING-AUTHORITY.md',
     'docs/CLOUD.md',
     'docs/LEADER.md',
+    'docs/LEADER-NETWORK.md',
+    'docs/DISK-MAINT.md',
     'docs/DEVIN.md',
     'docs/VERSE-CONTEXT.md',
     'docs/VERSE-BROWSER.md',
@@ -527,6 +540,7 @@ function rootPackageIsPortable(
     'docs/UNIVERSE-RESEARCH.md',
     'docs/UNIVERSE-AUTONOMY-RESEARCH.md',
     'docs/NORTH-STAR.md',
+    'docs/model-registry.json',
     'docs/RESOURCE-POOLS.md',
     'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     'docs/RUNTIME_ACTIVATION_AUTHORITY.md',
@@ -537,6 +551,8 @@ function rootPackageIsPortable(
     'docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md',
     'schema',
     'scripts/run-verify-command.mjs',
+    'scripts/lib/docs-pages.mjs',
+    'scripts/lib/docs-pages.d.mts',
     'scripts/scorecard-history-worker.mjs',
     'scripts/local-app-transaction.mjs',
     // Fixed host imports for builtin custody; never admit the scripts directory
@@ -553,8 +569,10 @@ function rootPackageIsPortable(
     'scripts/run-verify-command.mjs',
   ];
   if (!Array.isArray(declaredFiles) || declaredFiles.length === 0 ||
-    declaredFiles.some((entry) => typeof entry !== 'string' || !allowedFiles.has(entry)) ||
-    new Set(declaredFiles).size !== declaredFiles.length ||
+    declaredFiles.some((entry) => !isPortablePackageMemberPath(entry) || !allowedFiles.has(entry)) ||
+    // Entries differing only in case resolve to one path on macOS and Windows.
+    new Set(declaredFiles.map((entry) =>
+      typeof entry === 'string' ? entry.toLowerCase() : entry)).size !== declaredFiles.length ||
     requiredFiles.some((entry) => !declaredFiles.includes(entry))) {
     throw new Error('release package files declaration is not portable');
   }
@@ -747,15 +765,14 @@ function normalizePackagedFiles(
     const path = value['path'];
     const size = value['size'];
     const mode = value['mode'];
-    if (!isBoundedText(path) || path.includes('\\') || path.startsWith('/') ||
-      path.split('/').some((segment) => !segment || segment === '.' || segment === '..') ||
+    if (!isPortablePackageMemberPath(path) ||
       !Number.isSafeInteger(size) || (size as number) < 0 || (size as number) > MAX_FILE_BYTES ||
       !Number.isSafeInteger(mode) || (mode !== 0o644 && mode !== 0o755) ||
-      seen.has(path)) {
+      seen.has(path.toLowerCase())) {
       throw new Error('npm pack file report is invalid');
     }
     output.push({ mode: mode as number, path, size: size as number });
-    seen.add(path);
+    seen.add(path.toLowerCase());
   }
   return output.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
 }

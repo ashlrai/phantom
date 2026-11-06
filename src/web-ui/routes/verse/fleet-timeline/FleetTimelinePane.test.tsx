@@ -7,7 +7,7 @@ import { FleetTimelinePane } from './FleetTimelinePane.js';
 
 const fixture: FleetRunsV1 = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
-  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, host: null,
   lanes: [
     { lane: 'codex', running: 2, target: 3, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null },
     { lane: 'devin', running: 0, target: 1, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null },

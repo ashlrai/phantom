@@ -8,7 +8,7 @@
 > releases do not require repeated Touch ID or browser approvals. Initial or
 > changed publisher bindings still require npm owner authentication.
 >
-> Complete exact-source hosted CI, independent Audit and trusted attestation
+> Both qualification profiles require exact-source hosted CI, independent Audit and trusted attestation
 > remain prerequisites. Native desktop finalization, signed asset publication,
 > installation and resident activation are separate steps. The frozen
 > `release.yml` and `promote.yml` procedures in the archive describe the historical
@@ -46,21 +46,74 @@ registry or installed-app status.
 
 ## Qualified CI build handoff
 
-Canonical admission requires complete successful exact-source hosted CI,
-independent Dependency Audit and trusted attestation. Local feedback and
-`prepublishOnly` do not replace those gates. The handoff reuses the original
-qualified JavaScript build and npm archive; it does not skip native signing,
-installation, Stop/drain, rollback or live acceptance.
+Canonical admission requires exact-source hosted qualification, independent
+Dependency Audit and trusted attestation. Local feedback and
+`prepublishOnly` do not replace those gates. Native signing, installation, Stop/drain, rollback
+and live acceptance remain separate.
 
-CI binds the candidate tree, runs every required whole-module partition and
-captures its actual report closure. Advisory impact-shadow artifacts are
-excluded from release evidence; unchanged inputs never inherit a passing result.
-After merging an identical default-branch tree, dispatch
-[Attest qualified CI build](../.github/workflows/attest-ci-build.yml) on `master`
-with the exact CI run, attempt, candidate SHA and producer artifact ID. The
-workflow checks fresh official job and artifact metadata, complete module
-coverage and original bytes before signing the handoff. It never executes
-downloaded candidate code.
+The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
+
+- Nightly at `3 9 * * *`, or manual dispatch with `release_gate=false`: retain
+  the exhaustive platform suites and the existing seven-day Mac rotation.
+  Failed jobs stay red and emit scrubbed `tier=work` repair lines in the
+  `phantom-fixup-queue` artifact. Router ingestion is a separate operation.
+- At `0,30 * * * *`, or manual dispatch with `release_gate=true`: reuse a
+  completed successful **push** CI run for the exact master SHA. The unsigned
+  preparation job reuses an immutable artifact for that source when available,
+  otherwise builds once with cached compiler inputs. The following one-minute
+  smoke job downloads that artifact, checks source/version/package identity,
+  parses the updater feed/manifest contract under canonical-v2 trust and
+  launches the native binary with `--release-smoke` in an isolated home.
+  Only a repeated HTTP 404 redirected to the observed latest tag, bracketed
+  by unchanged stable release metadata and independently complete zero-asset
+  inventories, permits a previous stocked feed. Partial releases, unknown or
+  malformed metadata, auth/rate-limit/server errors and observed races fail.
+  The scan must finish within ten 100-row pages; asset lists must stay below
+  a full page. Published release and asset identities must match the repository
+  and tag; draft rows are never admitted (GitHub may give them untagged URLs).
+  The selected prior release is rechecked before and after reading its bounded,
+  size/SHA256-matching, version-matched feed. The 60-second smoke budget remains.
+  Outputs `updater_live_http_status` and `updater_contract_source` and the step
+  summary distinguish live HTTP 200 from historical contract coverage while
+  the live endpoint remains HTTP 404. The unchanged parser/launch receipt does
+  not establish updater recovery, cryptographic publication verification or
+  installed acceptance; those remain separate gates. It never installs dependencies
+  or rebuilds. No current per-PR desktop producer exists; cold preparation,
+  hosted queueing, attestation and signing are outside the smoke budget.
+
+The fast handoff uses profile `fast-release-v1`. A successful hosted smoke job
+and its required steps select this profile; an artifact's own claim cannot.
+Qualification rechecks exact repository/run/attempt/SHA identities, artifact
+IDs and digests, the green push CI steps, and the hashed native smoke receipt
+and binary. The legacy exhaustive profile still requires every whole-module
+partition and report. Tests are neither skipped nor reclassified as passing.
+
+[Attest qualified CI build](../.github/workflows/attest-ci-build.yml) polls at
+`15,45 * * * *`. It selects a completed fast CI run for its exact source, or
+accepts manual exact CI run/attempt/candidate SHA/artifact ID inputs. Its
+trusted checkout verifies original bytes before signing the same `dist.tar`,
+`manifest.json` and `qualification.json` subjects. Downloaded candidate code
+never executes in the attestor.
+
+**Current limits:** the trusted tree must still equal the candidate tree, and
+finalization still requires the attestor revision to equal live master. Merges
+between preparation, attestation and signing can therefore defer a release.
+The host `release-autorun` consumer and published signed updater acceptance
+must be verified separately before claiming continuous release operation.
+The one-minute smoke timeout is a budget, not a measured hosted runtime.
+No test has been newly quarantined by this change; individual quarantine needs
+reproducible evidence and a linked issue in the existing ledger.
+
+### Patch cadence and notes
+
+The existing Release PR workflow evaluates new green master commits every
+30 minutes. `RELEASE_CADENCE_MINUTES` sets the minimum interval (5–1440 minutes;
+values below 30 are bounded by the timer's polling interval). It requests a
+patch bump, then synchronizes README, desktop and registry version carriers
+and the dated changelog in that release PR. Its existing guarded merge route
+remains required. Auto-tag retries every 30 minutes and only creates the tag
+and draft after the exact commit's required checks succeed. Signed publication
+then makes the complete updater feed visible; a draft is not an update.
 
 Keep all contents of the original `ashlr-attested-…` artifact together in a
 private directory. In a clean checkout at the exact candidate commit, verify:
@@ -104,6 +157,91 @@ Website promotion, provider sign-ins, spending permissions and resident fleet
 activation are separate verified operations. Neither this guide nor a version
 bump claims `phm.dev` was deployed. The legacy static site at `verse.ashlr.ai`
 is a separate surface.
+
+## Finalize a stocked Phantom draft
+
+The [stable finalizer](../.github/workflows/finalize-github-release.yml) accepts
+an exact Phantom version and a successful canonical npm run/attempt. It only
+publishes an existing draft after checking nonempty notes, the complete signed
+seven-asset desktop set, source identity and provenance. It neither creates a
+release nor uploads assets or changes npm. The normal sanctioned
+[`publish-desktop-release.mjs`](../scripts/publish-desktop-release.mjs) procedure
+already uploads and publishes; use this workflow for a complete draft left
+before that publisher's publication step. A public release is refused.
+
+[CONTRACT-M523](contracts/CONTRACT-M523.md) defines the evidence and authority.
+The inputs are `version`, `publish_run_id`, `publish_run_attempt`,
+`candidate_sha`, `candidate_integrity` and `confirm_stable_finalization`.
+The protected `github-stable-release-finalization` environment remains required.
+The preflight receipt expires after one hour; redispatch for fresh verification
+if approval is delayed beyond that window.
+For a reviewed, complete draft, set these shell variables to its actual
+verified evidence, then dispatch from the repository root:
+
+```sh
+jq -n --arg version "$version" \
+  --arg run "$publish_run_id" --arg attempt "$publish_run_attempt" \
+  --arg sha "$candidate_sha" --arg integrity "$candidate_integrity" \
+  '{version:$version, publish_run_id:$run, publish_run_attempt:$attempt,
+    candidate_sha:$sha, candidate_integrity:$integrity,
+    confirm_stable_finalization:true}' |
+  gh workflow run finalize-github-release.yml --repo ashlrai/phantom \
+    --ref master --json
+```
+
+The dispatch mutates the release only through the protected finalization job.
+Inspect the created run's JSON evidence receipts and postchecks before claiming
+publication. A failed postcheck requires reconciliation; do not replay a hand
+PATCH or change a tag. Never publish an empty draft with `gh release edit`, and
+never upload assets outside the sanctioned publisher. The publisher's refusal
+to touch a live feed must remain intact.
+
+The verified November 5, 2026 incident handoff records `v3.30.8` as already public
+and empty (release ID `435347257`), with the configured updater feed redirecting
+to a 404. Leave that release and tag as-is: no unpublish, reversal, tag move or
+hand asset upload. Recover on the next free patch; prefer `3.30.9` only after
+fresh npm, GitHub tag and release checks establish that it is available.
+The fast-gate smoke is repaired repo-side for this state: it verifies the newest
+stocked published feed only after a live HTTP 404 and authenticated metadata
+confirm that stable `releases/latest` has no feed asset. Inventory rows must
+have exact repository/tag URLs, valid bounded identities, timestamps and asset
+counts; a historical feed must report its selected release version. Other HTTP failures or
+a missing advertised asset remain failures. Historical contract verification
+does not establish that the configured live updater endpoint works; recovery
+still requires its post-publication HTTP 200 and signed-feed checks.
+Coordinate with `RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, which supersedes
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; this finalizer does not build
+or release desktop binaries and must not bypass signing or quarantine guards.
+The read-only Linux verifier checks signed metadata, archive bytes, trust and
+qualification identities, but does not reconstruct the hosted desktop bundle or
+run Apple `codesign` or launch checks. Desktop quarantine root-cause closure is
+an external prerequisite; this finalizer cannot certify it.
+
+This workflow replacement requires one `[SECURITY REVIEW]` PR with no
+auto-merge and Security pin review of the workflow/permissions diff. Workflow
+state is a separate GitHub setting. Only after the reviewed fixed YAML is on
+`master`, an authorized operator enables ID `350636007` and confirms `active`:
+
+```sh
+gh api repos/ashlrai/phantom/actions/workflows/350636007 \
+  --jq '{id,path,state}'
+gh workflow enable 350636007 --repo ashlrai/phantom
+gh api repos/ashlrai/phantom/actions/workflows/350636007 \
+  --jq '{id,path,state}'
+```
+
+These `gh api` reads return JSON; enable changes workflow state and must not run
+against the old disabled YAML. An uncommitted worktree handoff does not satisfy
+the merge or enable step.
+
+Updater recovery additionally requires actual fleet job ID/lane/start timestamp
+from sanctioned Mac read surfaces, sanctioned signed seven-asset publication
+after quarantine repair, and HTTP 200 after redirects from the configured
+`releases/latest/download/latest.json` with publisher-equivalent signature and
+provenance verification. File handoff, inbox messages, npm `latest` and GitHub
+release metadata are insufficient. Installed-app version/update and successful
+launch remain unverified until supported tooling is used with authorized Mac
+access. See the [complete evidence checklist](contracts/CONTRACT-M523.md#recovery-evidence).
 
 ## Supplemental and historical references
 

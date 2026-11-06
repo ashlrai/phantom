@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,6 +27,7 @@ beforeEach(async () => {
   previousHome = process.env['HOME'];
   previousRuns = process.env['ASHLR_RUNS_DIR'];
   process.env['HOME'] = root;
+  pairedTelegram(root, chat);
   process.env['ASHLR_RUNS_DIR'] = root;
   await mkdir(join(root, 'queue'));
   slots = join(root, 'queue', 'slots.json');

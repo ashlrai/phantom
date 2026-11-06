@@ -57,7 +57,7 @@ export function readLeaderPasses(snapshot: unknown, nowMs: number): {
     const age = ageMs === null ? '—' : formatDuration(ageMs);
     const eta = nextPassEta(ageMs === null ? null : nowMs - ageMs, nowMs);
     const dueText = ageMs === null ? 'no pass recorded' : etaText(eta);
-    const tone = eta.kind !== 'overdue' ? 'ok' : ageMs !== null && ageMs - LEADER_PASS_CADENCE_MS > 30 * 60_000 ? 'danger' : 'warning';
+    const tone: 'ok' | 'danger' | 'warning' = eta.kind !== 'overdue' ? 'ok' : ageMs !== null && ageMs - LEADER_PASS_CADENCE_MS > 30 * 60_000 ? 'danger' : 'warning';
     return { label, age, eta, dueText, tone };
   }) : [];
   const count = data.orchestratorAgents;

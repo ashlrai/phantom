@@ -228,6 +228,38 @@ export interface DaemonDrainSummary {
   fairnessDeferred?: boolean;
 }
 
+/**
+ * RQ-DAEMONTICK-UNBLOCK: settled status of one bounded tick phase.
+ * `timeout` means the phase exceeded its deadline and the tick stopped
+ * waiting (the underlying work may still be running detached); `degraded`
+ * means the phase threw or otherwise failed; `skipped` means the phase was
+ * intentionally not run (recorded reason in `error`, e.g. 'no-frontier');
+ * `running` appears only in in-progress snapshots, never in settled records.
+ */
+export type DaemonTickPhaseStatus = 'ok' | 'degraded' | 'timeout' | 'skipped' | 'running';
+
+/**
+ * One bounded phase of a daemon tick. METADATA ONLY — never carries secret
+ * values, diffs, or provider output; `error` is a short scrubbed reason.
+ */
+export interface DaemonTickPhase {
+  /** Phase label — e.g. 'backlog-refresh', 'invent', 'capacity', 'dispatch'. */
+  name: string;
+  status: DaemonTickPhaseStatus;
+  /** Wall-clock ms the tick spent inside the phase (deadline+grace on timeout). */
+  durationMs: number;
+  /** Short machine-safe error/detail string; absent for a clean 'ok'. */
+  error?: string;
+}
+
+/**
+ * RQ-DAEMONTICK-UNBLOCK: how the most recent tick ended, from the resident
+ * loop's point of view — `ok` every phase clean, `degraded` at least one
+ * phase threw, `timeout` at least one phase (or the tick itself) exceeded
+ * its deadline, `failed` tick() threw before producing a record.
+ */
+export type DaemonTickOutcome = 'ok' | 'degraded' | 'failed' | 'timeout';
+
 export interface DaemonTick {
   /** ISO timestamp the tick ran. */
   ts: string;
@@ -349,6 +381,13 @@ export interface DaemonTick {
   dispatches?: DaemonDispatchTrace[];
   /** M48: proposals auto-merged this tick via the M47 gate (omitted/0 when disabled). */
   merged?: number;
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: bounded phase ledger for this tick — which stage
+   * ran, how long it took, and whether it degraded/timed out/was skipped.
+   * Recorded by the recordTick funnel from the open tick's phase collector;
+   * absent on pre-existing records.
+   */
+  phases?: DaemonTickPhase[];
 }
 
 /**
@@ -369,6 +408,24 @@ export interface DaemonState {
   startedAt: string | null;
   /** ISO timestamp of the most recent tick, or null. */
   lastTickAt: string | null;
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: how the most recent tick ended. Written by the
+   * resident loop's guaranteed post-tick persistence — which always stamps
+   * `lastTickAt` even when tick() throws or is abandoned at its deadline.
+   */
+  lastTickOutcome?: DaemonTickOutcome;
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: the last tick's phase ledger (same shape as
+   * `DaemonTick.phases`). A `running` entry marks the phase in flight when
+   * the tick was abandoned at the overall deadline.
+   */
+  lastTickPhases?: DaemonTickPhase[];
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: short scrubbed reason when the last tick did not
+   * end 'ok' (phase error, thrown message, or deadline marker). null is a
+   * clean tick; absent on pre-existing state.
+   */
+  lastTickError?: string | null;
   /** Calendar day (YYYY-MM-DD) the spend counters apply to; null until first tick. */
   todayDate: string | null;
   /** Estimated USD spent so far today; reset when todayDate rolls over. */

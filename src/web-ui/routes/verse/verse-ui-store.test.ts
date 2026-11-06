@@ -59,7 +59,7 @@ beforeEach(() => {
 describe('sections', () => {
   it('puts the six surfaces on the rail in ⌘1–⌘6 order and the rest in the tray', () => {
     expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(['command', 'fleet', 'growth', 'mind', 'chat', 'agents']);
-    expect(TRAY_SECTIONS.map((s) => s.id)).toEqual(['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops']);
+    expect(TRAY_SECTIONS.map((s) => s.id)).toEqual(['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops', 'live']);
     for (const entry of VERSE_SECTIONS) expect(entry.module).toMatch(/Section$/);
   });
 
@@ -134,10 +134,10 @@ describe('v2 → v3 migration', () => {
 });
 
 describe('launch rule', () => {
-  it('starts a fresh install in Chat without changing dispatch or permission state', () => {
+  it('starts a fresh install in Home without changing dispatch or permission state', () => {
     reloadVerseUiForTest({ now: NOON, landed: EVERYTHING_LANDED });
-    expect(getVerseUiState().section).toBe('chat');
-    expect(stored()).toMatchObject({ version: 3, section: 'chat' });
+    expect(getVerseUiState().section).toBe('live');
+    expect(stored()).toMatchObject({ version: 3, section: 'live' });
   });
   it('preserves the last surface across daily launches', () => {
     localStorage.setItem(VERSE_UI_STORAGE_KEY, JSON.stringify({ version: 3, section: 'chat', lastLaunchDay: '2026-09-23' }));
@@ -264,7 +264,7 @@ describe('the v3 blob', () => {
     );
     reloadVerseUiForTest({ now: NOON, landed: EVERYTHING_LANDED });
     expect(getVerseUiState()).toMatchObject({
-      section: 'chat',
+      section: 'live',
       sidebarWidth: VERSE_SIDEBAR.def,
       recentChats: ['ok'],
       recentActions: [],

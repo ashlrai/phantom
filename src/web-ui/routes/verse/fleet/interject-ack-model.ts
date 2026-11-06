@@ -71,3 +71,31 @@ export function loadDraft(storage: Pick<Storage, 'getItem'>): string {
 export function saveDraft(storage: Pick<Storage, 'setItem' | 'removeItem'>, text: string): void {
   try { if (text) storage.setItem(DRAFT_KEY, text); else storage.removeItem(DRAFT_KEY); } catch { /* Storage can be unavailable. */ }
 }
+
+export const PENDING_ACK_KEY = 'phantom.interject.pendingAck';
+const PENDING_ACK_MAX_ID = 200;
+const PENDING_ACK_MAX_FUTURE_MS = 60_000;
+export function savePendingAck(storage: Pick<Storage, 'setItem' | 'removeItem'>, pending: { id: string; sentAtMs: number } | null): void {
+  try {
+    if (pending) storage.setItem(PENDING_ACK_KEY, JSON.stringify({ v: 1, id: pending.id, sentAtMs: pending.sentAtMs }));
+    else storage.removeItem(PENDING_ACK_KEY);
+  } catch { /* Storage can be unavailable. */ }
+}
+export function loadPendingAck(storage: Pick<Storage, 'getItem' | 'removeItem'>, nowMs: number, giveUpMs: number):
+  { id: string; sentAtMs: number; remainingMs: number } | null {
+  try {
+    const raw = storage.getItem(PENDING_ACK_KEY);
+    if (raw === null) return null;
+    let value: unknown = null;
+    try { value = JSON.parse(raw); } catch { /* Malformed records are dropped below. */ }
+    const record = value as { v?: unknown; id?: unknown; sentAtMs?: unknown } | null;
+    if (record && typeof record === 'object' && record.v === 1
+      && typeof record.id === 'string' && record.id.length > 0 && record.id.length <= PENDING_ACK_MAX_ID
+      && typeof record.sentAtMs === 'number' && Number.isFinite(record.sentAtMs)
+      && record.sentAtMs - nowMs <= PENDING_ACK_MAX_FUTURE_MS && nowMs - record.sentAtMs < giveUpMs) {
+      return { id: record.id, sentAtMs: record.sentAtMs, remainingMs: giveUpMs - (nowMs - record.sentAtMs) };
+    }
+    storage.removeItem(PENDING_ACK_KEY);
+    return null;
+  } catch { return null; }
+}

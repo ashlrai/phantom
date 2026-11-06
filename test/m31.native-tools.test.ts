@@ -10,6 +10,7 @@ import { readFileSync, mkdirSync, writeFileSync, existsSync, mkdtempSync, realpa
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { contractedNativeToolNames } from './helpers/native-tool-contract.js';
 import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 import {
   nativeToolDefs,
@@ -57,47 +58,7 @@ function resultText(r: { content: { type: 'text'; text: string }[] }): string {
 describe('native tool registry', () => {
   it('exposes the contracted native tools', () => {
     const names = nativeToolDefs().map((t) => t.name).sort();
-    expect(names).toEqual(
-      [
-        'ashlr_ask',
-        'ashlr_backlog',
-        'ashlr_browser_task',
-        'ashlr_comms',
-        'ashlr_desktop_open',
-        'ashlr_fleet_status',
-        'ashlr_health',
-        'ashlr_impact',
-        'ashlr_inbox_list',
-        'ashlr_inbox_propose',
-        'ashlr_learn',
-        'ashlr_north_star',
-        'ashlr_orient',
-        'ashlr_oversight',
-        'ashlr_pulse',
-        'ashlr_racing',
-        'ashlr_recall',
-        'ashlr_routing',
-        'ashlr_scorecard',
-        'ashlr_self_heal',
-        'ashlr_status',
-        'ashlr_website_publish',
-        'ashlr_website_status',
-        'phantom_fleet_graph',
-        'phantom_fleet_session',
-        'phm_proactive_agents_list',
-        'phm_proactive_agents_create',
-        'phm_proactive_agents_update',
-        'phm_proactive_agents_delete',
-        'phm_task_context',
-        'phm_team_claim',
-        'phm_team_context_add',
-        'phm_team_context_get',
-        'phm_team_handoff',
-        'phm_team_publish',
-        'phm_team_register',
-        'phm_team_view',
-      ].sort(),
-    );
+    expect(names).toEqual(contractedNativeToolNames);
   });
 
   it('every tool has a valid object inputSchema and a safety class', () => {

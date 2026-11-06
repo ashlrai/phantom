@@ -16,6 +16,7 @@ const SHOWN_STEPS = 10;
 const REPO = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+// eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
 const safeText = (value: string): string => scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 100);
 
 export function validCiPublishInput(repo: string, run: string, to: string): boolean {

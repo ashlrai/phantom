@@ -9,8 +9,8 @@
  * 3. Every backticked id in the doc table rows exists in code.
  * 4. Every source file path listed in the table exists on disk.
  */
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = join(__dirname, "..");
@@ -39,6 +39,38 @@ function collectPanesFromCode(): Set<string> {
     const idMatch = src.match(/id:\s*'([a-z-]+)'/);
     if (idMatch) {
       ids.add(idMatch[1]);
+      continue;
+    }
+
+    // Imported pane-id constant: terminal.pane.tsx registers
+    // `id: TERMINAL_PANE_ID`, whose stable value lives in
+    // ../dock/terminal-id.ts so the lazy registration and the ⌘K commands
+    // share one spelling. Resolve the import to its declaration.
+    const idConstMatch = src.match(/\bid:\s*([A-Z][A-Z0-9_]*)\b/);
+    if (idConstMatch) {
+      const name = idConstMatch[1];
+      const importMatch = src.match(
+        new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from\\s*'([^']+)'`),
+      );
+      expect(importMatch, `Cannot find pane id import ${name} in ${rel}`).not.toBeNull();
+      if (importMatch) {
+        const depBase = join(dirname(abs), importMatch[1].replace(/\.js$/, ''));
+        let resolved = false;
+        for (const ext of ['.ts', '.tsx']) {
+          if (existsSync(`${depBase}${ext}`)) {
+            const dep = readFileSync(`${depBase}${ext}`, 'utf-8');
+            const decl = dep.match(
+              new RegExp(`export\\s+const\\s+${name}\\s*=\\s*'([a-z-]+)'`),
+            );
+            if (decl) {
+              ids.add(decl[1]);
+              resolved = true;
+              break;
+            }
+          }
+        }
+        expect(resolved, `Cannot resolve pane id ${name} in ${rel}`).toBe(true);
+      }
     }
   }
   return ids;
@@ -73,7 +105,7 @@ function collectIdsFromDoc(text: string): Set<string> {
 function collectSourcePathsFromDoc(text: string): string[] {
   const paths: string[] = [];
   // Regex literal — \/ is a forward slash, \` and ` are literal backticks
-  const pathRegex = /`src\/web-ui\/routes\/verse\/[a-z0-9\/_-]+\.pane\.tsx`/g;
+  const pathRegex = /`src\/web-ui\/routes\/verse\/[a-z0-9/_-]+\.pane\.tsx`/g;
   let match: RegExpExecArray | null;
   while ((match = pathRegex.exec(text)) !== null) {
     paths.push(match[0].replace(/^`|`$/g, ""));

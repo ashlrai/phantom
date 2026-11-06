@@ -51,7 +51,7 @@ const MISSING_RUNS: FleetRunsV1 = {
   v: 1,
   generatedAt: '2026-10-31T00:00:00.000Z',
   sources: { runsDir: 'missing', workers: 'missing', inbox: 'missing', codex: 'missing', merges: 'missing' },
-  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, host: null,
   lanes: [], workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [],
   mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
@@ -86,10 +86,6 @@ const KNOWN_FAILURES = new Map<string, string>([
   // prefers ApiError.detail, which is the gate's bare { error: 'not found' }).
   ['checks/all-404', 'pane renders only the raw server string "not found" (9 visible chars) — BRIDGE_NOTES.md'],
   ['checks/missing-runs-dir', 'pane renders only the raw server string "not found" (9 visible chars) — BRIDGE_NOTES.md'],
-  // FleetBriefPane interpolates mergesLastHour.count verbatim, printing the
-  // literal "null" in "Merged last hour: null" when the runs payload reports
-  // null (its honest missing-fleet shape).
-  ['fleet-brief/missing-runs-dir', 'shows literal "null" in "Merged last hour: null" — BRIDGE_NOTES.md'],
 ]);
 
 /** Visible text, skipping anything hidden by attribute or computed style (every-pane-sweep's measure). */

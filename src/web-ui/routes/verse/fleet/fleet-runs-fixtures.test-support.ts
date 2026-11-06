@@ -12,7 +12,7 @@ export function fleetRunsFixture(overrides?: Partial<FleetRunsV1>): FleetRunsV1 
     generatedAt: '2026-10-31T05:00:00.000Z',   v: 1,
     sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
     lastTick: '2026-10-31T05:00:00.000Z', paused: false, memFreePct: null, diskFreeGb: null,
-    switches: ['run:restart', 'merge:flush'],
+    switches: ['run:restart', 'merge:flush'], claudeLane: null, host: null,
     lanes: [
       { lane: 'codex-personal', running: 3, target: 4, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: 12, mergeRate24h: 0.5 },
       { lane: 'devin',          running: 1, target: 2, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h:  5, mergeRate24h: 0.3 },

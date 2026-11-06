@@ -71,7 +71,7 @@ describe('knowledge context-pack Markdown (RQ-PHX-PACKMARKDOWNRECUT31)', () => {
     ['--markdown', '--report'], ['--report', '--markdown'],
     ['--markdown', '--require-upstream'], ['--require-upstream', '--markdown'],
     ['--markdown', '--markdown'],
-  ])('rejects incompatible flags %j before reading the snapshot', async (...flags) => {
+  ])('rejects incompatible flags %j before reading the snapshot (%#)', async (...flags) => {
     const input = new Readable({ read() { throw new Error('unexpected read'); } });
     expect(await runKnowledgeContextPack(['--stdin', ...flags], input)).toBe(2);
     expect(input.readableDidRead).toBe(false);

@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 /**
  * M147 — Telegram Bot API comms transport
  *
@@ -23,7 +24,7 @@
  * fs operations use a tmp HOME (h1-fixture pattern).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,7 +53,6 @@ vi.mock('node:https', () => {
       if (_strictHttpPaths && (opts.hostname !== 'api.telegram.org' || opts.method !== 'POST' || !_strictHttpPaths.has(opts.path))) {
         throw new Error('Unexpected HTTPS fixture request');
       }
-      const chunks: Buffer[] = [];
       let body = '';
 
       // Fake IncomingMessage
@@ -104,7 +104,7 @@ vi.mock('node:https', () => {
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 
-import { makeCfg, makeFixture } from './helpers/h1-fixture.js';
+import { makeCfg } from './helpers/h1-fixture.js';
 import {
   sendTelegramMessage,
   pollTelegramUpdates,
@@ -121,7 +121,6 @@ import {
   postRequest,
   listRequests,
   markSent,
-  resolveRequest,
   outstanding,
 } from '../src/core/comms/requests.js';
 import { runCommsCycle, registerResolutionHandler } from '../src/core/comms/dispatch.js';
@@ -197,6 +196,7 @@ function makeTextUpdate(updateId: number, text: string, chatId = CHAT_ID) {
         message: {
           message_id: 1,
           chat: { id: Number(chatId), type: 'private' },
+          from: { id: Number(chatId), is_bot: false },
           text,
         },
       },
@@ -218,10 +218,12 @@ function makeCallbackUpdate(
         update_id: updateId,
         callback_query: {
           id: queryId,
+          from: { id: Number(chatId), is_bot: false },
           data: callbackData,
           message: {
             message_id: 1,
             chat: { id: Number(chatId), type: 'private' },
+          from: { id: Number(chatId), is_bot: false },
           },
         },
       },
@@ -257,6 +259,7 @@ beforeEach(() => {
   _prevHome = process.env.HOME;
   _tmpHome = mkdtempSync(join(tmpdir(), 'ashlr-m147-'));
   process.env.HOME = _tmpHome;
+  pairedTelegram(_tmpHome, Number(CHAT_ID));
 });
 
 afterEach(() => {
@@ -699,6 +702,7 @@ describe('pollTelegramUpdates', () => {
           message: {
             message_id: 1,
             chat: { id: Number(CHAT_ID), type: 'private' },
+            from: { id: Number(CHAT_ID), is_bot: false },
             text: '1',
           },
         },
@@ -706,10 +710,12 @@ describe('pollTelegramUpdates', () => {
           update_id: 301,
           callback_query: {
             id: 'cbq-002',
+            from: { id: Number(CHAT_ID), is_bot: false },
             data: 'req-zzz:2',
             message: {
               message_id: 2,
               chat: { id: Number(CHAT_ID), type: 'private' },
+            from: { id: Number(CHAT_ID), is_bot: false },
             },
           },
         },

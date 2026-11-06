@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+/* global AbortController */
 import { spawn } from 'node:child_process';
+import { setTimeout, clearTimeout } from 'node:timers';
 import { setTimeout as delay } from 'node:timers/promises';
 import { performance } from 'node:perf_hooks';
 

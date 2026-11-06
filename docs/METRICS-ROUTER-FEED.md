@@ -85,6 +85,9 @@ included; no current timestamp, path, job ID or PR is copied into output.
 Identical input bytes produce identical output bytes. Reordering records
 changes source digests but not the rollup values.
 
+Top-level fields: `schemaVersion`, `kind: "router-metrics"`, `readOnly: true`,
+`sources`, `overall`, `lanes`, `tiers`, `laneTiers`, `priors`.
+
 Completed jobs are merged, empty, failed or cancelled. Incomplete jobs remain
 visible in `jobs` and `incompleteJobs`, but their partial tokens and outcomes
 are excluded from every completed-job metric.
@@ -116,11 +119,14 @@ statistical significance claim is added.
 ## Router integration boundary
 
 `priors` exposes the objective `mergedImpactPerToken` with completed, merged
-and empty counts per lane and tier. `laneTiers` provides joint evidence when
-lane and tier observations are correlated. Consumers can use these counts for
-bandit priors and known efficiency as an LP objective coefficient, after their
-own evidence admission and exploration policy. Null evidence is an unknown
-arm, not a zero-reward arm. Compare scores only when impact units match.
+and empty counts per lane and tier. The `priors` object carries `basis`,
+`operationalSteering`, `objective`, `lanes` and `tiers` arrays. Each prior
+element has `key`, `completedJobs`, `mergedPRs`, `emptyJobs` and
+`mergedImpactPerToken`. `laneTiers` provides joint evidence when lane and tier
+observations are correlated. Consumers can use these counts for bandit priors
+and known efficiency as an LP objective coefficient, after their own evidence
+admission and exploration policy. Null evidence is an unknown arm, not a
+zero-reward arm. Compare scores only when impact units match.
 
 This checkout has no queue bandit/LP consumer. The predecessor
 RQ-PACE-GROK-BURN at local commit `60975653` also exports advisory pacing only;

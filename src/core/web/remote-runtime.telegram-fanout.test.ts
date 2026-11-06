@@ -14,6 +14,11 @@ vi.mock('../config.js', async (original) => ({
   loadConfigReadOnly: () => ({ comms: { enabled: true, channel: 'telegram', telegram: { chatId: '12345', botToken: 'fake-token-123' } } }),
 }));
 vi.mock('../integrations/telegram.js', () => ({ sendTelegramMessage: mocks.telegram }));
+// The fan-out contract does not depend on real asynchronous email-config I/O.
+vi.mock('../fleet/operator-glance-read.js', async (original) => ({
+  ...await original<typeof import('../fleet/operator-glance-read.js')>(),
+  writeSignificantEmail: vi.fn(async () => undefined),
+}));
 vi.mock('./server.js', () => ({ assetsDir: () => mocks.assets }));
 vi.mock('./remote-device-store.js', () => ({ createRemoteDeviceStore: () => ({}) }));
 vi.mock('./remote-pairing.js', () => ({ createRemotePairing: () => ({}) }));
@@ -38,7 +43,7 @@ describe('remote runtime Telegram fan-out', () => {
     } }), { mode: 0o600 });
     let held = false;
     vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.endsWith('/fleet/runs') ? {
-      mergesLastHour: { items: [] }, lanes: [{ lane: 'codex-personal', held, heldReason: held ? 'usage_limit' : null }], claudeLane: 'up',
+      mergesLastHour: { items: [] }, lanes: [{ lane: 'codex-personal', held: false, heldReason: null }], claudeLane: held ? 'down' : 'up',
     } : { cursor: 'c1', needsYou: [], completions: [],
       sources: Object.fromEntries(NEEDS_YOU_SOURCES.map((source) => [source, 'ok'])) })));
     vi.useFakeTimers();
@@ -48,9 +53,9 @@ describe('remote runtime Telegram fan-out', () => {
       await vi.advanceTimersByTimeAsync(0);
       held = true;
       await vi.advanceTimersByTimeAsync(15_000);
-      expect(mocks.push).toHaveBeenCalledExactlyOnceWith('fleet-lane-held', { detail: 'codex-personal: usage_limit' });
+      expect(mocks.push).toHaveBeenCalledExactlyOnceWith('fleet-lane-held', { detail: 'claude: down' });
       expect(mocks.telegram).toHaveBeenCalledOnce();
-      expect(mocks.telegram.mock.calls[0]?.[0]).toBe('Fleet: lane codex-personal held — usage_limit');
+      expect(mocks.telegram.mock.calls[0]?.[0]).toBe('Claude lane is down. It needs you.');
     } finally {
       await runtime?.close();
       rmSync(root, { recursive: true, force: true });

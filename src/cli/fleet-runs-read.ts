@@ -128,6 +128,8 @@ function formatParked(state: FleetQueueV1): string {
     `Total: ${state.total}; ready: ${state.ready}; parked: ${state.parked}; malformed: ${state.malformed}`,
     ...state.byLane.map(lane => `${lane.lane}: ${lane.ready} ready, ${lane.parked} parked`),
     ...state.groups.map(group => `${group.reason} (${value(group.lane)}): ${group.count} [${group.jobs.join(', ')}]`),
+    ...((state.unmetDeps ?? []).map(row =>
+      `UNMET-DEP ${row.job} (${value(row.lane)}): ${row.unmet.join(', ')}`)),
     `Precheck skips last 24h: ${value(state.skipsLast24h)}`,
     ...state.skips.map(skip => `${skip.at} ${skip.job} ${skip.code}: ${skip.reason}`),
   ].join('\n');
@@ -147,7 +149,7 @@ const SAMPLE_MAX = 200;
 const SAMPLE_ROW_KEYS: Record<Verb, readonly string[]> = {
   runs: ['lanes', 'claimed', 'publishesLastHour', 'events'],
   journal: ['notes', 'passes', 'ingest', 'ingested'],
-  parked: ['byLane', 'nextUp', 'groups', 'skips'],
+  parked: ['byLane', 'nextUp', 'groups', 'unmetDeps', 'skips'],
 };
 const ISO_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
@@ -163,14 +165,14 @@ function newestFirst(rows: readonly unknown[]): unknown[] {
 }
 
 /** Cap each emitted row collection to its newest `n` rows; `truncated` reports rows cut by the bound. */
-function boundSample<T extends object>(state: T, verb: Verb, n: number): T & { sampled: number; truncated: boolean } {
+function boundSample<T extends object>(state: T, verb: Verb | string, n: number): T & { sampled: number; truncated: boolean } {
   let truncated = false;
   const capped = { ...(state as Record<string, unknown>) };
   const take = (key: string, rows: unknown[]): void => {
     if (rows.length > n) truncated = true;
     capped[key] = newestFirst(rows).slice(0, n);
   };
-  for (const key of SAMPLE_ROW_KEYS[verb]) {
+  for (const key of SAMPLE_ROW_KEYS[verb as Verb] ?? []) {
     const rows = capped[key];
     if (Array.isArray(rows)) take(key, rows);
   }
@@ -186,7 +188,14 @@ function boundSample<T extends object>(state: T, verb: Verb, n: number): T & { s
 }
 
 /** Read only the host's standard runs directory; callers cannot supply paths. */
-export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
+export async function cmdFleetRunsRead(verb: Verb | string, args: string[] = [], deps: Readers = readers, watchOptions: WatchOptions = {}): Promise<number> {
+  // `fleet runs-read <rest>` reaches this export through registry convention:
+  // the rest args land in `verb`'s slot and `args` stays unset. The named
+  // runs/journal/parked entry points already pass both parameters.
+  if (!Array.isArray(args)) {
+    args = Array.isArray(verb) ? verb : [];
+    verb = 'runs-read';
+  }
   const usage = `Usage: phm fleet ${verb} [--json] [--help]${verb === 'journal' ? ' [--rejections-only]' : ' [--lane <lane>]'} [--sample <1..${SAMPLE_MAX}>] [--watch] [--interval-ms <1000..60000>]${verb === 'runs' ? ' [--check-ready | --wait-ready --lane <lane> --timeout-ms <1..3600000>]' : ''}`;
   const seen = new Set<string>();
   let lane: string | undefined;
@@ -282,7 +291,8 @@ export async function cmdFleetRunsRead(verb: Verb, args: string[], deps: Readers
       if (lane === undefined) emit(state, formatParked);
       else {
         const filtered = { ...state, byLane: state.byLane.filter(row => row.lane === lane),
-          groups: state.groups.filter(row => row.lane === lane), skips: [],
+          groups: state.groups.filter(row => row.lane === lane),
+          unmetDeps: (state.unmetDeps ?? []).filter(row => row.lane === lane), skips: [],
           laneFilter: { lane: sanitizePublicJson(lane), global: ['sources', 'total', 'ready', 'parked', 'malformed', 'skipsLast24h'], omitted: ['skips'] } };
         emit(filtered, formatParked, `Lane filter: ${filtered.laneFilter.lane}; totals and source health are global; unattributed skips omitted\n`);
       }

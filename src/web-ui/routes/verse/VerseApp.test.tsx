@@ -40,6 +40,8 @@ import {
 } from './verse-ui-store.js';
 
 function mount() {
+  // Shell interaction scenarios start from Chat; Home launch is covered by the store tests.
+  if (getVerseUiState().section === 'live') setVerseSection('chat');
   return render(<ToastProvider><VerseApp /></ToastProvider>);
 }
 
@@ -216,7 +218,7 @@ describe('work intents', () => {
 });
 
 describe('the rail', () => {
-  it('shows the five surfaces in ⌘1–⌘5 order and mounts Chat first', async () => {
+  it('shows the five surfaces in ⌘1–⌘5 order and restores the Chat workspace', async () => {
     mount();
     const buttons = within(rail()).getAllByRole('button').filter((b) => b.hasAttribute('data-section'));
     expect(buttons.map((b) => b.getAttribute('data-section'))).toEqual(RAIL_SECTIONS.map((s) => s.id));

@@ -55,6 +55,8 @@ const DYNAMIC = [
   // The tour's store and the tour: the gate reads the one and loads the other.
   './onboarding/OnboardingGate.js',
   './shell/RailStatus.js',
+  // The window title follows the fleet badge, which first paint does not read.
+  './shell/WindowTitle.js',
   // The after-first-paint warm-up (review 3.10.1): the idle gate, the step
   // list and — one import() further in — the surfaces' query table. Only a
   // few-line trigger (prefetchAfterFirstPaint) is on the first-paint path;
@@ -75,6 +77,8 @@ const LAZY_ONLY = [
   './growth/adoption-model.js',
   ...DYNAMIC,
   './shell/palette-model.js',
+  // The CI item's copy and builder; first paint only counts (ci-runs-facts.js).
+  './shell/ci-needs-you.js',
   // The palette's half of the catalog; first paint matches keys with command-keys.ts.
   './shell/command-catalog.js',
   // Reached only through ./onboarding/OnboardingGate.js.
@@ -180,6 +184,9 @@ const FIRST_PAINT_ROOTS = ['web-ui/main.tsx', 'web-ui/app/VerseConsoleApp.tsx', 
  * loaded with import() (or preloaded) by whoever needs it; the note says who.
  */
 const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
+  'web-ui/routes/verse/sections/useAutoSelfUpdate.ts': 'ShellUpdates loads the background update observer after shell paint',
+  'web-ui/routes/verse/shell/self-update-badge.ts': 'ShellUpdates and GearUpdateDot load the update observer lazily',
+
   'web-ui/routes/verse/verse-transcript.ts': 'transcript derivation — workspace/dock only (verse-store must not import it back)',
   'web-ui/routes/verse/useVerseTranscript.ts': 'transcript hook — workspace/dock only',
   'web-ui/routes/verse/Workspace.tsx': 'ChatSection preloads it',
@@ -195,7 +202,7 @@ const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
   'web-ui/routes/verse/NewChatDialog.tsx': 'opens on request',
   'web-ui/routes/verse/verse-model.ts': 'ChatSection preloads the seat lookups',
   'core/verse/context-math.ts': 'verse-store uses compaction-point.ts instead',
-  'web-ui/routes/verse/chat/composer-state.ts': 'first-paint callers use composer-memory.ts',
+  'web-ui/routes/verse/chat/composer-state.ts': 'first-paint callers use composer-forget.ts / composer-wipe.ts',
   'web-ui/components/auth/SessionGate.tsx': 'VerseConsoleApp loads it while the probe runs',
   'web-ui/components/auth/MutationTokenDialog.tsx': 'preloaded by ChatSection and guarded-action',
   'web-ui/components/primitives/Dialog.tsx': 'preloaded by ChatSection',
@@ -233,7 +240,8 @@ describe('the chat first-paint static closure (whole graph)', () => {
       'web-ui/routes/verse/VerseApp.tsx',
       'web-ui/routes/verse/verse-store.ts',
       'core/verse/compaction-point.ts',
-      'web-ui/routes/verse/chat/composer-memory.ts',
+      'web-ui/routes/verse/chat/composer-forget.ts',
+      'web-ui/routes/verse/chat/composer-wipe.ts',
       'web-ui/routes/verse/rail-icons.tsx',
       'web-ui/components/primitives/icon-base.tsx',
       'web-ui/routes/verse/shell/anchor-requests.ts',

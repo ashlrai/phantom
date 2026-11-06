@@ -12,10 +12,9 @@
  * held / held_reason / held_by / held_until. held_by 'autobackoff' is the
  * fleet's own hold — software may release it. ANY other held_by is a hold a
  * person placed: the dispatcher never touches it and neither does this route
- * ('manual-hold'). Releasing sets held false — it stays a boolean because
- * this file's own source() checks (and readLaneTargets) require `held` on
- * every row; deleting it would make the rewrite unreadable to the very
- * surface that reports it — drops the three attribution keys, and stamps
+ * ('manual-hold'). Releasing explicitly sets held false, preserving the
+ * boolean representation of a previously held row (older unheld dispatcher
+ * rows may omit it), drops the three attribution keys, and stamps
  * last_change plus unheld_by, whose trailing ISO is how readLaneTargets
  * attributes the change.
  */
@@ -24,7 +23,7 @@ import { lstat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { LANE_ID_RE, readLaneTargets, type LaneTargetsOptions, type LaneTargetsV1 } from './runs-lane-targets.js';
+import { GLOBAL_SLOT_KEYS, LANE_ID_RE, readLaneTargets, type LaneTargetsOptions, type LaneTargetsV1 } from './runs-lane-targets.js';
 
 export const VERSE_FLEET_CONTROL_HOLDS_PATH = '/api/verse/fleet/control/holds';
 export interface LaneHoldOptions extends LaneTargetsOptions { reason?: string }
@@ -83,7 +82,13 @@ async function source(opts: LaneHoldOptions) {
   const lanes = Object.hasOwn(raw, 'lanes') ? raw.lanes : raw;
   if (!object(lanes)) throw new LaneHoldError('unavailable');
   for (const [lane, row] of Object.entries(lanes)) {
-    if (!LANE_ID_RE.test(lane) || !object(row) || !integer(row.target) || !integer(row.floor) || !integer(row.ceiling) || row.floor > row.ceiling || typeof row.held !== 'boolean') throw new LaneHoldError('unavailable');
+    if (GLOBAL_SLOT_KEYS.has(lane)) {
+      if (lane === 'last_change_by' && typeof row !== 'string') throw new LaneHoldError('unavailable');
+      continue;
+    }
+    // Legacy unheld rows omit the flag; explicitly malformed flags stay denied.
+    if (!LANE_ID_RE.test(lane) || !object(row) || !integer(row.target) || !integer(row.floor) || !integer(row.ceiling) || row.floor > row.ceiling ||
+        (Object.hasOwn(row, 'held') && typeof row.held !== 'boolean')) throw new LaneHoldError('unavailable');
   }
   return { queue, path, raw, lanes: lanes as Record<string, Record<string, unknown>> };
 }

@@ -126,7 +126,7 @@ export async function runChannelAckReplay(args: readonly string[], deps: Channel
       acknowledgements.length === 2 &&
       acknowledgements[0]?.channel === 'desktop' && acknowledgements[0]?.status === 'accepted' &&
       acknowledgements[1]?.channel === 'telegram' && acknowledgements[1]?.status === 'duplicate' &&
-      inbox.entries.length === 1 && entry?.source === 'desktop' && entry?.text === FAKE_BODY;
+      inbox.entries.length === 1 && entry?.channel === 'desktop' && entry?.text === FAKE_BODY;
     return finish({
       verified,
       runsDir: dir,
@@ -134,7 +134,7 @@ export async function runChannelAckReplay(args: readonly string[], deps: Channel
       acknowledgements,
       sameDedupeKey,
       inboxEntries: inbox.entries.length,
-      entrySource: entry?.source ?? null,
+      entrySource: entry?.channel ?? null,
     }, verified ? 0 : 1);
   } catch {
     return finish({ error: 'Unable to complete the demonstration.' }, 1);

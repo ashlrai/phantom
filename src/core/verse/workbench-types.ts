@@ -53,7 +53,7 @@ export type WorkbenchSurfaceId = (typeof WORKBENCH_SURFACES)[number];
  * on, not a live surface. Ops is the desktop command center: the board, the
  * router's choices, releases and the leaders' channel, watched not worked.
  */
-export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops'] as const;
+export const WORKBENCH_TRAY_SECTIONS = ['settings', 'apps', 'usage', 'wiki', 'playbooks', 'automations', 'ops', 'live'] as const;
 export type WorkbenchTraySectionId = (typeof WORKBENCH_TRAY_SECTIONS)[number];
 
 export type WorkbenchSectionId = WorkbenchSurfaceId | WorkbenchTraySectionId;
@@ -1597,6 +1597,10 @@ export const WORKBENCH_ROUTE_FAMILIES = [
     prefixes: ['/api/verse/fleet/live'],
   },
   { id: 'fleet-runs', owner: 'desktop-command', module: 'src/core/verse/fleet-runs-api.ts', handler: 'handleFleetRunsApi', prefixes: ['/api/verse/fleet/runs'] },
+  { id: 'fleet-cos', owner: 'desktop-command', module: 'src/core/verse/fleet-cos-api.ts', handler: 'handleFleetCosApi', prefixes: ['/api/verse/fleet/cos'] },
+  { id: 'cos-memory', owner: 'desktop-command', module: 'src/core/verse/cos-memory-api.ts', handler: 'handleCosMemoryApi', prefixes: ['/api/verse/cos/memory'] },
+  { id: 'team', owner: 'desktop-command', module: 'src/core/verse/team-api.ts', handler: 'handleTeamApi', prefixes: ['/api/verse/team'] },
+  { id: 'fleet-comms-status', owner: 'desktop-command', module: 'src/core/verse/fleet-comms-status-api.ts', handler: 'handleFleetCommsStatusApi', prefixes: ['/api/verse/fleet/comms-status'] },
   {
     // 3.15: the Fleet tab's control surface (Start / Pause / Resume / Stop,
     // per-run stop and interject, task and goal edits). Its own prefix, so it

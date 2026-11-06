@@ -6,19 +6,19 @@ import { readInboxEntries } from './mason-inbox.js';
 export interface OrderTraceJob {
   id: string;
   lane: string | null;
-  state: 'queued' | 'launched' | 'published';
+  state: 'queued' | 'launched' | 'published' | 'merged';
   url: string | null;
 }
 export interface OrderTraceV1 {
   v: 1;
   generatedAt: string;
   sources: Record<'inbox' | 'prompts' | 'publishes', 'healthy' | 'missing' | 'degraded'>;
-  orders: Array<{ at: string; source: string; key: string; jobs: OrderTraceJob[] }>;
+  orders: Array<{ at: string; source: string; alsoChannels?: string[]; key: string; jobs: OrderTraceJob[] }>;
 }
 const months = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
 export function parseOrderCitations(body: string): string[] {
   const keys = new Set<string>();
-  for (const phrase of body.matchAll(/Serves Mason['’]s\s+([^.!?]+)/gi)) {
+  for (const phrase of body.matchAll(/\bServ(?:e|es|ing)\s+Mason['’]s\s+([^.!?]+)/gi)) {
     let date: string | undefined;
     for (const match of phrase[1]!.matchAll(/\b(?:(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+)?([0-2]\d:[0-5]\d)\b/gi)) {
       if (match[1]) {
@@ -57,7 +57,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
     sources: { inbox: inbox.sourceState, prompts: 'healthy', publishes: 'healthy' },
     orders: inbox.entries.flatMap(entry => {
       const key = orderKey(entry.at);
-      return key ? [{ at: entry.at, source: entry.source, key, jobs: [] }] : [];
+      return key ? [{ at: entry.at, source: entry.source, ...(entry.alsoChannels ? { alsoChannels: entry.alsoChannels } : {}), key, jobs: [] }] : [];
     }),
   };
   const files: Array<{ path: string; id: string; mtime: number }> = [];
@@ -81,14 +81,23 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
   }
   if ((!directories || !files.length) && result.sources.prompts === 'healthy') result.sources.prompts = 'missing';
   const publishes = new Map<string, { url: string; ts: number }>();
+  const merges = new Map<string, string | null>();
   try {
     const text = await readFile(join(root, 'metrics', 'jobs.jsonl'), 'utf8');
     for (const line of text.split(/\r?\n/).filter(Boolean)) {
       try {
         const row = JSON.parse(line) as Record<string, unknown>;
+        const id = row.job ?? row.job_id ?? row.id;
+        const merged = typeof id === 'string' && id.startsWith('RQ-') &&
+          (/merged/i.test(String(row.state ?? '')) || /merged/i.test(String(row.outcome ?? '')) || typeof row.merged_at === 'string');
+        if (merged) {
+          const url = typeof row.url === 'string' ? row.url : typeof row.pr_url === 'string' ? row.pr_url : null;
+          merges.set(id, url ?? merges.get(id) ?? null);
+        }
         if (row.event !== 'publish' || typeof row.job !== 'string' || typeof row.url !== 'string' ||
             typeof row.ts !== 'string' || !Number.isFinite(Date.parse(row.ts))) {
-          result.sources.publishes = 'degraded'; continue;
+          if (!merged) result.sources.publishes = 'degraded';
+          continue;
         }
         const ts = Date.parse(row.ts);
         if (ts >= (publishes.get(row.job)?.ts ?? -Infinity)) publishes.set(row.job, { url: row.url, ts });
@@ -117,7 +126,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
       const publish = publishes.get(file.id);
       for (const order of result.orders) {
         if (!cached.keys.includes(order.key) || order.jobs.some(job => job.id === file.id)) continue;
-        order.jobs.push({ id: file.id, lane, state: publish ? 'published' : launched ? 'launched' : 'queued', url: publish?.url ?? null });
+        order.jobs.push({ id: file.id, lane, state: merges.has(file.id) ? 'merged' : publish ? 'published' : launched ? 'launched' : 'queued', url: publish?.url ?? merges.get(file.id) ?? null });
       }
     } catch { result.sources.prompts = 'degraded'; }
   }

@@ -24,9 +24,13 @@ export interface UsageSignalOptions {
   directory: string; event: UsageEvent; pools?: readonly UsagePool[];
   readers?: Partial<Record<UsagePool, () => Promise<unknown>>>;
   now?: () => Date;
+  /** Run readers and build rows, but append nothing and leave fleet.json untouched. */
+  dryRun?: boolean;
 }
 export interface UsageSignalResult {
   written: UsagePool[]; debounced: UsagePool[]; signals: UsageCutSignal[];
+  /** Rows that would have been appended; present only for a dry run. */
+  preview?: UsageReading[];
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -193,6 +197,7 @@ async function writeLocked(root: string, options: UsageSignalOptions): Promise<U
       }
     }
     if (!ownsLocalStoreLock(lock)) throw new Error('Usage writer lost lock');
+    if (options.dryRun) return { ...result, preview: rows };
     if (rows.length) {
       // Completion, rather than dispatch, anchors debounce for slow readers too.
       const writtenAt = (options.now ?? (() => new Date()))().toISOString();

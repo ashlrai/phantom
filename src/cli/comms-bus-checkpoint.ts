@@ -62,8 +62,14 @@ export function openBusCheckpoint(path: string, filters: Record<string, string |
         previous = text;
       } finally {
         if (fd !== undefined) closeSync(fd);
-        try { unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        removeTemporaryCheckpoint(temp);
       }
     } };
   } catch (error) { releaseLocalStoreLock(lock); throw error; }
+}
+
+function removeTemporaryCheckpoint(path: string): void {
+  try { unlinkSync(path); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 }

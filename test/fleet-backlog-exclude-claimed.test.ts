@@ -49,7 +49,7 @@ describe('fleet backlog claimed PR exclusions', () => {
     expect(report.plan.deferred).toMatchObject([{ number: 303 }]);
     expect(deps.gh).toHaveBeenCalledTimes(1);
     expect(deps.gh.mock.calls[0]![0]).toEqual(['pr', 'list', '--repo', 'example/project', '--state', 'open', '--limit', '500', '--json',
-      'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup']);
+      'number,state,isDraft,headRefOid,headRefName,baseRefName,isCrossRepository,mergeable,mergeStateStatus,statusCheckRollup,createdAt']);
     expect(deps.states).toHaveBeenCalledExactlyOnceWith('example/project');
   });
 
@@ -92,7 +92,7 @@ describe('fleet backlog claimed PR exclusions', () => {
   it.each([
     ['--pr', '101', '--exclude-pr', '0101'],
     ['--exclude-pr', '101', '--pr', '0101'],
-  ])('rejects overlapping selection and exclusion in either order', async (...args) => {
+  ])('rejects overlapping selection and exclusion in either order (%#)', async (...args) => {
     const deps = fixture([]);
     expect(await cmdFleetBacklog(args, deps)).toBe(2);
     expect(errors).toContain('PR #101 cannot be both selected and excluded');

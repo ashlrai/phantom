@@ -243,7 +243,7 @@ export interface VerseFetchState {
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
-export function verseFetch(initial: Partial<VerseFetchState> = {}): { fetch: ReturnType<typeof vi.fn>; state: VerseFetchState } {
+export function verseFetch(initial: Partial<VerseFetchState> = {}): { fetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>; state: VerseFetchState } {
   const boot = initial.bootstrap ?? bootstrap();
   const state: VerseFetchState = {
     bootstrap: boot,

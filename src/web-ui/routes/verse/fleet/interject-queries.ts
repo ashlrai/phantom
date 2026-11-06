@@ -2,6 +2,7 @@ import { apiGet, apiPost } from '../../../data/client.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { VerseMutationLockedError } from '../verse-queries.js';
+import { INTERJECT_ACK_READ_PATH, INTERJECT_POST_PATH, buildInterjectBody, pickInboxAck, type InboxAck } from './interject-request.js';
 
 interface InboxTail {
   inbox: Array<{ at: string; source: string; text: string }>;
@@ -31,18 +32,26 @@ export const inboxTailQuery: QueryDef<InboxTail> = {
   },
 };
 
-async function post(text: string): Promise<{ at: string; duplicate: boolean; accepted: boolean }> {
+export type { InboxAck };
+
+async function post(text: string): Promise<{ at: string; duplicate: boolean; accepted: boolean; id?: string }> {
   const token = getMutationToken();
   if (!token) throw new VerseMutationLockedError();
-  const result = await apiPost<{ at: string; duplicate?: unknown; accepted?: unknown }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop' }, token);
+  const result = await apiPost<{ at: string; duplicate?: unknown; accepted?: unknown; id?: unknown }>(INTERJECT_POST_PATH, buildInterjectBody(text), token);
   if (!result || typeof result.at !== 'string') throw new Error('The message could not be confirmed. Refresh and check the inbox.');
   touchMutationHold();
-  return { at: result.at, duplicate: result.duplicate === true, accepted: result.accepted === true };
+  const id = typeof result.id === 'string' && result.id ? result.id : undefined;
+  return { at: result.at, duplicate: result.duplicate === true, accepted: result.accepted === true, ...(id ? { id } : {}) };
 }
 
-export async function postInterjection(text: string): Promise<{ at: string }> {
-  const { at } = await post(text);
-  return { at };
+export async function postInterjection(text: string): Promise<{ at: string; id?: string }> {
+  const { at, id } = await post(text);
+  return { at, ...(id ? { id } : {}) };
+}
+
+/** The planner's acknowledgement of one inbox entry; every field is optional on older servers. */
+export async function readInboxAck(id: string, signal?: AbortSignal): Promise<InboxAck> {
+  return pickInboxAck(await apiGet<unknown>(INTERJECT_ACK_READ_PATH, signal), id);
 }
 
 export const postInterjectionDetailed = post;

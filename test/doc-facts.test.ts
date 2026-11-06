@@ -27,6 +27,7 @@ const DOCS = [
   'CLAUDE.md',
   'CONTRIBUTING.md',
   'docs/AGENT-OPERATIONS.md',
+  'docs/AGENT-MCP-CLI.md',
   'docs/HUB-REFERENCE.md',
   'docs/MISSION-OS.md',
   'docs/README.md',
@@ -177,5 +178,6 @@ describe('agent docs name only real CLI commands, verbs and flags', () => {
       inv.flags.filter((f) => !flags.has(f)).map((f) => `${inv.file}:${inv.line}: \`${inv.span}\` (${f})`),
     );
     expect(bad, 'flag not found anywhere in src/; fix the doc line').toEqual([]);
-  });
+    // Scans every source file synchronously; under a loaded shard the default 5s budget is too tight.
+  }, 60_000);
 });

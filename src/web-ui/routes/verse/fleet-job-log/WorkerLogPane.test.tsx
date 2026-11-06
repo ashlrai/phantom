@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { type MockInstance, afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import * as client from '../../../data/client.js';
@@ -13,7 +13,7 @@ const fixture: FleetRuns = {
   leaders: [], orchestratorAgents: null, publishesLastHour: [], mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
 const detail = { schema: 'fleet.job.v1', job: 'RQ-OLD', state: 'running', lane: 'codex-personal', tier: 'mid', model: 'model', publish: { prUrl: 'https://github.com/example/repo/pull/1234' }, log: { source: 'live', tail: ['first line', 'second line'], truncated: true } };
-let spy: ReturnType<typeof vi.spyOn>;
+let spy: MockInstance<typeof client.apiGet>;
 beforeEach(() => { evictAll(); });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); evictAll(); });
 function serve(runs: FleetRuns = fixture, job: unknown = detail) {

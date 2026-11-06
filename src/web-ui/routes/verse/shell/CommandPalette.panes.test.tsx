@@ -7,7 +7,7 @@ import { MockEventSource } from '../fixtures.test-support.js';
 import { fleetRunsFixture } from '../fleet/fleet-runs-fixtures.test-support.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { useVerseUi } from '../useVerseUi.js';
-import { closeVerseOverlay, getVerseUiState, openVerseOverlay, resetVerseUi } from '../verse-ui-store.js';
+import { getVerseUiState, openVerseOverlay, resetVerseUi } from '../verse-ui-store.js';
 import { CommandPalette } from './CommandPalette.js';
 import { activity, shellFetch } from './shell-fixtures.test-support.js';
 import { resetActivityForTest } from './useActivity.js';

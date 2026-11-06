@@ -7,6 +7,7 @@
 - [Phantom — the engineering agent workbench](https://verse.ashlr.ai/): landing page
 - [Repository README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview
 - [Documentation index](https://github.com/ashlrai/phantom/blob/master/docs/README.md): canonical guides by task
+- [All docs as Markdown](https://verse.ashlr.ai/docs/llms-full.txt): every docs page in one file; each page is also at https://verse.ashlr.ai/docs/<page>.md
 - [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide
 
 ## Install

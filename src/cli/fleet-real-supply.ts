@@ -3,17 +3,20 @@
  *
  * Prints the ranked candidates collectRealSupply reads from the seven
  * approved repos: critical Dependabot alerts, a scheduled suite whose latest
- * run went red, high alerts, then open issues — each with its exact target
- * and a one-line goal. This is the same supply `fleet planner-brief` embeds
- * as its REAL SUPPLY section.
+ * run went red, high alerts, then open issues — then two local signals read
+ * once from this checkout: registry verbs no doc under docs/ names, and
+ * `fleet <verb>` commands README.md names that the registry lacks. Each
+ * candidate carries its exact target and a one-line goal. This is the same
+ * supply `fleet planner-brief` embeds as its REAL SUPPLY section.
  *
  * READ-ONLY: the only gh calls are `gh api repos/{repo}`,
  * `repos/{repo}/dependabot/alerts`, `repos/{repo}/actions/runs` and
- * `repos/{repo}/issues` GETs — nothing is opened, labeled or closed. The
- * per-repo read is injectable so the report is fully unit-testable; a repo
- * that cannot be read is reported `unknown`, never dropped or faked clean.
+ * `repos/{repo}/issues` GETs — nothing is opened, labeled or closed — and
+ * the local read never leaves the checkout. The per-repo read and the local
+ * read are injectable so the report is fully unit-testable; a source that
+ * cannot be read is reported `unknown`, never dropped or faked clean.
  *
- * Exit codes: 0 every repo read, 1 at least one repo unread, 2 bad usage.
+ * Exit codes: 0 every source read, 1 at least one source unread, 2 bad usage.
  */
 import { tmpdir } from 'node:os';
 
@@ -57,20 +60,24 @@ export async function cmdFleetRealSupply(args: string[], deps: RealSupplyDeps = 
   }
 
   const supply = sanitizePublicJson(await collectRealSupply({ ...deps, gh: deps.gh ?? defaultRealSupplyGh })) as RealSupplyV1;
-  const unknown = supply.repos.filter(row => row.status === 'unknown').length;
+  const unknownRepos = supply.repos.filter(row => row.status === 'unknown').length;
+  const unread = unknownRepos + (supply.local.status === 'unknown' ? 1 : 0);
 
   if (json) {
     console.log(JSON.stringify(supply));
   } else {
-    console.log(bold('Fleet real supply:') + ` ${supply.candidates.length} candidate(s), ${supply.repos.length - unknown}/${supply.repos.length} repo(s) read`);
+    console.log(bold('Fleet real supply:') + ` ${supply.candidates.length} candidate(s), ${supply.repos.length - unknownRepos}/${supply.repos.length} repo(s) read, local ${supply.local.status}`);
     for (const candidate of supply.candidates) {
       console.log(`  ${candidate.repo.padEnd(28)} ${candidate.kind.padEnd(19)} ${dim(candidate.target)}  ${candidate.goal}`);
     }
     for (const row of supply.repos.filter(repo => repo.status === 'unknown')) {
       console.log(`  ${row.repo.padEnd(28)} ${red('unknown')}  ${dim(row.reason ?? '')}`);
     }
-    if (supply.candidates.length === 0 && unknown === 0) console.log('  all repos read clean');
-    if (unknown > 0) console.log(yellow(`${unknown} repo(s) could not be read — supply is unread, not empty`));
+    if (supply.local.status === 'unknown') {
+      console.log(`  ${'local'.padEnd(28)} ${red('unknown')}  ${dim(supply.local.reason ?? '')}`);
+    }
+    if (supply.candidates.length === 0 && unread === 0) console.log('  all sources read clean');
+    if (unread > 0) console.log(yellow(`${unread} source(s) could not be read — supply is unread, not empty`));
   }
-  return unknown > 0 ? 1 : 0;
+  return unread > 0 ? 1 : 0;
 }

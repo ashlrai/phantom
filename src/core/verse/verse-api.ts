@@ -89,6 +89,7 @@
  * its directory and prompt block go into the private launch record only.
  */
 
+import { readBuildIdentity } from '../build-identity.js';
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
@@ -196,7 +197,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -246,10 +247,22 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Usage meter motion audit; read-only.
   { id: 'fleet-ci-runs', load: async () => (await import('./fleet-ci-runs-api.js')).handleFleetCiRunsApi },
   { id: 'fleet-usage-audit', load: async () => (await import('./fleet-usage-audit-api.js')).handleFleetUsageAuditApi },
+  // Host memory guard projection: GET /api/verse/fleet/memory (core/verse/fleet-memory-api.ts); read-only.
+  { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
+  // Local desktop app status and bounded launch, focus and restart actions.
+  { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
+  { id: 'fleet-apps', load: async () => (await import('./fleet-apps-api.js')).handleFleetAppsApi },
+  { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
+  // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
+  { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
-  // Exact path only, so it cannot claim /api/verse/fleet/graph/live. Last so the
-  // registry mount stays visible beside the modules already on master.
+  // Exact path only, so it cannot claim /api/verse/fleet/graph/live.
   { id: 'fleet-graph', load: async () => (await import('./fleet-graph-api.js')).handleFleetGraphApi },
+  // Main guardian per-repo red-age: GET /api/verse/fleet/main-red-age
+  // (core/verse/fleet-main-red-age-api.ts); read-only.
+  { id: 'fleet-main-red-age', load: async () => (await import('./fleet-main-red-age-api.js')).handleFleetMainRedAgeApi },
+  { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
+  { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -442,11 +455,23 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   overnight: async () => {
     try { return (await import('./overnight-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'overnight-api.js'); }
   },
+  'fleet-live': async () => {
+    try { return (await import('./fleet-live-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-live-api.js'); }
+  },
   'fleet-runs': async () => {
     try { return (await import('./fleet-runs-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-runs-api.js'); }
   },
-  'fleet-live': async () => {
-    try { return (await import('./fleet-live-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-live-api.js'); }
+  'fleet-cos': async () => {
+    try { return (await import('./fleet-cos-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-cos-api.js'); }
+  },
+  'cos-memory': async () => {
+    try { return (await import('./cos-memory-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'cos-memory-api.js'); }
+  },
+  'team': async () => {
+    try { return (await import('./team-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'team-api.js'); }
+  },
+  'fleet-comms-status': async () => {
+    try { return (await import('./fleet-comms-status-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-comms-status-api.js'); }
   },
   'fleet-control': async () => {
     try { return (await import('./fleet-control-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-control-api.js'); }
@@ -615,6 +640,8 @@ async function dispatchWorkbenchModules(
 
 export interface VerseApiContext {
   cfg: AshlrConfig;
+  /** Display route supplied by the HTTP composition root, outside authority imports. */
+  usageResourcesApi?: ApiModule;
   token: string;
   allowDispatch: boolean;
   readSession?: { id: string; expiresAt: number };
@@ -2012,6 +2039,10 @@ export async function handleVerseApi(
   if (!isVerseApiPath(path)) return false;
 
   try {
+    if (path === `${VERSE_API_PREFIX}/version` && method === 'GET') {
+      sendJson(res, 200, readBuildIdentity());
+      return true;
+    }
     if (path === `${VERSE_API_PREFIX}/fleet/grok-ultra` || path.startsWith(`${VERSE_API_PREFIX}/fleet/grok-ultra/`)) {
       if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
       return (await import('./grok-ultra-api.js')).handleGrokUltraApi(req, res, path, method);
@@ -2028,6 +2059,14 @@ export async function handleVerseApi(
       // legacy mounted modules (including the active cloud scheduler).
       if (path !== `${VERSE_API_PREFIX}/resources/credit-pools`) { sendJson(res, 404, { error: 'Credit pool route not found.' }); return true; }
       return (await import('./credit-pools-api.js')).handleCreditPoolsApi(ctx, req, res, path, method);
+    }
+    if (path === `${VERSE_API_PREFIX}/usage-resources` || path.startsWith(`${VERSE_API_PREFIX}/usage-resources/`)) {
+      // Read-only resource-usage aggregate; unknown children 404 here rather
+      // than evaluating the mounted modules.
+      if (path !== `${VERSE_API_PREFIX}/usage-resources`) { sendJson(res, 404, { error: 'Usage resources route not found.' }); return true; }
+      if (ctx.usageResourcesApi) return ctx.usageResourcesApi(ctx, req, res, path, method);
+      sendJson(res, 503, { error: 'Usage resources are unavailable.' });
+      return true;
     }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {

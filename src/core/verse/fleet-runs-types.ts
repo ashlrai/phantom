@@ -1,4 +1,5 @@
 export const VERSE_FLEET_RUNS_PATH = '/api/verse/fleet/runs';
+export const VERSE_FLEET_RUNS_GLANCE_PATH = '/api/verse/fleet/runs/glance';
 export const VERSE_FLEET_RUNS_INBOX_PATH = '/api/verse/fleet/runs/inbox';
 export const FLEET_RUNS_INBOX_MAX_CHARS = 6000;
 export interface FleetRunsV1 {
@@ -15,6 +16,7 @@ export interface FleetRunsV1 {
   events: Array<{ at: string; kind: string; text: string }>;
   codexPersonal: { usedPct: number|null; resetsAt: string|null; asOf: string|null } | null;
   inbox: Array<{ at: string; source: string; text: string }>;
+  outbox?: Array<{ at: string; text: string }>;
   drop: { pending: Array<{ lane: string; file: string }>; done: number } | null;
 }
 export interface FleetRunsInboxBody { text: string; source?: string }

@@ -15,10 +15,10 @@ describe('inboxLinesFor', () => {
   });
 
   it('dedupes trimmed Mason text in the same minute, preserving repeated orders later', () => {
-    const thread = [msg({ from: 'mason', text: ' Fake order ', at: '2026-10-31T12:00:59Z' })];
+    const thread = [msg({ id: 'mason-1', from: 'mason', text: ' Fake order ', at: '2026-10-31T12:00:59Z' })];
     expect(inboxLinesFor(snapshot(), thread, now)).toEqual([]);
     expect(inboxLinesFor(snapshot([{ ...entry, at: '2026-10-31T12:01:00Z' }]), thread, now)).toHaveLength(1);
-    expect(inboxLinesFor(snapshot(), [msg({ from: 'leader', text: entry.text, at })], now)).toHaveLength(1);
+    expect(inboxLinesFor(snapshot(), [msg({ id: 'leader-1', from: 'leader', text: entry.text, at })], now)).toHaveLength(1);
   });
 
   it('ignores malformed, missing, unhealthy and undated input', () => {

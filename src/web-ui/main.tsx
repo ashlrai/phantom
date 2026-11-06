@@ -1,8 +1,12 @@
 import { PRODUCT_NAME } from './app/product-brand.js';
 import { StrictMode, type ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
-import { autoSelectVerseMobile, isResourceConsolePath, isUniverseConsolePath, isVerseConsolePath, isVerseMobilePath } from './app/console-mode.js';
+import { autoSelectVerseMobile, isResourceConsolePath, isUniverseConsolePath, isVerseConsolePath, isVerseMobilePath, syncConsoleLayout } from './app/console-mode.js';
 import './data/appearance-boot.js';
+
+// Stamp the shared width class before any app paints, so the shell CSS
+// (:root[data-console-layout]) is right on the first frame.
+syncConsoleLayout();
 
 // The scoped console must not evaluate the general shell's observer modules.
 // Verse on a phone is its own chunk: /verse/m, or /verse opened on a phone

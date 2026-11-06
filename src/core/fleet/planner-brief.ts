@@ -1,9 +1,16 @@
+import { acknowledgeInboxEntries, type InboxAckSenders } from './inbox-ack.js';
 import { execFile } from 'node:child_process';
 import { lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
+import { parseIngestedTsv } from './drop-job-fate.js';
+import type { OrderTraceV1 } from './order-trace.js';
+import { inflightBriefLines } from './planner-inflight.js';
+import { orderCoverageBriefLines } from './planner-order-coverage.js';
+import type { WasteRiskProjection } from '../resources/waste-risk.js';
+import { wasteRiskBriefLines } from './planner-waste.js';
 import { realSupplyBriefLines, type RealSupplyV1 } from './planner-real-supply.js';
 import { readSource, type Source } from './runs-parked-queue.js';
 
@@ -13,16 +20,21 @@ const INBOX_BUDGET = 256 * 1024;
 const INBOX_BUDGET_LABEL = '256 KiB';
 /** Public-shape job id; malformed ledger cells must never reach the prompt. */
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
-/** The only heading shape MASON-INBOX.md producers write; it opens an entry. */
+/** Channel-tagged timestamp lines also open independent inbox entries. */
+const INBOX_CHANNEL_LINE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})\s+\[src:[a-z0-9._-]{1,32}(?:\s+id:[A-Za-z0-9._:-]{1,64})?\]\s+\S/;
+/** The Markdown heading shape MASON-INBOX.md producers write; it opens an entry. */
 const INBOX_HEADING = /^## \d{4}-\d{2}-\d{2} \d{2}:\d{2} ET \(/;
 // eslint-disable-next-line no-control-regex -- ledger titles must stay a single printable line.
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
 const INGESTED = 'leader/drop/ingested.tsv';
 const MASON_INBOX = 'leader/MASON-INBOX.md';
 const UNAVAILABLE = '(unavailable from Phantom; read git log origin/master)';
+/** How far back the IN FLIGHT section looks for ingested-but-unmerged jobs. */
+const IN_FLIGHT_WINDOW_HOURS = 48;
 export type PlannerBriefGit = (program: string, args: string[], options: { timeout: number; maxBuffer: number; encoding: 'utf8'; shell: false }, callback: (error: Error | null, stdout: string) => void) => unknown;
 export interface PlannerBriefOptions {
   runsRoot?: string;
+  inboxAckSenders?: InboxAckSenders;
   repoRoot?: string;
   note?: string;
   now?: number;
@@ -33,6 +45,10 @@ export interface PlannerBriefOptions {
    * no REAL SUPPLY section; when it throws, the section reads unavailable.
    */
   realSupply?: () => Promise<RealSupplyV1>;
+  /** Optional order trace; failures render an unavailable coverage section. */
+  orderCoverage?: () => Promise<OrderTraceV1>;
+  /** Optional waste-risk projections; failures render an unavailable section. */
+  wasteRisk?: () => Promise<WasteRiskProjection[]>;
 }
 const lines = (text: string): string[] => text === '' ? [] : text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -106,6 +122,7 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
   // is never cut mid-body; fill the inbox budget newest-first, then render
   // chronologically. Anything dropped is reported, never shown partially.
   const inboxBody: string[] = [];
+  const ackEntries: string[] = [];
   const inboxState = states.get(MASON_INBOX) ?? 'missing';
   if (inboxState !== 'healthy') {
     inboxBody.push(`(unavailable: ${MASON_INBOX} ${inboxState})`);
@@ -114,7 +131,7 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     const entries: Array<{ heading: string; body: string[] }> = [];
     let fragment = 0;
     for (const line of lines(inbox)) {
-      if (INBOX_HEADING.test(line)) entries.push({ heading: line, body: [] });
+      if (INBOX_HEADING.test(line) || (INBOX_CHANNEL_LINE.test(line) && Number.isFinite(Date.parse(line.split(/\s/, 1)[0]!)))) entries.push({ heading: line, body: [] });
       else if (entries.length) entries[entries.length - 1]!.body.push(line);
       else if (line.trim()) fragment++;
     }
@@ -124,16 +141,19 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     let omitted = 0;
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]!;
+      let complete = true;
       let rendered = [entry.heading, ...entry.body].join('\n');
       let bytes = Buffer.byteLength(rendered) + 1;
       if (used + bytes > INBOX_BUDGET) {
         if (bytes <= INBOX_BUDGET) { omitted++; continue; }
+        complete = false;
         rendered = `${entry.heading}\n(order body omitted: entry is ${bytes} bytes — over the ${INBOX_BUDGET_LABEL} inbox budget)`;
         bytes = Buffer.byteLength(rendered) + 1;
         if (used + bytes > INBOX_BUDGET) { omitted++; continue; }
       }
       used += bytes;
       picked.unshift(rendered);
+      if (complete) ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
     }
     if (omitted) inboxBody.push(`(${omitted} older entr${omitted === 1 ? 'y' : 'ies'} omitted — over the ${INBOX_BUDGET_LABEL} inbox budget)`);
     inboxBody.push(...picked);
@@ -154,6 +174,24 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     mergeText = UNAVAILABLE;
     missing.push('git log origin/master');
   }
+  // Planner passes re-derive which earlier jobs are still unmerged by hand;
+  // a bounded merge scan over the same window answers it in one section.
+  let inFlight: string[];
+  if (ledgerState !== 'healthy') {
+    inFlight = [ledgerUnavailable];
+  } else {
+    try {
+      const stdout = await new Promise<string>((resolve, reject) => {
+        (opts.git ?? execFile)('git', ['-C', opts.repoRoot ?? join(homedir(), 'Projects', 'ashlrai', 'phantom'), 'log', 'origin/master', `--since=${IN_FLIGHT_WINDOW_HOURS}.hours`, '--format=%s'],
+          { timeout: 5000, maxBuffer: 1024 * 1024, encoding: 'utf8', shell: false },
+          (error, output) => error ? reject(error) : resolve(output));
+      });
+      inFlight = inflightBriefLines(parseIngestedTsv(ingested), lines(stdout), opts.now ?? Date.now(), IN_FLIGHT_WINDOW_HOURS);
+    } catch {
+      inFlight = ['(unavailable: git log origin/master)'];
+      missing.push('git log origin/master (in flight)');
+    }
+  }
   let realSupply: string[] | null = null;
   if (opts.realSupply !== undefined) {
     try {
@@ -163,6 +201,24 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
       missing.push('real-supply');
     }
   }
+  let wasteRisk: string[] | null = null;
+  if (opts.wasteRisk !== undefined) {
+    try {
+      wasteRisk = wasteRiskBriefLines(await opts.wasteRisk());
+    } catch {
+      wasteRisk = ['(unavailable: waste-risk read failed)'];
+      missing.push('waste-risk');
+    }
+  }
+  let orderCoverage: string[] | null = null;
+  if (opts.orderCoverage !== undefined) {
+    try {
+      orderCoverage = orderCoverageBriefLines(await opts.orderCoverage());
+    } catch {
+      orderCoverage = ['(unavailable: order coverage read failed)'];
+      missing.push('order-coverage');
+    }
+  }
   // eslint-disable-next-line no-control-regex -- tick notes must remain a single printable line.
   const note = opts.note?.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 500);
   const text = scrubSecrets([
@@ -170,14 +226,18 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     ...(opts.note !== undefined ? [`NOTE FROM TICK: ${note}`] : []),
     `## CLAUDE LANE: ${claude.trim() || 'unknown'}`,
     '## LANES', ...laneLines,
+    ...(wasteRisk === null ? [] : ['## WASTE RISK (lanes projected to leave capacity unused at reset; prefer them)', ...wasteRisk]),
     ...(realSupply === null ? [] : ['## REAL SUPPLY', ...realSupply]),
     '## USED IDS', ...usedIdLines,
     '## USED TITLES', ...titleLines,
     '## RECENT PHANTOM MERGES', mergeText,
+    `## IN FLIGHT (ingested in the last ${IN_FLIGHT_WINDOW_HOURS}h, not yet merged on origin/master)`, ...inFlight,
+    ...(orderCoverage === null ? [] : ['## ORDER COVERAGE', 'Orders marked UNSERVED have no job citing them; prefer them.', ...orderCoverage]),
     '## MASON INBOX (newest last)', ...inboxBody,
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
-  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }) }, missing };
+  await acknowledgeInboxEntries(ackEntries, root, new Date(opts.now ?? Date.now()).toISOString(), opts.inboxAckSenders);
+  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(wasteRisk === null ? {} : { wasteRisk: wasteRisk.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
 }
 
 /** Publish only a prompt the planner's bounded input reader can consume. */

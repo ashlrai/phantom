@@ -10,7 +10,7 @@ import type { FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js'
 import type { VerseControlSnapshot } from '../../../../core/verse/control-types.js';
 import { clearMutationToken, markCheckComplete, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
-import { bootstrap } from '../fixtures.test-support.js';
+import { bootstrap, session } from '../fixtures.test-support.js';
 import { resetGuard } from '../shell/guard-store.js';
 import { resetResolvedForTest } from '../shell/resolved-store.js';
 import { refreshActivity, resetActivityForTest } from '../shell/useActivity.js';
@@ -58,11 +58,15 @@ const ACTIVITY = activityResponse({
 
 function mac(over: { control?: unknown; activity?: unknown; dispatch?: boolean; onDaemon?: (body: Record<string, unknown> | null) => unknown } = {}) {
   return stubFetch({
-    'GET /api/verse/bootstrap': bootstrap({ dispatchEnabled: over.dispatch ?? true }),
+    'GET /api/verse/bootstrap': bootstrap({ dispatchEnabled: over.dispatch ?? true, sessions: [session({ id: 'vs_9', title: 'Ship the phone app' })] }),
     'GET /api/verse/seats': { seats: bootstrap().seats, localRuntime: bootstrap().localRuntime },
     'GET /api/verse/activity': over.activity ?? ACTIVITY,
     'GET /api/verse/control': over.control ?? control(),
     'GET /api/verse/fleet/live': fleetLive(),
+    'GET /api/verse/fleet/runs/glance': {
+      v: 1, at: '2026-11-02T15:00:00.000Z', running: 4, target: 6, usagePct: 62,
+      resetsAt: '2026-11-02T18:00:00.000Z', mergesToday: 2, main: 'down', incidents: ['Ship needs a human'],
+    },
     'GET /api/verse/cloud': json({ error: 'not found' }, 404),
     'POST /api/verse/daemon': (body: Record<string, unknown> | null) => over.onDaemon?.(body) ?? { ok: true, action: body?.action, note: 'Done on your Mac.' },
   });
@@ -88,9 +92,15 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-async function homeLoaded() {
-  await screen.findByText('Ship the phone app');
-  await screen.findByText('Running');
+async function glanceLoaded() {
+  await screen.findByText('Running 4 of 6.');
+}
+
+async function openFleet() {
+  await glanceLoaded();
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Phantom' })).getByRole('button', { name: /^More/ }));
+  fireEvent.click(await screen.findByRole('button', { name: /^Fleet/ }));
+  await waitFor(() => expect(window.location.hash).toBe('#/fleet'));
 }
 
 describe('the shell', () => {
@@ -111,7 +121,7 @@ describe('the shell', () => {
   it('switches screens through the hash (so Back works), and a re-tap pops to the tab root', async () => {
     mac();
     render(<MobileShell />);
-    await homeLoaded();
+    await glanceLoaded();
     const tabs = screen.getByRole('navigation', { name: 'Phantom' });
     fireEvent.click(within(tabs).getByRole('button', { name: /^More/ }));
     await waitFor(() => expect(window.location.hash).toBe('#/more'));
@@ -127,7 +137,7 @@ describe('the shell', () => {
   it('says the Mac is unreachable when a poll fails, keeping the last data on screen', async () => {
     mac();
     render(<MobileShell />);
-    await homeLoaded();
+    await glanceLoaded();
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new TypeError('Failed to fetch');
     }));
@@ -135,13 +145,13 @@ describe('the shell', () => {
       await refreshActivity();
     });
     expect(await screen.findByText(/Can’t reach your Mac\. Updated just now\./)).toBeInTheDocument();
-    expect(screen.getByText('Ship the phone app')).toBeInTheDocument();
+    expect(screen.getByText('Running 4 of 6.')).toBeInTheDocument();
   });
 
   it('says the phone is offline when the browser reports it', async () => {
     mac();
     render(<MobileShell />);
-    await homeLoaded();
+    await glanceLoaded();
     const onLine = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false);
     act(() => {
       window.dispatchEvent(new Event('offline'));
@@ -181,28 +191,31 @@ describe('Home', () => {
     expect(screen.getAllByRole('status', { name: /Loading/ }).length).toBeGreaterThan(0);
   });
 
-  it('shows the fleet, what needs you, who is working, and today’s spend', async () => {
+  it('routes from the glance to fleet, needs you, and the working agent', async () => {
     mac();
     render(<MobileShell />);
-    await homeLoaded();
-    expect(screen.getByText('2 runs building · 1 queued')).toBeInTheDocument();
+    await openFleet();
+    expect(await screen.findByText('2 runs building · 1 queued')).toBeInTheDocument();
+    const tabs = screen.getByRole('navigation', { name: 'Phantom' });
+    fireEvent.click(within(tabs).getByRole('button', { name: /^Needs you/ }));
+    await waitFor(() => expect(window.location.hash).toBe('#/needs'));
+    fireEvent.click(within(tabs).getByRole('button', { name: /^Agents/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Ship the phone app/ }));
+    await waitFor(() => expect(window.location.hash).toBe('#/agents/vs_9'));
+  });
+
+  it('shows today’s spend and daily budget', async () => {
+    mac();
+    render(<MobileShell />);
+    await openFleet();
     expect(screen.getByText('$3.20')).toBeInTheDocument();
     expect(screen.getByText('of $25.00')).toBeInTheDocument();
-    const main = screen.getByRole('main');
-    fireEvent.click(within(main).getByRole('button', { name: /Needs you/ }));
-    await waitFor(() => expect(window.location.hash).toBe('#/needs'));
-    act(() => {
-      window.location.hash = '#/';
-    });
-    await screen.findByText('Ship the phone app');
-    fireEvent.click(screen.getByRole('button', { name: /Ship the phone app/ }));
-    await waitFor(() => expect(window.location.hash).toBe('#/agents/vs_9'));
   });
 
   it('an unreadable figure is a dash, never zero', async () => {
     mac({ control: json({ error: 'ledger unreadable' }, 503) });
     render(<MobileShell />);
-    await screen.findByText('Ship the phone app');
+    await openFleet();
     const spent = screen.getByText('Spent today').closest('div')!;
     expect(within(spent).getByText('—')).toBeInTheDocument();
   });
@@ -211,7 +224,7 @@ describe('Home', () => {
     setMutationToken(TOKEN);
     const fetches = mac();
     render(<MobileShell />);
-    await homeLoaded();
+    await openFleet();
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(fetches.posts()).toHaveLength(1));
     const post = fetches.posts()[0]!;
@@ -226,6 +239,7 @@ describe('Home', () => {
     setMutationToken(TOKEN);
     const fetches = mac({ control: control({ paused: true }) });
     render(<MobileShell />);
+    await openFleet();
     await screen.findByText('Paused');
     fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
     const sheet = await screen.findByRole('alertdialog', { name: 'Resume the fleet?' });
@@ -241,7 +255,7 @@ describe('Home', () => {
   it('asks for the mutation token when it is not held, then runs', async () => {
     const fetches = mac();
     render(<MobileShell />);
-    await homeLoaded();
+    await openFleet();
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     const sheet = await screen.findByRole('dialog', { name: 'Unlock actions' });
     const field = within(sheet).getByLabelText('Mutation token');
@@ -258,16 +272,16 @@ describe('Home', () => {
   it('a kill switch offers no release from the phone — only details', async () => {
     mac({ control: control({ kill: true }) });
     render(<MobileShell />);
-    await screen.findByText('Emergency stop engaged.');
+    await openFleet();
+    expect((await screen.findAllByText('Emergency stop engaged.')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /Resume|Start/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    await waitFor(() => expect(window.location.hash).toBe('#/fleet'));
+    expect(screen.getByText('ashlr fleet resume')).toBeInTheDocument();
   });
 
   it('a read-only device sees no action at all', async () => {
     mac({ dispatch: false });
     render(<MobileShell />);
-    await homeLoaded();
+    await glanceLoaded();
     await screen.findByText('Read-only on this device');
     expect(screen.queryByRole('button', { name: 'Pause' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
@@ -277,7 +291,7 @@ describe('Home', () => {
     const vp = mockCompactViewport();
     mac();
     const { container } = render(<MobileShell />);
-    await homeLoaded();
+    await glanceLoaded();
     for (const el of container.querySelectorAll<HTMLElement>('[style]')) {
       const width = el.style.width || el.style.minWidth;
       if (width.endsWith('px')) expect(Number.parseFloat(width)).toBeLessThanOrEqual(375);

@@ -32,6 +32,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { hasLeaderNetworkConfig } from '../agents/leader-network-config.js';
+import { allowOperatorMessage } from '../fleet/operator-glance.js';
+import { acceptTelegramPair } from '../fleet/operator-glance-read.js';
 import { sendIMessage } from '../integrations/imessage.js';
 import {
   sendTelegramMessage,
@@ -266,6 +269,10 @@ async function handleTelegramCallback(event: InboundEvent, cfg: AshlrConfig, res
 }
 
 async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrConfig, result: CycleResult): Promise<void> {
+  if (typeof event.senderUserId === 'number' && !allowOperatorMessage(`telegram:${event.senderUserId}`, Date.now())) {
+    await sendTelegramMessage('Slow down.', replyOpts(event), cfg);
+    return;
+  }
   // M212: pause/resume commands (comms soft-pause).
   if (/^\s*pause(\s+fleet)?\s*$/i.test(text)) {
     const { setPause } = await import('./pause.js');
@@ -352,6 +359,16 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
   }
   // A failed status send is a dispatch failure, not a question for the Leader.
   if (!inbox.ok && inbox.reason === 'status-send-failed') throw new Error('Telegram status reply failed');
+  if (inbox.ok && hasLeaderNetworkConfig()) {
+    const { readLeaderNetworkConfig } = await import('../agents/leader-network-runtime.js');
+    const { parseMasonIdentities } = await import('../agents/leader-network.js');
+    const owners = parseMasonIdentities(readLeaderNetworkConfig().configSource);
+    if (owners.some(owner => owner.channel === 'telegram' && owner.id === inbox.envelope.verifiedSenderId)) {
+      if (inbox.publishState !== 'published') throw new Error('Leader network receipt unavailable; retry retained.');
+      result.resolved++;
+      return;
+    }
+  }
   await converseWithLeader(event, text, cfg);
 }
 
@@ -364,6 +381,19 @@ async function pollTelegram(cfg: AshlrConfig, result: CycleResult): Promise<void
     const { updates } = await pollTelegramUpdates(cfg, true);
     for (const event of updates ?? []) {
       try {
+        const owner = cfg.comms?.telegram?.chatId;
+        if (event.privateChat !== true || event.fromChatId !== owner ||
+            String(event.senderUserId) !== owner) continue;
+        const pair = event.kind === 'text' ? /^\/pair\s+(\S+)\s*$/.exec(event.text ?? '') : null;
+        if (!acceptTelegramPair(event.senderUserId!, undefined, pair?.[1])) {
+          if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+          continue;
+        }
+        if (pair) {
+          await sendTelegramMessage('Paired.', replyOpts(event), cfg);
+          if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+          continue;
+        }
         if (event.kind === 'callback') await handleTelegramCallback(event, cfg, result);
         else if (event.kind === 'text' && event.text) await handleTelegramText(event, event.text, cfg, result);
         if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);

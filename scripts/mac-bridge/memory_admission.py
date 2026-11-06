@@ -33,6 +33,50 @@ MAX_SWAP = 8 * GIB
 DEFAULT_RESERVE = 4 * GIB
 PROFILES = ('cargo-build', 'cargo-test', 'npm-test', 'tsc', 'other')
 IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
+# Admitted build/test children yield the performance cores: an absolute nice
+# level everywhere plus the utility QoS clamp on Darwin. Agents and the
+# daemon never pass through this gate and keep their default scheduling.
+TASKPOLICY = '/usr/sbin/taskpolicy'
+NICE_LEVEL = 10
+VITEST_UNIT_WORKER_CAP = 2
+
+
+def load_average():
+    """Host [1, 5, 15]-minute load averages, or None where unavailable."""
+    try:
+        return [round(value, 2) for value in os.getloadavg()]
+    except (OSError, AttributeError):
+        return None
+
+
+def clamped_unit_workers(value):
+    """Vitest unit-lane worker cap for admitted jobs; stricter settings win."""
+    try:
+        configured = int(value)
+    except (TypeError, ValueError):
+        return VITEST_UNIT_WORKER_CAP
+    return VITEST_UNIT_WORKER_CAP if configured < 1 else min(configured, VITEST_UNIT_WORKER_CAP)
+
+
+def exec_under_utility(command):
+    """Replace this process with the workload at utility QoS and nice 10.
+
+    An absolute nice level never stacks on nested admissions and never
+    promotes an already-nicer process. The QoS clamp runs through taskpolicy;
+    if it cannot exec, the niced workload still runs without the clamp.
+    """
+    try:
+        if os.getpriority(os.PRIO_PROCESS, 0) < NICE_LEVEL:
+            os.setpriority(os.PRIO_PROCESS, 0, NICE_LEVEL)
+    except (OSError, AttributeError):
+        pass
+    if sys.platform == 'darwin':
+        try:
+            os.execv(TASKPOLICY, [TASKPOLICY, '-c', 'utility', *command])
+            return  # execv replaces the image; unreachable on real success
+        except OSError:
+            pass
+    os.execvp(command[0], command)
 
 
 def required_memory_bytes(jobs_path, pool, fallback_bytes):
@@ -331,6 +375,7 @@ class Admission:
                 if reason:
                     return reason
                 self.record.update(state='active', startedAt=time.time(),
+                                   loadavgStart=load_average(),
                                    admission=dict(totalBytes=sample.total, freeBytes=sample.free,
                                                   swapBytes=sample.swap))
                 atomic_json(self.path, self.record)
@@ -358,7 +403,12 @@ class Admission:
                     raise ValueError('invalid historical peaks')
                 history[self.record['profile']] = max(history.get(self.record['profile'], 0), peak_bytes)
                 atomic_json(history_path, history)
-            self.record.update(state='finished', endedAt=time.time(), peakRssBytes=peak_bytes,
+            ended = time.time()
+            started = self.record.get('startedAt')
+            self.record.update(state='finished', endedAt=ended,
+                               durationSeconds=(round(ended - started, 3)
+                                                if isinstance(started, (int, float)) else None),
+                               loadavgEnd=load_average(), peakRssBytes=peak_bytes,
                                returncode=returncode, **details)
             atomic_json(self.root / 'receipts' / self.path.name, self.record)
             self.path.unlink(missing_ok=True)
@@ -440,6 +490,8 @@ def run(command, admission, poll=1.0, wait_seconds=None):
             return code
         env = dict(os.environ)
         env['CARGO_BUILD_JOBS'] = '4'
+        env['ASHLR_VITEST_UNIT_MAX_WORKERS'] = str(
+            clamped_unit_workers(os.environ.get('ASHLR_VITEST_UNIT_MAX_WORKERS')))
         env['PHANTOM_MEMORY_STATE_DIR'] = str(admission.root.absolute())
         env['PHANTOM_MEMORY_PAUSE_FILE'] = str(admission.pause_file.absolute())
         env['PHANTOM_MEMORY_LEASE'] = f'{admission.ticket}:{admission.fd}'
@@ -547,7 +599,7 @@ def main(argv=None):
         os.close(fd)
         if ready != b'1':
             return 70
-        os.execvp(raw[2], raw[2:])
+        exec_under_utility(raw[2:])
     root, pause = defaults()
     invoked = Path(sys.argv[0]).name
     if invoked in ('cargo', 'npm', 'npx', 'tsc'):

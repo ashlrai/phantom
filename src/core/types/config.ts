@@ -1184,6 +1184,13 @@ export interface AshlrConfig {
      * Only used when channel === 'imessage' (or channel is unset).
      */
     imessageHandle?: string;
+    /**
+     * Inbound intake allowlist: iMessage handles whose messages are read from
+     * chat.db. Only imessageHandle is operator input; other allowlisted handles
+     * enter the local teammate inbox. Falls back to [imessageHandle]
+     * when unset or empty. Set in ~/.ashlr/config.json. NEVER commit values.
+     */
+    imessageAllow?: string[];
     /** iMessage service name. Default 'iMessage'. */
     service?: 'iMessage';
     /**

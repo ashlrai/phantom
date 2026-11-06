@@ -10,6 +10,12 @@ import {
   formatExternalSkillAudit,
 } from '../core/fleet/external-skill-audit.js';
 import type { ExternalSkillAuditReport } from '../core/fleet/external-skill-audit.js';
+import {
+  formatSkillList,
+  isSkillCardStatus,
+  listSkills,
+  SKILL_LIST_MAX_LIMIT,
+} from '../core/fleet/skill-list.js';
 
 const AUDIT_TIMEOUT_MS = 30_000;
 
@@ -85,8 +91,10 @@ export async function cmdSkillsAuditWorker(args: string[]): Promise<number> {
 
 function help(): void {
   console.log([
-    'Usage: ashlr skills audit <pack-path> [--json]',
+    'Usage: ashlr skills list [--status candidate|verified|deprecated|revoked] [--limit N] [--json]',
+    '       ashlr skills audit <pack-path> [--json]',
     '',
+    'list shows skills learned from merged PRs (newest revision each).',
     'Audits an external skills/ catalog and evals/cases fixtures without',
     'executing scripts, importing prompts, or granting skill authority.',
   ].join('\n'));
@@ -97,7 +105,7 @@ function invalidUsage(json: boolean): number {
     process.stdout.write(`${JSON.stringify({
       schemaVersion: 1,
       error: { code: 'invalid-usage' },
-      usage: 'ashlr skills audit <pack-path> [--json]',
+      usage: 'ashlr skills list [--status <s>] [--limit N] [--json] | ashlr skills audit <pack-path> [--json]',
     })}\n`);
   } else {
     help();
@@ -105,7 +113,30 @@ function invalidUsage(json: boolean): number {
   return 2;
 }
 
+function cmdSkillsList(args: string[]): number {
+  let json = false;
+  let status: string | undefined;
+  let limit: number | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--json' && !json) json = true;
+    else if (arg === '--status' && status === undefined && args[i + 1] !== undefined) status = args[++i];
+    else if (arg === '--limit' && limit === undefined && /^\d+$/.test(args[i + 1] ?? '')) {
+      limit = Number(args[++i]);
+      if (limit < 1 || limit > SKILL_LIST_MAX_LIMIT) return invalidUsage(args.includes('--json'));
+    } else return invalidUsage(args.includes('--json'));
+  }
+  if (status !== undefined && !isSkillCardStatus(status)) return invalidUsage(json);
+  const report = listSkills({
+    ...(status !== undefined ? { status } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  });
+  process.stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : `${formatSkillList(report)}\n`);
+  return 0;
+}
+
 export async function cmdSkills(args: string[]): Promise<number> {
+  if (args[0] === 'list') return cmdSkillsList(args.slice(1));
   const json = args.includes('--json');
   const unknownFlags = args.filter((arg) => arg.startsWith('-') && arg !== '--json');
   const positional = args.filter((arg) => !arg.startsWith('-'));

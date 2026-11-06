@@ -297,6 +297,8 @@ async function cmdSendTest(): Promise<number> {
 }
 
 async function cmdCycle(): Promise<number> {
+  // Email remains available even when another transport is misconfigured.
+  await cmdEmailCycle();
   const cfg = await loadConfig();
   if (cfg.comms?.channel === 'telegram' && cfg.comms.enabled && !telegramEnabled(cfg)) {
     console.error(readTelegramHealth(cfg).tokenPresent
@@ -351,23 +353,74 @@ async function cmdCycle(): Promise<number> {
   const result = await runCommsCycle(cfg);
   logMigration(result.migration);
   console.log(`cycle complete: sent=${result.sent} resolved=${result.resolved}`);
+  return 0;
+}
+
+/** Shared configured email pass, also used by the scheduled comms cycle. */
+async function cmdEmailCycle(): Promise<number> {
   try {
     const runsDir = join(homedir(), '.ashlr-runs');
     const email = await readEmailDropConfig(runsDir);
-    if (email.state === 'invalid') console.error(`cycle: email-drop config invalid at ${email.path}`);
-    else if (email.state === 'ok' && email.config) {
+    if (email.state === 'invalid') {
+      console.error(`cycle: email-drop config invalid at ${email.path}`);
+      return 1;
+    }
+    else if (email.state === 'ok' && email.config && email.config.enabled !== false) {
       const { runEmailDropOnce } = await import('../core/comms/email-drop-bridge.js');
       const { inboxDir, outboxDir, processedDir, from } = email.config;
+      const outDir = outboxDir ?? join(inboxDir, '..', 'outbox');
       const counts = await runEmailDropOnce({
-        inboxDir, outboxDir: outboxDir ?? join(inboxDir, '..', 'outbox'),
+        inboxDir, outboxDir: outDir,
         processedDir: processedDir ?? join(inboxDir, '..', 'processed'),
         allowedSenders: new Set(from), runsDir, busRoot: join(ashlrHome(), 'fleet'),
       });
+      if (counts.unsafeFolder) console.error(`cycle: email-drop refused, the ${counts.unsafeFolder} folder is writable by other users; run chmod o-w on it`);
       console.log(`cycle: email-drop accepted=${counts.accepted} duplicate=${counts.duplicate} refused=${counts.refused} failed=${counts.failed}`);
+      // RQ-PHX-EMAILOUTBOXSEND02: opt-in reply send. Off by default — a config
+      // with no sendReplies field behaves exactly as before. A failed send
+      // never fails the cycle; the counts line carries the outcome.
+      if (email.config.sendReplies === true) {
+        try {
+          const { macMailTransport, sendEmailOutbox } = await import('../core/comms/email-outbox.js');
+          const outbox = await sendEmailOutbox({ dir: outDir, allowedRecipients: new Set(from), transport: macMailTransport(), draftsRunsDir: runsDir });
+          console.log(`cycle: email-outbox queued=${outbox.queued} sent=${outbox.sent} refused=${outbox.refused} failed=${outbox.failed} stuck=${outbox.stuck}${outbox.drafted ? ` drafted=${outbox.drafted}` : ''}`);
+        } catch {
+          console.error('cycle: email-outbox send failed');
+        }
+      }
+      return counts.unsafeFolder || counts.failed > 0 ? 1 : 0;
     }
   } catch {
     console.error('cycle: email-drop failed');
+    return 1;
   }
+  return 0;
+}
+
+async function cmdSetupEmail(): Promise<number> {
+  const runsDir = join(homedir(), '.ashlr-runs');
+  const saved = await readEmailDropConfig(runsDir);
+  if (saved.state === 'invalid') {
+    console.error(`email-drop config invalid at ${saved.path}`);
+    return 1;
+  }
+  const inbox = saved.config?.inboxDir ?? join(runsDir, 'email-drop', 'inbox');
+  console.log('Phantom email drop setup');
+  console.log(`Config: ${saved.path}`);
+  console.log(`Inbound: ${inbox}`);
+  console.log(`Outbound: ${saved.config?.outboxDir ?? join(inbox, '..', 'outbox')}`);
+  console.log(`Processed (including refused senders): ${saved.config?.processedDir ?? join(inbox, '..', 'processed')}`);
+  console.log('1. Create private drop directories (mode 0700). Use only Mason’s independently verified addresses for --from.');
+  console.log(`2. Save configuration: phm comms email-drop ${JSON.stringify(inbox)} --from <verified-address> --save-config`);
+  console.log('   A saved config enables polling; set "enabled": false in that file to pause it.');
+  console.log('3. Mail.app → Settings → Rules → Add Rule: match From to a verified address; Run AppleScript.');
+  console.log('   The rule script must save each message’s raw source as a unique *.eml in Inbound.');
+  console.log('   Alternatively, have a trusted local forwarder write raw RFC 822 to a temporary file there, then rename to *.eml atomically.');
+  console.log('   Preserve Message-ID and original From. Only trust Authentication-Results written by your receiving mail server; strip sender-supplied copies.');
+  console.log('4. Existing operator pairing and exact-domain DKIM checks remain required. Pair through the established operator-secret flow before sending orders.');
+  console.log('5. Run phm comms email-cycle to test; the existing phm comms cycle schedule polls the same config.');
+  console.log('6. A local forwarder can send Outbound/*.reply.eml once, then archive sent files. For Mail.app delivery, opt in with --send-replies --save-config.');
+  console.log('   Replies preserve In-Reply-To. Unknown senders are archived without an inbox entry or reply.');
   return 0;
 }
 
@@ -528,12 +581,14 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <inbox|bus|email-drop|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
-  console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (verified senders only)');
+  console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
+  console.log('    email-cycle                  process the enabled saved email drop configuration');
+  console.log('    setup-email                  print drop paths and Mail.app / forwarder setup');
   console.log('    status                       config + pending/outstanding + watermark');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
@@ -559,6 +614,8 @@ const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> 
   health:           { allowed: { flags: ['--json'] }, usage: 'usage: phm comms health [--json]' },
   status:           { allowed: {}, usage: 'usage: phm comms status' },
   'send-test':      { allowed: {}, usage: 'usage: phm comms send-test' },
+  'email-cycle':    { allowed: {}, usage: 'usage: phm comms email-cycle' },
+  'setup-email':    { allowed: {}, usage: 'usage: phm comms setup-email' },
   cycle:            { allowed: {}, usage: 'usage: phm comms cycle' },
   ask:              { allowed: { values: ['-o', '--option'] }, usage: 'usage: phm comms ask "<text>" -o <option> [-o <option> ...]' },
   digest:           { allowed: { flags: ['--force'] }, usage: 'usage: phm comms digest [--force]' },
@@ -600,6 +657,10 @@ export async function cmdComms(args: string[]): Promise<number> {
       return cmdStatus();
     case 'send-test':
       return cmdSendTest();
+    case 'email-cycle':
+      return cmdEmailCycle();
+    case 'setup-email':
+      return cmdSetupEmail();
     case 'cycle':
       return cmdCycle();
     case 'ask':
@@ -623,15 +684,15 @@ export async function cmdComms(args: string[]): Promise<number> {
 // RQ-PHX-EMAILDROPCHANNEL31: email-drop — .eml drop-folder → MASON-INBOX.md
 // ---------------------------------------------------------------------------
 
-const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--once | --watch <seconds>] [--save-config] [--json]';
+const EMAIL_DROP_USAGE = 'usage: phm comms email-drop <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--once | --watch <seconds>] [--save-config] [--send-replies] [--json]';
 
 async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records verified senders in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
+    console.log(`${EMAIL_DROP_USAGE}\nIngests every *.eml in <inboxDir> (name order), records messages whose From is allowlisted in Mason's inbox\nand the agent bus, writes a reply .eml per receipt, and moves handled files to processed/.\n--from is repeatable and required; unlisted senders are refused silently.\n--send-replies with --save-config lets 'ashlr comms cycle' send queued replies via Mail.app.\nDefaults: --outbox <inboxDir>/../outbox, --processed <inboxDir>/../processed, --once.`);
     return 0;
   }
   const badOption = rejectUnknownOptions(args, {
-    flags: ['--once', '--json', '--save-config'],
+    flags: ['--once', '--json', '--save-config', '--send-replies'],
     values: ['--from', '--outbox', '--processed', '--watch'],
   });
   const badUsage = (message?: string): number => {
@@ -648,6 +709,7 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   let once = false;
   let json = false;
   let saveConfig = false;
+  let sendReplies = false;
   const senders = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -672,6 +734,8 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
       json = true;
     } else if (arg === '--save-config') {
       saveConfig = true;
+    } else if (arg === '--send-replies') {
+      sendReplies = true;
     } else if (inboxDir === undefined && !arg.startsWith('-')) {
       inboxDir = arg;
     } else {
@@ -681,7 +745,7 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
   if (inboxDir === undefined) return badUsage();
   if (watchSeconds !== undefined && once) return badUsage('--once and --watch are mutually exclusive');
   if (senders.size === 0) {
-    return badUsage('email-drop needs at least one --from <address>; with no verified sender list every message is refused');
+    return badUsage('email-drop needs at least one --from <address>; with no allowlisted From address every message is refused');
   }
 
   const { runEmailDropOnce } = await import('../core/comms/email-drop-bridge.js');
@@ -692,7 +756,8 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
     allowedSenders: senders,
   };
   let savedConfig: string | undefined;
-  const emit = (counts: { accepted: number; duplicate: number; refused: number; failed: number }): void => {
+  const emit = (counts: { accepted: number; duplicate: number; refused: number; failed: number; unsafeFolder?: string }): void => {
+    if (counts.unsafeFolder) console.error(`email-drop: refused, the ${counts.unsafeFolder} folder is writable by other users; run chmod o-w on it`);
     console.log(json
       ? JSON.stringify(savedConfig ? { ...counts, savedConfig } : counts)
       : `email-drop: accepted=${counts.accepted} duplicate=${counts.duplicate} refused=${counts.refused} failed=${counts.failed}`);
@@ -702,8 +767,9 @@ async function cmdCommsEmailDrop(args: string[]): Promise<number> {
       savedConfig = await writeEmailDropConfig(join(homedir(), '.ashlr-runs'), {
         v: 1, inboxDir: resolve(options.inboxDir), outboxDir: resolve(options.outboxDir),
         processedDir: resolve(options.processedDir), from: [...senders],
+        ...(sendReplies ? { sendReplies: true } : {}),
       });
-      if (!json) console.log(`saved ${savedConfig}; \`ashlr comms cycle\` now runs the email drop every pass`);
+      if (!json) console.log(`saved ${savedConfig}; \`ashlr comms cycle\` now runs the email drop every pass${sendReplies ? ' and sends queued replies via Mail.app' : ''}`);
     }
     if (watchSeconds === undefined) {
       emit(await runEmailDropOnce(options));

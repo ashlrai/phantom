@@ -1,4 +1,8 @@
-/** Planning only. No provisioning, host inspection, credentials, or registry I/O. */
+import { NODE_FLEET_USAGE, NODE_FLEET_VERBS } from './node-fleet-usage.js';
+
+/** `bootstrap` is planning only: no provisioning, host inspection, credentials, or registry I/O.
+ * The other verbs (see node-fleet.ts) are the local node registry, router and job leases.
+ */
 export function nodeBootstrapPlan() {
   return {
     schemaVersion: 1,
@@ -23,10 +27,22 @@ export function nodeBootstrapPlan() {
 const USAGE = 'Usage: phm node bootstrap --dry-run [--json]';
 
 export async function cmdNode(args: string[]): Promise<number> {
+  if (!args.includes('--help') && !args.includes('-h') &&
+      (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && (args.includes('--primary') || args.slice(1).every(a => a === '--json'))))) {
+    return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
+  }
+  const fleetVerb = NODE_FLEET_VERBS.find(verb => verb === args[0]);
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${USAGE}\nPlanning stub only. No VM creation, login, or registry calls.`);
+    console.log(`${USAGE}\nbootstrap is a planning stub: no VM creation, login, or registry calls.\n\n${NODE_FLEET_USAGE}\n\nMulti-Mac pool (explicit team SSH aliases only):
+phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json
+phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> --json
+phm node join --json (repeat on an already configured Mac)
+phm node watch [--once] --json
+phm node worker --runner /absolute/host-owned-runner --json
+phm node rpc --json (SSH stdin endpoint)`);
     return 0;
   }
+  if (fleetVerb) return (await import('./node-fleet.js')).cmdNodeFleet(fleetVerb, args.slice(1));
   const json = args.includes('--json');
   const flags = args.slice(1);
   if (args[0] !== 'bootstrap' || !flags.includes('--dry-run') ||

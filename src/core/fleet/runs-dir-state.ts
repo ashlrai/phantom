@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { GLOBAL_SLOT_KEYS, LANE_ID_RE } from './runs-lane-targets.js';
 
 export interface FleetRunsLane {
   lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
@@ -23,7 +24,7 @@ export interface FleetRunsDirState {
   drop: { pending: Array<{ lane: string; file: string }>; done: number };
 }
 export interface ReadFleetRunsDirOptions { runsDir?: string; now?: () => number }
-const LANES = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin', 'claude-api', 'codex-local']);
+const validLane = (lane: string): boolean => LANE_ID_RE.test(lane) && !GLOBAL_SLOT_KEYS.has(lane);
 const ID = /^[A-Za-z0-9._-]{1,80}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const MAX = 8 * 1024 * 1024;
@@ -33,6 +34,17 @@ const object = (v: unknown): Record<string, unknown> => v !== null && typeof v =
 const number = (v: unknown): number|null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 const timestamp = (v: unknown): v is string => typeof v === 'string' && ISO.test(v) && Number.isFinite(Date.parse(v)) && new Date(`${v.slice(0, 10)}T00:00:00Z`).toISOString().slice(0, 10) === v.slice(0, 10);
 const safeId = (v: unknown): v is string => typeof v === 'string' && ID.test(v) && scrubSecrets(v) === v;
+function pauseState(status: Record<string, unknown>): boolean|null {
+  if (typeof status.paused === 'boolean') return status.paused;
+  // The host dispatcher v1 writes a pause reason or explicit null. Only that
+  // known producer schema gives null the meaning "not paused"; missing and
+  // unknown representations must remain unavailable.
+  if (status.schema === 'dispatchd.status.v1') {
+    if (status.paused === null) return false;
+    if (typeof status.paused === 'string' && status.paused.trim() && status.paused.length <= 500) return true;
+  }
+  return null;
+}
 function clean(text: string, max = 500): string {
   // Redact path tokens and prompt-bearing suffixes before exposing free text.
   return scrubSecrets(text).replace(/(?:[A-Za-z]:\\|~\/|\/)[^\s"'<>]*/g, '[path]')
@@ -42,7 +54,7 @@ function clean(text: string, max = 500): string {
 export function parseClaimedTsv(text: string): FleetRunsClaim[] {
   return text.split(/\r?\n/).flatMap(line => {
     const [job, lane, tier, clock, epoch, ...extra] = line.split('\t');
-    if (!safeId(job) || !LANES.has(lane) || !safeId(tier) || extra.length ||
+    if (!safeId(job) || !validLane(lane) || !safeId(tier) || extra.length ||
         !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(clock) || !/^\d{1,12}$/.test(epoch)) return [];
     const ms = Number(epoch) * 1000;
     return Number.isFinite(ms) && ms <= 8.64e15 ? [{ job, lane, tier, at: new Date(ms).toISOString() }] : [];
@@ -65,7 +77,7 @@ function metrics(text: string, nowMs: number) {
   for (const line of text.split(/\r?\n/).filter(Boolean)) {
     let row: Record<string, unknown>;
     try { row = object(JSON.parse(line)); } catch { corrupt = true; continue; }
-    if (!safeId(row.job) || !timestamp(row.ts) || (row.lane != null && !LANES.has(String(row.lane)))) { corrupt = true; continue; }
+    if (!safeId(row.job) || !timestamp(row.ts) || (row.lane != null && !validLane(String(row.lane)))) { corrupt = true; continue; }
     const age = nowMs - Date.parse(row.ts);
     if (age < 0 || age > 3600000) continue;
     const lane = typeof row.lane === 'string' ? row.lane : null;
@@ -87,11 +99,11 @@ export function parseJobsMetrics(text: string, nowMs: number): { tokensByLane: R
 }
 
 /** Descriptor-bound reads cap allocation even if dispatchd appends during the read. Symlinks are refused. */
-async function read(path: string, tail = false): Promise<string> {
+async function read(path: string, tail = false): Promise<{ text: string; clipped: boolean }> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
-    if (!info.isFile() || info.size > MAX) throw new Error('invalid source');
+    if (!info.isFile() || (!tail && info.size > MAX)) throw new Error('invalid source');
     const start = tail ? Math.max(0, info.size - TAIL) : 0;
     const bytes = Buffer.alloc(Math.min(info.size, tail ? TAIL : MAX));
     let offset = 0;
@@ -101,7 +113,7 @@ async function read(path: string, tail = false): Promise<string> {
       offset += result.bytesRead;
     }
     const text = bytes.subarray(0, offset).toString('utf8');
-    return start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text;
+    return { text: start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text, clipped: start > 0 };
   } finally { await file.close(); }
 }
 const missing = (e: unknown) => object(e).code === 'ENOENT';
@@ -123,13 +135,15 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
   let tokens: Record<string, number> = {};
   await Promise.all([
     guarded('status', async () => {
-      const s = object(JSON.parse(await read(join(root, 'queue/status.json'))));
-      if (!timestamp(s.last_tick) || typeof s.paused !== 'boolean' || number(s.mem_free_pct) === null || Number(s.mem_free_pct) > 100 || !s.lanes || Array.isArray(s.lanes) || typeof s.lanes !== 'object') throw new Error('invalid status');
-      state.lastTick = s.last_tick; state.paused = s.paused; state.memFreePct = number(s.mem_free_pct);
+      const s = object(JSON.parse((await read(join(root, 'queue/status.json'))).text));
+      const paused = pauseState(s);
+      if (!timestamp(s.last_tick) || paused === null || number(s.mem_free_pct) === null || Number(s.mem_free_pct) > 100 || !s.lanes || Array.isArray(s.lanes) || typeof s.lanes !== 'object') throw new Error('invalid status');
+      state.lastTick = s.last_tick; state.paused = paused; state.memFreePct = number(s.mem_free_pct);
       state.diskFreeGb = number(object(object(s.autopilot).disk).free_gb);
       for (const [lane, raw] of Object.entries(object(s.lanes))) {
+        if (GLOBAL_SLOT_KEYS.has(lane)) continue;
         const l = object(raw);
-        if (!LANES.has(lane) || !['running', 'target', 'queued'].every(k => number(l[k]) !== null && Number.isSafeInteger(l[k])) || !['floor', 'ceiling'].every(k => l[k] == null || (number(l[k]) !== null && Number.isSafeInteger(l[k]))) || typeof l.held !== 'boolean') {
+        if (!validLane(lane) || !['running', 'target', 'queued'].every(k => number(l[k]) !== null && Number.isSafeInteger(l[k])) || !['floor', 'ceiling'].every(k => l[k] == null || (number(l[k]) !== null && Number.isSafeInteger(l[k]))) || typeof l.held !== 'boolean') {
           state.sources.status = 'degraded'; continue;
         }
         const rollup = object(object(object(s.rollup_24h).by_lane)[lane]);
@@ -140,24 +154,28 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
       }
     }),
     guarded('claimed', async () => {
-      const text = await read(join(root, 'queue/claimed.tsv'));
+      const { text } = await read(join(root, 'queue/claimed.tsv'));
       state.claimed = parseClaimedTsv(text);
       if (text.split(/\r?\n/).filter(Boolean).length !== state.claimed.length) state.sources.claimed = 'degraded';
     }),
     guarded('events', async () => {
-      const text = await read(join(root, 'dispatch-events.log'));
+      const tail = await read(join(root, 'dispatch-events.log'), true);
+      const { text } = tail;
       state.events = parseDispatchEvents(text);
-      if (text.trimEnd().split(/\r?\n/).slice(-400).filter(Boolean).some(line => {
+      if (tail.clipped && !text.trim() || text.trimEnd().split(/\r?\n/).slice(-400).filter(Boolean).some(line => {
         const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) [A-Z][A-Z0-9_-]{0,63}(?: |$)/.exec(line);
         return !match || !timestamp(`${match[1]}T${match[2]}Z`);
       })) state.sources.events = 'degraded';
     }),
     guarded('metrics', async () => {
-      const result = metrics(await read(join(root, 'metrics/jobs.jsonl'), true), now);
-      tokens = result.tokensByLane; state.publishesLastHour = result.publishes;
-      if (result.corrupt) state.sources.metrics = 'degraded';
+      const tail = await read(join(root, 'metrics/jobs.jsonl'), true);
+      const result = metrics(tail.text, now);
+      // A bounded tail proves individual publication events, but does not prove
+      // complete hourly totals. Keep those unknown when any prefix was omitted.
+      tokens = tail.clipped ? {} : result.tokensByLane; state.publishesLastHour = result.publishes;
+      if (tail.clipped || result.corrupt) state.sources.metrics = 'degraded';
     }),
-    guarded('claudeLane', async () => { state.claudeLane = clean((await read(join(root, 'queue/claude-lane.state'))).split(/\r?\n/)[0], 200) || null; }),
+    guarded('claudeLane', async () => { state.claudeLane = clean((await read(join(root, 'queue/claude-lane.state'))).text.split(/\r?\n/)[0], 200) || null; }),
     guarded('switches', async () => {
       for (const name of SWITCHES) {
         try { await lstat(join(root, name)); state.switches.push(name); } catch (e) { if (!missing(e)) throw e; }
@@ -166,7 +184,7 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
     guarded('drop', async () => {
       const base = join(root, 'leader/drop');
       for (const entry of (await readdir(base, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-        if (!entry.isDirectory() || (entry.name !== 'done' && !LANES.has(entry.name))) continue;
+        if (!entry.isDirectory() || (entry.name !== 'done' && !validLane(entry.name))) continue;
         for (const file of (await readdir(join(base, entry.name), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
           if (!file.isFile() || !file.name.endsWith('.md') || !safeId(file.name)) continue;
           if (entry.name === 'done') state.drop.done++;

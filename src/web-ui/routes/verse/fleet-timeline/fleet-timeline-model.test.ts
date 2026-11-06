@@ -7,7 +7,7 @@ const lane = (name: string) => ({ lane: name, running: 0, target: 2, queued: 0, 
 const worker = (job: string, ageSeconds: number | null, laneName = 'codex') => ({ job, lane: laneName, ageSeconds, tier: 'work', repo: 'example/repo' });
 const runs: FleetRunsV1 = {
   v: 1, generatedAt: '2026-10-31T12:30:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
-  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, host: null,
   lanes: [lane('codex'), lane('devin')], workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [],
   mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };

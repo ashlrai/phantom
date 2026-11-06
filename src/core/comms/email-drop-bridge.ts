@@ -33,7 +33,7 @@
  *     name order; every handled file is renamed into processedDir (never
  *     deleted) and one bad file never throws or stops the pass.
  *
- * Like Telegram's `sender-not-allowed`, an unverified sender gets no reply and
+ * Like Telegram's `sender-not-allowed`, a sender not on the From allowlist gets no reply and
  * no inbox write. A failed outbox write never unwrites an accepted entry.
  */
 
@@ -41,9 +41,33 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createChannelReceiver, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
+import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
+import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
+import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
+import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
+import { isEmailNeedsCommand, runEmailNeedsCommand } from './email-needs-command.js';
+import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
+import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
+import { renderNeedsCommandReply } from './telegram-needs-command.js';
+import { deliverCosResult } from '../cos/intake.js';
+
+/** Place an explicitly approved result in the existing mail transport outbox. */
+export async function deliverEmailCosResult(id: string, approvedDigest: string,
+  opts: Pick<EmailDropRecordOptions, 'runsDir' | 'outboxDir'>): Promise<void> {
+  await deliverCosResult(id, approvedDigest, async draft => {
+    const address = draft.origin.senderId.replace(/^email:/, '');
+    if (draft.origin.channel !== 'email' || !draft.origin.senderId.startsWith('email:') ||
+        !/^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+$/.test(address) || !opts.outboxDir ||
+        !SAFE_MESSAGE_ID.test(draft.origin.threadId ?? '')) throw new Error('No verified email origin');
+    mkdirSync(opts.outboxDir, { recursive: true, mode: 0o700 });
+    const headers = [`To: ${address}`, 'Subject: Phantom result',
+      `In-Reply-To: <${draft.origin.threadId}>`, `References: <${draft.origin.threadId}>`,
+      'Content-Type: text/plain; charset=utf-8'];
+    writeFileSync(join(opts.outboxDir, `${id}.result.eml`), `${headers.join('\r\n')}\r\n\r\n${draft.text}\r\n`, { flag: 'wx', mode: 0o600 });
+  }, opts.runsDir);
+}
 
 export interface ParsedEml {
   from: string;
@@ -51,6 +75,7 @@ export interface ParsedEml {
   subject: string;
   body: string;
   inReplyTo: string | null;
+  authenticationResults: string | null;
 }
 
 export interface EmailDropRecordOptions {
@@ -87,6 +112,14 @@ export interface EmailDropCounts {
   failed: number;
   /** Present when the pass handled status messages; accepted counts include queued replies. */
   status?: { queued: number; duplicate: number };
+  /** Set when the pass did nothing because this folder is writable by other users. */
+  unsafeFolder?: 'inbox' | 'processed' | 'outbox';
+}
+
+/** A folder any other local user can write could inject or swap .eml files. */
+function isOtherWritable(path: string): boolean {
+  try { return (statSync(path).mode & 0o002) !== 0; }
+  catch { return false; } // missing dirs are handled by the normal empty-pass path
 }
 
 const BODY_CAP_BYTES = 8 * 1024;
@@ -228,6 +261,7 @@ export function parseEmlMessage(raw: string): ParsedEml | null {
     subject: headers.get('subject') ?? '',
     body: capUtf8Bytes(kept.join('\n'), BODY_CAP_BYTES).trim(),
     inReplyTo: messageIdToken(headers.get('in-reply-to')),
+    authenticationResults: headers.get('authentication-results') ?? null,
   };
 }
 
@@ -255,7 +289,9 @@ function seenFilePath(runsDir: string | undefined): string {
   return join(runsRoot(runsDir), 'queue', 'email-drop-seen.jsonl');
 }
 
-// Status requests use permanent exclusive claims rather than the bounded,
+const SAFE_MESSAGE_ID = /^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9.-]+$/;
+
+// Status and needs requests use permanent exclusive claims rather than the bounded,
 // best-effort inbox journal: a replay must not read or queue a second reply.
 function statusClaimPath(runsDir: string | undefined, id: string): string {
   const hash = createHash('sha256').update(id).digest('hex');
@@ -328,21 +364,79 @@ export async function recordEmailToInbox(
   raw: string,
   opts: EmailDropRecordOptions,
 ): Promise<EmailDropResult> {
-  const parsed = parseEmlMessage(raw);
-  if (!parsed) return { ok: false, reason: 'invalid' };
+  const received = parseEmlMessage(raw);
+  if (!received) return { ok: false, reason: 'invalid' };
+  if (!opts.allowedSenders.has(received.from)) return { ok: false, reason: 'sender-not-allowed' };
+  const secret = readOperatorSecret();
+  if (secret.state === 'invalid') return { ok: false, reason: 'sender-not-allowed' };
+  let parsed = received;
+  if (secret.state === 'ready' && secret.secret) {
+    if (!dkimPasses(parsed.authenticationResults, parsed.from)) return { ok: false, reason: 'sender-not-allowed' };
+    const stripped = stripPairingSecret(parsed.body, secret.secret);
+    const paired = emailPaired(parsed.from, runsRoot(opts.runsDir));
+    if (!stripped.presented && !paired) return { ok: false, reason: 'sender-not-allowed' };
+    if (stripped.presented) rememberEmailPair(parsed.from, runsRoot(opts.runsDir));
+    parsed = { ...parsed, body: stripped.body };
+    if (!parsed.body && stripped.presented) {
+      if (!opts.outboxDir || !parsed.messageId) return { ok: false, reason: 'invalid' };
+      try {
+        mkdirSync(opts.outboxDir, { recursive: true });
+        writeFileSync(join(opts.outboxDir, `paired-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+          `To: ${parsed.from}\r\nSubject: Re: Phantom\r\nIn-Reply-To: <${parsed.messageId}>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPaired.\r\n`,
+          { mode: 0o600, flag: 'wx' });
+      } catch { return { ok: false, reason: 'write-failed' }; }
+      return { ok: false, kind: 'status', reason: 'status-queued' };
+    }
+  } else if (!emailPaired(parsed.from, runsRoot(opts.runsDir)) || !dkimPasses(parsed.authenticationResults, parsed.from)) {
+    return { ok: false, reason: 'sender-not-allowed' };
+  }
+  if (!allowOperatorMessage(`email:${parsed.from}`, (opts.now ?? (() => new Date()))().getTime())) {
+    if (opts.outboxDir && parsed.messageId) {
+      try {
+        mkdirSync(opts.outboxDir, { recursive: true });
+        writeFileSync(join(opts.outboxDir, `slow-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+          `To: ${parsed.from}\r\nSubject: Re: Phantom\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSlow down.\r\n`,
+          { mode: 0o600, flag: 'wx' });
+      } catch { /* best-effort */ }
+    }
+    return { ok: false, reason: 'full' };
+  }
   const message = emailChannelMessage(parsed, opts.allowedSenders);
   if (!message) return { ok: false, reason: 'sender-not-allowed' };
-  // This adapter inherits authentication from the configured trusted drop
-  // transport. From is only an allowlist match; neither message headers nor
-  // body can establish authentication. Only that transport may populate the
-  // drop folder, and it must bind the authenticated sender to From.
+  // Allowlist, exact-domain DKIM and prior pairing are mandatory. A configured
+  // secret can establish the pairing on the first authenticated mail. The secret
+  // line is removed before the order is logged. Inbound text is never a command.
   try {
-    const status = isFleetStatusRequest(raw);
+    const ask = isOperatorStatusAsk(parsed.body.trim() || parsed.subject.trim());
+    const status = isFleetStatusRequest(raw) || ask;
     const claim = parsed.messageId ? statusClaimPath(opts.runsDir, parsed.messageId) : null;
     if (claim && statusWasClaimed(claim)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
+    const commandText = parsed.body.trim() || parsed.subject.trim();
+    if (isEmailNeedsCommand(commandText)) {
+      // Same replay protection as status: one permanent claim per Message-ID, so a
+      // redelivered mail never resolves or replies twice.
+      if (!parsed.messageId || !SAFE_MESSAGE_ID.test(parsed.messageId) || !claim || !opts.outboxDir) return { ok: false, reason: 'invalid' };
+      mkdirSync(dirname(claim), { recursive: true });
+      try { writeFileSync(claim, '', { flag: 'wx', mode: 0o600 }); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, kind: 'status', reason: 'status-duplicate' };
+        throw error;
+      }
+      const reply = await runEmailNeedsCommand(commandText, {
+        list: listNeedsMason,
+        resolve: (request, options) => resolveNeedsMasonWithInbox(request, { ...options, ...(opts.busRoot ? { bus: { root: opts.busRoot } } : {}) }),
+        runsDir: runsRoot(opts.runsDir),
+      });
+      mkdirSync(opts.outboxDir, { recursive: true });
+      const headers = [`To: ${parsed.from}`, 'Subject: Re: Phantom needs', `In-Reply-To: <${parsed.messageId}>`,
+        `References: <${parsed.messageId}>`, 'Content-Type: text/plain; charset=utf-8'];
+      writeFileSync(join(opts.outboxDir, `needs-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+        `${headers.join('\r\n')}\r\n\r\n${renderNeedsCommandReply(reply)}\r\n`, { flag: 'wx', mode: 0o600 });
+      return { ok: false, kind: 'status', reason: 'status-queued' };
+    }
     if (status) {
       // A safe Message-ID is required for threading and durable replay protection.
-      if (!parsed.messageId || !/^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9.-]+$/.test(parsed.messageId) || !claim || !opts.outboxDir) {
+      if (!parsed.messageId || !SAFE_MESSAGE_ID.test(parsed.messageId) || !claim || !opts.outboxDir) {
         return { ok: false, reason: 'invalid' };
       }
       if (readSeenMessageIds(opts.runsDir).has(parsed.messageId)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
@@ -352,9 +446,11 @@ export async function recordEmailToInbox(
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, kind: 'status', reason: 'status-duplicate' };
         throw error;
       }
-      const body = await emailFleetStatus(opts.runsDir, opts.now ?? (() => new Date()), opts.statusReaders);
+      const body = ask
+        ? formatOperatorGlance(await readOperatorGlance({ runsDir: opts.runsDir, now: opts.now }))
+        : await emailFleetStatus(opts.runsDir, opts.now ?? (() => new Date()), opts.statusReaders);
       mkdirSync(opts.outboxDir, { recursive: true });
-      const headers = [`To: ${parsed.from}`, 'Subject: Re: Phantom fleet status',
+      const headers = [`To: ${parsed.from}`, `Subject: Re: ${ask ? 'Phantom' : 'Phantom fleet status'}`,
         `In-Reply-To: <${parsed.messageId}>`, `References: <${parsed.messageId}>`,
         'Content-Type: text/plain; charset=utf-8'];
       writeFileSync(join(opts.outboxDir, `status-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
@@ -393,8 +489,9 @@ export async function recordEmailToInbox(
       busRoot: opts.busRoot,
       acknowledge: reply,
     });
-    const result = await receive(message);
-    if (result.ok && result.ack.status === 'accepted' && parsed.messageId) {
+    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID,
+      ...(parsed.messageId && SAFE_MESSAGE_ID.test(parsed.messageId) ? { threadId: parsed.messageId } : {}) });
+    if (result.ok && parsed.messageId) {
       recordSeenMessageId(opts.runsDir, parsed.messageId);
     }
     return result;
@@ -406,10 +503,16 @@ export async function recordEmailToInbox(
 /**
  * One pass over `*.eml` in inboxDir, in name order. Each handled file is
  * renamed into processedDir (never deleted; a colliding name gains a suffix)
- * and one bad file never throws or stops the pass.
+ * and one bad file never throws or stops the pass. A drop folder that is
+ * other-writable (inbox, processed or outbox) refuses the whole pass: the From
+ * header is the only identity evidence, and such a folder lets any local user
+ * plant a file with an allowlisted From.
  */
 export async function runEmailDropOnce(opts: EmailDropRunOptions): Promise<EmailDropCounts> {
   const counts: EmailDropCounts = { accepted: 0, duplicate: 0, refused: 0, failed: 0 };
+  for (const [kind, path] of [['inbox', opts.inboxDir], ['processed', opts.processedDir], ['outbox', opts.outboxDir]] as const) {
+    if (path && isOtherWritable(path)) return { ...counts, unsafeFolder: kind };
+  }
   let names: string[];
   try {
     mkdirSync(opts.processedDir, { recursive: true });

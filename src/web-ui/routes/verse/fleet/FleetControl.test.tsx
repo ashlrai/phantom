@@ -124,7 +124,8 @@ describe('shared native readback', () => {
 
 describe('automatic control polling', () => {
   function stubControlFetch(fetcher: (path: string, init: RequestInit) => Promise<Response>): void {
-    vi.stubGlobal('fetch', (path: string, init: RequestInit) => path === '/api/verse/fleet/control/switches'
+    vi.stubGlobal('fetch', (path: string, init: RequestInit) => path === '/api/verse/fleet/runs'
+      ? Promise.resolve(json(null, 404)) : path === '/api/verse/fleet/control/switches'
       ? Promise.resolve(json({ v: 1, switches: [], sourceState: 'missing' })) : fetcher(path, init));
   }
 
@@ -728,10 +729,10 @@ describe('lane observations', () => {
     render(<FleetSection />);
     const lanes = await screen.findByRole('list', { name: 'Lanes: busy of slots' });
     const grok = within(lanes).getByText('Grok').closest('li');
-    expect(grok).toHaveTextContent('1 working · capacity unobserved');
+    expect(grok).toHaveTextContent('1 working · capacity unknown');
     expect(grok).not.toHaveAttribute('data-off');
     expect(lanes).not.toHaveTextContent('off');
-    expect(screen.getByText(/no completed standing tick has reported lanes/)).toBeInTheDocument();
+    expect(screen.getByText(/no standing lane observation has arrived/)).toBeInTheDocument();
   });
 });
 

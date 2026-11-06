@@ -14,12 +14,14 @@ either name.
 | Need | Command |
 | --- | --- |
 | Node version | `>=22.15.0` (`package.json` `engines`) |
-| Install dependencies | `npm ci` |
+| Install dependencies in a trusted local worktree | `npm run install:worktree` (pnpm 10.28.2; shared same-volume store; see [setup](../CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)) |
+| Install dependencies in CI or for release packaging | `npm ci` |
 | Build `dist/` (CLI, assets, web console, build identity) | `npm run build` |
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
 | Type check (backend + web) | `npm run typecheck` |
+| Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
 | Backend tests | `npm test` (all), `npx vitest run test/<file>.test.ts` (focused) |
 | Fast unit lane with per-file timing | `npm run test:fast` (report: `.ashlr-gate/test-fast-durations.json`) |
@@ -112,6 +114,28 @@ An accepted PR creates one deterministic follow-up asking for the next bounded,
 evidence-supported improvement. Replay is idempotent, even after completion;
 conflicting SHA/time metadata for the same PR is refused.
 
+### Outcome learning
+
+`phm fleet outcomes --events <log> --json` reads a dispatch event log and
+prints, for each resource, model, job type, and repo, the merge rate, time to
+merge, usage, and breakage rate. It also lists improvement jobs for recurring
+failures. `phm fleet outcomes route` adds the next assignment and a
+plain-language reason. The same types are exported from
+`src/core/routing/outcome-learning.ts` for the desktop app. There is no
+routing setting to tune: the log is the memory. Critical jobs are never held
+for an exhausted resource, and allowance that resets soon is still spent when
+that resource can finish the job.
+
+### Selector
+
+`phm select --json` ranks candidates in `~/.ashlr-runs/selector/candidates.jsonl`
+by value x leverage / (time + usage), using the outcome log for what a candidate
+leaves out. It prints the top five as `READY` lines, appends them with their
+predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
+twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
+hourly launchd agent on the Mac. See
+[the selector contract](contracts/CONTRACT-SELECTOR.md).
+
 `phm fleet queue ask --json` reads one `ask.v1` record on stdin —
 `{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
 as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
@@ -189,6 +213,13 @@ phm verse             # console at http://127.0.0.1:7777/verse/
   batching can change actual timing; these ranges are estimates, not deadlines.
   Missing/malformed history, unavailable required checks, or an unknown queue
   position yields `unknown`. History is bounded to 1 MiB / 10,000 rows.
+  Each row also attributes the PR's merge-queue wait (`waitingOn`): `position`
+  when entries ahead must land first, `checks` when the head entry waits on
+  the merge-group's required checks, or `conflict` when GitHub reports the PR
+  conflicting; `waitingMs` is the observed queue time from `enqueuedAt`.
+  A conflicting PR carries exactly one idempotent recut request,
+  `RQ-RECUT-<repo>-<pr>-<head7>` — the same conflicting head re-read yields
+  the same key, so consumers dedupe by it; a moved head makes a new request.
 - `phm preflight [--json]` is a read-only readiness check (exit 0 ready, 1 blocked).
 - `phm onboard [--yes] [--json]` walks through the first safe activation (preflight, enroll
   one repo, dry-run plan, inbox). `--json` never prompts and prints one object.
@@ -590,6 +621,8 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
+| Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
+| Rebuildable disk growth (logs, sessions, staging, worktrees) | `phm disk-maint` (dry run: bytes reclaimable per class; `--apply` frees them; `phm disk-maint schedule --install` installs the daily job; the protect-list keeps `~/.codex*`, model weights, Docker, client trees and secrets always) |
 | Log roots using too much disk | `phm steward disk` (dry run; `--apply` deletes expired or over-quota plain logs and gzip-archives cold Codex and Claude sessions to `~/.ashlr/archive`; files modified in the last 24 hours are untouched) |
 | Ledger integrity questions | `phm authority ledger verify` |
 | Safety invariants | `phm verify-safety` |
@@ -694,3 +727,16 @@ The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
 excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
+
+`phm fleet repo-rate --json` reads merged PR outcomes from
+`~/.ashlr-runs/metrics/jobs.jsonl` for the last six hours. It reports each repo's
+merge count, median time to merge in seconds, and newest merge time. Each PR
+counts once; missing durations remain unknown. `--hours N` changes the window.
+The default target is 20 merges for `ashlrai/phantom`; `--target N` changes it
+and `--all` checks every observed repo. Exit 1 means a checked repo is below
+target or the ledger could not be read. No work is launched or changed.
+
+`phm fleet slow-prs [--json]` lists open PRs at least 30 minutes old, measured
+against the newest timestamp in the last 3000 lines of the jobs ledger. Plain
+output shows one line per repository with its count and PR URLs; JSON returns
+the typed `fleet.slow-prs.v1` report. This command only reads the local ledger.

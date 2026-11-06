@@ -1,3 +1,4 @@
+import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
@@ -11,10 +12,15 @@ import { createChannelReceiver } from '../fleet/channel-envelope.js';
 import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
-import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
+import { readOperatorGlance } from '../fleet/operator-glance-read.js';
+import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
+import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
+import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
+
+export const VERSE_FLEET_RUNS_REASSIGN_PATH = '/api/verse/fleet/runs/reassign';
 
 // passesMutationGate authenticates a single local operator (the x-ashlr-token
 // holder); there is no per-request user identity. The shared channel receiver's
@@ -44,6 +50,7 @@ export interface FleetRunsApiDeps {
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
   readInbox?: (limit: number) => Promise<unknown>;
+  readOutbox?: (limit: number) => Promise<unknown>;
   appendInbox?: (text: string, source: string) => Promise<unknown>;
   codexPersonal?: () => Promise<unknown>;
   mergedLastHour?: () => Promise<unknown>;
@@ -62,6 +69,7 @@ export interface FleetRunsApiDeps {
   receiptStore?: ChannelDedupeStore;
   /** One-job stop behind POST .../runs/stop. Injected so tests never signal a real process. */
   stopJob?: (id: string, opts: StopJobOptions) => Promise<JobStopResult>;
+  reassign?: typeof reassignQueuedJobs;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention. */
@@ -91,6 +99,7 @@ function project(value: unknown, shape: Shape): unknown {
   return Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, project(value[k], s)]));
 }
 const inboxShape: Shape = [{ at: 'string', source: 'string', text: 'string' }];
+const outboxShape: Shape = [{ at: 'string', text: 'string' }];
 // The independent host reading projects nullable load averages, core count and ratio.
 const hostShape: Shape = { load1: 'number?', load5: 'number?', load15: 'number?', cores: 'number?', ratio: 'number?' };
 const runsShape: Shape = {
@@ -157,7 +166,8 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   });
   const runs = deps.readRunsDir ?? (async () => (await import('../fleet/runs-dir-state.js' as string)).readFleetRunsDirState());
   const workers = deps.listWorkers ?? (async () => (await import('../fleet/runs-live-workers.js' as string)).listLiveWorkers());
-  const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit }));
+  const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit, runsDir: deps.runsDir ?? defaultRunsDir() }));
+  const outbox = deps.readOutbox ?? (async (limit: number) => (await import('../fleet/mason-outbox.js' as string)).readOutboxEntries({ limit, runsDir: deps.runsDir ?? defaultRunsDir() }));
   const append = deps.appendInbox ?? (async (text: string, source: string) => (await import('../fleet/mason-inbox.js' as string)).appendInboxEntry(text, { source, runsDir: deps.runsDir ?? defaultRunsDir() }));
   // One receiver per API instance: its normalization/dedupe contract is shared
   // by every POST below for the process lifetime. `source` stays presentation
@@ -166,7 +176,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // pendingSources the one belonging to the request inside receive(). Each
   // request removes its ticket exactly once (consumed by write, or spliced in
   // the finally of the POST handler) before the next receive can start.
-  const pendingSources: { source: string }[] = [];
+  const pendingSources: { source: string; id?: string }[] = [];
   const receive = createChannelReceiver({
     allowedSenderIds: new Set([VERSE_INBOX_OPERATOR_ID, VERSE_INBOX_MOBILE_OPERATOR_ID]),
     now: () => new Date(now()),
@@ -177,8 +187,32 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     // two such instances must not dedupe across each other. The shipped
     // handleFleetRunsApi below passes the resolved default runsDir.
     receiptStore: deps.receiptStore ?? (deps.runsDir === undefined ? undefined : createLocalChannelDedupeStore(deps.runsDir)),
-    write: async (envelope) => (await append(envelope.body, pendingSources[0]?.source ?? DEFAULT_INBOX_SOURCE)) as InboxAppendResult,
+    write: async (envelope) => {
+      const ticket = pendingSources[0];
+      const result = await append(envelope.body, ticket?.source ?? DEFAULT_INBOX_SOURCE) as InboxAppendResult;
+      if (result.ok && ticket && typeof result.id === 'string') ticket.id = result.id;
+      return result;
+    },
   });
+  // Optional metadata uses the same string guards as the existing projection.
+  function withAck(entry: unknown, states: ReturnType<typeof readInboxAckStates>): { id?: string; channel?: string; ack?: InboxAckState } {
+    if (!record(entry)) return {};
+    const channel = entry.channel === undefined ? {} : { channel: project(entry.channel, 'string') as string };
+    if (entry.id === undefined) return channel;
+    const id = project(entry.id, 'string') as string;
+    const ack: InboxAckState = states.get(id)?.status ?? 'pending';
+    return { ...channel, id, ack };
+  }
+  function projectInboxWithAcks(raw: unknown, query: Parameters<typeof projectInboxRead>[1]) {
+    const result = projectInboxRead(raw, query);
+    if (!result || !record(raw) || !Array.isArray(raw.entries)) return result;
+    const states = readInboxAckStates(deps.runsDir ?? defaultRunsDir());
+    const entries = raw.entries.flatMap(item => {
+      const safe = projectInboxRead({ ...raw, entries: [item] }, query)?.entries[0];
+      return safe ? [{ ...safe, ...withAck(item, states) }] : [];
+    });
+    return { ...result, entries: entries.slice(0, query.limit).reverse() };
+  }
   async function build(): Promise<FleetRunsV1> {
     const result: FleetRunsV1 = {
       v: 1, generatedAt: new Date(now()).toISOString(), sources: { runsDir: 'degraded', workers: 'degraded', inbox: 'degraded', codex: 'degraded', merges: 'degraded' },
@@ -191,7 +225,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       ['runsDir', runs, runsShape], ['workers', workers, workersShape], ['inbox', () => inbox(30), inboxShape],
       ['codex', deps.codexPersonal ?? (() => personal(now())), codexShape], ['merges', merges, mergesShape],
     ] as const;
-    await Promise.all(sources.map(async ([key, read, shape]) => {
+    const sourcesDone = Promise.all(sources.map(async ([key, read, shape]) => {
       try {
         const raw: unknown = await read();
         if (raw === null && key === 'codex') { result.sources[key] = 'missing'; return; }
@@ -209,12 +243,27 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
         if (key === 'runsDir') result.claimed = claimed as FleetRunsV1['claimed'];
         if (key === 'runsDir') result.drop = drop as FleetRunsV1['drop'];
-        if (key === 'inbox') result.inbox = value as FleetRunsV1['inbox'];
+        if (key === 'inbox') {
+          const entries = record(raw) ? raw.entries : raw;
+          const states = readInboxAckStates(deps.runsDir ?? defaultRunsDir());
+          result.inbox = (value as FleetRunsV1['inbox']).map((entry, i) => ({ ...entry, ...withAck((entries as unknown[])[i], states) }));
+        }
         if (key === 'codex') result.codexPersonal = value as FleetRunsV1['codexPersonal'];
         if (key === 'merges') result.mergesLastHour = value as FleetRunsV1['mergesLastHour'];
-        result.sources[key] = record(raw) && ['missing', 'degraded'].includes(String(raw.sourceState)) ? raw.sourceState as 'missing' | 'degraded' : 'healthy';
+        // The live-worker reader reports an unreadable process table as 'unavailable'; that is degraded, never healthy.
+        const reported = record(raw) ? String(raw.sourceState) : '';
+        result.sources[key] = reported === 'unavailable' ? 'degraded'
+          : reported === 'missing' || reported === 'degraded' ? reported : 'healthy';
       } catch (error) { result.sources[key] = unavailable(error) ? 'not-landed' : 'degraded'; }
     }));
+    // The leader's answers file may not exist yet on a host, so it carries no
+    // sources flag: any failure leaves an empty list and every other field as is.
+    try {
+      const raw: unknown = await outbox(30);
+      const entries = record(raw) && Array.isArray(raw.entries) ? raw.entries : raw;
+      result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
+    } catch { result.outbox = []; }
+    await sourcesDone;
     return result;
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
@@ -239,6 +288,14 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, modelFlight ? await modelFlight : modelCache!.value);
       return true;
     }
+    if (method === 'GET' && path === VERSE_FLEET_RUNS_GLANCE_PATH) {
+      try {
+        sendJson(res, 200, await readOperatorGlance({ runsDir: deps.runsDir, now: () => new Date(now()) }));
+      } catch {
+        sendJson(res, 200, { v: 1, at: new Date(now()).toISOString(), running: null, target: null, usagePct: null, resetsAt: null, mergesToday: null, main: 'unknown', incidents: [] });
+      }
+      return true;
+    }
     if (method === 'GET' && path === VERSE_FLEET_RUNS_PATH) {
       if (flight?.generation !== generation && (!cached || now() - cached.at >= 2000)) {
         const buildGeneration = generation;
@@ -259,7 +316,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       catch { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid query string' }); return true; }
       if ('error' in query) { sendJson(res, 400, { code: 'VERSE_INVALID', error: query.error }); return true; }
       // Filter within the bounded tail before applying the requested result limit.
-      try { sendJson(res, 200, projectInboxRead(await inbox(VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX), query)); }
+      try { sendJson(res, 200, projectInboxWithAcks(await inbox(VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX), query)); }
       catch { sendJson(res, 503, { code: 'INBOX_UNAVAILABLE' }); }
       return true;
     }
@@ -272,6 +329,40 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       catch {
         sendJson(res, 200, { v: 1, generatedAt: new Date(now()).toISOString(), source: 'unavailable', pairs: [], openDirty: 0 } satisfies SupersededReadV1);
       }
+      return true;
+    }
+    if (path === VERSE_FLEET_RUNS_REASSIGN_PATH) {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      const lanePattern = /^[a-z0-9-]{1,40}$/;
+      if (!record(body) || Object.keys(body).some(k => !['job', 'fromLane', 'lane', 'tier'].includes(k)) ||
+        (('job' in body) === ('fromLane' in body)) ||
+        ('job' in body && (typeof body.job !== 'string' || !STRAY_ID_PATTERN.test(body.job))) ||
+        ('fromLane' in body && (typeof body.fromLane !== 'string' || !lanePattern.test(body.fromLane))) ||
+        typeof body.lane !== 'string' || !lanePattern.test(body.lane) ||
+        ('tier' in body && (typeof body.tier !== 'string' || !/^[a-z]{1,20}$/.test(body.tier)))) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid reassign body' }); return true;
+      }
+      try {
+        const mod = await import('../fleet/runs-reassign.js');
+        try {
+          const report = await (deps.reassign ?? mod.reassignQueuedJobs)({
+            ...(typeof body.job === 'string' ? { job: body.job } : { fromLane: body.fromLane as string }),
+            lane: body.lane, ...(typeof body.tier === 'string' ? { tier: body.tier } : {}),
+            apply: true, force: false, reason: 'desktop',
+          }, { runsDir: deps.runsDir ?? defaultRunsDir(), changedBy: req.headers['x-ashlr-channel'] === 'mobile' ? 'mobile' : 'desktop' });
+          if (report.moved.length > 0) { generation++; cached = undefined; }
+          sendJson(res, 200, { v: 1, applied: report.applied, lane: report.lane,
+            moved: report.moved.map(({ id, fromLane, toLane, fromTier, toTier }) => ({ id, fromLane, toLane, fromTier, toTier })),
+            skipped: report.skipped.map(({ id, reason }) => ({ id, reason })), verified: report.verified });
+        } catch (error) {
+          if (error instanceof mod.ReassignError) sendJson(res, error.status, { code: 'REASSIGN_REFUSED', reason: error.code });
+          else sendJson(res, 503, { code: 'REASSIGN_UNAVAILABLE' });
+        }
+      } catch { sendJson(res, 503, { code: 'REASSIGN_UNAVAILABLE' }); }
       return true;
     }
     if (path === VERSE_FLEET_RUNS_STOP_PATH) {
@@ -301,7 +392,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       (body.source !== undefined && (typeof body.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(body.source)))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid inbox body' }); return true;
     }
-    const ticket = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
+    const ticket: { source: string; id?: string } = { source: typeof body.source === 'string' ? body.source : DEFAULT_INBOX_SOURCE };
     pendingSources.push(ticket);
     try {
       // x-ashlr-channel is trusted only because this route sits on loopback
@@ -321,13 +412,32 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         // Only an accepted persistence invalidates the cached composite; a
         // duplicate appended nothing, and a refusal changed nothing.
         if (result.ack.status === 'accepted') { generation++; cached = undefined; }
+        // The text is already receipted above, so the order trail exists even
+        // if the command fails. The reply is fixed text from the shared renderer.
+        let command: { status: string; reply: string } | undefined;
+        if (isJobCommand(body.text)) {
+          const outcome = await runTelegramJobCommand(body.text.trim(), {
+            stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+            reassignQueuedJobs: async (input, opts) => (deps.reassign ?? (await import('../fleet/runs-reassign.js')).reassignQueuedJobs)(
+              input, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+            // The gateway stamps this header from its live paired session;
+            // neither inbox text nor source can assert a device identity.
+            changedBy: mobile && typeof req.headers['x-ashlr-remote-device'] === 'string'
+              && /^[0-9a-f-]{36}$/.test(req.headers['x-ashlr-remote-device'])
+              ? `mobile-device:${req.headers['x-ashlr-remote-device']}` : mobile ? 'mobile' : 'desktop',
+          });
+          if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
+          command = { status: outcome.status, reply: renderJobCommandReply(outcome) };
+        }
         sendJson(res, result.ack.status === 'accepted' ? 201 : 200, {
           ok: true, at: result.envelope.receivedAt,
+          ...(ticket.id === undefined ? {} : { id: project(ticket.id, 'string') }),
           accepted: result.ack.status === 'accepted', duplicate: result.ack.status === 'duplicate',
           // The receiver's key is a bare 64-hex SHA-256 — a secret shape the
           // response sanitizer would redact — so the wire carries a labeled
           // 96-bit prefix of the same stable key.
           dedupeKey: `sha256:${result.ack.dedupeKey.slice(0, 24)}`,
+          ...(command === undefined ? {} : { command }),
         });
       } else if (result.reason === 'dedupe-store-unavailable') {
         // Fail closed: the receipt store could not be read, so the inbox entry

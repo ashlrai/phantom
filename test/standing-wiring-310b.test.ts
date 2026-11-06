@@ -282,7 +282,7 @@ describe('U6 — mirrors and enrollment in beforeTick', () => {
     expect(result.pausedRepos).toContain(STALE_MIRROR);
     expect(result.pausedRepos).not.toContain(PATH);
     expect(hooks.lastTickState()?.pausedRepos).toContainEqual({ repo: 'ashlrai/stale', reason: 'Its mirror is not current (fetch failed).' });
-    // Mirrors are prepared before anything reads holds or directives.
+    // Mirrors are prepared before dispatch reads holds; observations may read directives earlier.
     expect(calls.order.indexOf('mirrors')).toBeLessThan(calls.order.indexOf('holds'));
   });
 
@@ -386,7 +386,8 @@ describe('B-U8 — the Leader', () => {
     w.directives = { v: 1, updatedAt: NOW_ISO, routerTuning: null, grokLanes: 4, codexEnabled: true };
     const hooks = createLiveTickHooks({ deps: deps() });
     const result = await hooks.beforeTick(ctx);
-    expect(calls.order.indexOf('leader')).toBeLessThan(calls.order.indexOf('directives'));
+    expect(calls.order.indexOf('leader')).toBeLessThan(calls.order.lastIndexOf('directives'));
+    expect(calls.order.indexOf('directives')).toBeLessThan(calls.order.indexOf('mirrors'));
     expect(result.laneCaps['grok-cli']).toBe(0);
     expect(result.laneCaps.codex).toBe(0);
     expect(clampLeaderDirectives(w.directives, { engines: ['local'] })).toMatchObject({ grokLanes: null, codexEnabled: null });

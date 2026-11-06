@@ -33,8 +33,9 @@
  *   review  — no cap violation, but the scope, estimate or status is
  *             undeclared/unknown, so admission cannot be proven safe.
  *   skip    — a known non-admission status, or a non-queue line.
- *   invalid — an RQ-shaped line that fails the grammar or carries a
- *             malformed `EST-LINES` value.
+ *   invalid — an RQ-shaped line that fails the grammar, carries a
+ *             malformed `EST-LINES` value, or names a `tier=` outside
+ *             queue-tier.ts (dispatchd would skip it silently).
  *
  * Split children quote the parent task with out-of-scope area mentions
  * replaced by `[sibling-area]`, so every emitted line is lint-clean under
@@ -44,6 +45,8 @@
  * its own lock after revalidating. Task text is untrusted data and is
  * never executed, interpolated into commands, or treated as authority.
  */
+
+import { queueTierProblem } from './queue-tier.js';
 
 export const ROUTER_LINT_LIMITS = Object.freeze({
   inputBytes: 8 * 1024 * 1024,
@@ -62,7 +65,7 @@ export type RouterLineVerdict = 'accept' | 'reject' | 'review' | 'skip' | 'inval
 export type RouterLintReason =
   | 'multi-area' | 'oversized' | 'unbounded-scope'
   | 'scope-undeclared' | 'estimate-undeclared' | 'status-unknown'
-  | 'not-admission' | 'not-a-queue-line' | 'malformed';
+  | 'not-admission' | 'not-a-queue-line' | 'malformed' | 'unknown-tier';
 export type RouterSplitBlock = 'unbounded-scope' | 'fan-out-too-wide' | 'id-too-long';
 
 export interface RouterLintOptions {
@@ -85,6 +88,8 @@ export interface RouterLineReport {
   areas: string[];
   /** Declared changed-line estimate; null when undeclared. */
   estLines: number | null;
+  /** Operator-facing explanation, set only for `unknown-tier` verdicts. */
+  detail?: string;
 }
 
 export interface RouterSplitChild {
@@ -132,6 +137,8 @@ const LINE_RE = new RegExp(
   `\\(([^()\\n]{0,${ROUTER_LINT_LIMITS.envelopeChars}})\\)[ \\t]*:[ \\t]*(.{1,${ROUTER_LINT_LIMITS.taskChars}})$`,
 );
 const FIELD_RE = /\b([A-Za-z][A-Za-z0-9_-]{0,39})[ \t]*=[ \t]*([^\s;]+)/g;
+/** Every `tier=` field in an envelope; an empty value is still a value to check. */
+const ENVELOPE_TIER_RE = /(?:^|[\s,(])tier[ \t]*=[ \t]*([^\s,;)]*)/gi;
 const URL_RE = /https?:\/\/\S+/g;
 const PATH_RE = /[A-Za-z0-9_.~+@-]+(?:\/[A-Za-z0-9_.~+@-]+)+/g;
 const BARE_FILE_RE = /(?:^|[\s"'`([{<])([A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9]{0,9})+)\b/g;
@@ -381,6 +388,12 @@ export function lintRouterLine(text: string, options: RouterLintOptions = {}, li
   }
   if (!ADMISSION_STATUSES.has(status)) {
     return { ...base, verdict: 'skip', reasons: ['not-admission'], areas: sortedAreas, estLines };
+  }
+  for (const match of parsed.envelope.matchAll(ENVELOPE_TIER_RE)) {
+    const problem = queueTierProblem(match[1]!);
+    if (problem !== null) {
+      return { ...base, verdict: 'invalid', reasons: ['unknown-tier'], areas: sortedAreas, estLines, detail: problem };
+    }
   }
   if (parsed.task.includes('\u0000') || parsed.task.includes('\uE000')) {
     return invalidLine(lineNumber, parsed.id, status, sortedAreas, estLines);

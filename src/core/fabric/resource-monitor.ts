@@ -651,10 +651,14 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
   // OAuth endpoint. 60-second cache; never-throws; returns null on any error
   // or when CLAUDE_CODE_OAUTH_TOKEN / CLAUDE_BRIDGE_OAUTH_TOKEN are absent.
   //
-  // When available: availability is classified using max(fiveHourPct, weeklyPct)
-  // vs protectPct thresholds. The reason string cites reported windows. This is the
-  // most authoritative signal — reflects Mason's actual subscription headroom,
-  // not just the fleet's transcript files.
+  // When available: the weekly window governs whenever one is reported —
+  // usedPct, capWindow '7d', resetsAt and availability all come from it
+  // (standing order: no 5h window for Claude). The five_hour reading still
+  // appears in the reason string, marked informational. When weekly is absent
+  // the five_hour reading is the only evidence and still governs; an absent
+  // weekly reading never creates headroom. This is the most authoritative
+  // signal — reflects Mason's actual subscription headroom, not just the
+  // fleet's transcript files.
   //
   // When null: falls through to the M253 transcript method (fully intact).
   // -------------------------------------------------------------------------
@@ -666,15 +670,19 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
         { pct: apiUsage.fiveHourPct, reset: apiUsage.fiveHourResetAt, label: '5h', capWindow: '5h' },
       ].filter((window): window is typeof window & { pct: number; reset: number } =>
         window.pct !== null && window.reset !== null);
-      // Weekly wins equal-utilization ties, consistent with CLI event priority.
-      const governing = windows.reduce((selected, window) => window.pct > selected.pct ? window : selected);
+      // A reported weekly window always governs; the 5h reading is
+      // informational only. With no weekly reading the 5h window is the only
+      // evidence and still governs — absent weekly data never creates headroom.
+      const governing = windows.find((window) => window.capWindow === '7d') ?? windows[0];
       const combinedPct = governing.pct;
       const clampedPct  = Math.max(0, Math.min(combinedPct, 200));
 
       let availability: BackendAvailability;
       let reason: string;
 
-      const sourceNote = `(${windows.map(window => `${window.label}: ${window.pct}%`).join(', ')}; source=oauth-usage-api)`;
+      const sourceNote = `(${windows.map(window =>
+        `${window.label}: ${window.pct}%${window === governing ? '' : ' (not governing)'}`,
+      ).join(', ')}; source=oauth-usage-api)`;
 
       if (clampedPct >= 100) {
         availability = 'exhausted';

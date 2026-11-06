@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, it } from 'node:test';
+import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 
 describe('docs/REMOTE-PHONE.md phone section', () => {

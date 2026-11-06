@@ -8,10 +8,19 @@ import { mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 
 import { devinCliBindingCurrent, refreshDevinCliExecutionBinding } from '../../devin/cli-admission.js';
-import { DEVIN_CLI_PERMISSION_MODE, DEVIN_CLI_STALL_IDLE_MS, resolveDevinCliFleetModel } from '../../devin/cli-engine.js';
+import { DEVIN_CLI_STALL_IDLE_MS, resolveDevinCliFleetModel } from '../../devin/cli-engine.js';
 import { assertHostNativeAccountContext, assertLocusJobDispatch, withLocusJobChildEnv } from '../../integrations/locus-job-env.js';
 import { sanitizeChildEnv } from '../../verse/login-path.js';
 import { scrubSecrets } from '../../util/scrub.js';
+
+/**
+ * A bus turn only reads and replies: the adapter writes the outbox itself. `auto`
+ * is Devin's read-only tool mode (devin/cli-engine.ts header). The fleet engine's
+ * `smart` mode (edits plus model-judged shell) is safe there only because the run
+ * is under OS confinement; this adapter spawns the CLI on the host with untrusted
+ * inbox text, so it must not inherit edit or shell permission.
+ */
+export const DEVIN_BUS_PERMISSION_MODE = 'auto';
 
 export interface DevinBusRequest {
   inboxPath: string;
@@ -234,7 +243,7 @@ export async function runDevinBusAdapter(request: DevinBusRequest, deps = defaul
     catch { return fail(request.signal?.aborted ? 'cancelled' : 'inbox'); }
     if (request.signal?.aborted) return fail('cancelled');
     const reply = await runPrintMode(admission.command, [
-      '-p', '--model', model, '--permission-mode', DEVIN_CLI_PERMISSION_MODE,
+      '-p', '--model', model, '--permission-mode', DEVIN_BUS_PERMISSION_MODE,
       '--respect-workspace-trust', 'false', '--',
       `Read the host prompt file at ${JSON.stringify(promptPath)} and follow its host instructions.`,
     ], { ...request, cwd }, stallMs, timeoutMs, admission.check);

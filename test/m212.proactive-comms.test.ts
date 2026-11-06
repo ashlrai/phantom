@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 /**
  * M212 — Proactive comms test suite.
  *
@@ -66,7 +67,8 @@ vi.mock('../src/core/inbox/store.js', () => ({
   resolveRequest: vi.fn(),
 }));
 
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  DEFAULT_STALE_GOAL_MILESTONE_MS: (await importOriginal<typeof import('../src/core/goals/store.js')>()).DEFAULT_STALE_GOAL_MILESTONE_MS,
   listGoals: mockListGoals,
   createGoal: vi.fn(),
   loadGoal: vi.fn().mockReturnValue(null),
@@ -112,6 +114,7 @@ const origHome = process.env['HOME'];
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'm212-'));
   process.env['HOME'] = tmpHome;
+  pairedTelegram(tmpHome, 42);
   vi.clearAllMocks();
   mockSendTelegramMessage.mockResolvedValue({ ok: true });
   mockPollTelegramUpdates.mockResolvedValue({ updates: [], newOffset: 0 });
@@ -138,7 +141,6 @@ import {
 } from '../src/core/comms/events.js';
 import { isPaused, setPause } from '../src/core/comms/pause.js';
 import { runCommsCycle } from '../src/core/comms/dispatch.js';
-import { handleStrategicMessage } from '../src/core/comms/elon-dialogue.js';
 
 // ---------------------------------------------------------------------------
 // Helper cfgs
@@ -271,7 +273,7 @@ describe('dispatch.ts — soft-pause integration', () => {
 
   it('11. "pause" text → setPause(true) + confirmation message', async () => {
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: 'pause', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'pause', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     await runCommsCycle(makeCfg() as never);
@@ -287,7 +289,7 @@ describe('dispatch.ts — soft-pause integration', () => {
     // 3.14: inbound is polled even while paused, so the resume command arrives.
     setPause(true);
     mockPollTelegramUpdates.mockResolvedValueOnce({
-      updates: [{ kind: 'text', text: 'resume fleet', fromChatId: '42' }],
+      updates: [{ kind: 'text', text: 'resume fleet', fromChatId: '42', senderUserId: 42, privateChat: true }],
       newOffset: 1,
     });
     await runCommsCycle(makeCfg() as never);

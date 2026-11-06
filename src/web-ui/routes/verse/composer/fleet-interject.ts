@@ -15,7 +15,7 @@ function mutationHoldError(status = 403): ApiError {
   return new ApiError(reason, status, '/api/verse/fleet/runs/inbox', reason);
 }
 
-type FleetSendResult = { at: string; outcome: 'accepted' | 'duplicate' };
+type FleetSendResult = { at: string; outcome: 'accepted' | 'duplicate'; reply?: string };
 
 function fleetSendTime(result: FleetSendResult): string {
   const date = new Date(result.at);
@@ -25,6 +25,8 @@ function fleetSendTime(result: FleetSendResult): string {
 }
 
 export function fleetSendLanding(result: FleetSendResult): { text: string; openInbox: boolean } {
+  // A /stop or /reassign order was acted on server-side; show its one-line result.
+  if (result.reply) return { text: result.reply, openInbox: false };
   return result.outcome === 'accepted'
     ? { text: `Sent to the leaders' inbox · ${fleetSendTime(result)} · open Inbox to confirm`, openInbox: true }
     : { text: fleetSendStatus(result), openInbox: false };
@@ -45,10 +47,11 @@ export async function postFleetInterjection(text: string): Promise<FleetSendResu
   const token = getMutationToken();
   if (!token) throw mutationHoldError();
   try {
-    const ack = await apiPost<{ at: string; duplicate?: unknown }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop chat' }, token);
+    const ack = await apiPost<{ at: string; duplicate?: unknown; command?: { reply?: unknown } }>('/api/verse/fleet/runs/inbox', { text, source: 'Phantom desktop chat' }, token);
     if (!ack || typeof ack.at !== 'string') throw new Error('The message could not be confirmed. Refresh and check the inbox.');
     touchMutationHold();
-    return { at: ack.at, outcome: ack.duplicate === true ? 'duplicate' : 'accepted' };
+    const reply = typeof ack.command?.reply === 'string' && ack.command.reply ? { reply: ack.command.reply } : {};
+    return { at: ack.at, outcome: ack.duplicate === true ? 'duplicate' : 'accepted', ...reply };
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 404) throw new FleetInboxUnavailableError();

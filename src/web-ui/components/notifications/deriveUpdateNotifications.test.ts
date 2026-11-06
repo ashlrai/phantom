@@ -17,7 +17,7 @@ const server = (over: Partial<UpdateServerStatus> & Record<string, unknown> = {}
   processStartedAt: '2026-10-31T08:00:00Z', uptimeSeconds: 15_300, canFastForward: false, ...over,
 });
 
-const lastApply = (over: Record<string, unknown> = {}) => ({
+const lastApply = (over: Record<string, unknown> = {}): NonNullable<UpdateServerStatus['lastApply']> => ({
   outcome: 'failed', reason: 'update failed', startedAt: '2026-10-31T12:00:00Z',
   finishedAt: '2026-10-31T12:01:00Z', fromCommit: sha('a'), toCommit: sha('b'),
   restartRequired: false, restartMode: 'manual', ...over,
@@ -100,8 +100,16 @@ describe('update notifications — server self-update probe', () => {
       title: 'Update to bbbbbbb refused: dirty tree' })]);
   });
 
-  it.each(['updated', 'already-current'])('stays silent once the apply is %s', (outcome) => {
-    const status = server({ lastApply: lastApply({ outcome, reason: null, restartRequired: true }) }) as UpdateServerStatus;
+  it('reports a restart after applying while the old process is still running', () => {
+    const status = server({ lastApply: lastApply({ outcome: 'updated', reason: null, restartRequired: true }) });
+    expect(derive(status, now)).toEqual([expect.objectContaining({
+      id: 'update-restart-needed:bbbbbbb', title: 'Phantom updated to bbbbbbb; restart to load it',
+      detail: 'Quit and reopen Phantom to run the new code.', actionLabel: 'Open Updates',
+    })]);
+  });
+
+  it('stays silent when already current', () => {
+    const status = server({ lastApply: lastApply({ outcome: 'already-current', reason: null, restartRequired: true }) });
     expect(derive(status, now)).toEqual([]);
   });
 

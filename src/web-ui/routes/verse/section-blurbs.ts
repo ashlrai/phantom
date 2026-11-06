@@ -2,6 +2,7 @@
 import type { VerseSectionId } from './verse-ui-store.js';
 
 export const SECTION_BLURBS: Readonly<Record<VerseSectionId, string>> = {
+  live: 'Running, merged, blocked and pool usage.',
   'command': 'What the fleet did, what needs you, and the autonomy switch — the morning read.',
   'fleet': 'Every lane live: what is building, what the gates refused, and why each seat was chosen.',
   'growth': 'Is the fleet getting better? Merges, cost per merge and the experiments behind them.',

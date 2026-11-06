@@ -361,5 +361,258 @@ class DevinDefaultTests(unittest.TestCase):
         self.assertEqual(need_of(out)['devin'], 30)
 
 
+class AutoUnparkTests(unittest.TestCase):
+    """RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP rows unpark when DEPENDENCY GATE ids are MERGED."""
+
+    def seed_parked(self, home, job, deps, lane='devin', pin_text=False, merged=()):
+        q = home / '.ashlr-runs' / 'queue'
+        pf = q / 'prompts' / f'{job}.md'
+        body = (f'DEPENDENCY GATE: {", ".join(deps)}\n\n{job}: wait for deps\n')
+        if pin_text:
+            body += 'no merge without Security pin\n'
+        pf.write_text(body)
+        row = '\t'.join([f'PARKED-DEP.{lane}', job, lane, 'work', 'phantom', str(pf)])
+        (q / 'ready.tsv').write_text(row + '\n')
+        (home / '.ashlr-runs' / 'metrics' / 'jobs.jsonl').write_text(''.join(
+            json.dumps({'event': 'outcome', 'state': 'MERGED', 'job': d}) + '\n' for d in merged))
+        return pf
+
+    def test_unparks_when_every_gate_id_is_merged(self):
+        tmp = build(line('RQ-OK', P=3, pool='devin', repo='phantom', text='filler') + '\n',
+                    slots={**{l: {'held': True} for l in LANES}, 'devin': {'target': 0}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        # Hold every lane so restock does not claim the filler; only the unpark path runs.
+        pf = self.seed_parked(home, 'RQ-WAIT', ['RQ-DEP-A', 'RQ-DEP-B'],
+                              merged=('RQ-DEP-A', 'RQ-DEP-B'))
+        before = pf.read_text()
+        r = restock(home, '--per-lane', '0', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out['unpark'], [{'job': 'RQ-WAIT', 'deps': ['RQ-DEP-A', 'RQ-DEP-B']}])
+        ready = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        self.assertIn('RQ-WAIT\tphantom\tdevin\twork\t', ready)
+        self.assertNotIn('PARKED-DEP.', ready)
+        self.assertEqual(pf.read_text(), before)  # prompt (incl. pin prose) untouched
+        ev = (home / '.ashlr-runs' / 'dispatch-events.log').read_text()
+        self.assertIn('UNPARK RQ-WAIT deps=RQ-DEP-A,RQ-DEP-B', ev)
+
+    def test_keeps_parked_when_a_gate_id_is_unmerged(self):
+        tmp = build('# empty\n', slots={**{l: {'held': True} for l in LANES}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        row = self.seed_parked(home, 'RQ-WAIT', ['RQ-DEP-A', 'RQ-DEP-B'], merged=('RQ-DEP-A',))
+        ready_before = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        r = restock(home, '--per-lane', '0', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)['unpark'], [])
+        self.assertEqual((home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text(), ready_before)
+        self.assertTrue(row.exists())
+
+    def test_preserves_no_merge_without_security_pin(self):
+        tmp = build('# empty\n', slots={**{l: {'held': True} for l in LANES}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        pf = self.seed_parked(home, 'RQ-PIN', ['RQ-DEP-A'], merged=('RQ-DEP-A',), pin_text=True)
+        restock(home, '--per-lane', '0')
+        self.assertIn('no merge without Security pin', pf.read_text())
+        self.assertNotIn('PARKED-DEP.', (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text())
+
+    def test_dry_run_does_not_unpark(self):
+        tmp = build('# empty\n', slots={**{l: {'held': True} for l in LANES}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        self.seed_parked(home, 'RQ-WAIT', ['RQ-DEP-A'], merged=('RQ-DEP-A',))
+        before = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        r = restock(home, '--dry-run', '--per-lane', '0', '--json')
+        self.assertEqual(json.loads(r.stdout)['unpark'][0]['job'], 'RQ-WAIT')
+        self.assertEqual((home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text(), before)
+
+    def test_after_unlanded_parks_with_dependency_gate(self):
+        rows = [line('RQ-NEED', P=1, pool='devin', tier='work', repo='phantom',
+                     text='after RQ-UPSTREAM: do the follow-up')]
+        # Put after= in attrs the way router lines do.
+        rows = ['- READY RQ-NEED (P1, pool=devin, tier=work, repo=phantom, after RQ-UPSTREAM): do the follow-up']
+        tmp = build('\n'.join(rows) + '\n')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        r = restock(home, '--per-lane', '4', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out['parked_dep'], [{'job': 'RQ-NEED', 'deps': ['RQ-UPSTREAM']}])
+        ready = (home / '.ashlr-runs' / 'queue' / 'ready.tsv').read_text()
+        self.assertIn('PARKED-DEP.devin\tRQ-NEED\t', ready)
+        prompt = (home / '.ashlr-runs' / 'queue' / 'prompts' / 'RQ-NEED.md').read_text()
+        self.assertIn('DEPENDENCY GATE: RQ-UPSTREAM', prompt)
+        md = (home / '.ashlr-runs' / 'queue' / 'router-queue.md').read_text()
+        self.assertIn('CLAIMED', md)
+        self.assertIn('RQ-NEED', md)
+
+
+class NoopCutTests(unittest.TestCase):
+    """RQ-PSEL-4-NOOPCUT: PR/file dedupe and the 2-NOOPs-in-24h park."""
+
+    def make(self, rows, precheck_code=None):
+        tmp = build('\n'.join(rows) + '\n', slots={
+            **{l: {'held': True} for l in LANES}, 'devin': {'target': 6}, 'claude-api': {'target': 0}})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        if precheck_code is not None:
+            b = home / '.ashlr-runs' / 'bin'
+            b.mkdir(parents=True)
+            (b / 'precheck.sh').write_text(
+                f'id=${{1%% *}}\necho "SKIP $id code={precheck_code} reason=id_merged_pr_7"\nexit {precheck_code}\n')
+        return home
+
+    def set_md(self, home, rows):
+        (home / '.ashlr-runs' / 'queue' / 'router-queue.md').write_text('\n'.join(rows) + '\n')
+
+    def state(self, home):
+        return json.loads((home / '.ashlr-runs' / 'queue' / 'noop-streak.json').read_text())
+
+    def test_same_pr_and_same_file_collapse_to_one_pick(self):
+        home = self.make([
+            line('RQ-A', P=1, pool='devin', repo='phantom', text='FIXUP phantom#7 file=src/a.ts fix'),
+            line('RQ-B', P=1, pool='devin', repo='phantom', text='REBASE phantom#7 file=src/b.ts fix'),
+            line('RQ-C', P=1, pool='devin', repo='phantom', text='FIXUP phantom#8 file=src/a.ts fix'),
+            line('RQ-D', P=1, pool='devin', repo='phantom', text='FIXUP phantom#9 file=src/d.ts fix'),
+        ])
+        r = restock(home, '--dry-run')
+        self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-D'], r.stdout)
+        self.assertEqual(skips(r.stdout).get('dup-pr'), 1)
+        self.assertEqual(skips(r.stdout).get('dup-file'), 1)
+
+    def test_two_noops_park_the_line_for_24h(self):
+        row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
+        home = self.make([row], precheck_code=10)
+        for n in (1, 2):
+            self.set_md(home, [row])
+            r = restock(home, '--per-lane', '4')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self.state(home)['RQ-N']['n'], n)
+        self.set_md(home, [row])   # third appearance: parked before any precheck runs
+        r = restock(home, '--per-lane', '4', '--json')
+        out = json.loads(r.stdout)
+        self.assertEqual(out['done_noop'], [])
+        self.assertEqual(out['skips'], {'noop-streak': 1})
+        self.assertEqual(self.state(home)['RQ-N']['n'], 2)
+        # the window expires: aged state no longer parks the line
+        st = self.state(home)
+        st['RQ-N']['at'] -= 24 * 3600 + 5
+        (home / '.ashlr-runs' / 'queue' / 'noop-streak.json').write_text(json.dumps(st))
+        r = restock(home, '--per-lane', '4', '--json')
+        self.assertEqual(json.loads(r.stdout)['done_noop'], ['RQ-N'])
+
+    def test_single_noop_does_not_park_and_a_real_run_clears(self):
+        row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
+        home = self.make([row], precheck_code=10)
+        restock(home, '--per-lane', '4')
+        self.assertEqual(self.state(home)['RQ-N']['n'], 1)
+        (home / '.ashlr-runs' / 'bin' / 'precheck.sh').write_text('exit 0\n')   # real work now
+        self.set_md(home, [row])
+        r = restock(home, '--per-lane', '4', '--json')
+        self.assertEqual(json.loads(r.stdout)['queued'], 1, r.stdout)
+        self.assertNotIn('RQ-N', self.state(home))
+
+    def test_dry_run_leaves_streak_state_alone(self):
+        home = self.make([line('RQ-N', P=1, pool='devin', repo='phantom')], precheck_code=10)
+        restock(home, '--dry-run', '--per-lane', '4')
+        self.assertFalse((home / '.ashlr-runs' / 'queue' / 'noop-streak.json').exists())
+
+    def test_corrupt_state_fails_open(self):
+        home = self.make([line('RQ-N', P=1, pool='devin', repo='phantom')])
+        (home / '.ashlr-runs' / 'queue' / 'noop-streak.json').write_text('{not json')
+        r = restock(home, '--dry-run', '--per-lane', '4')
+        self.assertEqual(dry_ids(r.stdout), ['RQ-N'], r.stdout + r.stderr)
+
+
+class PrecheckAuthoringTests(unittest.TestCase):
+    make = NoopCutTests.make
+    set_md = NoopCutTests.set_md
+    state = NoopCutTests.state
+    def test_repeated_skips_fall_and_each_actionable_job_is_generated(self):
+        stale = line('RQ-SATISFIED', P=0, pool='devin', repo='phantom', text='file=src/a.ts old task')
+        blocked = line('RQ-UNCERTAIN', P=1, pool='devin', repo='phantom', text='file=src/a.ts fix existing code')
+        home = self.make([stale, blocked])
+        q = home / '.ashlr-runs/queue'
+        binary = home / '.ashlr-runs/bin'
+        binary.mkdir()
+        check = binary / 'precheck.sh'
+        check.write_text('echo "$1" >> "$HOME/checks"\ncase "$1" in RQ-UNCERTAIN*) exit 13;; esac\n')
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(
+            json.dumps({'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-SATISFIED', 'repo': 'ashlrai/phantom'}) + '\n')
+        for n in range(3):
+            job = f'RQ-ACTION-{n}'
+            self.set_md(home, [stale, blocked, line(job, P=2, pool='devin', repo='phantom',
+                                                  text='file=src/a.ts repair behavior')])
+            result = restock(home, '--per-lane', '1', '--json')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            out = json.loads(result.stdout)
+            self.assertEqual(out['queued'], 1, out)
+            self.assertEqual(out['done_noop'], [])
+            self.assertEqual(out['skips'], {'already-merged': 1, 'precheck-parked': 1})
+            self.assertIn(f'{job}\tphantom\tdevin\t', (q / 'ready.tsv').read_text())
+            self.assertTrue((q / f'prompts/{job}.md').exists())
+            self.assertIn(blocked, (q / 'router-queue.md').read_text())
+        checks = (home / 'checks').read_text()
+        self.assertEqual(checks.count('RQ-UNCERTAIN'), 1)  # One precheck across three fresh processes
+        self.assertNotIn('RQ-SATISFIED', checks)
+        self.assertEqual(checks.count('RQ-ACTION-'), 3)
+        # Due retries retain work, then recover when the precondition clears.
+        state_path = q / 'restock-precheck-parked.json'
+        state = json.loads(state_path.read_text())
+        state['RQ-UNCERTAIN']['retry_at'] = 0
+        state_path.write_text(json.dumps(state))
+        restock(home, '--per-lane', '1', '--json')
+        self.assertEqual(json.loads(state_path.read_text())['RQ-UNCERTAIN']['count'], 2)
+        check.write_text('exit 0\n')
+        self.set_md(home, [blocked.replace('fix existing code', 'fix revised behavior')])
+        result = restock(home, '--per-lane', '1', '--json')
+        self.assertEqual(json.loads(result.stdout)['queued'], 1, result.stdout)
+        self.assertNotIn('RQ-UNCERTAIN', json.loads(state_path.read_text()))
+
+    def test_only_exact_merged_evidence_suppresses_work(self):
+        jobs = ['RQ-MATCH', 'RQ-MATCH-FOLLOWUP', 'RQ-OTHER', 'RQ-OPEN', 'RQ-UNKNOWN']
+        home = self.make([line(j, pool='devin', repo='phantom') for j in jobs])
+        records = [None, [], {'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-MATCH'},
+                   {'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-OTHER', 'repo': 'locus'},
+                   {'event': 'outcome', 'state': 'PR_OPEN', 'job': 'RQ-OPEN'},
+                   {'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-UNKNOWN', 'repo': ''}]
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(
+            '{malformed\n' + '\n'.join(json.dumps(r) for r in records))
+        result = restock(home, '--dry-run', '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['queued'], 4)
+        self.assertEqual(json.loads(result.stdout)['skips'], {'already-merged': 1})
+        self.assertFalse((home / '.ashlr-runs/queue/restock-precheck-parked.json').exists())
+
+    def test_changed_task_resets_noop_suppression(self):
+        row = line('RQ-N', pool='devin', repo='phantom', text='original task')
+        home = self.make([row], precheck_code=10)
+        for _ in range(2):
+            self.set_md(home, [row])
+            restock(home, '--per-lane', '1')
+        (home / '.ashlr-runs/bin/precheck.sh').write_text('exit 0\n')
+        self.set_md(home, [row.replace('original task', 'fix existing implementation')])
+        result = restock(home, '--per-lane', '1', '--json')
+        self.assertEqual(json.loads(result.stdout)['queued'], 1, result.stdout)
+        self.assertNotIn('RQ-N', self.state(home))
+
+    def test_precheck_budget_defers_then_reaches_actionable_tail(self):
+        rows = [line(f'RQ-WAIT-{n}', pool='devin', repo='phantom') for n in range(21)]
+        rows.append(line('RQ-ACTION', pool='devin', repo='phantom'))
+        home = self.make(rows, precheck_code=13)
+        (home / '.ashlr-runs/bin/precheck.sh').write_text(
+            'echo "$1" >> "$HOME/checks"\ncase "$1" in RQ-WAIT-*) exit 13;; esac\n')
+        q = home / '.ashlr-runs/queue'
+        for expected in (0, 1):
+            result = restock(home, '--per-lane', '1', '--json')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)['queued'], expected)
+            self.assertEqual((q / 'router-queue.md').read_text().count('- READY RQ-WAIT-'), 21)
+        self.assertEqual(len((home / 'checks').read_text().splitlines()), 22)
+        self.assertIn('RQ-ACTION\tphantom\tdevin\t', (q / 'ready.tsv').read_text())
+
+
 if __name__ == '__main__':
     unittest.main()

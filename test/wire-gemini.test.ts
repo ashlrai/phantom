@@ -28,6 +28,14 @@ afterEach(() => {
 });
 
 describe('gemini status', () => {
+  it('documents Gemini as a status-only target in wire help', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdWire(['--help'])).toBe(0);
+    const help = log.mock.calls.map((args) => args.join(' ')).join('\n');
+    expect(help).toContain('wire status [claude|codex|cursor|gemini|all]');
+    expect(help).toContain('status-only gemini target');
+  });
+
   it('is listed in all targets', () => {
     expect(ALL_EDITOR_TARGETS).toContain('gemini');
   });

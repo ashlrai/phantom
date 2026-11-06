@@ -2691,7 +2691,7 @@ function printFleetHelp(): void {
   console.log(`    phm fleet wait-jobs --job ID --timeout-ms N [--interval-ms N] --json`);
   console.log(`    phm fleet job <id> [--json] [--changes] ${cyan('# host worker evidence')}`);
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
-  console.log(`    phm fleet parked [--json]     ${cyan('# ready and parked host work')}`);
+  console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
   console.log('    ashlr fleet merge-throughput --input <snapshot.json> [--json]');
@@ -2699,6 +2699,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
   console.log(`    ashlr fleet queue merged|read|complete <job-id> [--json]`);
+  console.log(`    phm fleet outcomes [--events <file>] [--json] ${cyan('# learned merge, usage, breakage, and the next assignment')}`);
   console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);

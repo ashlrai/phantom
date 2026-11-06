@@ -29,6 +29,8 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
   const approvals = new Map<string, Approval>();
   const messages: TeamState['messages'] = [];
   let foundingHumanJoined = false;
+  /** Removed members stay removed (their later events are ignored) until an owner/admin re-invites them. */
+  const removed = new Set<string>();
   const touch = (a: TeamActor, ts: string) => {
     const m = members.get(a.id);
     if (m) { m.lastSeen = ts; return m; }
@@ -38,6 +40,7 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
   };
   for (const ev of events) {
     const p = ev.payload;
+    if (removed.has(ev.actor.id)) continue;
     const m = touch(ev.actor, ev.ts);
     switch (ev.type) {
       case 'member.invited':
@@ -56,7 +59,18 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
         const humanRole = role && ['owner', 'admin', 'member'].includes(role);
         const humanRoleGrant = ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role);
         if (existing?.kind === 'human' && humanRole && (ev.actor.id === target ? existing.role === role : humanRoleGrant)) existing.role = role;
-        else if (!existing && target.startsWith('human:') && humanRole && humanRoleGrant) members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false });
+        else if (!existing && target.startsWith('human:') && humanRole && humanRoleGrant) { removed.delete(target); members.set(target, { id: target, kind: 'human', role, capabilities: [], lastSeen: ev.ts, online: false }); }
+        break;
+      }
+      case 'member.removed': {
+        // Removal drains the node: its claims vanish and accepted handoffs reopen for someone else.
+        const target = str(p.memberId);
+        const victim = members.get(target);
+        if (ev.actor.kind === 'human' && ['owner', 'admin'].includes(m.role) && victim?.kind === 'human' && victim.role !== 'owner' && target !== ev.actor.id) {
+          members.delete(target); removed.add(target);
+          for (const c of [...claims.values()]) if (c.holder === target) claims.delete(c.id);
+          for (const h of handoffs.values()) if (h.state === 'accepted' && h.assignee === target) { h.state = 'open'; h.assignee = null; h.updatedAt = ev.ts; }
+        }
         break;
       }
       case 'repo.linked':

@@ -35,7 +35,7 @@ function validCandidateRef(ref: string): boolean {
   if (!ref.startsWith('refs/heads/') && !ref.startsWith('refs/remotes/')) return false;
   return ref.length <= 200 && !ref.endsWith('/') && !ref.endsWith('.')
     && !ref.includes('..') && !ref.includes('//') && !ref.includes('@{')
-    && !/[\s~^:?*\[\\]/u.test(ref)
+    && !/[\s~^:?*[\\]/u.test(ref)
     && ref.split('/').every(part => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'));
 }
 

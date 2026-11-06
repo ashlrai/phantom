@@ -1,5 +1,5 @@
 export interface OrderTraceJob {
-  id: string; lane: string | null; state: 'queued' | 'launched' | 'published'; url: string | null;
+  id: string; lane: string | null; state: 'queued' | 'launched' | 'published' | 'merged'; url: string | null;
 }
 export interface OrderTraceV1 {
   v: 1; generatedAt: string; sources: { inbox: unknown; prompts: unknown; publishes: unknown };
@@ -19,7 +19,7 @@ export function narrowOrderTrace(v: unknown): OrderTraceV1 | null {
     const jobs: OrderTraceJob[] = [];
     for (const job of order.jobs) {
       if (!record(job) || typeof job.id !== 'string' || !job.id || !nullableString(job.lane) || !nullableString(job.url)
-        || (job.state !== 'queued' && job.state !== 'launched' && job.state !== 'published')) return null;
+        || (job.state !== 'queued' && job.state !== 'launched' && job.state !== 'published' && job.state !== 'merged')) return null;
       jobs.push({ id: job.id, lane: job.lane, state: job.state, url: job.url });
     }
     orders.push({ at: order.at, source: order.source, key: order.key, jobs });
@@ -52,5 +52,6 @@ export function stateWord(job: OrderTraceJob): string {
   if (job.state === 'launched') return 'running';
   const url = githubUrl(job);
   const number = url && /^\/[^/]+\/[^/]+\/pull\/(\d+)\/?$/.exec(new URL(url).pathname)?.[1];
+  if (job.state === 'merged') return number ? `merged #${number}` : 'merged';
   return number ? `PR #${number}` : 'published';
 }

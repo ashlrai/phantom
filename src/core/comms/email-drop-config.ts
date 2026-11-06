@@ -8,10 +8,14 @@ const MAX_CONFIG_BYTES = 16 * 1024;
 
 export interface EmailDropConfig {
   v: 1;
+  /** Saved configs enable polling by default; false pauses inbound and outbound. */
+  enabled?: boolean;
   inboxDir: string;
   outboxDir?: string;
   processedDir?: string;
   from: string[];
+  /** Opt-in: `phm comms cycle` sends queued reply .eml files via Mail.app. Absent means off. */
+  sendReplies?: boolean;
 }
 
 /** Match the email-drop CLI's existing address normalization. */
@@ -24,10 +28,11 @@ function validConfig(value: unknown): value is EmailDropConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const config = value as Record<string, unknown>;
   const directory = (dir: unknown): boolean => typeof dir === 'string' && isAbsolute(dir) && !dir.includes('\0');
-  return Object.keys(config).every((key) => ['v', 'inboxDir', 'outboxDir', 'processedDir', 'from'].includes(key)) &&
-    config.v === 1 && directory(config.inboxDir) &&
+  return Object.keys(config).every((key) => ['v', 'enabled', 'inboxDir', 'outboxDir', 'processedDir', 'from', 'sendReplies'].includes(key)) &&
+    config.v === 1 && (config.enabled === undefined || typeof config.enabled === 'boolean') && directory(config.inboxDir) &&
     (config.outboxDir === undefined || directory(config.outboxDir)) &&
     (config.processedDir === undefined || directory(config.processedDir)) &&
+    (config.sendReplies === undefined || typeof config.sendReplies === 'boolean') &&
     Array.isArray(config.from) && config.from.length >= 1 && config.from.length <= 32 &&
     config.from.every((address: unknown) => typeof address === 'string' &&
       normalizeEmailDropAddress(address) === address &&

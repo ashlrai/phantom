@@ -3,6 +3,8 @@ import { Button, EmptyState, Input, SkeletonLine, Tag } from '../../../component
 import { ApiError } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { refetchQuery } from '../../../data/cache.js';
+import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
+import { orderJobDraft } from './order-job-draft.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { channelKey, channelLabel, type ChannelKey } from '../fleet-channels/fleet-channels-model.js';
 import { JobRefs } from '../fleet/JobRefs.js';
@@ -15,15 +17,22 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { filterEntries, groupByDay, quoteForMessage, readInboxEntries } from './fleet-inbox-model.js';
 import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox-queries.js';
 import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } from './order-trace-model.js';
+import { CommsStatusCard } from './CommsStatusCard.js';
+import { CosDraftsCard } from './CosDraftsCard.js';
 import { InboxPostBox } from './InboxPostBox.js';
 import { matchesPosted } from './inbox-post-model.js';
+import { sourceChip } from '../fleet/interject-ack-model.js';
 import { annotateAck, seenCounts } from './inbox-ack-model.js';
 import { canResend, resendPrefill } from './inbox-resend.js';
 import { takeRequestedInboxChannel, useRequestedInboxChannel } from './inbox-source-request.js';
+import { plannerAckLabel } from './planner-ack-model.js';
+import { usePlannerAcks } from './planner-ack-query.js';
+import tagStyles from '../../../components/primitives/Tag.module.css';
 import styles from './fleet-inbox.module.css';
 
 const notFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 export function FleetInboxPane({ visible, host }: PaneProps) {
+  const plannerAcks = usePlannerAcks(visible);
   const route = useQuery(fleetInboxQuery);
   const routeInbox = readInboxEntries(route.data, undefined);
   const fallback = routeInbox.origin === 'none' && (route.status === 'error' || route.status === 'success');
@@ -35,6 +44,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const refreshRoute = useRefetch(fleetInboxQuery), refreshSnapshot = useRefetch(fleetRunsQuery);
   usePollWhileVisible(refreshRoute, 10_000, { enabled: visible });
   usePollWhileVisible(refreshOrders, 15_000, { enabled: visible });
+  const [draftStatus, setDraftStatus] = useState('');
   const [source, setSource] = useState('');
   const [channel, setChannel] = useState<ChannelKey | null>(null);
   const requestedChannel = useRequestedInboxChannel();
@@ -57,7 +67,7 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const entries = channel === null ? inbox.entries : inbox.entries.filter(entry => channelKey(entry.source) === channel);
   const annotated = annotateAck(filterEntries(entries, { source, text }), snapshot.data, Date.now());
   const groups = groupByDay(annotated, today);
-  const { waiting, overdue } = seenCounts(annotated);
+  const { waiting, overdue } = seenCounts(annotated.filter(entry => entry.plannerAck !== 'acked' && entry.plannerAck !== 'skipped'));
   usePollWhileVisible(() => setClockTick(tick => tick + 1), 10_000, { enabled: visible && waiting > 0 });
   const matching = posted && posted.until > Date.now() && visible && sectionVisible && documentVisible
     ? annotated.filter(entry => matchesPosted(entry, posted.text)) : [];
@@ -77,6 +87,9 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     openDockPane('worker-log');
   }
   return <div className={styles.pane}>
+    {draftStatus && <p role="status">{draftStatus}</p>}
+    <CommsStatusCard visible={visible} />
+    <CosDraftsCard visible={visible} />
     <InboxPostBox snapshot={snapshot.data} onPosted={postedText => {
       setSource(''); setChannel(null); setText(''); setPosted({ text: postedText, until: Date.now() + 5_000 }); setPostedForAck(postedText);
       void refetchQuery(fleetInboxQuery.key, () => fleetInboxQuery.fetch(), true);
@@ -95,8 +108,8 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     {groups.length === 0 && <EmptyState compact title={inbox.entries.length ? 'No matching orders' : 'No orders yet'} />}
     {groups.map(group => <section key={group.day} aria-label={group.label}>
       <h3 className={styles.day}>{group.label}{group.day !== '—' && ' · ET'}</h3>
-      {group.entries.map((entry, i) => { const jobs = jobsForEntry(trace, entry.at); return <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
-        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag className={styles[entry.ack]} data-overdue={entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{entry.ackLabel}</Tag>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
+      {group.entries.map((entry, i) => { const jobs = jobsForEntry(trace, entry.at); const draft = trace && jobs.length === 0 ? orderJobDraft(entry, Date.now()) : null; return <article className={`${styles.row}${entry === highlighted ? ` ${styles.highlight}` : ''}`} key={`${entry.at}-${i}`}>
+        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><span className={`${tagStyles.tag} ${tagStyles.md} ${styles[entry.ack]}`} data-ack={entry.plannerAck === 'acked' || entry.plannerAck === 'skipped' ? entry.plannerAck : entry.ack} data-overdue={!['acked', 'skipped'].includes(entry.plannerAck ?? '') && entry.ack === 'waiting' && entry.eta.kind === 'overdue' ? true : undefined}>{entry.plannerAck === 'acked' ? `Acknowledged on ${sourceChip(entry.channel ?? entry.source)}` : entry.plannerAck === 'skipped' ? 'Planner saw it · no reply route' : plannerAckLabel(entry, plannerAcks) ?? entry.ackLabel}</span>{entry.priority !== 'P0' && <Tag>{entry.priority}</Tag>}</div>
         <p className={styles.text}>{entry.text}</p>
         {jobs.length > 0 && <div className={styles.jobs}>
           <span>{orderJobsLine(jobs)}</span>
@@ -113,6 +126,15 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
           {jobs.length > 6 && <span>+{jobs.length - 6} more</span>}
         </div>}
         <Button size="sm" onClick={() => host.addToMessage(quoteForMessage(entry))}>Add to message</Button>
+        {draft && <Button size="sm" variant="ghost" aria-label={`Draft job for order at ${entry.at.slice(11, 16)}`} onClick={async () => {
+          if (openDropJobSheet(draft) === 'kept') {
+            setDraftStatus('You have an unsent draft; the fix draft was not applied.');
+            return;
+          }
+          const { closeVerseOverlay, setVerseSection } = await import('../verse-ui-store.js');
+          const { setFocusMode } = await import('../shell/focus-mode.js');
+          setDraftStatus(''); closeVerseOverlay(); setFocusMode(false); setVerseSection('chat'); openDockPane('fleet-queue');
+        }}>Draft job</Button>}
         {canResend(entry) && <Button size="sm" variant="ghost" aria-label={`Resend order from ${entry.at.slice(11)}`} onClick={() => openInterjectDialog({ prefill: resendPrefill(entry) })}>Resend</Button>}
       </article>; })}
     </section>)}

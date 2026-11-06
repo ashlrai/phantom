@@ -27,13 +27,16 @@ describe('self-update badge', () => {
   it('labels singular, plural and unknown commit counts', () => {
     expect(updateEntryLabel({ ...status, behind: 1 })).toBe('Update available · 1 commit behind');
     expect(updateEntryLabel({ ...status, behind: 3 })).toBe('Update available · 3 commits behind');
-    expect(updateEntryLabel({ ...status, behind: null })).toBe('Update available');
+    expect(updateEntryLabel({ ...status, behind: null })).toBeNull();
+    expect(updateEntryLabel({ ...status, dirty: true })).toBe('Update blocked · local changes');
+    expect(updateEntryLabel({ ...status, canFastForward: false, ahead: 1 })).toBe('Update blocked · diverged');
+    expect(updateEntryLabel({ ...status, canFastForward: false })).toBe('Update blocked · open Settings');
   });
 
   it.each([
-    [{ ...status, behind: null, dirty: true }, true],
+    [{ ...status, behind: null, dirty: true }, false],
     [{ ...status, canFastForward: false, behind: 2, dirty: false }, true],
-    [{ ...status, canFastForward: false, behind: 2, dirty: true }, false],
+    [{ ...status, canFastForward: false, behind: 2, dirty: true }, true],
     [{ ...status, canFastForward: false, behind: 0 }, false],
     [{ ...status, sourceState: 'unavailable' as const }, false],
   ])('applies the availability rule', (value, shown) => {

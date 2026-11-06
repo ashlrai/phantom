@@ -1,0 +1,94 @@
+diff --git a/contrib/mac/dispatchd.py b/contrib/mac/dispatchd.py
+index e3ac98ba3..497b7dd6d 100644
+--- a/contrib/mac/dispatchd.py
++++ b/contrib/mac/dispatchd.py
+@@ -7,7 +7,7 @@
+ # hard_cap 10 (the live values; a slots.json or budget-overrides.json entry raises them per host).
+ # RQ-LANERECOVERNOV1Q8 rev: repeated authentication failures (>=2 distinct failed/EMPTY finishes with a
+ # provider auth-error line) hold the lane autobackoff-style; no credential store is ever written.
+-import os, re, json, time, fcntl, subprocess, glob
++import os, re, json, time, fcntl, subprocess, glob, math
+ H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
+ WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+ NOW = time.time(); TS = time.strftime("%F %T")
+@@ -214,7 +214,7 @@ def ab_unhold():
+         if not isinstance(s_, dict) or not s_.get("held") or s_.get("held_by") != AB_BY: continue
+         u = ab_epoch(s_.get("held_until"))
+         if u is not None and u > NOW: continue
+-        for k in ("held", "held_reason", "held_by", "held_until"): s_.pop(k, None)
++        for k in ("held", "held_reason", "held_by", "held_until", "auth_failed"): s_.pop(k, None)
+         s_["last_change"] = NOW; ev("LANE_UNHOLD %s autobackoff expired" % lane)
+ def ab_scan(lane, alive_):
+     s_ = slots[lane]; pats = AB_RX.get(AB_PROV.get(lane, ""))
+@@ -317,6 +317,7 @@ def ab_auth_scan(lane, alive_):
+         if cur is not None and cur >= rs: return
+     until = ab_iso(rs)
+     s_["held"] = True; s_["held_by"] = AB_BY; s_["held_until"] = until; s_["last_change"] = NOW
++    s_["auth_failed"] = True
+     s_["held_reason"] = "autobackoff %s job=%s until=%s src=default (%d auth-failed runs)" % (pid, j, until, count)
+     ev("LANE_HOLD %s autobackoff pattern=%s job=%s until=%s src=default (%d auth-failed runs)" % (lane, pid, j, until, count))
+     metric({"event": "autobackoff_hold", "lane": lane, "job": j, "pattern": pid, "until": until, "src": "default", "auth_failures": count})
+@@ -633,6 +634,20 @@ if not isinstance(park_state, dict): park_state = {}
+ def precheck(j, repo, pf):
+     return shared_precheck(j, repo, rd(pf), H, R, _run)
+ 
++# Route proposals arrive as ready.tsv pool changes; receipts outlive queue removal.
++def route_decision(record, proposed, now, hard_down=False, launched=False):
++    if record is None:
++        return {"pool": proposed, "decided_at": now, "moves": []}, None
++    record = dict(record)
++    record["launched"] = record.get("launched", False) or launched
++    record["moves"] = [t for t in record["moves"] if t > now - 21600]
++    if proposed == record["pool"]: return record, None
++    reason = ("launched" if record["launched"] else "move_cap" if len(record["moves"]) >= 2
++              else "minimum_residency" if now - record["decided_at"] < 3600 and not hard_down else None)
++    if reason: return record, reason
++    record.update(pool=proposed, decided_at=now, moves=record["moves"] + [now])
++    return record, None
++
+ # ---- queue
+ # RQ-READYLOCK-SCOPE: queue/ready.lock guards only the ready.tsv read and the ready.tsv rewrite, never the
+ # tick body (a slow tick held it 4+ min and blocked restock.py / sync-router-queue.py appends). Every taker
+@@ -650,8 +665,40 @@ def qlock(who="dispatchd", timeout=None):
+     return fd
+ lk = qlock("dispatchd-read")
+ if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
+-_raw = rd(Q + "/ready.tsv").splitlines(); lk.close()   # snapshot taken; writers may append from here on
+-lines = [l for l in _raw if l.strip() and not l.startswith("#")] + requeue
++_raw = rd(Q + "/ready.tsv").splitlines()
++# Invalid persisted history must not silently reset the move budget.
++try:
++    route_state = json.loads(rd(Q + "/route-state.json")) if os.path.exists(Q + "/route-state.json") else {}
++    assert isinstance(route_state, dict)
++    for receipt in route_state.values():
++        assert receipt["pool"] in LANES and type(receipt["decided_at"]) in (int, float) and math.isfinite(receipt["decided_at"])
++        assert isinstance(receipt["moves"], list) and all(type(t) in (int, float) and math.isfinite(t) for t in receipt["moves"])
++except (ValueError, TypeError, KeyError, AssertionError):
++    lk.close(); ev("ROUTE_STATE_INVALID tick held"); raise SystemExit(1)
++routed = []
++for line in _raw + requeue:
++    f = line.split("\t")
++    if len(f) < 5 or not JID.fullmatch(f[0]) or f[2] not in LANES:
++        routed.append(line); continue
++    job, proposed = f[0], f[2]
++    previous = route_state.get(job)
++    launched_line = rd(RUN + "/" + job + ".line").strip().split("\t")
++    launched = os.path.exists(RUN + "/" + job + ".dispatched") or len(launched_line) >= 5
++    if previous is None and len(launched_line) >= 5 and launched_line[2] in LANES:
++        previous = {"pool": launched_line[2], "decided_at": NOW, "moves": []}
++    current = slots.get(previous["pool"], {}) if previous else {}
++    hard_down = (current.get("auth_failed") is True or (type(current.get("quota")) in (int, float) and current["quota"] == 0)
++                 or (current.get("held") and current.get("held_reason") == "auth_failure"))
++    record, reason = route_decision(previous, proposed, NOW, hard_down, launched)
++    route_state[job] = record
++    if reason:
++        ev("ROUTE_HOLD %s %s->%s reason=%s" % (job, record["pool"], proposed, reason))
++    elif previous and previous["pool"] != record["pool"]:
++        ev("ROUTE %s %s->%s" % (job, previous["pool"], record["pool"]))
++    f[2] = record["pool"]; routed.append("\t".join(f))
++jsave(Q + "/route-state.json", route_state)
++lk.close()   # snapshot taken; writers may append from here on
++lines = [l for l in routed if l.strip() and not l.startswith("#")]
+ # Record first observation even while admission is paused or a lane is held.
+ # Per-job receipts survive ticks and queue rewrites without rescanning the metrics log.
+ for l in lines:

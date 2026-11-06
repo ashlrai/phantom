@@ -41,6 +41,13 @@ def stop_group(process):
 
 def run(args):
     started = time.monotonic()
+    cwd = getattr(args, 'cwd', None)
+    if cwd is not None:
+        if not cwd:
+            return 'invalid cwd', 1
+        cwd = os.path.realpath(cwd)
+        if not os.path.isdir(cwd):
+            return 'invalid cwd', 1
     claim = queue(args.db, 'claim', host=args.host, ttl=args.lease)['claim']
     if claim is None:
         return 'empty', 0
@@ -58,7 +65,7 @@ def run(args):
                 return 'lease lost', 1
             try:
                 child = subprocess.Popen(args.command, stdin=payload, stdout=subprocess.DEVNULL,
-                                         stderr=subprocess.DEVNULL, start_new_session=True)
+                                         stderr=subprocess.DEVNULL, start_new_session=True, cwd=cwd)
             except OSError:
                 result = queue(args.db, 'release', receipt=receipt)
                 return ('launch failed', 1) if result['ok'] else ('lease lost', 1)
@@ -116,6 +123,7 @@ def main():
     p.add_argument('--host', required=True, type=host_queue.identifier)
     p.add_argument('--lease', type=host_queue.positive, default=30, help='lease seconds (1-86400)')
     p.add_argument('--runtime', type=host_queue.positive, default=300, help='maximum runtime seconds (1-86400)')
+    p.add_argument('--cwd', help='operator-selected checkout directory for the worker process')
     p.add_argument('command', nargs=argparse.REMAINDER, help='literal worker argv after --')
     args = p.parse_args()
     if not args.command or args.command[0] != '--' or len(args.command) < 2:

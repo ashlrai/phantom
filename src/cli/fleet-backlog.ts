@@ -27,7 +27,7 @@ import {
   type FleetMergeStateRead,
   type FleetPrGhState,
 } from '../core/fleet/fleet-merge-state.js';
-import { planMergeBacklog, type MergeBacklogEntry, type MergeBacklogItem } from '../core/fleet/merge-backlog-plan.js';
+import { mergeBacklogCreatedAt, planMergeBacklog, type MergeBacklogEntry, type MergeBacklogItem } from '../core/fleet/merge-backlog-plan.js';
 import { renderBacklogRecutJob } from '../core/fleet/backlog-recut-job.js';
 import { makeColors, isTty } from './ui.js';
 
@@ -86,7 +86,7 @@ type GhRead = { ok: true; rows: unknown[] } | { ok: false; reason: string };
 /** Read the open-PR page independently of any exact selections. */
 async function readOpenPrs(repo: string, limit: number, gh: CloudGh, includeTitle = false): Promise<GhRead> {
   const result = await gh([
-    'pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json', FLEET_PR_GH_VIEW_FIELDS + (includeTitle ? ',title' : ''),
+    'pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json', FLEET_PR_GH_VIEW_FIELDS + ',createdAt' + (includeTitle ? ',title' : ''),
   ]);
   if (!result.ok) {
     const detail = result.stderr.split('\n').map((line) => line.trim()).find(Boolean);
@@ -101,19 +101,19 @@ async function readOpenPrs(repo: string, limit: number, gh: CloudGh, includeTitl
 }
 
 type ViewRead =
-  | { number: number; github: FleetPrGhState }
+  | { number: number; github: FleetPrGhState; createdAt?: string }
   | { number: number; reason: string };
 
 async function readSelectedPr(repo: string, number: number, gh: CloudGh): Promise<ViewRead> {
   try {
-    const result = await gh(['pr', 'view', String(number), '--repo', repo, '--json', FLEET_PR_GH_VIEW_FIELDS]);
+    const result = await gh(['pr', 'view', String(number), '--repo', repo, '--json', FLEET_PR_GH_VIEW_FIELDS + ',createdAt']);
     if (!result.ok) return { number, reason: 'gh pr view failed' };
     const raw: unknown = JSON.parse(result.stdout);
     if (raw === null) return { number, reason: 'not found' };
     const github = parseFleetPrGhState(raw);
     if (!github) return { number, reason: 'unreadable response' };
     if (github.number !== number) return { number, reason: 'PR number mismatch' };
-    return { number, github };
+    return { number, github, createdAt: mergeBacklogCreatedAt(raw) };
   } catch {
     return { number, reason: 'gh pr view failed or returned invalid JSON' };
   }
@@ -243,7 +243,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   const missing: FleetMergeStateRead = { state: 'missing' };
   const items: MergeBacklogItem[] = read.rows.map((raw) => {
     const github: FleetPrGhState | null = parseFleetPrGhState(raw);
-    return { repo, mergeState: (github && states.get(github.number)) || missing, github };
+    return { repo, mergeState: (github && states.get(github.number)) || missing, github, createdAt: mergeBacklogCreatedAt(raw) };
   });
   const tracked = items.filter((item) => item.mergeState.state === 'ok').length;
   const unreadable = items.filter((item) => item.github === null).length;
@@ -297,7 +297,7 @@ export async function cmdFleetBacklog(args: string[], deps: FleetBacklogDeps = {
   ];
   for (const result of lookups) {
     if ('github' in result && result.github.state === 'OPEN') {
-      items.push({ repo, github: result.github, mergeState: states.get(result.number) ?? missing });
+      items.push({ repo, createdAt: result.createdAt, github: result.github, mergeState: states.get(result.number) ?? missing });
     }
   }
   // Preserve duplicate parsed page observations so the planner marks them unknown.

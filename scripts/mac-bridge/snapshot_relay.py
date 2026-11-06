@@ -14,8 +14,18 @@ destination latest.json survives any failure; a repeated identical
 publication is a successful no-op. Preview is the default and writes nothing;
 --apply performs the transfer. One non-blocking destination lock (the
 publisher's lock) serializes competing relays and any publisher on the same
-destination. Emits bounded metadata only, never file contents. Filesystem
-transport support only — not proof of cross-machine coordinator safety.
+destination.
+
+After an apply commits the destination pointer, surplus prior generations
+are pruned under that same lock to --retain (the publisher's bounds and
+default), so repeated relays cannot fill the standby disk; an
+already-published apply converges retention without copying again. Pruning
+never touches the source store, the selected generation, symlinked entries,
+or unrelated directories. A pruning failure is reported as retentionError
+and never rolls back a committed pointer or denies a completed copy; preview
+and failed transfers never prune. Emits bounded metadata only, never file
+contents. Filesystem transport support only — not proof of cross-machine
+coordinator safety.
 """
 
 import argparse
@@ -120,8 +130,27 @@ def copy_generation(src, dst):
     shutil.copytree(src, dst, symlinks=True)
 
 
-def relay(source, destination, apply):
+def prune_retained(dest, keep_name, retain, result):
+    """Bounded prune of surplus priors under the held destination lock.
+
+    Runs only after the destination pointer verifiably selects keep_name. Any
+    failure is reported as retentionError: the committed pointer and the
+    copied generation still stand and are never rolled back or denied.
+    """
+    try:
+        result['pruned'] = snapshot_publish.prune(dest, keep_name, retain)
+    except Exception as exc:  # a committed pointer must never be misreported
+        result['retentionError'] = str(exc) or 'retention prune failed'
+
+
+def relay(source, destination, apply, retain=3):
     """Preview or perform the transfer; never touches the prior pointer on failure."""
+    if isinstance(retain, bool) or not isinstance(retain, int) \
+            or not snapshot_publish.MIN_RETAIN <= retain \
+            <= snapshot_publish.MAX_RETAIN:
+        raise RelayError(
+            f'retain must be between {snapshot_publish.MIN_RETAIN} '
+            f'and {snapshot_publish.MAX_RETAIN}')
     src, dest = check_dirs(source, destination)
     lock = snapshot_publish.acquire_lock(dest) if apply else None
     staging = None
@@ -132,9 +161,12 @@ def relay(source, destination, apply):
             raise RelayError('generation escapes the source store')
         check = verified(generation, digest)
         result = {'tool': TOOL, 'ok': True, 'apply': apply, 'generation': name,
-                  'manifestSha256': digest, 'files': check['files']}
+                  'manifestSha256': digest, 'files': check['files'],
+                  'retain': retain}
         if already_published(dest, name, digest):
             result['noop'] = True
+            if apply:  # converge retention under the lock, no second copy
+                prune_retained(dest, name, retain, result)
             return result
         result['noop'] = False
         if not apply:
@@ -159,6 +191,7 @@ def relay(source, destination, apply):
                               'files': check['files'], 'published': time.time()},
                              separators=(',', ':')).encode('utf-8')
         snapshot_publish.commit_pointer(dest, payload)
+        prune_retained(dest, name, retain, result)
         return result
     finally:
         if staging is not None and staging.is_dir() \
@@ -178,14 +211,24 @@ def build_parser():
                         help='existing standby publication directory; must not nest --source')
     parser.add_argument('--apply', action='store_true',
                         help='perform the transfer; default is a preview that writes nothing')
+    parser.add_argument('--retain', type=int, default=3,
+                        help='prior generations kept beside the selected current one '
+                             'after a successful apply, '
+                             f'{snapshot_publish.MIN_RETAIN}..{snapshot_publish.MAX_RETAIN} '
+                             '(default 3); preview never prunes')
     return parser
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not snapshot_publish.MIN_RETAIN <= args.retain \
+            <= snapshot_publish.MAX_RETAIN:
+        parser.error(f'--retain must be between {snapshot_publish.MIN_RETAIN} '
+                     f'and {snapshot_publish.MAX_RETAIN}')
     os.umask(0o077)
     try:
-        result = relay(args.source, args.destination, args.apply)
+        result = relay(args.source, args.destination, args.apply, args.retain)
     except KeyboardInterrupt:
         result = {'tool': TOOL, 'ok': False, 'error': 'interrupted'}
     except (RelayError, snapshot_publish.PublishError, OSError, ValueError) as exc:

@@ -14,7 +14,7 @@ vi.mock('../fleet-job-log/worker-log-selection.js', () => ({ requestWorkerLogJob
 const now = Date.parse('2026-10-31T12:45:00Z');
 const runs: FleetRunsV1 = {
   v: 1, generatedAt: '2026-10-31T12:45:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
-  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+  lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null, host: null,
   lanes: [{ lane: 'codex', running: 2, target: 3, queued: 0, held: false, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null }],
   workers: [
     { job: 'first-job', repo: 'example/repo', lane: 'codex', tier: 'work', ageSeconds: 1800 },
@@ -54,7 +54,7 @@ it('shows and routes interjections on the worker timeline in both layouts', asyn
   fireEvent.pointerEnter(lane.querySelector('rect[data-status="interjection"]')!);
   expect(screen.getByText('inspect the fleet')).toBeInTheDocument();
   fireEvent.click(first);
-  expect(openDockPane).toHaveBeenCalledWith('fleet-inbox');
+  expect(openDockPane).toHaveBeenCalledWith('fleet-steering');
   expect(requestWorkerLogJob).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'codex 2/3: first-job' }));
   expect(requestWorkerLogJob).toHaveBeenCalledWith('first-job');

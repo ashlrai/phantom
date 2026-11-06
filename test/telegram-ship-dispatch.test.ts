@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,6 +23,7 @@ beforeEach(() => {
   previousHome = process.env['HOME'];
   home = mkdtempSync(join(tmpdir(), 'ship-dispatch-'));
   process.env['HOME'] = home;
+  pairedTelegram(home, 123);
   sent = [];
   bridge.record.mockClear();
   leader.converse.mockClear();

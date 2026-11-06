@@ -1,3 +1,4 @@
+import { rememberEmailPair } from '../fleet/operator-glance-read.js';
 /**
  * RQ-PHX-EMAILDROPCHANNEL31 — drop-folder email → MASON-INBOX.md bridge.
  *
@@ -17,7 +18,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -62,6 +63,7 @@ function eml(over: { from?: string; id?: string | null; subject?: string; body?:
     `Subject: ${subject}`,
     ...(id === null ? [] : [`Message-ID: ${id}`]),
     'Date: Fri, 31 Oct 2026 08:00:00 -0400',
+    'Authentication-Results: mx.example.com; dkim=pass header.d=example.com',
     ...(extraHeaders ? [extraHeaders] : []),
     '',
     body,
@@ -71,7 +73,7 @@ function eml(over: { from?: string; id?: string | null; subject?: string; body?:
 
 const inboxPath = () => join(runsDir, 'leader', 'MASON-INBOX.md');
 const inboxText = () => readFileSync(inboxPath(), 'utf8');
-const inboxHeadings = () => (existsSync(inboxPath()) ? inboxText().match(/^## /gm) ?? [] : []);
+const inboxReceipts = () => (existsSync(inboxPath()) ? inboxText().match(/^\d{4}-\d{2}-\d{2}T[^\n]+ \[src:email id:email-[a-f0-9]{16}\]/gm) ?? [] : []);
 const replyFiles = () => readdirSync(outboxDir).filter((name) => name.endsWith('.reply.eml')).sort();
 const drop = (name: string, raw: string) => writeFileSync(join(inboxDir, name), raw, 'utf8');
 const runOpts = () => ({ inboxDir, outboxDir, processedDir, allowedSenders: ALLOWED, runsDir, now });
@@ -84,6 +86,7 @@ beforeEach(() => {
   outboxDir = dir('email-drop-out-');
   processedDir = dir('email-drop-done-');
   process.env['HOME'] = home;
+  rememberEmailPair(MASON, runsDir);
 });
 
 afterEach(() => {
@@ -122,8 +125,8 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     expect(result.ok && result.envelope.verifiedSenderId).toBe(`email:${MASON}`);
 
     const inbox = inboxText();
-    expect(inbox.match(/^## /gm)).toHaveLength(1);
-    expect(inbox).toContain('(Mason, email)');
+    expect(inboxReceipts()).toHaveLength(1);
+    expect(inbox).toContain('[src:email id:email-');
     expect(inbox).toContain('Fleet note');
     expect(inbox).toContain('focus the fleet on billing');
 
@@ -143,7 +146,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 1, duplicate: 0, refused: 0, failed: 0 });
     drop('a.eml', eml());
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 0, duplicate: 1, refused: 0, failed: 0 });
-    expect(inboxHeadings()).toHaveLength(1);
+    expect(inboxReceipts()).toHaveLength(1);
     expect(readdirSync(processedDir).sort()).toEqual(['a.eml', 'a.eml.1']);
     expect(replyFiles()).toHaveLength(1);
     const reply = readFileSync(join(outboxDir, replyFiles()[0]!), 'utf8');
@@ -154,7 +157,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     drop('b.eml', eml({ from: 'Stranger <stranger@example.net>', id: '<stranger-1@x>' }));
     drop('c.eml', eml({ id: '<ok-1@x>' }));
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 1, duplicate: 0, refused: 1, failed: 0 });
-    expect(inboxHeadings()).toHaveLength(1);
+    expect(inboxReceipts()).toHaveLength(1);
     expect(inboxText()).not.toContain('stranger');
     expect(replyFiles()).toHaveLength(1);
     expect(readdirSync(processedDir).sort()).toEqual(['b.eml', 'c.eml']);
@@ -163,6 +166,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
   it('multipart: first text/plain part only, quoted lines and signature stripped', async () => {
     const raw = [
       `From: ${MASON}`,
+      'Authentication-Results: mx.example.com; dkim=pass header.d=example.com',
       'Subject: Multipart test',
       'Message-ID: <mp-1@x>',
       'Content-Type: multipart/alternative; boundary="BOUND"',
@@ -206,7 +210,7 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     drop('1-bad.eml', 'this is not an email at all\r\n\r\nno from header');
     drop('2-good.eml', eml({ id: '<good-1@x>' }));
     expect(await runEmailDropOnce(runOpts())).toEqual({ accepted: 1, duplicate: 0, refused: 0, failed: 1 });
-    expect(inboxHeadings()).toHaveLength(1);
+    expect(inboxReceipts()).toHaveLength(1);
     expect(readdirSync(processedDir).sort()).toEqual(['1-bad.eml', '2-good.eml']);
   });
 
@@ -233,5 +237,24 @@ describe('recordEmailToInbox + runEmailDropOnce', () => {
     const parsed = parseEmlMessage(eml({ id: null, body: 'x'.repeat(16 * 1024) }));
     expect(parsed).not.toBeNull();
     expect(Buffer.byteLength(parsed!.body, 'utf8')).toBeLessThanOrEqual(8 * 1024);
+  });
+});
+
+describe('runEmailDropOnce other-writable folders', () => {
+  it.each(['inbox', 'processed', 'outbox'] as const)('refuses the pass when the %s folder is other-writable', async (kind) => {
+    drop('a.eml', eml());
+    chmodSync({ inbox: inboxDir, processed: processedDir, outbox: outboxDir }[kind], 0o777);
+    const counts = await runEmailDropOnce(runOpts());
+    expect(counts).toMatchObject({ accepted: 0, unsafeFolder: kind });
+    expect(readdirSync(inboxDir)).toEqual(['a.eml']);
+    expect(existsSync(inboxPath())).toBe(false);
+  });
+
+  it('still ingests from a private folder', async () => {
+    chmodSync(inboxDir, 0o700);
+    drop('a.eml', eml());
+    const counts = await runEmailDropOnce(runOpts());
+    expect(counts.accepted).toBe(1);
+    expect(counts.unsafeFolder).toBeUndefined();
   });
 });

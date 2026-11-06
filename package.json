@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.29.16",
+  "version": "3.30.20",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -33,9 +33,12 @@
     "phm": "bin/ashlr"
   },
   "files": [
+    "radar/sources.json",
     "dist",
     "bin",
     "scripts/run-verify-command.mjs",
+    "scripts/lib/docs-pages.mjs",
+    "scripts/lib/docs-pages.d.mts",
     "scripts/local-app-transaction.mjs",
     "scripts/scorecard-history-worker.mjs",
     "scripts/evaluators/preparation-verification-activity.mjs",
@@ -46,8 +49,13 @@
     "schema",
     "CHANGELOG.md",
     "docs/README.md",
+    "docs/SIGNALS.md",
+    "docs/FLEET-API.md",
+    "docs/model-registry.json",
     "docs/PHANTOM-BRAND.md",
     "docs/COMPANIONS.md",
+    "docs/CONNECTORS.md",
+    "docs/lanes/zai.md",
     "docs/MEMORY-FOUNDATION.md",
     "docs/MEMORY-EVALUATION.md",
     "docs/QUICKSTART.md",
@@ -62,6 +70,8 @@
     "docs/STANDING-AUTHORITY.md",
     "docs/CLOUD.md",
     "docs/LEADER.md",
+    "docs/LEADER-NETWORK.md",
+    "docs/DISK-MAINT.md",
     "docs/DEVIN.md",
     "docs/VERSE-CONTEXT.md",
     "docs/VERSE-BROWSER.md",
@@ -101,7 +111,8 @@
     "smol-toml",
     "tar",
     "web-push",
-    "yaml"
+    "yaml",
+    "zod"
   ],
   "exports": {
     ".": {
@@ -159,10 +170,10 @@
     "check:first-paint:built": "node scripts/check-first-paint-budget.mjs --no-build --out-dir dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250",
     "check:docs": "node scripts/check-documentation.mjs",
     "check:perf": "node scripts/perf-budget.mjs",
-    "check:pack-contracts": "node --test .github/tests/ci-pack-smoke.test.mjs .github/tests/desktop-update-finalizer.test.mjs .github/tests/first-paint-built.test.mjs .github/tests/ci-qualification-lane.test.mjs .github/tests/ci-impact-shadow.test.mjs .github/tests/ci-attestation-inputs.test.mjs .github/tests/hosted-build-artifact.test.mjs .github/tests/hosted-native-build.test.mjs",
+    "check:pack-contracts": "node --test .github/tests/ci-pack-smoke.test.mjs .github/tests/desktop-update-finalizer.test.mjs .github/tests/first-paint-built.test.mjs .github/tests/ci-qualification-lane.test.mjs .github/tests/ci-impact-shadow.test.mjs .github/tests/ci-attestation-inputs.test.mjs .github/tests/hosted-build-artifact.test.mjs .github/tests/hosted-native-build.test.mjs .github/tests/release-train.test.mjs .github/tests/fast-hosted-artifact.test.mjs .github/tests/release-fast-smoke.test.mjs .github/tests/release-cadence.test.mjs .github/tests/ci-history-source.test.mjs .github/tests/ci-test-feedback.test.mjs .github/tests/ci-impact-map.test.mjs",
     "check:quarantine": "node scripts/check-quarantine-ledger.mjs",
     "check:release:fast": "npm run check:pack-contracts && npm run check:release",
-    "check:release": "npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/m515.release-publish-authority-split.test.ts test/documentation-navigation.test.ts test/authority-release-truth.test.ts test/m33.release-meta.test.ts test/cli-registry-drift.test.ts test/authority-tier1-closure-310b.test.ts test/sidecar-literal-imports-315.test.ts test/m93.service-authority-docs.test.ts test/m479.release-workflow-policy.test.ts test/m522.production-promotion-docs.test.ts test/m468.release-desktop-workflow-policy.test.ts test/authority-codeowners-310b.test.ts test/m30.ci.test.ts test/m25.index.test.ts",
+    "check:release": "npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/m515.release-publish-authority-split.test.ts test/documentation-navigation.test.ts test/package-files-allowlist.test.ts test/authority-release-truth.test.ts test/m33.release-meta.test.ts test/cli-registry-drift.test.ts test/authority-tier1-closure-310b.test.ts test/sidecar-literal-imports-315.test.ts test/m93.service-authority-docs.test.ts test/m479.release-workflow-policy.test.ts test/m522.production-promotion-docs.test.ts test/m468.release-desktop-workflow-policy.test.ts test/authority-codeowners-310b.test.ts test/m30.ci.test.ts test/m25.index.test.ts",
     "gate": "node scripts/gate.mjs",
     "gate:full": "node scripts/gate.mjs --full",
     "ship:local": "node scripts/ship-local.mjs",
@@ -171,7 +182,9 @@
     "lint:verse-sync-io": "node scripts/check-verse-sync-io.mjs",
     "typecheck": "tsc --noEmit && npm run typecheck:web",
     "typecheck:web": "tsc --noEmit -p src/web-ui/tsconfig.json",
-    "test:fast": "node scripts/test-fast.mjs"
+    "typecheck:fast": "npx --no-install tsgo --noEmit && tsgo --noEmit -p src/web-ui/tsconfig.json",
+    "test:fast": "node scripts/test-fast.mjs",
+    "install:worktree": "node scripts/worktree-install.mjs"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -232,7 +245,8 @@
     "smol-toml": "1.9.0",
     "tar": "7.5.22",
     "web-push": "3.6.7",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "4.6.7"
   },
   "bundleDependencies": [
     "@modelcontextprotocol/sdk",
@@ -244,6 +258,7 @@
     "smol-toml",
     "tar",
     "web-push",
-    "yaml"
+    "yaml",
+    "zod"
   ]
 }

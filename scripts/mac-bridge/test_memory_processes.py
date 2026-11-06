@@ -123,6 +123,23 @@ class ProcessTests(unittest.TestCase):
         self.assertNotIn('command', receipt)
         self.assertNotIn('environment', receipt)
 
+    def test_admitted_child_runs_niced_with_bounded_workers(self):
+        marker = self.base / 'child-scheduling.json'
+        # A wider caller setting is clamped to the per-job cap of two.
+        with patch.dict(os.environ, {'ASHLR_VITEST_UNIT_MAX_WORKERS': '4'}):
+            child = self.start('demoted',
+                               'import json,os; from pathlib import Path; '
+                               f'Path({str(marker)!r}).write_text(json.dumps({{'
+                               "'nice': os.getpriority(os.PRIO_PROCESS, 0), "
+                               "'unitWorkers': os.environ.get('ASHLR_VITEST_UNIT_MAX_WORKERS'), "
+                               "'cargoJobs': os.environ.get('CARGO_BUILD_JOBS')}))")
+        _, errors = child.communicate(timeout=10)
+        self.assertEqual(child.returncode, 0, errors)
+        observed = json.loads(marker.read_text())
+        self.assertEqual(observed['nice'], 10)
+        self.assertEqual(observed['unitWorkers'], '2')
+        self.assertEqual(observed['cargoJobs'], '4')
+
     def test_cancelled_waiter_does_not_execute_child(self):
         self.pause.touch()
         marker = self.base / 'should-not-run'

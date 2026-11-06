@@ -58,7 +58,7 @@
  *
  *   isSubscriptionEngine(engine)
  *     → boolean
- *     True for frontier-tier CLI agents (claude / codex). Reuses engineTierOf.
+ *     True for frontier-tier CLI agents (claude / codex), per the engine registry.
  *
  * Why the gate defaults to AUTONOMOUS while routing defaults to interactive
  * (V3.10 integration, IB2): every direct caller of subscriptionAllows is a
@@ -90,7 +90,7 @@ import { loadBudgetPolicy, readCapacitySnapshot } from '../routing/budget-store.
 import { assessSeat, type SeatCapacity } from '../routing/headroom.js';
 import { defaultSeatPolicy, effectiveSeatPolicy, engineOfSeatId } from '../routing/policy.js';
 import type { BudgetPolicy } from '../routing/types.js';
-import { engineTierOf } from '../run/sandboxed-engine.js';
+import { resolveEngineSpec } from '../run/engine-registry.js';
 import type { EngineId } from '../types.js';
 import { SharedStore } from './shared-store.js';
 
@@ -170,12 +170,11 @@ function minutesToLabel(mins: number): string {
 
 /**
  * True when `engine` is a frontier-tier CLI agent (runs on a subscription, not
- * API billing). Reuses engineTierOf from sandboxed-engine.ts (single source of
- * truth from the engine registry). Never throws.
+ * API billing). The engine registry is the single source of truth. Never throws.
  */
 export function isSubscriptionEngine(engine: EngineId): boolean {
   try {
-    return engineTierOf(engine) === 'frontier';
+    return resolveEngineSpec(engine)?.tier === 'frontier';
   } catch {
     return false;
   }

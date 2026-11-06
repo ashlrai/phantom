@@ -1,6 +1,6 @@
 # Fleet HTTP API
 
-The machine-readable contract for this surface is [docs/api/fleet-openapi.json](api/fleet-openapi.json) (OpenAPI 3.1).
+The machine-readable contract for this surface is [docs/api/fleet-openapi.json](https://github.com/ashlrai/phantom/blob/master/docs/api/fleet-openapi.json) (OpenAPI 3.1).
 `test/fleet-openapi-coverage.test.ts` keeps it aligned with the remote gateway's reviewed route policy.
 
 Phantom's fleet coordinates and observes local agent work, queues, controls,
@@ -37,6 +37,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/history` | days, tz | [FleetHistoryResponse](../src/core/verse/fleet-history-types.ts) | [source](../src/core/verse/fleet-history.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/history?days=30&tz=0'` |
 | GET | `/api/verse/fleet/grok-ultra` | none | [GrokUltraRunway](../src/core/fleet/grok-ultra-types.ts) | [source](../src/core/verse/grok-ultra-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/grok-ultra'` |
 | GET | `/api/verse/fleet/runs` | none | [FleetRunsV1](../src/core/verse/fleet-runs-types.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs'` |
+| GET | `/api/verse/fleet/runs/glance` | none | [OperatorGlance](../src/core/fleet/operator-glance.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/glance'` |
 | GET | `/api/verse/fleet/runs/inbox` | limit, source | [FleetInboxReadV1 or null](../src/core/verse/fleet-inbox-read.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | POST | `/api/verse/fleet/runs/inbox` | none | [inline {ok, at} (201)](../src/core/verse/fleet-runs-api.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Please review the queue","source":"operator"}' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | GET | `/api/fleet/job` | id (required) | [FleetJobDetailV1](../src/core/fleet/runs-job-detail.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job?id=example-job'` |
@@ -157,3 +158,50 @@ CLI has related, independently shaped views and controls: `phm fleet status`,
 `phm inbox reject`, and `phm inbox automerge`. That proposal inbox is distinct
 from the runs leader inbox above. See the [fleet CLI](../src/cli/fleet.ts) and
 [inbox CLI](../src/cli/inbox.ts) for flags and authority gates.
+
+## Merge queue age from a snapshot
+
+Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and
+blocking reasons, oldest first. Add `--json` for agents. The typed
+`MergeQueueAgeInput` and `mergeQueueAge(input, now)` API use the same report.
+The snapshot contains `prs` and `queue`; `--help` lists their fields.
+Merged and closed PRs are excluded. Missing evidence stays unknown. Required
+checks remain in place; this command only reads the supplied file.
+
+Acceptance: keep the interface as simple and intuitive as possible, with fewer
+steps, plain words, one obvious path, and every human surface backed by a typed
+API or CLI that agents can use (code-first, agent-native).
+
+## Queue latency by stage and automatic recut
+
+Run `phm fleet queue-latency --input snapshot.json` to see where PRs lose time
+on the way to merge (waiting for approval, to join the queue, in the queue, or
+running required checks) and which conflicts can be recut automatically. Add
+`--json` for agents. The typed `QueueLatencyInput`, `queueLatency(input, now)`
+and `formatQueueLatency(report)` API use the same report. The snapshot is
+`{prs:[{repo,number,stages:[{stage,at}],headSha?,mergeable?,queuePosition?,recutRequests?,lastRecutHead?}]}`;
+`--help` lists the stages. A conflicting PR with a known head, fewer than three
+recuts and no recut for that head yet gets a `recut` recommendation with the
+same idempotency key the recut loop uses; anything else is `needs_person`.
+This only reads the supplied file; required checks stay in place and nothing
+is merged or requeued.
+
+Acceptance: as simple and intuitive as possible, fewer steps, plain words,
+one obvious path, and every human surface backed by a typed API or CLI
+that agents can use (code-first, agent-native).
+
+## PR creation and queue delays
+
+Run `phm fleet queue-age --events events.json --json` to rank PR delays from
+creation to queue entry, queue entry to merge, and creation to merge. Omit
+`--json` for plain words. Supply a JSON array of `QueueAgeEvent` records:
+`{"pr":"ashlrai/phantom#42","event":"created","ts":"2026-01-01T00:00:00Z"}`.
+Events are `created`, `queue_entered`, and `merged`; use repository-qualified
+PR identities. The typed `queueAge(events)` API returns the same report.
+This only reads the file. Exact duplicates are deduplicated; missing, reversed,
+or repeated distinct boundaries (including re-entry) remain unmeasured.
+The longest measured delays come first; ongoing waits are not estimated.
+
+Acceptance: as simple and intuitive as possible, fewer steps, plain words,
+one obvious path, and every human surface backed by a typed API or CLI
+that agents can use (code-first, agent-native).

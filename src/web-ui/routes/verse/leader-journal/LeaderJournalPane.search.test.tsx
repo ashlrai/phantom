@@ -1,3 +1,4 @@
+import { paneProps } from '../panes/pane-fixtures.test-support.js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
@@ -16,7 +17,7 @@ it('filters, expands and highlights matching passes, then restores them when cle
       { at: '2026-01-01T12:03:00Z', sections: [{ title: 'Plan', bullets: ['Other task'] }] },
     ], ingest: [], ingested: [], rejectedLastHour: 0,
   })));
-  render(<LeaderJournalPane visible />);
+  render(<LeaderJournalPane {...paneProps()} />);
   const region = await screen.findByRole('region', { name: 'Passes' });
   expect(region.querySelectorAll('details')).toHaveLength(3);
   const input = screen.getByRole('searchbox', { name: 'Search journal' });

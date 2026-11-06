@@ -2,13 +2,13 @@ import type { RunsSwitch } from './runs-switches-queries.js';
 
 const LABELS: Record<string, string> = {
   ORCH_OFF: 'Leader passes', OPUS_LEADER_OFF: 'Opus leader', PAUSE: 'Launches',
-  PUBLISH_HOLD: 'Publishing', HOLD: 'Dispatcher', QUEUE_DISABLE: 'Queue',
+  PUBLISH_HOLD: 'Publishing', HOLD: 'Saved lane holds', QUEUE_DISABLE: 'Queue',
 };
 
 export function switchLabel(id: string): string { return Object.hasOwn(LABELS, id) ? LABELS[id]! : id; }
 
 export function switchSummary(rows: RunsSwitch[]): string {
-  const off = rows.filter(row => row.on).map(row => switchLabel(row.id));
+  const off = rows.filter(row => row.id !== 'HOLD' && row.on).map(row => switchLabel(row.id));
   return off.length ? `${off.length} ${off.length === 1 ? 'switch' : 'switches'} off: ${off.join(', ')}` : 'All on';
 }
 

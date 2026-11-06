@@ -530,10 +530,10 @@ export interface ReflectionCycleResult {
  * One batched Jev pass over recent swarm goals so classifyGoal can use typed
  * labels. Never throws; with no key it does no I/O beyond reading config.
  */
-export async function primeGoalClasses(cfg: AshlrConfig, maxRuns = 50): Promise<void> {
+export async function primeGoalClasses(cfg: AshlrConfig, maxRuns = 50, signal?: AbortSignal): Promise<void> {
   try {
     const goals = listSwarms().slice(0, maxRuns).map((s) => s?.goal);
-    await primeTaskClasses(goals, { cfg });
+    await primeTaskClasses(goals, { cfg, ...(signal ? { signal } : {}) });
   } catch {
     /* the keyword table decides */
   }
@@ -541,11 +541,11 @@ export async function primeGoalClasses(cfg: AshlrConfig, maxRuns = 50): Promise<
 
 export async function runReflectionCycle(
   cfg: AshlrConfig,
-  opts: ReflectionOptions & { maxPlaybookRuns?: number } = {},
+  opts: ReflectionOptions & { maxPlaybookRuns?: number; signal?: AbortSignal } = {},
 ): Promise<ReflectionCycleResult> {
   // Prime Jev task-class labels for the goals buildReflection will bucket.
   // buildReflection itself stays network-free; it only consults the memo.
-  await primeGoalClasses(cfg);
+  await primeGoalClasses(cfg, 50, opts.signal);
   const report = buildReflection(cfg, opts);
 
   // Periodic write-back is autonomous learning authority, not read-only
@@ -573,6 +573,7 @@ export async function runReflectionCycle(
       ...(opts.maxPlaybookRuns !== undefined ? { maxRuns: opts.maxPlaybookRuns } : {}),
       narrative: false,
       persist: true,
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
   } catch {
     // Keep the report even when playbook distillation fails.

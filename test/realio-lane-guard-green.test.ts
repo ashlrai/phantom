@@ -33,6 +33,12 @@ describe('real-I/O lane guard', () => {
     expect(realIo.filter((path) => fastSet.has(path))).toEqual([]);
   });
 
+  it('keeps each manifest free of duplicate entries', () => {
+    const duplicates = (paths: string[]) => paths.filter((path, index) => paths.indexOf(path) !== index);
+    expect(duplicates(realIo)).toEqual([]);
+    expect(duplicates(fast)).toEqual([]);
+  });
+
   it('accepts the current marker classifications', () => {
     const output = execFileSync(process.execPath, ['scripts/check-realio-lane-membership.mjs'], {
       cwd: root,

@@ -12,6 +12,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createFleetServer, type FleetReaders } from '../src/mcp/fleet-server.js';
 import { MAX_FLEET_LANES, readFleetLanes } from '../src/mcp/fleet-lanes.js';
+import { FLEET_MCP_TOOL_NAMES } from './support/fleet-mcp-tools.js';
 import type { FleetRunsDirState, FleetRunsLane } from '../src/core/fleet/runs-dir-state.js';
 import type { LaneTargetRow, LaneTargetsV1 } from '../src/core/fleet/runs-lane-targets.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
@@ -71,9 +72,7 @@ describe('fleet_lanes MCP tool', () => {
   it('is listed beside the existing read-only tools with an empty schema', async () => {
     const client = await connect();
     const { tools } = await client.listTools();
-    expect(tools.map(tool => tool.name)).toEqual([
-      'fleet_status', 'fleet_loop', 'fleet_bus_hops', 'fleet_host_runs', 'fleet_bus_inbox', 'fleet_lanes',
-    ]);
+    expect(tools.map(tool => tool.name)).toEqual([...FLEET_MCP_TOOL_NAMES]);
     const tool = tools.find(candidate => candidate.name === 'fleet_lanes');
     expect(tool?.annotations).toEqual({
       readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,

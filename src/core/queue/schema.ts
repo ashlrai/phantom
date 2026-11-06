@@ -13,6 +13,8 @@ export interface QueueJob {
   scope: string;
   acceptance: string;
   claims: QueueClaim[];
+  replayOf?: string;
+  replayedAt?: string;
   prUrl?: string;
   blockedReason?: string;
 }
@@ -43,6 +45,7 @@ export function validateQueue(value: unknown): asserts value is QueueDocument {
     if (typeof job.acceptance !== 'string') throw new Error(`Invalid acceptance: ${job.id}`);
     if (!Array.isArray(job.deps) || job.deps.some(d => !nonempty(d) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(d) || d === job.id) || new Set(job.deps).size !== job.deps.length) throw new Error(`Invalid deps: ${job.id}`);
     if (!Array.isArray(job.claims) || job.claims.some(c => !record(c) || !nonempty(c.owner) || !timestamp(c.claimedAt) || (c.finishedAt !== undefined && (!timestamp(c.finishedAt) || Date.parse(c.finishedAt as string) < Date.parse(c.claimedAt as string))))) throw new Error(`Invalid claims: ${job.id}`);
+    if (job.replayOf !== undefined && (!nonempty(job.replayOf) || job.replayOf === job.id || !timestamp(job.replayedAt))) throw new Error(`Invalid replay lineage: ${job.id}`);
     if (job.prUrl !== undefined) {
       if (typeof job.prUrl !== 'string' || !/^https:\/\/[^\s]+$/.test(job.prUrl)) throw new Error(`Invalid PR URL: ${job.id}`);
       const url = new URL(job.prUrl);

@@ -1493,10 +1493,11 @@ Secret-shaped text is refused rather than redacted. The equivalent CLI/API call
 is `POST /api/verse/fleet/runs/inbox` with `{"text": "..."}` and the mutation
 token; the entry is also logged to `dispatch-events.log`.
 
-The view shows kill switches as red chips. Each is a file whose existence stops
-its named activity: `~/.ashlr-runs/HOLD` stops the Claude lane; `PAUSE`,
-`ORCH_OFF`, `OPUS_LEADER_OFF`, `PUBLISH_HOLD`, and `queue/DISABLE` (dispatcher)
-are under `~/.ashlr-runs`. Removing a switch file resumes its activity.
+The view shows the fleet's existing control files. `HOLD` contains individual
+lane IDs, so **Saved lane holds** is status-only and preserves that selection.
+Use **Queue** (`queue/DISABLE`) to pause all new dispatches while running workers
+finish. `PAUSE`, `ORCH_OFF`, `OPUS_LEADER_OFF`, and `PUBLISH_HOLD` control their
+named activities under `~/.ashlr-runs`.
 
 In **Settings ▸ Desktop ▸ Updates**, you can see the running version and short
 commit, how far it is behind or ahead of `origin/master`, whether a fast-forward

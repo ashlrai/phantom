@@ -75,6 +75,7 @@ const errno = (error: unknown): LaneModelWriteError =>
   error instanceof LaneModelWriteError ? error
     : new LaneModelWriteError(object(error) && error.code === 'ENOENT' ? 'models-missing' : 'models-invalid');
 /** Log-field hygiene: control characters stripped, field capped. */
+// eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
 const field = (value: string, max: number): string => value.replace(/[\x00-\x1F\x7F]/g, '').slice(0, max);
 
 /** Read + parse models.json under the same guards as the slots writers. */

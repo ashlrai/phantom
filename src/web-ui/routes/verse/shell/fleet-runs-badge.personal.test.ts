@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeFleetRuns, fleetRunsBadge, fleetRunsTone } from './fleet-runs-badge.js';
+import { fleetRunsBadge, fleetRunsTone } from './fleet-runs-badge.js';
 
 const base = { v: 1, workers: [{ job: 'a' }], leaders: [], mergesLastHour: { count: 5 }, switches: [] };
 

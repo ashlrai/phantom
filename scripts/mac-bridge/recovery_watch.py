@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 
+import recover_apps
 import recover_services
 
 
@@ -43,6 +44,12 @@ def service(value):
     return value
 
 
+def successful(record):
+    return (record is not None and record.get("outcome") == "completed"
+            and record.get("complete") is True and type(record.get("exitCode")) is int
+            and record["exitCode"] == 0)
+
+
 def main(argv=None, deps=None, out=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--interval-seconds", type=positive_interval, default=60.0)
@@ -50,6 +57,16 @@ def main(argv=None, deps=None, out=None):
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--runs-dir")
     parser.add_argument("--service", action="append", type=service, default=[])
+    parser.add_argument("--require-complete", action="store_true",
+                        help="exit 0 only when the final attempted pass produced valid complete=true and exit code 0; "
+                             "exhaustion with incomplete, exception, invalid report, nonzero child status, or "
+                             "cancellation before any completed pass returns nonzero")
+    parser.add_argument("--until-complete", action="store_true",
+                        help="stop after the first valid complete report with exit code 0; "
+                             "return nonzero if stopped or exhausted before success")
+    parser.add_argument("--recover-apps", action="store_true",
+                        help="after each pass whose service recovery report is complete, run "
+                             "recover_apps --apply once; the app report is never copied into the log")
     args = parser.parse_args(argv)
     deps = deps or {}
     out = out or sys.stdout
@@ -65,6 +82,20 @@ def main(argv=None, deps=None, out=None):
         recovery_args.extend(["--runs-dir", args.runs_dir])
     for item in args.service:
         recovery_args.extend(["--service", item])
+    app_call = deps.get("app_call") or recover_apps.main
+    app_deps = dict(recovery_deps or {})
+    app_deps.setdefault("now", now)
+    app_args = ["--apply"]
+    if args.runs_dir is not None:
+        app_args.extend(["--runs-dir", args.runs_dir])
+
+    def run_app_recovery():
+        try:
+            captured = io.StringIO()
+            code = app_call(app_args[:], deps=app_deps, out=captured)
+            return code if isinstance(code, int) else None
+        except Exception:
+            return None
 
     previous = {}
     def cancel(_signum, _frame):
@@ -74,6 +105,7 @@ def main(argv=None, deps=None, out=None):
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous[sig] = signal.signal(sig, cancel)
     try:
+        final_record = None
         for index in range(1, args.max_passes + 1):
             if stop.is_set():
                 break
@@ -85,16 +117,23 @@ def main(argv=None, deps=None, out=None):
                 result = json.loads(captured.getvalue())
                 if not isinstance(result, dict) or not isinstance(result.get("complete"), bool):
                     raise ValueError("invalid recovery result")
-                record.update(exitCode=code if isinstance(code, int) else None,
+                record.update(exitCode=code if type(code) is int else None,
                               complete=result["complete"], outcome="completed")
+                if args.recover_apps and result["complete"]:
+                    record["appRecovery"] = {"exitCode": run_app_recovery()}
             except Exception:
                 record.update(outcome="failed", complete=False)
+            final_record = record
             print(json.dumps(record, separators=(",", ":")), file=out, flush=True)
+            if args.until_complete and successful(final_record):
+                break
             if index == args.max_passes or stop.is_set() or wait(args.interval_seconds):
                 break
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+    if args.require_complete or args.until_complete:
+        return 0 if successful(final_record) else 1
     return 0
 
 

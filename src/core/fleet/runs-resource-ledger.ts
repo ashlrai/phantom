@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, parse, resolve } from 'node:path';
 import { laneDeadSignals, type LaneDeadSignal } from './lane-dead-signal.js';
 import { buildCodexResourceReport, collectCodexSessionUsages } from './codex-session-usage.js';
+import { readClaudeQuotaReading, usableClaudeWeekly } from './claude-quota-reading.js';
 import { redactHomePaths, scrubPrivateText } from '../util/scrub.js';
 
 export const VERSE_LEADER_RESOURCES_PATH = '/api/verse/leader/resources';
@@ -16,7 +17,9 @@ export interface ResourceLaneRow {
   burnPctPerHour: number | null; tokensPerHour6h: number | null; projectedExhaustion: string | null;
   source: string | null; deadSignal: LaneDeadSignal | null;
   quotaEvidence?: QuotaEvidence;
-  observation?: { source: 'codex-personal-sessions'; asOf: string };
+  observation?: { source: 'codex-personal-sessions' | 'claude-native-usage'; asOf: string };
+  /** Claude per-model weekly windows beside the all-models `usedPct`. */
+  quotaScopes?: { id: string; usedPct: number; resetAt: string | null }[];
 }
 export interface ApiModelUsage {
   model: string; rows: number; errors: number; inputTokens: number; outputTokens: number;
@@ -119,6 +122,8 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
   const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null };
+  // A controller tick republishes cached quotas; it never recaptures them.
+  const statusQuotaObservedAt = new Map<string, string | null>();
   let signals: ReturnType<typeof laneDeadSignals> | null = null;
   await Promise.all([
     (async () => {
@@ -132,6 +137,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
           if (!safeName(lane)) { result.sources.status = 'degraded'; continue; }
           const l = object(data.lanes[lane]) ? data.lanes[lane] : {};
           const b = object(budget[lane]) ? budget[lane] : {};
+          statusQuotaObservedAt.set(lane, timestamp(b.observed_at));
           if ((lane in data.lanes && !object(data.lanes[lane])) || (lane in budget && !object(budget[lane]))) result.sources.status = 'degraded';
           const credits = number(b.credits_remaining);
           result.lanes.push({ lane, running: number(l.running), target: number(l.target), held: typeof l.held === 'boolean' ? l.held : null,
@@ -163,7 +169,7 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
   ]);
   const statusMeasurements = new Map(result.lanes.map(row => [row.lane, {
     lane: row.lane, window: row.window, usedPct: row.usedPct, resetAt: row.resetAt,
-    source: row.source, observedAt: result.asOf,
+    source: row.source, observedAt: statusQuotaObservedAt.get(row.lane) ?? null,
   } satisfies QuotaMeasurement]));
   for (const row of result.lanes) row.quotaEvidence = quotaEvidence(statusMeasurements.get(row.lane)!, null, row.held, now);
   // Both collector slots point at the explicitly personal home. The collector
@@ -177,11 +183,12 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     const personal = report.resources[0];
     const observed = personal?.observedAt ? Date.parse(personal.observedAt) : NaN;
     let lane = result.lanes.find(row => row.lane === 'codex-personal');
-    const statusAt = result.asOf ? Date.parse(result.asOf) : NaN;
+    const quotaAt = statusMeasurements.get('codex-personal')?.observedAt;
+    const statusAt = quotaAt ? Date.parse(quotaAt) : NaN;
     if (personal?.weekly?.usedPct != null &&
         (personal.weekly.windowMinutes === null || personal.weekly.windowMinutes > 315) &&
         Number.isFinite(observed) && observed <= now &&
-        (!lane || (Number.isFinite(statusAt) ? observed > statusAt : lane.usedPct === null))) {
+        (!lane || !Number.isFinite(statusAt) || statusAt > now || observed > statusAt)) {
       if (!lane) {
         lane = { lane: 'codex-personal', running: null, target: null, held: null,
           window: 'weekly', usedPct: null, creditsRemaining: null, resetAt: null,
@@ -201,6 +208,27 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
       lane.source = 'codex-personal-sessions';
       lane.observation = { source: 'codex-personal-sessions', asOf: personal.observedAt! };
     }
+  }
+  // Native Claude weekly usage. The status value is hand-typed and ticks never refresh it,
+  // so a fresh bounded reading wins without a last_tick comparison. Invalid input changes nothing.
+  const claude = usableClaudeWeekly(await readClaudeQuotaReading(root), now);
+  if (claude) {
+    let lane = result.lanes.find(row => row.lane === 'claude');
+    if (!lane) {
+      lane = { lane: 'claude', running: null, target: null, held: null,
+        window: 'weekly', usedPct: null, creditsRemaining: null, resetAt: null,
+        burnPctPerHour: null, tokensPerHour6h: null, projectedExhaustion: null,
+        source: null, deadSignal: null };
+      result.lanes.push(lane);
+    }
+    const measured: QuotaMeasurement = { lane: 'claude', window: 'weekly', usedPct: claude.weekly.usedPct,
+      resetAt: claude.weekly.resetAt, source: 'claude-native-usage', observedAt: claude.observedAt };
+    lane.quotaEvidence = quotaEvidence(statusMeasurements.get('claude') ?? null, measured, lane.held, now);
+    lane.usedPct = claude.weekly.usedPct;
+    lane.resetAt = claude.weekly.resetAt;
+    lane.source = 'claude-native-usage';
+    lane.observation = { source: 'claude-native-usage', asOf: claude.observedAt };
+    if (claude.scopes.length) lane.quotaScopes = claude.scopes;
   }
   if (signals !== null) {
     const byLane = new Map((signals as ReturnType<typeof laneDeadSignals>).lanes.map(signal => [signal.lane, signal]));

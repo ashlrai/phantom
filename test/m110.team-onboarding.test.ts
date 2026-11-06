@@ -25,9 +25,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 // ---------------------------------------------------------------------------
 // Hermetic HOME
@@ -60,14 +62,23 @@ const mockExecFileSync = vi.fn((_cmd: string, args: string[]) => {
 
 vi.mock('node:child_process', () => ({
   execFileSync: (...args: unknown[]) => mockExecFileSync(args[0] as string, args[1] as string[]),
-  execFile: vi.fn(),
+  execFile: vi.fn((...args: unknown[]) => {
+    const callback = args.at(-1);
+    if (typeof callback === 'function') queueMicrotask(() => callback(new Error('ENOENT'), '', ''));
+    return { stdin: null };
+  }),
   spawnSync: vi.fn(() => ({ status: 1, stdout: '', stderr: '' })),
-  spawn: vi.fn(() => ({
-    stdout: { on: vi.fn() },
-    stderr: { on: vi.fn() },
-    on: vi.fn(),
-    pid: 0,
-  })),
+  spawn: vi.fn(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(), stderr: new PassThrough(),
+      stdin: null, pid: undefined, unref: vi.fn(),
+    });
+    queueMicrotask(() => {
+      child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+      child.emit('close', -1, null);
+    });
+    return child;
+  }),
 }));
 
 // ---------------------------------------------------------------------------
@@ -158,10 +169,11 @@ function makeConfig(overrides: Cfg = {}): Cfg {
   };
 }
 
-// Mock saveConfig so it writes to tmpHome (same as m97 approach — just write the file).
-// We re-import onboard dynamically so it picks up the patched HOME.
+// Load the large onboarding module during collection, outside individual test deadlines.
+const onboardModule = await import('../src/core/onboard.js');
+
 async function importOnboard() {
-  const mod = await import('../src/core/onboard.js');
+  const mod = onboardModule;
   return {
     stepUser: mod.stepUser,
     stepPulse: mod.stepPulse,

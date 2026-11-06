@@ -64,6 +64,20 @@ afterEach(() => {
 });
 
 describe('compiled activation-readiness surface', () => {
+  it.each(['accounts', 'mcp-cli-health'])('initializes native ESM with %s imported first', (entry) => {
+    const home = isolateHome();
+    requireBuiltDist(['dist/core/verse/accounts.js', 'dist/core/verse/mcp-cli-health.js']);
+    const entryUrl = pathToFileURL(join(process.cwd(), 'dist/core/verse', `${entry}.js`)).href;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', `await import(${JSON.stringify(entryUrl)})`], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home, USERPROFILE: home, ASHLR_HOME: join(home, '.ashlr') },
+      timeout: 60_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it('projects fail-closed activation through dist, the CLI, and copied dashboard assets', async () => {
     const home = isolateHome();
     requireBuiltDist([

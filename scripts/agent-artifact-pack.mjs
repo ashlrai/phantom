@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { setTimeout, clearTimeout } from 'node:timers';
 
 const HELP = `Usage: node scripts/agent-artifact-pack.mjs --job ID --upstream ID [--upstream ID ...] [--byte-budget N] [--phm-bin PATH]
 

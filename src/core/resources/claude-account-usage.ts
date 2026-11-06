@@ -190,8 +190,15 @@ export function parseClaudeNativeUsageStream(raw: string, observedAt: string): {
  *           (five_hour, seven_day, seven_day_fable). Needed because Opus 5.5
  *           (`claude-opus-5-5`) exists only from 2.1.280, so seats re-pinned
  *           for it would otherwise lose their usage meter.
+ * 2.1.312 — verified 2026-11-02: `name:"usage"` is `type:"local"` with
+ *           `supportsNonInteractive:!0` in the binary; a live stream-json run
+ *           returned num_turns 0, total_cost_usd 0, duration_api_ms 0 and a
+ *           structured `usage_report` (weekly_all + weekly_scoped rows).
  */
-export const CLAUDE_USAGE_VERIFIED_VERSIONS: readonly string[] = ['2.1.257', '2.1.280'];
+export const CLAUDE_USAGE_VERIFIED_VERSIONS: readonly string[] = ['2.1.257', '2.1.280', '2.1.312'];
+
+/** Verified builds that emit the structured stream-json `usage_report`; 2.1.257 stays legacy text. */
+const CLAUDE_USAGE_STRUCTURED_VERSIONS: ReadonlySet<string> = new Set(['2.1.280', '2.1.312']);
 
 export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOptions): Promise<ClaudeAccountUsageResult> {
   const pinned = validateClaudeAccountStatusOptions(options);
@@ -237,7 +244,7 @@ export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOption
     if (!CLAUDE_USAGE_VERIFIED_VERSIONS.some((version) => reported === `${version} (Claude Code)`)) {
       return report('usage-version-unsupported');
     }
-    const structured = reported === '2.1.280 (Claude Code)';
+    const structured = CLAUDE_USAGE_STRUCTURED_VERSIONS.has(reported.replace(/ \(Claude Code\)$/, ''));
     const raw = await run(['--safe-mode', '--restricted', '--tools', '', '--strict-mcp-config', '--mcp-config',
       '{"mcpServers":{}}', '--no-chrome', '--no-session-persistence', '--output-format', ...(structured ? ['stream-json', '--verbose'] : ['json']), '-p', '/usage'], 'usage');
     const parsed = structured ? parseClaudeNativeUsageStream(raw, before.startedAt) : null;

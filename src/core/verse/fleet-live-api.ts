@@ -95,6 +95,7 @@ import {
 import type { EffectivePolicy, LedgerEntry, LedgerReadOptions, LedgerReadResult } from '../authority/types.js';
 import { STANDING_GRANT_PATTERNS } from '../authority/types.js';
 import { displayStandingPolicy } from './display-standing-policy.js';
+import { readRunningCommit } from '../fleet/build-commit.js';
 import { readLedger } from '../authority/ledger.js';
 import { listRepoHolds, setRepoHold } from '../fleet/quarantine.js';
 import { listPostMergeWatches, type PostMergeWatchView } from '../fleet/post-merge-watch.js';
@@ -115,6 +116,7 @@ import { isMirrorPath } from '../fleet/mirrors.js';
 import { pendingFolders } from './folder-io.js';
 import { audit } from '../sandbox/audit.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { startOfDayInZone } from '../fleet/fleet-truth.js';
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -181,6 +183,11 @@ export interface FleetLiveDeps {
   dispatchStarts(sinceMs: number): Promise<Map<string, number> | null>;
   /** GET /live/outside-prs reader. Default: fleet/outside-prs.ts `listOutsidePrs()`. */
   outsidePrs?(): Promise<unknown>;
+  /**
+   * Merged PRs since `sinceMs` across the fleet (GitHub unioned with the ledger).
+   * Default: fleet/fleet-truth.ts, the same source the Telegram brief and pulse read.
+   */
+  fleetTruth?(sinceMs: number, nowMs: number): Promise<import('../fleet/fleet-truth.js').FleetTruth>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1294,12 +1301,28 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     }
     return median(samples);
   };
+  // dispatchd fleet merges never write the authority ledger, so the ledger count alone
+  // under-reports. GitHub-backed truth wins; when GitHub is unreachable fall back to the
+  // ledger count, and with nothing recorded say unknown (null), never "0 merged".
+  const etTodayMs = startOfDayInZone(nowMs);
+  const ledgerToday = merges ? merges.filter((m) => m.landedMs >= etTodayMs).length : null;
+  let mergedToday: number | null = ledgerToday;
+  try {
+    const truth = await (d.fleetTruth
+      ? d.fleetTruth(etTodayMs, nowMs)
+      : import('../fleet/fleet-truth.js').then((m) => m.getFleetTruthToday({ nowMs })));
+    mergedToday = truth.mergeCountState === 'ok'
+      ? Math.max(truth.merged.length, ledgerToday ?? 0)
+      : ledgerToday !== null && ledgerToday > 0 ? ledgerToday : null;
+  } catch {
+    mergedToday = ledgerToday !== null && ledgerToday > 0 ? ledgerToday : null;
+  }
   const summary: FleetLiveSummary = {
     building,
     queued: queuedTasks,
     parked: parkedTasks === null ? null : parkedTasks + heldCount,
     waitingVerify: tick?.waitingVerify ?? null,
-    mergedToday: merges ? merges.filter((m) => m.landedMs >= todayMs).length : null,
+    mergedToday,
     revertsToday: reverts ? reverts.filter((m) => m.landedMs >= todayMs).length : null,
     merged7d: merges ? merges.filter((m) => m.landedMs >= since7d).length : null,
     postMergeGreenPct7d: greenPctOf(null, since7d),
@@ -1353,7 +1376,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
   }
   if (problems.length > 0) stateReason = `${stateReason ? `${stateReason} ` : ''}Unknown: ${problems.join('; ')}.`;
 
-  const standingTickFresh = tick !== null && tick.standing !== null && nowMs - msOf(tick.at) <= 10 * 60_000;
+  const standingTickFresh = tick !== null && tick.standing !== null && nowMs >= msOf(tick.at) && nowMs - msOf(tick.at) <= 10 * 60_000;
   const lanes: FleetLaneState[] = standingTickFresh
     ? tick.lanes.map((lane) => ({ ...lane, busy: busy[lane.lane] ?? 0 }))
     : FLEET_ENGINES.map((lane) => ({
@@ -1417,7 +1440,11 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     stateReason,
     lastActivityAt,
     darkSince: fleetDarkSince(state, lastActivityAt),
+    blockedHolds: holds === null ? null : holds.map(h => ({ repo: clip(h.repo, 200), reason: clip(h.reason, 480), until: h.until })),
+    merged24h: merges === null ? null : merges.filter(m => m.landedMs >= nowMs - DAY_MS && m.landedMs <= nowMs)
+      .map(({ rec }) => ({ id: clip(rec.id, 240), repo: clip(rec.repo, 200), prNumber: rec.prNumber, landedAt: rec.landedAt })),
     summary,
+    commit: safely(readRunningCommit, null),
     lanes,
     runs: runList,
     funnel,

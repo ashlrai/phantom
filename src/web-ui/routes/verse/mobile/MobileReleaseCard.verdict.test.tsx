@@ -7,7 +7,7 @@ import { renderMobile, stubFetch } from './mobile.test-support.js';
 const pr = {
   number: 1479, title: 'chore(master): release 3.29.16', url: 'https://github.com/example/phantom/pull/1479', version: '3.29.16',
   openedAt: '2026-10-28T12:00:00Z', updatedAt: '2026-10-31T12:00:00Z', mergeable: 'UNKNOWN',
-  checks: [], failing: [], pending: 0, blocked: false, summary: '3.29.16 green, waiting for merge',
+  checks: [], failing: [] as string[], pending: 0, blocked: false, summary: '3.29.16 green, waiting for merge',
 };
 
 function release(entry: Record<string, unknown> = {}, prOverrides: Partial<typeof pr> = {}) {

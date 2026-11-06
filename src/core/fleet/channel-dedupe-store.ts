@@ -15,9 +15,11 @@ const MAX_BYTES = 2 * 1024 * 1024;
 export interface ChannelReceipt {
   at: number;
   key: string;
-  /** Original source; body/sender are recovered only through the matching hash.
-   * Absent on legacy receipts, whose source must never be guessed. */
-  mirror?: { channel: InboundChannel; pending: boolean };
+  /** Original source. `envelopeDigest` is a hash-only binding of the exact raw
+   * body, channel, verified sender and thread; a retry may rebuild the mirrored
+   * envelope only when its own tuple hashes to it. Absent on legacy receipts,
+   * which therefore never recover (source and body must never be guessed). */
+  mirror?: { channel: InboundChannel; pending: boolean; envelopeDigest?: string };
 }
 export interface ChannelDedupeStore {
   /** Serialize lookup, awaited sink persistence, and commit across all users.
@@ -25,7 +27,7 @@ export interface ChannelDedupeStore {
   transaction<T>(work: (receipts: Map<string, ChannelReceipt>, commit: () => void | Promise<void>) => Promise<T>): Promise<T>;
 }
 
-export function createLocalChannelDedupeStore(runsDir = join(homedir(), '.ashlr-runs')): ChannelDedupeStore {
+export function createLocalChannelDedupeStore(runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs')): ChannelDedupeStore {
   const parent = resolve(runsDir, 'channel-receipts');
   const file = join(parent, 'receipts.json');
   return {
@@ -57,8 +59,11 @@ export function createLocalChannelDedupeStore(runsDir = join(homedir(), '.ashlr-
                 receipts.has(row[0])) throw new Error('Invalid channel receipt');
             const mirror = row[3];
             if (row.length === 4 && (!mirror || typeof mirror !== 'object' ||
-                !['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'].includes(mirror.channel) ||
-                typeof mirror.pending !== 'boolean' || Object.keys(mirror).sort().join() !== 'channel,pending')) {
+                !['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'].includes(mirror.channel) ||
+                typeof mirror.pending !== 'boolean' ||
+                !(Object.keys(mirror).sort().join() === 'channel,pending' ||
+                  (Object.keys(mirror).sort().join() === 'channel,envelopeDigest,pending' &&
+                    typeof mirror.envelopeDigest === 'string' && /^[a-f0-9]{64}$/.test(mirror.envelopeDigest))))) {
               throw new Error('Invalid channel mirror receipt');
             }
             receipts.set(row[0], { at: row[1], key: row[2], ...(mirror ? { mirror } : {}) });

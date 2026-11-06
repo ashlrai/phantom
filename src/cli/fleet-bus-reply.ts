@@ -5,9 +5,14 @@ import { postBusReply, replyResult, type ReplyDependencies, type ReplyResult } f
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
+const usage = `ashlr fleet bus-reply --request-id <id> --reply-id <id> --body-file <absolute-json> [--root <absolute-path>] [--json]
+Routing labels do not authenticate the responder. A reply does not mark work completed.
+--root selects the local store. Body must be a stable regular JSON object file (maximum 65536 bytes), without inReplyTo.
+Retries require the same explicit reply ID. Missing or expired requests are refused.`;
+
 /** Convention loader entry; root/clock/output injection is programmatic only. */
-export function cmdFleetBusReply(args: string[], options: BusInboxOptions = {},
-  deps: ReplyDependencies & { output?: (text: string) => void } = {}): number {
+export async function cmdFleetBusReply(args: string[], options: BusInboxOptions = {},
+  deps: ReplyDependencies & { output?: (text: string) => void } = {}): Promise<number> {
   const output = deps.output ?? console.log;
   const emit = (result: ReplyResult): number => {
     try { output(JSON.stringify(sanitizePublicJson(result))); } catch { return 1; }
@@ -15,7 +20,7 @@ export function cmdFleetBusReply(args: string[], options: BusInboxOptions = {},
       : result.outcome === 'invalid-input' ? 2 : result.outcome === 'request-not-found' ? 3 : 4;
   };
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    output('ashlr fleet bus-reply --request-id <id> --reply-id <id> --body-file <absolute-json> [--root <absolute-path>] [--json]\nRouting labels do not authenticate the responder. A reply does not mark work completed.\n--root selects the local store. Body must be a stable regular JSON object file (maximum 65536 bytes), without inReplyTo.\nRetries require the same explicit reply ID. Missing or expired requests are refused.');
+    output(usage);
     return 0;
   }
   const values: Record<string, string> = {};

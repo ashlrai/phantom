@@ -1,7 +1,7 @@
 import { runBusWorkPool, validBusWorkPoolOptions, type BusWorkPoolOptions } from '../core/fleet/bus-work-pool.js';
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 
-const usage = 'Usage: ashlr fleet bus-work-pool --to <address> --owner <label> --lease-ms <ms> --wait-ms <ms> --max-jobs <1..16> --concurrency <1..4> --snapshot <absolute> --prompt <absolute> [--root <absolute>] [--timeout-ms <1..3600000>] -- <program> [args...]';
+const usage = 'Usage: ashlr fleet bus-work-pool --to <address> --owner <label> --lease-ms <ms> --wait-ms <ms> --max-jobs <1..16> --concurrency <1..4> --snapshot <absolute> --prompt <absolute> [--root <absolute>] [--cwd <absolute directory>] [--timeout-ms <1..3600000>] -- <program> [args...]';
 const note = '--max-jobs is the total pool limit on one-job attempts, including failures and timeouts. Healthy consumers share unattempted capacity; consumer quota reports attempts. External effects are not exactly-once.';
 
 export async function cmdFleetBusWorkPool(args: string[], io: ContextWorkerIO = {}): Promise<number> {
@@ -13,14 +13,17 @@ export async function cmdFleetBusWorkPool(args: string[], io: ContextWorkerIO = 
   const flags = new Map<string, string>();
   for (let i = 0; i < split; i += 2) {
     const key = args[i]!, value = args[i + 1];
-    if (!['--to', '--owner', '--lease-ms', '--wait-ms', '--max-jobs', '--concurrency', '--snapshot', '--prompt', '--root', '--timeout-ms'].includes(key) ||
+    if (!['--to', '--owner', '--lease-ms', '--wait-ms', '--max-jobs', '--concurrency', '--snapshot', '--prompt', '--root', '--cwd', '--timeout-ms'].includes(key) ||
       flags.has(key) || !value || value.startsWith('--') || value.includes('\0')) return invalid();
     flags.set(key, value);
   }
   const number = (key: string) => { const s = flags.get(key); return s && /^\d+(?![\s\S])/.test(s) ? Number(s) : NaN; };
+  // Omitted --cwd keeps the inherited directory; validBusWorkPoolOptions refuses any other non-directory value.
+  const cwd = flags.get('--cwd');
   const opts: BusWorkPoolOptions = { to: flags.get('--to')!, owner: flags.get('--owner')!, root: flags.get('--root'),
     leaseMs: number('--lease-ms'), waitMs: number('--wait-ms'), maxJobs: number('--max-jobs'), concurrency: number('--concurrency'),
     snapshot: flags.get('--snapshot')!, prompt: flags.get('--prompt')!, argv: args.slice(split + 1),
+    ...(cwd !== undefined ? { cwd } : {}),
     ...(flags.has('--timeout-ms') ? { timeoutMs: number('--timeout-ms') } : {}) };
   if (!validBusWorkPoolOptions(opts)) return invalid();
   const result = await runBusWorkPool(opts);

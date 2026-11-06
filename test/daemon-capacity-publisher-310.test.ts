@@ -6,10 +6,11 @@
  * fails closed while cold. Everything is injected: no collector, probe or
  * seat is ever started (HOME is the per-worker temp home from test/setup).
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createDaemonCapacityPublisher,
+  CHECK_EVERY_MS,
   daemonCapacityPublisherRefusal,
   defaultDaemonCapacityPublisherDeps,
   ensureDaemonCapacityPublisher,
@@ -79,6 +80,20 @@ function harness(): Harness {
 const foreign = (h: Harness, ageMs: number): CapacitySnapshot => ({ v: 1, publishedAt: new Date(h.clock.now - ageMs).toISOString(), seats: [] });
 
 describe('daemon capacity publisher (c8)', () => {
+  it.each(['failure', 'lease'] as const)('idles repeated cycles after %s until the retry deadline', async (condition) => {
+    const h = harness();
+    h.refreshingReads = 0;
+    if (condition === 'lease') h.mode = 'read-only';
+    else h.deps.publish = async () => { throw new Error('unavailable'); };
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    await pub.cycle();
+    for (let i = 0; i < 100; i++) await pub.cycle();
+    expect(h.started).toBe(1);
+    expect(h.closed).toBe(1);
+    h.clock.now += CHECK_EVERY_MS;
+    await pub.cycle();
+    expect(h.started).toBe(2);
+  });
   it('COLD with no Verse: samples under an OWNED lease, waits for the first sample, publishes, then releases the lease', async () => {
     const h = harness();
     const pub = createDaemonCapacityPublisher(cfg, h.deps);
@@ -246,8 +261,8 @@ describe('daemon capacity publisher → seat capacity history (3.10.1)', () => {
     expect((await pub.cycle()).state).toBe('dormant');
     expect(calls).toBe(3);
     expect(h.logs.filter((l) => l.includes('capacity history'))).toEqual([
-      'daemon capacity publisher: capacity history was not recorded (boom)',
-      'daemon capacity publisher: capacity history was not recorded (EACCES)',
+      'daemon capacity publisher: capacity history was not recorded; check local routing directory write access and retry phm capacity publish',
+      'daemon capacity publisher: capacity history was not recorded; check local routing directory write access and retry phm capacity publish',
     ]);
   });
 
@@ -333,5 +348,35 @@ describe('publishCapacitySnapshotFrom (c8)', () => {
     const snapshot = readCapacitySnapshot();
     expect(snapshot?.publishedAt).toBe(publishedAt);
     expect(snapshot?.seats.map((s) => s.seatId)).toEqual(['grok']);
+  });
+});
+
+
+describe('capacity background scheduling and safe failures', () => {
+  it('samples at startup and on its own timer without overlapping cycles', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    try {
+      pub.start();
+      await pub.cycle();
+      expect(h.started).toBe(1);
+      h.clock.now += SAMPLE_EVERY_MS;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.started).toBe(2);
+      pub.stop();
+      h.clock.now += SAMPLE_EVERY_MS;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.started).toBe(2);
+    } finally { pub.stop(); vi.useRealTimers(); }
+  });
+
+  it('never includes collector exception secrets in status or logs', async () => {
+    const h = harness();
+    h.deps.startCollector = async () => { throw new Error('secret-canary'); };
+    const result = await createDaemonCapacityPublisher(cfg, h.deps).cycle();
+    expect(result.state).toBe('failed');
+    expect(JSON.stringify([result, h.logs])).not.toContain('secret-canary');
+    expect(result.reason).toContain('retry phm capacity publish');
   });
 });

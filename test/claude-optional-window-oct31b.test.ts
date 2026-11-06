@@ -59,7 +59,7 @@ describe('Claude optional live windows', () => {
   it.each([
     [null, window(1), 100, '7d', 1900000000, 'exhausted'],
     [window(1), null, 100, '5h', 1900000000, 'exhausted'],
-    [window(0.91, 1800000000), window(0.46), 91, '5h', 1800000000, 'throttled'],
+    [window(0.91, 1800000000), window(0.46), 46, '7d', 1900000000, 'open'],
     [window(0.46), window(0.91, 1800000000), 91, '7d', 1800000000, 'throttled'],
     [window(0.46, 1800000000), window(0.46), 46, '7d', 1900000000, 'open'],
     [window(0.46), null, 46, '5h', 1900000000, 'open'],

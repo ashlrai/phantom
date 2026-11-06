@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -27,11 +27,11 @@ async function call(method: string, body?: unknown, token = 'fixture-token', url
   const handled = await handleFleetControlApi(ctx, req, res, new URL(url, 'http://localhost').pathname, method);
   return { handled, status, body: payload ? JSON.parse(payload) as RunsSwitchesV1 : null };
 }
-it('GET returns the six switch rows and rejects queries', async () => {
+it('GET returns the seven switch rows and rejects queries', async () => {
   const result = await call('GET');
   expect(result.status).toBe(200);
   expect(result.body).toMatchObject({ v: 1, sourceState: 'healthy', switches: expect.any(Array) });
-  expect(result.body?.switches).toHaveLength(6);
+  expect(result.body?.switches).toHaveLength(7);
   expect((await call('GET', undefined, '', `${PATH}?unknown=1`)).status).toBe(400);
 });
 it('POST requires dispatch, token and JSON before changing flags', async () => {
@@ -50,11 +50,20 @@ it('rejects invalid bodies and methods and ignores unrelated paths', async () =>
   expect((await call('DELETE')).status).toBe(405);
   expect((await call('GET', undefined, '', '/unrelated')).handled).toBe(false);
 });
+it('refuses boolean HOLD requests while retaining the saved lane holds', async () => {
+  const original = 'codex-personal\nclaude-api\n';
+  await writeFile(join(dir, 'HOLD'), original);
+  for (const on of [true, false]) {
+    expect((await call('POST', { id: 'HOLD', on })).status).toBe(400);
+    expect(await readFile(join(dir, 'HOLD'), 'utf8')).toBe(original);
+  }
+  expect((await call('GET')).body?.switches.find(row => row.id === 'HOLD')?.on).toBe(true);
+});
 
 it('serializes simultaneous switch mutations through the shared action lock', async () => {
   const results = await Promise.all([
     call('POST', { id: 'PAUSE', on: true }),
-    call('POST', { id: 'HOLD', on: true }),
+    call('POST', { id: 'QUEUE_DISABLE', on: true }),
   ]);
   expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
 });

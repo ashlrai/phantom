@@ -8,7 +8,7 @@ const at = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
 const release = (lane = 'codex-personal', minutes = 28): ResetReleases['releases'][number] => ({
   v: 1, lane, state: 'reset-detected', usedPct: 0, readingAsOf: at(29), heldUntil: null, at: at(minutes), by: 'reset-detect', reason: 'reset',
 });
-const data: ResetReleases = { v: 1, generatedAt: at(0), loop: { started: true, lastRunAt: new Date(now - 40_000).toISOString(), lastResult: { at: at(0), checked: 1, released: [], errors: [] }, lastError: null }, releases: [release()] };
+const data: ResetReleases = { v: 1, generatedAt: at(0), loop: { started: true, lastRunAt: new Date(now - 40_000).toISOString(), lastResult: { at: at(0), checked: 1, released: [], bus: [], errors: [] }, lastError: null }, releases: [release()] };
 const resetRow: UsageResetRow = { lane: 'codex-personal', held: true, heldReason: 'usage', heldUntil: null, holdSince: at(60), heldBy: 'autobackoff', usedPct: 0, readingAsOf: at(25), resetAt: at(25), state: 'reset-detected', releasable: true, tell: '' };
 const resets: UsageResets = { v: 1, generatedAt: at(0), sourceState: 'healthy', rows: [resetRow] };
 

@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=PHANTOM_RELEASE_REVISION");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         panic!(
             "Linux desktop builds are quarantined by RUSTSEC-2024-0429 / \

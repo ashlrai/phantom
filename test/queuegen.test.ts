@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { QUEUE_TIERS } from '../src/core/drive/queue-tier.js';
 import {
   runQueuegenCycle, firstErrorLine, errorFile, acceptanceCommand,
-  securityPinnedPath, normalizeState,
+  securityPinnedPath, normalizeState, fixupLine, rebaseLine,
   QUEUEGEN_SECURITY_PIN, QUEUEGEN_PR_WINDOW_MS,
   type QueuegenCheck, type QueuegenIo, type QueuegenPr, type QueuegenState,
 } from '../src/core/drive/queuegen.js';
@@ -366,5 +367,55 @@ describe('queuegen pure helpers', () => {
     expect(errorFile('ERROR ../../etc/passwd:1')).toBeUndefined();
     expect(errorFile('ERROR https://evil.test/x.ts:1')).toBeUndefined();
     expect(errorFile('ERROR no file here')).toBeUndefined();
+  });
+});
+
+describe('queuegen tier validation', () => {
+  const tierOne = (tier: string) => makeIo(oneOptions({
+    checks: failChecks('build-test'),
+    logs: errLog('ERROR src/core/drive/x.ts:42: type mismatch', 'build-test'),
+    tier,
+  }));
+
+  it.each(QUEUE_TIERS)('writes a FIXUP line for the valid tier %s', (tier) => {
+    const { io, lines } = tierOne(tier);
+    expect(runQueuegenCycle(io, { tier })).toMatchObject({ emitted: 1 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`, tier=${tier}, repo=phantom,`);
+  });
+
+  it.each(['standard', 'low', 'q8'])('refuses %s before any line is written', (tier) => {
+    const { io, lines, calls } = tierOne(tier);
+    expect(() => runQueuegenCycle(io, { tier })).toThrow(/unknown tier "/);
+    expect(lines).toEqual([]);
+    expect(calls).toContain('log QUEUEGEN_TIER_INVALID');
+    expect(calls.some((call) => call.startsWith('checks '))).toBe(false);
+  });
+
+  it('names the allowed values and the closest match in the refusal', () => {
+    const { io } = tierOne('standard');
+    expect(() => runQueuegenCycle(io, { tier: 'standard' })).toThrow(
+      'invalid queue line: unknown tier "standard" (allowed: frontier, work, mid, fast); did you mean "work"?');
+  });
+
+  it('the line builders refuse an unknown tier too, so no writer bypasses the check', () => {
+    const p = pr({});
+    const check1 = check({ name: 'build-test' });
+    const opts = { fixupPriority: 'P1', pool: 'any', tier: 'q8' };
+    expect(() => fixupLine('ashlrai/phantom', p, check1, 'src/x.ts', 'ERROR x', false, '00:00', opts))
+      .toThrow('unknown tier "q8"');
+    expect(() => rebaseLine('ashlrai/phantom', p, ['src/x.ts'], false, '00:00', { rebasePriority: 'P0', pool: 'any', tier: 'low' }))
+      .toThrow('unknown tier "low"');
+  });
+
+  it('a REBASE line is held to the same tier rule', () => {
+    const { io, lines, calls } = makeIo(oneOptions({
+      prs: new Map([['ashlrai/phantom', [pr({ mergeState: 'DIRTY' })]]]),
+      conflicts: new Map([['ashlrai/phantom#1', ['src/a.ts']]]),
+      tier: 'standard',
+    }));
+    expect(() => runQueuegenCycle(io, { tier: 'standard' })).toThrow('did you mean "work"?');
+    expect(lines).toEqual([]);
+    expect(calls.some((call) => call.startsWith('merge-tree '))).toBe(false);
   });
 });

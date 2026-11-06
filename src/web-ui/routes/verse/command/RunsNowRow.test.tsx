@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
-import { evictAll } from '../../../data/cache.js';
+import { ensureQuery, evictAll } from '../../../data/cache.js';
 import { SectionVisibilityProvider } from '../shell/section-visibility.js';
 import { mockWideViewport } from '../shell/viewport.test-support.js';
 import { resetActivityForTest } from '../shell/useActivity.js';
 import { CommandSection } from '../sections/CommandSection.js';
 import { stubSurfaceFetch } from './fetch-stub.test-support.js';
 import { RunsNowRow } from './RunsNowRow.js';
+import { runsNowQuery } from './runs-now-queries.js';
 
 const now = Date.parse('2026-01-01T12:00:00Z');
 const fixture = { v: 1, generatedAt: new Date(now).toISOString(), workers: [{ job: 'a' }, { job: 'b' }], mergesLastHour: { count: 2 }, codexPersonal: { usedPct: 64, resetsAt: new Date(now + 10800000).toISOString(), asOf: null }, leaders: [{ label: 'a', ageSeconds: 240 }], sources: { workers: 'healthy', merges: 'healthy', codex: 'healthy' } };
@@ -20,6 +21,21 @@ it('renders the four current tiles', async () => {
   const group = await screen.findByRole('group', { name: /Right now: 2 workers/ });
   for (const text of ['Workers running', 'Merged last hour', 'Personal Codex used', '64%', 'resets in 3 h', 'Leader passes', 'newest 4 min ago']) expect(within(group).getByText(text)).toBeInTheDocument();
   expect(group.querySelectorAll('[data-stat-tile]')).toHaveLength(4);
+});
+
+it('paints a warmed read without fetching again on mount and still polls', async () => {
+  const intervals = vi.spyOn(globalThis, 'setInterval');
+  const { fetchMock } = stubSurfaceFetch({ routes: { '/api/verse/fleet/runs': fixture } });
+  await ensureQuery(runsNowQuery.key, () => runsNowQuery.fetch(), 60_000);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  render(row());
+  expect(screen.getByRole('group', { name: /Right now: 2 workers/ })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const tick = intervals.mock.calls.find(call => call[1] === 10_000)?.[0];
+  expect(typeof tick).toBe('function');
+  await act(async () => { (tick as () => void)(); });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  intervals.mockRestore();
 });
 
 it('memoizes a 404 until the section reopens', async () => {

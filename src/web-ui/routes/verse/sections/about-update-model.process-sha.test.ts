@@ -9,13 +9,13 @@ const status: UpdateServerStatus = {
   headAt: null, originSha: null, branch: 'master', behind: 0, ahead: 0, dirty: false,
   lastFetchAt: null, processStartedAt: null, uptimeSeconds: null, canFastForward: false,
 };
-const lastApply = {
+const lastApply: NonNullable<UpdateServerStatus['lastApply']> = {
   outcome: 'updated', reason: null, startedAt: '2026-10-31T09:59:00Z', finishedAt: '2026-10-31T10:00:00Z',
   fromCommit, toCommit, restartRequired: true, restartMode: 'manual',
 };
 const now = Date.parse('2026-10-31T12:00:00Z');
 
-function row(observation: UpdateServerStatus & { lastApply?: unknown; processHeadSha?: unknown }) {
+function row(observation: UpdateServerStatus & { processHeadSha?: unknown }) {
   return aboutUpdateLines(observation, now).rows.find((r) => r.label === 'Last update')?.value;
 }
 

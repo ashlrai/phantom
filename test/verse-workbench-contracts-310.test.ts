@@ -175,6 +175,7 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   browser: 'handleBrowserApi',
   // 3.15 agent tools: Verse's one MCP server for every seat, and the Agent tools sheet.
   'agent-tools': 'handleVerseMcpApi',
+  'agent-bus': 'handleAgentBusApi',
   // 3.15: desktop control for agents (the Verse window's relay, grants, KILL).
   computer: 'handleComputerApi',
   // 3.16: every model working together (Auto seat, compare, escalation, meter).
@@ -185,6 +186,11 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   sources: 'handleSourcesApi',
   // 3.15: the Fleet tab's control surface (Start / Pause / Stop, steering).
   'fleet-control': 'handleFleetControlApi',
+  'fleet-runs': 'handleFleetRunsApi',
+  'fleet-comms-status': 'handleFleetCommsStatusApi',
+  'fleet-cos': 'handleFleetCosApi',
+  'cos-memory': 'handleCosMemoryApi',
+  team: 'handleTeamApi',
   // 3.16: run many agents — the board, agent workspaces, Checks, Plan first, spend caps.
   agents: 'handleAgentsApi',
   outcomes: 'handleOutcomesApi',

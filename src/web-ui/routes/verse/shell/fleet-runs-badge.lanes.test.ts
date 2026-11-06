@@ -54,6 +54,6 @@ describe('fleet lane badge', () => {
 
   it('keeps ambiguous lane names distinct', () => {
     const input = withLane(fleetRunsFixture(), { lane: 'personal', running: 1, target: 1, held: false });
-    expect(fleetRunsBadge(input)!.lanes[0].short).toBe('codex-personal');
+    expect(fleetRunsBadge(input)!.lanes?.[0]?.short).toBe('codex-personal');
   });
 });

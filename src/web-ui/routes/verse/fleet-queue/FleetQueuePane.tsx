@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { QueueMoveControl } from './QueueMoveControl.js';
+import { useEffect, useRef, useState } from 'react';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
 import { refetchQuery } from '../../../data/cache.js';
 import { ApiError, readFailureReason } from '../../../data/client.js';
@@ -19,6 +20,7 @@ import { restockNotice } from './queue-repo-mix.js';
 import { DropJobSheet } from './DropJobSheet.js';
 import { dropJobsQuery } from './drop-job-queries.js';
 import { waitingRows } from './drop-job-model.js';
+import { useDropJobSheetRequest } from './drop-job-sheet-store.js';
 import { fillerFirst, nextUpCaption, nextUpClasses } from './next-up-class-model.js';
 import styles from './fleet-queue.module.css';
 
@@ -29,6 +31,8 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
   const drops = useQuery(dropJobsQuery, { enabled: visible, freshMs: 0 });
   const refetchDrops = useRefetch(dropJobsQuery);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetRequest = useDropJobSheetRequest();
+  useEffect(() => { if (sheetRequest) setSheetOpen(true); }, [sheetRequest]);
   usePollWhileVisible(refetchDrops, 15_000, { enabled: visible });
   const refetch = useRefetch(opsQueueQuery);
   const refetchSnapshot = useRefetch(fleetSupplyQuery);
@@ -79,7 +83,10 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
         const drain = laneDrainText(lane, snapshotLanes.find((snapshotLane) => snapshotLane.lane === lane.lane));
         const held = heldLaneLine(holds.data?.lanes.find((row) => row.lane === lane.lane), Date.now());
         const next = data.nextUp?.find((entry) => entry.lane === lane.lane);
-        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{held && <><span className={styles.muted}>{held}</span><Button size="sm" aria-label={`Release hold on ${lane.lane}`} busy={pending} onClick={() => void release(lane.lane)}>Release hold</Button></>}{error?.lane === lane.lane && <span role="status">{error.message}</span>}{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <>
+        return <li className={styles.row} key={lane.lane}><span>{lane.lane}: {lane.ready} ready{lane.phantom !== undefined && lane.other !== undefined ? ` (${lane.phantom} Phantom · ${lane.other} other${lane.otherRepos?.length ? `: ${lane.otherRepos.join(', ')}` : ''})` : ''} · {lane.parked} parked</span>{held && <><span className={styles.muted}>{held}</span><Button size="sm" aria-label={`Release hold on ${lane.lane}`} busy={pending} onClick={() => void release(lane.lane)}>Release hold</Button>{(lane.phantom ?? 0) > 0 && <QueueMoveControl fromLane={lane.lane} lanes={data.byLane} heldLanes={holds.data?.lanes.filter(row => row.held).map(row => row.lane) ?? []} onMoved={() => Promise.all([
+          refetchQuery(laneHoldsQuery.key, () => laneHoldsQuery.fetch(), true),
+          refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
+        ])} />}</>}{error?.lane === lane.lane && <span role="status">{error.message}</span>}{drain && <span className={styles.muted} data-testid="lane-drain">{drain}</span>}{next && next.jobs.length > 0 && <>
           <span className={`${styles.muted} ${styles.nextLine}`} data-testid="lane-next">Next: {nextUpClasses(next.jobs).map(({ job, cls, label }, index) => <span key={`${job}:${index}`}>{index > 0 && ', '}<JobRefs text={job} onOpenJob={openJob} /> <span className={styles.chip} data-class={cls}>{label}</span></span>)}</span>
           <span className={`${styles.muted} ${styles.nextLine}`}>{nextUpCaption(lane.lane, next.jobs)}</span>
           {fillerFirst(next.jobs) && <span className={`${styles.warning} ${styles.nextLine}`} role="status">filler launches before Phantom work on {lane.lane}</span>}
@@ -101,6 +108,6 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
       <ul className={styles.list}>{waitingRows(drops.data.items, Date.now()).map(row => <li className={styles.row} key={row.id}>{row.id} · {row.lane} · {row.tier} · {row.title} · {row.age}</li>)}</ul>
     </section>}
     {drops.status === 'error' && <p aria-live="polite">Waiting in drop could not refresh.</p>}
-    <DropJobSheet open={visible && sheetOpen && drops.data !== null} onClose={() => setSheetOpen(false)} />
+    <DropJobSheet open={visible && sheetOpen && drops.data !== null} onClose={() => setSheetOpen(false)} seed={sheetRequest?.seed ?? undefined} />
   </section>;
 }

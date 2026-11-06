@@ -44,7 +44,7 @@ async function fixture() {
 describe('standalone fleet host runs MCP', () => {
   it('lists the existing tools and advertises an empty, read-only host runs schema', async () => {
     const { tools } = await (await connect()).listTools();
-    expect(tools.map(tool => tool.name)).toEqual(['fleet_status', 'fleet_loop', 'fleet_bus_hops', 'fleet_host_runs']);
+    expect(tools.map(tool => tool.name)).toEqual(['fleet_staging_inventory_retry', 'fleet_staging_inventory_batch', 'fleet_status', 'fleet_loop', 'fleet_bus_hops', 'fleet_host_runs', 'fleet_bus_inbox', 'fleet_lanes', 'fleet_usage_resets', 'fleet_reset_await', 'fleet_reset_group_await', 'fleet_reset_release_await', 'fleet_reset_history', 'fleet_reset_follow', 'fleet_job_history', 'fleet_job_history_batch', 'fleet_job_overlap', 'fleet_job_current', 'fleet_job_patch', 'fleet_path_history', 'fleet_job_precheck', 'fleet_job_precheck_batch', 'fleet_main_health', 'fleet_waste_risk', 'fleet_kept', 'fleet_trim', 'fleet_email_outbox', 'fleet_email_outbox_await', 'fleet_comms_readiness', 'fleet_email_diagnosis', 'fleet_imessage_path', 'fleet_imessage_acks', 'fleet_ci_resume_inputs', 'fleet_ci_receipt_await', 'fleet_ci_receipt_await_batch']);
     const host = tools.find(tool => tool.name === 'fleet_host_runs');
     expect(host?.inputSchema).toEqual({ type: 'object', properties: {}, additionalProperties: false });
     expect(host?.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
@@ -83,8 +83,7 @@ describe('standalone fleet host runs MCP', () => {
     });
   });
 
-  it.each([{ limit: 1 }, { path: 'elsewhere' }, { command: 'start' }, { extra: null }])
-  ('rejects unknown arguments before reading: %j', async args => {
+  it.each([{ limit: 1 }, { path: 'elsewhere' }, { command: 'start' }, { extra: null }])('rejects unknown arguments before reading: %j', async args => {
     const hostRuns = vi.fn(async () => ({}));
     const client = await connect(hostRuns);
     await expect(client.callTool({ name: 'fleet_host_runs', arguments: args })).rejects.toMatchObject({ code: -32602 });

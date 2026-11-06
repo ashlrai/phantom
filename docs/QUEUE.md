@@ -73,7 +73,10 @@ Fields accept comma or semicolon separators. Routing fields (`priority`, `pool`,
 inferred from a known pool name in the pre-id tokens. Dependencies use `|`, `+`,
 commas, or spaces within the field (CLI `--deps` uses commas), and are also
 collected from prose (`deps=`, `depends on`, `after`, `waits for`, `blocked by`,
-`needs`, `requires`) anywhere on the line. `children=`/`parent=` tokens mark
+`needs`, `requires`) anywhere on the line. On the Mac restocker, unmet `after=`
+deps become `PARKED-DEP.<lane>` rows whose prompts carry `DEPENDENCY GATE: <ids>`;
+restock unparks them when every id has a `MERGED` outcome in `jobs.jsonl` (see
+[Mac queue scripts](../contrib/mac/README.md)). `children=`/`parent=` tokens mark
 related ids, never the job id or a dependency. `worker=`/`owner=` plus a
 `claimed=`/`claimedAt=` ISO timestamp import as a real claim; `reason=`,
 `blocked=`, `PR=` and `BASE_OVERRIDE=` text stays intact in `source`. Unknown
@@ -94,6 +97,19 @@ warning, and an unbalanced `(` is treated as literal text with a warning.
 JSON import validates the same schema. Import requires an empty queue; it never
 replaces live state. Use a separate directory to inspect a later snapshot.
 
+### Tier values
+
+A router-queue line's `tier=` must be one of `frontier`, `work`, `mid` or
+`fast`. dispatchd skips any other value without an error, so the job never
+runs. `queuegen` refuses to write a line with another tier, and
+`router-lint` reports such an admission line as `invalid` with reason
+`unknown-tier`. The refusal names the allowed values and, where one is near,
+the closest match: `standard` means `work`, `medium` means `mid`, `low` means
+`fast` and `high` means `frontier`. Nothing is accepted by alias; write the
+tier name itself. The vocabulary lives in
+[`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
+`TIERS` in `contrib/mac/dispatchd.py`.
+
 `exportMarkdown` round-trips unchanged imports byte-for-byte. State changes
 update the status while retaining original text and append a comment with claim,
 PR and block metadata. JSON export is the complete backup and restore format.
@@ -110,6 +126,38 @@ a whole old or new snapshot. Files use mode 0600 and newly created directories
 use 0700. The existing dispatchd directory's permissions are not changed.
 Corrupt snapshots fail closed instead of becoming empty queues.
 
+## Load-aware admission
+
+`phm pool admission [--json]` is a read-only report of the dispatchd load gate:
+1-min loadavg and its limit, `ncpu`, process and live-worktree counts, the daemon
+tick age, the global running cap, running jobs, the `queue/install.lock` holder and
+`admit` true or false with the reason. It claims and launches nothing. The gate
+logic itself lives in `contrib/mac/dispatchd.py`; see `contrib/mac/README.md`.
+The global cap is adaptive (RQ-QUEUE-BATCH-1). dispatchd raises it while load,
+memory, swap, disk, process count and provider rate limits have headroom, and backs
+off before they run out. The report shows it as `adaptiveCap`. An operator
+`hard_cap` in `slots.json` is optional; without one, `hardCap` is `null`. The same
+change batches related ready tasks into one agent session. See
+[adaptive concurrency and batching](../contrib/mac/README.md#adaptive-concurrency-and-batching).
+
+`ashlr fleet admission [--json]` reads that stored verdict from `queue/status.json`
+and says why each lane is waiting: held, at target, blocked by the global cap, or ok.
+It does not probe the host or launch work. It exits 1 when any lane is blocked by
+the global cap with 5 or more jobs queued. Other waits are `ashlr fleet lane-idle`.
+
+`ashlr fleet lane-share [--json]` reads the same file and prints each lane's share
+of the fleet: one line per lane with running of target and queued, marked `starved`
+(10 or more queued and none running) or `full` (running equals target), then one
+line with fleet running against the admission cap. It exits 1 when a lane is
+starved while the admission reason starts with `at_cap` — queued work parked
+because the whole fleet is full, the case `ashlr fleet trim` suggests a slot move for.
+
+`ashlr fleet starved [--json]` reads the same file and prints only the lanes that
+still have queued work: running of target and queued, marked `starved` when a lane
+is below its target while the admission reason starts with `at_cap`, then one line
+with the admission running, cap and reason. It exits 1 when any lane has 10 or
+more jobs queued and none running.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename
@@ -122,3 +170,28 @@ The host dispatchd README was not accessible in the implementation workspace.
 status prefix and line shape observed in the live queue; the suite imports it
 with zero unparsed lines and round-trips it byte-for-byte. Verifying the real
 snapshot end to end remains a required cutover step, not a claimed validation.
+
+## Replay failed attempts
+
+`ashlr queue replay --failed --since 2026-11-02T00:00:00Z --query repair --dry-run --json`
+lists proposed READY runs without writing. Remove `--dry-run` to persist them.
+Failed means BLOCKED with a finished claim; `--since` filters that completion
+instant inclusively and `--query` matches job ID, repo, scope, acceptance or reason
+(case insensitive). Omit either filter to include all failed attempts.
+`--mode replay_failed` is the default. `--mode replay_failed_and_dependents`
+includes transitive dependents in dependency order and maps their dependencies
+to replay runs. Active original dependents must finish before replay. Claims still require
+all dependencies DONE. Each new run records `replayOf` (the original run ID)
+and `replayedAt`; original runs remain unchanged. Concurrent or repeated requests
+reuse active READY, CLAIMED or PR-OPEN replays. Completed replays allow a later
+explicit replay. Queue snapshots persist lineage across process restarts.
+
+## Group failed jobs by error
+
+`ashlr issues` (also `phm issues`) reads the queue and groups failed jobs (BLOCKED
+with a finished claim) by their error text. Ids, timestamps and long numbers are
+ignored, so one problem counts once. Each group shows a count and a few sample
+job ids. It never writes unless you add `--retry`, which queues one READY retry per
+failed job using the same lineage as `queue replay` (repeats do not duplicate).
+Add `--json` for `{ v, failed, groups: [{ error, count, samples, jobs }] }`, or
+`{ v, retried: [{ id, retry }] }` with `--retry`. Use `--dir` to pick a queue directory.

@@ -32,7 +32,7 @@ describe('verdictText', () => {
   });
   it('renders nothing for ok and a fixed explanation for unknown', () => {
     expect(verdictText(row({ verdict: 'ok' }))).toBeNull();
-    expect(verdictText(row({ verdict: 'unknown' })))
+    expect(verdictText(row({ verdict: 'unknown', meter: meter({ sampledAt: '2026-10-30T00:00:00.000Z' }) })))
       .toBe('Lane truth unknown: slots.json or the meter is older than 15 min.');
   });
 });

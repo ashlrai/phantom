@@ -157,6 +157,12 @@ Credit records project only their account ID, pool kind, exact amount, original 
 
 The endpoint reads fixed local stores. Opening it does not start a model, provider probe, cloud scheduler, or dispatch. Missing records mean **unknown**, not zero dollars. A recorded deadline passing does not establish a newly refreshed balance or prove that a provider actually expired a grant.
 
+## Every-resource usage aggregate
+
+The console's **Every resource** panel (desktop Usage section and mobile Fleet screen) reads one authorized GET, `/api/verse/usage-resources`, accepting no query parameters or mutations. It returns the twelve fixed operator resources — Ultra (Cursor + Grok pool), Claude Max, claude-api gift, claude-api monthly, codex-cmp, codex-personal, Devin, zai, agy, Gemini (Workspace), local and Stacksync — each with used, limit, unit, resets-at, source and as-of, or an explicit state: `ok`, `no-reading` (a reader ran but measured nothing), `no-reader` (nothing in the repo reads that resource yet) or `unavailable` (the read failed, errored, or beat its deadline).
+
+Each resource is one `UsageResourceReader` in `src/core/usage/resource-usage.ts`: a small function returning the shared `UsageResourceReading` shape, or `null`. Adding a reader for an uncovered pool is a one-function change. Reader returns are boundary-checked — only finite non-negative amounts, ISO instants, and bounded printable source labels reach the wire; a malformed or oversized return degrades to `unavailable`. Reader failures are states, never thrown errors, and provider error text is never echoed. A resource with no measured value reports nulls, never a fabricated percentage or limit.
+
 ## Claude API promotional grants
 
 The resource bar and expandable credit view can show a private, verified API grant observation separately from Claude's subscription and cloud-session credits. A single promotion shows last-recorded dollars and **Held**; several records show their count without adding possibly overlapping history. On a cold local read, the bar checks every two seconds for at most thirty seconds, then returns to its regular fifteen-second cadence. Hidden surfaces stop polling. Money is stored as exact integer microdollars and displayed with two significant figures, including the recorded amount in hover details. Storage and admission arithmetic retain the exact values. Its asynchronous local read does not wait for the subscription worker or request billing credentials. API organization, workspace and credential digests remain private. Windows currently reports this new read unavailable until asynchronous private-file ACL verification is supported.
@@ -176,3 +182,18 @@ phm resources claude-promotion record --observation /absolute/path/history.json 
 Keep the original `capturedAt`, the capture's SHA-256 `evidenceDigest`, and the reported integer-microdollar amounts. Set `binding` and `cycleId` to `null`. For a UTC expiry date without an exact instant, use `expiry: {"precision":"date","date":"YYYY-MM-DD","timezone":"UTC","instant":null}`; unknown expiry or amounts stay unknown. The command validates the local schema, not the authenticity of billing evidence, and returns **Held**. It writes only the existing private history store, creates no credentials or financial authority, and makes no provider request. `--accounts-root` can select the same private root configured for the desktop; otherwise the configured accounts root is used. An identical observation ID is idempotent; a conflicting ID, unsafe file or busy store is refused without replacing existing history.
 
 For recorded attempt, verification, and GitHub outcomes, see [execution feedback](EXECUTION-FEEDBACK.md).
+
+## Publish subscription capacity
+
+Run `phm capacity publish --json` on each node to refresh its local capacity
+snapshot once with that node's own local CLI authentication. Only usage metadata
+is published; credentials stay local. Exit 0 means published or already fresh,
+1 means unavailable (follow the returned recovery instruction), and 2 means bad
+arguments or configuration. Unknown usage remains ineligible; publishing does
+not guarantee a seat qualifies. Resident daemons start the publisher at startup
+and check every minute outside tick dispatch, sampling at most every five minutes.
+`ASHLR_DAEMON_CAPACITY_PUBLISHER=0` disables automatic daemon publication.
+
+```sh
+phm capacity publish --json
+```

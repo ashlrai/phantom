@@ -19,6 +19,10 @@ export interface FleetMemoryGuardView {
   level: string | number | null;
   /** Stopped job ids in the file's order; null when the file does not report them. */
   stopped: string[] | null;
+  /** Set only when the guard file declares a boolean omlx_down. */
+  omlx_down?: boolean;
+  /** Set only when the guard file declares a non-negative finite calm count. */
+  calm?: number;
 }
 
 export interface FleetMemoryView {
@@ -37,11 +41,26 @@ const identifier = (v: unknown): v is string => typeof v === 'string' && /^[A-Za
 const level = (v: unknown): string | number | null =>
   (typeof v === 'number' && Number.isFinite(v)) || identifier(v) ? v : null;
 
+// memstat.json writes epoch SECONDS; numbers at or above 1e11 (~Mar 1973 in ms,
+// ~year 5138 in s) are already epoch milliseconds.
+const EPOCH_SECONDS_MAX = 1e11;
+
 const sampleTime = (v: unknown): number | null => {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'number' && Number.isFinite(v)) return v < EPOCH_SECONDS_MAX ? v * 1000 : v;
   if (typeof v === 'string') {
     const ms = Date.parse(v);
     if (Number.isFinite(ms)) return ms;
+  }
+  return null;
+};
+
+// The guard writes stopped as an ARRAY of job ids or as a process-group→job-id
+// map; a map whose values carry no valid id reports nothing, so it is unknown.
+const stoppedIds = (v: unknown): string[] | null => {
+  if (Array.isArray(v)) return v.filter(identifier);
+  if (object(v)) {
+    const ids = Object.values(v).filter(identifier);
+    return ids.length ? ids : null;
   }
   return null;
 };
@@ -68,7 +87,9 @@ export function memoryView(memstat: unknown, memguard: unknown, now = Date.now()
     },
     memguard: {
       level: level(guard.level),
-      stopped: Array.isArray(stoppedRaw) ? stoppedRaw.filter(identifier) : null,
+      stopped: stoppedIds(stoppedRaw),
+      ...(typeof guard.omlx_down === 'boolean' ? { omlx_down: guard.omlx_down } : {}),
+      ...(nonnegative(guard.calm) ? { calm: guard.calm } : {}),
     },
   };
 }

@@ -184,8 +184,7 @@ interface WbGhCacheEntry<T> {
   inFlight: Promise<T | void> | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const wbGhCache = new WeakMap<AshlrConfig, WbGhCacheEntry<any>>();
+const wbGhCache = new WeakMap<AshlrConfig, WbGhCacheEntry<unknown>>();
 
 function getWbGhEntry<T>(cfg: AshlrConfig): WbGhCacheEntry<T> {
   let entry = wbGhCache.get(cfg) as WbGhCacheEntry<T> | undefined;

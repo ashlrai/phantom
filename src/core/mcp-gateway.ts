@@ -22,7 +22,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment, type StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { ChildProcess } from 'node:child_process';
 import { Writable } from 'node:stream';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -39,6 +38,11 @@ import {
 
 import type { McpRegistry, McpServerSpec, McpServerHealth, HealEvent } from './types.js';
 import { loadConfig } from './config.js';
+import { loadGatewayPolicy, checkGatewayPolicy } from './mcp-gateway-policy.js';
+import {
+  endGatewaySession, isGatewaySessionAllowed, recordGatewayActivity, registerGatewaySession, rotateGatewayActivity,
+  type GatewayVerdict,
+} from './gateway-sessions.js';
 import { toolCachePath, readToolCache, writeToolCache } from './mcp-tool-cache.js';
 import { withToolEnv } from './env-bridge.js';
 import { withHeal, defaultHealPolicy } from './run/self-heal.js';
@@ -51,6 +55,9 @@ import { fileURLToPath } from 'node:url';
 import { scrubSecrets } from './util/scrub.js';
 import { getLocusJobEnv, hasInheritedLocusSession, hasLocusJobEnv, withLocusJobChildEnv } from './integrations/locus-job-env.js';
 import { spawnSessionChild } from './verse/process-registry.js';
+
+/** JSON-RPC message type — aliased from serializeMessage to avoid duplicate imports across SDK paths. */
+type McpJsonRpcMessage = Parameters<typeof serializeMessage>[0];
 
 /** SDK-compatible stdio with session-owned process groups and parent-death cleanup. */
 export class SessionStdioClientTransport extends StdioClientTransport {
@@ -106,7 +113,7 @@ export class SessionStdioClientTransport extends StdioClientTransport {
     });
   }
 
-  override async send(message: JSONRPCMessage): Promise<void> {
+  override async send(message: McpJsonRpcMessage): Promise<void> {
     const stdin = this.sessionProcess?.stdin;
     if (!stdin || this.closing) throw new Error('Not connected');
     await new Promise<void>((resolve, reject) => {
@@ -636,6 +643,15 @@ export async function startGateway(
     throw new Error('Nested MCP gateway refused: inherited gateway marker would recurse');
   }
   refuseSharedJobGateway();
+  const policy = loadGatewayPolicy();
+  const identity = { agent: process.env.ASHLR_MCP_AGENT, groups: (process.env.ASHLR_MCP_GROUPS ?? '').split(',').filter(Boolean) };
+  // Registration is best effort; once it succeeds, revoking the id blocks the next call.
+  let session: { id: string } | undefined;
+  try { rotateGatewayActivity(); session = registerGatewaySession(identity); } catch { /* read-only home: run without a revoke switch */ }
+  const caller = identity.agent ?? 'unknown';
+  const audit = (tool: string, verdict: GatewayVerdict, args: unknown): void => {
+    if (session) recordGatewayActivity({ session: session.id, caller, tool, verdict, args });
+  };
   let gatewayCfg: ReturnType<typeof loadConfig> | undefined;
   try { gatewayCfg = loadConfig(); } catch { /* non-fatal; retain narrow child env */ }
 
@@ -787,7 +803,20 @@ export async function startGateway(
   server.setRequestHandler(CallToolRequestSchema, unknownToolAsInvalidParams(async (request) => {
     assertUsable();
     const requested = request.params.name;
-    if (isNativeTool(requested)) return callNativeTool(requested, request.params.arguments ?? {});
+    if (session && !isGatewaySessionAllowed(session.id)) {
+      audit(requested, 'revoked', request.params.arguments);
+      return { isError: true, content: [{ type: 'text', text: `Session ${session.id} was revoked. Start a new gateway session.` }] };
+    }
+    if (isNativeTool(requested)) {
+      audit(requested, 'allow', request.params.arguments);
+      return callNativeTool(requested, request.params.arguments ?? {});
+    }
+    const blocked = checkGatewayPolicy(policy, identity, requested);
+    if (blocked) {
+      audit(requested, blocked.endsWith('approval_required') ? 'approval_required' : 'deny', request.params.arguments);
+      return { isError: true, content: [{ type: 'text', text: blocked }] };
+    }
+    audit(requested, 'allow', request.params.arguments);
     let route = routes.get(requested);
     if (route?.downstream.lazy) {
       const d = route.downstream;
@@ -880,5 +909,6 @@ export async function startGateway(
     await finished;
   } finally {
     await closeAll();
+    if (session) endGatewaySession(session.id);
   }
 }
