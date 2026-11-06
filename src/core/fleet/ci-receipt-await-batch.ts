@@ -142,6 +142,8 @@ export function parseCiReceiptAwaitBatchInput(text: string): CiReceiptAwaitBatch
 export interface CiReceiptAwaitBatchOptions {
   /** Total batch bound shared by every target; at most one hour. */
   timeoutMs: number;
+  /** Optional cap on each wait, within the remaining shared deadline. */
+  targetTimeoutMs?: number;
   pollMs?: number;
   signal?: AbortSignal;
   /** Awaited after each settled entry; failures propagate to the caller. */
@@ -176,7 +178,8 @@ export async function awaitCiReceiptBatch(
   }
   const pollMs = opts.pollMs ?? CI_RECEIPT_AWAIT_DEFAULT_POLL_MS;
   if (!isAwaitMs(opts.timeoutMs, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS)
-    || !isAwaitMs(pollMs, CI_RECEIPT_AWAIT_MAX_POLL_MS) || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS) {
+    || !isAwaitMs(pollMs, CI_RECEIPT_AWAIT_MAX_POLL_MS) || pollMs < CI_RECEIPT_AWAIT_MIN_POLL_MS
+    || (opts.targetTimeoutMs !== undefined && !isAwaitMs(opts.targetTimeoutMs, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS))) {
     throw new RangeError('invalid await parameters');
   }
   const now = deps.now ?? (() => performance.now());
@@ -193,7 +196,7 @@ export async function awaitCiReceiptBatch(
     try {
       const found = await wait(
         { repo: target.repo, run: target.run, attempt: target.attempt,
-          artifactName: target.artifactName, timeoutMs: remaining, pollMs, signal: opts.signal },
+          artifactName: target.artifactName, timeoutMs: Math.min(opts.targetTimeoutMs ?? remaining, remaining), pollMs, signal: opts.signal },
         { gh: deps.gh, now, sleep });
       entries.push({ ...target, outcome: 'bound', prior: found.prior, reason: null });
       const tag = `${target.repo} run ${target.run} attempt ${target.attempt}`;

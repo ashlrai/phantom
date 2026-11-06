@@ -433,6 +433,25 @@ describe.skipIf(process.platform==='win32')('manual original paired artifact ins
     expect(fs.readlinkSync(f.current)).toBe(join(f.home,'.local/share/ashlr/releases',f.m.source.revision));
     await expect(applyInspectedDesktopArtifacts(fresh)).rejects.toThrow(/replayed/);
   });
+  it('verifies admitted runtime entries larger than 16MiB and rejects changed lengths or bytes',async()=> {
+    const f=fixture('canonical-v2');
+    const original=await readPinnedRuntimeArchive({artifactPath:join(f.artifacts,f.m.cli.filename),sha256:f.m.cli.sha256,revision:f.m.source.revision,version:f.m.version,identityProfile:'canonical-v2'});
+    const large=Buffer.alloc(16*1024*1024+1,0x5a);
+    const leaf='dist/core/universe/builtins/preparation/preparation-bridge.mjs';
+    const data=tar([...original.entries.map(entry=>({path:`package/${entry.path}`,data:entry.bytes,mode:entry.executable?0o755:0o644})),{path:`package/${leaf}`,data:large,mode:0o644}]);
+    const artifactPath=join(f.root,'large-runtime.tgz');write(artifactPath,data);
+    const pins={artifactPath,sha256:hash(data),revision:f.m.source.revision,version:f.m.version,identityProfile:'canonical-v2' as const};
+    const archive=await readPinnedRuntimeArchive(pins);
+    expect(archive.entries.find(entry=>entry.path===leaf)?.bytes.length).toBe(large.length);
+    const pkg=join(f.root,'large-package');fs.mkdirSync(pkg,{mode:0o700});extractPinnedRuntimeArchive(archive,pkg);
+    await verifyInstalledRuntimeArchive(pkg,pins);
+    const path=join(pkg,leaf);
+    write(path,large.subarray(0,-1));await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    write(path,Buffer.concat([large,Buffer.from([0])]));await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    const changed=Buffer.from(large);changed[changed.length-1]^=1;
+    write(path,changed);await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    write(path,large);await verifyInstalledRuntimeArchive(pkg,pins);
+  });
   it('bounded extractor refuses nonempty/link destinations and original package verifier rejects added members and modes',async()=> {
     const f=fixture(),dest=join(f.root,'extract');fs.mkdirSync(dest,{mode:0o700});write(join(dest,'foreign'),'leave alone');
     expect(()=>extractSignedAppArchive(f.app,dest)).toThrow(/destination/);expect(fs.readFileSync(join(dest,'foreign'),'utf8')).toBe('leave alone');

@@ -13,6 +13,7 @@ import { inspectLocalApp } from './local-app-transaction.mjs';
 import { codesignArgv } from './ship-local.mjs';
 import { requireRepositoryMetadata, requireRepositoryReference } from '../.github/scripts/github-repository-binding.mjs';
 import { getDesktopReleaseToolchain, DESKTOP_RELEASE_TOOL_PINS } from './desktop-release-policy.mjs';
+import { verifyExistingIcons } from './build-desktop-nightly.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -140,6 +141,12 @@ export function desktopNativeBundleConfiguration(signer) {
   assert.match(signer, /^[A-F0-9]{40}$/);
   return {bundle: {createUpdaterArtifacts: false, macOS: {signingIdentity: signer, hardenedRuntime: false}}};
 }
+/** Compile only from unchanged source-owned icons; regeneration dirties the qualified tree. */
+export function buildTrackedDesktopBundle({root, tools, env}, execute = run) {
+  verifyExistingIcons(root);
+  execute(tools.tauri.path, ['build', '--bundles', 'app', '--ci', '--target', 'aarch64-apple-darwin', '--config', JSON.stringify(desktopNativeBundleConfiguration(tools.appleSigner))], join(root, 'desktop'), env, 30 * 60_000);
+  verifyExistingIcons(root);
+}
 /** Restore only the fixed freshly built SEA before re-signing the private bundle. */
 export function restoreFreshDesktopSidecar(root, afterOpen = () => {}) {
   const source = join(root, 'dist-bin/ashlr');
@@ -200,9 +207,8 @@ async function buildNative({root, bundle, policy, source, version, surfaceDigest
   const hosted = ['--hosted-bundle', bundle, '--run', String(policy.runId), '--attempt', String(policy.runAttempt), '--attestor-sha', policy.attestorSha, '--attestor-run', String(policy.attestorRun), '--attestor-attempt', String(policy.attestorAttempt)];
   run(tools.node.path, ['scripts/build-sea.mjs', ...hosted], root, env, 20 * 60_000);
   run(tools.node.path, ['desktop/scripts/prepare-sidecar.mjs'], root, env);
-  run(tools.tauri.path, ['icon', 'src-tauri/icons/icon.svg'], join(root, 'desktop'), env);
   // The private publishing key is absent from every compiler/build-script environment.
-  run(tools.tauri.path, ['build', '--bundles', 'app', '--ci', '--target', 'aarch64-apple-darwin', '--config', JSON.stringify(desktopNativeBundleConfiguration(tools.appleSigner))], join(root, 'desktop'), env, 30 * 60_000);
+  buildTrackedDesktopBundle({root, tools, env});
   const app = join(root, 'desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Phantom.app');
   // Tauri's legitimate signature changes Mach-O bytes. Replace only this fixed
   // private sidecar with the fresh SEA, then sign and smoke-test the whole app.
