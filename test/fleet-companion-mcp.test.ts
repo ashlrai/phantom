@@ -33,7 +33,9 @@ describe('fleet companion MCP specs', () => {
   it('pin the reviewed companion releases and match the repo .mcp.json exactly', () => {
     const version = (id: string): string => COMPANION_RELEASES.find(r => r.id === id)!.version;
     expect(FLEET_COMPANION_MCP_SPECS['phantom-secrets']).toContain(`phantom-secrets-mcp@${version('secrets')}`);
-    expect(FLEET_COMPANION_MCP_SPECS['locus']).toContain(`@ashlrai/locus-mcp@${version('locus')}`);
+    // @ashlrai/locus-mcp is reviewed as its own package release: 0.6.2 carries
+    // the npm-shim fork-bomb fix, independent of the reviewed locus CLI (0.5.0).
+    expect(FLEET_COMPANION_MCP_SPECS['locus']).toContain('@ashlrai/locus-mcp@0.6.2');
     expect(FLEET_COMPANION_MCP_SPECS['lexicon']).toContain(`@ashlr/lexicon@${version('lexicon')}`);
     for (const [name, args] of Object.entries(FLEET_COMPANION_MCP_SPECS)) {
       expect(repoMcp.mcpServers[name]).toEqual({ command: 'npx', args: [...args] });
@@ -65,11 +67,11 @@ describe('trackedCompanionMcpServers', () => {
 
 describe('fleet sidecar with companions', () => {
   it('writes companions without ashlr-mcp and stays off for codex', () => {
-    const dir = worktree({ mcpServers: { locus: { command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.5.0'] } } });
+    const dir = worktree({ mcpServers: { locus: { command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.6.2'] } } });
     const path = writeMcpConfigIfAvailable(dir, NO_PATH);
     expect(path).toBe(join(dir, FLEET_MCP_CONFIG_FILENAME));
     const written = JSON.parse(readFileSync(path!, 'utf8')) as { mcpServers: Record<string, unknown> };
-    expect(written.mcpServers['locus']).toEqual({ command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.5.0'] });
+    expect(written.mcpServers['locus']).toEqual({ command: 'npx', args: ['-y', '@ashlrai/locus-mcp@0.6.2'] });
     expect(fleetEfficiencyMcpArgs('claude', { path: path!, command: null })).toEqual(['--mcp-config', path, '--strict-mcp-config']);
     expect(fleetEfficiencyMcpArgs('codex', { path: path!, command: null })).toEqual([]);
   });
