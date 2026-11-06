@@ -125,6 +125,9 @@ describe('verse account collector — read-only lease retry on touch()', () => {
 
     clockOffset += VERSE_ACCOUNTS_LEASE_RETRY_MS + 1;
     collector.touch();
+    // Retry spacing is a parent-only fake clock. Restore it before real worker
+    // ownership/publication, whose OS wall clock is deliberately not mocked.
+    clockOffset = 0;
     expect(await waitFor(() => collector!.status().mode === 'owned')).toBe(true);
     expect(collector.status()).toMatchObject({ mode: 'owned', owner: 'this-server', reasonCode: null });
     expect(logs.some((m) => m.includes('now collects live readings'))).toBe(true);
@@ -133,6 +136,12 @@ describe('verse account collector — read-only lease retry on touch()', () => {
     await expect(acquireResourceQuotaRefreshLease(accountsLedgerRoot(root), { trackNativeActivity: true }))
       .rejects.toMatchObject({ code: 'collector-owned' });
 
+    // Wait for the fake monitor's actual first attempt, not a vacuously empty
+    // reservation list before asynchronous collection has even started.
+    expect(await waitFor(() => {
+      const snapshot = collector!.connections();
+      return snapshot !== null && !snapshot.refreshing && snapshot.accounts.every(row => row.reason !== 'connection-not-checked');
+    })).toBe(true);
     // This fixture tests lease takeover, not death before the v5 helper can
     // publish identity. Observe publication or completed reservations before
     // asking for a clean close; unregistered cancellation remains held.
@@ -155,6 +164,7 @@ describe('verse account collector — read-only lease retry on touch()', () => {
     // And close() releases it again.
     await collector.close();
     collector = null;
+    expect(logs).not.toContain('Phantom account collector: shared quota evidence publication failed; readers fall back to the baseline.');
     held = await acquireResourceQuotaRefreshLease(accountsLedgerRoot(root), { trackNativeActivity: true });
     expect(held).toBeTruthy();
   });
@@ -183,6 +193,7 @@ describe('verse account collector — read-only lease retry on touch()', () => {
 
     clockOffset += VERSE_ACCOUNTS_LEASE_RETRY_MS + 1;
     collector.touch();
+    clockOffset = 0;
     await collector.close();
     collector = null;
     // Whichever finished first, nothing is left holding the lock.
