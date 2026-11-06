@@ -16,6 +16,13 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.15](https://github.com/ashlrai/phantom/compare/v3.30.14...v3.30.15) (2026-11-06)
+
+
+### Changes
+
+* RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3780](https://github.com/ashlrai/phantom/issues/3780)) ([ddd0020](https://github.com/ashlrai/phantom/commit/ddd0020bc407b8852f02b27c24428ae95573e2ac))
+
 ## [Unreleased]
 
 ## [3.30.14] — 2026-11-06
