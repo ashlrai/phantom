@@ -26,36 +26,6 @@ export function narrowFleetMemory(raw: unknown): FleetMemoryResponse | null {
   if (!(memguard.stopped === null || (Array.isArray(memguard.stopped) && memguard.stopped.every((id: unknown) => typeof id === 'string')))) return null;
   if (!(memguard.omlx_down === undefined || typeof memguard.omlx_down === 'boolean')) return null;
   if (!(memguard.calm === undefined || (typeof memguard.calm === 'number' && Number.isFinite(memguard.calm)))) return null;
-  if (memory.resource_session !== undefined) {
-    const resource = memory.resource_session;
-    const member = (value: unknown, allowed: string[]): value is string => typeof value === 'string' && allowed.includes(value);
-    const nonnegative = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-    if (!object(resource) || !member(resource.state, ['fresh', 'stale', 'future', 'unknown']) ||
-        !(resource.sampled_at === null || (typeof resource.sampled_at === 'string' && Number.isFinite(Date.parse(resource.sampled_at)))) || !nullableNumber(resource.age_ms) ||
-        !member(resource.pressure, ['normal', 'warning', 'critical', 'not-applicable', 'unknown']) ||
-        !member(resource.censusState, ['known', 'unknown']) || !member(resource.sessionsState, ['known', 'unknown']) ||
-        !Array.isArray(resource.sessions) || resource.sessions.length > 256 || (resource.sessionsState === 'unknown' && resource.sessions.length > 0)) return null;
-    if (resource.state === 'unknown' ? resource.age_ms !== null || resource.sampled_at !== null :
-      typeof resource.age_ms !== 'number' || resource.sampled_at === null ||
-      (resource.state === 'fresh' ? resource.age_ms < 0 || resource.age_ms > 30000 :
-        resource.state === 'stale' ? resource.age_ms <= 30000 : resource.age_ms >= 0)) return null;
-    if (resource.state !== 'fresh' && (resource.pressure !== 'unknown' || resource.censusState !== 'unknown' || resource.sessionsState !== 'unknown' || resource.sessions.length !== 0)) return null;
-    const disk = resource.disk;
-    if (!object(disk) || !member(disk.state, ['history', 'stale', 'unknown'])) return null;
-    if (disk.state === 'unknown' ? disk.allocatedBytes !== null || disk.ageSeconds !== null || disk.provenance !== null :
-      !nonnegative(disk.allocatedBytes) || !nonnegative(disk.ageSeconds) || typeof disk.provenance !== 'string' || disk.provenance.length > 256) return null;
-    if ((resource.state === 'future' || resource.state === 'unknown') && disk.state !== 'unknown' || resource.state === 'stale' && disk.state === 'history') return null;
-    const seen = new Set<string>();
-    for (const row of resource.sessions) {
-      if (!object(row) || typeof row.jobId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(row.jobId) || seen.has(row.jobId) ||
-          !member(row.state, ['known', 'unknown']) || row.swapBytes !== null ||
-          !['processCount', 'rssBytes', 'cpuPercentOneCore', 'cpuPercentHost'].every(key => row[key] === null || nonnegative(row[key]))) return null;
-      const metrics = [row.processCount, row.rssBytes, row.cpuPercentOneCore, row.cpuPercentHost];
-      if (row.state === 'unknown' ? metrics.some(value => value !== null) :
-        typeof row.processCount !== 'number' || !Number.isSafeInteger(row.processCount) || row.processCount <= 0 || row.rssBytes === null || row.cpuPercentOneCore === null) return null;
-      seen.add(row.jobId);
-    }
-  }
   return raw as unknown as FleetMemoryResponse;
 }
 

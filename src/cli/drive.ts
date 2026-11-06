@@ -2,7 +2,6 @@ import { lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { driveLoop, type DriveDependencies } from '../core/drive/supervisor.js';
-import { readDrivePressure } from '../core/drive/host-pressure.js';
 import { checkDrivePublisher, ScriptDriveBridge } from '../core/drive/script-bridge.js';
 
 const HELP = `Usage: phm drive [--once] [--dry-run] [--tick <seconds>]
@@ -58,10 +57,9 @@ export async function cmdDrive(args: string[], dependencies?: DriveDependencies)
   let options: DriveOptions;
   try { options = parseDriveOptions(args); }
   catch { console.error('Invalid drive arguments. Run phm drive --help.'); return 2; }
-  const bridge = new ScriptDriveBridge(options.bridge, undefined, undefined, readDrivePressure);
+  const bridge = new ScriptDriveBridge(options.bridge);
   const deps = dependencies ?? {
     bridge,
-    pressure: readDrivePressure,
     paused: async () => await driveControlPresent(options.pauseFile) || await driveControlPresent(join(homedir(), '.ashlr', 'KILL')),
     publish: (job: string, lease: string) => bridge.publish(options.publisher, job, lease),
   };

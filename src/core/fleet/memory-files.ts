@@ -6,7 +6,6 @@ import { join } from 'node:path';
 export interface FleetMemoryFiles {
   memstat: unknown;
   memguard: unknown;
-  resourceSession?: unknown;
 }
 
 /** Each file degrades independently: missing, non-regular or unparseable JSON is null. */
@@ -34,10 +33,9 @@ async function readJsonFile(path: string): Promise<unknown> {
 }
 
 export async function readFleetMemoryFiles(root: string): Promise<FleetMemoryFiles> {
-  const [memstat, memguard, resourceSession] = await Promise.all([
+  const [memstat, memguard] = await Promise.all([
     readJsonFile(join(root, 'memstat.json')),
     readJsonFile(join(root, '.memguard2.json')),
-    readJsonFile(join(root, 'resource-session-observation.json')),
   ]);
-  return { memstat, memguard, resourceSession };
+  return { memstat, memguard };
 }

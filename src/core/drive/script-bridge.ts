@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
-import { parseDriveSnapshot, type DriveBridge, type DriveReport, type DriveSnapshot, type DrivePressureLevel } from './supervisor.js';
+import { parseDriveSnapshot, type DriveBridge, type DriveReport, type DriveSnapshot } from './supervisor.js';
 
 const execFileAsync = promisify(execFile);
 const protocol = 'phm-drive/v1';
@@ -60,7 +60,6 @@ export class ScriptDriveBridge implements DriveBridge {
     readonly executable: string,
     private readonly command: DriveCommand = runDriveCommand,
     private readonly check: (path: string) => Promise<void> = checkDriveExecutable,
-    private readonly pressure?: () => Promise<DrivePressureLevel | null>,
   ) {}
 
   private async call(operation: string, request: Record<string, unknown> = {}): Promise<unknown> {
@@ -88,10 +87,6 @@ export class ScriptDriveBridge implements DriveBridge {
   }
   reap(lease: string): Promise<void> { return this.acknowledge('reap', { lease }); }
   async launch(lease: string, job: string): Promise<'launched' | 'held'> {
-    if (this.pressure) {
-      try { if (await this.pressure() !== 'normal') return 'held'; }
-      catch { return 'held'; }
-    }
     const result = await this.call('launch', { lease, job });
     if (result !== 'launched' && result !== 'held') throw new Error('Invalid drive launch acknowledgement');
     return result;

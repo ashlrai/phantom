@@ -2,12 +2,11 @@
 
 `restock.py` and `dispatchd.py` are reviewable repository copies of the
 deterministic Mac queue scripts that run under `~/.ashlr-runs` on the dispatch
-host. A repository snapshot can be older than the installed controller: compare
-its exact input hash before adoption. Current-host changes under
-`host-integration/` are surgical patches against their declared input, not
-permission to overwrite the whole controller with an older copy. Changes land
-by PR review and the adoption owner verifies immutable source hashes before any
-live install. The queue scripts are deterministic and do not create tokens.
+host. `dispatchd.py` here is the single source for the live dispatcher (see
+[Installing the dispatcher](#installing-the-dispatcher)). They are pinned artifacts: changes
+land by PR review, and Security re-pins the sha before any live install. Both
+are deterministic (no model or network calls of their own) and neither creates
+tokens.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
@@ -680,42 +679,3 @@ python3 -m unittest contrib/mac/tests/test_integrated_merge.py -v
 python3 -m unittest contrib/mac/tests/test_publish_dependency_links.py -v
 bash -n contrib/mac/publish.sh
 ```
-
-
-## Host and session resource observations
-
-The fixed `host_session_tick.py` composes `host_session_runtime.py`,
-`host_session_observation.py` and `host_session_disk_cache.py`. The existing
-controller invokes it under its existing `dispatchd.lock`; there is no new
-service. Its fixed observation file is descriptive, not a quota, identity,
-permission, or capacity grant. CPU is the OS-reported per-core average; RSS
-sums shared resident pages and is not unique physical RAM. Disk is historical
-allocated worktree attribution excluding `node_modules`, never free or
-reclaimable capacity. Census, disk and UI freshness are independent.
-
-The launcher registers the actual just-launched child with PID birth, current
-boot and protected dispatch-record pins. Registration failure does not undo or
-kill a launched process. The private claim-directory lock serializes only
-registration and retirement. Each tick examines at most 512 current claims;
-archived history is excluded from the active 256-row budget. A current root
-must be absent in both complete fresh process censuses before retirement, with
-unchanged protected input/name pins and a matching recorded attempt, terminal
-exit receipt, or complete reaped-record absence. Reused PIDs, incomplete
-observations, changed records and legacy claims lacking registration pins stay
-unknown and are not retired. Archival does not prove provider quiescence or
-make an empty inventory healthy. It grants no launch or reclamation authority.
-
-`host_pressure_admission.py` reuses the bounded kernel observer. The surgical
-host patches check pressure before selection and again immediately before
-unreserved native Codex/Devin execution. On macOS only known-normal pressure
-permits new work; non-Darwin behavior is retained. A late hold uses the existing
-launch grace/requeue path, including reuse of its prepared worktree; retired
-jobs remain cancelled. No worker is stopped, no percentage reserve or new
-concurrency cap is added. Seven paced-lane final reservation/cancellation
-integration and the separate product machine producer are outside this patch.
-
-The existing whole `install.sh` is not the adoption transaction for these
-current-host patches. Immutable helper closure, exact current-input comparison,
-existing controller/ready locks, backups and post-adoption checks must be
-reviewed separately. Source tests and a synthetic locked-tick measurement do
-not by themselves establish live adoption or worst-case host latency.

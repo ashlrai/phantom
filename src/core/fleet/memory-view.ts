@@ -30,31 +30,7 @@ export interface FleetMemoryView {
   generatedAt: string;
   sample: FleetMemorySampleView;
   memguard: FleetMemoryGuardView;
-  resource_session?: ResourceSessionView;
 }
-
-
-/** Descriptive evidence only; never an admission decision. */
-export interface ResourceSessionView {
-  state: 'fresh' | 'stale' | 'future' | 'unknown';
-  sampled_at: string | null;
-  age_ms: number | null;
-  pressure: 'normal' | 'warning' | 'critical' | 'not-applicable' | 'unknown';
-  disk: { state: 'history' | 'stale' | 'unknown'; allocatedBytes: number | null; ageSeconds: number | null; provenance: string | null }; 
-  censusState: 'known' | 'unknown';
-  sessionsState: 'known' | 'unknown';
-  sessions: ResourceSessionRow[];
-}
-export interface ResourceSessionRow {
-  jobId: string;
-  state: 'known' | 'unknown';
-  processCount: number | null;
-  rssBytes: number | null;
-  cpuPercentOneCore: number | null;
-  cpuPercentHost: number | null;
-  swapBytes: null;
-}
-const RESOURCE_SESSION_MAX_AGE_MS = 30_000;
 
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonnegative = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
@@ -89,52 +65,8 @@ const stoppedIds = (v: unknown): string[] | null => {
   return null;
 };
 
-/** Reject malformed or excessive input instead of rendering partial evidence as current. */
-function resourceSessionView(input: unknown, now: number): ResourceSessionView {
-  const unknown: ResourceSessionView = { state: 'unknown', sampled_at: null, age_ms: null, pressure: 'unknown', censusState: 'unknown', sessionsState: 'unknown', sessions: [], disk: { state: 'unknown', allocatedBytes: null, ageSeconds: null, provenance: null } };
-  if (!object(input) || input.schemaVersion !== 1 || typeof input.observedAt !== 'string' ||
-      !object(input.pressure) || !(typeof input.pressure.state === 'string' && ['normal', 'warning', 'critical', 'not-applicable', 'unknown'].includes(input.pressure.state)) ||
-      !(input.censusState === 'known' || input.censusState === 'unknown') || !(input.sessionsState === 'known' || input.sessionsState === 'unknown') ||
-      !Array.isArray(input.sessions) || input.sessions.length > 256 || (input.sessionsState === 'unknown' && input.sessions.length > 0)) return unknown;
-  const timestamp = Date.parse(input.observedAt);
-  if (!Number.isFinite(timestamp)) return unknown;
-  const sessions: ResourceSessionRow[] = [];
-  const seen = new Set<string>();
-  for (const row of input.sessions) {
-    if (!object(row) || !identifier(row.jobId) || seen.has(row.jobId) ||
-        (row.state !== 'known' && row.state !== 'unknown') || row.swapBytes !== null) return unknown;
-    const values = [row.processCount, row.rssBytes, row.cpuPercentOneCore, row.cpuPercentHost];
-    if (values.some(value => value !== null && !nonnegative(value)) ||
-        (row.processCount !== null && (!Number.isSafeInteger(row.processCount) || row.processCount === 0)) ||
-        (row.state === 'unknown' && values.some(value => value !== null)) ||
-        (row.state === 'known' && values.slice(0, 3).some(value => value === null))) return unknown;
-    seen.add(row.jobId);
-    sessions.push({ jobId: row.jobId, state: row.state, processCount: row.processCount as number | null,
-      rssBytes: row.rssBytes as number | null, cpuPercentOneCore: row.cpuPercentOneCore as number | null,
-      cpuPercentHost: row.cpuPercentHost as number | null, swapBytes: null });
-  }
-  const age = now - timestamp;
-  const state = age < 0 ? 'future' : age > RESOURCE_SESSION_MAX_AGE_MS ? 'stale' : 'fresh';
-  let disk = unknown.disk;
-  if (age >= 0 && object(input.disk) && (input.disk.state === 'history' || input.disk.state === 'stale') &&
-      nonnegative(input.disk.allocatedBytes) && nonnegative(input.disk.ageSeconds) &&
-      typeof input.disk.provenance === 'string' && input.disk.provenance.length <= 256) {
-    // Disk age is measured at publication; an older outer snapshot cannot reset it.
-    const ageSeconds = input.disk.ageSeconds + age / 1000;
-    disk = { state: state === 'stale' || ageSeconds > 900 ? 'stale' : input.disk.state,
-      allocatedBytes: input.disk.allocatedBytes, ageSeconds, provenance: input.disk.provenance };
-  }
-  return { state, sampled_at: new Date(timestamp).toISOString(), age_ms: age,
-    // Only a fresh observation can describe current pressure/process measurements.
-    // Stale disk attribution remains explicitly historical; future evidence is invalid.
-    pressure: state === 'fresh' ? input.pressure.state as ResourceSessionView['pressure'] : 'unknown',
-    censusState: state === 'fresh' ? input.censusState as 'known' | 'unknown' : 'unknown',
-    sessionsState: state === 'fresh' ? input.sessionsState as 'known' | 'unknown' : 'unknown',
-    sessions: state === 'fresh' ? sessions : [], disk };
-}
-
 /** Unknown inputs yield unknown fields; a partial object keeps the fields that validate. */
-export function memoryView(memstat: unknown, memguard: unknown, now = Date.now(), resourceSession?: unknown): FleetMemoryView {
+export function memoryView(memstat: unknown, memguard: unknown, now = Date.now()): FleetMemoryView {
   if (!Number.isFinite(now)) throw new Error('Invalid reporting time');
   const stat = object(memstat) ? memstat : {};
   const sampledMs = sampleTime(stat.ts);
@@ -142,7 +74,6 @@ export function memoryView(memstat: unknown, memguard: unknown, now = Date.now()
   const guard = object(memguard) ? memguard : {};
   const stoppedRaw = guard.stopped ?? guard.stopped_jobs;
   return {
-    ...(resourceSession === undefined ? {} : { resource_session: resourceSessionView(resourceSession, now) }),
     schema: 'fleet.memory.v1',
     generatedAt: new Date(now).toISOString(),
     sample: {
