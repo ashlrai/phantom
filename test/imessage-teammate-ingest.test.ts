@@ -65,6 +65,14 @@ afterEach(() => {
 });
 
 describe('teammate intake', () => {
+  it('does not advance the cursor when the teammate ledger cannot persist', async () => {
+    writeFileSync(join(runsDir, 'imessage', 'teammates.jsonl'), '');
+    rmSync(join(runsDir, 'imessage', 'teammates.jsonl'));
+    mkdirSync(join(runsDir, 'imessage', 'teammates.jsonl'));
+    const result = await ingest([row(11, TEAMMATE, 'Please preserve this artifact')]);
+    expect(result).toMatchObject({ ok: false, deferred: true, cursor: 10, teammate: 0 });
+    expect(readCursor(runsDir)).toBe(10);
+  });
   it('keeps a teammate text in the local inbox, never in MASON-INBOX.md or the queue', async () => {
     const result = await ingest([row(11, TEAMMATE, 'hey ashlr, the gate is red')]);
     expect(result).toMatchObject({ ok: true, state: 'ingested', scanned: 1, accepted: 0, notMason: 1, teammate: 1, cursor: 11 });

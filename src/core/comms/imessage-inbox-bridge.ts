@@ -133,6 +133,11 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       if (!isVerifiedMasonHandle(msg.handle, cfg)) {
         result.notMason++;
         if (recordTeammateText(msg, deps.runsDir, now())) result.teammate++;
+        else {
+          // A teammate's artifact is not receipted until its local record is durable.
+          result.deferred = true;
+          break;
+        }
       } else if (message) {
         current = msg.rowid;
         currentHandle = msg.handle;
