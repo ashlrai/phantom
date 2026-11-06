@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.15 |
-| Latest dated changelog release (2026-11-06) | 3.30.15 |
+| Source package | 3.30.17 |
+| Latest dated changelog release (2026-11-06) | 3.30.17 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,20 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.17] — 2026-11-06
+
+
+### Changes
+
+* RQ-RECUT-V330-CIFIX-6R2-MACMEM-NOV6 ([#3784](https://github.com/ashlrai/phantom/issues/3784)) ([a0df5df](https://github.com/ashlrai/phantom/commit/a0df5df9e6b11c8a917acfb8bcc871f5b898f5d1))
+
+## [3.30.16] — 2026-11-06
+
+
+### Changes
+
+* RQ-RECUT-V330-CIFIX-6R2-MACMEM-NOV6 ([#3782](https://github.com/ashlrai/phantom/issues/3782)) ([b2cf6a3](https://github.com/ashlrai/phantom/commit/b2cf6a38e00103fbd6b1dbb770027bed2759b2b3))
 
 ## [3.30.15] — 2026-11-06
 
