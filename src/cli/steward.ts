@@ -5,7 +5,7 @@ import { dirname, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { stewardSchedule } from '../core/steward/schedule.js';
+import { stewardSchedule, type ScheduleUnit } from '../core/steward/schedule.js';
 
 const USAGE = 'Usage: phm steward disk [--apply] [--json] | phm steward schedule [--install] [--apply] [--hour 0-23]';
 const mb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
@@ -23,6 +23,47 @@ function scheduleDirectory(path: string, home: string): void {
     const stat = lstatSync(current);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Refusing linked schedule directory: ${current}`);
   }
+}
+
+/**
+ * Write schedule units under HOME and activate them. Shared by
+ * `phm steward schedule` and `phm disk-maint schedule`: exclusive creates
+ * refuse to clobber an existing job, a written set is rolled back on any
+ * failure, and the log file is created 0600 no-follow.
+ */
+export function installScheduleUnits(units: ScheduleUnit[], opts: { home?: string; logName: string }): number {
+  const home = opts.home ?? homedir();
+  const created: string[] = [];
+  try {
+    for (const unit of units) {
+      scheduleDirectory(dirname(unit.path), home);
+      // Exclusive create also refuses symlinks and preserves existing jobs.
+      const fd = openSync(unit.path, 'wx', 0o600);
+      created.push(unit.path);
+      try { writeFileSync(fd, unit.contents); } finally { closeSync(fd); }
+    }
+    scheduleDirectory(join(home, '.ashlr', 'logs'), home);
+    const log = join(home, '.ashlr', 'logs', opts.logName);
+    try { closeSync(openSync(log, 'wx', 0o600)); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const stat = lstatSync(log);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('Refusing linked schedule log.');
+    }
+  } catch (error) {
+    for (const path of created) unlinkSync(path);
+    throw error;
+  }
+  for (const unit of units) {
+    if (!unit.activate.length) continue;
+    const result = spawnSync(unit.activate[0]!, unit.activate.slice(1), { stdio: 'inherit', timeout: 30_000 });
+    if (result.error || result.status !== 0) {
+      console.error('Schedule files written, but activation failed. Run these commands manually:');
+      for (const pending of units) console.error(JSON.stringify(pending.activate));
+      return 1;
+    }
+  }
+  return 0;
 }
 
 function schedule(argv: string[]): number {
@@ -54,37 +95,8 @@ function schedule(argv: string[]): number {
     if (!existsSync(fileURLToPath(new URL('../../dist/cli/index.js', import.meta.url)))) {
       throw new Error('Compiled CLI missing; run npm run build before installing the schedule.');
     }
-    const home = homedir();
-    const created: string[] = [];
-    try {
-      for (const unit of units) {
-        scheduleDirectory(dirname(unit.path), home);
-        // Exclusive create also refuses symlinks and preserves existing jobs.
-        const fd = openSync(unit.path, 'wx', 0o600);
-        created.push(unit.path);
-        try { writeFileSync(fd, unit.contents); } finally { closeSync(fd); }
-      }
-      scheduleDirectory(join(home, '.ashlr', 'logs'), home);
-      const log = join(home, '.ashlr', 'logs', 'steward.jsonl');
-      try { closeSync(openSync(log, 'wx', 0o600)); }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        const stat = lstatSync(log);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error('Refusing linked steward log.');
-      }
-    } catch (error) {
-      for (const path of created) unlinkSync(path);
-      throw error;
-    }
-    for (const unit of units) {
-      if (!unit.activate.length) continue;
-      const result = spawnSync(unit.activate[0]!, unit.activate.slice(1), { stdio: 'inherit', timeout: 30_000 });
-      if (result.error || result.status !== 0) {
-        console.error('Schedule files written, but activation failed. Run these commands manually:');
-        for (const pending of units) console.error(JSON.stringify(pending.activate));
-        return 1;
-      }
-    }
+    const code = installScheduleUnits(units, { logName: 'steward.jsonl' });
+    if (code !== 0) return code;
     console.log(`Steward scheduled daily (${flags.has('--apply') ? 'apply' : 'report-only'}).`);
     return 0;
   } catch (error) { console.error(`error: ${(error as Error).message}`); return 1; }

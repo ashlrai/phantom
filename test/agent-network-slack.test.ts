@@ -211,7 +211,7 @@ describe('slackEventToBus', () => {
       ['message_changed', messageEvent({ subtype: 'message_changed' }), 'unsupported-subtype'],
       ['reaction', messageEvent({ type: 'reaction_added' }), 'unsupported-event-type'],
       ['empty text', messageEvent({ text: '   ' }), 'empty-text'],
-      ['secret-shaped text', messageEvent({ text: 'token: xoxb-1234567890abcdef' }), 'secret-shaped-text'],
+      ['secret-shaped text', messageEvent({ text: 'token: xoxb-FAKE-EXAMPLE-1234567890abcdef' }), 'secret-shaped-text'],
       ['hidden event', messageEvent({ hidden: true }), 'hidden-event'],
       ['bad ts', messageEvent({ ts: 'not-a-ts' }), 'malformed-event'],
       ['no author', messageEvent({ user: undefined }), 'malformed-event'],
@@ -354,7 +354,7 @@ describe('slackOutboundPlan', () => {
     expect(slackOutboundPlan(note({ external: true }), CONFIG)).toEqual({ ok: false, reason: 'external-envelope' });
     expect(slackOutboundPlan(note({ to: 'other' }), CONFIG)).toEqual({ ok: false, reason: 'unmapped-topic' });
     expect(slackOutboundPlan(note({ body: { kind: 'work.post', jobId: 'j', title: 't', repo: 'a/b', claimKeys: [] } }), CONFIG)).toEqual({ ok: false, reason: 'unsupported-body-kind' });
-    expect(slackOutboundPlan(note({ body: { kind: 'note', text: 'xoxb-1234567890abcdef' } }), CONFIG)).toEqual({ ok: false, reason: 'secret-shaped-text' });
+    expect(slackOutboundPlan(note({ body: { kind: 'note', text: 'xoxb-FAKE-EXAMPLE-1234567890abcdef' } }), CONFIG)).toEqual({ ok: false, reason: 'secret-shaped-text' });
     expect(slackOutboundPlan(note({ body: { kind: 'note', text: '   ' } }), CONFIG)).toEqual({ ok: false, reason: 'empty-text' });
   });
 

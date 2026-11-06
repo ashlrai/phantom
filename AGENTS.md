@@ -83,6 +83,14 @@ Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
 
+Disk maintenance: `phm disk-maint` is a dry run that reports reclaimable bytes
+per class; `--apply` rotates, compresses and deletes rebuildable leftovers and
+reaps finished worktrees. `phm disk-maint schedule [--install]` prints or
+installs the daily per-user job. The protect-list (`~/.codex*`, model weights,
+Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
+plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
+See [DISK-MAINT](docs/DISK-MAINT.md).
+
 ## Publish subscription capacity
 
 Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;

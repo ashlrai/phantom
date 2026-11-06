@@ -6,6 +6,7 @@ import { checkDriveExecutable } from '../script-bridge.js';
 import type { JobClaim } from './index.js';
 import { callPool, type PoolConfig } from './pool-host.js';
 import { validId } from './state.js';
+import { readNodeCapacity } from './capacity.js';
 
 /** Native sign-in checks only. No auth-file reads, API tokens or output retention. */
 export function probeNodeLanes(run: typeof spawnSync = spawnSync): string[] {
@@ -33,25 +34,28 @@ export function nodeStopped(): boolean {
 export async function runNodeWorker(config: PoolConfig, runner: string): Promise<Record<string, unknown>> {
   await checkDriveExecutable(runner);
   if (nodeStopped()) return { held: 'host-paused' };
+  const capacity = readNodeCapacity();
+  if (capacity.held) return { held: capacity.held, capacity };
   const lanes = probeNodeLanes();
   if (!lanes.length) return { held: 'no-local-provider-login' };
-  const joined = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(',')]);
+  const joined = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(','), '--slots', String(capacity.slots)]);
   const session = joined.result['session'];
   if (!Number.isSafeInteger(session)) return { held: 'node-already-live' };
   const identity = ['--node', config.node, '--session', String(session)];
-  let claim: JobClaim | undefined;
-  try {
-    callPool(config, 'beat', [...identity, '--usage', '0']);
+  const attempt = async (): Promise<Record<string, unknown>> => {
+    const admission = readNodeCapacity();
+    if (admission.held) return { held: admission.held };
+    callPool(config, 'beat', [...identity, '--usage', '0', '--slots', String(admission.slots)]);
     const pulled = callPool(config, 'pull', identity);
     if (pulled.demoted || !pulled.result['pulled']) return { pulled: false };
-    claim = pulled.result['claim'] as JobClaim;
+    const claim = pulled.result['claim'] as JobClaim;
     const job = pulled.result['job'] as { id: string; requires: string[]; secrets: string[] };
     if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
-        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || nodeStopped()) return { held: 'unsupported-job' };
+        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || nodeStopped() || readNodeCapacity().held) return { held: 'unsupported-job' };
     const lease = [...identity, '--job', claim.jobId, '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
     // Check immediately before spawn as well as throughout execution.
     const renewed = callPool(config, 'renew', lease);
-    if (!renewed.result['expiresAt'] || renewed.demoted) return { held: 'lease-lost' };
+    if (!renewed.result['expiresAt'] || renewed.demoted || readNodeCapacity().held) return { held: 'lease-lost' };
     const resultRef = await new Promise<string | null>(resolve => {
       const child = spawn(runner, ['run'], { shell: false, detached: true,
         env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
@@ -74,7 +78,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string): Promise
       process.once('SIGTERM', stop);
       const timer = setInterval(() => {
         try {
-          if (nodeStopped()) return stop();
+          if (nodeStopped() || readNodeCapacity().held) return stop();
           callPool(config, 'beat', [...identity, '--usage', '1000']);
           const current = callPool(config, 'renew', lease);
           if (current.demoted || !current.result['expiresAt']) stop();
@@ -96,6 +100,12 @@ export async function runNodeWorker(config: PoolConfig, runner: string): Promise
     if (!resultRef) return { completed: false, held: 'runner-stopped' };
     const completed = callPool(config, 'complete', [...lease, '--result', resultRef]);
     return { jobId: claim.jobId, completed: completed.result['completed'] === true };
+  };
+  try {
+    // Keep one fenced node session until every slot settles; never leave while a sibling runs.
+    const settled = await Promise.allSettled(Array.from({ length: capacity.slots }, () => attempt()));
+    const attempts = settled.map(result => result.status === 'fulfilled' ? result.value : { held: 'attempt-unavailable' });
+    return attempts.length === 1 ? attempts[0]! : { slots: capacity.slots, attempts };
   } finally {
     try { callPool(config, 'leave', identity); } catch { /* expiry fences uncertain sessions */ }
   }

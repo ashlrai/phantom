@@ -58,6 +58,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
   'disk', 'app', 'radar',
+  // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
+  'disk-maint',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -66,6 +68,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   sweep: ['report'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
+  'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   app: ['update', 'status', '--json', '--help'],
