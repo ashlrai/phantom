@@ -622,6 +622,7 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
 | Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
+| Rebuildable disk growth (logs, sessions, staging, worktrees) | `phm disk-maint` (dry run: bytes reclaimable per class; `--apply` frees them; `phm disk-maint schedule --install` installs the daily job; the protect-list keeps `~/.codex*`, model weights, Docker, client trees and secrets always) |
 | Log roots using too much disk | `phm steward disk` (dry run; `--apply` deletes expired or over-quota plain logs and gzip-archives cold Codex and Claude sessions to `~/.ashlr/archive`; files modified in the last 24 hours are untouched) |
 | Ledger integrity questions | `phm authority ledger verify` |
 | Safety invariants | `phm verify-safety` |
