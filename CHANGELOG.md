@@ -16,6 +16,52 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.10](https://github.com/ashlrai/phantom/compare/v3.30.9...v3.30.10) (2026-11-06)
+
+
+### Features
+
+* connect authenticated Slack to Phantom Leader ([#3697](https://github.com/ashlrai/phantom/issues/3697)) ([78ca550](https://github.com/ashlrai/phantom/commit/78ca55033b74b9359f4fda87e5576e4897a5b9bb))
+
+
+### Fixes
+
+* bind historical updater feed identities ([#3694](https://github.com/ashlrai/phantom/issues/3694)) ([93af05a](https://github.com/ashlrai/phantom/commit/93af05a2c7b4938b6e3301dbab136fcd1cc32255))
+* include current operator guides in release package ([#3700](https://github.com/ashlrai/phantom/issues/3700)) ([91235fd](https://github.com/ashlrai/phantom/commit/91235fde153241806d04c5f689e2c0662d762d68))
+* protect stable release finalizer authority ([#3692](https://github.com/ashlrai/phantom/issues/3692)) ([cd22d72](https://github.com/ashlrai/phantom/commit/cd22d72c63954436458e359f7cef110e0fdb7104))
+* reconcile updater recovery and publication evidence ([#3706](https://github.com/ashlrai/phantom/issues/3706)) ([59b3097](https://github.com/ashlrai/phantom/commit/59b30970a630672055be38cf8603b4ccae73b5db))
+* recover desktop smoke after empty latest release ([#3675](https://github.com/ashlrai/phantom/issues/3675)) ([3cadede](https://github.com/ashlrai/phantom/commit/3cadeded9b3c01ad3fabbfb083ba1ce2b1c33805))
+* report private-safe desktop finalization phases ([#3696](https://github.com/ashlrai/phantom/issues/3696)) ([f2dc2ed](https://github.com/ashlrai/phantom/commit/f2dc2ed21b5f48053f7a971e069f2726ae27203b))
+* restore local Phantom teammate replies ([#3598](https://github.com/ashlrai/phantom/issues/3598)) ([a3a2408](https://github.com/ashlrai/phantom/commit/a3a2408830d1b5aaa474ddb3fbcfc63c8c547c8a))
+* run teammate replies inside Phantom ([#3695](https://github.com/ashlrai/phantom/issues/3695)) ([ef0718c](https://github.com/ashlrai/phantom/commit/ef0718c6bceb2d8ed1e18056bbc941e5f24a9833))
+
+
+### Changes
+
+* **RQ-DISKMAINT-1:** BRIDGE_NOTES - RQ-DISKMAINT-1 ([#3680](https://github.com/ashlrai/phantom/issues/3680)) ([ee5dd4e](https://github.com/ashlrai/phantom/commit/ee5dd4e789b0e038b15393188ab7274d77ab1142))
+* **RQ-LEADER-CEO-1:** RQ-LEADER-CEO-1 bridge notes ([#3677](https://github.com/ashlrai/phantom/issues/3677)) ([32a92b0](https://github.com/ashlrai/phantom/commit/32a92b09ffa6457bf7e413dffc3c49465fd60fa9))
+* **RQ-OUTBOXFALLBACKQ8:** RQ-OUTBOXFALLBACKQ8 ([#3707](https://github.com/ashlrai/phantom/issues/3707)) ([c633f05](https://github.com/ashlrai/phantom/commit/c633f05ce3c3ae27fda04cad561ff3cad903ad04))
+* **RQ-PHX-INSTALLEDMILESTONEREAD05SSV2:** Bridge notes ([#3676](https://github.com/ashlrai/phantom/issues/3676)) ([2a98a51](https://github.com/ashlrai/phantom/commit/2a98a51d951fb568bc773495173090d1571f31a0))
+* **RQ-PHX-MCPSTAGINGBATCH05SSZ2:** Staging inventory batch MCP handoff ([#3684](https://github.com/ashlrai/phantom/issues/3684)) ([ad35f75](https://github.com/ashlrai/phantom/commit/ad35f75413f979b073ebfc6d0bdf5b0feb6b4749))
+* **RQ-PHX-MCPSTAGINGCANCEL05STB2:** MCP staging cancellation handoff ([#3689](https://github.com/ashlrai/phantom/issues/3689)) ([370ad1c](https://github.com/ashlrai/phantom/commit/370ad1cd998e396d313515cc712ea07d2899ba64))
+* **RQ-PHX-MCPSTAGINGRETRY05STD1:** MCP staging retry handoff ([#3693](https://github.com/ashlrai/phantom/issues/3693)) ([e027319](https://github.com/ashlrai/phantom/commit/e027319f830c8ee47656a53b1c82c1563d0fffe7))
+* **RQ-PHX-STAGINGASYNCDU05STA1:** Staging inventory responsiveness handoff ([#3686](https://github.com/ashlrai/phantom/issues/3686)) ([a62da61](https://github.com/ashlrai/phantom/commit/a62da61d1d275d669f6f3233c30aacd89f301379))
+* **RQ-PHX-STAGINGBATCH05SSW2:** Staging inventory batch handoff ([#3679](https://github.com/ashlrai/phantom/issues/3679)) ([2d98ecd](https://github.com/ashlrai/phantom/commit/2d98ecd02c61240e14f7a84c1e818c85bd18ba15))
+* **RQ-PHX-STAGINGBATCHHELP05SSZ1:** BRIDGE_NOTES: RQ-PHX-STAGINGBATCHHELP05SSZ1 ([#3688](https://github.com/ashlrai/phantom/issues/3688)) ([e61dbb1](https://github.com/ashlrai/phantom/commit/e61dbb1ecf2017d916fc233e08fc0aab691e0dde))
+* **RQ-PHX-STAGINGBATCHPROGRESS05SSY1:** Staging batch progress handoff ([#3683](https://github.com/ashlrai/phantom/issues/3683)) ([b78a0d3](https://github.com/ashlrai/phantom/commit/b78a0d33bfc215a7cbda5c371ff94f0bac71367a))
+* **RQ-PHX-STAGINGBATCHREACH05SSX1:** Staging batch dispatch handoff ([#3682](https://github.com/ashlrai/phantom/issues/3682)) ([ba59bf8](https://github.com/ashlrai/phantom/commit/ba59bf8c843f3f8ed1b8fd2fabc6f1d1be26dee9))
+* **RQ-PHX-STAGINGBATCHSTOP05STA2:** Staging batch stop handoff ([#3687](https://github.com/ashlrai/phantom/issues/3687)) ([d2a8501](https://github.com/ashlrai/phantom/commit/d2a8501113c1b7bece31e294d982261f57cee31d))
+* **RQ-PHX-STAGINGRETRY05STB1:** Staging inventory retry handoff ([#3690](https://github.com/ashlrai/phantom/issues/3690)) ([c7a1ff2](https://github.com/ashlrai/phantom/commit/c7a1ff24918b4e3d2d6d0fec1d935f3d8bdffb14))
+* **RQ-PHX-STAGINGRETRYCANCEL05STC1:** Staging inventory cancellation retry handoff ([#3691](https://github.com/ashlrai/phantom/issues/3691)) ([623925f](https://github.com/ashlrai/phantom/commit/623925f9401f56c99dfdab0dd40d3ca38c8e7e5b))
+* **RQ-RECUT-MACDISPATCH-SNAPSHOT-NOV5:** Bound macOS fleet process ownership observations ([#3704](https://github.com/ashlrai/phantom/issues/3704)) ([423a2a7](https://github.com/ashlrai/phantom/commit/423a2a7db52a2ef31b5b12a9e104364616b30f0b))
+* **RQ-RECUT-MR-CONFLICT-DRIVERS-phantom-NOV5-R2:** Recovery Apps backlog integration against current iMessage o ([#3708](https://github.com/ashlrai/phantom/issues/3708)) ([4630340](https://github.com/ashlrai/phantom/commit/46303405152a552e75d241e5bbb4992db92a5069))
+* RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3712](https://github.com/ashlrai/phantom/issues/3712)) ([df2b35f](https://github.com/ashlrai/phantom/commit/df2b35fcfe3f63de6b943d50252fd8f3ddf3b9f9))
+* **RQ-V330-CIFIX-10R3:** RQ-V330-CIFIX-10R3 ([#3703](https://github.com/ashlrai/phantom/issues/3703)) ([6c7b0f5](https://github.com/ashlrai/phantom/commit/6c7b0f5255b42cc0dc96bd75422c95a14ac33448))
+* **RQ-V330-CIFIX-15R2:** RQ-V330-CIFIX-15R2 ([#3702](https://github.com/ashlrai/phantom/issues/3702)) ([f0f9a0f](https://github.com/ashlrai/phantom/commit/f0f9a0f69194ee97d1b52ef15ac5b74f60f6d9c6))
+* **RQ-V330-CIFIX-22:** BRIDGE_NOTES: RQ-V330-CIFIX-22 ([#3698](https://github.com/ashlrai/phantom/issues/3698)) ([b8a82fe](https://github.com/ashlrai/phantom/commit/b8a82fe2625288f39c4e497c626b4c6065941c16))
+* **RQ-V330-CIFIX-23:** BRIDGE_NOTES - RQ-V330-CIFIX-23 ([#3701](https://github.com/ashlrai/phantom/issues/3701)) ([fb60409](https://github.com/ashlrai/phantom/commit/fb60409191a8dc2600e4d151e52cb38de4a10999))
+* **RQ-V330-CIFIX-24:** RQ-V330-CIFIX-24 ([#3699](https://github.com/ashlrai/phantom/issues/3699)) ([1cb7fd5](https://github.com/ashlrai/phantom/commit/1cb7fd55f34e8450a23e44c95fa3e6cc182be37d))
+
 ## [Unreleased]
 
 ## [3.30.9] — 2026-11-05
