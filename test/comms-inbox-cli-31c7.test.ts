@@ -39,9 +39,9 @@ it('posts to the shared inbox with cli attribution and returns receiver duplicat
   const inbox = await readInboxEntries({ runsDir });
   expect(inbox.sourceState).toBe('healthy');
   expect(inbox.entries).toHaveLength(1);
-  expect(inbox.entries[0]).toMatchObject({ source: 'cli', text: body });
+  expect(inbox.entries[0]).toMatchObject({ channel: 'cli', source: expect.stringMatching(/^cli \(cli-[a-f0-9]{16}\)$/), text: body });
   expect(await command(['read', '--json'])).toBe(0);
-  expect(output()).toEqual(inbox);
+  expect(output()).toEqual({ sourceState: inbox.sourceState, entries: inbox.entries.map(({ at, source, priority, text }) => ({ at, source, priority, text })) });
 });
 
 it('refuses empty, secret-shaped and oversized input without appending', async () => {
