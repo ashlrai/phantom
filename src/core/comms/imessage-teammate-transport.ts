@@ -10,7 +10,12 @@ import { isPaused } from './pause.js';
 import { senderIdFor } from './imessage-teammate-inbox.js';
 
 export interface TeamMessageReceipt { rowid: number; sent: boolean; delivered: boolean; error: number }
-export interface TeamTransportOptions { configDir?: string }
+export interface TeamTransportOptions { configDir?: string; loadConfig?: () => AshlrConfig }
+
+async function currentConfig(options: TeamTransportOptions): Promise<AshlrConfig | null> {
+  try { return options.loadConfig ? options.loadConfig() : (await import('../config.js')).loadConfigReadOnlyStrict(); }
+  catch { return null; }
+}
 
 function readConfig(name: string, options: TeamTransportOptions): string {
   const dir = options.configDir ?? join(homedir(), '.ashlr');
@@ -37,8 +42,10 @@ function run(file: string, args: string[], timeout: number): Promise<{ ok: boole
 }
 
 /** Re-check authority immediately before sending. A transport return is not delivery proof. */
-export async function sendApprovedTeammateMessage(text: string, senderId: string, cfg: AshlrConfig, options: TeamTransportOptions = {}): Promise<'accepted' | 'uncertain' | 'refused'> {
-  const handle = approvedTeammateHandle(senderId, cfg, options);
+export async function sendApprovedTeammateMessage(text: string, senderId: string, _cfg: AshlrConfig, options: TeamTransportOptions = {}): Promise<'accepted' | 'uncertain' | 'refused'> {
+  // A generation may outlive a config revocation. Never send using its old snapshot.
+  const live = await currentConfig(options);
+  const handle = live ? approvedTeammateHandle(senderId, live, options) : null;
   if (process.platform !== 'darwin' || !handle || !text.trim() || text.length > 4000) return 'refused';
   const script = 'on run argv\n tell application "Messages"\n send (item 2 of argv) to participant (item 1 of argv) of (1st service whose service type = iMessage)\n end tell\nend run';
   const result = await run('/usr/bin/osascript', ['-e', script, handle, text], 10000);
@@ -46,8 +53,9 @@ export async function sendApprovedTeammateMessage(text: string, senderId: string
 }
 
 /** Exact-text matching also handles modern macOS attributed-body-only outgoing messages. */
-export async function reconcileTeammateMessage(text: string, senderId: string, afterMs: number, cfg: AshlrConfig, options: TeamTransportOptions = {}): Promise<TeamMessageReceipt | null> {
-  const handle = approvedTeammateHandle(senderId, cfg, options);
+export async function reconcileTeammateMessage(text: string, senderId: string, afterMs: number, _cfg: AshlrConfig, options: TeamTransportOptions = {}): Promise<TeamMessageReceipt | null> {
+  const live = await currentConfig(options);
+  const handle = live ? approvedTeammateHandle(senderId, live, options) : null;
   if (process.platform !== 'darwin' || !handle || !Number.isFinite(afterMs) || afterMs < 0) return null;
   const quote = (value: string): string => `'${value.replace(/'/g, "''")}'`;
   const hex = Buffer.from(text).toString('hex').toUpperCase();
