@@ -37,7 +37,7 @@ const cmd = async (args: string[], deps: Parameters<typeof cmdFleetResetWatch>[1
 const root = mkdtempSync(join(tmpdir(), 'reset-watch-'));
 afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }); });
 
-it('resolves through the fleet convention without registry edits', async () => {
+it('reset-watch resolves through the fleet convention without registry edits', async () => {
   expect(resolveFleetSubcommand('reset-watch')).toEqual({ module: './fleet-reset-watch.js', exportName: 'cmdFleetResetWatch' });
   expect(typeof (await import('../src/cli/fleet-reset-watch.js')).cmdFleetResetWatch).toBe('function');
 });

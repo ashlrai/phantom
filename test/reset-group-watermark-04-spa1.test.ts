@@ -64,7 +64,7 @@ it.each([
   ['equal to the watermark', start - 60_000],
   ['before the watermark', start - 90_000],
   ['in the future', start + 3_600_000],
-])('does not observe a reading %s', async (_label, readingMs) => {
+])('reset-group-await does not observe a reading %s', async (_label, readingMs) => {
   const read = vi.fn(async () => snapshot([row('alpha', {}, readingMs), row('beta')]));
   const pending = awaitResetGroup({ lanes: ['alpha', 'beta'], timeoutMs: 100, pollMs: 20, after: watermark }, { read, now });
   await vi.advanceTimersByTimeAsync(100);
@@ -132,7 +132,7 @@ it('rejects an invalid core after option before any read or sleep', async () => 
   expect(sleep).not.toHaveBeenCalled();
 });
 
-it('rejects invalid and duplicate --after flags before reading', async () => {
+it('reset-group-await rejects invalid and duplicate --after flags before reading', async () => {
   const read = vi.fn(async () => snapshot([row('alpha')]));
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   for (const argv of [
@@ -152,7 +152,7 @@ it('rejects invalid and duplicate --after flags before reading', async () => {
   expect(read).not.toHaveBeenCalled();
 });
 
-it('help explains the caller-persisted watermark', async () => {
+it('reset-group-await --help explains the caller-persisted watermark', async () => {
   const lines: string[] = [];
   expect(await cmdFleetResetGroupAwait(['--help'], { emit: line => { lines.push(line); } })).toBe(0);
   expect(lines[0]).toContain('--after');

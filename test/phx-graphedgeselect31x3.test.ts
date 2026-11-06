@@ -79,7 +79,7 @@ describe('graph edge endpoint filters', () => {
     ['edges', '--from'], ['edges', '--to', ''], ['edges', '--from='], ['edges', '--to='],
     ['edges', '--from', '--json'], ['edges', '--to', '--from=task:a'],
     ['edges', '--from', 'task:a', '--from=task:b'], ['edges', '--to=task:a', '--to', 'task:b'],
-  ])('rejects invalid arguments %j before loading', async (...args) => {
+  ])('rejects invalid arguments %j before loading (%#)', async (...args) => {
     expect(await query(args, 2)).toMatchObject({ status: 'error', error: { code: 'GRAPH_USAGE' } });
     expect(loader.loadGraph).not.toHaveBeenCalled();
   });

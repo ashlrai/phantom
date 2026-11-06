@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdResources } from '../src/cli/resources.js';
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 
 let root: string, home: string, bin: string;
 let output: ReturnType<typeof vi.spyOn>;
@@ -10,7 +11,7 @@ const bucket = (usedPercent = 0) => ({ limitId: 'codex', primary: {
   usedPercent, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600,
 }, secondary: { usedPercent, windowDurationMins: 10080, resetsAt: Math.floor(Date.now() / 1000) + 86400 } });
 function native(payload: unknown, mode = ''): void {
-  writeFileSync(join(bin, 'codex'), `#!${process.execPath}
+  writeFileSync(join(bin, 'codex'), `${nodeFixtureHeader()}
 const fs = require('node:fs');
 fs.writeFileSync('pid', String(process.pid));
 fs.writeFileSync(${JSON.stringify(join(root, 'spawned'))}, 'fake');

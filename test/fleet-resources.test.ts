@@ -251,7 +251,7 @@ describe('ashlr fleet resources', () => {
     ['--runs-dir', 'relative/path'],
     ['extra'],
     ['--json', '--', 'extra'],
-  ])('rejects usage error %j with exit 2', async (...args: string[]) => {
+  ])('rejects usage error %j with exit 2 (%#)', async (...args: string[]) => {
     const { code, err, read } = await run(new Map(), args);
     expect(code).toBe(2);
     expect(err).toContain('Usage: ashlr fleet resources');
