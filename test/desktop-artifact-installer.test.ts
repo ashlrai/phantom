@@ -517,9 +517,9 @@ function publishedFixture() {
 describe.skipIf(process.platform==='win32')('commissioned public historical manual proof',()=> {
   let publicationFixture: ReturnType<typeof publishedFixture>;
   beforeEach(() => { publicationFixture=publishedFixture(); },5_000);
-  // These filesystem/Git protocol integrations perform multiple complete verifications.
-  // Observed runs exceeded the unit default (CI 5.362s; local 14.106s); only
-  // these two cases get 20s. Setup and all other cases retain their 5s limits.
+  // Keep the two compound-proof cases' existing 20s bounds (CI 5.362s; local 14.106s).
+  // Setup retains its explicit 5s bound. Other real filesystem/Git/signature proofs
+  // inherit the real-I/O lane's 60s harness budget; they assert no elapsed-time SLO.
   it('runs genuine complete original evidence after master advances; historical success cannot authorize either hosted adopter or a replay',async()=> {
     const p=publicationFixture;
     const cap=await realHosted.inspectCommissionedManualPublication(p.envelope());
