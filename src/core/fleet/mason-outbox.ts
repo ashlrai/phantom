@@ -60,12 +60,25 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
   return entries.slice(-Math.floor(limit));
 }
 
-/** Read-only tail read of MASON-OUTBOX.md; missing file is 'missing', any read error is 'degraded'. */
-export async function readOutboxEntries(opts: { runsDir?: string; limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'degraded'; entries: OutboxEntry[] }> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
+/** Extract only explicit leader replies, retaining their section's wall-clock time. */
+function parsePlanLog(markdown: string, limit = 20): OutboxEntry[] {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  const entries: OutboxEntry[] = [];
+  let at = '';
+  for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    if (line.startsWith('## ')) {
+      at = /^## (\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?) ET(?:\s|$)/.exec(line)?.[1] ?? '';
+    } else if (line.startsWith('- MASON-OUTBOX') || line.includes('Reply for Mason, to copy there:')) {
+      entries.push({ at, text: cap(line) });
+    }
+  }
+  return entries.sort((a, b) => a.at.localeCompare(b.at)).slice(-Math.min(20, Math.floor(limit)));
+}
+
+/** Bounded, read-only tail; never expose a partial first line. */
+async function readTail(path: string): Promise<string> {
+  const handle = await open(path, 'r');
   try {
-    const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-    handle = await open(join(runsDir, 'leader', 'MASON-OUTBOX.md'), 'r');
     const { size } = await handle.stat();
     const offset = Math.max(0, size - MAX_READ_BYTES);
     const buffer = Buffer.alloc(size - offset);
@@ -76,16 +89,31 @@ export async function readOutboxEntries(opts: { runsDir?: string; limit?: number
       bytesRead += result.bytesRead;
     }
     let markdown = buffer.subarray(0, bytesRead).toString('utf8');
-    // An offset inside a line cannot identify a complete heading or body.
     if (offset > 0) {
       const firstNewline = markdown.indexOf('\n');
       markdown = firstNewline < 0 ? '' : markdown.slice(firstNewline + 1);
     }
-    return { sourceState: 'healthy', entries: parseOutbox(markdown, opts.limit) };
-  } catch (error) {
-    const missing = !handle && (error as NodeJS.ErrnoException).code === 'ENOENT';
-    return { sourceState: missing ? 'missing' : 'degraded', entries: [] };
+    return markdown;
   } finally {
-    await handle?.close().catch(() => undefined);
+    await handle.close().catch(() => undefined);
+  }
+}
+
+/** Prefer the outbox; an empty or missing outbox falls back to explicit PLAN-LOG replies. */
+export async function readOutboxEntries(opts: { runsDir?: string; limit?: number } = {}): Promise<{ sourceState: 'healthy' | 'missing' | 'degraded'; entries: OutboxEntry[] }> {
+  const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  let sourceState: 'healthy' | 'missing' | 'degraded' = 'healthy';
+  try {
+    const entries = parseOutbox(await readTail(join(runsDir, 'leader', 'MASON-OUTBOX.md')), opts.limit);
+    if (entries.length) return { sourceState, entries };
+  } catch (error) {
+    sourceState = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded';
+  }
+  try {
+    const entries = parsePlanLog(await readTail(join(runsDir, 'leader', 'PLAN-LOG.md')), opts.limit);
+    return { sourceState: entries.length ? 'healthy' : sourceState, entries };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') sourceState = 'degraded';
+    return { sourceState, entries: [] };
   }
 }
