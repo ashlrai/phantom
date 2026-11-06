@@ -1,6 +1,6 @@
 /** Read-only projection of retained apps-watch bus events. */
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter } from './bus-inbox.js';
-import { FLEET_APPS } from '../verse/fleet-apps-api.js';
+import { FLEET_APPS } from './app-await.js';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const app = (v: unknown): v is string => typeof v === 'string' && (FLEET_APPS as readonly string[]).includes(v);

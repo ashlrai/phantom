@@ -3,12 +3,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { awaitAppState, type AppAwaitTarget } from '../fleet/app-await.js';
+import { awaitAppState, FLEET_APPS, type AppAwaitTarget } from '../fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
-export const FLEET_APPS = ['Phantom', 'Codex', 'Claude', 'Grok Bot', 'ChatGPT', 'Cursor', 'Safari', 'Google Chrome'] as const;
+export { FLEET_APPS };
 const PATH = '/api/verse/fleet/apps';
 // One finite budget covers the action and any running confirmation; waitRunningMs only caps the confirmation part.
 const ACTION_BUDGET_MS = 30_000;

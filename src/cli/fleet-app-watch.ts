@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
-import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
+import { FLEET_APPS } from '../core/fleet/app-await.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const execFileAsync = promisify(execFile);

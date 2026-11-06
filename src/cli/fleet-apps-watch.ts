@@ -5,7 +5,7 @@ import { stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createAppsWatchPublisher, type AppsWatchEvent, type AppsWatchDiagnostic } from '../core/fleet/apps-watch-bus.js';
-import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
+import { FLEET_APPS } from '../core/fleet/app-await.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const execFileAsync = promisify(execFile);
