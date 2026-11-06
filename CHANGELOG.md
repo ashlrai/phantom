@@ -16,6 +16,13 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.19](https://github.com/ashlrai/phantom/compare/v3.30.18...v3.30.19) (2026-11-06)
+
+
+### Fixes
+
+* **release:** preserve qualified tracked native icons ([#3789](https://github.com/ashlrai/phantom/issues/3789)) ([7481256](https://github.com/ashlrai/phantom/commit/748125663263c882d0e1ea61cd4d50ce89ff0625))
+
 ## [Unreleased]
 
 ## [3.30.18] — 2026-11-06
