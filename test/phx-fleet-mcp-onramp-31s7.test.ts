@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createFleetServer, MAX_FLEET_OUTPUT_BYTES, type FleetReaders } from '../src/mcp/fleet-server.js';
+import { FLEET_MCP_TOOL_NAMES } from './support/fleet-mcp-tools.js';
 
 const guide = readFileSync(new URL('../docs/FLEET-MCP-ONRAMP.md', import.meta.url), 'utf8');
 const blocks = [...guide.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]!) as unknown);
@@ -34,6 +35,8 @@ describe('standalone fleet MCP onramp', () => {
   it('uses the documented config and executes its listed sequence with JSON observations', async () => {
     expect(config.mcpServers['phantom-fleet']).toEqual({ command: 'phm', args: ['mcp', 'fleet'] });
     expect(sequence.map(call => call.name)).toEqual(['fleet_status', 'fleet_loop', 'fleet_bus_hops']);
+    // The guide's first-session sequence is a subset of the advertised contract.
+    for (const name of sequence.map(call => call.name)) expect(FLEET_MCP_TOOL_NAMES).toContain(name);
     const status = { snapshotKind: 'local-persisted', authority: 'none', queue: { backlogItems: 2 } };
     const loop = { snapshotKind: 'local-persisted', historyLimit: 5, recentTicks: [{ ts: '2026-01-01T00:00:00Z' }] };
     const bus = { snapshotKind: 'local-persisted', sourceState: 'ok', limit: 5, hops: [{ id: 'fake-hop-1', from: 'agent-a', to: 'agent-b', inputTokens: null, outputTokens: 3 }] };
@@ -42,7 +45,8 @@ describe('standalone fleet MCP onramp', () => {
     try {
       await withClient(readers, async client => {
         const listed = await client.listTools();
-        expect(listed.tools.map(tool => tool.name)).toEqual(sequence.map(call => call.name));
+        const advertised = listed.tools.map(tool => tool.name);
+        for (const call of sequence) expect(advertised).toContain(call.name);
         for (const [index, call] of sequence.entries()) {
           const result = await client.callTool(call);
           expect(result.isError).not.toBe(true);
