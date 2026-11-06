@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.11 |
-| Latest dated changelog release (2026-11-06) | 3.30.11 |
+| Source package | 3.30.12 |
+| Latest dated changelog release (2026-11-06) | 3.30.12 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.12](https://github.com/ashlrai/phantom/compare/v3.30.11...v3.30.12) (2026-11-06)
+## [Unreleased]
+
+## [3.30.12] — 2026-11-06
 
 
 ### Changes
@@ -51,8 +53,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3742](https://github.com/ashlrai/phantom/issues/3742)) ([64ec88f](https://github.com/ashlrai/phantom/commit/64ec88f5c85977cb19ca5d8b011c24024b9d2b06))
 * RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3753](https://github.com/ashlrai/phantom/issues/3753)) ([44f7c3e](https://github.com/ashlrai/phantom/commit/44f7c3ee38645a27a6e3f3267472376e5354617e))
 * RQ-V330-CIFIX-2 ([#3630](https://github.com/ashlrai/phantom/issues/3630)) ([c7a19f3](https://github.com/ashlrai/phantom/commit/c7a19f328713c9abe078f1b5752abf330c09875a))
-
-## [Unreleased]
 
 ## [3.30.11] — 2026-11-06
 
