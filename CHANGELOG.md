@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.17 |
-| Latest dated changelog release (2026-11-06) | 3.30.17 |
+| Source package | 3.30.18 |
+| Latest dated changelog release (2026-11-06) | 3.30.18 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,13 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.18] — 2026-11-06
+
+
+### Tests
+
+* classify real installer proofs in the real-I/O lane ([#3786](https://github.com/ashlrai/phantom/issues/3786)) ([e3284a3](https://github.com/ashlrai/phantom/commit/e3284a36573605000ededc8d4e9a537987fcd336))
 
 ## [3.30.17] — 2026-11-06
 

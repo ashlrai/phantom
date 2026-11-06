@@ -174,3 +174,34 @@ describe('full bus recovery', { timeout: 20000 }, () => {
     expect(readFileSync(join(opts.runsDir, 'leader/MASON-INBOX.md'), 'utf8').match(/Synthetic engineering request/g)).toHaveLength(1);
   });
 });
+
+describe('trusted sole-writer receipts', () => {
+  it('does not advance inbox or bus on missing/uncertain/mismatched writer receipts, then reconciles once', async () => {
+    const opts = fixture();
+    const identity = { channel: 'slack' as const, id: 'U0SYNTHETIC' };
+    const source = '[mason]\nidentities=[{channel="slack",id="U0SYNTHETIC"}]\n[team]\nidentities=[{channel="slack",id="U0SYNTHETIC"}]';
+    const input = { message: { ...message, channel: 'slack' as const }, verifiedSender: identity };
+    const { leaderInboxRequestHash } = await import('../src/core/agents/leader-inbox-writer.js');
+    let mode: 'missing' | 'uncertain' | 'mismatch' | 'good' = 'missing';
+    let writes = 0;
+    const service = () => createLeaderNetwork({ ...opts, configSource: source, appendInbox: async request => {
+      if (mode === 'uncertain') throw new Error('Synthetic lost result');
+      if (mode === 'missing') return undefined;
+      if (mode === 'good') writes++;
+      return { schema: 'mason-inbox-receipt.v1', requestId: request.requestId,
+        requestSha256: mode === 'mismatch' ? '0'.repeat(64) : leaderInboxRequestHash(request), status: 'duplicate' };
+    } });
+    for (const state of ['missing', 'uncertain', 'mismatch'] as const) {
+      mode = state;
+      expect((await service().ingest(input)).status).toBe('unavailable');
+      const saved = JSON.parse(readFileSync(join(opts.runsDir, 'leader/network-state.json'), 'utf8'));
+      expect(Object.values(saved.routes)).toMatchObject([{ inbox: false, bus: false }]);
+      expect(await service().pending()).toEqual([]);
+    }
+    mode = 'good';
+    expect((await service().ingest(input)).status).toBe('accepted');
+    expect((await service().ingest(input)).status).toBe('duplicate');
+    expect(writes).toBe(1);
+    expect(listBusInboxAfter(0, 10, { root: opts.busRoot, now: opts.now })).toMatchObject({ status: 'ok', messages: [expect.anything()] });
+  });
+});
