@@ -246,10 +246,18 @@ describe('phm channels CLI', () => {
   it('routes the map alias to the same offline handler', async () => {
     useHome();
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdChannels(['map', '--json'])).toBe(0);
-    const direct = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
-    expect(await cmdChannels(['slack', 'map', '--json'])).toBe(0);
-    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(direct);
+    // Both aliases observe the same clock; their full offline plans must match.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-06T00:00:00.000Z'));
+    try {
+      expect(await cmdChannels(['map', '--json'])).toBe(0);
+      const direct = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+      expect(direct.at).toBe('2026-11-06T00:00:00.000Z');
+      expect(await cmdChannels(['slack', 'map', '--json'])).toBe(0);
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(direct);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects bad usage with exit 2 and keeps secrets out of every output path', async () => {
