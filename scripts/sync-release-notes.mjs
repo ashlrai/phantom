@@ -5,6 +5,7 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncCandidateVersion } from './sync-candidate-version.mjs';
+import { synchronize } from './site-freshness.mjs';
 
 export function normalizeReleaseNotes(text, version) {
   assert.match(version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
@@ -44,6 +45,9 @@ export function syncReleaseNotes(root, version) {
   manifest['.'] = version;
   writeFileSync(path, notes);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  // Managed site facts depend on the newly normalized dated heading as well
+  // as the candidate carriers; synchronize only after both sources are saved.
+  synchronize(root);
   return result;
 }
 
