@@ -320,6 +320,33 @@ const TOOLS: NativeToolImpl[] = [
     handler: async () => (await import('../cli/fleet-apps-status.js')).readFleetAppsStatus(),
   },
   {
+    name: 'phantom_fleet_apps_recovery_batch',
+    description: 'Wait for retained recovery evidence for multiple invocations. Read-only; no live probe or app control.',
+    inputSchema: { type: 'object', properties: {
+      invocationIds: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true,
+        items: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' } },
+      maxAgeMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      durationMs: { type: 'integer', minimum: 1, maximum: 300000 },
+      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
+    }, required: ['invocationIds', 'maxAgeMs', 'durationMs'], additionalProperties: false },
+    safety: 'read',
+    handler: async args => {
+      const { cmdFleetAppsRecoveryBatch } = await import('../cli/fleet-apps-recovery-batch.js');
+      const commandArgs = ['--root', process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), '--json',
+        '--max-age-ms', String(args.maxAgeMs), '--duration-ms', String(args.durationMs)];
+      if (args.intervalMs !== undefined) commandArgs.push('--interval-ms', String(args.intervalMs));
+      for (const id of args.invocationIds as string[]) commandArgs.push('--invocation', id);
+      let output = '';
+      const code = await cmdFleetAppsRecoveryBatch(commandArgs, { emit: line => { output = line; } });
+      const result: unknown = JSON.parse(output);
+      if (!result || typeof result !== 'object' || Array.isArray(result) ||
+        !('outcome' in result) || !('evidence' in result) || result.evidence !== 'retained' ||
+        !('liveProbe' in result) || result.liveProbe !== false ||
+        (code === 0) !== (result.outcome === 'healthy')) throw new Error('Invalid batch result');
+      return result;
+    },
+  },
+  {
     name: 'phantom_fleet_apps_await',
     description: 'Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart.',
     get inputSchema() { return { type: 'object', properties: {
@@ -1395,6 +1422,18 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       auditNativeCall(`${tool.name} keys=${argKeys} — bus validation unavailable`, 'error');
       return textResult({ error: 'Bus validation unavailable' }, true);
     }
+  } else if (name === 'phantom_fleet_apps_recovery_batch') {
+    const ids = args.invocationIds;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    invalid = rawArgs === null || typeof rawArgs !== 'object' || Array.isArray(rawArgs) ||
+      Object.keys(args).some(key => !['invocationIds', 'maxAgeMs', 'durationMs', 'intervalMs'].includes(key)) ||
+      !Array.isArray(ids) || ids.length < 1 || ids.length > 20 ||
+      ids.some(id => typeof id !== 'string' || !uuid.test(id)) ||
+      new Set(ids.map(id => typeof id === 'string' ? id.toLowerCase() : id)).size !== ids.length ||
+      !Number.isSafeInteger(args.maxAgeMs) || (args.maxAgeMs as number) < 1 ||
+      !Number.isSafeInteger(args.durationMs) || (args.durationMs as number) < 1 || (args.durationMs as number) > 300000 ||
+      ('intervalMs' in args && (!Number.isSafeInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
+      ? 'invalid recovery batch arguments' : null;
   } else if (name === 'phantom_fleet_apps_changes') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     const apps = args.apps;
@@ -1488,7 +1527,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || name === 'phantom_fleet_apps_ensure' || name === 'phantom_fleet_apps_await') return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || name === 'phantom_fleet_apps_recovery_batch' || name === 'phantom_fleet_apps_ensure' || name === 'phantom_fleet_apps_await') return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1497,6 +1536,11 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
 
   try {
     const payload = await tool.handler(args, cfg);
+    if (name === 'phantom_fleet_apps_recovery_batch') {
+      const healthy = (payload as { outcome: string }).outcome === 'healthy';
+      auditNativeCall(`${tool.name} keys=${argKeys} — ${healthy ? 'ok' : 'batch incomplete'}`, healthy ? 'ok' : 'error');
+      return textResult(payload, !healthy);
+    }
     // Handlers refuse with a `{ error }` payload (not enrolled, bad kind, ...).
     // That is a failed call: flag it so clients do not read it as success.
     if (isRefusalPayload(payload)) {
@@ -1521,6 +1565,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     }
     return textResult(payload);
   } catch (err) {
+    if (name === 'phantom_fleet_apps_recovery_batch') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — batch unavailable`, 'error');
+      return textResult({ error: 'Fleet recovery batch unavailable' }, true);
+    }
     if (name === 'phantom_fleet_apps_ensure') {
       auditNativeCall(`${tool.name} keys=${argKeys} — recovery unavailable`, 'error');
       return textResult({ error: 'Fleet recovery unavailable' }, true);
