@@ -6,6 +6,7 @@
 import { appendBusInbox } from './bus-inbox.js';
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
 import type { ChannelEnvelope } from './channel-envelope.js';
+import { hasLeaderNetworkConfig } from '../agents/leader-network-config.js';
 
 export const CHANNEL_BUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export type ChannelPublishState = 'published' | 'skipped' | 'failed';
@@ -43,6 +44,15 @@ export async function publishChannelEnvelope(
   options: ChannelBusPublishOptions = {},
 ): Promise<ChannelPublishState> {
   try {
+    // This function receives only receipts accepted by an authenticated channel
+    // receiver. Envelope labels supplied directly to the bus never enter here.
+    if (hasLeaderNetworkConfig()) {
+      const { receiptLeaderChannel } = await import('../agents/leader-network-runtime.js');
+      // The bus mirror clock may be the original receipt's historical timestamp.
+      // Network state uses wall time; attribution is carried separately below.
+      const routed = await receiptLeaderChannel(envelope, { busRoot: options.root });
+      if (routed !== 'ignored') return routed === 'published' ? 'published' : 'failed';
+    }
     const busEnvelope = buildChannelBusEnvelope(envelope, options.now);
     if (busEnvelope === null) return 'skipped';
     const post = appendBusInbox(busEnvelope, { root: options.root, now: options.now });

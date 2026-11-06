@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
 import { loadConfig } from '../core/config.js';
+import { hasLeaderNetworkConfig } from '../core/agents/leader-network-config.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import type { LeaderAction, LeaderMemo, LeaderStateV1 } from '../core/vision/leader-types.js';
 
@@ -41,6 +42,8 @@ Compatible alias: ashlr leader <command>
 
 Usage:
   phm leader show [--json]
+  phm leader seat [--json] [--tier elite|workhorse|fast|local]
+  phm leader inbox [--json] [--limit n] [--text "message"]
   phm leader run [--force]
   phm leader tick [--wait]
   phm leader veto <actionId> [--note "why"]
@@ -207,9 +210,10 @@ export async function wakeLeaderIfDue(
     if (nowMs - d.readLastWake() < LEADER_WAKE_THROTTLE_MS) return { started: false, why: 'woke the Leader recently' };
     const [leader, cadenceMod] = await Promise.all([import('../core/vision/leader.js'), import('../core/vision/leader-cadence.js')]);
     const wake = leader.leaderWakeDue(nowMs, leader.readLeaderRunState(), cadenceMod.resolveLeaderCadence(cfg));
-    if (!wake.due) return { started: false, why: wake.why };
+    const networkPending = hasLeaderNetworkConfig() && await (await import('../core/agents/leader-network-runtime.js')).hasPendingLeaderNetwork();
+    if (!wake.due && !networkPending) return { started: false, why: wake.why };
     d.writeLastWake(nowMs);
-    return d.spawnTick() ? { started: true, why: wake.why } : { started: false, why: 'the tick could not be started' };
+    return d.spawnTick() ? { started: true, why: networkPending ? 'verified Leader inbox request' : wake.why } : { started: false, why: 'the tick could not be started' };
   } catch {
     return { started: false, why: 'error' };
   }
@@ -493,6 +497,47 @@ async function runDirectivesCli(args: string[]): Promise<number> {
   return 2;
 }
 
+/** Typed CEO inspection and compose verbs; inspection never calls a model. */
+async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number> {
+  const json = flag(args, '--json');
+  const limit = option(args, '--limit');
+  const text = option(args, '--text');
+  const tier = option(args, '--tier');
+  if (args.length || limit === undefined || text === undefined || tier === undefined ||
+      (sub === 'seat' && (limit !== null || text !== null)) ||
+      (sub === 'inbox' && tier !== null) ||
+      (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200)) ||
+      (tier !== null && !['elite', 'workhorse', 'fast', 'local'].includes(tier))) {
+    console.error(USAGE); return 2;
+  }
+  try {
+    if (sub === 'seat') {
+      const { loadDefaultLeaderSeatDeps, inspectLeaderSeats } = await import('../core/vision/leader-seat.js');
+      const cfg = loadConfig();
+      if (tier !== null) {
+        const foundry = (cfg.foundry ?? {}) as Record<string, unknown>;
+        const current = foundry.leader as Record<string, unknown> | undefined;
+        cfg.foundry = { ...foundry, leader: { ...current, modelTiers: current?.modelTiers ?? {}, taskTier: { ...(current?.taskTier as Record<string, unknown> | undefined), full: tier } } } as typeof cfg.foundry;
+      }
+      const result = await inspectLeaderSeats(await loadDefaultLeaderSeatDeps(cfg), { deep: false, promptChars: 0, mode: 'full' });
+      console.log(json ? JSON.stringify(result, null, 2) : result.seats.map(seat => `${seat.seatId}  ${seat.model}  ${seat.tier ?? 'unclassified'}`).join('\n') || result.reason);
+      return 0;
+    }
+    const { readLeaderInbox, composeLeaderInbox } = await import('../core/agents/leader-network-runtime.js');
+    if (text !== null) {
+      const result = await composeLeaderInbox(text);
+      console.log(json ? JSON.stringify(result) : result.ok ? 'Recorded for the Leader.' : result.reason);
+      return result.ok ? 0 : 1;
+    }
+    const result = await readLeaderInbox({ limit: limit === null ? 30 : Number(limit) });
+    console.log(json ? JSON.stringify(result, null, 2) : result.inbox.entries.map(entry => `${entry.at} ${entry.text}`).join('\n') || 'No inbox entries yet.');
+    return 0;
+  } catch {
+    console.error(json ? JSON.stringify({ error: 'leader-unavailable' }) : 'Leader state is unavailable.');
+    return 1;
+  }
+}
+
 export async function runLeaderCli(argv: string[]): Promise<number> {
   const args = [...argv];
   const sub = args.shift();
@@ -509,6 +554,7 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
   }
   // Before the core import: printing a plist needs no Leader state.
   if (sub === 'oversight-plist') return runOversightPlist(args);
+  if (sub === 'seat' || sub === 'inbox') return runCeoCli(sub, args);
   if (sub === 'say' || sub === 'thread' || sub === 'answer' || sub === 'approve' || sub === 'directives') return runThreadCli(sub, args);
   const leader = await import('../core/vision/leader.js');
 
