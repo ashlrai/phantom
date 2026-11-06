@@ -74,6 +74,24 @@ function duringRead(f: Fixture, effect: (readNumber: number) => void, maximumEff
   restores.push(restore);
   return { restore, reads: () => reads, effects: () => effects };
 }
+/** Commit between the initial named-file checks and the real open syscall. */
+function beforeOpen(f: Fixture, effect: () => void, maximumEffects = 1) {
+  const original = fs.openSync; let opens = 0, effects = 0, insideEffect = false;
+  const spy = vi.spyOn(fs, 'openSync').mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+    if (args[0] === f.file && !insideEffect) {
+      opens++;
+      if (effects < maximumEffects) {
+        effects++; insideEffect = true;
+        try { effect(); } finally { insideEffect = false; }
+      }
+    }
+    return Reflect.apply(original, fs, args);
+  }) as typeof fs.openSync);
+  syncBuiltinESMExports(); let restored = false;
+  const restore = () => { if (restored) return; restored = true; spy.mockRestore(); syncBuiltinESMExports(); };
+  restores.push(restore);
+  return { restore, opens: () => opens, effects: () => effects };
+}
 function publishNext(f: Fixture, expectedRevision = f.initial.revision) {
   return setResourcePoolAllocation(f.root, f.pool, f.bindings, 60, expectedRevision);
 }
@@ -112,6 +130,60 @@ describe.runIf(process.platform === 'darwin')('owned ledger publication during s
     expect(identity(fs.lstatSync(join(f.root, '.resource-console.lock')))).toEqual(identity(lock));
     expect(observation).toMatchObject({ error: null, jobs: [] });
     expect(f.owner!.snapshot().error).toBeNull();
+  });
+
+  it('reads the fresh production generation when atomic replacement precedes open without poisoning ownership', async () => {
+    const f = await fixture(); const lock = identity(fs.lstatSync(join(f.root, '.resource-console.lock')));
+    let published: ReturnType<typeof publishNext> | undefined;
+    const hook = beforeOpen(f, () => { published = publishNext(f); });
+    expect(f.owner!.snapshot()).toMatchObject({ error: null, jobs: [] }); hook.restore();
+    expect(hook.effects()).toBe(1); expect(hook.opens()).toBe(2);
+    expect(readResourcePoolAllocation(f.root, f.pool, f.bindings)).toEqual(published);
+    expect(f.owner!.snapshot().error).toBeNull();
+    expect(identity(fs.lstatSync(join(f.root, '.resource-console.lock')))).toEqual(lock);
+    unchangedPolicies(f);
+  });
+
+  it('keeps immutable inputs strict for a pre-open replacement and bounds continued publication to three reads', async () => {
+    const f = await fixture(false);
+    const immutable = beforeOpen(f, () => { publishNext(f); });
+    expect(() => readResourceJson(f.file)).toThrow(); immutable.restore();
+    expect(immutable.effects()).toBe(1); expect(immutable.opens()).toBe(1);
+    let revision = 2;
+    const repeated = beforeOpen(f, () => { revision = publishNext(f, revision).revision; }, 10);
+    expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); repeated.restore();
+    expect(repeated.effects()).toBe(3); expect(repeated.opens()).toBe(3); expect(revision).toBe(5);
+    expect(readResourcePoolAllocation(f.root, f.pool, f.bindings)).toMatchObject({ revision: 5 });
+  });
+
+  it.each(['mode', 'hardlink', 'symlink', 'oversized', 'malformed', 'schema'] as const)(
+    'refuses unsafe pre-open %s replacement without admitting its bytes', async kind => {
+      const f = await fixture(false);
+      const hook = beforeOpen(f, () => {
+        publishNext(f);
+        if (kind === 'mode') fs.chmodSync(f.file, 0o604);
+        else if (kind === 'hardlink') fs.linkSync(f.file, join(f.root, 'extra-link'));
+        else if (kind === 'symlink') {
+          const retained = join(f.root, 'retained.json'); fs.renameSync(f.file, retained); fs.symlinkSync(retained, f.file);
+        } else if (kind === 'oversized') fs.writeFileSync(f.file, Buffer.alloc(4 * 1024 * 1024 + 1, 32));
+        else if (kind === 'malformed') fs.writeFileSync(f.file, '{broken\n');
+        else { const state = JSON.parse(fs.readFileSync(f.file, 'utf8')); state.schemaVersion = 99; fs.writeFileSync(f.file, JSON.stringify(state)); }
+      });
+      expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); hook.restore();
+      expect(hook.effects()).toBe(1); expect(hook.opens()).toBeLessThanOrEqual(2);
+      expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow();
+    });
+
+  it('does not treat a replaced parent directory as an ordinary ledger publication', async () => {
+    const f = await fixture(false);
+    const bytes = fs.readFileSync(f.file);
+    const hook = beforeOpen(f, () => {
+      fs.renameSync(f.root, join(f.base, 'retained-ledger')); fs.mkdirSync(f.root, { mode: 0o700 });
+      fs.writeFileSync(f.file, bytes, { mode: 0o600 });
+    });
+    expect(() => readResourcePoolAllocation(f.root, f.pool, f.bindings)).toThrow(); hook.restore();
+    expect(hook.effects()).toBe(1); expect(hook.opens()).toBe(1);
+    expect(fs.readFileSync(f.file)).toEqual(bytes);
   });
 
   it('keeps the public configuration reader strict rather than silently retrying replacement', async () => {

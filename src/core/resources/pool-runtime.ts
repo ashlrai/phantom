@@ -183,6 +183,7 @@ function readResourceJsonSnapshot(file: string, maxBytes: number): unknown {
   }
   let fd: number | undefined;
   try {
+    const parent = lstatSync(dirname(file));
     const named = lstatSync(file);
     if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || realpathSync(file) !== file ||
       named.size < 2 || named.size > maxBytes || (named.mode & 0o777) !== 0o600 ||
@@ -190,8 +191,21 @@ function readResourceJsonSnapshot(file: string, maxBytes: number): unknown {
       !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: dirname(file) }).ok) throw new Error();
     fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     const opened = fstatSync(fd);
-    if (opened.dev !== named.dev || opened.ino !== named.ino || opened.size !== named.size ||
-      opened.uid !== named.uid || opened.mode !== named.mode || opened.nlink !== 1) throw new Error();
+    if (opened.dev !== named.dev || opened.ino !== named.ino) {
+      // A committed ledger can replace the initial named generation before
+      // open. Admit no bytes from this descriptor: retry only the same witnessed
+      // private-file publication that the post-read check already recognizes.
+      const installed = lstatSync(file); const currentParent = lstatSync(dirname(file));
+      if (!parent.isDirectory() || parent.isSymbolicLink() || !currentParent.isDirectory() || currentParent.isSymbolicLink() ||
+        parent.dev !== currentParent.dev || parent.ino !== currentParent.ino || parent.uid !== currentParent.uid || parent.mode !== currentParent.mode ||
+        !opened.isFile() || opened.nlink !== 1 || opened.uid !== named.uid || opened.mode !== named.mode ||
+        opened.size < 2 || opened.size > maxBytes || !installed.isFile() || installed.isSymbolicLink() ||
+        installed.dev !== opened.dev || installed.ino !== opened.ino || installed.uid !== opened.uid || installed.mode !== opened.mode ||
+        installed.nlink !== 1 || installed.size !== opened.size || installed.mtimeMs !== opened.mtimeMs || installed.ctimeMs !== opened.ctimeMs ||
+        realpathSync(file) !== file || !assurePrivateStoragePath(file, 'file', 'inspect-existing', { anchorPath: dirname(file) }).ok) throw new Error();
+      throw new ResourceFileReplacedDuringRead(RESOURCE_FILE_UNAVAILABLE);
+    }
+    if (opened.size !== named.size || opened.uid !== named.uid || opened.mode !== named.mode || opened.nlink !== 1) throw new Error();
     const bytes = Buffer.alloc(named.size);
     if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw new Error();
     const after = fstatSync(fd); const installed = lstatSync(file);
@@ -229,7 +243,7 @@ export function readResourceJson(file: string, maxBytes = 2 * 1024 * 1024): unkn
 
 function readMutablePoolState(file: string): unknown {
   // Other owners can commit this ledger while a supervisor observes it. Retry
-  // only a witnessed post-read atomic replacement, with at most three complete
+  // only a witnessed atomic replacement, with at most three complete
   // fresh reads. Never retry a mutation, invalid data or commissioning custody.
   for (let attempt = 0; attempt < 3; attempt++) {
     try { return readResourceJsonSnapshot(file, MAX_STATE_BYTES); }
