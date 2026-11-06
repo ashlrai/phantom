@@ -48,11 +48,16 @@ export function createSlackApi(input: {
     if (!response.ok) throw new Error('slack-http-failed');
     const chunks: Uint8Array[] = []; let size = 0;
     if (!response.body) throw new Error('slack-response-invalid');
-    for await (const chunk of response.body) {
-      size += chunk.byteLength;
-      if (size > MAX_REPLY_BYTES) { await response.body.cancel().catch(() => {}); throw new Error('slack-response-too-large'); }
-      chunks.push(chunk);
-    }
+    const reader = response.body.getReader();
+    try {
+      for (;;) {
+        const next = await reader.read().catch(() => { throw new Error('slack-network-uncertain'); });
+        if (next.done) break;
+        size += next.value.byteLength;
+        if (size > MAX_REPLY_BYTES) { await reader.cancel().catch(() => {}); throw new Error('slack-response-too-large'); }
+        chunks.push(next.value);
+      }
+    } finally { reader.releaseLock(); }
     let result: unknown;
     try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { throw new Error('slack-response-invalid'); }
