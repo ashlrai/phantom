@@ -82,6 +82,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'cos-work': () => import('./fleet-cos-work.js'),
   'daily-reds': () => import('./fleet-daily-reds.js'),
   'dead-heads': () => import('./fleet-dead-heads.js'),
+  'dep-gate': () => import('./fleet-dep-gate.js'),
   'diff-scan': () => import('./fleet-diff-scan.js'),
   'dirty-landed': () => import('./fleet-dirty-landed.js'),
   'disk': () => import('./fleet-disk.js'),
