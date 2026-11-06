@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.11 |
-| Latest dated changelog release (2026-11-06) | 3.30.11 |
+| Source package | 3.30.12 |
+| Latest dated changelog release (2026-11-06) | 3.30.12 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -17,6 +17,42 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ---
 
 ## [Unreleased]
+
+## [3.30.12] — 2026-11-06
+
+
+### Changes
+
+* RQ-MAC-PUBLISH-RESILIENCE ([#1100](https://github.com/ashlrai/phantom/issues/1100)) ([cc59555](https://github.com/ashlrai/phantom/commit/cc5955587dfa26256461287c55fd20b3e109077e))
+* RQ-MAC-PUBLISH-RESILIENCE ([#3746](https://github.com/ashlrai/phantom/issues/3746)) ([50143f8](https://github.com/ashlrai/phantom/commit/50143f8790eb9c9e1f3a97ebe02eabfdda58aaf9))
+* RQ-PHX-TEAMMATETEXTS25 ([#3723](https://github.com/ashlrai/phantom/issues/3723)) ([e68b89e](https://github.com/ashlrai/phantom/commit/e68b89ebe68247f2a4f6fdc70441842c813479c3))
+* RQ-PHX-TEAMMATETEXTS25 ([#3748](https://github.com/ashlrai/phantom/issues/3748)) ([a527459](https://github.com/ashlrai/phantom/commit/a527459b3a1f17a9d3b229365b2d206f08c28ae0))
+* RQ-RECUT-V330-CIFIX-10R3-ONBOARD-NOV6 ([#3750](https://github.com/ashlrai/phantom/issues/3750)) ([963ba88](https://github.com/ashlrai/phantom/commit/963ba88ae16db7cdedf59214298070da5e35eb3c))
+* **RQ-RECUT-V330-CIFIX-10R3-ONBOARD-NOV6:** Onboarding continuation handoff ([#3735](https://github.com/ashlrai/phantom/issues/3735)) ([313239b](https://github.com/ashlrai/phantom/commit/313239bc4d533b624d12bf789b0edb6515924da9))
+* RQ-RECUT-V330-CIFIX-6R2-MACMEM-NOV6 ([#3754](https://github.com/ashlrai/phantom/issues/3754)) ([ba51cda](https://github.com/ashlrai/phantom/commit/ba51cdaba3e7167f54021e8b7d8ec2b574e1f3a7))
+* **RQ-RECUT-V330-CIFIX-6R2-MACMEM-NOV6:** Bound the resource supervisor capacity assertion ([#3743](https://github.com/ashlrai/phantom/issues/3743)) ([fc537a9](https://github.com/ashlrai/phantom/commit/fc537a920f9618da1d0e96147c212c34db636e4d))
+* **RQ-RECUT-V330-CIFIX-TITLES-NOV6:** BRIDGE_NOTES — RQ-RECUT-V330-CIFIX-TITLES-NOV6 ([#3752](https://github.com/ashlrai/phantom/issues/3752)) ([40364cb](https://github.com/ashlrai/phantom/commit/40364cb91feac0faa50e317a5ac5c784aa453222))
+* RQ-RECUT-V330-CIFIX23-NATIVE-NOV6 ([#3749](https://github.com/ashlrai/phantom/issues/3749)) ([ab3d126](https://github.com/ashlrai/phantom/commit/ab3d126695316ad8adaee7c6b9087813de27971e))
+* **RQ-RECUT-V330-CIFIX23-NATIVE-NOV6:** Preserve the real environment-credential reader in API versi ([#3744](https://github.com/ashlrai/phantom/issues/3744)) ([32d2100](https://github.com/ashlrai/phantom/commit/32d2100cfd9a39d11c7aa4fb7df1e489321808ef))
+* **RQ-RECUT-V330-CIFIX24-COMMSV2-NOV6:** CIFIX24 communications V2 handoff ([#3755](https://github.com/ashlrai/phantom/issues/3755)) ([5826f9a](https://github.com/ashlrai/phantom/commit/5826f9a1e6befd42c9ef6db1485cfbdab2da4922))
+* RQ-RECUT-V330-CLIHELP-CONTRACTS-NOV6 ([#3759](https://github.com/ashlrai/phantom/issues/3759)) ([cdb208f](https://github.com/ashlrai/phantom/commit/cdb208f17962afb21d62e5d2490220328a4145e1))
+* **RQ-RECUT-V330-CLIHELP-NOV6:** CLI channels help handoff ([#3738](https://github.com/ashlrai/phantom/issues/3738)) ([05130d0](https://github.com/ashlrai/phantom/commit/05130d083751465a3f5812254ec9a26a37de076d))
+* RQ-RECUT-V330-ENGINEAVAILABLE-NOV6 ([#3747](https://github.com/ashlrai/phantom/issues/3747)) ([ab93279](https://github.com/ashlrai/phantom/commit/ab93279fc2aeeb69ff8b1aaca0e6f5e07de475d3))
+* **RQ-RECUT-V330-ENGINEAVAILABLE-NOV6:** Bridge notes ([#3741](https://github.com/ashlrai/phantom/issues/3741)) ([9b8f117](https://github.com/ashlrai/phantom/commit/9b8f117888fa6180965d208cca144bc8381456a9))
+* **RQ-RECUT-V330-ENGINEAVAILABLE-RESOURCE-NOV6:** Resource observation repair handoff ([#3751](https://github.com/ashlrai/phantom/issues/3751)) ([7bd8384](https://github.com/ashlrai/phantom/commit/7bd83845a42ebce87df365d70a8a693dfe784121))
+* **RQ-RECUT-V330-FIXTURES-NOV6:** Align retained resource and Verse fixtures with current cont ([#3760](https://github.com/ashlrai/phantom/issues/3760)) ([83afd78](https://github.com/ashlrai/phantom/commit/83afd7864b85be19fc4f1b90ec2bd72fdbb69287))
+* **RQ-RECUT-V330-FLEETMCP-INVENTORY-NOV6:** Bridge notes — MCP inventory and payload guard ([#3758](https://github.com/ashlrai/phantom/issues/3758)) ([ff83725](https://github.com/ashlrai/phantom/commit/ff83725cb703416e9927181f8cc8f37f778a1fa0))
+* **RQ-RECUT-V330-FLEETMCP-NOV6:** Fleet release/recovery bridge ([#3737](https://github.com/ashlrai/phantom/issues/3737)) ([2ab869c](https://github.com/ashlrai/phantom/commit/2ab869ca03ffc863c52072aa632b5f7344dee1b7))
+* **RQ-RECUT-V330-FLEETMCP-PLANNER-NOV6:** Repair planner and fleet runtime contracts ([#3745](https://github.com/ashlrai/phantom/issues/3745)) ([1805d09](https://github.com/ashlrai/phantom/commit/1805d09997b6b64c35f37494a01933b7c7f4bbed))
+* RQ-RECUT-V330-WEB-COMPOSER-NOV6 ([#3757](https://github.com/ashlrai/phantom/issues/3757)) ([30c77f3](https://github.com/ashlrai/phantom/commit/30c77f33fbfbedb20f9fff4ccbcc247d1a1240e2))
+* **RQ-RECUT-V330-WEB-COMPOSER-NOV6:** Web composer owner continuation ([#3733](https://github.com/ashlrai/phantom/issues/3733)) ([3233354](https://github.com/ashlrai/phantom/commit/3233354e07188096bad4204115b4306cc096562a))
+* RQ-RECUT-V330-WEB-FLEET-NOV6 ([#3740](https://github.com/ashlrai/phantom/issues/3740)) ([4578c11](https://github.com/ashlrai/phantom/commit/4578c117f792d42f4ed9676621d48200d4efe55c))
+* **RQ-RECUT-V330-WEB-MOBILE-NOV6:** Mobile web owner continuation ([#3756](https://github.com/ashlrai/phantom/issues/3756)) ([fdb24d0](https://github.com/ashlrai/phantom/commit/fdb24d088ed465f16cbde27a49d9ae3a2f28ae45))
+* **RQ-RECUT-V330-WEB-SHELL-NOV6:** Web shell release repair ([#3739](https://github.com/ashlrai/phantom/issues/3739)) ([0c81b56](https://github.com/ashlrai/phantom/commit/0c81b56588e45c6baa7332ec87cc408f467ff8b4))
+* RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3722](https://github.com/ashlrai/phantom/issues/3722)) ([c86e881](https://github.com/ashlrai/phantom/commit/c86e881eaec747f26bb37b64c5565a6bf74f05ec))
+* RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3742](https://github.com/ashlrai/phantom/issues/3742)) ([64ec88f](https://github.com/ashlrai/phantom/commit/64ec88f5c85977cb19ca5d8b011c24024b9d2b06))
+* RQ-RELEASE-DESKTOP-UNQUARANTINE-2 ([#3753](https://github.com/ashlrai/phantom/issues/3753)) ([44f7c3e](https://github.com/ashlrai/phantom/commit/44f7c3ee38645a27a6e3f3267472376e5354617e))
+* RQ-V330-CIFIX-2 ([#3630](https://github.com/ashlrai/phantom/issues/3630)) ([c7a19f3](https://github.com/ashlrai/phantom/commit/c7a19f328713c9abe078f1b5752abf330c09875a))
 
 ## [3.30.11] — 2026-11-06
 
