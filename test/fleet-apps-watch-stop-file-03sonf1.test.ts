@@ -93,7 +93,7 @@ it.each([
   ['Phantom', '--duration-ms', '1000', '--stop-file'],
   ['Phantom', '--duration-ms', '1000', '--stop-file', '--json'],
   ['Phantom', '--duration-ms', '1000', '--stop-file', 'a', '--stop-file', 'b'],
-])('rejects malformed stop-file arguments before filesystem or child work: %j', async argv => {
+])('rejects malformed stop-file arguments before filesystem or child work: %j (%#)', async argv => {
   const runner = vi.fn<AppsEnsureChildRunner>();
   vi.mocked(stat).mockClear();
   expect(await cmdFleetAppsWatch(argv, { runChild: runner })).toBe(2);

@@ -30,7 +30,7 @@ describe('models inventory CLI', () => {
     expect(await cmdModels(['inventory', '--help'])).toBe(0);
     expect(runner).not.toHaveBeenCalled();
   });
-  it.each([['inventory', '--yes'], ['inventory', 'extra']])('refuses unsupported args %j', async (...args) => {
+  it.each([['inventory', '--yes'], ['inventory', 'extra']])('refuses unsupported args %j (%#)', async (...args) => {
     const runner = vi.mocked(runModelInventory); runner.mockClear(); vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     expect(await cmdModels(args)).toBe(2); expect(runner).not.toHaveBeenCalled();
   });

@@ -33,6 +33,12 @@ import { applyAutonomousEnvOverlay, buildAutonomousEnvOverlay } from '../src/cor
 import { autonomousConfinementProfile, buildSandboxLauncher } from '../src/core/sandbox/confine.js';
 import type { AshlrConfig, EngineId } from '../src/core/types.js';
 
+// Ambient host admission has dedicated threshold/hysteresis tests. These real
+// fake-CLI/sandbox lifecycle tests must not depend on desktop memory pressure.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: () => ({ allowed: true, reading: { freePercent: 50, swapGb: 0 }, reason: null }),
+}));
+
 const posix = process.platform !== 'win32';
 
 function cfg(over: Partial<AshlrConfig> = {}): AshlrConfig {

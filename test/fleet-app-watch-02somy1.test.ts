@@ -32,14 +32,14 @@ describe('app-watch', () => {
     { code: 0, stdout: 'private output' },
     success('unknown'), success('launched', 'Claude'),
     { code: 1, stdout: JSON.stringify({ app: 'Cursor', outcome: 'launched', running: true }) },
-  ])('fails closed on an invalid child result', async result => {
+  ])('fails closed on an invalid child result (%#)', async result => {
     const runner = vi.fn<AppsEnsureChildRunner>(async () => result);
     expect(await cmdFleetAppWatch(['Cursor', '--duration-ms', '1000', '--json'], { runChild: runner })).toBe(1);
     expect(report()).toMatchObject({ outcome: 'failed', recoveries: 0, lastObservedState: null });
     expect(output).not.toContain('private output');
     expect(runner).toHaveBeenCalledTimes(1);
   });
-  it.each([[], ['Cursor'], ['Cursor', 'Claude', '--duration-ms', '100'], ['Cursor', '--duration-ms', '0'], ['Cursor', '--duration-ms', '100', '--interval-ms', '99']])('rejects invalid arguments before work', async (...args) => {
+  it.each([[], ['Cursor'], ['Cursor', 'Claude', '--duration-ms', '100'], ['Cursor', '--duration-ms', '0'], ['Cursor', '--duration-ms', '100', '--interval-ms', '99']])('rejects invalid arguments before work (%#)', async (...args) => {
     const runner = vi.fn<AppsEnsureChildRunner>();
     expect(await cmdFleetAppWatch(args as string[], { runChild: runner })).toBe(2);
     expect(runner).not.toHaveBeenCalled();

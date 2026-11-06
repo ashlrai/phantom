@@ -108,7 +108,7 @@ describe('graph CLI kind filters', () => {
     ['status', '--kind', 'agent'], ['node', 'fake:agent-1', '--kind', 'agent'],
     ['neighbors', 'fake:agent-1', '--kind', 'agent'], ['nodes', '--kind', 'agent', '--json', '--json'],
     ['nodes', '--kind', 'agent', '--help', '--help'],
-  ])('rejects invalid arguments %j before loading', async (...args) => {
+  ])('rejects invalid arguments %j before loading (%#)', async (...args) => {
     expect(await cmdGraph(args)).toBe(2);
     expect(loader.loadGraph).not.toHaveBeenCalled();
     if (args.includes('--json')) {

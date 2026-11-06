@@ -137,7 +137,7 @@ describe('fleet handoff-run context execution', () => {
     ['--upstream', 'not a job'],
     ['--upstream', 'AB'],
     Array.from({ length: 33 }, (_v, i) => `JOB-${i}`).flatMap(id => ['--upstream', id]),
-  ])('rejects invalid flags %j before spawning', async (...flags) => {
+  ])('rejects invalid flags %j before spawning (%#)', async (...flags) => {
     expect(await run([...flags, '--file', file, ...spawnArgs()])).toBe(2);
     expect(existsSync(spawned())).toBe(false);
     expect(await tmpFiles()).toEqual([]);

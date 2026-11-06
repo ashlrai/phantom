@@ -6,13 +6,9 @@ import { basename, dirname } from 'node:path';
 
 import { devinCliCredentialsPath, probeDevinCli } from './cli-probe.js';
 import { parseDevinModelsList } from './models.js';
-import { DEVIN_CLI_FREE_MODELS, DEVIN_CLI_PROMOTION_EVIDENCE_BOUNDARY } from './cli-engine.js';
 
 const METADATA_MAX_AGE_MS = 60_000;
 const RETRY_MS = 10 * 60_000;
-// A conservative HOST evidence boundary, not the vendor's reset or expiry timezone.
-// https://devin.ai/pricing promises SWE-2 Free through October 16, 2026, without a timezone.
-const PROMOTIONAL_MODELS = new Set(DEVIN_CLI_FREE_MODELS);
 const issued = new WeakSet<object>();
 const entries = new Map<string, DevinCliExecutionBinding>();
 const flights = new Map<string, Promise<DevinCliExecutionBinding | null>>();
@@ -167,7 +163,7 @@ export async function refreshDevinCliExecutionBinding(model: string, opts: Devin
         if (!admitted(opts) || !row?.pricing.free || [row.pricing.inPerM, row.pricing.outPerM, row.pricing.cachedPerM].some(n => n !== null && n !== 0) ||
           !row.contextTokens || !Number.isSafeInteger(row.contextTokens) || observedAt < startedAt ||
           epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch || realpathSync(selectedPath) !== executable) return null;
-        const validUntil = PROMOTIONAL_MODELS.has(model) ? Math.min(observedAt + METADATA_MAX_AGE_MS, DEVIN_CLI_PROMOTION_EVIDENCE_BOUNDARY) : observedAt + METADATA_MAX_AGE_MS;
+        const validUntil = observedAt + METADATA_MAX_AGE_MS;
         if (!Number.isFinite(observedAt) || observedAt >= validUntil) return null;
         const executableSha256 = createHash('sha256').update(readFileSync(executable)).digest('hex');
         if (epoch(executable, true) !== executableEpoch || epoch(credentialsPath, false) !== credentialsEpoch) return null;
