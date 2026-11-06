@@ -44,7 +44,7 @@ beforeEach(async () => {
   await writeFile(snapshot, JSON.stringify({ node: { jobId: 'CURRENT', upstreamJobIds: [] }, tasks: [], outputs: [], byteBudget: 2000 }));
   await writeFile(prompt, 'prompt'); await writeFile(requestFile, JSON.stringify(request()));
 });
-afterEach(async () => { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); });
 
 it.each([false, true])('CLI waits for the real gate and publishes its fixed verdict (fail=%s)', async fail => {
   const g = gate(fail);
@@ -111,9 +111,12 @@ it.each([0, -1, Infinity, NaN])('rejects invalid runner budget %s before launch'
 it('publishes nothing if the request expires while the gate runs', async () => {
   await writeFile(requestFile, JSON.stringify(request(10000)));
   const g = gate(), exec = g.deps.exec!;
+  const realNow = performance.now.bind(performance);
+  let offset = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => realNow() + offset);
   const start = performance.now();
   let enteredAt = 0;
-  g.deps.exec = async (...params) => { if (params[1].includes('--noEmit')) { enteredAt = performance.now(); await new Promise(resolve => setTimeout(resolve, 10100)); } return exec(...params); };
+  g.deps.exec = async (...params) => { if (params[1].includes('--noEmit')) { enteredAt = performance.now(); offset = 10100; } return exec(...params); };
   const result = await runContextReply({ ...options(), check: {} }, io(g.deps), { root: busRoot });
   expect(enteredAt - start).toBeLessThan(10000);
   expect(result).toMatchObject({ workerExit: { status: 'returned', exitCode: 0 }, verification: 'pass', exitCode: 1,

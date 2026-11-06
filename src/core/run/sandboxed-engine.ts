@@ -1101,7 +1101,9 @@ export const FLEET_MCP_CONFIG_FILENAME = '.ashlr-fleet.mcp.json';
  */
 export const FLEET_COMPANION_MCP_SPECS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   'phantom-secrets': Object.freeze(['-y', 'phantom-secrets-mcp@0.7.9']),
-  locus: Object.freeze(['-y', '@ashlrai/locus-mcp@0.5.0']),
+  // locus-mcp versions independently of the reviewed locus CLI: 0.6.2 carries
+  // the npm-shim fork-bomb fix while the CLI review stays at 0.5.0.
+  locus: Object.freeze(['-y', '@ashlrai/locus-mcp@0.6.2']),
   lexicon: Object.freeze(['-y', '-p', '@ashlr/lexicon@0.5.4', 'lexicon-mcp']),
 });
 
