@@ -106,6 +106,7 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/cli/desktop.ts',
   'scripts/desktop-release-policy.mjs',
   'scripts/finalize-desktop-update.mjs',
+  'scripts/finalize-github-release.mjs',
   'scripts/publish-desktop-release.mjs',
   'src/core/daemon/activation-permit.ts',
   'src/core/daemon/tick-hooks.ts',
