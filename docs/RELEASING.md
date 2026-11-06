@@ -62,12 +62,22 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   preparation job reuses an immutable artifact for that source when available,
   otherwise builds once with cached compiler inputs. The following one-minute
   smoke job downloads that artifact, checks source/version/package identity,
-  verifies the signed updater feed and launches the native binary
-  with `--release-smoke` in an isolated home. The feed is read from the
-  configured `releases/latest` endpoint; while the pointed-at release carries
-  no feed asset, as the assetless `v3.30.8` incident left it, the smoke
-  verifies the newest stocked published feed instead. The signed envelope
-  contract is verified, never skipped. It never installs dependencies
+  parses the updater feed/manifest contract under canonical-v2 trust and
+  launches the native binary with `--release-smoke` in an isolated home.
+  Only a repeated HTTP 404 redirected to the observed latest tag, bracketed
+  by unchanged stable release metadata and independently complete zero-asset
+  inventories, permits a previous stocked feed. Partial releases, unknown or
+  malformed metadata, auth/rate-limit/server errors and observed races fail.
+  The scan must finish within ten 100-row pages; asset lists must stay below
+  a full page. Published release and asset identities must match the repository
+  and tag; draft rows are never admitted (GitHub may give them untagged URLs).
+  The selected prior release is rechecked before and after reading its bounded,
+  size/SHA256-matching, version-matched feed. The 60-second smoke budget remains.
+  Outputs `updater_live_http_status` and `updater_contract_source` and the step
+  summary distinguish live HTTP 200 from historical contract coverage while
+  the live endpoint remains HTTP 404. The unchanged parser/launch receipt does
+  not establish updater recovery, cryptographic publication verification or
+  installed acceptance; those remain separate gates. It never installs dependencies
   or rebuilds. No current per-PR desktop producer exists; cold preparation,
   hosted queueing, attestation and signing are outside the smoke budget.
 

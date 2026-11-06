@@ -53,7 +53,7 @@ describe('wait for capacity', () => {
   it.each([
     ['missing status', undefined],
     ['missing lane', { ...status(), lanes: {} }],
-    ['degraded status', { ...status(), lanes: { ...status().lanes, 'invalid-lane': { running: 0, target: 4, queued: 0, held: false } } }],
+    ['degraded status', { ...status(), lanes: { ...status().lanes, 'invalid-lane': { running: -1, target: 4, queued: 0, held: false } } }],
     ['malformed status', { ...status(), paused: 'no' }],
   ])('never invents capacity for %s', async (_name, value) => {
     const result = await invoke(await fixture(value));
