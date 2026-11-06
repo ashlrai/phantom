@@ -78,7 +78,7 @@ describe('graph review candidates example', () => {
   });
 
   it.each([[], ['--agent'], ['--agent', ''], ['--agent', '--other'], ['--agent', 'a', '--agent', 'b'],
-    ['--node', 'a'], ['--agent', 'a', '--extra']])('rejects invalid arguments %j without loading', async (...args) => {
+    ['--node', 'a'], ['--agent', 'a', '--extra']])('rejects invalid arguments %j without loading (%#)', async (...args) => {
     const load = vi.fn(async () => graph);
     expect(await query(args, load)).toMatchObject({ exit: 2, result: { error: { code: 'GRAPH_USAGE' } } });
     expect(load).not.toHaveBeenCalled();

@@ -82,7 +82,7 @@ describe('router queue input decoding', () => {
     ['merged', '--json', '--json'],
     ['ask', 'extra'],
     ['merged', '--json', 'extra'],
-  ])('rejects invalid arguments %j without consuming stdin', async (...args) => {
+  ])('rejects invalid arguments %j without consuming stdin (%#)', async (...args) => {
     const output: unknown[] = [];
     const next = vi.fn(() => { throw new Error('stdin was consumed'); });
     const input: AsyncIterable<Buffer> = { [Symbol.asyncIterator]: () => ({ next }) };

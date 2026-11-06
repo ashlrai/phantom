@@ -70,7 +70,7 @@ describe('ledger freshness check', () => {
     ['--check-fresh-seconds', '1.5'], ['--check-fresh-seconds', '1e3'],
     ['--check-fresh-seconds', '9007199254740992'], ['--check-fresh-seconds', '1', '--check-fresh-seconds', '2'],
     ['--watch', '--check-fresh-seconds', '1'], ['--check-fresh-seconds', '0', '--watch', '--json'],
-  ])('rejects invalid arguments %j before reading', async (...args) => {
+  ])('rejects invalid arguments %j before reading (%#)', async (...args) => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);
