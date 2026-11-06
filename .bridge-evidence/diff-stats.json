@@ -1,0 +1,32 @@
+{
+  "runtime": {
+    "files": 8,
+    "added": 357,
+    "removed": 88,
+    "net": 269
+  },
+  "tests_and_fixtures": {
+    "files": 13,
+    "added": 924,
+    "removed": 0,
+    "net": 924
+  },
+  "product_docs": {
+    "files": 1,
+    "added": 27,
+    "removed": 0,
+    "net": 27
+  },
+  "owner_metadata": {
+    "files": 1,
+    "added": 1,
+    "removed": 0,
+    "net": 1
+  },
+  "local_provenance": {
+    "files": 11,
+    "added": 664,
+    "removed": 0,
+    "net": 664
+  }
+}
