@@ -12,6 +12,8 @@ export interface NodeRecord extends NodeSession {
   caps?: string[];
   /** Live load in permille (0-1000), self-reported on each heartbeat. */
   usage?: number;
+  /** Maximum concurrent claims; zero holds admission. Missing preserves legacy routing. */
+  slots?: number;
   auth?: NodeAuth;
 }
 
@@ -71,6 +73,7 @@ export function parseState(value: unknown): NodesState {
   if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt) &&
     (n.owners === undefined || list(n.owners, validId)) && (n.caps === undefined || list(n.caps, validCap)) &&
     (n.usage === undefined || (integer(n.usage) && n.usage <= 1000)) &&
+    (n.slots === undefined || (integer(n.slots) && n.slots <= 64)) &&
     (n.auth === undefined || ['ok', 'missing', 'unknown'].includes(String(n.auth))))) return fail();
   if (new Set(value.nodes.map(n => n.nodeId)).size !== value.nodes.length) return fail();
   if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();

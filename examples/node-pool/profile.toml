@@ -1,0 +1,12 @@
+# Credential-free Phantom metadata; review and install separately on each Mac.
+version = 1
+
+[[connectors]]
+id = "phantom-gateway"
+kind = "mcp-stdio"
+command = "phm"
+args = ["mcp"]
+scopes = []
+tools = ["codex", "claude"]
+lanes = ["work"]
+credentials = []
