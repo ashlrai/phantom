@@ -210,7 +210,7 @@ it('rejects usage errors with exit 2 before any git call, including outside a re
   } finally { process.chdir(cwd); error.mockRestore(); log.mockRestore(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-it('refuses non-ancestor, missing, blob and tree objects with a scrubbed exit 1 and no evidence', async () => {
+it('job-compare-snapshot refuses non-ancestor, missing, blob and tree objects with a scrubbed exit 1 and no evidence', async () => {
   const repo = pairRepo();
   const cwd = process.cwd();
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -297,7 +297,7 @@ it('surfaces injected git failures as rejections with snapshot-specific messages
   expect(seen.filter(args => args[0] === 'log')[0]!.at(-2)).toBe(oid);
 });
 
-it('resolves the convention verb name for dispatcher discoverability', async () => {
+it('job-compare-snapshot resolves the convention verb name for dispatcher discoverability', async () => {
   const resolved = resolveFleetSubcommand('job-compare-snapshot');
   expect(resolved).toEqual({
     module: './fleet-job-compare-snapshot.js', exportName: 'cmdFleetJobCompareSnapshot',

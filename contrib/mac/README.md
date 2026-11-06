@@ -630,7 +630,15 @@ are invoked with `bash`, so no installation or executable-bit change is needed.
 The host-owned `publish.sh <job> --integrated-merge` mode preserves a reviewed
 two-parent merge on the existing `codex-bridge/<job>` fork branch. It reuses the
 original open PR and requests its ordinary required CI and merge queue. It does
-not create a replacement PR. The default publisher behavior is unchanged.
+not create a replacement PR. Both modes reject staged symlinks named
+`node_modules` before committing or pushing. A directory-only ignore rule does
+not exclude such a link; regular checked-in dependency fixtures remain allowed.
+An unavailable Git index also fails this check.
+
+For an existing PR repair, the operator must explicitly disable any previous
+auto-merge request before the first push and verify that readback. Merely leaving
+auto-merge disabled in the new publication command does not clear an older
+request. Restore normal queue admission after verifying the exact reviewed head.
 
 Use this only when reconciliation establishes that every original contribution
 is already present in current main. A final tree equal to main is necessary,
@@ -668,5 +676,6 @@ for rollback and inspect any partial push before retrying.
 
 ```sh
 python3 -m unittest contrib/mac/tests/test_integrated_merge.py -v
+python3 -m unittest contrib/mac/tests/test_publish_dependency_links.py -v
 bash -n contrib/mac/publish.sh
 ```

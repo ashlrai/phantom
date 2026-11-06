@@ -10,7 +10,7 @@ import type { EngineAdmissionView } from '../src/core/fleet/engine-admission-vie
 // The default loader must never sample the real vm_stat/sysctl inside a test.
 vi.mock('../src/core/fleet/engine-admission-view.js', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../src/core/fleet/engine-admission-view.js')>();
-  return { ...mod, readEngineAdmission: () => mod.engineAdmissionView({ freePercent: 61, swapGb: 0.5 }, 'darwin') };
+  return { ...mod, readEngineAdmission: () => mod.engineAdmissionView({ freePercent: 61, swapGb: 0.5, pressureLevel: 1 }, 'darwin') };
 });
 
 async function call(api: ApiModule, url = PATH, method = 'GET') {
@@ -26,8 +26,8 @@ const NOW = TS_SECONDS * 1000 + 30_000;
 const MEMSTAT = { schema: 'ashlr.memstat.v1', ts: TS_SECONDS, free_pct: 58, swap_gb: 0, swapouts_per_min: 0, disk_gb: 601 };
 const MEMGUARD = { stopped: { '4242': 'RQ-PHX-A' }, calm: 8, omlx_down: false };
 const ADMISSION: EngineAdmissionView = {
-  gated: true, allowed: true, free_pct: 61, swap_gb: 0.5, reason: null,
-  thresholds: { hold_below_free_pct: 30, hold_above_swap_gb: 8, resume_free_pct: 35, resume_swap_gb: 6 },
+  gated: true, allowed: true, pressure_level: 1, free_pct: 61, swap_gb: 0.5, reason: null,
+  policy: { source: 'kern.memorystatus_vm_pressure_level', allow_level: 1, hold_levels: [2, 4] },
 };
 
 describe('fleet memory read route', () => {
@@ -79,6 +79,6 @@ describe('fleet memory read route', () => {
     expect(result.status).toBe(200);
     expect(result.body.v).toBe(1);
     expect(result.body.memory.schema).toBe('fleet.memory.v1');
-    expect(result.body.memory.engine_admission).toMatchObject({ gated: true, allowed: true, free_pct: 61 });
+    expect(result.body.memory.engine_admission).toMatchObject({ gated: true, allowed: true, pressure_level: 1, free_pct: 61 });
   });
 });

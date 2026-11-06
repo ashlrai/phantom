@@ -40,7 +40,12 @@ export function projectInboxRead(raw: unknown, query: InboxReadQuery): FleetInbo
     const at = safeString(item.at), source = safeString(item.source), text = safeString(item.text);
     const priority = item.priority === null ? null : safeString(item.priority);
     if (at === null || source === null || text === null || (item.text as string).length > 6000 || (item.priority !== null && priority === null)) { dropped++; continue; }
-    if (query.source === null || source.toLowerCase() === query.source.toLowerCase()) entries.push({ at, source, priority, text });
+    // Channel records retain their receipt ID in the display source. Match the
+    // actual channel only when it is bound to that display attribution.
+    const channel = typeof item.channel === 'string' && /^[a-z0-9._-]{1,32}$/.test(item.channel)
+      && (source === item.channel || (typeof item.id === 'string' && /^[A-Za-z0-9._:-]{1,64}$/.test(item.id)
+        && source === `${item.channel} (${item.id})`)) ? item.channel : null;
+    if (query.source === null || source.toLowerCase() === query.source.toLowerCase() || channel === query.source.toLowerCase()) entries.push({ at, source, priority, text });
   }
   // The inbox reader supplies newest-first file order; select before reversing
   // for the oldest-first wire contract used by the phone reader.

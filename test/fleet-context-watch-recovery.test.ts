@@ -168,7 +168,7 @@ it('expires on an empty spool as bounded completion with nothing unresolved', as
   expect(summary).toMatchObject({ status: 'ok', reason: 'duration-expired', delivered: 0, unresolved: 0, lastSweepComplete: true, exitCode: 0 });
 });
 
-it('never prints reply ids, bodies or filesystem paths', async () => {
+it('context-watch never prints reply ids, bodies or filesystem paths', async () => {
   expect(spool(reply('secret-reply-id-beta'))).toBe('saved');
   const { deps } = fakeDeps();
   const code = await cmdFleetContextWatch([...watchArgs(), '--apply'], io(), { root: busRoot }, deps);
@@ -194,7 +194,7 @@ it.each([
   ['--spool-dir', spoolDir, '--duration-ms', '1000', '--interval-ms', '100', '--limit', '4', '--json', '--wat'] as const,
   ['--spool-dir', spoolDir, '--duration-ms', '1000', '--interval-ms', '100', '--limit', '4', '--json', '--apply', '--apply'] as const,
   ['--spool-dir', spoolDir, '--duration-ms', '1000', '--duration-ms', '1000', '--interval-ms', '100', '--limit', '4', '--json'] as const,
-] as const)('rejects invalid invocation %j without launching a sweep', async (...args) => {
+] as const)('rejects invalid invocation %j without launching a sweep (%#)', async (...args) => {
   expect(spool(reply('reply-idle'))).toBe('saved');
   const sigint = process.listenerCount('SIGINT');
   expect(await cmdFleetContextWatch([...args], io(), { root: busRoot })).toBe(2);
@@ -206,7 +206,7 @@ it.each([
   err = '';
 });
 
-it('prints usage for --help', async () => {
+it('context-watch prints usage for --help', async () => {
   expect(await cmdFleetContextWatch(['--help'], io(), { root: busRoot })).toBe(0);
   expect(out).toContain('context-watch');
 });

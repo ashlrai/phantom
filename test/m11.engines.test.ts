@@ -459,7 +459,7 @@ describe('spawnEngine — never throws on failure', () => {
   it('refuses a pressured launch before spawning and permits a recovered host', async () => {
     const { spawn } = await import('node:child_process');
     vi.mocked(checkHostHeadroom).mockReturnValueOnce({ allowed: false,
-      reading: { freePercent: 40, swapGb: 9 }, reason: 'Host memory pressure; launch held.' });
+      reading: { freePercent: 40, swapGb: 9, pressureLevel: 2 }, reason: 'Host memory pressure; launch held.' });
     const cmd: EngineCommand = { bin: 'codex', args: ['exec', '--json', GOAL] };
     const refused = await spawnEngine(cmd, makeConfig());
     expect(refused).toMatchObject({ ok: false, error: 'Host memory pressure; launch held.' });

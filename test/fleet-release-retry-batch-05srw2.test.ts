@@ -180,7 +180,7 @@ describe('fleet release-retry-batch', () => {
     ['non-boolean apply', JSON.stringify({ ...priorObj([[REPO, TAG, 'busy']]), apply: 'yes' })],
     ['non-string remaining', JSON.stringify({ ...priorObj([[REPO, TAG, 'busy']]), remaining: [7] })],
     ['bad receipt state', JSON.stringify({ ...priorObj([[REPO, TAG, 'busy']]), entries: [{ ...entry(REPO, TAG, 'busy'), receipt: { state: 'weird', record: null } }] })],
-  ])('rejects %s with exit 2 and zero action calls', async (_label, doc) => {
+  ])('rejects %s with exit 2 and zero action calls (%#)', async (_label, doc) => {
     const once = vi.fn();
     expect(await cmdFleetReleaseRetryBatch(['--stdin', '--apply', '--json'], { input: feed(doc), once, stateDir })).toBe(2);
     expect(once).not.toHaveBeenCalled();
