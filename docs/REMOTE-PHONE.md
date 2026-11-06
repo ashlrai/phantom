@@ -53,6 +53,7 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 | Route | Description |
 | --- | --- |
 | `/api/verse/bootstrap` | Server bootstrap retrieves startup configuration |
+| `/api/verse/version` | Version endpoint returns the current build identity |
 | `/api/verse/activity` | Activity feed streams recent system updates |
 | `/api/verse/sessions` | Session list displays currently open sessions |
 | `/api/verse/control` | Control endpoint returns current gateway settings |

@@ -1,4 +1,4 @@
-import { DOCK_PANE_GROUPS, type DockPaneCatalogEntry } from '../shell/dock-pane-catalog.js';
+import { DOCK_PANE_GROUPS, type DockPaneCatalogEntry } from '../shell/dock-catalog.js';
 
 export function matchesPaneQuery(pane: DockPaneCatalogEntry, query: string): boolean {
   const needle = query.trim().toLowerCase();

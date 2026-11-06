@@ -87,22 +87,6 @@ const webUiRoot = fileURLToPath(new URL('./src/web-ui', import.meta.url));
  *    again in that chunk's preload list is a no-op paid for in the chunk's
  *    own bytes. resolveDependencies drops exactly those. CSS dependencies
  *    are never passed to it (Vite appends them afterwards) and are unchanged.
- *
- * 2b. First-paint chunks do not preload the SCRIPTS of lazy surfaces.
- *
- *    A preload list names every script and style of an import()'s closure.
- *    In a chunk a cold load must download, the lists of overlays, dialogs,
- *    docked panes and sections nobody has opened yet were ~15 KB of file
- *    names (the first-paint budget counts them). For an import() written in
- *    a first-paint chunk whose target is neither first-paint itself nor one
- *    of EAGER_LAZY_MODULES, resolveDependencies returns no scripts: the
- *    target's own imports are then discovered when it arrives, one round
- *    trip later, and the idle warm-up (shell/warmup.ts) has usually fetched
- *    it by then. Styles stay listed — a lazy chunk's CSS is only ever loaded
- *    through that list. Import sites outside first-paint chunks keep their
- *    full lists. A surface that paints with the cold load goes in
- *    EAGER_LAZY_MODULES or, better, is imported from a lazy module
- *    (chat/surface-loaders.ts) so its list is not a first-paint cost at all.
  */
 const VERSE_SHELL_ROOT = fileURLToPath(new URL('./src/web-ui/app/VerseConsoleApp.tsx', import.meta.url));
 const VERSE_MOBILE_ROOT = fileURLToPath(new URL('./src/web-ui/app/VerseMobileApp.tsx', import.meta.url));
@@ -117,20 +101,6 @@ const presentationFormatModules = new Set([
 ]);
 /** chunk file name → the chunk file names it imports statically, as Vite's preload pass sees the bundle. */
 const staticChunkImports = new Map<string, readonly string[]>();
-/** Chunk files a cold /verse or /verse/m load fetches before first paint: the static closure of the roots below. */
-const firstPaintChunks = new Set<string>();
-/** Chunk files first paint starts downloading on purpose, though they are lazy (see EAGER_LAZY_MODULES). */
-const eagerChunks = new Set<string>();
-/** Facades of the chunks, besides the entry and the Verse shell group, that a cold load's first paint is measured from. */
-const ROOT_MODULES = /\/(VerseMobileApp|HomeScreen|ChatSection)\.tsx$/;
-/**
- * Lazy modules that ARE the cold load's first paint, imported from a
- * first-paint chunk: the chat's resizer, and the phone's Home body (cards over
- * a remote link, where a second round trip is felt). They keep their preload
- * lists. The chat's workspace and chat list are not here: their lists live in
- * chat/surface-loaders.ts, outside the first-paint chunks.
- */
-const EAGER_LAZY_MODULES = /\/(ChatResizer|OperatorGlance)\.tsx?$/;
 
 function verseFirstPaintChunks(): Plugin {
   return {
@@ -172,20 +142,7 @@ function verseFirstPaintChunks(): Plugin {
       order: 'pre',
       handler(_options, bundle) {
         staticChunkImports.clear();
-        firstPaintChunks.clear();
-        eagerChunks.clear();
-        const roots: string[] = [];
-        for (const chunk of Object.values(bundle)) {
-          if (chunk.type !== 'chunk') continue;
-          staticChunkImports.set(chunk.fileName, chunk.imports);
-          const facade = chunk.facadeModuleId?.replace(/\\/g, '/') ?? '';
-          if (chunk.isEntry || chunk.name === 'VerseConsoleApp' || ROOT_MODULES.test(facade)) roots.push(chunk.fileName);
-          if (EAGER_LAZY_MODULES.test(facade)) eagerChunks.add(chunk.fileName);
-        }
-        for (const root of roots) {
-          firstPaintChunks.add(root);
-          for (const file of loadedWith(root)) firstPaintChunks.add(file);
-        }
+        for (const chunk of Object.values(bundle)) if (chunk.type === 'chunk') staticChunkImports.set(chunk.fileName, chunk.imports);
       },
     },
   };
@@ -221,9 +178,8 @@ export default defineConfig(({ mode }) => {
       target: 'es2022',
       // FIRST-PAINT CHUNKING §2.
       modulePreload: {
-        resolveDependencies: (file, deps, { hostId, hostType }) => {
+        resolveDependencies: (_file, deps, { hostId, hostType }) => {
           if (hostType !== 'js') return deps;
-          if (firstPaintChunks.has(hostId) && !firstPaintChunks.has(file) && !eagerChunks.has(file)) return [];
           const loaded = loadedWith(hostId);
           return deps.filter((dep) => !loaded.has(dep));
         },

@@ -85,6 +85,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
 | Queue Mac bridge builds and tests within a shared memory budget | [Memory admission — source guide](https://github.com/ashlrai/phantom/blob/master/scripts/mac-bridge/MEMORY.md) |
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
+| Reclaim rebuildable disk bytes by class, or install the daily maintenance job | [Standing disk maintenance](DISK-MAINT.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Inspect release dependencies and unresolved publisher ownership across repositories | [Ecosystem release planning](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-RELEASE-CONTRACTS.md) |
 | Diagnose daemon liveness and prepare the protected Mac revival handoff | [Daemon revival source guide](https://github.com/ashlrai/phantom/blob/master/docs/DAEMON-REVIVE.md) |
@@ -114,6 +115,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Read a Phantom chat's context meter, choose standard or expansive context, and continue a long session in a fresh chat | [Context windows — source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTEXT.md) |
 | Use the Phantom workbench: Command, Fleet, Growth and Lessons, Mind, Chat and its panel (terminal, browser, changes, sources, reasoning), the Needs-you and Resources drawers, the repo wiki, playbooks, automations, ⌘K, budget modes and account health | [Phantom user guide — source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE.md) |
 | Talk to the Leader from Phantom, Telegram or the CLI: directives, answers, approvals, briefs, founder mode | [The Leader — source guide](https://github.com/ashlrai/phantom/blob/master/docs/LEADER.md) |
+| CEO endpoint, verified owner routing, model tiers, durable inbox/outbox and away digests | [Leader network](LEADER-NETWORK.md) |
 | Hand work to Claude Code cloud sessions or Devin, and triage what they deliver | [Cloud lane — source guide](https://github.com/ashlrai/phantom/blob/master/docs/CLOUD.md) · [Devin — source guide](https://github.com/ashlrai/phantom/blob/master/docs/DEVIN.md) |
 | Understand the standing authority design, and turn autonomy on under a grant that starts in shadow | [Standing authority — source guide](https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md) · [Current activation state](AUTONOMY-GAP.md#current-activation-state-315) |
 | Find a Verse route family, its gates and wire shapes | [Verse build contract — source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTRACT-V1.md#v310-additive-contract--the-workbench-and-the-autonomy-console) |
@@ -208,6 +210,7 @@ canonical release guide for required hosted qualification and publication.
 
 ## All documents
 
+- [Agent network channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK-CHANNELS.md)
 - [Durable agent bus: read, write, envelope, and conventions](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md)
 - [ASHLR Agentic Inference Fabric — Definitive Architecture Specification](https://github.com/ashlrai/phantom/blob/master/docs/SPEC-INFERENCE-FABRIC.md)
 - [Agent OS Doctrine](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-DOCTRINE.md)
@@ -233,6 +236,7 @@ canonical release guide for required hosted qualification and publication.
 - [Duration-balanced Bun shards](https://github.com/ashlrai/phantom/blob/master/docs/BUN-SHARDS.md)
 - [Elite agent efficiency roadmap](ELITE-AGENT-EFFICIENCY.md)
 - [Execution Identity V1](https://github.com/ashlrai/phantom/blob/master/docs/EXECUTION-IDENTITY-V1.md)
+- [Friction loop doctrine](https://github.com/ashlrai/phantom/blob/master/docs/doctrine/FRICTION-LOOP.md)
 - [Grok Bot beside Phantom](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md)
 - [Harness digest contribution format](https://github.com/ashlrai/phantom/blob/master/docs/HARNESS-DIGEST-FORMAT.md)
 - [Historical release and operator reference](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-HISTORICAL.md)

@@ -14,7 +14,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { getSpeechRecognition, startWebSpeech, type WebSpeechSession } from '../voice/web-speech.js';
-import { MicGlyph } from './mobile-icons-more.js';
+import { MicGlyph } from './mobile-icons.js';
 import styles from './parts.module.css';
 import core from './ui.module.css';
 

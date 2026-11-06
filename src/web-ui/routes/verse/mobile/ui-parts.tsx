@@ -4,7 +4,7 @@
  * ui.module.css). Off the first paint: the Home frame needs none of them.
  */
 import { useId, type ReactNode } from 'react';
-import { ChevronGlyph } from './mobile-icons-more.js';
+import { ChevronGlyph } from './mobile-icons.js';
 import { usedPercentText } from '../percent-text.js';
 import partStyles from './parts.module.css';
 import { Button, cx, ui as coreStyles } from './ui.js';

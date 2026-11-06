@@ -18,6 +18,7 @@
 import { PRODUCT_NAME } from '../../../app/product-brand.js';
 import { Component, Suspense, useCallback, useEffect, type ComponentType, type ReactNode } from 'react';
 import { preloadedLazy } from '../shell/preloaded.js';
+import { useAppBadge } from './app-badge.js';
 import { BOOT_CONTEXT, MobileContext, type MobileContextValue } from './mobile-context.js';
 import { AgentsGlyph, HomeGlyph, LeaderGlyph, MoreGlyph, NeedsGlyph } from './mobile-icons.js';
 import { tabOf, tabRoot, useMobileRoute, type MobileRoute, type MobileTab } from './mobile-router.js';
@@ -94,6 +95,7 @@ interface FrameProps {
 function Frame({ route, context, overlays }: FrameProps) {
   const current = tabOf(route);
   const { navigate, needsCount, workingCount } = context;
+  useAppBadge(needsCount);
   const onTab = useCallback((tab: MobileTab) => {
     // Re-tapping the active tab pops back to its root, as on iOS.
     navigate(tabRoot(tab), { replace: tab === current });

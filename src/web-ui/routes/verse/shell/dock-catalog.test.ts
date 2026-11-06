@@ -9,6 +9,7 @@ import {
   DEFAULT_DOCK_STATE,
   DOCK_LAYOUT,
   DOCK_PANE_IDS,
+  DOCK_PANES,
   dockPresentation,
   clampDockHeight,
   isDockPaneId,
@@ -17,15 +18,12 @@ import {
   VERSE_UI_STORAGE_KEY,
   VERSE_UI_STORAGE_KEY_V2,
 } from './dock-catalog.js';
-import { DOCK_PANES } from './dock-pane-catalog.js';
 import { SLOTS } from './slots.js';
 import { COMPACT_WIDTH, MEDIUM_WIDTH, WIDE_WIDTH } from './viewport.test-support.js';
 
 describe('dock panes', () => {
   it('lists the first-party panes — each other unit’s pane through a slot', () => {
     expect(DOCK_PANE_IDS).toEqual(['terminal', 'browser', 'diff', 'files', 'sources', 'reasoning', 'tasks', 'context']);
-    // The ids dock-catalog keeps for first paint are the lazy catalog's, in order.
-    expect(DOCK_PANE_IDS).toEqual(DOCK_PANES.map((pane) => pane.id));
     for (const pane of DOCK_PANES) {
       if (pane.slot === null) {
         expect(['C2', 'workbench'], pane.id).toContain(pane.owner);

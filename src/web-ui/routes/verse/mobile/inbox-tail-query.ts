@@ -2,6 +2,7 @@ import { ApiError, apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import type { FleetRunsV1 } from '../../../../core/verse/fleet-runs-types.js';
 import { isFleetRuns } from '../ops/ops-runs-model.js';
+import { fleetOutbox } from '../leader-thread/thread-merge-model.js';
 
 export interface InboxEntry { at: string; source: string; text: string }
 
@@ -17,7 +18,7 @@ export function narrowInboxTail(value: unknown): InboxEntry[] {
 }
 
 let missing: ApiError | null = null;
-export const inboxTailQuery: QueryDef<{ inbox: InboxEntry[]; snapshot: FleetRunsV1 | undefined }> = {
+export const inboxTailQuery: QueryDef<{ inbox: InboxEntry[]; snapshot: FleetRunsV1 | undefined; outbox: NonNullable<FleetRunsV1['outbox']> }> = {
   key: 'verse-mobile-inbox-tail',
   async fetch(signal) {
     if (missing) throw missing;
@@ -25,7 +26,8 @@ export const inboxTailQuery: QueryDef<{ inbox: InboxEntry[]; snapshot: FleetRuns
       const value = await apiGet<unknown>('/api/verse/fleet/runs', signal);
       const inbox = narrowInboxTail(value);
       const snapshot = isFleetRuns(value) && value.host !== undefined ? { ...value, host: value.host } : undefined;
-      return { inbox, snapshot };
+      // The leader's MASON-OUTBOX.md rides in the same read; [] when absent.
+      return { inbox, snapshot, outbox: fleetOutbox(value) };
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) missing = error;
       throw error;

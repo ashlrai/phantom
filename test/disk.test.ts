@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
   classifyWorktree,
   cmdDisk,
@@ -13,7 +15,6 @@ const NOW = Date.parse('2026-10-02T12:00:00Z');
 const FIXTURE = join(__dirname, 'fixtures', 'disk');
 const WT = join(FIXTURE, 'wt');
 const RUNS = join(FIXTURE, 'runs');
-const TMP = join(FIXTURE, 'tmp');
 
 const jobsText = [
   { job: 'RQ-MERGED-A', event: 'finish', ts: '2026-10-01T00:00:00Z' },
@@ -158,25 +159,33 @@ describe('readDiskReport', () => {
 
 describe('readDiskReport on the repo fixture', () => {
   it('runs the real lister, measurer and ledger reader end to end', async () => {
-    const r = await readDiskReport({
-      now: NOW,
-      wtRoot: WT,
-      runsRoot: RUNS,
-      tmpRoot: TMP,
-      readPins: () => ({ paths: [join(WT, 'RQ-KEPT-C')], valid: true }),
-      freeBytes: () => 412_000_000_000,
-    });
-    const byName = new Map([...(r.worktrees ?? []), ...(r.runsWorktrees ?? [])].map(e => [e.name, e]));
-    expect(byName.get('RQ-MERGED-A')).toMatchObject({ state: 'merged', complete: true, reclaimable: true });
-    expect(byName.get('RQ-MERGED-A')!.bytes).toBeGreaterThan(0);
-    expect(byName.get('RQ-OPEN-B')).toMatchObject({ state: 'open', reclaimable: false });
-    expect(byName.get('RQ-KEPT-C')).toMatchObject({ kept: true, reclaimable: false });
-    expect(byName.get('RQ-FRESH-F')).toMatchObject({ state: 'merged', reclaimable: false });
-    expect(byName.get('RQ-EMPTY-E')).toMatchObject({ state: 'empty', reclaimable: true });
-    expect(byName.has('guardian-x')).toBe(false);
-    expect(r.quarantine).toMatchObject({ dirs: 1, complete: true });
-    expect(r.temp).toMatchObject({ dirs: 2, complete: true });
-    expect(r.totals.reclaimable).toBe(2);
+    const tmp = mkdtempSync(join(tmpdir(), 'disk-fixture-'));
+    mkdirSync(join(tmp, 'vwt-aa11bb'));
+    mkdirSync(join(tmp, 'mwt-22cc33'));
+    mkdirSync(join(tmp, 'scratch-notes'));
+    try {
+      const r = await readDiskReport({
+        now: NOW,
+        wtRoot: WT,
+        runsRoot: RUNS,
+        tmpRoot: tmp,
+        readPins: () => ({ paths: [join(WT, 'RQ-KEPT-C')], valid: true }),
+        freeBytes: () => 412_000_000_000,
+      });
+      const byName = new Map([...(r.worktrees ?? []), ...(r.runsWorktrees ?? [])].map(e => [e.name, e]));
+      expect(byName.get('RQ-MERGED-A')).toMatchObject({ state: 'merged', complete: true, reclaimable: true });
+      expect(byName.get('RQ-MERGED-A')!.bytes).toBeGreaterThan(0);
+      expect(byName.get('RQ-OPEN-B')).toMatchObject({ state: 'open', reclaimable: false });
+      expect(byName.get('RQ-KEPT-C')).toMatchObject({ kept: true, reclaimable: false });
+      expect(byName.get('RQ-FRESH-F')).toMatchObject({ state: 'merged', reclaimable: false });
+      expect(byName.get('RQ-EMPTY-E')).toMatchObject({ state: 'empty', reclaimable: true });
+      expect(byName.has('guardian-x')).toBe(false);
+      expect(r.quarantine).toMatchObject({ dirs: 1, complete: true });
+      expect(r.temp).toMatchObject({ dirs: 2, complete: true });
+      expect(r.totals.reclaimable).toBe(2);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

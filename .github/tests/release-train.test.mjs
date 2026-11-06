@@ -18,6 +18,7 @@ import {
   parseReleasePublishArguments, planDesktopReleasePublication,
   inspectDesktopReleasePublication, applyDesktopReleasePublication, acquirePublishLock,
 } from '../../scripts/publish-desktop-release.mjs';
+import { dedupeDrafts, dedupePlan } from '../../scripts/dedupe-draft-releases.mjs';
 import {duplicateDraftGroups} from '../../scripts/list-duplicate-draft-releases.mjs';
 
 const REPO = 'ashlrai/phantom';
@@ -303,7 +304,7 @@ test('releaseForTag picks the canonical row among duplicates', async () => {
   const remoteRepo = remote();
   const read = async ep => { try { return remoteRepo.read(ep); } catch (e) { if (e.status === 404) return null; throw e; } };
   for (const id of [90, 88, 89]) remoteRepo.releases.set(id, {id, tag_name: 'v3.30.0', draft: true, name: 'x'});
-  assert.equal((await releaseForTag(read, `repos/${REPO}`, 'v3.30.0')).id, 88, 'lowest draft id is canonical');
+  assert.equal((await releaseForTag(read, `repos/${REPO}`, 'v3.30.0')).id, 90, 'newest draft id is canonical');
   remoteRepo.releases.set(99, {id: 99, tag_name: 'v3.30.0', draft: false, name: 'x'});
   assert.equal((await releaseForTag(read, `repos/${REPO}`, 'v3.30.0')).id, 99, 'published release outranks drafts');
   assert.equal(await releaseForTag(read, `repos/${REPO}`, 'v9.9.9'), null);
@@ -378,6 +379,8 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.ok(autoTag.on.push.paths.includes('package.json'));
   assert.equal(autoTag.on.workflow_run.workflows[0], 'CI');
   assert.deepEqual(autoTag.permissions, {});
+  assert.equal(autoTag.concurrency.group, 'auto-tag-${{ github.repository }}');
+  assert.equal(autoTag.concurrency['cancel-in-progress'], false);
   const tagJob = autoTag.jobs.tag;
   assert.deepEqual(tagJob.permissions, {contents: 'read', checks: 'read'});
   const names = tagJob.steps.map(s => s.name ?? '');
@@ -427,4 +430,57 @@ test('argument and plan contracts are fail-closed', () => {
   assert.throws(() => planDesktopReleasePublication({version: '3.29.17', revision: 'c'.repeat(40), release: draft,
     assets: [{name: 'foreign', state: 'uploaded', digest: 'sha256:' + '9'.repeat(64)}], expected}), /unexpected existing asset/);
   assert.throws(() => planDesktopReleasePublication({version: '3.29.17', revision: 'd'.repeat(40), release: draft, assets: [], expected}), /target commit differs/);
+});
+
+const row = (id, extra = {}) => ({ id, tag_name: 'v3.30.0', draft: true, assets: [], ...extra });
+
+test('existing draft beyond page ten prevents creation on repeated runs', async () => {
+  const pages = [];
+  const sha = 'a'.repeat(40);
+  const read = async endpoint => {
+    if (endpoint.includes('/git/ref/')) return { ref: 'refs/tags/v3.30.0', object: { type: 'commit', sha } };
+    const page = Number(new URL(`https://example.test/${endpoint}`).searchParams.get('page'));
+    pages.push(page);
+    return page < 12 ? Array.from({ length: 100 }, (_, i) => row(page * 100 + i, { tag_name: 'v0.0.1', name: 'Phantom 3.30.0' })) : [row(2000, { name: 'different name' })];
+  };
+  for (let i = 0; i < 2; i++) {
+    const result = await createTagAndDraftRelease({ repo: 'ashlrai/phantom', version: '3.30.0', sha, read,
+      write: async () => assert.fail('existing draft must prevent writes') });
+    assert.equal(result.releaseId, 2000);
+  }
+  assert.equal(pages.filter(page => page === 12).length, 2);
+});
+
+test('plan keeps newest and excludes published, stocked and untagged groups', () => {
+  assert.deepEqual(dedupePlan([row(1), row(3), row(2)]), [{ tag: 'v3.30.0', keep: 3, remove: [2, 1] }]);
+  for (const extra of [{ draft: false }, { assets: [{}] }, { assets: undefined }]) {
+    assert.deepEqual(dedupePlan([row(1), row(2, extra)]), []);
+  }
+  assert.deepEqual(dedupePlan([row(1, { tag_name: 'untagged-x' }), row(2, { tag_name: 'untagged-x' })]), []);
+});
+
+test('dry run makes no deletes; apply revalidates and deletes only older empty draft', async () => {
+  const deleted = [];
+  const read = async endpoint => endpoint.includes('?') ? [row(1), row(2)] : row(Number(endpoint.split('/').at(-1)));
+  const options = { repo: 'ashlrai/phantom', read, remove: async endpoint => deleted.push(endpoint) };
+  await dedupeDrafts(options);
+  assert.deepEqual(deleted, []);
+  await dedupeDrafts({ ...options, apply: true });
+  assert.deepEqual(deleted, ['repos/ashlrai/phantom/releases/1']);
+  await assert.rejects(dedupeDrafts({ ...options, apply: true,
+    read: async endpoint => endpoint.includes('?') ? [row(1), row(2)] : row(2, { assets: [{}] }) }), /changed/);
+  assert.equal(deleted.length, 1);
+});
+
+test('cleanup scans later pages and aborts before writes on listing failure', async () => {
+  const filler = Array.from({ length: 100 }, (_, i) => row(i + 10, { tag_name: `v0.0.${i}` }));
+  const deletes = [];
+  const options = { repo: 'ashlrai/phantom', remove: async endpoint => deletes.push(endpoint) };
+  const result = await dedupeDrafts({ ...options,
+    read: async endpoint => endpoint.endsWith('page=1') ? filler : [row(1), row(2)] });
+  assert.equal(result.scanned, 102);
+  assert.deepEqual(result.groups, [{ tag: 'v3.30.0', keep: 2, remove: [1] }]);
+  await assert.rejects(dedupeDrafts({ ...options, apply: true,
+    read: async endpoint => { if (endpoint.endsWith('page=1')) return filler; throw new Error('listing unavailable'); } }), /listing unavailable/);
+  assert.deepEqual(deletes, []);
 });

@@ -31,7 +31,7 @@
 import { evictAll, invalidateObserved } from './cache.js';
 // The composer owns its own storage format, so the key names live with it
 // rather than being duplicated here where they could drift.
-import { wipeComposerMemory } from '../routes/verse/chat/composer-wipe.js';
+import { clearComposerMemory } from '../routes/verse/chat/composer-memory.js';
 import { isRemoteMobileMode } from './remote-mode.js';
 
 const READ_CLIENT_STORAGE_KEY = 'ashlr.readClientProof.v1';
@@ -177,7 +177,7 @@ function expireNow(): void {
   // session's first paint. The composer's drafts and sent-message history live
   // in localStorage, not in that cache, and they are verbatim prompt text —
   // exactly the kind of content this wipe exists for.
-  wipeComposerMemory();
+  clearComposerMemory();
   setState({ phase: 'unauthenticated', checked: true });
 }
 

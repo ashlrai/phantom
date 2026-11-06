@@ -8,7 +8,9 @@ admission: what dispatchd would decide about new claims right now, read-only.
   Updated hosts report the dispatcher's admission.v2 snapshot, including its timestamp,
   starvation signals, warnings and claim limit. Critical pressure, rapid swap growth
   or low disk stop claims; high load halves claims. Older hosts use legacy probes.
-  Cap = min(sum of unheld lane targets, ncpu, hard_cap in queue/slots.json).
+  Cap = min(sum of unheld lane targets, adaptive cap, optional hard_cap in queue/slots.json).
+  The adaptive cap (queue/concurrency.json) rises on headroom and backs off on pressure;
+  hosts without it fall back to ncpu.
   At most one npm ci / pnpm install / bun install runs fleet-wide (queue/install.lock).
   The runs directory is ASHLR_RUNS_DIR or ~/.ashlr-runs; queue/LOADGATE_OFF disables the gate.`;
 
@@ -17,7 +19,7 @@ function render(r: AdmissionReport): string {
   return [
     `admit=${r.admit}${r.reason ? ` reason=${r.reason}` : ''}${r.disabled ? ' (gate disabled by queue/LOADGATE_OFF)' : ''}`,
     `load1=${r.load.load1.toFixed(2)} max=${r.load.max.toFixed(1)} ncpu=${r.ncpu} procs=${r.procs} worktrees=${r.worktrees}`,
-    `running=${r.running} cap=${r.cap} hard_cap=${r.hardCap}`,
+    `running=${r.running} cap=${r.cap} adaptive_cap=${r.adaptiveCap ?? 'none'} hard_cap=${r.hardCap ?? 'none'}`,
     `daemon tick age=${r.daemon.tickAgeSeconds === null ? 'unknown' : `${Math.floor(r.daemon.tickAgeSeconds)}s`}`,
     `install lock holder=${holder ? `pid ${holder.pid}${holder.job ? ` job ${holder.job}` : ''}${holder.command ? ` (${holder.command})` : ''}` : 'none'}`,
   ].join('\n');

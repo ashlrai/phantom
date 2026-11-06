@@ -3,7 +3,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { awaitAppState } from '../fleet/app-await.js';
+import { readAppsRecoveryInvocations } from '../fleet/apps-recovery-invocations.js';
+import { appsRecoveryVerdict } from '../fleet/apps-recovery-verdict.js';
+import { awaitAppState, type AppAwaitTarget } from '../fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from '../../cli/fleet-app.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
@@ -20,6 +22,7 @@ export interface FleetAppsApiDeps {
   locateScript?: () => string | null;
   now?: () => number;
   runsDir?: string;
+  readRecoveryInvocations?: typeof readAppsRecoveryInvocations;
 }
 interface AppsView {
   v: 1;
@@ -179,6 +182,26 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     return seen.outcome === 'reached' ? respond('launched', true, true) : respond('timeout', seen.running, true);
   }
   return async (ctx, req, res, path, method) => {
+    if (path === `${PATH}/history`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      try {
+        const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+        const keys = ['after', 'limit', 'invocationId'];
+        const decimal = (value: string): boolean => /^\d+$/.test(value) && Number.isSafeInteger(Number(value));
+        const after = params.get('after') ?? '0', limit = params.get('limit') ?? '100';
+        const id = params.get('invocationId');
+        if ([...params.keys()].some(key => !keys.includes(key) || params.getAll(key).length !== 1) ||
+          !decimal(after) || !decimal(limit) || Number(limit) < 1 || Number(limit) > 100 ||
+          (id !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+          sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid history query' }); return true;
+        }
+        const { readAppsRecoveryHistory } = await import('../fleet/apps-recovery-history.js');
+        const page = readAppsRecoveryHistory(root, Number(after), Number(limit), id ?? undefined);
+        if (page.availability === 'unavailable') sendJson(res, 503, { error: 'fleet apps history unavailable' });
+        else sendJson(res, page.availability === 'invalid-cursor' ? 400 : 200, page);
+      } catch { sendJson(res, 503, { error: 'fleet apps history unavailable' }); }
+      return true;
+    }
     if (path === PATH && method === 'GET') {
       try {
         const requested = new URL(req.url ?? '/', 'http://localhost').searchParams.getAll('app');
@@ -194,6 +217,25 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
       catch { sendJson(res, 503, { error: 'fleet apps unavailable' }); }
       return true;
     }
+    if (path === `${PATH}/recovery/check`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const invocation = params.get('invocation') ?? '';
+      const age = params.get('maxAgeMs') ?? '';
+      const maxAgeMs = /^\d+$/.test(age) ? Number(age) : 0;
+      if ([...params.keys()].some(key => key !== 'invocation' && key !== 'maxAgeMs') ||
+        params.getAll('invocation').length !== 1 || params.getAll('maxAgeMs').length !== 1 ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(invocation) ||
+        !Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid recovery check' }); return true;
+      }
+      try {
+        const projection = (deps.readRecoveryInvocations ?? readAppsRecoveryInvocations)(root);
+        if (!projection || projection.availability !== 'available') throw new Error('unavailable');
+        sendJson(res, 200, appsRecoveryVerdict(projection, invocation, maxAgeMs, now()));
+      } catch { sendJson(res, 503, { error: 'recovery evidence unavailable' }); }
+      return true;
+    }
     if (path !== `${PATH}/action`) return false;
     if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
     if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
@@ -204,8 +246,12 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
     let body: unknown;
     try { body = JSON.parse(await readBody(req)); } catch { body = null; }
     if (!record(body) || Object.keys(body).some(k => k !== 'app' && k !== 'action' && k !== 'waitRunningMs') ||
-      !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart', 'ensure'].includes(body.action))) {
+      !FLEET_APPS.some(app => app === body.app) || (typeof body.action !== 'string' || !['launch', 'focus', 'restart', 'ensure', 'quit'].includes(body.action))) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid app action' }); return true;
+    }
+    // Phantom hosts this server: quitting it would drop the answer mid-request.
+    if (body.app === 'Phantom' && body.action === 'quit') {
+      sendJson(res, 400, { code: 'VERSE_INVALID', error: 'Phantom cannot quit itself from here' }); return true;
     }
     // Validated before anything runs; focus never has a running state to wait for.
     const wait = body.waitRunningMs;
@@ -234,17 +280,18 @@ export function createFleetAppsApi(deps: FleetAppsApiDeps = {}): ApiModule {
       if (!result) throw new Error('app control unavailable');
       if (result.ok === true && typeof result.code === 'string') {
         const accepted = { app, action: body.action, code: result.code };
-        let confirmation: { target: 'running'; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
+        let confirmation: { target: AppAwaitTarget; outcome: string; attempts: number; running: boolean | null; confirmed: boolean } | undefined;
         if (typeof wait === 'number') {
-          // Observe only: sequential status probes, never a second launch or retry of the action.
+          // Observe only: sequential status probes, never a second action or retry of it.
+          const target: AppAwaitTarget = body.action === 'quit' ? 'stopped' : 'running';
           const seen = await awaitAppState({
-            target: 'running',
+            target,
             timeoutMs: Math.min(wait, Math.max(0, deadline - Date.now())),
             intervalMs: CONFIRM_INTERVAL_MS,
             probe: async budget => reading(await control(script, 'status', app, Math.min(budget, Math.max(0, deadline - Date.now())))),
           });
-          const confirmed = Date.now() < deadline && seen.outcome === 'reached' && seen.running === true;
-          confirmation = { target: 'running', outcome: seen.outcome === 'reached' && !confirmed ? 'timeout' : seen.outcome, attempts: seen.attempts, running: seen.running, confirmed };
+          const confirmed = Date.now() < deadline && seen.outcome === 'reached' && seen.running === (target === 'running');
+          confirmation = { target, outcome: seen.outcome === 'reached' && !confirmed ? 'timeout' : seen.outcome, attempts: seen.attempts, running: seen.running, confirmed };
         }
         sendJson(res, 202, { ...accepted, at: new Date(now()).toISOString(), ...(confirmation ? { confirmation } : {}) });
       } else if (result.ok === false && typeof result.code === 'string' && Object.hasOwn(REFUSALS, result.code)) {

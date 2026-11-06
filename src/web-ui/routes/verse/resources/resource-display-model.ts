@@ -2,6 +2,7 @@
 import { accountStatus, hasCurrentUsage, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
 import { DEFAULT_RESOURCE_OBSERVATION_MAX_AGE_MS } from '../../../../core/resources/provider-aggregation-types.js';
 import { currentQuotaReading } from '../../../../core/verse/quota-freshness.js';
+import { missingReadingReason } from './missing-reading-reason.js';
 
 export type ResourceUsageDisplayState = 'current' | 'retained' | 'historical' | 'missing' | 'signed-out' | 'not-applicable';
 
@@ -27,6 +28,11 @@ function canonicalInstant(value: string | null | undefined): string | null {
 function observedInstant(value: string | null | undefined, nowMs: number): string | null {
   const instant = canonicalInstant(value);
   return instant !== null && Number.isFinite(nowMs) && nowMs >= 0 && Date.parse(instant) <= nowMs ? instant : null;
+}
+
+function missingSummary(row: CapacityRow, nowMs: number): string {
+  const { cause, fix } = missingReadingReason(row, nowMs);
+  return `${cause} ${fix === 'None needed' ? '' : `${fix}.`}`.trim();
 }
 
 /** The capacity builder owns usage validation. Health/readiness do not restamp its evidence. */
@@ -84,7 +90,7 @@ export function projectResourceDisplay(row: CapacityRow, options: { nowMs: numbe
       : 'Last known usage · reading age unconfirmed or stale · current availability unconfirmed'
     : state === 'historical' ? 'Last known usage · current availability and resets unconfirmed'
     : state === 'signed-out' ? 'Signed out · reconnect to check current usage'
-    : 'Usage not reported by this resource.';
+    : missingSummary(row, options.nowMs);
   if (row.kind === 'subscription' && state !== 'current' && state !== 'signed-out') {
     const connectionCurrent = connection.checkedAt !== null && policyValid
       && options.nowMs - Date.parse(connection.checkedAt) <= maxAgeMs;

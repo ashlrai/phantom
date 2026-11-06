@@ -34,6 +34,7 @@ export interface JobPrecheckBatchResult {
 export interface JobPrecheckBatchDeps {
   readFile: (path: string) => Promise<string>;
   git: JobPrecheckGit;
+  jobIdForFile?: (file: string) => string | undefined;
 }
 
 /**
@@ -92,7 +93,7 @@ export async function precheckJobBatch(
       continue;
     }
     try {
-      const report = await precheckJob(markdown, git);
+      const report = await precheckJob(markdown, git, { jobId: deps.jobIdForFile?.(file) });
       entries.push({ file, report });
       counts[report.verdict] += 1;
       for (const fact of report.facts) {

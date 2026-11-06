@@ -9,6 +9,14 @@ const receipt = (cursor: number, to = 'mason', body: unknown = { kind: 'ack', te
 const line = (id: string, at: number): MergedLine => ({ id, at, who: 'leader', source: 'verse', text: id, ack: null });
 
 describe('bus replies to Mason', () => {
+  it('prefers the full durable CEO outbox line while retaining bus-only replies', () => {
+    const mirrored = { ...receipt(1), envelope: { ...receipt(1).envelope,
+      from: 'leader', origin_bridge: 'leader-network', body: { kind: 'leader-reply', text: 'Leader: Synthetic full answer' } } };
+    expect(busRepliesToMason([mirrored], 1500, [{ text: 'Leader: Synthetic full answer' }])).toEqual([]);
+    expect(busRepliesToMason([mirrored], 1500)).toHaveLength(1);
+    const otherBridge = { ...mirrored, envelope: { ...mirrored.envelope, origin_bridge: 'other-fixture-bridge' } };
+    expect(busRepliesToMason([otherBridge], 1500, [{ text: 'Leader: Synthetic full answer' }])).toHaveLength(1);
+  });
   it('filters recipients case-insensitively, deduplicates by id and orders oldest first', () => {
     const duplicate = { ...receipt(3), envelope: { ...receipt(3).envelope, id: 'id-1' } };
     const rows = busRepliesToMason([receipt(2, 'leader'), receipt(1, 'MASON'), duplicate, receipt(4, 'other')], 5000);

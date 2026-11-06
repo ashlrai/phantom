@@ -21,8 +21,6 @@ export async function firstPaintSurface(waitMs: number = FIRST_PAINT_WAIT_MS): P
   const section = VERSE_SECTIONS.find((s) => s.id === getVerseUiState().section);
   if (!section) return;
   const importer = SECTION_MODULES[`./sections/${section.module}.tsx`];
-  // The chat's columns start now, beside the section's own chunk (chat/surface-loaders.ts).
-  if (section.id === 'chat') void import('../routes/verse/chat/surface-loaders.js').then((m) => m.warmChatSurface(), () => undefined);
   const work = Promise.all([
     // Registers the section as loaded, so the shell mounts it without suspending.
     loadSection(section.id),

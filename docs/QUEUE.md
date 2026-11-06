@@ -133,6 +133,12 @@ Corrupt snapshots fail closed instead of becoming empty queues.
 tick age, the global running cap, running jobs, the `queue/install.lock` holder and
 `admit` true or false with the reason. It claims and launches nothing. The gate
 logic itself lives in `contrib/mac/dispatchd.py`; see `contrib/mac/README.md`.
+The global cap is adaptive (RQ-QUEUE-BATCH-1). dispatchd raises it while load,
+memory, swap, disk, process count and provider rate limits have headroom, and backs
+off before they run out. The report shows it as `adaptiveCap`. An operator
+`hard_cap` in `slots.json` is optional; without one, `hardCap` is `null`. The same
+change batches related ready tasks into one agent session. See
+[adaptive concurrency and batching](../contrib/mac/README.md#adaptive-concurrency-and-batching).
 
 `ashlr fleet admission [--json]` reads that stored verdict from `queue/status.json`
 and says why each lane is waiting: held, at target, blocked by the global cap, or ok.
@@ -145,6 +151,12 @@ of the fleet: one line per lane with running of target and queued, marked `starv
 line with fleet running against the admission cap. It exits 1 when a lane is
 starved while the admission reason starts with `at_cap` — queued work parked
 because the whole fleet is full, the case `ashlr fleet trim` suggests a slot move for.
+
+`ashlr fleet starved [--json]` reads the same file and prints only the lanes that
+still have queued work: running of target and queued, marked `starved` when a lane
+is below its target while the admission reason starts with `at_cap`, then one line
+with the admission running, cap and reason. It exits 1 when any lane has 10 or
+more jobs queued and none running.
 
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned

@@ -26,20 +26,19 @@ const httpStatus = (error) =>
  * there, which let every leg of the train mint a fresh draft per run. The list
  * endpoint does include drafts for tokens with push access, so dedup scans it.
  * With several matches (the duplicate-draft state this repaired) the canonical
- * row is the published one when present, else the lowest id, so every caller
+ * row is the published one when present, else the highest id, so every caller
  * converges on the same release. */
 export async function releaseForTag(read, base, tag) {
   let found = null;
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; ; page++) {
     const rows = await read(`${base}/releases?per_page=100&page=${page}`);
     assert.ok(Array.isArray(rows), 'release listing did not return an array');
     for (const row of rows) {
       if (object(row)?.tag_name !== tag) continue;
-      if (found === null || (found.draft === row.draft ? row.id < found.id : found.draft)) found = row;
+      if (found === null || (found.draft === row.draft ? row.id > found.id : found.draft)) found = row;
     }
     if (rows.length < 100) return found;
   }
-  return found;
 }
 
 /** Every GitHub write goes through this one shape so tests can record it. */

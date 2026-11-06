@@ -105,6 +105,7 @@ class GateTests(unittest.TestCase):
                 (home / 'Projects' / 'ashlrai' / 'wt' / j).mkdir()
                 (home / '.ashlr-runs' / f'{j}.base').write_text(f'deadbeef x {home}/Projects/ashlrai/wt/{j} claude\n')
             (home / 'stubbin' / 'ps').write_text('#!/bin/bash\n' + ''.join(f'echo \"{1000+i} launch.sh RQ-LIVE-{i:02d} fixture\"\n' for i in range(count)))
+            seed_cap(home, 64)   # an earlier tick already raised the adaptive cap past the 41 live sessions
         capacity = {'slot': devin_slot(target=64, ceiling=64, hard_cap=64, last_change=int(1e15)),
                     'top': {'hard_cap': 64}}
         home = self._case({'LOADGATE_NCPU': '64'}, prep=prep, **capacity)
@@ -196,14 +197,34 @@ class GateTests(unittest.TestCase):
         self.assertIn('LOADGATE clear', events(home))
 
 
+def seed_cap(home, cap, **state):
+    """Persist adaptive-controller state (RQ-QUEUE-BATCH-1), as an earlier tick would have."""
+    row = {'schema': 'dispatchd.concurrency.v1', 'cap': cap, 'last_change': 0, 'last_backoff': 0, 'trouble_cap': None,
+           'trouble_at': None, 'fork_failures': [], 'rate_limits': [], 'history': [], **state}
+    (home / '.ashlr-runs' / 'queue' / 'concurrency.json').write_text(json.dumps(row))
+
+
+def conc(home):
+    return json.loads((home / '.ashlr-runs' / 'queue' / 'concurrency.json').read_text())
+
+
 class GlobalCapTests(unittest.TestCase):
-    def test_cap_is_min_of_target_sum_and_ncpu(self):
+    def test_cap_is_min_of_target_sum_and_adaptive_cap(self):
         tmp, home = ready_fixture(3)
         self.addCleanup(tmp.cleanup)
-        tick(home, {'LOADGATE_NCPU': '2'})
-        self.assertEqual(admission(home)['cap'], 2)   # min(sum targets 10, ncpu 2)
+        seed_cap(home, 2)
+        tick(home, {'LOADGATE_NCPU': '2', 'ASHLR_CONCURRENCY_MIN': '1'})   # the floor (default 4) is tunable
+        self.assertEqual(admission(home)['cap'], 2)   # min(sum targets 10, adaptive cap 2)
         self.assertEqual(len(launched(home)), 2)
         self.assertEqual(len(ready_left(home)), 1)
+
+    def test_first_tick_seeds_the_controller_from_the_legacy_bound(self):
+        # min(18, ncpu) as before, never under the floor of 4; ncpu no longer bounds later ticks.
+        for ncpu, expected in (('2', 4), ('8', 8), ('64', 18)):
+            tmp, home = ready_fixture(0, slot=devin_slot(target=32, ceiling=32, hard_cap=32, last_change=int(1e15)))
+            self.addCleanup(tmp.cleanup)
+            tick(home, {'LOADGATE_NCPU': ncpu})
+            self.assertEqual((conc(home)['cap'], admission(home)['cap']), (expected, expected), ncpu)
 
     def test_cap_counts_running_jobs_from_every_lane(self):
         tmp, home = ready_fixture(2)
@@ -211,7 +232,8 @@ class GlobalCapTests(unittest.TestCase):
         j = 'RQ-OTHER'   # one fresh claude job counts against the cap of 2 even though claude is held
         (home / 'Projects' / 'ashlrai' / 'wt' / j).mkdir()
         (home / '.ashlr-runs' / f'{j}.base').write_text(f'deadbeef x {home}/Projects/ashlrai/wt/{j} claude\n')
-        tick(home, {'LOADGATE_NCPU': '2'})
+        seed_cap(home, 2)
+        tick(home, {'LOADGATE_NCPU': '2', 'ASHLR_CONCURRENCY_MIN': '1'})   # the floor (default 4) is tunable
         a = admission(home)
         self.assertEqual((a['cap'], a['running'] if len(launched(home)) == 0 else None), (2, None))
         self.assertEqual(len(launched(home)), 1)
@@ -231,17 +253,108 @@ class GlobalCapTests(unittest.TestCase):
         self.assertEqual((a['cap'], a['hard_cap']), (1, 1))
         self.assertEqual(len(launched(home)), 1)
 
-    def test_global_hard_cap_seeded_and_bad_values_reset(self):
+    def test_global_hard_cap_is_an_optional_operator_ceiling(self):
         tmp, home = ready_fixture(0)
         self.addCleanup(tmp.cleanup)
         tick(home)
-        self.assertEqual(slots_of(home)['hard_cap'], 18)
-        for bad in (-3, 'ten', True, None, 2.5):
+        self.assertNotIn('hard_cap', slots_of(home))   # nothing seeded any more
+        self.assertIsNone(admission(home)['hard_cap'])
+        def write(value):
             slots = slots_of(home)
-            slots['hard_cap'] = bad
+            slots['hard_cap'] = value
             (home / '.ashlr-runs' / 'queue' / 'slots.json').write_text(json.dumps(slots))
+        for bad in (-3, 'ten', True, None, 2.5):   # malformed fails closed to the legacy 18, never to "no ceiling"
+            write(bad)
             tick(home)
             self.assertEqual(slots_of(home)['hard_cap'], 18, bad)
+        write(18)   # once the controller runs, an explicit 18 is the operator's and stays
+        tick(home)
+        self.assertEqual(slots_of(home)['hard_cap'], 18)
+        write(40)
+        tick(home)
+        self.assertEqual((slots_of(home)['hard_cap'], admission(home)['concurrency_ceiling']), (40, 40))
+
+    def test_legacy_seeded_hard_cap_is_retired_once_when_the_controller_starts(self):
+        tmp, home = ready_fixture(0, top={'hard_cap': 18})
+        self.addCleanup(tmp.cleanup)
+        tick(home)
+        self.assertNotIn('hard_cap', slots_of(home))
+        self.assertIn('CONCURRENCY legacy hard_cap 18 seed retired', events(home))
+        tmp, home = ready_fixture(0, top={'hard_cap': 12})   # any other value is an operator choice
+        self.addCleanup(tmp.cleanup)
+        tick(home)
+        self.assertEqual(slots_of(home)['hard_cap'], 12)
+
+
+class AdaptiveConcurrencyTests(unittest.TestCase):
+    """The controller end to end through a real tick: raise on headroom, back off on danger, log every change."""
+    def _saturated(self, cap=4, env=None, prep=None, **state):
+        # cap sessions already running on devin (target 32) with more queued: the adaptive cap is the binding limit.
+        tmp, home = ready_fixture(3, slot=devin_slot(target=32, ceiling=32, hard_cap=32, last_change=int(1e15)))
+        self.addCleanup(tmp.cleanup)
+        ps = []
+        for i in range(cap):
+            j = f'RQ-RUN-{i}'
+            (home / 'Projects' / 'ashlrai' / 'wt' / j).mkdir()
+            (home / '.ashlr-runs' / f'{j}.base').write_text(f'deadbeef x {home}/Projects/ashlrai/wt/{j} devin\n')
+            ps.append(f'echo "{2000 + i} launch.sh {j} fixture"\n')
+        (home / 'stubbin' / 'ps').write_text('#!/bin/bash\n' + ''.join(ps))
+        seed_cap(home, cap, **state)
+        if prep:
+            prep(home)
+        r = tick(home, env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return home
+
+    def test_raises_while_every_signal_has_headroom(self):
+        home = self._saturated()
+        self.assertEqual(conc(home)['cap'], 6)
+        self.assertIn('CONCURRENCY 4->6 raise headroom', events(home))
+        self.assertEqual(len(launched(home)), 2)   # the two new sessions launch in the same tick
+        rows = [json.loads(l) for l in (home / '.ashlr-runs' / 'metrics' / 'jobs.jsonl').read_text().splitlines()]
+        self.assertIn({'from': 4, 'to': 6, 'reason': 'raise headroom'},
+                      [{k: r[k] for k in ('from', 'to', 'reason')} for r in rows if r.get('event') == 'concurrency'])
+
+    def test_memory_pressure_warning_backs_off_before_the_gate_trips(self):
+        home = self._saturated(cap=8, env={'LOADGATE_PRESSURE': '2'})
+        self.assertTrue(admission(home)['admit'] is False)   # at cap: 8 running >= cap 6
+        self.assertEqual(conc(home)['cap'], 6)
+        self.assertIn('CONCURRENCY 8->6 backoff memory_pressure', events(home))
+        self.assertNotIn('LOADGATE tripped', events(home))
+        self.assertEqual(launched(home), [])
+
+    def test_swap_growth_and_high_load_back_off(self):
+        import time
+        home = self._saturated(cap=8, env={'LOADGATE_SWAP_GB': '2'}, prep=lambda h: (h / '.ashlr-runs' / 'queue' / 'admission.json')
+                               .write_text(json.dumps({'swap_samples': [[time.time() - 60, 0.5]]})))
+        self.assertIn('CONCURRENCY 8->6 backoff swap', events(home))
+        home = self._saturated(cap=8, env={'LOADGATE_LOADAVG': '45'})   # 45 / (18 x 3) = 0.83 >= 0.8
+        self.assertIn('CONCURRENCY 8->6 backoff load', events(home))
+
+    def test_rate_limit_hits_hold_then_back_off(self):
+        now = __import__('time').time()
+        home = self._saturated(rate_limits=[now - 30])
+        self.assertEqual(conc(home)['cap'], 4)   # one recent 429: hold, no raise
+        self.assertNotIn('CONCURRENCY', events(home))
+        home = self._saturated(cap=8, rate_limits=[now - 30, now - 20, now - 10])
+        self.assertIn('CONCURRENCY 8->6 backoff rate_limit', events(home))
+
+    def test_fork_failure_in_a_launch_log_backs_off(self):
+        def prep(home):
+            run = home / '.ashlr-runs' / 'queue' / 'run'
+            (run / 'RQ-FORKED.dispatched').write_text('0')
+            os.utime(run / 'RQ-FORKED.dispatched', (0, 0))
+            (home / '.ashlr-runs' / 'RQ-FORKED.launch').write_text('launch.sh: fork: retry: Resource temporarily unavailable\n')
+        home = self._saturated(cap=8, prep=prep)
+        self.assertIn('FORK_FAILED RQ-FORKED', events(home))
+        self.assertIn('CONCURRENCY 8->6 backoff fork', events(home))
+
+    def test_no_raise_past_the_trouble_point_until_settled(self):
+        import time
+        home = self._saturated(cap=4, trouble_cap=5, trouble_at=time.time() - 60)
+        self.assertEqual(conc(home)['cap'], 4)   # 4 + 2 would reach 5 within the settle window: hold
+        home = self._saturated(cap=4, trouble_cap=5, trouble_at=time.time() - 3600)
+        self.assertEqual(conc(home)['cap'], 5)   # settled: probe one session at a time
 
 
 class HardCapTests(unittest.TestCase):
@@ -399,7 +512,7 @@ class AdmissionSnapshotTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         tick(home, {'LOADGATE_LOADAVG': '3.5', 'LOADGATE_NCPU': '10'})
         a = admission(home)
-        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 30.0, 0, 0))
+        self.assertEqual((a['load1'], a['ncpu'], a['load_max'], a['procs'], a['worktrees']), (3.5, 10, 30.0, 1, 0))
         self.assertEqual(a['schema'], 'dispatchd.admission.v2')
         self.assertEqual(json.loads((home / '.ashlr-runs' / 'queue' / 'status.json').read_text())['admission']['cap'], a['cap'])
 

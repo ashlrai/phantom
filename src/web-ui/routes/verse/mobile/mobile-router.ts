@@ -7,7 +7,7 @@
  * back a screen instead of leaving the app. Nothing secret ever goes in it —
  * only screen names and chat ids the read session can list anyway.
  */
-import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
+import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { useCallback, useSyncExternalStore } from 'react';
 
 export type MobileTab = 'home' | 'agents' | 'needs' | 'leader' | 'more';

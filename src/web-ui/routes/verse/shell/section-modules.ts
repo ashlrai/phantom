@@ -1,50 +1,29 @@
 /**
- * routes/verse/shell/section-modules.ts — every `sections/*Section.tsx`, lazily
- * (unit C1).
+ * routes/verse/shell/section-modules.ts — every `sections/*Section.tsx` that
+ * exists at build time, lazily (unit C1).
  *
- * Which sections exist is a static list (SECTION_MODULE_NAMES; the test beside
- * this file pins it to the directory), so the framework-free ui store can ask
- * "has Command landed?" (for the first-launch-of-the-day rule) without
- * importing the shell component. Keys are `./sections/<Module>.tsx` — relative
- * to routes/verse, the form VerseApp and VerseConsoleApp's first-paint preload
- * have always used.
+ * The rail's surfaces are written by other owners and land at different
+ * times (C7's Command/Fleet/Growth/Mind, C6's Apps). A glob yields real
+ * per-section code splitting for a module that is present and a missing KEY
+ * — not an unresolved import — for one that is not, so the shell builds and
+ * runs at every stage of the landing.
  *
- * Chat, the section a cold load opens on, is imported directly. Every other
- * section goes through shell/section-modules-rest.ts, the glob, loaded on first
- * use: its import() thunks and preload lists are ~6 KB the chat's first paint
- * does not need. A cold load that opens on another section pays one small
- * chunk in front of it, in parallel with the session probe.
+ * Lives here rather than in VerseApp.tsx so the framework-free ui store can
+ * ask "has Command landed?" (for the first-launch-of-the-day rule) without
+ * importing the shell component. Keys are re-based to `./sections/<Module>.tsx`
+ * — relative to routes/verse, the form VerseApp and VerseConsoleApp's
+ * first-paint preload have always used.
+ *
+ * THE COST OF A GLOB, paid once: a finished section outside `sections/` is
+ * invisible, with nothing failing to say so (MCP shipped that way for a
+ * release). VerseApp.test.tsx walks this map for every VERSE_SECTIONS entry.
  */
 type Importer = () => Promise<unknown>;
 
-/** Every section module, by name. */
-export const SECTION_MODULE_NAMES = [
-  'AgentsSection',
-  'AppsSection',
-  'AutomationsSection',
-  'AutonomySection',
-  'ChatSection',
-  'CommandSection',
-  'FleetSection',
-  'GrowthSection',
-  'LiveStatusSection',
-  'McpSection',
-  'MindSection',
-  'OpsSection',
-  'PlaybooksSection',
-  'SettingsSection',
-  'UsageSection',
-  'WikiSection',
-] as const;
-
-const loadRest = () => import('./section-modules-rest.js');
+const RAW: Record<string, Importer> = import.meta.glob('../sections/*Section.tsx');
 
 export const SECTION_MODULES: Record<string, Importer> = Object.fromEntries(
-  SECTION_MODULE_NAMES.map((name): [string, Importer] => {
-    const key = `./sections/${name}.tsx`;
-    if (name === 'ChatSection') return [key, () => import('../sections/ChatSection.js')];
-    return [key, () => loadRest().then((rest) => rest.REST_SECTION_MODULES[key]!())];
-  }),
+  Object.entries(RAW).map(([key, load]) => [key.replace(/^\.\.\//, './'), load]),
 );
 
 /** The importer for one module name (`ChatSection`), or undefined when it has not landed. */

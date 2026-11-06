@@ -1,4 +1,88 @@
-# Drive node options
+# Multi-Mac compute pool
+
+## Implemented SSH pool
+
+The node router now has an opt-in SSH transport and a designated backup witness.
+Use Macs on a network they already share and explicit SSH config aliases approved
+for team devices. No DNS registration, paid service, discovery broadcast, provider
+auth transfer or agent forwarding is added. See [Agent network](AGENT-NETWORK.md)
+for complete setup and the runner contract.
+
+The primary keeps queue input and publication custody. The backup durably records
+every node-router transition as its replica and fencing witness. It accepts no
+backup-origin admissions while the primary is live. Every primary admission must
+reach this witness, so a disconnected primary stops admitting. After 15 minutes
+without a primary heartbeat, the witness promotes the backup, increments its
+fencing epoch and invalidates the old leader. A returning primary is demoted and
+cannot reclaim leadership by sending a heartbeat. There is no independent election
+from a copied queue. The witness clock is authoritative and clock regression fails
+closed. Loss of the witness holds admission; two isolated machines cannot safely
+provide both availability and exclusive admission without a shared authority.
+
+Run `phm node watch --json` on both runner Macs. On the primary it sends heartbeats;
+on the backup it checks for promotion. This is a foreground command, not an
+installed service. Workers can also trigger the timeout check when they contact
+the backup after primary transport fails. The primary's private mirror is evidence
+only and is never loaded as admission authority. Do not reset either store to
+recover an unavailable witness.
+
+Secondary workers probe their own native Codex and Claude CLI sign-in status,
+advertise only those lanes, pull fenced owner-scoped jobs and return result
+references. They check host-local PAUSE and KILL and stop the runner process group
+when a lease cannot be renewed. Auth stays device-bound: never copy `~/.codex`,
+`~/.claude` or any auth directory. Publication remains exclusively on the primary
+through the existing `publish.sh` path. Backup promotion grants compute admission,
+not publication authority.
+
+`phm node list --json` and `phm node status --json` on a configured Mac show the
+configured team scope, per-node lanes, load (`usage`, permille), heartbeat and
+expiry timestamps, plus the active runner and fencing epoch. Expired nodes remain
+visible. Unknown local sign-in never qualifies a provider lane.
+
+This transport extends the existing DriveNodes queue adapter. It does not migrate
+`ready.tsv`, install or modify dispatchd, or make the provisional node queue the
+production driver queue. A host-owned runner must implement the documented worker
+contract; existing dispatchd work must remain isolated until a shared claim adapter
+is commissioned. The Agent Bus and A2A contracts remain coordination and context
+surfaces, not a second admission authority. No message sending is introduced.
+No new log paths are created; child diagnostics and provider output are discarded,
+and only references and bounded metadata enter private node state.
+
+## Small Mac enrollment and admission
+
+After installing the reviewed Phantom build, enroll each additional Mac with
+`phm node join --owner mason --primary primary-mac --backup backup-mac --json`.
+The node ID defaults to a sanitized hostname. Subsequent `phm node join --json`
+uses the saved identity and preserves primary/backup roles. SSH trust and each
+provider's local sign-in remain prerequisites; join does not discover devices or
+install a runner.
+
+The 16 GiB Air has a two-slot RAM ceiling; the 8 GiB Pro has one. Reserve at least
+4 GiB or 30% of RAM, whichever is larger, and budget 4 GiB per job. Memory below
+30% available, swap in use, disk below 20 GB free or unknown telemetry holds
+admission; runtime pressure stops the worker. A worker launches one bounded batch
+of up to its RAM slot ceiling concurrently under one session, waits for every
+started slot, then leaves. No permanent supervisor is installed. Disk telemetry
+covers the home filesystem; the runner's existing DISKGUARD must also cover
+checkout and artifact volumes. Pressure checks target three seconds, subject to
+bounded synchronous telemetry and SSH delays. These checks add to DISKGUARD.
+Use independent per-node lanes; no sharded-inference speedup has been measured.
+iPad Pro and phone are mobile control surfaces, not compute nodes.
+
+Share reviewed project MCP and skill files with the same checkout revision, and
+credential-free Phantom connector profiles with local vault bindings. There is no
+automatic profile sync or Cursor credential copy. The
+[agent-network guide](AGENT-NETWORK.md) and
+[example](../examples/node-pool/README.md) describe the boundaries.
+
+## Earlier hosting decision
+
+The historical decision below describes the original single-Mac deployment and
+hosted-box options. Its hardware inventory and recommendation predate the opt-in
+multi-Mac pool above; its auth, publication, cost and host-control boundaries remain
+applicable to hosted-box pilots.
+
+### Drive node options
 
 This is a decision document for where `phm drive` capacity should run. The
 supervisor and queue come from the queued driver change sets: `phm queue`

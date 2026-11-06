@@ -50,8 +50,7 @@ import { EmptyState } from '../../../components/primitives/EmptyState.js';
 import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { ActionMenu, anchorBelow, type ActionMenuItem, type MenuAnchor } from '../chat/ActionMenu.js';
 import { commandChord, formatChord } from '../shell/command-keys.js';
-import { DOCK_LAYOUT, clampDockHeight, clampDockWidth, type DockPaneId, type DockPresentation } from '../shell/dock-catalog.js';
-import { DOCK_PANES, REGISTERED_DOCK_PANE_GROUPS, type DockPaneCatalogEntry } from '../shell/dock-pane-catalog.js';
+import { DOCK_LAYOUT, DOCK_PANES, REGISTERED_DOCK_PANE_GROUPS, clampDockHeight, clampDockWidth, type DockPaneCatalogEntry, type DockPaneId, type DockPresentation } from '../shell/dock-catalog.js';
 import { getPane, isPaneAvailable, paneChordLabel, panesFor, preloadPanes, usePanes, type PaneContext, type PaneProps, type RegisteredPane } from '../panes/index.js';
 import {
   closeDock,

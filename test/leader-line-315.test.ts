@@ -114,7 +114,6 @@ function briefSources(over: Partial<BriefSources> = {}): BriefSources {
       cloudTasks: () => [],
       capacity: () => null,
       memos: () => [],
-      // GitHub answered with nothing extra: the ledger rows above are the whole story.
       fleetTruth: async (since) => ({ windowStartMs: since, windowEndMs: since, merged: [], mergeCountState: 'ok', truncated: false, running: null, queued: null }),
     },
     leader: () => ({
@@ -197,7 +196,11 @@ afterEach(() => {
 
 describe('brief — composed from recorded state, with links', () => {
   it('shipped, running, blockers, next and one question, phone-sized', async () => {
-    const facts = await gatherBriefFacts(ET('00:00'), ET('08:05'), briefSources());
+    const sources = briefSources();
+    sources.digest!.fleetTruth = async (since) => ({ windowStartMs: since, windowEndMs: since,
+      merged: [{ repo: VERSE, number: 541, title: '', url: 'https://github.com/ashlrai/ashlr-hub/pull/541', mergedAtMs: ET('06:00'), source: 'gh' }],
+      mergeCountState: 'ok', truncated: false, running: null, queued: null });
+    const facts = await gatherBriefFacts(ET('00:00'), ET('08:05'), sources);
     const text = composeBrief('morning', facts, { narrative: 'One line of narrative.' });
     const lines = text.split('\n');
     expect(lines[0]).toBe('Morning brief · Sun, Sep 27');
