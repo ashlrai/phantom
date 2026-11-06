@@ -14,6 +14,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { validLeaderInboxReceipt, type LeaderInboxAppender, type LeaderInboxRequest } from './leader-inbox-writer.js';
 
 export const LEADER_BRIDGE_ID = 'leader-network';
 export const LEADER_AWAY_MS = 72 * 60 * 60 * 1000;
@@ -55,6 +56,8 @@ export interface LeaderNetworkOptions {
   commsSource: string;
   deliver?: (identity: TeamIdentity, message: BusEnvelope) => Promise<DeliverResult>;
   adapters?: Partial<Record<ChannelId, ChannelAdapter>>;
+  /** Trusted host dependency, never supplied by an envelope or model. */
+  appendInbox?: LeaderInboxAppender;
   now?: () => number;
 }
 export interface LeaderNetworkInput { message: BusEnvelope; verifiedSender: TeamIdentity; addressedAgent?: string; /** Original adapter receipt clock, never a message-body claim. */ receivedAt?: number; /** Trusted adapter already wrote the durable inbox. */ inboxAlreadyRecorded?: boolean }
@@ -215,7 +218,13 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
           // Preserve the planner/ack consumers' existing wall-clock ET heading
           // contract. ISO headings are treated as foreign fragments by them.
           const heading = formatInboxEntry('', route.channel, new Date(route.receivedAt)).trim().replace(/\([^,]+, /, '(Operator, ');
-          appendRecord(join(leaderDir, 'MASON-INBOX.md'), requestId, `${heading} [leader-network:${requestId}]\n${text.split('\n').map(escapeInboxContinuation).join('\n')}`);
+          if (route.channel === 'slack' && options.appendInbox) {
+            const request: LeaderInboxRequest = { requestId, channel: 'slack', ownerId: route.recipient, receivedAt: route.receivedAt, text };
+            const receipt = await options.appendInbox(request);
+            if (!validLeaderInboxReceipt(receipt, request)) throw new Error('Leader inbox receipt is invalid');
+          } else {
+            appendRecord(join(leaderDir, 'MASON-INBOX.md'), requestId, `${heading} [leader-network:${requestId}]\n${text.split('\n').map(escapeInboxContinuation).join('\n')}`);
+          }
           route.inbox = true; save(state);
         }
         if (!route.bus) {
