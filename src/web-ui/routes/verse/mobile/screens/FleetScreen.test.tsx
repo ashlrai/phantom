@@ -9,7 +9,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMutationToken, setMutationToken } from '../../../../data/auth-store.js';
-import { evictAll } from '../../../../data/cache.js';
+import { evictAll, queryGateStats } from '../../../../data/cache.js';
 import { authorityStatus, budgetView, fleetLive } from '../../command/fixtures.test-support.js';
 import { decisionsView, wouldMergeDecision } from '../../command/ladder-fixtures.test-support.js';
 import { controlSnapshot } from '../../sections/section-fixtures.test-support.js';
@@ -60,10 +60,14 @@ afterEach(() => {
 });
 
 describe('FleetScreen states', () => {
-  it('shows a skeleton while the fleet loads', () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+  it('shows a skeleton while the fleet loads', async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async () => { await pending; return json({ error: 'not found' }, 404); }));
     mount();
     expect(screen.getByRole('status', { name: 'Loading the fleet' })).toBeInTheDocument();
+    finish();
+    await waitFor(() => expect(queryGateStats()).toMatchObject({ active: 0, queued: 0 }));
   });
 
   it('says why when neither the control plane nor the live view answers', async () => {
