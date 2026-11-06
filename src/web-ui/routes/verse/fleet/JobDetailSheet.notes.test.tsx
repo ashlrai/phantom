@@ -20,7 +20,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); evictAll(); });
 it('shows closing issues and opens referenced worker logs', async () => {
   vi.stubGlobal('fetch', vi.fn(async (path: string) => path.startsWith('/api/fleet/job/text?') ? Response.json(notes) : Response.json(detail)));
   const onClose = vi.fn();
-  render(<JobDetailSheet job={job} repo="ashlrai/phantom" onClose={onClose} />);
+  render(<JobDetailSheet job={job} onClose={onClose} />);
   const section = await screen.findByRole('region', { name: 'Bridge notes' });
   expect(await within(section).findByText('Bridge notes · 3 lines')).toBeInTheDocument();
   const closes = within(section).getByText('Closes', { exact: false, selector: 'p' });

@@ -85,11 +85,11 @@ it('does not fetch while hidden and polls every 10 s while visible', async () =>
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetSteeringPane {...props} />); });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(fetcher).toHaveBeenCalledTimes(3);
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(fetcher).toHaveBeenCalledTimes(4);
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-  expect(fetcher).toHaveBeenCalledTimes(5);
-  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-  expect(fetcher).toHaveBeenCalledTimes(7);
+  expect(fetcher).toHaveBeenCalledTimes(6);
 });

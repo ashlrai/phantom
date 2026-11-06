@@ -58,7 +58,7 @@ function snapshot(over: Partial<FleetRuns> = {}): FleetRuns {
   };
 }
 
-/** The five-item incident snapshot from the acceptance criteria. */
+/** The four-item incident snapshot from the acceptance criteria. */
 const INCIDENT = snapshot({
   claudeLane: 'down token rejected 2026-10-31 01:03:35',
   lanes: [{ lane: 'claude', running: 0, target: 12, queued: 0, held: false, heldReason: null, tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 },
@@ -158,23 +158,22 @@ describe('FleetNeedsYouRows', () => {
     expect(screen.queryByText('Fleet on this Mac')).not.toBeInTheDocument();
   });
 
-  it('renders the incident snapshot: five rows, each with a next step and a surface', async () => {
+  it('renders the incident snapshot: four rows, each with a next step and a surface', async () => {
     setup(activity(), INCIDENT);
     const reports = renderRows();
     const group = await screen.findByRole('region', { name: 'Fleet on this Mac' });
     expect(within(group).getByText('Claude lane is down: 12 slots idle')).toBeInTheDocument();
     expect(within(group).getByText('Dispatch is paused by HOLD')).toBeInTheDocument();
     expect(within(group).getByText('Lane codex-cmp is held')).toBeInTheDocument();
-    expect(within(group).getByText('Disk is critically full on this Mac')).toBeInTheDocument();
     expect(within(group).getByText('This Mac is under pressure')).toBeInTheDocument();
-    expect(within(group).getAllByText(/^Next: /)).toHaveLength(5);
-    expect(within(group).getAllByRole('button', { name: /^Open / })).toHaveLength(5);
-    expect(within(group).getAllByText('Urgent')).toHaveLength(3);
+    expect(within(group).getAllByText(/^Next: /)).toHaveLength(4);
+    expect(within(group).getAllByRole('button', { name: /^Open / })).toHaveLength(4);
+    expect(within(group).getAllByText('Urgent')).toHaveLength(2);
     expect(within(group).getAllByText('Attention')).toHaveLength(2);
     const last = reports.at(-1)!;
     expect(last.answered).toBe(true);
     expect(last.items.map((i: FleetNeedsYouItem) => i.id)).toEqual(
-      ['claude-lane-down', 'switches-on', 'lane-held:codex-cmp', 'host-disk-low', 'host-pressure'],
+      ['claude-lane-down', 'switches-on', 'lane-held:codex-cmp', 'host-pressure'],
     );
   });
 
@@ -193,7 +192,7 @@ describe('FleetNeedsYouRows', () => {
   it('renders nothing on the Chats split but still reports', async () => {
     setup(activity(), INCIDENT);
     const reports = renderRows('chats');
-    await waitFor(() => expect(reports.at(-1)?.items).toHaveLength(5));
+    await waitFor(() => expect(reports.at(-1)?.items).toHaveLength(4));
     expect(screen.queryByText('Fleet on this Mac')).not.toBeInTheDocument();
   });
 
@@ -246,12 +245,12 @@ describe('FleetNeedsYouRows inside NeedsYouDrawer', () => {
     setup(activity({ needsYou: [quarantined] }), INCIDENT);
     await openDrawer('fleet');
     const group = await screen.findByRole('region', { name: 'Fleet on this Mac' });
-    // Five local items plus the one server fleet item → the tab counts 6.
-    expect(screen.getByRole('tab', { name: /Fleet 6 items/ })).toHaveAttribute('aria-selected', 'true');
+    // Four local items plus the one server fleet item → the tab counts 5.
+    expect(screen.getByRole('tab', { name: /Fleet 5 items/ })).toHaveAttribute('aria-selected', 'true');
     // The group sits above the server listbox.
     const list = await screen.findByRole('listbox', { name: /Fleet needing you/ });
     expect(group.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(group).getAllByRole('button', { name: /^Open / })).toHaveLength(5);
+    expect(within(group).getAllByRole('button', { name: /^Open / })).toHaveLength(4);
     expect(within(list).getAllByRole('option')).toHaveLength(1);
     // An all-clear can never be claimed while there are items.
     expect(screen.queryByText('All clear')).not.toBeInTheDocument();
@@ -261,7 +260,7 @@ describe('FleetNeedsYouRows inside NeedsYouDrawer', () => {
     setup(activity({ needsYou: [approvalNeed('p-1')] }), INCIDENT);
     await openDrawer('all');
     await screen.findByRole('region', { name: 'Fleet on this Mac' });
-    expect(screen.getByRole('tab', { name: /All 6 items/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /All 5 items/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('the Chats split shows no group', async () => {
@@ -271,7 +270,7 @@ describe('FleetNeedsYouRows inside NeedsYouDrawer', () => {
   });
 
   it('a healthy snapshot leaves the master all-clear logic untouched', async () => {
-    setup(activity({ needsYou: [] }), snapshot({ generatedAt: new Date().toISOString() }));
+    setup(activity({ needsYou: [] }), snapshot());
     await openDrawer('fleet');
     expect(await screen.findByText('All clear')).toBeInTheDocument();
   });

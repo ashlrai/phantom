@@ -62,9 +62,9 @@ it('polls every five seconds only while visible', async () => {
   serve(fixture);
   const view = render(<SectionVisibilityProvider visible><OpsRuns /></SectionVisibilityProvider>);
   await act(async () => {});
-  await act(async () => { vi.advanceTimersByTime(5_000); }); expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/verse/fleet/runs')).toHaveLength(2);
+  await act(async () => { vi.advanceTimersByTime(5_000); }); expect(fetch).toHaveBeenCalledTimes(2);
   view.rerender(<SectionVisibilityProvider visible={false}><OpsRuns /></SectionVisibilityProvider>);
-  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/verse/fleet/runs')).toHaveLength(2);
+  await act(async () => { vi.advanceTimersByTime(15_000); }); expect(fetch).toHaveBeenCalledTimes(2);
 });
 it('caps the event and inbox tails', async () => {
   const entries = Array.from({ length: 50 }, (_, i) => ({ at: `2026-10-31T12:00:${String(i).padStart(2, '0')}Z`, kind: 'tick', source: 'Mason', text: `entry-${i}` }));

@@ -2,12 +2,11 @@ import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
-import { evictAll } from '../../../data/cache.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { InterjectDialog } from './InterjectDialog.js';
 import { closeInterjectDialog, openInterjectDialog } from './interject-dialog-store.js';
 
-afterEach(() => { evictAll(); act(closeInterjectDialog); clearMutationToken(); vi.unstubAllGlobals(); });
+afterEach(() => { act(closeInterjectDialog); clearMutationToken(); vi.unstubAllGlobals(); });
 
 it('seeds the message once and places the caret at the end, including in StrictMode', async () => {
   render(<StrictMode><InterjectDialog /></StrictMode>);
@@ -30,7 +29,7 @@ it('opens empty without a prefill', () => {
 
 it('sends a steering note with its job context to the inbox', async () => {
   setMutationToken('a'.repeat(64));
-  const fetcher = vi.fn(async (_path: string, options: RequestInit) => Response.json(options.method === 'GET' ? { inbox: [] } : { ok: true, at: '2026-10-31T00:52:00Z' }));
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ ok: true, at: '2026-10-31T00:52:00Z' }));
   vi.stubGlobal('fetch', fetcher);
   const user = userEvent.setup();
   render(<InterjectDialog />);
@@ -38,7 +37,6 @@ it('sends a steering note with its job context to the inbox', async () => {
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'stop touching dock-store');
   await user.click(screen.getByRole('button', { name: /Send/ }));
   await screen.findByRole('status');
-  const post = fetcher.mock.calls.find(([, options]) => options.method === 'POST')!;
-  expect(post[0]).toBe('/api/verse/fleet/runs/inbox');
-  expect(JSON.parse(post[1].body as string)).toEqual({ text: 'Re RQ-PHX-FOO (codex-personal): stop touching dock-store', source: 'Phantom desktop' });
+  expect(fetcher.mock.calls[0]![0]).toBe('/api/verse/fleet/runs/inbox');
+  expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual({ text: 'Re RQ-PHX-FOO (codex-personal): stop touching dock-store', source: 'Phantom desktop' });
 });

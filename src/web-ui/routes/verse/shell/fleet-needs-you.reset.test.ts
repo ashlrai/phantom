@@ -30,7 +30,7 @@ describe('personal Codex reset in Needs you', () => {
     const time = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(AS_OF));
     expect(result.map((item) => item.id)).toEqual(['lane-held:codex-personal', 'supply-personal-reset']);
     expect(result[1]).toEqual({
-      id: 'supply-personal-reset', open: { kind: 'pane', paneId: 'fleet-lanes', lane: 'codex-personal' },
+      id: 'supply-personal-reset', open: { kind: 'pane', paneId: 'fleet-lanes' },
       severity: 'urgent', title: 'Personal Codex has reset; its lane is still held',
       detail: `Reads 0% as of ${time} · 14 jobs waiting`,
       nextStep: 'Release the hold in Fleet ▸ Lanes, or wait for it to expire', target: 'fleet',

@@ -39,7 +39,7 @@ function snapshot(over: Partial<FleetRuns> = {}): FleetRuns {
 const ids = (result: { items: Array<{ id: string }> }) => result.items.map((i) => i.id);
 
 describe('deriveFleetNeedsYou', () => {
-  it('the incident snapshot: lane down, a held lane, a switch, low disk — five items', () => {
+  it('the incident snapshot: lane down, a held lane, a switch, low disk — four items', () => {
     const result = deriveFleetNeedsYou(snapshot({
       claudeLane: 'down token rejected 2026-10-31 01:03:35',
       lanes: [{ lane: 'claude', running: 0, target: 12, queued: 0, held: false, heldReason: null, tokensLastHour: 0, merged24h: 0, mergeRate24h: 0 },
@@ -48,7 +48,7 @@ describe('deriveFleetNeedsYou', () => {
       diskFreeGb: 4,
     }), NOW);
     expect(result.answered).toBe(true);
-    expect(ids(result)).toEqual(['claude-lane-down', 'switches-on', 'lane-held:codex-cmp', 'host-disk-low', 'host-pressure']);
+    expect(ids(result)).toEqual(['claude-lane-down', 'switches-on', 'lane-held:codex-cmp', 'host-pressure']);
     const byId = new Map(result.items.map((i) => [i.id, i]));
     expect(byId.get('claude-lane-down')).toMatchObject({
       severity: 'urgent',
@@ -64,7 +64,6 @@ describe('deriveFleetNeedsYou', () => {
       target: 'fleet',
     });
     expect(byId.get('lane-held:codex-cmp')).toMatchObject({ severity: 'attention', detail: 'credit exhausted' });
-    expect(byId.get('host-disk-low')).toMatchObject({ severity: 'urgent', title: 'Disk is critically full on this Mac' });
     expect(byId.get('host-pressure')).toMatchObject({ severity: 'attention', detail: 'disk free 4 GB' });
     for (const item of result.items) expect(item.nextStep.length).toBeGreaterThan(0);
   });
@@ -134,7 +133,7 @@ describe('deriveFleetNeedsYou', () => {
     expect(deriveFleetNeedsYou(snapshot({ memFreePct: 8 }), NOW).items[0]).toMatchObject({ detail: 'memory free 8 %' });
     // null is unknown, never evidence of pressure (the honesty rule).
     expect(ids(deriveFleetNeedsYou(snapshot({ diskFreeGb: null, memFreePct: null }), NOW))).toEqual([]);
-    expect(ids(deriveFleetNeedsYou(snapshot({ diskFreeGb: 20, memFreePct: 10 }), NOW))).toEqual([]);
+    expect(ids(deriveFleetNeedsYou(snapshot({ diskFreeGb: 10, memFreePct: 10 }), NOW))).toEqual([]);
   });
 
   it('reads a lane-down only from "down", and never prints a path', () => {

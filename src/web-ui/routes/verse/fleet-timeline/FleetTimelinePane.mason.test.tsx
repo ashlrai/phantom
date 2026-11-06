@@ -54,7 +54,7 @@ it('shows and routes interjections on the worker timeline in both layouts', asyn
   fireEvent.pointerEnter(lane.querySelector('rect[data-status="interjection"]')!);
   expect(screen.getByText('inspect the fleet')).toBeInTheDocument();
   fireEvent.click(first);
-  expect(openDockPane).toHaveBeenCalledWith('fleet-steering');
+  expect(openDockPane).toHaveBeenCalledWith('fleet-inbox');
   expect(requestWorkerLogJob).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'codex 2/3: first-job' }));
   expect(requestWorkerLogJob).toHaveBeenCalledWith('first-job');

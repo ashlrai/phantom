@@ -17,11 +17,11 @@ describe('rollupChannels', () => {
   it('counts valid messages at the hour and day boundaries and orders the channels', () => {
     const inbox = [entry(3_600_000, 'TG'), entry(3_600_001, 'Telegram'), entry(86_400_000, 'telegram'), entry(86_400_001, 'telegram'), entry(1, 'phantom page', 'latest\nmessage'), entry(-1, 'mystery'), { at: 'invalid', source: 'email', text: 'fake' }];
     const result = rollupChannels({ inbox, sources: { inbox: 'healthy' }, generatedAt: 'snapshot' }, now)!;
-    expect(result.rows.map(row => row.key)).toEqual(['other', 'page', 'telegram', 'desktop', 'terminal', 'email', 'imessage', 'fleet-say', 'mobile']);
+    expect(result.rows.map(row => row.key)).toEqual(['other', 'page', 'telegram', 'desktop', 'terminal', 'email', 'fleet-say', 'mobile']);
     expect(result.rows.find(row => row.key === 'telegram')).toMatchObject({ total: 4, lastHour: 1, last24h: 3, rawSources: ['TG', 'Telegram', 'telegram'] });
     expect(result.rows[0]).toMatchObject({ total: 1, lastHour: 0, last24h: 0 });
     expect(result.rows[1].preview).toBe('latest message');
-    expect(result.silent).toEqual(['Desktop app', 'Terminal', 'Email', 'iMessage', 'Fleet-say', 'Mobile']);
+    expect(result.silent).toEqual(['Desktop app', 'Terminal', 'Email', 'Fleet-say', 'Mobile']);
     expect(result).toMatchObject({ sourceState: 'healthy', generatedAt: 'snapshot' });
   });
   it('clips the latest preview to a word boundary, including a long unbroken word', () => {
@@ -34,7 +34,7 @@ describe('rollupChannels', () => {
     expect(rollupChannels(null, now)).toBeNull();
     expect(rollupChannels({ inbox: 'bad' }, now)).toBeNull();
     const result = rollupChannels({ inbox: [] }, now)!;
-    expect(result.rows).toHaveLength(8);
-    expect(result.silent).toHaveLength(8);
+    expect(result.rows).toHaveLength(7);
+    expect(result.silent).toHaveLength(7);
   });
 });

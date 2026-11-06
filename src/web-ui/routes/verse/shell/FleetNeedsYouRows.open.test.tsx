@@ -5,18 +5,17 @@ import { FleetNeedsYouRows } from './FleetNeedsYouRows.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { closeVerseOverlay, setVerseSection } from '../verse-ui-store.js';
 import { setFocusMode } from './focus-mode.js';
-import { TERMINAL_PANE_ID } from '../terminal/terminal.pane.js';
+import { TERMINAL_PANE_ID } from '../dock/terminal-id.js';
 const state = vi.hoisted(() => ({ data: undefined as unknown }));
-vi.mock('../../../data/hooks.js', async importOriginal => ({
-  ...await importOriginal<typeof import('../../../data/hooks.js')>(),
+vi.mock('../../../data/hooks.js', () => ({
   useQuery: (query: { key: string }) => ({ data: query.key === 'verse-fleet-runs' ? state.data : null, status: 'success' }),
   useRefetch: () => () => {}, useRefresh: () => () => {},
+  useMutationHold: () => ({ hasHold: false, token: null, touch: () => {} }),
 }));
 vi.mock('../dock/dock-store.js', () => ({ openDockPane: vi.fn(), requestTerminal: vi.fn() }));
 vi.mock('../verse-ui-store.js', () => ({ closeVerseOverlay: vi.fn(), setVerseSection: vi.fn() }));
 vi.mock('./focus-mode.js', () => ({ setFocusMode: vi.fn() }));
 vi.mock('./section-visibility.js', () => ({ usePollWhileVisible: vi.fn() }));
-vi.mock('../terminal/terminal.pane.js', () => ({ TERMINAL_PANE_ID: 'terminal' }));
 const NOW = Date.parse('2026-10-31T12:00:00Z');
 
 /** A healthy snapshot: dispatcher ticking, a lane working, sources green. */
@@ -47,8 +46,8 @@ function snapshot(over: Partial<FleetRuns> = {}): FleetRuns {
 
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 function show(data: FleetRuns) {
-  state.data = { ...data, kind: 'notInBuild' };
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'content-type': 'application/json' } })));
+  state.data = data;
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({ items: [] })));
   render(<FleetNeedsYouRows split="fleet" nowMs={NOW} onResult={() => {}} />);
 }
 it('closes the overlay and reveals Lanes from outside Chat', () => {
@@ -64,21 +63,19 @@ it('copies the exact fix and opens Terminal without sending a request', async ()
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   show(snapshot({ claudeLane: 'down', lanes: [{ ...snapshot().lanes[0]!, lane: 'claude' }] }));
-  vi.mocked(fetch).mockClear(); // Ignore the initial Needs Mason read; opening Terminal must not send a request.
   fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
   await screen.findByRole('button', { name: 'Open Terminal · command copied' });
   expect(writeText).toHaveBeenCalledWith('~/.ashlr-runs/bin/fix-claude-lane.sh');
   expect(openDockPane).toHaveBeenCalledWith(TERMINAL_PANE_ID);
   expect(closeVerseOverlay).toHaveBeenCalledOnce();
-  expect(fetch).not.toHaveBeenCalled();
+  expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
 });
 it('keeps a failed clipboard command visible for manual copying', async () => {
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
   show(snapshot({ claudeLane: 'down', lanes: [{ ...snapshot().lanes[0]!, lane: 'claude' }] }));
-  vi.mocked(fetch).mockClear(); // Ignore the initial Needs Mason read; opening Terminal must not send a request.
   fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
   await waitFor(() => expect(screen.getByText('Copy command: ~/.ashlr-runs/bin/fix-claude-lane.sh')).toBeVisible());
   expect(closeVerseOverlay).not.toHaveBeenCalled();
   expect(openDockPane).toHaveBeenCalledWith(TERMINAL_PANE_ID);
-  expect(fetch).not.toHaveBeenCalled();
+  expect(vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
 });

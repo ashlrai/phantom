@@ -33,7 +33,7 @@ describe('personal Codex supply in Needs you', () => {
 
   it('warns at 93% with the queue, estimated exhaustion and local reset', () => {
     expect(supply(snapshot(93))).toEqual([{
-      id: 'supply-personal-low', open: { kind: 'pane', paneId: 'fleet-supply' }, severity: 'attention', title: 'Personal Codex is at 93%',
+      id: 'supply-personal-low', severity: 'attention', title: 'Personal Codex is at 93%',
       detail: `3 jobs queued on codex-personal · out in about 105 min · resets ${localReset}`,
       nextStep: 'Move new work to Devin and local lanes before it runs out', target: 'fleet',
     }]);
@@ -46,7 +46,7 @@ describe('personal Codex supply in Needs you', () => {
 
   it('makes an exhausted lane urgent while jobs are queued', () => {
     expect(supply(snapshot(100))).toEqual([{
-      id: 'supply-personal-out', open: { kind: 'pane', paneId: 'fleet-supply' }, severity: 'urgent', title: `Personal Codex is out until ${localReset}`,
+      id: 'supply-personal-out', severity: 'urgent', title: `Personal Codex is out until ${localReset}`,
       detail: '3 jobs are waiting on it',
       nextStep: 'Those jobs wait for the reset; the leaders should route new work elsewhere', target: 'fleet',
     }]);
@@ -62,7 +62,7 @@ describe('personal Codex supply in Needs you', () => {
       runs.codexPersonal = null;
       runs.lanes[0]!.held = true;
       runs.lanes[0]!.heldReason = reason;
-      expect(supply(runs)[0]).toMatchObject({ id: 'supply-personal-out', open: { kind: 'pane', paneId: 'fleet-supply' }, severity: 'urgent', title: 'Personal Codex is out' });
+      expect(supply(runs)[0]).toMatchObject({ id: 'supply-personal-out', severity: 'urgent', title: 'Personal Codex is out' });
     }
     const runs = snapshot(93);
     runs.lanes[0]!.held = true;

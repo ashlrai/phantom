@@ -23,7 +23,7 @@ describe('idle lanes and pending drops in Needs you', () => {
     const runs = snapshot();
     Object.assign(runs.lanes[0]!, { running: 0, target: 24, queued: 7 });
     expect(deriveFleetNeedsYou(runs, NOW)).toEqual({ answered: true, items: [{
-      id: 'lane-idle:codex-personal', open: { kind: 'pane', paneId: 'fleet-lanes', lane: 'codex-personal' },
+      id: 'lane-idle:codex-personal', open: { kind: 'pane', paneId: 'fleet-lanes' },
       severity: 'attention', title: 'Lane codex-personal is idle',
       detail: '7 queued jobs but nothing is running.',
       nextStep: 'Lane codex-personal has 7 queued and nothing running; check its hold and target in Lanes',
