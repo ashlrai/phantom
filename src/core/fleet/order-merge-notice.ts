@@ -25,11 +25,14 @@ export function planOrderMergeNotices(trace: OrderTraceV1, sent: ReadonlySet<str
     const route = orderSourceRoute(order.source);
     if (!route) continue;
     for (const job of order.jobs) {
-      const key = `${route.entryId}:${job.id}`;
-      if (job.state !== 'merged' || seen.has(key)) continue;
-      seen.add(key);
-      notices.push({ ...route, key, jobId: job.id,
-        text: scrubSecrets(`Merged: ${job.id} for your ${order.key} order${job.url ? ` (${job.url})` : ''}.`).slice(0, 200) });
+      if (job.state !== 'merged') continue;
+      for (const channel of new Set([route.channel, ...(order.alsoChannels ?? [])])) {
+        const key = `${route.entryId}:${job.id}${channel === route.channel ? '' : `:${channel}`}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        notices.push({ ...route, channel, key, jobId: job.id,
+          text: scrubSecrets(`Merged: ${job.id} for your ${order.key} order${job.url ? ` (${job.url})` : ''}.`).slice(0, 200) });
+      }
     }
   }
   return notices;

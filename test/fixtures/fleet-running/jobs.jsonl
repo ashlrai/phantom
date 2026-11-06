@@ -1,0 +1,10 @@
+{"job":"a1","event":"launch","ts":"2026-11-03T06:00:00-0500","lane":"codex","model":"gpt-x","repo":"phantom","tier":"work"}
+{"job":"a2","event":"launch","ts":"2026-11-03T11:30:00Z","lane":"codex","model":"gpt-x","repo":"hub","tier":"fix"}
+{"job":"b1","event":"launch","ts":"2026-11-03T11:50:00+00:00","lane":"claude","model":"opus","repo":"phantom","tier":"work"}
+{"job":"done","event":"launch","ts":"2026-11-03T11:00:00Z","lane":"claude","model":"opus","repo":"phantom","tier":"work"}
+{"job":"done","event":"finish","ts":"2026-11-03T11:40:00Z"}
+{"job":"old","event":"launch","ts":"2026-11-03T04:00:00Z","lane":"claude","model":"opus","repo":"phantom","tier":"work"}
+{"job":"redo","event":"launch","ts":"2026-11-03T10:00:00Z","lane":"claude","model":"opus","repo":"phantom","tier":"work"}
+{"job":"redo","event":"finish","ts":"2026-11-03T10:10:00Z"}
+{"job":"redo","event":"launch","ts":"2026-11-03T11:20:00Z","lane":"claude","model":"opus","repo":"phantom","tier":"work"}
+not json

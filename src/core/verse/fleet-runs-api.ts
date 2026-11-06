@@ -50,6 +50,7 @@ export interface FleetRunsApiDeps {
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
   readInbox?: (limit: number) => Promise<unknown>;
+  readOutbox?: (limit: number) => Promise<unknown>;
   appendInbox?: (text: string, source: string) => Promise<unknown>;
   codexPersonal?: () => Promise<unknown>;
   mergedLastHour?: () => Promise<unknown>;
@@ -98,6 +99,7 @@ function project(value: unknown, shape: Shape): unknown {
   return Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, project(value[k], s)]));
 }
 const inboxShape: Shape = [{ at: 'string', source: 'string', text: 'string' }];
+const outboxShape: Shape = [{ at: 'string', text: 'string' }];
 // The independent host reading projects nullable load averages, core count and ratio.
 const hostShape: Shape = { load1: 'number?', load5: 'number?', load15: 'number?', cores: 'number?', ratio: 'number?' };
 const runsShape: Shape = {
@@ -165,6 +167,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   const runs = deps.readRunsDir ?? (async () => (await import('../fleet/runs-dir-state.js' as string)).readFleetRunsDirState());
   const workers = deps.listWorkers ?? (async () => (await import('../fleet/runs-live-workers.js' as string)).listLiveWorkers());
   const inbox = deps.readInbox ?? (async (limit: number) => (await import('../fleet/mason-inbox.js' as string)).readInboxEntries({ limit, runsDir: deps.runsDir ?? defaultRunsDir() }));
+  const outbox = deps.readOutbox ?? (async (limit: number) => (await import('../fleet/mason-outbox.js' as string)).readOutboxEntries({ limit, runsDir: deps.runsDir ?? defaultRunsDir() }));
   const append = deps.appendInbox ?? (async (text: string, source: string) => (await import('../fleet/mason-inbox.js' as string)).appendInboxEntry(text, { source, runsDir: deps.runsDir ?? defaultRunsDir() }));
   // One receiver per API instance: its normalization/dedupe contract is shared
   // by every POST below for the process lifetime. `source` stays presentation
@@ -222,7 +225,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       ['runsDir', runs, runsShape], ['workers', workers, workersShape], ['inbox', () => inbox(30), inboxShape],
       ['codex', deps.codexPersonal ?? (() => personal(now())), codexShape], ['merges', merges, mergesShape],
     ] as const;
-    await Promise.all(sources.map(async ([key, read, shape]) => {
+    const sourcesDone = Promise.all(sources.map(async ([key, read, shape]) => {
       try {
         const raw: unknown = await read();
         if (raw === null && key === 'codex') { result.sources[key] = 'missing'; return; }
@@ -250,6 +253,14 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         result.sources[key] = record(raw) && ['missing', 'degraded'].includes(String(raw.sourceState)) ? raw.sourceState as 'missing' | 'degraded' : 'healthy';
       } catch (error) { result.sources[key] = unavailable(error) ? 'not-landed' : 'degraded'; }
     }));
+    // The leader's answers file may not exist yet on a host, so it carries no
+    // sources flag: any failure leaves an empty list and every other field as is.
+    try {
+      const raw: unknown = await outbox(30);
+      const entries = record(raw) && Array.isArray(raw.entries) ? raw.entries : raw;
+      result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
+    } catch { result.outbox = []; }
+    await sourcesDone;
     return result;
   }
   const laneModels = deps.laneModels ?? (() => getLaneModelSnapshot({ runsDir: deps.runsDir ?? defaultRunsDir() }));
@@ -403,9 +414,14 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         let command: { status: string; reply: string } | undefined;
         if (isJobCommand(body.text)) {
           const outcome = await runTelegramJobCommand(body.text.trim(), {
-            stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, opts ?? {}),
-            reassignQueuedJobs: deps.reassign ?? (async (...args) => (await import('../fleet/runs-reassign.js')).reassignQueuedJobs(...args)),
-            changedBy: 'desktop',
+            stopJob: (id, opts) => (deps.stopJob ?? stopJob)(id, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+            reassignQueuedJobs: async (input, opts) => (deps.reassign ?? (await import('../fleet/runs-reassign.js')).reassignQueuedJobs)(
+              input, { ...opts, runsDir: deps.runsDir ?? defaultRunsDir() }),
+            // The gateway stamps this header from its live paired session;
+            // neither inbox text nor source can assert a device identity.
+            changedBy: mobile && typeof req.headers['x-ashlr-remote-device'] === 'string'
+              && /^[0-9a-f-]{36}$/.test(req.headers['x-ashlr-remote-device'])
+              ? `mobile-device:${req.headers['x-ashlr-remote-device']}` : mobile ? 'mobile' : 'desktop',
           });
           if (outcome.status === 'stopped' || outcome.status === 'moved') { generation++; cached = undefined; }
           command = { status: outcome.status, reply: renderJobCommandReply(outcome) };

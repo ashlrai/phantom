@@ -172,6 +172,24 @@ Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed
 API or CLI that agents can use (code-first, agent-native).
 
+## Queue latency by stage and automatic recut
+
+Run `phm fleet queue-latency --input snapshot.json` to see where PRs lose time
+on the way to merge (waiting for approval, to join the queue, in the queue, or
+running required checks) and which conflicts can be recut automatically. Add
+`--json` for agents. The typed `QueueLatencyInput`, `queueLatency(input, now)`
+and `formatQueueLatency(report)` API use the same report. The snapshot is
+`{prs:[{repo,number,stages:[{stage,at}],headSha?,mergeable?,queuePosition?,recutRequests?,lastRecutHead?}]}`;
+`--help` lists the stages. A conflicting PR with a known head, fewer than three
+recuts and no recut for that head yet gets a `recut` recommendation with the
+same idempotency key the recut loop uses; anything else is `needs_person`.
+This only reads the supplied file; required checks stay in place and nothing
+is merged or requeued.
+
+Acceptance: as simple and intuitive as possible, fewer steps, plain words,
+one obvious path, and every human surface backed by a typed API or CLI
+that agents can use (code-first, agent-native).
+
 ## PR creation and queue delays
 
 Run `phm fleet queue-age --events events.json --json` to rank PR delays from

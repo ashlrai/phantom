@@ -5,12 +5,15 @@
  */
 import { NEEDS_YOU_SOURCES, type NeedsYouSource, type VerseActivityResponse } from '../verse/workbench-types.js';
 import { diffFleetForPush, validPushFleet, type PushFleetSnapshot } from './remote-push-fleet.js';
+import { diffNeedsMasonForPush, validNeedsMasonItems } from './remote-push-needs-mason.js';
 import type { RemotePushDetail, RemotePushKind } from './remote-push.js';
 
 type Activity = Pick<VerseActivityResponse, 'cursor' | 'needsYou' | 'completions' | 'sources'>;
 export interface RemotePushWatcherOptions {
   read: (since: string | null) => Promise<unknown>;
   readFleet?: () => Promise<unknown>;
+  /** Open NEEDS-MASON items as `{id, text}[]`; the first valid read is a baseline. */
+  readNeedsMason?: () => Promise<unknown>;
   send: (kind: RemotePushKind, detail?: RemotePushDetail) => Promise<unknown>;
   intervalMs?: number;
   /** Deadline for each callback, in milliseconds. Defaults to 10 seconds. */
@@ -50,6 +53,9 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
     throw new Error('Invalid remote push operation timeout');
   }
   let fleet: PushFleetSnapshot | null = null;
+  let needsMason: ReadonlySet<string> | null = null;
+  // Set by pollActivity when it sends needs-you this tick, so NEEDS-MASON does not send a second.
+  let activitySentNeed = false;
   let cursor: string | null = null;
   let initialized = false;
   let polling = false;
@@ -92,6 +98,7 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
 
   const read = bounded(options.read);
   const readFleet = options.readFleet ? bounded(options.readFleet) : null;
+  const readNeedsMason = options.readNeedsMason ? bounded(options.readNeedsMason) : null;
   const send = bounded(options.send);
   let sendTail: Promise<unknown> = Promise.resolve();
   function sendBestEffort(requested: number, kind: RemotePushKind, detail?: RemotePushDetail): Promise<unknown> {
@@ -121,6 +128,7 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
       // Advance before the network calls: a failed push must not replay old work.
       cursor = result.cursor;
       initialized = true;
+      activitySentNeed = newNeed;
       if (newNeed) await sendBestEffort(requested, 'needs-you');
       if (newCompletion) await sendBestEffort(requested, 'completed');
       return true;
@@ -138,11 +146,30 @@ export function createRemotePushWatcher(options: RemotePushWatcherOptions) {
     } catch { /* Preserve the last successful baseline. */ }
   }
 
+  async function pollNeedsMason(requested: number, activity: Promise<boolean>): Promise<void> {
+    if (!readNeedsMason) return;
+    try {
+      const current = await readNeedsMason();
+      if (requested !== generation || !validNeedsMasonItems(current)) return;
+      const { intent, ids } = diffNeedsMasonForPush(needsMason, current);
+      needsMason = ids;
+      if (!intent) return;
+      await activity;
+      if (activitySentNeed) return;
+      const { kind, ...detail } = intent;
+      await sendBestEffort(requested, kind, detail);
+    } catch { /* Preserve the last successful baseline. */ }
+  }
+
   async function pollOnce(): Promise<boolean> {
     if (polling) return false;
     polling = true;
     try {
-      const [activity] = await Promise.all([pollActivity(generation), pollFleet(generation)]);
+      activitySentNeed = false;
+      const activityPoll = pollActivity(generation);
+      const [activity] = await Promise.all([
+        activityPoll, pollFleet(generation), pollNeedsMason(generation, activityPoll),
+      ]);
       return activity;
     } finally { polling = false; }
   }

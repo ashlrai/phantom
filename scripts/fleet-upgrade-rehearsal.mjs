@@ -510,7 +510,7 @@ export async function runFleetUpgradeRehearsal({
     generatedAt: new Date(started).toISOString(),
     durationMs: now() - started,
     seededFiles: seeded,
-    stateFiles: stateFiles.map(({ parsed, ...rest }) => rest),
+    stateFiles: stateFiles.map(file => Object.fromEntries(Object.entries(file).filter(([key]) => key !== 'parsed'))),
     verbs: verbReports,
     failures,
     ok: failures.length === 0,

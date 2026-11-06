@@ -45,6 +45,7 @@ const parked: FleetQueueV1 = {
   byLane: [{ lane: 'fake-a', ready: 1, parked: 0 }, { lane: 'fake-b', ready: 0, parked: 2 }],
   nextUp: [{ lane: 'fake-b', jobs: ['fake-1', 'fake-2'] }],
   groups: [{ reason: 'HOLD', lane: 'fake-b', count: 2, jobs: ['fake-1', 'fake-2'] }],
+  unmetDeps: [],
   skips: [
     { at: '2026-10-31T03:00:00+00:00', job: 'fake-new', code: 'fake', reason: 'fake newest skip' },
     { at: '2026-10-31T02:00:00+00:00', job: 'fake-mid', code: 'fake', reason: 'fake middle skip' },

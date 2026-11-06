@@ -115,7 +115,6 @@ describe('HELP_ENTRIES — the command table', () => {
   it('covers every top-level command (no drift vs completions)', () => {
     const tableCmds = new Set(HELP_ENTRIES.map((e) => e.cmd.split(' ')[0]));
     for (const cmd of TOP_LEVEL_COMMANDS) {
-      if (cmd === 'dash') continue; // alias of tui
       expect(tableCmds.has(cmd), `help table missing "${cmd}"`).toBe(true);
     }
   });

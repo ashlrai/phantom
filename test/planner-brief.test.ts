@@ -11,8 +11,13 @@ async function fixture() {
   return root;
 }
 const git: PlannerBriefGit = (_program, args, options, done) => {
-  expect(args.slice(-4)).toEqual(['log', 'origin/master', '--format=%s', '-15']);
   expect(options).toMatchObject({ timeout: 5000, shell: false });
+  if (args.includes('--since=48.hours')) {
+    expect(args.slice(-4)).toEqual(['log', 'origin/master', '--since=48.hours', '--format=%s']);
+    done(null, '');
+    return;
+  }
+  expect(args.slice(-4)).toEqual(['log', 'origin/master', '--format=%s', '-15']);
   done(null, `ordinary\nbridge(test): ${'x'.repeat(120)}\n`);
 };
 it('assembles ordered live sections with bounded rows, Python booleans, scrubbed notes and private writes', async () => {
@@ -26,9 +31,9 @@ it('assembles ordered live sections with bounded rows, Python booleans, scrubbed
       `## 2026-01-01 ${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')} ET (Mason, Phantom desktop) PRIORITY P0\ninbox${i}\n`).join('')),
   ]);
   const brief = await buildPlannerBrief({ runsRoot: root, git, note: '\n\t' + 'n'.repeat(600) });
-  expect(brief.sections).toEqual({ usedIds: 400, usedTitles: 60, lanes: 2, inboxLines: 180, merges: 1 });
+  expect(brief.sections).toEqual({ usedIds: 400, usedTitles: 60, lanes: 2, inboxLines: 180, merges: 1, inFlight: 1 });
   expect(brief.missing).toEqual([]);
-  const markers = ['# Orchestrate', 'NOTE FROM TICK:', '## CLAUDE LANE: ready', '## LANES', '## USED IDS', '## USED TITLES', '## RECENT PHANTOM MERGES', '## MASON INBOX (newest last)'];
+  const markers = ['# Orchestrate', 'NOTE FROM TICK:', '## CLAUDE LANE: ready', '## LANES', '## USED IDS', '## USED TITLES', '## RECENT PHANTOM MERGES', '## IN FLIGHT (ingested in the last 48h, not yet merged on origin/master)', '## MASON INBOX (newest last)'];
   const positions = markers.map(marker => brief.text.indexOf(marker));
   expect(positions.every((pos, i) => pos >= 0 && (i === 0 || pos > positions[i - 1]!))).toBe(true);
   expect(brief.text).toContain('a running 1 target 2 queued 3 held True\nb running 0 target 0 queued 0 held False');

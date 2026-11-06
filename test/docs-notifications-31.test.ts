@@ -45,11 +45,11 @@ describe('docs/NOTIFICATIONS.md notification coverage', () => {
         if (staticPart === prefix) {
           return (
             src.includes("'" + prefix + "'") ||
-            src.includes('\`' + prefix + '\`')
+            src.includes('`' + prefix + '`')
           );
         }
         // Dynamic id: the prefix stem starts a template literal.
-        return src.includes('\`' + staticPart);
+        return src.includes('`' + staticPart);
       });
       expect(
         found,

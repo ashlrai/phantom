@@ -41,12 +41,33 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createChannelReceiver, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
+import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelEnvelope, type ChannelMessage, type ChannelReceiveResult } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import { allowOperatorMessage, formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
 import { emailPaired, readOperatorGlance, rememberEmailPair } from '../fleet/operator-glance-read.js';
 import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
+import { isEmailNeedsCommand, runEmailNeedsCommand } from './email-needs-command.js';
+import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
+import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
+import { renderNeedsCommandReply } from './telegram-needs-command.js';
+import { deliverCosResult } from '../cos/intake.js';
+
+/** Place an explicitly approved result in the existing mail transport outbox. */
+export async function deliverEmailCosResult(id: string, approvedDigest: string,
+  opts: Pick<EmailDropRecordOptions, 'runsDir' | 'outboxDir'>): Promise<void> {
+  await deliverCosResult(id, approvedDigest, async draft => {
+    const address = draft.origin.senderId.replace(/^email:/, '');
+    if (draft.origin.channel !== 'email' || !draft.origin.senderId.startsWith('email:') ||
+        !/^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+$/.test(address) || !opts.outboxDir ||
+        !SAFE_MESSAGE_ID.test(draft.origin.threadId ?? '')) throw new Error('No verified email origin');
+    mkdirSync(opts.outboxDir, { recursive: true, mode: 0o700 });
+    const headers = [`To: ${address}`, 'Subject: Phantom result',
+      `In-Reply-To: <${draft.origin.threadId}>`, `References: <${draft.origin.threadId}>`,
+      'Content-Type: text/plain; charset=utf-8'];
+    writeFileSync(join(opts.outboxDir, `${id}.result.eml`), `${headers.join('\r\n')}\r\n\r\n${draft.text}\r\n`, { flag: 'wx', mode: 0o600 });
+  }, opts.runsDir);
+}
 
 export interface ParsedEml {
   from: string;
@@ -268,7 +289,9 @@ function seenFilePath(runsDir: string | undefined): string {
   return join(runsRoot(runsDir), 'queue', 'email-drop-seen.jsonl');
 }
 
-// Status requests use permanent exclusive claims rather than the bounded,
+const SAFE_MESSAGE_ID = /^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9.-]+$/;
+
+// Status and needs requests use permanent exclusive claims rather than the bounded,
 // best-effort inbox journal: a replay must not read or queue a second reply.
 function statusClaimPath(runsDir: string | undefined, id: string): string {
   const hash = createHash('sha256').update(id).digest('hex');
@@ -388,9 +411,32 @@ export async function recordEmailToInbox(
     const status = isFleetStatusRequest(raw) || ask;
     const claim = parsed.messageId ? statusClaimPath(opts.runsDir, parsed.messageId) : null;
     if (claim && statusWasClaimed(claim)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
+    const commandText = parsed.body.trim() || parsed.subject.trim();
+    if (isEmailNeedsCommand(commandText)) {
+      // Same replay protection as status: one permanent claim per Message-ID, so a
+      // redelivered mail never resolves or replies twice.
+      if (!parsed.messageId || !SAFE_MESSAGE_ID.test(parsed.messageId) || !claim || !opts.outboxDir) return { ok: false, reason: 'invalid' };
+      mkdirSync(dirname(claim), { recursive: true });
+      try { writeFileSync(claim, '', { flag: 'wx', mode: 0o600 }); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, kind: 'status', reason: 'status-duplicate' };
+        throw error;
+      }
+      const reply = await runEmailNeedsCommand(commandText, {
+        list: listNeedsMason,
+        resolve: (request, options) => resolveNeedsMasonWithInbox(request, { ...options, ...(opts.busRoot ? { bus: { root: opts.busRoot } } : {}) }),
+        runsDir: runsRoot(opts.runsDir),
+      });
+      mkdirSync(opts.outboxDir, { recursive: true });
+      const headers = [`To: ${parsed.from}`, 'Subject: Re: Phantom needs', `In-Reply-To: <${parsed.messageId}>`,
+        `References: <${parsed.messageId}>`, 'Content-Type: text/plain; charset=utf-8'];
+      writeFileSync(join(opts.outboxDir, `needs-${createHash('sha256').update(parsed.messageId).digest('hex')}.reply.eml`),
+        `${headers.join('\r\n')}\r\n\r\n${renderNeedsCommandReply(reply)}\r\n`, { flag: 'wx', mode: 0o600 });
+      return { ok: false, kind: 'status', reason: 'status-queued' };
+    }
     if (status) {
       // A safe Message-ID is required for threading and durable replay protection.
-      if (!parsed.messageId || !/^[A-Za-z0-9.!#$%&'*+\-/=?^_`{|}~]+@[A-Za-z0-9.-]+$/.test(parsed.messageId) || !claim || !opts.outboxDir) {
+      if (!parsed.messageId || !SAFE_MESSAGE_ID.test(parsed.messageId) || !claim || !opts.outboxDir) {
         return { ok: false, reason: 'invalid' };
       }
       if (readSeenMessageIds(opts.runsDir).has(parsed.messageId)) return { ok: false, kind: 'status', reason: 'status-duplicate' };
@@ -443,8 +489,9 @@ export async function recordEmailToInbox(
       busRoot: opts.busRoot,
       acknowledge: reply,
     });
-    const result = await receive(message);
-    if (result.ok && result.ack.status === 'accepted' && parsed.messageId) {
+    const result = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID,
+      ...(parsed.messageId && SAFE_MESSAGE_ID.test(parsed.messageId) ? { threadId: parsed.messageId } : {}) });
+    if (result.ok && parsed.messageId) {
       recordSeenMessageId(opts.runsDir, parsed.messageId);
     }
     return result;

@@ -73,7 +73,7 @@ function collectIdsFromDoc(text: string): Set<string> {
 function collectSourcePathsFromDoc(text: string): string[] {
   const paths: string[] = [];
   // Regex literal — \/ is a forward slash, \` and ` are literal backticks
-  const pathRegex = /`src\/web-ui\/routes\/verse\/[a-z0-9\/_-]+\.pane\.tsx`/g;
+  const pathRegex = /`src\/web-ui\/routes\/verse\/[a-z0-9/_-]+\.pane\.tsx`/g;
   let match: RegExpExecArray | null;
   while ((match = pathRegex.exec(text)) !== null) {
     paths.push(match[0].replace(/^`|`$/g, ""));

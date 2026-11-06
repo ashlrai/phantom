@@ -1131,7 +1131,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
   const store: VerseSessionStore = createVerseSessionStore(root);
   const running = new Map<string, RunningTurn>();
   // One bounded summary per accepted turn, independent of subscriptions or focus.
-  const turnStatuses = new Map<string, { turnId: string; task: string; answer: string; streaming: boolean; cancelled: boolean }>();
+  const turnStatuses = new Map<string, { turnId: string; task: string; answer: string; streaming: boolean; cancelled: boolean; neverStarted: boolean }>();
   const turnHooks = opts.turnHooks ?? null;
   /**
    * Turns admitted but waiting on `turnHooks.beforeTurn` (the checkpoint) —
@@ -1473,7 +1473,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       return null;
     }
     const status = turnStatuses.get(id);
-    if (event.type === 'turn-done' && status?.turnId === event.turnId) {
+    if (event.type === 'turn-done' && status?.turnId === event.turnId && !status.neverStarted) {
       const session = store.get(id);
       if (!session) return null;
       const result = emit(id, {
@@ -1659,7 +1659,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       const ask = events.find(event => event.type === 'user-message' && event.turnId === orphanTurnId);
       turnStatuses.set(session.id, {
         turnId: orphanTurnId, task: statusLine(scrubSecrets(ask?.type === 'user-message' ? ask.text : session.title), 100),
-        answer: '', streaming: false, cancelled: false,
+        answer: '', streaming: false, cancelled: false, neverStarted: false,
       });
     }
     emit(session.id, { type: 'error', turnId: orphanTurnId, message: INTERRUPTED_MESSAGE });
@@ -2318,7 +2318,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     seatLaunch: VerseSeatLaunch,
     launch: VerseTurnLaunch,
     redactions: Redaction[],
-    turnCtx: { text: string; userSeq: number; isRecovery: boolean; gated?: boolean },
+    turnCtx: { text: string; userSeq: number; isRecovery: boolean; gated?: boolean; ackText?: string },
   ): void {
     const id = session.id;
 
@@ -2340,6 +2340,8 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       : session.engine === 'local' && localHarnessInvocation().executable === null ? LOCAL_HARNESS_UNAVAILABLE : null;
     if (refusal !== null) {
       const message = refusal;
+      // The send was already accepted and acknowledged; the refusal is the answer.
+      if (turnCtx.ackText !== undefined) emit(id, { type: 'assistant-status', turnId, phase: 'acknowledgement', text: turnCtx.ackText });
       emit(id, { type: 'error', turnId, message });
       emit(id, {
         type: 'turn-done',
@@ -2387,7 +2389,13 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         const current = store.get(id);
         if (closed || !current) return;
         if (gate.cancelled) {
-          // Stopped before it started: the same close-out a stopped turn gets.
+          // Stopped before it started: the same close-out a stopped turn gets,
+          // minus the turn status — nothing was acknowledged and no work ran,
+          // so the stream stays user-message → cancelled → turn-done. The
+          // entry stays put (busy through the close-out, like a stopped turn);
+          // `neverStarted` just tells emit not to synthesize a result.
+          const status = turnStatuses.get(id);
+          if (status?.turnId === turnId) status.neverStarted = true;
           emit(id, { type: 'cancelled', turnId });
           emit(id, { type: 'turn-done', turnId, ok: false, nativeSessionId: current.nativeSessionId, durationMs: 0 });
           const storageError = storageFailed.has(id);
@@ -2407,6 +2415,22 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         log('error', `session ${id}: turn could not start after its checkpoint (${err instanceof Error ? err.name : 'error'})`);
       });
       return;
+    }
+
+    // The turn is really starting now — every gate (local-only, checkpoint)
+    // is behind it — so this is where its acknowledgement belongs. A send
+    // cancelled while gated closes without one, and a recovery retry keeps
+    // the ack the original send already logged (`ackText` is only set by
+    // sendTurnImpl). The two failure rules are the send path's own: an
+    // acknowledgement that cannot be logged stops the spend, and a chat
+    // deleted by the acknowledgement's subscribers never spawns.
+    if (turnCtx.ackText !== undefined) {
+      if (!emit(id, { type: 'assistant-status', turnId, phase: 'acknowledgement', text: turnCtx.ackText })) {
+        throw new Error('verse session acknowledgement could not be written');
+      }
+      if (store.get(id) !== session) {
+        throw new VerseError('VERSE_SESSION_NOT_FOUND', 'session was deleted');
+      }
     }
 
     const adapter = adapterFor(session.engine);
@@ -2738,7 +2762,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
     const turnId = randomUUID();
     if (session.turnCount === 0 && session.title === DEFAULT_TITLE) session.title = autoTitle(text);
     storageFailed.delete(id);
-    turnStatuses.set(id, { turnId, task: statusLine(scrubSecrets(text), 100), answer: '', streaming: false, cancelled: false });
+    turnStatuses.set(id, { turnId, task: statusLine(scrubSecrets(text), 100), answer: '', streaming: false, cancelled: false, neverStarted: false });
     const userMessage = emit(id, { type: 'user-message', turnId, text, ...(chip ? { playbook: chip } : {}) });
     if (!userMessage) {
       // The log cannot be written (onStorageFailure already recorded it):
@@ -2750,14 +2774,10 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
       turnStatuses.delete(id);
       throw new VerseError('VERSE_SESSION_NOT_FOUND', 'session was deleted');
     }
-    if (!emit(id, { type: 'assistant-status', turnId, phase: 'acknowledgement', text: turnAcknowledgement(scrubSecrets(text)) })) {
-      turnStatuses.delete(id);
-      throw new Error('verse session acknowledgement could not be written');
-    }
-    if (store.get(id) !== session) {
-      turnStatuses.delete(id);
-      throw new VerseError('VERSE_SESSION_NOT_FOUND', 'session was deleted');
-    }
+    // The acknowledgement is emitted by startTurn once the turn is actually
+    // starting (every pre-spawn gate passed); a turn stopped while it was
+    // gated never got one. Close-outs before startTurn emit it themselves.
+    const ackText = turnAcknowledgement(scrubSecrets(text));
     session.status = 'running';
     session.lastError = null;
     save(session);
@@ -2783,6 +2803,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         turnLaunch = adapter.buildLaunch(session, cliText, turnSeatLaunch);
       } catch (err) {
         const message = redact(err instanceof Error ? err.message : String(err), redactionsFor(launch, null));
+        emit(id, { type: 'assistant-status', turnId, phase: 'acknowledgement', text: ackText });
         emit(id, { type: 'error', turnId, message });
         emit(id, { type: 'turn-done', turnId, ok: false, nativeSessionId: session.nativeSessionId, durationMs: 0 });
         session.status = 'error';
@@ -2795,6 +2816,7 @@ export function createVerseEngine(opts: VerseEngineOptions = {}): VerseEngineHan
         text: cliText,
         userSeq: userMessage.seq,
         isRecovery: false,
+        ackText,
       });
     } catch (err) {
       if (turnStatuses.get(id)?.turnId === turnId) turnStatuses.delete(id);

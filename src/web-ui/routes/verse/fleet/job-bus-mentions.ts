@@ -20,6 +20,7 @@ export function jobBusMentions(receipts: readonly AgentBusReceipt[], job: string
     const text = typeof body?.text === 'string' ? body.text : json;
     rows.push({ key: envelope.id, at, from: envelope.from, to: envelope.to,
       kind: typeof body?.kind === 'string' && body.kind ? body.kind : 'message',
+      // eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.
       excerpt: text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 120),
       ageText: formatRelative(at, nowMs), expired: nowMs - receivedAt >= envelope.ttl });
     if (rows.length >= limit) break;

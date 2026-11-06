@@ -14,8 +14,7 @@ describe('main health needs you', () => {
       title: 'phantom master is red with no fix job: build', detail: expect.stringContaining('abcdef0'),
       nextStep: expect.stringContaining('guardian.log'), open: { kind: 'pane', paneId: 'fleet-lanes' } }]);
   });
-  it.each([{ ...repo, fixJobs: ['job'] }, { ...repo, state: 'green' as const }, { ...repo, state: 'unknown' as const }])
-    ('does not show a healthy, unknown, or assigned repo', value => expect(derive({ ...data, repos: [value] })).toEqual([]));
+  it.each([{ ...repo, fixJobs: ['job'] }, { ...repo, state: 'green' as const }, { ...repo, state: 'unknown' as const }])('does not show a healthy, unknown, or assigned repo', value => expect(derive({ ...data, repos: [value] })).toEqual([]));
   it('shows the kill switch alongside red repos and prefers it over stale', () => {
     expect(derive({ ...data, guardianOff: true, stale: true }).map(item => item.id)).toEqual(['main-red-phantom', 'main-guardian-off']);
   });

@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 import { execFileSync, spawn } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -145,11 +146,11 @@ async function main() {
   process.on('SIGTERM', onTerm);
   try {
     const deadline = Date.now() + options.waitSeconds * 1000;
-    do {
+    for (;;) {
       try { release = acquireSlot(shared, options.slots); } catch (error) { note(error); }
       if (release || Date.now() >= deadline) break;
       await new Promise((done) => setTimeout(done, Math.min(5000, deadline - Date.now())));
-    } while (true);
+    }
     if (!release) { print({ status: 'DEFER', slots: options.slots }); process.exitCode = 3; return; }
     for (const project of projects) {
       const name = `phantom-${project}.tsbuildinfo`;

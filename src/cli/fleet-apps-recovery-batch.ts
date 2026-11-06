@@ -3,14 +3,17 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readAppsRecoveryInvocations } from '../core/fleet/apps-recovery-invocations.js';
+import { createAppsRecoveryBatchPublisher } from '../core/fleet/apps-recovery-batch-bus.js';
+import { appendBusInbox } from '../core/fleet/bus-inbox.js';
 import { appsRecoveryVerdict } from '../core/fleet/apps-recovery-verdict.js';
 
-const usage = 'Usage: ashlr fleet apps-recovery-batch --invocation <v4 uuid> [--invocation <v4 uuid> ...up to 20] --max-age-ms <positive integer> --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--json]';
+const usage = 'Usage: ashlr fleet apps-recovery-batch --invocation <v4 uuid> [--invocation <v4 uuid> ...up to 20] --max-age-ms <positive integer> --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--json] [--stream] [--wait-all] [--bus]';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_INVOCATIONS = 20;
 const STOP_CHECK_MS = 250;
 export type AppsRecoveryBatchDeps = {
   reader?: typeof readAppsRecoveryInvocations;
+  appendBus?: typeof appendBusInbox;
   stat?: (path: string) => unknown;
   now?: () => number;
   wallNow?: () => number;
@@ -28,13 +31,17 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
   let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   let stopFile: string | undefined;
   let maxAge = 0, duration = 0, interval = 1000;
+  let stream = false, waitAll = false, bus = false;
   const ids: string[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (!['--root', '--json', '--invocation', '--max-age-ms', '--duration-ms', '--interval-ms', '--stop-file'].includes(arg)) return invalid();
+    if (!['--root', '--json', '--invocation', '--max-age-ms', '--duration-ms', '--interval-ms', '--stop-file', '--stream', '--wait-all', '--bus'].includes(arg)) return invalid();
     if (arg !== '--invocation' && seen.has(arg)) return invalid();
     seen.add(arg);
+    if (arg === '--bus') { bus = true; continue; }
+    if (arg === '--stream') { stream = true; continue; }
+    if (arg === '--wait-all') { waitAll = true; continue; }
     if (arg === '--json') continue;
     const value = args[++i];
     if (!value || value.startsWith('-')) return invalid();
@@ -52,6 +59,7 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
     }
   }
   if (!ids.length || maxAge < 1 || duration < 1 || duration > 300000 || interval < 100 || interval > 60000) return invalid();
+  const publisher = bus ? createAppsRecoveryBatchPublisher(root, ids, deps.appendBus) : undefined;
   const now = deps.now ?? (() => performance.now());
   const wallNow = deps.wallNow ?? Date.now;
   const reader = deps.reader ?? readAppsRecoveryInvocations;
@@ -73,6 +81,8 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
   const start = now(), deadline = start + duration;
   let verdicts: ReturnType<typeof appsRecoveryVerdict>[] | null = null;
   let outcome: Outcome = 'timeout';
+  // Stream mode keeps only the last change key and a counter, never a history.
+  let lastKey: string | null = null, progressSeq = 0;
   try {
     for (;;) {
       if (controller.signal.aborted) { outcome = 'cancelled'; break; }
@@ -86,7 +96,19 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
         if (controller.signal.aborted) { outcome = 'cancelled'; break; }
         if (stopped()) { outcome = 'stopped'; break; }
         if (projection.availability !== 'available') { outcome = 'unavailable'; break; }
-        if (verdicts.some(v => v.verdict === 'terminal')) { outcome = 'terminal'; break; }
+        publisher?.publish('progress', verdicts);
+        if (stream) {
+          const key = JSON.stringify(verdicts.map(v => [v.verdict, v.latestCursor, v.terminalOutcome, v.truncated,
+            v.ageMs === null ? 'unknown' : v.ageMs > maxAge ? 'stale' : 'fresh']));
+          if (key !== lastKey) {
+            lastKey = key;
+            emit(JSON.stringify({ type: 'progress', v: 1, evidence: 'retained', liveProbe: false, invocationIds: ids,
+              ...(waitAll ? { waitAll: true } : {}), seq: ++progressSeq, elapsedMs: Math.max(0, now() - start), verdicts }));
+          }
+        }
+        // Default is fail-fast. --wait-all finishes terminal only once every verdict is healthy or terminal
+        // in this same cycle; nothing is latched, so later stale evidence un-settles an invocation.
+        if (verdicts.some(v => v.verdict === 'terminal') && (!waitAll || verdicts.every(v => v.verdict === 'healthy' || v.verdict === 'terminal'))) { outcome = 'terminal'; break; }
         if (now() >= deadline) break;
         if (verdicts.every(v => v.verdict === 'healthy')) { outcome = 'healthy'; break; }
       } catch { outcome = 'unavailable'; break; }
@@ -102,8 +124,11 @@ export async function cmdFleetAppsRecoveryBatch(args: string[], deps: AppsRecove
       }
       if (outcome === 'stopped' || outcome === 'unavailable') break;
     }
-    emit(JSON.stringify({ v: 1, evidence: 'retained', liveProbe: false, invocationIds: ids, outcome,
+    publisher?.publish('summary', verdicts, outcome);
+    emit(JSON.stringify({ ...(stream ? { type: 'summary' } : {}), v: 1, evidence: 'retained', liveProbe: false, invocationIds: ids,
+      ...(waitAll ? { waitAll: true } : {}), outcome,
       elapsedMs: Math.max(0, now() - start), verdicts,
+      ...(publisher ? { bus: { ...publisher.counts } } : {}),
       ...(outcome === 'unavailable' ? { message: 'Recovery evidence unavailable' } : {}) }));
     return outcome === 'healthy' ? 0 : 1;
   } finally {

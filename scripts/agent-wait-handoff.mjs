@@ -54,7 +54,7 @@ function readChild(bin, args, remaining, signal) {
 }
 
 async function main(options) {
-  const controller = new AbortController();
+  const controller = new globalThis.AbortController();
   const cancel = () => controller.abort();
   process.on('SIGINT', cancel);
   process.on('SIGTERM', cancel);

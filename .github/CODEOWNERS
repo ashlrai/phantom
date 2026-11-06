@@ -104,6 +104,7 @@
 /scripts/ship-local.mjs @masonwyatt23
 /scripts/local-app-transaction.mjs @masonwyatt23
 /scripts/install-desktop-artifacts.mjs @masonwyatt23
+/scripts/publish-desktop-release.mjs @masonwyatt23
 /scripts/verify-release-policy.mjs @masonwyatt23
 /tools/custody/** @masonwyatt23
 **/*.plist @masonwyatt23
@@ -154,6 +155,7 @@
 /src/cli/desktop.ts @masonwyatt23
 /scripts/desktop-release-policy.mjs @masonwyatt23
 /scripts/finalize-desktop-update.mjs @masonwyatt23
+/scripts/publish-desktop-release.mjs @masonwyatt23
 /src/core/daemon/activation-permit.ts @masonwyatt23
 /src/core/daemon/tick-hooks.ts @masonwyatt23
 /src/core/daemon/loop.ts @masonwyatt23
@@ -243,6 +245,7 @@
 /test/activation-readiness-package.test.ts @masonwyatt23
 /test/activation-readiness-windows.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
+/test/agent-network-policy.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23
 /test/authority-api-310b.test.ts @masonwyatt23
@@ -521,6 +524,7 @@
 /test/l1-seat-threading-310.test.ts @masonwyatt23
 /test/leader-api-310b.test.ts @masonwyatt23
 /test/leader-apply-310b.test.ts @masonwyatt23
+/test/leader-ceo-failover.test.ts @masonwyatt23
 /test/leader-cloud-311.test.ts @masonwyatt23
 /test/leader-comms-310b.test.ts @masonwyatt23
 /test/leader-conversation-gaps-315.test.ts @masonwyatt23
@@ -529,6 +533,7 @@
 /test/leader-lessons-315.test.ts @masonwyatt23
 /test/leader-local-transport-314.test.ts @masonwyatt23
 /test/leader-memo-310b.test.ts @masonwyatt23
+/test/leader-network-routing.test.ts @masonwyatt23
 /test/leader-outcome-planning-retry.test.ts @masonwyatt23
 /test/leader-outcomes.test.ts @masonwyatt23
 /test/leader-preferences.test.ts @masonwyatt23
@@ -862,6 +867,7 @@
 /test/m520.runtime-activation-stopped-consumer.test.ts @masonwyatt23
 /test/m521.runtime-activation-resident-start.test.ts @masonwyatt23
 /test/m522.best-of-n-real-judge.test.ts @masonwyatt23
+/test/m523.github-stable-release-finalization.test.ts @masonwyatt23
 /test/m53.intel.test.ts @masonwyatt23
 /test/m532.standing-permit-shadow.test.ts @masonwyatt23
 /test/m537.daemon-tick-authority-capability.test.ts @masonwyatt23

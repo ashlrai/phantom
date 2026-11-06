@@ -347,6 +347,17 @@ describe('NeedsYouScreen — swipe', () => {
     expect(screen.queryByRole('article', { name: /migrate the store/ })).not.toBeInTheDocument();
   });
 
+  it('abandons a swipe when vertical scrolling starts first', () => {
+    const stub = stubFetch({});
+    renderMobile(<Harness />, { activity: withItems() });
+    fireEvent.pointerDown(card(), { pointerId: 1, clientX: 150, clientY: 100, button: 0 });
+    fireEvent.pointerMove(card(), { pointerId: 1, clientX: 152, clientY: 140 });
+    fireEvent.pointerMove(card(), { pointerId: 1, clientX: 290, clientY: 140 });
+    fireEvent.pointerUp(card(), { pointerId: 1, clientX: 290, clientY: 140 });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(stub.posts()).toHaveLength(0);
+  });
+
   it('has no swipe under reduced motion (the buttons remain)', () => {
     vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), addEventListener: () => undefined, removeEventListener: () => undefined }));
     renderMobile(<Harness />, { activity: withItems() });

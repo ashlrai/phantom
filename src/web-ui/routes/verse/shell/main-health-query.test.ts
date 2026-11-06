@@ -18,8 +18,7 @@ describe('main health query', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
     expect(await mainHealthQuery.fetch()).toEqual({ kind: 'notInBuild' });
   });
-  it.each([{ ...data, red: -1 }, { ...data, repos: [{ ...repo, fixJobs: [1] }] }, { ...data, stale: 'yes' }])
-    ('rejects an invalid payload', async invalid => {
+  it.each([{ ...data, red: -1 }, { ...data, repos: [{ ...repo, fixJobs: [1] }] }, { ...data, stale: 'yes' }])('rejects an invalid payload', async invalid => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(invalid))));
       expect(await mainHealthQuery.fetch()).toEqual({ kind: 'notInBuild' });
     });

@@ -89,8 +89,8 @@ describe('recordTelegramToInbox', () => {
     expect(result.ok && result.envelope.verifiedSenderId).toBe(`telegram:${OWNER}`);
 
     const inbox = inboxText();
-    expect(inbox.match(/^## /gm)).toHaveLength(1);
-    expect(inbox).toContain('(Mason, telegram)');
+    expect(inbox.match(/^\d{4}-.* \[src:/gm)).toHaveLength(1);
+    expect(inbox).toMatch(/\[src:telegram id:telegram-[a-f0-9]{16}\]/);
     expect(inbox).toContain('focus the fleet on billing');
 
     expect(send).toHaveBeenCalledTimes(1);
@@ -109,7 +109,7 @@ describe('recordTelegramToInbox', () => {
     expect(second).toMatchObject({ ok: true, ack: { status: 'duplicate' } });
     expect(second.ok && second.ack.dedupeKey).toBe(first.ok && first.envelope.dedupeKey);
 
-    expect(inboxText().match(/^## /gm)).toHaveLength(1);
+    expect(inboxText().match(/^\d{4}-.* \[src:/gm)).toHaveLength(1);
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1]![0]).toContain('duplicate');
     expect(send.mock.calls[1]![0]).toContain(second.ok ? formatChannelAck(second.ack) : 'unreachable');
@@ -144,7 +144,7 @@ describe('recordTelegramToInbox', () => {
     expect(result).toMatchObject({ ok: true, ack: { status: 'accepted' } });
     expect(send).toHaveBeenCalledTimes(1);
     const inbox = inboxText();
-    expect(inbox).toContain('(Mason, telegram)');
+    expect(inbox).toMatch(/\[src:telegram id:telegram-[a-f0-9]{16}\]/);
     expect(inbox).toContain('focus the fleet on billing');
   });
 });

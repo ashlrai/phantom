@@ -13,7 +13,7 @@ export interface OrderTraceV1 {
   v: 1;
   generatedAt: string;
   sources: Record<'inbox' | 'prompts' | 'publishes', 'healthy' | 'missing' | 'degraded'>;
-  orders: Array<{ at: string; source: string; key: string; jobs: OrderTraceJob[] }>;
+  orders: Array<{ at: string; source: string; alsoChannels?: string[]; key: string; jobs: OrderTraceJob[] }>;
 }
 const months = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
 export function parseOrderCitations(body: string): string[] {
@@ -57,7 +57,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
     sources: { inbox: inbox.sourceState, prompts: 'healthy', publishes: 'healthy' },
     orders: inbox.entries.flatMap(entry => {
       const key = orderKey(entry.at);
-      return key ? [{ at: entry.at, source: entry.source, key, jobs: [] }] : [];
+      return key ? [{ at: entry.at, source: entry.source, ...(entry.alsoChannels ? { alsoChannels: entry.alsoChannels } : {}), key, jobs: [] }] : [];
     }),
   };
   const files: Array<{ path: string; id: string; mtime: number }> = [];

@@ -106,6 +106,7 @@ export function defaultDedupeTemplate(kind: AutomationTriggerKind): string {
   switch (kind) {
     case 'github-issues': return '{repo}#{number}';
     case 'ci-red': return '{repo}@{sha}';
+    case 'watch': return '{occurrence}';
     case 'schedule': return '{repo}@{occurrence}';
     case 'webhook': return '{key}';
     case 'telegram': return '{repo}:{key}';
@@ -161,7 +162,7 @@ export function automationStats(automation: AutomationV1, state: AutomationState
   let nextRunAt: string | null = null;
   const t = automation.trigger;
   if (automation.enabled) {
-    if (t.kind === 'schedule') {
+    if (t.kind === 'schedule' || (t.kind === 'watch' && !cursor?.since['watchDisarmed'])) {
       const parsed = parseRrule(t.rrule);
       nextRunAt = cursor?.nextRunAt ?? (parsed.ok ? nextOccurrence(parsed.rule, now)?.toISOString() ?? null : null);
     } else if (t.kind === 'github-issues' || t.kind === 'ci-red') {
@@ -200,6 +201,7 @@ export function triggerSummary(automation: AutomationV1): string {
     }
     case 'ci-red':
       return `Failing checks on ${t.branch ?? 'the default branch'} of ${repos}, checked every ${t.pollMinutes} min`;
+    case 'watch': return `Watch ${t.condition.path}, notification draft in Needs-you (${t.rrule})`;
     case 'schedule': {
       const parsed = parseRrule(t.rrule);
       return `${parsed.ok ? describeRrule(parsed.rule) : t.rrule} on ${repos}`;
@@ -244,6 +246,13 @@ export function pollDue(automation: AutomationV1, cursor: AutomationCursor, now:
   if (t.kind === 'github-issues' || t.kind === 'ci-red') {
     const last = at(cursor.lastPolledAt);
     return last === null || now.getTime() - last.getTime() >= t.pollMinutes * 60_000 || now.getTime() < last.getTime();
+  }
+  if (t.kind === 'watch') {
+    if (cursor.since['watchDisarmed']) return false;
+    const last = at(cursor.lastPolledAt);
+    if (last && now.getTime() - last.getTime() < 3_600_000) return false;
+    const next = at(cursor.nextRunAt);
+    return next === null || now.getTime() >= next.getTime();
   }
   if (t.kind === 'schedule') {
     const next = at(cursor.nextRunAt);
@@ -295,6 +304,34 @@ async function collectEvents(automation: AutomationV1, cursorIn: AutomationCurso
       cursor.lastPolledAt = nowIso;
       cursor.lastError = errors[0] ?? (repos.length === 0 ? 'No repos to check — the standing grant lists none.' : null);
       return { events, cursor, sourceKind: t.kind };
+    }
+    case 'watch': {
+      if (!pollDue(automation, cursor, now)) return { events, cursor, sourceKind: 'watch' };
+      const parsed = parseRrule(t.rrule);
+      if (!parsed.ok) return { events, cursor, sourceKind: 'watch' };
+      if (cursor.nextRunAt === null) {
+        cursor.nextRunAt = nextOccurrence(parsed.rule, now)?.toISOString() ?? null;
+        return { events, cursor, sourceKind: 'watch' };
+      }
+      cursor.lastPolledAt = nowIso;
+      cursor.nextRunAt = nextOccurrence(parsed.rule, new Date(now.getTime() + 3_600_000 - 1))?.toISOString() ?? null;
+      cursor.lastError = null;
+      try {
+        const repo = t.command[5]!;
+        if (!await repoInScope(automation, repo, ctx)) throw new Error('scope');
+        const result = await ctx.gh(t.command.slice(1));
+        if (!result.ok || result.stdout.length > 65_536) throw new Error('probe');
+        let value: unknown = JSON.parse(result.stdout);
+        for (const part of t.condition.path.replace(/^\$/, '').split('.').filter(Boolean)) {
+          value = value !== null && typeof value === 'object' && Object.hasOwn(value, part)
+            ? (value as Record<string, unknown>)[part] : undefined;
+        }
+        if (value === t.condition.equals) {
+          events.push({ repo, vars: { occurrence: nowIso }, title: untrustedTitle(`Watch matched: ${automation.name}`),
+            text: 'Notification draft for Mason: the watch condition matched. Review before sending on your channel. Probe output is withheld.', url: null, ref: nowIso });
+        }
+      } catch { cursor.lastError = 'Watch probe failed or returned invalid JSON; output withheld.'; }
+      return { events, cursor, sourceKind: 'watch' };
     }
     case 'schedule': {
       const parsed = parseRrule(t.rrule);
@@ -458,7 +495,7 @@ async function intake(automation: AutomationV1, candidates: readonly Candidate[]
   }
   const triaged = new Map<string, Awaited<ReturnType<typeof triageFiring>>>();
   for (const { c, keep } of plan) {
-    if (keep) triaged.set(c.dedupeKey, await triageFiring(automation, c.event, ctx.decider));
+    if (keep) triaged.set(c.dedupeKey, await triageFiring(automation.trigger.kind === 'watch' ? { ...automation, lane: 'leader-review', triage: null, playbookId: null } : automation, c.event, ctx.decider));
   }
 
   const journal: AutomationJournalRecord[] = [];
@@ -480,6 +517,10 @@ async function intake(automation: AutomationV1, candidates: readonly Candidate[]
         continue;
       }
       state.seen[key] = nowMs;
+      if (automation.trigger.kind === 'watch' && !automation.trigger.repeat) {
+        const cursor = state.cursors[automation.id];
+        if (cursor) { cursor.since['watchDisarmed'] = 'true'; cursor.nextRunAt = null; }
+      }
       state.firings.push(firing);
       result.queued.push(firing);
       journal.push(journalRecord(firing, 'fired', firing.createdAt));
@@ -691,6 +732,7 @@ async function tickOnce(deps: AutomationEngineDeps): Promise<AutomationsTickSumm
   for (const automation of enabled) {
     const now = ctx.now();
     const cursor = state.cursors[automation.id] ?? emptyCursor();
+    if (automation.trigger.kind === 'watch' && summary.blocked) continue;
     if (!pollDue(automation, cursor, now)) continue;
     let collected: Collected;
     try {
@@ -811,6 +853,7 @@ export async function fireAutomation(id: string, req: AutomationFireRequest = {}
 
   let candidates: Candidate[];
   let cursor: AutomationCursor | null = null;
+  if (automation.trigger.kind === 'watch') return refuse('Watch probes run only on scheduler ticks; manual runs cannot bypass the hourly limit.');
   if (typeof req.text === 'string' && req.text.trim() !== '') {
     const repo = await pickRepo(automation, req.repo, ctx);
     if (typeof repo !== 'string') return refuse(repo.error);
@@ -918,6 +961,7 @@ export async function reviewFiring(firingId: string, decision: 'approve' | 'reje
   let lane = firing.lane;
   if (decision === 'approve') {
     if (!automation) return { ok: false, status: 409, error: 'Its automation was deleted; reject it instead.' };
+    if (firing.source.kind === 'watch') return { ok: false, status: 409, error: 'Notification draft only. Send through your channel approval flow, then reject this draft to dismiss it.' };
     lane = automation.lane === 'leader-review' ? 'fleet' : automation.lane;
     const gate = await laneGateRefusal(lane, firing.repo, ctx.lane);
     if (gate) return { ok: false, status: 409, error: gate };

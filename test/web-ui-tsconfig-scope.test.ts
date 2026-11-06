@@ -16,10 +16,6 @@ const WEB    = join(ROOT, 'src', 'web-ui');
 const TSCONFIG = join(WEB, 'tsconfig.json');
 const VERSE  = join(WEB, 'routes', 'verse');
 
-// Pattern examples used by the web tsconfig (for documentation only).
-const EXAMPLE_WILDCARD_GLOB = './' + '**' + '/*.ts';
-const EXAMPLE_PREFIXED_GLOB = './src/x' + '/**/y/*.ts';
-
 function hasFilesUnder(d: string): boolean {
   const children = readdirSync(d, { withFileTypes: true });
   return children.some(
@@ -64,8 +60,8 @@ describe('web-ui tsconfig includes routes/verse', () => {
 /** Build a simple glob matcher for recursion wildcards.
 
 Supported forms (those used by the web tsconfig):
-  - `${EXAMPLE_WILDCARD_GLOB}`  (recursion from project root)
-  - `${EXAMPLE_PREFIXED_GLOB}`  (recursion from a subdirectory)
+  - Root recursive globs (recursion from project root)
+  - Prefixed recursive globs (recursion from a subdirectory)
   - `"./src/foo"`  (literal directory — not used here)
 
 A match succeeds when the target directory is under (or equal to) the
@@ -78,7 +74,7 @@ function createPathMatcher(
   const stem = glob.startsWith('./') ? glob.slice(2) : glob;
 
   // Root-level recursion (matches every file at every depth
-  // from tsconfigDir).  Examples:  "${EXAMPLE_WILDCARD_GLOB}",  "**/*.tsx"
+  // from tsconfigDir).  Examples:  "./**/*.ts",  "**/*.tsx"
   if (/^[\u002A][\u002A]/.test(stem)) {
     return () => true;
   }
