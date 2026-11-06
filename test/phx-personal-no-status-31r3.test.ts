@@ -81,7 +81,7 @@ describe('personal usage without a dispatch status lane', () => {
   it('preserves newer status for an existing lane', async () => {
     const opts = await setup(JSON.stringify({ last_tick: '2036-10-31T11:00:00Z',
       lanes: { 'codex-personal': { running: 2, target: 4, held: false } },
-      budget: { 'codex-personal': { weekly_used_pct: 41, source: 'fake status' } },
+      budget: { 'codex-personal': { weekly_used_pct: 41, source: 'fake status', observed_at: '2036-10-31T11:00:00Z' } },
     }));
     await session(opts.personalCodexHome, weekly);
     const ledger = await readResourceLedger({ ...opts, now: () => now });
