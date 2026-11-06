@@ -111,7 +111,8 @@ const isolatedCases = [
   { file: isolatedAcceptance, filter: 'automatic seed measurement: true', label: 'campaign true' },
 ];
 // Measured macOS seconds per isolated case (hosted run 39088914496, 10-18).
-// Paired runs start the longest first so neither slot is left with the tail.
+// The paired acceptance pool starts longest first; the capacity ledger runs
+// afterward without a competing consumer.
 const isolatedSeconds = {
   'test/resource-engineering-setup-acceptance.test.ts': 473,
   'test/resource-engineering-successor-acceptance.test.ts': 172,
@@ -272,7 +273,13 @@ if (failure || !expectedShards.every((shard) => codes[shard - 1] === 0)) {
     const seconds = ({ file, label }) => isolatedSeconds[label === file ? file : label] ?? 0;
     order.sort((a, b) => seconds(isolatedCases[b]) - seconds(isolatedCases[a]) || a - b);
   }
-  await runPool(order, isolatedConcurrency, runIsolated);
+  // Retiring 2,048 real receipt generations must not compete with an acceptance
+  // fixture for filesystem/ACL capacity. Preserve its original report and bounds;
+  // serial mode is already exclusive and keeps its existing order.
+  const capacityLedger = isolatedConcurrency > 1
+    ? isolatedCases.findIndex(({ file }) => file === 'test/m342.dispatch-production-ledger.test.ts') : -1;
+  await runPool(order.filter((index) => index !== capacityLedger), isolatedConcurrency, runIsolated);
+  if (capacityLedger !== -1 && !failure) await runIsolated(capacityLedger);
   const launched = isolatedCodes.filter((code) => code !== undefined);
   process.exitCode = failure || (launched.length === isolatedCases.length ? 0 : 1);
   const prefix = isolatedOnly ? '' : `${codes.join(', ')}, `;

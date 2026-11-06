@@ -21,6 +21,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_CLAUDE_MODEL_ID } from '../src/core/run/model-catalog.js';
+import { MAX_BEST_OF_N_CANDIDATES, resolveBestOfNCount } from '../src/core/run/best-of-n-policy.js';
 import { deriveCandidateAttemptIdentity } from '../src/core/fleet/attempt-identity.js';
 import {
   hashDiff,
@@ -419,17 +420,16 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('M333 — fan-out containment', () => {
-  it('fails malformed counts closed and clamps valid counts to the hard maximum', async () => {
-    const sandbox = makeSandboxMock(0.1, 'limits');
-    const h = await harness({ cli: sandbox.fn, api: sandbox.fn });
-
-    expect(h.resolveBestOfNCount(undefined)).toBe(1);
-    expect(h.resolveBestOfNCount(Number.NaN)).toBe(1);
-    expect(h.resolveBestOfNCount(Number.POSITIVE_INFINITY)).toBe(1);
-    expect(h.resolveBestOfNCount(-10)).toBe(1);
-    expect(h.resolveBestOfNCount(3.9)).toBe(3);
-    expect(h.resolveBestOfNCount(h.maxCandidates + 1)).toBe(h.maxCandidates);
-    expect(h.resolveBestOfNCount(Number.MAX_SAFE_INTEGER)).toBe(h.maxCandidates);
+  it('fails malformed counts closed and clamps valid counts to the hard maximum', () => {
+    // Exercise the actual pure policy owner without constructing unrelated
+    // producer/judge/storage mocks. Runtime fan-out is covered below.
+    expect(resolveBestOfNCount(undefined)).toBe(1);
+    expect(resolveBestOfNCount(Number.NaN)).toBe(1);
+    expect(resolveBestOfNCount(Number.POSITIVE_INFINITY)).toBe(1);
+    expect(resolveBestOfNCount(-10)).toBe(1);
+    expect(resolveBestOfNCount(3.9)).toBe(3);
+    expect(resolveBestOfNCount(MAX_BEST_OF_N_CANDIDATES + 1)).toBe(MAX_BEST_OF_N_CANDIDATES);
+    expect(resolveBestOfNCount(Number.MAX_SAFE_INTEGER)).toBe(MAX_BEST_OF_N_CANDIDATES);
   });
 
   it('caps oversized config and never exceeds the internal worker limit', async () => {

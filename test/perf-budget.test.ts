@@ -16,9 +16,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { loadBudgets, median, summarize, budgetMs } from '../scripts/perf-budget.mjs';
+import { quoteShellValue } from '../src/core/playbooks/command-template.js';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/perf-budget.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('..', import.meta.url));
+// The benchmark intentionally invokes a shell; the pinned Node path is one word.
+const NODE_COMMAND = process.platform === 'win32' ? `"${process.execPath}"` : quoteShellValue(process.execPath);
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'perf-budget-')); });
@@ -98,14 +101,14 @@ describe('perf-budget check outcomes', () => {
     const budgets = budgetsFile([
       {
         id: 'slow-target',
-        command: `${process.execPath} -e "setTimeout(() => {}, 250)"`,
+        command: `${NODE_COMMAND} -e "setTimeout(() => {}, 250)"`,
         baseline_ms: 20,
         warmup: 0,
         runs: 2,
       },
       {
         id: 'fast-target',
-        command: `${process.execPath} -e ""`,
+        command: `${NODE_COMMAND} -e ""`,
         baseline_ms: 30_000,
         warmup: 0,
         runs: 1,
@@ -120,7 +123,7 @@ describe('perf-budget check outcomes', () => {
 
   it('passes when every required target is within budget', () => {
     const budgets = budgetsFile([
-      { id: 'quick', command: `${process.execPath} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 2 },
+      { id: 'quick', command: `${NODE_COMMAND} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 2 },
     ]);
     const r = run(['--budgets', budgets, '--runner', 'node']);
     expect(r.status).toBe(0);
@@ -129,7 +132,7 @@ describe('perf-budget check outcomes', () => {
 
   it('reports JSON with per-target medians and budgets', () => {
     const budgets = budgetsFile([
-      { id: 'slow-json', command: `${process.execPath} -e "setTimeout(() => {}, 200)"`, baseline_ms: 10, warmup: 0, runs: 2 },
+      { id: 'slow-json', command: `${NODE_COMMAND} -e "setTimeout(() => {}, 200)"`, baseline_ms: 10, warmup: 0, runs: 2 },
     ]);
     const r = run(['--budgets', budgets, '--runner', 'node', '--json']);
     expect(r.status).toBe(1);
@@ -139,6 +142,7 @@ describe('perf-budget check outcomes', () => {
     expect(report.runner).toBe('node');
     expect(report.results[0]).toMatchObject({ id: 'slow-json', status: 'fail', baseline_ms: 10 });
     expect(report.results[0].stats.median_ms).toBeGreaterThan(report.results[0].budget_ms);
+    expect(report.results[0].exitCodes).toEqual([0, 0]);
   });
 });
 
@@ -181,7 +185,7 @@ describe('perf-budget preflight', () => {
     const budgets = budgetsFile([
       {
         id: 'needs-dist',
-        command: `${process.execPath} -e "process.exit(1)"`,
+        command: `${NODE_COMMAND} -e "process.exit(1)"`,
         baseline_ms: 50,
         requires_files: ['dist/definitely-not-built-9q7.js'],
         warmup: 0,
@@ -198,8 +202,8 @@ describe('perf-budget preflight', () => {
 describe('perf-budget selection', () => {
   it('--only runs the named subset', () => {
     const budgets = budgetsFile([
-      { id: 'one', command: `${process.execPath} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
-      { id: 'two', command: `${process.execPath} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
+      { id: 'one', command: `${NODE_COMMAND} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
+      { id: 'two', command: `${NODE_COMMAND} -e ""`, baseline_ms: 30_000, warmup: 0, runs: 1 },
     ]);
     const r = run(['--budgets', budgets, '--runner', 'node', '--only', 'two']);
     expect(r.status).toBe(0);

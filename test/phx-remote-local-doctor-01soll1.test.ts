@@ -16,7 +16,8 @@ let calls: string[];
 let deps: RemoteDoctorDeps;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'remote-doctor-'));
+  // Darwin's Unix socket path limit is shorter than the hermetic TMPDIR.
+  root = mkdtempSync(join(process.platform === 'darwin' ? '/private/tmp' : tmpdir(), 'remote-doctor-'));
   path = join(root, 'config.json');
   writeFileSync(path, JSON.stringify(config), { mode: 0o600 });
   output = [];
