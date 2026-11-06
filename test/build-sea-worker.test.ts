@@ -8,6 +8,7 @@ import {
   createSeaCompileArgs,
   createSeaWorkerShim,
   createSeaEngineeringWorkerShim,
+  createSeaQuotaEvidenceWorkerShim,
   createSeaEngineeringReadWorkerShim,
   createSeaFleetHistoryWorkerShim,
   createSeaOutcomesWorkerShim,
@@ -235,4 +236,17 @@ describe('Bun sidecar read-worker packaging', () => {
       '--outfile', '/owned/ashlr',
     ]);
   });
+  it('ships the fixed quota validator as an explicit sibling with the same build identity', () => {
+    const identity = JSON.stringify({ schemaVersion: 1, revision: 'c'.repeat(40) });
+    const shim = createSeaQuotaEvidenceWorkerShim({ buildIdentityJson: identity });
+    expect(shim).toContain(JSON.stringify(identity));
+    expect(shim).toContain("await import('../dist/core/resources/quota-evidence-worker.js');");
+    expect(shim.indexOf('Reflect.set(')).toBeLessThan(shim.indexOf('await import('));
+    expect(shim).not.toContain('process.env');
+    expect(createSeaCompileArgs({ entry: '/owned/_entry.js', workerEntry: '/owned/read-projection-worker.js',
+      quotaEvidenceWorkerEntry: '/owned/quota-evidence-worker.js', outBin: '/owned/ashlr' })).toEqual([
+      'build', '--compile', '/owned/_entry.js', '/owned/read-projection-worker.js', '/owned/quota-evidence-worker.js', '--outfile', '/owned/ashlr',
+    ]);
+  });
+
 });

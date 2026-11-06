@@ -354,6 +354,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-quota-registered-recovery.test.ts', // durable command phases and passive group-absence recovery
   'test/resource-collector-diagnostics.test.ts', // acquisition-time evidence and private loopback console
   'test/resource-native-idle-lifecycle.test.ts', // owned child exit and strict process-group receipt
+  'test/resource-quota-evidence-background.test.ts', // real private commits and kernel-verified quota lease custody
   'test/resource-quota-shared-evidence.test.ts', // private snapshots and verified process/lease identity
   'test/resource-shared-admission.test.ts', // current evidence inside atomic durable reservation
   'test/resource-worker-access.test.ts', // durable worker pauses and alias-aware atomic admission
