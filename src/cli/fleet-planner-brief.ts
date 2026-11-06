@@ -8,6 +8,8 @@ import { readLiveRealSupply } from './fleet-real-supply.js';
 
 type IO = { stdout?: { write(text: string): unknown } };
 
+export const usage = 'Usage: ashlr fleet planner-brief [--runs-dir <abs>] [--repo <abs>] [--note <text>] [--write] [--json]';
+
 export async function cmdFleetPlannerBrief(args: string[], io: IO = {}): Promise<number> {
   const output = io.stdout ?? process.stdout;
   const values = new Map<string, string>();

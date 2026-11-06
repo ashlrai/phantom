@@ -53,6 +53,15 @@ describe('fleet comms status route', () => {
       generatedAt: NOW.toISOString(),
       drafts: { pending: 2, oldestPendingAt: OLDEST },
       emailOutbox: { configured: true, queued: 1, drafted: 1, sent: 1, stuck: 1, stuckReasons: { 'interrupted-send': 1 } },
+      emailDiagnosis: expect.objectContaining({
+        config: 'ok',
+        polling: 'enabled',
+        sendReplies: 'disabled',
+        outbox: 'ok',
+        counts: { queued: 1, drafted: 1, sent: 1, stuck: 1 },
+        replies: 'blocked',
+        coverage: 'local-evidence-only-not-gmail-triage-or-proof-of-delivery',
+      }),
       sources: { drafts: 'healthy', emailOutbox: 'healthy' },
     });
     // Counts only: no body, subject, address, file name or path crosses the wire.
@@ -86,6 +95,8 @@ describe('fleet comms status route', () => {
     const runsDir = await mkdtemp(join(tmpdir(), 'comms-status-'));
     // `drafts` as a regular file makes listDrafts throw ENOTDIR.
     await writeFile(join(runsDir, 'drafts'), 'not a directory');
+    // An existing but empty outbox dir reads as zero counts, not a missing source.
+    await mkdir(join(runsDir, 'nowhere'), { recursive: true });
     const result = await call(createFleetCommsStatusApi({ runsDir, outboxDir: join(runsDir, 'nowhere'), now: () => NOW }));
     expect(result.status).toBe(200);
     expect(result.body.drafts).toBeNull();
