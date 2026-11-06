@@ -275,6 +275,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'superseded-close': () => import('./fleet-superseded-close.js'),
   'supply': () => import('./fleet-supply.js'),
   'task-check': () => import('./fleet-task-check.js'),
+  'teammate-texts': () => import('./fleet-teammate-texts.js'),
   'teammates': () => import('./fleet-teammates.js'),
   'telegram-pulse': () => import('./fleet-telegram-pulse.js'),
   'thread-run': () => import('./fleet-thread-run.js'),

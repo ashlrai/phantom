@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkFeed, checkLaunch, restorePreparedDist, selectRun } from '../scripts/release-fast-smoke.mjs';
+import { checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
 
 const repository = 'ashlrai/phantom', revision = 'a'.repeat(40);
 const repo = { full_name: repository, id: 1263526319, node_id: 'R_kgDOS0_hrw', owner: { id: 258113726, login: 'ashlrai' }, default_branch: 'master', private: false, visibility: 'public' };
@@ -110,6 +110,81 @@ test('feed parser uses the manifest trust parser and requires matching app disco
   assert.throws(() => checkFeed(feed, () => { throw new Error('invalid manifest'); }, trust));
 });
 
+const FEED_ENDPOINT = `https://github.com/${repository}/releases/latest/download/latest.json`;
+const feedResponse = (status, body) => ({ status, body: body === undefined ? null : (async function* () { yield Buffer.from(JSON.stringify(body)); })() });
+let releaseId = 1;
+const stockedRow = (tag, extra = {}) => {
+  const id = releaseId++, url = `https://api.github.com/repos/${repository}/releases/${id}`;
+  const feed = Buffer.from(JSON.stringify({version: tag.slice(1)}));
+  const assets = [{ id: id * 10, name: 'latest.json', state: 'uploaded', size: feed.length,
+    digest: `sha256:${createHash('sha256').update(feed).digest('hex')}`, url: `https://api.github.com/repos/${repository}/releases/assets/${id * 10}`,
+    browser_download_url: `https://github.com/${repository}/releases/download/${tag}/latest.json` }];
+  return { id, url, html_url: `https://github.com/${repository}/releases/tag/${tag}`, assets_url: `${url}/assets`,
+    tag_name: tag, draft: false, prerelease: false, created_at: '2026-11-01T00:00:00Z',
+    published_at: extra.draft === true ? null : '2026-11-01T00:00:00Z',
+    assets, ...extra, ...(extra.assets ? {assets: extra.assets.map((asset, index) => ({...assets[0], id: id * 10 + index, url: `https://api.github.com/repos/${repository}/releases/assets/${id * 10 + index}`, ...asset}))} : {}) };
+};
+
+test('only a stocked published release row can supply the feed contract', () => {
+  assert.equal(stockedFeedTag([
+    stockedRow('v9.9.9', { draft: true }),
+    stockedRow('v9.9.8', { prerelease: true }),
+    stockedRow('v9.9.7', { assets: [] }),
+    stockedRow('v9.9.6', { assets: [{ name: 'latest.json', state: 'starter' }] }),
+    stockedRow('desktop-v9.9'),
+    stockedRow('v9.9.4', { created_at: '2026-11-03T00:00:00Z' }),
+    stockedRow('v9.9.3'),
+  ]), 'v9.9.4');
+  assert.equal(stockedFeedTag([]), null);
+  assert.throws(() => stockedFeedTag({}), /invalid release inventory/);
+  assert.throws(() => stockedFeedTag(Array.from({ length: 101 }, () => stockedRow('v9.9.9'))), /invalid release inventory/);
+  assert.throws(() => stockedFeedTag([stockedRow('v9.9.5', { assets: [{ name: 'latest.json', state: 'uploaded' }, { name: 'latest.json', state: 'uploaded' }] })]), /duplicate release asset name/);
+});
+
+test('a serving live endpoint supplies the feed without any release lookup', async () => {
+  const feed = { version: '3.30.7', platforms: { 'darwin-aarch64': { url: 'https://example.invalid/app', signature: 's' } } };
+  const result = await readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: () => assert.fail('release inventory fetched while live feed serves'),
+    fetchImpl: async url => { assert.equal(url, FEED_ENDPOINT); return feedResponse(200, feed); } });
+  assert.equal(result.served, 'latest');
+  assert.deepEqual(result.feed, feed);
+});
+
+test('an assetless latest falls back to the newest stocked published feed', async () => {
+  const releases = [
+    stockedRow('v3.30.8', { assets: [], created_at: '2026-11-05T00:00:00Z' }),
+    stockedRow('v3.30.7', { created_at: '2026-11-04T00:00:00Z' }),
+    stockedRow('v3.30.6', { created_at: '2026-11-03T00:00:00Z' }),
+  ];
+  const feed = { version: '3.30.7' }; const fetched = [];
+  const result = await readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: path => { if (path.endsWith('/releases/latest')) return releases[0]; assert.equal(path, `repos/${repository}/releases?per_page=100&page=1`); return releases; },
+    fetchImpl: async url => { fetched.push(url); return url === FEED_ENDPOINT ? feedResponse(404) : feedResponse(200, feed); } });
+  assert.deepEqual(fetched, [FEED_ENDPOINT, `https://github.com/${repository}/releases/download/v3.30.7/latest.json`]);
+  assert.equal(result.served, 'v3.30.7');
+  assert.deepEqual(result.feed, feed);
+});
+
+test('the stocked-feed scan pages the release inventory until one is found', async () => {
+  const first = Array.from({ length: 100 }, (_, index) => stockedRow(`v4.0.${index}`, { assets: [], created_at: new Date(Date.UTC(2026, 10, 5, 0, index)).toISOString().replace('.000Z', 'Z') }));
+  const feed = { version: '3.30.7' };
+  const result = await readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: path => path.endsWith('/releases/latest') ? first[0] : path.endsWith('page=1') ? first : [stockedRow('v3.30.7')],
+    fetchImpl: async url => url === FEED_ENDPOINT ? feedResponse(404) : feedResponse(200, feed) });
+  assert.equal(result.served, 'v3.30.7');
+});
+
+test('the feed check refuses an endpoint that cannot serve and has no stocked fallback', async () => {
+  await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: path => path.endsWith('/releases/latest') ? stockedRow('v3.30.8', { assets: [] }) : [stockedRow('v3.30.8', { assets: [] })],
+    fetchImpl: async () => feedResponse(404) }), /no stocked updater feed release/);
+  await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: path => path.endsWith('/releases/latest') ? stockedRow('v3.30.8', { assets: [] }) : [stockedRow('v3.30.7')],
+    fetchImpl: async () => feedResponse(404) }), /stocked updater feed unavailable/);
+  await assert.rejects(readUpdaterFeed({ endpoint: 'https://example.invalid/feed.json', repository,
+    read: () => [], fetchImpl: async () => feedResponse(404) }));
+});
+
 for (const kind of ['build', 'attest']) {
   for (const state of ['missing', 'skipped', 'no-op']) test(`${kind} ignores newer ${state} full/nightly run without hiding an attempted release`, () => {
     const f = setup(kind);
@@ -182,3 +257,77 @@ test('prepared restoration never overwrites an existing dist tree', t => {
   assert.throws(() => restorePreparedDist(f), /dist already exists/);
   assert.equal(readFileSync(join(f.root, 'dist/keep'), 'utf8'), 'keep');
 });
+
+for (const status of [401, 403, 429, 500, 503]) test(`feed HTTP ${status} cannot be hidden by a historical feed`, async () => {
+  await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: () => assert.fail('historical lookup must not run'),
+    fetchImpl: async () => feedResponse(status) }), /live updater feed unavailable/);
+});
+
+for (const latest of [stockedRow('v3.30.8'), stockedRow('v3.30.8', { assets: undefined }),
+  stockedRow('v3.30.8', { assets: [], draft: true }), stockedRow('v3.30.8', { assets: [], prerelease: true }),
+  stockedRow('invalid', { assets: [] })]) test('a live 404 requires confirmed assetless stable latest metadata', async () => {
+  let reads = 0;
+  await assert.rejects(readUpdaterFeed({ endpoint: FEED_ENDPOINT, repository,
+    read: path => { assert.equal(++reads, 1); assert.equal(path, `repos/${repository}/releases/latest`); return latest; },
+    fetchImpl: async () => feedResponse(404) }), /latest release is not confirmed assetless|incomplete release asset inventory/);
+});
+
+for (const change of [
+  {id: 0}, {url: 'https://api.github.com/repos/attacker/phantom/releases/1'},
+  {html_url: 'https://github.com/ashlrai/phantom/releases/tag/v9.9.9'},
+  {assets_url: 'https://api.github.com/repos/attacker/phantom/releases/1/assets'},
+  {draft: undefined}, {prerelease: undefined}, {created_at: '2026-02-30T00:00:00Z'},
+  {created_at: '2026-11-01'}, {published_at: null}, {published_at: 'invalid'},
+  {assets: Array.from({length: 100}, () => ({name: 'other'}))},
+]) test('fallback refuses malformed or foreign release metadata', async () => {
+  const malformed = stockedRow('v3.30.8', {assets: [], ...change});
+  assert.throws(() => stockedFeedTag([malformed]));
+  await assert.rejects(readUpdaterFeed({endpoint: FEED_ENDPOINT, repository, read: () => malformed,
+    fetchImpl: async () => feedResponse(404)}));
+});
+
+test('fallback refuses duplicate release identities', () => {
+  const release = stockedRow('v3.30.7');
+  assert.throws(() => stockedFeedTag([release, {...release}]), /duplicate release identity/);
+  assert.throws(() => stockedFeedTag([release, stockedRow('v3.30.7')]), /duplicate published release tag/);
+});
+
+test('latest release tags cannot change the historical download route', async () => {
+  await assert.rejects(readUpdaterFeed({endpoint: FEED_ENDPOINT, repository,
+    read: () => stockedRow('v3.30.8/foreign', {assets: []}),
+    fetchImpl: async () => feedResponse(404)}), /invalid release tag/);
+});
+
+test('legitimate untagged draft URLs do not block a published feed fallback', () => {
+  const draft = stockedRow('v3.30.9', {draft: true, html_url: `https://github.com/${repository}/releases/tag/untagged-fixture`});
+  assert.equal(stockedFeedTag([draft, stockedRow('v3.29.15')]), 'v3.29.15');
+});
+
+test('historical feed version must match the selected release tag', async () => {
+  const release = stockedRow('v3.30.7'), feed = {version: '3.30.6'};
+  const bytes = Buffer.from(JSON.stringify(feed));
+  Object.assign(release.assets[0], {size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`});
+  await assert.rejects(readUpdaterFeed({endpoint: FEED_ENDPOINT, repository,
+    read: path => path.endsWith('/latest') ? stockedRow('v3.30.8', {assets: []}) : [release],
+    fetchImpl: async url => url === FEED_ENDPOINT ? feedResponse(404) : feedResponse(200, feed)}),
+  /stocked feed version differs from release/);
+});
+
+for (const change of [{id: 0}, {state: undefined}, {url: 'https://api.github.com/repos/attacker/phantom/releases/assets/1'},
+  {browser_download_url: 'https://github.com/ashlrai/phantom/releases/download/v9.9.9/latest.json'}]) {
+  test('fallback rejects foreign or mismatched asset identities', () => {
+    const release = stockedRow('v3.30.7'); Object.assign(release.assets[0], change);
+    assert.throws(() => stockedFeedTag([release]));
+  });
+}
+
+for (const change of [{size: 0}, {size: 128 * 1024 + 1}, {digest: null}, {digest: `sha256:${'f'.repeat(64)}`}]) {
+  test('historical feed requires bounded digest-matching asset bytes', async () => {
+    const release = stockedRow('v3.30.7'); Object.assign(release.assets[0], change);
+    await assert.rejects(readUpdaterFeed({endpoint: FEED_ENDPOINT, repository,
+      read: path => path.endsWith('/latest') ? stockedRow('v3.30.8', {assets: []}) : [release],
+      fetchImpl: async url => url === FEED_ENDPOINT ? feedResponse(404) : feedResponse(200, {version: '3.30.7'})}),
+    /invalid stocked feed asset|stocked feed bytes differ from asset/);
+  });
+}

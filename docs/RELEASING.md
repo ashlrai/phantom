@@ -62,8 +62,12 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   preparation job reuses an immutable artifact for that source when available,
   otherwise builds once with cached compiler inputs. The following one-minute
   smoke job downloads that artifact, checks source/version/package identity,
-  parses the current signed updater manifest and launches the native binary
-  with `--release-smoke` in an isolated home. It never installs dependencies
+  verifies the signed updater feed and launches the native binary
+  with `--release-smoke` in an isolated home. The feed is read from the
+  configured `releases/latest` endpoint; while the pointed-at release carries
+  no feed asset, as the assetless `v3.30.8` incident left it, the smoke
+  verifies the newest stocked published feed instead. The signed envelope
+  contract is verified, never skipped. It never installs dependencies
   or rebuilds. No current per-PR desktop producer exists; cold preparation,
   hosted queueing, attestation and signing are outside the smoke budget.
 
@@ -187,7 +191,16 @@ and empty (release ID `435347257`), with the configured updater feed redirecting
 to a 404. Leave that release and tag as-is: no unpublish, reversal, tag move or
 hand asset upload. Recover on the next free patch; prefer `3.30.9` only after
 fresh npm, GitHub tag and release checks establish that it is available.
-Coordinate with `RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; this finalizer does not build
+The fast-gate smoke is repaired repo-side for this state: it verifies the newest
+stocked published feed only after a live HTTP 404 and authenticated metadata
+confirm that stable `releases/latest` has no feed asset. Inventory rows must
+have exact repository/tag URLs, valid bounded identities, timestamps and asset
+counts; a historical feed must report its selected release version. Other HTTP failures or
+a missing advertised asset remain failures. Historical contract verification
+does not establish that the configured live updater endpoint works; recovery
+still requires its post-publication HTTP 200 and signed-feed checks.
+Coordinate with `RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, which supersedes
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; this finalizer does not build
 or release desktop binaries and must not bypass signing or quarantine guards.
 The read-only Linux verifier checks signed metadata, archive bytes, trust and
 qualification identities, but does not reconstruct the hosted desktop bundle or
