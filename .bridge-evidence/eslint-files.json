@@ -1,0 +1,22 @@
+[
+  "src/cli/fleet-apps-follow.ts",
+  "src/cli/fleet-apps-recovery-wait.ts",
+  "src/cli/fleet-apps-watch.ts",
+  "src/core/fleet/apps-recovery-history.ts",
+  "src/core/fleet/apps-recovery-invocations.ts",
+  "src/core/fleet/apps-recovery-wait.ts",
+  "src/core/mcp-native.ts",
+  "src/core/verse/fleet-apps-api.ts",
+  "test/fleet-apps-follow-delivery-03sooh1.test.ts",
+  "test/fleet-apps-follow-stop-file-03soog1.test.ts",
+  "test/fleet-apps-history-api-03sool1.test.ts",
+  "test/fleet-apps-recovery-verdict-api-03soou1.test.ts",
+  "test/fleet-apps-watch-attempt-budget-03-sonz1.test.ts",
+  "test/m31.contract-lock.test.ts",
+  "test/mcp-native-apps-recovery-history-03sooc1.test.ts",
+  "test/mcp-native-apps-recovery-integration.test.ts",
+  "test/mcp-native-fleet-apps-follow-03sooj1.test.ts",
+  "test/mcp-native-recovery-batch-03soow1.test.ts",
+  "test/mcp-native-recovery-check-03soor1.test.ts",
+  "test/mcp-native-recovery-wait-03soot1.test.ts"
+]
