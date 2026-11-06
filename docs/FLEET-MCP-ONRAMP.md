@@ -58,8 +58,9 @@ in oldest-first order. Invalid arguments are MCP invalid-params errors.
   A hop records a send attempt; it does not prove delivery or completion and
   contains no message body.
 
-The standalone server exposes only these read-only tools, without gateway
-server discovery, forwarding, or mutation tools. `phm mcp` without `fleet`
+The standalone server exposes read-only observation tools only — `tools/list`
+returns the full current inventory — without gateway server discovery,
+forwarding, or mutation tools. `phm mcp` without `fleet`
 starts the separate aggregation gateway, whose tool surface and permissions
 are different; registering the standalone server does not configure or limit
 that gateway. Neither observation nor a tool annotation grants execution
@@ -88,8 +89,9 @@ limit for history or hops. A smaller limit cannot necessarily reduce status.
 ## Resume communication separately
 
 The hop log is an observation of send attempts, distinct from the local bus
-inbox. To read message envelopes and bodies, use the separate CLI with the same
-Phantom home, for example:
+inbox. `fleet_bus_inbox` reads durable message envelopes and bodies through
+the same store with cursor paging; the equivalent CLI with the same Phantom
+home is, for example:
 
 ```sh
 phm comms bus read --after 0 --to worker --limit 50
