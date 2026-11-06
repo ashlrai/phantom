@@ -42,7 +42,7 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
       openEntry = true;
       at = '';
       body = [];
-      const rest = line.slice(3);
+      const rest = line.slice(3).replace(/\s*\[leader-network:(?:reply-|digest-)[a-f0-9]{64}\]$/, '');
       const match = HEADING_TIME.exec(rest);
       if (match) {
         at = match[0];
