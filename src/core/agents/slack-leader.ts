@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
-import { leaderInboxAppender, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
+import { leaderInboxAppender, leaderNetworkSources, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
@@ -31,7 +31,7 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
   if (!checked.ok || message.channel !== 'slack' || message.external !== false || message.sender?.human !== true ||
       message.sender.vendor !== 'slack' || !isSlackUserId(message.sender.agent_id) || message.from !== `slack:${message.sender.agent_id}`) return { owned: false, durable: false };
   const identity: TeamIdentity = { channel: 'slack', id: message.sender.agent_id };
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   if (!parseMasonIdentities(sources.configSource).some(owner => owner.channel === 'slack' && owner.id === identity.id)) return { owned: false, durable: false };
   const policy = readSlackDeliveryPolicy(options), ref = parseSlackThreadRef(message.channel_ref);
   if (options.signal?.aborted || !policy || !ref || ref.teamId !== policy.config.teamId || message.origin_bridge !== policy.config.bridgeId ||
@@ -96,7 +96,7 @@ export async function deliverSlackLeaderMessage(identity: TeamIdentity, message:
 /** The transport drains existing Leader drafts; the resident Leader owns model generation. */
 export async function flushSlackLeaderReplies(options: SlackLeaderOptions = {}): Promise<{ state: 'completed' | 'unavailable'; sent: number }> {
   try {
-    const sources = readLeaderNetworkConfig(options);
+    const sources = leaderNetworkSources(options);
     const network = createLeaderNetwork({ ...sources, runsDir: options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
       busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: (identity, message) => deliverSlackLeaderMessage(identity, message, options) });
     let sent = 0;
