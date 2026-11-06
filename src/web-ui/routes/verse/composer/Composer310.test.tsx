@@ -533,6 +533,52 @@ describe('@ files and / commands', () => {
     expect(box).toHaveValue('');
   });
 
+  it('keeps typed planner text ordered when a completion frame is delayed', async () => {
+    const user = userEvent.setup();
+    await renderReady();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(box, '/pl{Enter}');
+    expect(box).toHaveValue('/plan ');
+    await user.keyboard('ch');
+    act(() => { for (const frame of frames.splice(0)) frame(0); });
+    await user.keyboard('eck');
+    expect(box).toHaveValue('/plan check');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(server.posts(/leader\/planner\/run/).at(-1)!.body).toEqual({ reason: 'check' }));
+    expect(await screen.findByText('Planner pass ran on local: ran (exit 0)')).toBeInTheDocument();
+  });
+
+  it('places the latest completion caret within existing text', async () => {
+    await renderReady();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    const box = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+    box.focus();
+    fireEvent.change(box, { target: { value: '/pl later', selectionStart: 3, selectionEnd: 3 } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(box).toHaveValue('/plan later');
+    act(() => { for (const frame of frames.splice(0)) frame(0); });
+    expect(box.selectionStart).toBe(5);
+    expect(box.selectionEnd).toBe(5);
+  });
+
+  it('does not reclaim focus after a completion', async () => {
+    const user = userEvent.setup();
+    await renderReady();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    const box = screen.getByRole('textbox', { name: 'Message' });
+    await user.type(box, '/pl{Enter}');
+    const other = document.createElement('textarea');
+    document.body.appendChild(other);
+    other.focus();
+    act(() => { for (const frame of frames.splice(0)) frame(0); });
+    expect(other).toHaveFocus();
+    other.remove();
+  });
+
   it('/fleet completion keeps focus and submits to the inbox while a chat turn runs', async () => {
     const p = props({ running: true });
     await renderReady(p);

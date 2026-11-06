@@ -50,7 +50,7 @@ describe('fleet behind-sweep', () => {
     expect(code).toBe(1);
     expect(calls).toHaveLength(1);
   });
-  it.each([['--limit', '0'], ['--limit', 'oops'], ['--repo', '../bad'], ['--apply', '--apply']])('rejects invalid options %j', async (...args) => {
+  it.each([['--limit', '0'], ['--limit', 'oops'], ['--repo', '../bad'], ['--apply', '--apply']])('rejects invalid options %j (%#)', async (...args) => {
     const { code, calls } = await run(args);
     expect(code).toBe(2);
     expect(calls).toHaveLength(0);

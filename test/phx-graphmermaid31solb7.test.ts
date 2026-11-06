@@ -109,7 +109,7 @@ describe('graph Mermaid export', () => {
   it.each([
     ['export'], ['export', '--format', 'json'], ['export', '--format', 'mermaid', '--json'],
     ['export', '--format', 'mermaid', '--format', 'mermaid'], ['export', '--format', 'mermaid', '--from'],
-  ])('rejects invalid arguments %j before loading', async (...args) => {
+  ])('rejects invalid arguments %j before loading (%#)', async (...args) => {
     expect(await cmdGraph(args)).toBe(2);
     expect(reader).not.toHaveBeenCalled();
   });

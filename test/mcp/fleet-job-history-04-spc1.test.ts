@@ -63,7 +63,7 @@ describe('fleet_job_history over MCP', () => {
     const out = parse(await client.callTool({ name: 'fleet_job_history', arguments: { jobId: 'RQ-EXAMPLE-1', limit: 5 } }));
     expect(read).toHaveBeenCalledWith('RQ-EXAMPLE-1', 'origin/master', 5);
     expect(run).toHaveBeenNthCalledWith(1, ['rev-parse', '--verify', 'origin/master^{commit}']);
-    expect(run).toHaveBeenNthCalledWith(2, ['log', '-n1000', '--format=%H%x00%cI%x00%s%x00', PINNED, '--']);
+    expect(run).toHaveBeenNthCalledWith(2, ['log', '-n1000', '--first-parent', '--format=%H%x00%cI%x00%s%x00', PINNED, '--']);
     expect(out).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       jobId: 'RQ-EXAMPLE-1', ref: 'origin/master',

@@ -45,6 +45,7 @@ export interface MeterDropReport {
 }
 
 const PROVIDER_ID = /^[a-z][a-z0-9-]{1,40}$/;
+const usage = 'ashlr fleet meter-drop [--json] — read-only; flat meter + running jobs = incident';
 const WINDOW_ID = /^[a-z0-9][a-z0-9:._-]{0,39}$/;
 const providerName = (v: unknown): string => typeof v === 'string' && PROVIDER_ID.test(v) ? v : 'unknown';
 const windowName = (v: unknown): string => typeof v === 'string' && WINDOW_ID.test(v) ? v : 'other';
@@ -141,7 +142,7 @@ export async function readMeterDrop(readers: LaneTruthReaders, now = Date.now())
 
 export async function cmdFleetMeterDrop(args: string[], readers = defaultLaneTruthReaders(), now = Date.now()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet meter-drop [--json] — read-only; flat meter + running jobs = incident');
+    console.log(usage);
     return 0;
   }
   if (args.some(arg => arg !== '--json') || args.length > 1) return 2;

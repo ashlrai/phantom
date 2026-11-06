@@ -17,6 +17,10 @@ export interface FleetMainHealthOptions {
 }
 
 const STUCK_THRESHOLD_MINUTES = 20;
+const usage = `ashlr fleet main-health [--json] [--strict]
+Read-only view of the main-guardian status: red default branches, failing check, open fix jobs.
+Also shows fix PRs stuck open past 20 minutes (from metrics/jobs.jsonl); an unreadable ledger is reported, not fatal.
+Exit 0 by default; --strict exits 1 when any repo is red, the status is stale or unavailable, or a fix PR is stuck.`;
 interface StuckFixes { known: boolean; thresholdMinutes: number; stuck: StuckFixRow[] }
 
 /** Fold the jobs ledger; an unreadable ledger is `known: false`, never an error. */
@@ -59,10 +63,7 @@ function render(report: FleetMainHealthV1, fixes: StuckFixes): string[] {
 
 export async function cmdFleetMainHealth(args: string[], opts: FleetMainHealthOptions = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet main-health [--json] [--strict]\n' +
-      'Read-only view of the main-guardian status: red default branches, failing check, open fix jobs.\n' +
-      'Also shows fix PRs stuck open past 20 minutes (from metrics/jobs.jsonl); an unreadable ledger is reported, not fatal.\n' +
-      'Exit 0 by default; --strict exits 1 when any repo is red, the status is stale or unavailable, or a fix PR is stuck.');
+    console.log(usage);
     return 0;
   }
   let json = false;

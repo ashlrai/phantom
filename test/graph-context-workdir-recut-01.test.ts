@@ -58,7 +58,7 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-describe('fleet graph-context-run per-task cwd', () => {
+describe('fleet graph-context-run per-task cwd (recut)', () => {
   it('runs two nodes in their caller-selected checkouts in parallel, each with its own cited pack', async () => {
     const dirA = join(root, 'checkout A $(phony);[x]'), dirB = join(root, 'checkout B');
     await mkdir(dirA); await mkdir(dirB);

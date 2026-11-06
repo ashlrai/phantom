@@ -12,14 +12,14 @@ describe('channel line inbox entries', () => {
   it('splits the channel line from the preceding priority order', () => {
     const entries = parseInbox(mixed);
     expect(entries).toHaveLength(2);
-    expect(entries[0]).toEqual({ at: '2026-11-02 00:27', source: 'page (masbot-install)', priority: null, text: 'install check from Masbot' });
+    expect(entries[0]).toEqual({ at: '2026-11-02 00:27', source: 'page (masbot-install)', channel: 'page', id: 'masbot-install', priority: null, text: 'install check from Masbot' });
     expect(entries[1]!.text).toBe('Fake older order');
     expect(parseInbox(mixed, 1)).toEqual(entries.slice(0, 1));
   });
 
   it('converts UTC offsets in EST and EDT and accepts minute precision without an id', () => {
     expect(parseInbox('2026-01-15T05:27:30Z [src:email] Fake winter order')[0]).toEqual({
-      at: '2026-01-15 00:27', source: 'email', priority: null, text: 'Fake winter order',
+      at: '2026-01-15 00:27', source: 'email', channel: 'email', priority: null, text: 'Fake winter order',
     });
     expect(parseInbox('2026-07-15T04:27+00:00 [src:telegram id:fake-1] Fake summer order')[0]!.at).toBe('2026-07-15 00:27');
   });
@@ -34,13 +34,16 @@ prefix 2026-11-02T01:00:00-0500 [src:page] Fake mid-line tag`;
     expect(entries[0]!.text).toBe(`install check from Masbot\n${body}`);
   });
 
-  it('caps source and body and switches back to heading entries', () => {
+  it('caps source and body, keeping a later ordinary heading as body', () => {
     const source = 'a'.repeat(32);
     const id = 'b'.repeat(64);
     const entries = parseInbox(`2026-11-02T00:27-05:00 [src:${source} id:${id}] Fake\n${'x'.repeat(INBOX_MAX_CHARS)}\n## Fake heading\nFake heading body`);
-    expect(entries[1]!.source).toBe(`${source} (${id})`.slice(0, 80));
-    expect(entries[1]!.text).toHaveLength(INBOX_MAX_CHARS);
-    expect(entries[0]!.text).toBe('Fake heading body');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.source).toBe(`${source} (${id})`.slice(0, 80));
+    expect(entries[0]!.text).toHaveLength(INBOX_MAX_CHARS);
+    const short = parseInbox('2026-11-02T00:27-05:00 [src:page] Fake\n## Fake heading\nFake heading body');
+    expect(short).toHaveLength(1);
+    expect(short[0]!.text).toBe('Fake\n## Fake heading\nFake heading body');
   });
 
   it('reads split entries from a temporary runs directory', async () => {

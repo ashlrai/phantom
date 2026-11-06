@@ -276,6 +276,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const helpId = useId();
   const suggestId = useId();
   const [caret, setCaret] = useState<number | null>(null);
+  const caretRevision = useRef(0);
   const [dismissedTrigger, setDismissedTrigger] = useState<number | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [fileMatches, setFileMatches] = useState<{ query: string; files: VerseFileMatch[]; primaryRoot: string | null } | null>(null);
@@ -304,6 +305,8 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
     const node = textarea.current;
     const focused = node !== null && typeof document !== 'undefined' && document.activeElement === node;
     let caretAfter = -1;
+    const revision = ++caretRevision.current;
+    const active = document.activeElement;
     setHistoryAt(-1);
     setDraft((current) => {
       const next = insertDictation(current, chunk, focused ? node.selectionStart : null, focused ? node.selectionEnd : null);
@@ -311,7 +314,9 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       return next.value;
     });
     requestAnimationFrame(() => {
-      if (caretAfter >= 0 && textarea.current) textarea.current.setSelectionRange(caretAfter, caretAfter);
+      if (caretAfter >= 0 && node && textarea.current === node && caretRevision.current === revision && document.activeElement === active) {
+        node.setSelectionRange(caretAfter, caretAfter);
+      }
     });
   }, []);
   // The chat's repo: the lexicon applies that project's terms.
@@ -526,9 +531,11 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   }
 
   function placeCaret(position: number) {
+    const node = textarea.current;
+    const active = document.activeElement;
+    const revision = ++caretRevision.current;
     requestAnimationFrame(() => {
-      const node = textarea.current;
-      if (!node) return;
+      if (!node || textarea.current !== node || caretRevision.current !== revision || document.activeElement !== active) return;
       const at = Math.min(position, node.value.length);
       node.focus();
       node.setSelectionRange(at, at);
@@ -999,6 +1006,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') caretRevision.current += 1;
     const node = event.currentTarget;
     const collapsed = node.selectionStart === node.selectionEnd;
     const composing = event.nativeEvent.isComposing;
@@ -1144,14 +1152,15 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           aria-expanded={suggestOpen ? true : undefined}
           aria-activedescendant={suggestOpen && suggestItems.length > 0 ? suggestOptionId(suggestId, boundedActive) : undefined}
           onChange={(event) => {
+            caretRevision.current += 1;
             setHistoryAt(-1);
             laneConfirmation.current = null;
             setDraft(event.target.value);
             setDismissedTrigger(null);
             setCaret(event.target.selectionStart === event.target.selectionEnd ? event.target.selectionStart : null);
           }}
-          onSelect={syncCaret} onClick={syncCaret} onKeyUp={(event) => { if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') syncCaret(); }}
-          onBlur={() => setCaret(null)} onFocus={syncCaret}
+          onSelect={syncCaret} onClick={() => { caretRevision.current += 1; syncCaret(); }} onKeyUp={(event) => { if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') syncCaret(); }}
+          onBlur={() => { caretRevision.current += 1; setCaret(null); }} onFocus={syncCaret}
           onPaste={onPaste} onKeyDown={onKeyDown} />
         <input ref={fileInput} type="file" multiple hidden tabIndex={-1} aria-hidden="true"
           onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />

@@ -28,7 +28,9 @@ describe('repo .mcp.json companion servers', () => {
   it('pins Phantom Secrets, Locus and Lexicon to the reviewed companion releases', () => {
     const args = (name: string) => config.mcpServers[name]?.args.join(' ') ?? '';
     expect(args('phantom-secrets')).toContain(`phantom-secrets-mcp@${reviewed('secrets')}`);
-    expect(args('locus')).toContain(`@ashlrai/locus-mcp@${reviewed('locus')}`);
+    // @ashlrai/locus-mcp is reviewed as its own package release: 0.6.2 carries
+    // the npm-shim fork-bomb fix, independent of the reviewed locus CLI (0.5.0).
+    expect(args('locus')).toContain('@ashlrai/locus-mcp@0.6.2');
     expect(args('lexicon')).toContain(`@ashlr/lexicon@${reviewed('lexicon')}`);
     // Stack reads the vault through the phantom CLI, so it carries the same Secrets pin.
     expect(args('stack')).toContain(`phantom-secrets@${reviewed('secrets')}`);

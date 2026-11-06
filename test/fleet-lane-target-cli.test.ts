@@ -135,6 +135,6 @@ it('prints the held notice only for held lanes and records --reason', async () =
 it.each([
   ['--bogus'], ['devin', '1', 'extra'], ['--runs-dir', 'relative/path'],
   ['devin', '--reason', 'no target'], ['devin', '1', '--reason'], ['devin', '1', '--runs-dir'],
-])('rejects usage error %j with exit 2', async (...args: string[]) => {
+])('rejects usage error %j with exit 2 (%#)', async (...args: string[]) => {
   expect((await run(args)).code).toBe(2);
 });

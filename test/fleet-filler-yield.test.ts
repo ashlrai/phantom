@@ -39,7 +39,7 @@ it('counts per repo from a fixture file, joins repo via launch, and ignores othe
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-it('is red only when skips are over half of 10 or more rows', async () => {
+it('filler-yield is red only when skips are over half of 10 or more rows', async () => {
   const skips = (n: number, repo: string) => Array.from({ length: n }, (_, i) => row('precheck_skip', J(100 + i), 1, { repo, code: 13 }));
   const launches = (n: number, repo: string) => Array.from({ length: n }, (_, i) => row('launch', J(200 + i), 1, { repo }));
   const r = await fleetFillerYield(read(...skips(6, 'a'), ...launches(4, 'a'), ...skips(5, 'b'), ...launches(5, 'b'), ...skips(5, 'c'), ...launches(3, 'c')), 6, now);
@@ -47,14 +47,14 @@ it('is red only when skips are over half of 10 or more rows', async () => {
   expect(r.red).toBe(true);
 });
 
-it('reports unknown when the ledger is unreadable or throws', async () => {
+it('filler-yield reports unknown when the ledger is unreadable or throws', async () => {
   for (const reader of [async () => null, async () => { throw new Error('boom'); }]) {
     expect(await fleetFillerYield(reader, 6, now)).toMatchObject({ known: false, red: false, repos: [] });
   }
   await expect(fleetFillerYield(read(), 0, now)).rejects.toThrow(RangeError);
 });
 
-it('prints json, exits 1 on red and 0 otherwise, and rejects bad flags', async () => {
+it('filler-yield prints json, exits 1 on red and 0 otherwise, and rejects bad flags', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const err = vi.spyOn(console, 'error').mockImplementation(() => {});
   const red = read(...Array.from({ length: 10 }, (_, i) => row('precheck_skip', J(i), 1, { repo: 'phantom', code: 13 })));
@@ -71,6 +71,6 @@ it('prints json, exits 1 on red and 0 otherwise, and rejects bad flags', async (
   expect(err).toHaveBeenCalled();
 });
 
-it('is registered as a fleet verb', async () => {
+it('filler-yield is registered as a fleet verb', async () => {
   expect((await FLEET_SUBCOMMAND_LOADERS['filler-yield']!()).cmdFleetFillerYield).toBe(cmdFleetFillerYield);
 });
