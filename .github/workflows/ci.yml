@@ -2,7 +2,7 @@ name: CI
 
 on:
   # PRs and the merge queue run only the seconds-fast gate (Mason, Oct 28 2026:
-  # merge fast, test later, fix forward daily). Full suites run once a day on
+  # merge fast, test later, fix forward daily). Full suites run every six hours on
   # master, on manual dispatch, and on reusable workflow_call.
   pull_request:
     branches: ["**"]
@@ -15,11 +15,9 @@ on:
   push:
     branches: [master]
   workflow_call:
-  # Daily full suite on master at 05:03 ET (09:03 UTC). Staggered from the other
-  # six repos' daily runs so its seven macOS jobs never share the org's macOS
-  # concurrency with them (RQ-DAILY-15).
+  # Full suite on master every six hours at 17 minutes past the hour.
   schedule:
-    - cron: "3 9 * * *"
+    - cron: "17 */6 * * *"
     # Release preparation reuses green push CI; it never reruns full suites.
     - cron: "0,30 * * * *"
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
