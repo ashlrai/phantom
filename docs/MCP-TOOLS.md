@@ -20,6 +20,11 @@ exports, verbatim from source.
 | `phantom_fleet_apps_await` | Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart. |
 | `phantom_fleet_apps_changes` | Observe selected local managed app state changes within a bounded deadline. |
 | `phantom_fleet_apps_ensure` | Ensure an explicit group of local managed apps is running under one shared deadline. |
+| `phantom_fleet_apps_follow` | Follow retained app recovery events within a bounded deadline; resume using the returned cursor. |
+| `phantom_fleet_apps_history` | Read retained app recovery observations and summaries without starting a watcher. |
+| `phantom_fleet_apps_recovery_batch` | Wait for retained recovery evidence for multiple invocations. Read-only; no live probe or app control. |
+| `phantom_fleet_apps_recovery_check` | Check whether one recovery invocation retains fresh, healthy evidence in the local runs store. Reads only; never queries or launches apps. Returns stale, terminal, unhealthy, or unknown evidence outcomes without substituting healthy. |
+| `phantom_fleet_apps_recovery_wait` | Wait for retained recovery evidence for one invocation to become fresh and healthy or terminal. |
 | `phantom_fleet_apps_status` | Read the bounded local inventory of managed desktop app running states; unavailable and unknown states are reported explicitly. |
 | `phantom_fleet_drop_job` | Queue a Phantom fleet job by writing RQ-PHX-<id>.md into the local runs drop folder. Ingest validates it later; nothing launches from this call. The body is a worker prompt and is treated as untrusted text. |
 | `phantom_fleet_job_reassign` | Move one queued (not yet launched) fleet job, or every queued Phantom job on a lane, to another lane and optionally tier by editing the local ready queue. Refuses held or down target lanes. dryRun plans without writing. |
@@ -27,6 +32,28 @@ exports, verbatim from source.
 | `phantom_fleet_planner_run` | Run one fleet planner pass on the declared login slate under the local runs root. Waits up to 20 minutes and writes job files into the drop folder; no jobs launch from this call. No argv, prompt text or environment values are returned. |
 | `phantom_fleet_graph` | Read the local graph.v1 fleet inventory: repositories, lanes, seats and holds. Observation only; incomplete sources are flagged. No launcher environment values. |
 | `phantom_fleet_session` | Read local Codex fleet session quota observations per account as resource.v1 JSON. Includes session/weekly usage and freshness; missing readings are unknown. No prompts, credentials, environment values or provider probes. |
+
+The recovery tools read retained observations, not live process state. History
+accepts `after`, `limit` (1–100, default 25), and an optional `invocationId`;
+resume with `nextCursor`. Follow accepts `durationMs` up to 30,000 and at most
+100 events; `untilSummary` requires an `invocationId`. Recovery wait accepts
+`timeoutMs` up to 30,000, while batch accepts up to 20 unique invocation IDs and
+`durationMs` up to 300,000. Check, wait, and batch require a positive `maxAgeMs`.
+Tool arguments cannot choose the local runs root.
+
+The CLI supervisor `phm fleet apps-watch` also accepts
+`--attempt-timeout-ms` (1–300000), capped by the remaining overall duration. A
+timed-out attempt records a failed observation and waits for its child to settle
+before retrying. `phm fleet apps-follow --stop-file <path>` stops on a readable
+regular file, checks idle waits within 250 ms, and retains its last delivered
+cursor. These path controls are not exposed as MCP arguments.
+
+The authenticated Verse API also exposes read-only
+`GET /api/verse/fleet/apps/history?after=0&limit=100` (optional `invocationId`)
+and `GET /api/verse/fleet/apps/recovery/check?invocation=<v4-uuid>&maxAgeMs=1000`.
+History defaults to 100 results and returns the same cursor projection. Invalid
+queries return 400; unavailable evidence returns 503. These routes never probe
+or control apps.
 
 ## `phm_` — Agent & Team Operations
 

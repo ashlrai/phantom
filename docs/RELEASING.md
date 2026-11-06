@@ -62,8 +62,22 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   preparation job reuses an immutable artifact for that source when available,
   otherwise builds once with cached compiler inputs. The following one-minute
   smoke job downloads that artifact, checks source/version/package identity,
-  parses the current signed updater manifest and launches the native binary
-  with `--release-smoke` in an isolated home. It never installs dependencies
+  parses the updater feed/manifest contract under canonical-v2 trust and
+  launches the native binary with `--release-smoke` in an isolated home.
+  Only a repeated HTTP 404 redirected to the observed latest tag, bracketed
+  by unchanged stable release metadata and independently complete zero-asset
+  inventories, permits a previous stocked feed. Partial releases, unknown or
+  malformed metadata, auth/rate-limit/server errors and observed races fail.
+  The scan must finish within ten 100-row pages; asset lists must stay below
+  a full page. Published release and asset identities must match the repository
+  and tag; draft rows are never admitted (GitHub may give them untagged URLs).
+  The selected prior release is rechecked before and after reading its bounded,
+  size/SHA256-matching, version-matched feed. The 60-second smoke budget remains.
+  Outputs `updater_live_http_status` and `updater_contract_source` and the step
+  summary distinguish live HTTP 200 from historical contract coverage while
+  the live endpoint remains HTTP 404. The unchanged parser/launch receipt does
+  not establish updater recovery, cryptographic publication verification or
+  installed acceptance; those remain separate gates. It never installs dependencies
   or rebuilds. No current per-PR desktop producer exists; cold preparation,
   hosted queueing, attestation and signing are outside the smoke budget.
 
@@ -187,7 +201,16 @@ and empty (release ID `435347257`), with the configured updater feed redirecting
 to a 404. Leave that release and tag as-is: no unpublish, reversal, tag move or
 hand asset upload. Recover on the next free patch; prefer `3.30.9` only after
 fresh npm, GitHub tag and release checks establish that it is available.
-Coordinate with `RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; this finalizer does not build
+The fast-gate smoke is repaired repo-side for this state: it verifies the newest
+stocked published feed only after a live HTTP 404 and authenticated metadata
+confirm that stable `releases/latest` has no feed asset. Inventory rows must
+have exact repository/tag URLs, valid bounded identities, timestamps and asset
+counts; a historical feed must report its selected release version. Other HTTP failures or
+a missing advertised asset remain failures. Historical contract verification
+does not establish that the configured live updater endpoint works; recovery
+still requires its post-publication HTTP 200 and signed-feed checks.
+Coordinate with `RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, which supersedes
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; this finalizer does not build
 or release desktop binaries and must not bypass signing or quarantine guards.
 The read-only Linux verifier checks signed metadata, archive bytes, trust and
 qualification identities, but does not reconstruct the hosted desktop bundle or
