@@ -86,6 +86,13 @@ export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDi
   publishTimeoutMs?: number;
 }
 
+/** Hash-only tuple binding for mirror retries: the exact raw body (not the
+ * normalized one), channel, verified sender and thread. `receivedAt` is excluded;
+ * the receipt pins it. Retains no plaintext. */
+export function channelEnvelopeDigest(input: Pick<ChannelMessage, 'body' | 'channel' | 'verifiedSenderId' | 'threadId'>): string {
+  return createHash('sha256').update(JSON.stringify(['channel-mirror-envelope-v1', input.body, input.channel, input.verifiedSenderId, input.threadId ?? null])).digest('hex');
+}
+
 /** Rolling window from first successful receipt, including across clock bucket
  * boundaries. Retains hashes/times and mirror source/state, never credentials or message bodies.
  * Failed writes do not reserve a key. Capacity refuses rather than evicting keys.
@@ -106,18 +113,25 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     (publish === undefined && (options.busRoot !== undefined || options.runsDir === undefined));
   const store = options.receiptStore ?? (options.write && options.runsDir === undefined
     ? undefined : createLocalChannelDedupeStore(options.runsDir));
+  const backgroundQueue = options.backgroundQueue ?? !options.write;
   let tail = Promise.resolve();
   let lastTime = 0;
-  async function success(envelope: ChannelEnvelope, status: ChannelAck['status'], original?: ChannelEnvelope, entryId?: string): Promise<ChannelReceiveResult> {
-    if (options.backgroundQueue ?? !options.write) {
-      try { await queueCosEnvelope(envelope, options.runsDir); }
+  /** `original`/`queueEnvelope` are the envelopes every retryable effect (COS queue,
+   * bus mirror) may use: the current one for a first acceptance, or the original rebuilt from a
+   * duplicate whose exact tuple matched the receipt digest. Unproven duplicates
+   * have none, so a variant retry can never enqueue or publish altered content. */
+  async function success(envelope: ChannelEnvelope, status: ChannelAck['status'], original?: ChannelEnvelope, entryId?: string, recoveryRefused?: boolean, queueEnvelope?: ChannelEnvelope): Promise<ChannelReceiveResult> {
+    if (backgroundQueue && queueEnvelope) {
+      try { await queueCosEnvelope(queueEnvelope, options.runsDir); }
       catch { return { ok: false, reason: 'write-failed' }; }
     }
     const ack: ChannelAck = { channel: envelope.channel, dedupeKey: envelope.dedupeKey, status, ...(entryId ? { entryId } : {}) };
     // Bus mirroring is best effort and observational: it runs after the durable
     // write committed, before acknowledge, and outside the ack timeout. Its
     // outcome is reported as publishState; only mirror-pending state changes.
-    let publishState: ChannelPublishState = 'skipped';
+    // A pending mirror whose exact tuple cannot be proven stays pending and is
+    // reported failed, never published or silently skipped.
+    let publishState: ChannelPublishState = recoveryRefused && mirroringEnabled ? 'failed' : 'skipped';
     if (mirroringEnabled && original) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -183,7 +197,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     if (!Number.isSafeInteger(now) || now < lastTime || now < 0) return { ok: false, reason: 'invalid' };
     lastTime = now;
     const work = async (receipts: typeof seen, commit: () => void | Promise<void>): Promise<
-      { envelope: ChannelEnvelope; status: ChannelAck['status']; entryId?: string; original?: ChannelEnvelope } | Exclude<ChannelReceiveResult, { ok: true }>
+      { envelope: ChannelEnvelope; status: ChannelAck['status']; entryId?: string; original?: ChannelEnvelope; queueEnvelope?: ChannelEnvelope; recoveryRefused?: boolean } | Exclude<ChannelReceiveResult, { ok: true }>
     > => {
       for (const [hash, receipt] of receipts) {
         if (now - receipt.at >= CHANNEL_DEDUPE_WINDOW_MS) receipts.delete(hash);
@@ -210,13 +224,23 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
         );
         if (decision.action === 'merge' && addInboxSource(decision.entryId, decision.addSource, { runsDir })) entryId = decision.entryId;
       }
-      if (previous) return {
-        envelope, status: 'duplicate', ...(entryId ? { entryId } : {}),
-        // Hash lookup proves this normalized body and sender match the original.
-        original: previous.mirror?.pending ? {
-          ...envelope, channel: previous.mirror.channel, receivedAt: new Date(previous.at).toISOString(),
-        } : undefined,
-      };
+      if (previous) {
+        const pending = previous.mirror?.pending === true;
+        // Only the exact accepted tuple may rebuild the original; normalized
+        // near-matches dedupe/ack as duplicates but never recover a body.
+        // The receipt channel sits outside the hash, so it must agree with the
+        // hash-proven input channel; inconsistent metadata fails closed.
+        const proven = previous.mirror?.envelopeDigest !== undefined &&
+          previous.mirror.channel === input.channel &&
+          previous.mirror.envelopeDigest === channelEnvelopeDigest(input);
+        const recovered: ChannelEnvelope | undefined = proven
+          ? { ...envelope, receivedAt: new Date(previous.at).toISOString() } : undefined;
+        return {
+          envelope, status: 'duplicate', ...(entryId ? { entryId } : {}),
+          original: pending ? recovered : undefined, queueEnvelope: recovered,
+          ...(pending && !proven ? { recoveryRefused: true } : {}),
+        };
+      }
       if (receipts.size >= CHANNEL_RECEIPT_LIMIT) return { ok: false, reason: 'full' };
       try {
         const result = options.write
@@ -224,13 +248,15 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
           : await appendInboxEntry(body, { runsDir: options.runsDir, now: () => new Date(now), source: input.channel });
         if (!result.ok) return { ok: false, reason: result.reason };
       } catch { return { ok: false, reason: 'write-failed' }; }
-      receipts.set(hash, { at: now, key: dedupeKey, ...(mirroringEnabled ? { mirror: { channel: envelope.channel, pending: true } } : {}) });
+      // Every accepted record with a retryable background effect carries the
+      // hash-only tuple binding, even with mirroring disabled (pending=false).
+      receipts.set(hash, { at: now, key: dedupeKey, ...(mirroringEnabled || backgroundQueue ? { mirror: { channel: envelope.channel, pending: mirroringEnabled, envelopeDigest: channelEnvelopeDigest(input) } } : {}) });
       await commit();
-      return { envelope, status: 'accepted', original: envelope };
+      return { envelope, status: 'accepted', original: envelope, queueEnvelope: envelope };
     };
     try {
       const result = store ? await store.transaction(work) : await work(seen, () => {});
-      return 'envelope' in result ? success(result.envelope, result.status, result.original, result.entryId) : result;
+      return 'envelope' in result ? success(result.envelope, result.status, result.original, result.entryId, result.recoveryRefused, result.queueEnvelope) : result;
     } catch { return { ok: false, reason: 'dedupe-store-unavailable' }; }
   }
   return (input) => {
