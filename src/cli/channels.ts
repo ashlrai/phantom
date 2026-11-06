@@ -35,7 +35,9 @@ import { rejectUnknownOptions } from './args.js';
 const USAGE = `usage: phm channels status [--json]
        phm channels add telegram <chat-id> [--json]
        phm channels add email <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--json]
-       phm channels add <mobile|cli|desktop|page> [--json]`;
+       phm channels add <mobile|cli|desktop|page> [--json]
+       phm channels slack status [--json]
+       phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]`;
 
 function badUsage(message?: string): number {
   if (message) console.error(message);
@@ -149,5 +151,9 @@ export async function cmdChannels(args: string[]): Promise<number> {
   }
   if (sub === 'status') return cmdStatus(args.slice(1));
   if (sub === 'add') return cmdAdd(args.slice(1));
+  if (sub === 'slack') {
+    const { cmdChannelsSlack } = await import('./channels-slack.js');
+    return cmdChannelsSlack(args.slice(1));
+  }
   return badUsage(`unknown subcommand: ${sub}`);
 }

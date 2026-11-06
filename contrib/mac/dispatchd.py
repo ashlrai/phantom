@@ -56,7 +56,11 @@ def _run(cmd, timeout, **kw):
     except subprocess.TimeoutExpired:
         try: os.killpg(p.pid, signal.SIGKILL)
         except OSError: pass
-        p.communicate(); log("SLOW %s timeout %ds, group killed" % (name, timeout)); raise
+        try: p.communicate(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            for pipe in (p.stdout, p.stderr):
+                if pipe: pipe.close()
+        log("SLOW %s timeout %ds, group killed" % (name, timeout)); raise
     if time.time() - t0 > 5: log("SLOW %s %.0fs" % (name, time.time() - t0))
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 JID = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -424,7 +428,14 @@ pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
-ps_result = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True)
+from process_snapshot import capture as capture_process_snapshot
+ps_result = capture_process_snapshot(timeout=5)
+jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                    "known": ps_result.returncode == 0,
+                                    "reason": ps_result.stderr if ps_result.returncode else None})
+if ps_result.returncode:
+    log("PROCESS_SNAPSHOT unknown; preserving every worker and queue claim")
+    raise SystemExit(0)  # Unknown ownership is never permission to reap or launch.
 ps = ps_result.stdout
 for line in ps.splitlines():
     if "dispatchd.py" in line: continue
@@ -434,14 +445,17 @@ for line in ps.splitlines():
         m = p.search(line)
         if m: alive.add(m.group(1))
 claude_live = any(rd(x).split()[3:4] in (["claude"], ["claude-api"]) and os.path.isdir(rd(x).split()[2]) for x in glob.glob(R + "/*.base"))
-try:
-    if not claude_live: raise RuntimeError("skip lsof")   # cwd scan only needed for claude (argv lacks the worktree)
-    lo = _run(["lsof", "-nP", "-w", "-d", "cwd", "-Fn"], 20).stdout
-    for line in lo.splitlines():
+if claude_live:
+    lo_result = _run(["lsof", "-nP", "-w", "-d", "cwd", "-Fn"], 20)
+    if lo_result.returncode or not lo_result.stdout.strip():
+        jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                            "known": False, "reason": "worker cwd inspection unavailable"})
+        log("PROCESS_SNAPSHOT unknown cwd; preserving every worker and queue claim")
+        raise SystemExit(0)
+    for line in lo_result.stdout.splitlines():
         if line.startswith("n"):
             m = pat_wt.match(line[1:])
             if m: cwdjobs.add(m.group(1))
-except Exception: pass
 for j in cwdjobs:
     b = rd("%s/%s.base" % (R, j)).split()
     if len(b) >= 4 and b[3] in ("claude", "claude-api"): alive.add(j)
@@ -593,12 +607,6 @@ def _prio(bp):
 # but release the repo as soon as the worker has an explicit terminal outcome.
 fix_main_repos = {_job_repo(j) for j in alive if j.startswith("RQ-FIX-MAIN-")
                   and _rc(j) is None and not result(j)}
-if ps_result.returncode:
-    # An unavailable process snapshot is not proof that a worker finished.
-    # Hold only sibling fixes until liveness recovers or completion is explicit.
-    for bp in glob.glob(R + "/RQ-FIX-MAIN-*.base"):
-        j = os.path.basename(bp)[:-5]
-        if _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
 LANDONLY_PREFIXES = ("RQ-DESK-",)   # fixed strings in code; never read from the file
 def _landonly_ids():   # exact tokens only (whitespace-split, as before); tokens that are not valid job ids are ignored
     return {t for t in rd(R + "/PUBLISH_LANDONLY").split() if JID.match(t)}

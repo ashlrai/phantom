@@ -23,6 +23,9 @@ export interface LeaderRuntimeOptions {
   configDir?: string;
   busRoot?: string;
   now?: () => number;
+  /** Trusted host transport seam; credentials never appear in persisted options. */
+  slackCall?: import('./slack-transport.js').SlackCall;
+  signal?: AbortSignal;
 }
 
 function runsRoot(options: LeaderRuntimeOptions): string {
@@ -106,6 +109,10 @@ export function defaultLeaderDelivery(cfg: AshlrConfig, options: LeaderRuntimeOp
     const text = messageText(message);
     if (!text) return { status: 'refused', reason: 'Missing reply text.' };
     if (identity.channel === 'bus' && identity.id === LOCAL_LEADER_IDENTITY.id) return { status: 'sent', reason: 'Recorded in the local Leader outbox.' };
+    if (identity.channel === 'slack') {
+      const { deliverSlackLeaderMessage } = await import('./slack-leader.js');
+      return deliverSlackLeaderMessage(identity, message, { ...options, call: options.slackCall });
+    }
     if (identity.channel === 'telegram') {
       const { sendTelegramMessage } = await import('../integrations/telegram.js');
       if (cfg.comms?.enabled !== true || identity.id !== `telegram:${cfg.comms.telegram?.chatId}`) return { status: 'refused', reason: 'No matching configured private channel.' };

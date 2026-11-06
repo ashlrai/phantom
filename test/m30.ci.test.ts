@@ -419,6 +419,7 @@ describe('M30 CI workflow', () => {
       'npm run test:ci -- --maxWorkers=1 --fileParallelism=false',
       'test/m515.release-publish-authority-split.test.ts',
       'test/documentation-navigation.test.ts',
+      'test/package-files-allowlist.test.ts',
       'test/authority-release-truth.test.ts',
       'test/m33.release-meta.test.ts',
       'test/cli-registry-drift.test.ts',
@@ -558,7 +559,7 @@ describe('M30 CI workflow', () => {
       const push = id === 'ci' ? " && !(github.event_name == 'push' && github.ref == 'refs/heads/master')" : " && github.event_name != 'push'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'`);
     }
-    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '3 9 * * *' }, { cron: '0,30 * * * *' }]);
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }, { cron: '0,30 * * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
@@ -1072,6 +1073,7 @@ describe('M30 CI workflow', () => {
       'test/authority-codeowners-310b.test.ts',
       'test/m515.release-publish-authority-split.test.ts',
       'test/documentation-navigation.test.ts',
+      'test/package-files-allowlist.test.ts',
       'test/authority-release-truth.test.ts',
       'test/m33.release-meta.test.ts',
       'test/cli-registry-drift.test.ts',
