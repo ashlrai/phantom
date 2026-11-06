@@ -78,6 +78,15 @@ export interface ProtectedPathHit {
  *     adoption rests on — a fleet that could edit them could grade itself.
  */
 export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
+  // Reviewed-memory eligibility and its offline yardstick cannot grade themselves.
+  'src/core/memory/**',
+  'src/core/local-eval/memory-*.ts',
+  'scripts/evaluate-memory.ts',
+  'scripts/benchmark-memory.ts',
+  'scripts/benchmark-memory-embeddings.ts',
+  // The shared secret scrub decides what memory and prompts may carry.
+  'src/core/util/scrub.ts',
+  'src/core/util/scrub-secrets.ts',
   // Captured delegated authority and child identity admission are owner-controlled.
   'src/core/integrations/locus-job-env.ts',
   'src/core/integrations/locus.ts',
@@ -97,6 +106,8 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'src/cli/desktop.ts',
   'scripts/desktop-release-policy.mjs',
   'scripts/finalize-desktop-update.mjs',
+  'scripts/finalize-github-release.mjs',
+  'scripts/publish-desktop-release.mjs',
   'src/core/daemon/activation-permit.ts',
   'src/core/daemon/tick-hooks.ts',
   'src/core/daemon/loop.ts',
@@ -193,6 +204,16 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   // The control plane that lowers authority (Stop / Revoke) and asks for grants
   'src/core/verse/authority-api.ts',
   'src/cli/authority.ts',
+  // Self-change paths: the promotion gate that may queue a merge of Phantom's
+  // own PRs, and the PR autopilot that pushes and merges them. An agent that
+  // could edit either could rewrite the rules it is judged by.
+  'src/core/improve/**',
+  'src/cli/improve.ts',
+  'src/core/autopilot/**',
+  'src/cli/autopilot.ts',
+  // Task-to-PR Land: decides which cloud and Devin PRs a click may squash-merge.
+  'src/core/cloud/pr-actions.ts',
+  'src/core/cloud/pr-preview.ts',
 ]);
 
 /**
@@ -298,6 +319,11 @@ const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
       'scripts/hosted-build-artifact.mjs',
       // These coordinate the owned native app, current release and rollback links.
       'scripts/ship-local.mjs', 'scripts/local-app-transaction.mjs', 'scripts/install-desktop-artifacts.mjs',
+      // The sanctioned local publisher that attaches signed updater assets to a
+      // tag's GitHub release and flips the draft public.
+      'scripts/publish-desktop-release.mjs',
+      // Release-path policy verifier gating npm `latest` on the live publisher.
+      'scripts/verify-release-policy.mjs',
       'tools/custody/**', '**/*.plist', '**/*.entitlements', '**/src-tauri/capabilities/**',
       '**/src-tauri/tauri.conf.json', '**/src-tauri/tauri.*.conf.json',
     ],
@@ -334,7 +360,7 @@ const SELF_REPO_RULES: readonly ProtectedPathRule[] = [
     patterns: [
       // `**/tsconfig*.json` moved to the all-repos `verify-config` rule (it
       // matches first), so it is not repeated here.
-      'test/setup/**', 'test/config/**', 'test/fixtures/authority/**', 'vitest.config*', 'vitest.workspace*',
+      'test/setup/**', 'test/config/**', 'test/fixtures/authority/**', 'test/fixtures/memory/**', 'vitest.config*', 'vitest.workspace*',
     ],
     why: 'test setup and build config decide which tests run and whether HOME is isolated',
   },
@@ -473,9 +499,13 @@ function basenameTokens(path: string): string[] {
   return base.split(/[._-]+/).filter((token) => token.length > 0);
 }
 
-function containsTokenRun(tokens: readonly string[], stem: string): boolean {
-  const run = stem.toLowerCase().split(/[._-]+/).filter((t) => t.length > 0);
-  if (run.length === 0 || run.length > tokens.length) return false;
+/** Each Tier-1 stem split into its token run once (matchProtectedPath runs per path, the stems never change). */
+const TIER1_TEST_STEM_RUNS: readonly (readonly string[])[] = TIER1_TEST_STEMS
+  .map((stem) => stem.toLowerCase().split(/[._-]+/).filter((t) => t.length > 0))
+  .filter((run) => run.length > 0);
+
+function containsTokenRun(tokens: readonly string[], run: readonly string[]): boolean {
+  if (run.length > tokens.length) return false;
   for (let start = 0; start + run.length <= tokens.length; start++) {
     if (run.every((token, offset) => tokens[start + offset] === token)) return true;
   }
@@ -495,7 +525,7 @@ export function isTier1TestPath(path: string, importsTier1 = false): boolean {
   if (importsTier1) return true;
   if (isSafetyTestFile(normalized)) return true;
   const tokens = basenameTokens(lower);
-  return TIER1_TEST_STEMS.some((stem) => containsTokenRun(tokens, stem));
+  return TIER1_TEST_STEM_RUNS.some((run) => containsTokenRun(tokens, run));
 }
 
 // ---------------------------------------------------------------------------

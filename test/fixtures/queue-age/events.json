@@ -1,0 +1,8 @@
+[
+  {"pr":"ashlrai/phantom#1","event":"merged","ts":"2026-01-01T00:02:00Z"},
+  {"pr":"ashlrai/phantom#1","event":"created","ts":"2026-01-01T00:00:00Z"},
+  {"pr":"ashlrai/phantom#1","event":"queue_entered","ts":"2026-01-01T00:01:30Z"},
+  {"pr":"ashlrai/phantom#1","event":"created","ts":"2026-01-01T00:00:00Z"},
+  {"pr":"ashlrai/phantom#2","event":"created","ts":"2026-01-01T00:00:00Z"},
+  {"pr":"ashlrai/phantom#2","event":"queue_entered","ts":"2026-01-01T00:00:10Z"}
+]

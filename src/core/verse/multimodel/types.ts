@@ -250,11 +250,6 @@ export interface LocalModelBadge {
   supportsTools: boolean | null;
 }
 
-/** POST /api/verse/multimodel/local/warm */
-export interface LocalWarmRequest {
-  seatId: string;
-}
-
 export interface LocalWarmResult {
   seatId: string;
   ok: boolean;

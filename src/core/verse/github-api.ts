@@ -1,5 +1,5 @@
 /**
- * core/verse/github-api.ts — `GET /api/verse/github{,/pr-plan}`
+ * core/verse/github-api.ts — `GET /api/verse/github{,/pr-plan,/fleet-backlog}`
  * (docs/VERSE-WORKSPACES.md §2). The routes that make github.ts reachable
  * from Ashlr Verse.
  *
@@ -28,6 +28,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../web/api.js';
 import { loadProposal } from '../inbox/store.js';
 import type { VerseControlErrorCode } from './control-types.js';
+import { resolveGitHubOriginAuthorityAsync } from '../git.js';
+import { readMergeBacklog, type MergeBacklogReadInput, type MergeBacklogReadV1 } from '../fleet/merge-backlog-read.js';
 import { discoverProjectsAsync } from './projects.js';
 import { expandHomePrefix, peekVerseEngine } from './verse-api.js';
 import { describeVersePrPlans, type VersePrPlanProposal } from './github-proposal.js';
@@ -41,14 +43,27 @@ const VERSE_PREFIX = '/api/verse';
 
 export const VERSE_GITHUB_ROUTE = `${VERSE_PREFIX}/github`;
 export const VERSE_GITHUB_PR_PLAN_ROUTE = `${VERSE_PREFIX}/github/pr-plan`;
+export const VERSE_GITHUB_FLEET_BACKLOG_ROUTE = `${VERSE_PREFIX}/github/fleet-backlog`;
 
-const GITHUB_ROUTES = new Set([VERSE_GITHUB_ROUTE, VERSE_GITHUB_PR_PLAN_ROUTE]);
+const GITHUB_ROUTES = new Set([VERSE_GITHUB_ROUTE, VERSE_GITHUB_PR_PLAN_ROUTE, VERSE_GITHUB_FLEET_BACKLOG_ROUTE]);
 
 /** Bound the work one request can ask for. */
 const MAX_REPOS_PER_REQUEST = 12;
 const MAX_PLAN_IDS = 50;
 const MAX_ID_CHARS = 128;
 const MAX_PATH_CHARS = 4_096;
+
+/** `owner/name` — GitHub's canonical repo label, same shape fleet-backlog.ts accepts. */
+const REPO_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * The console polls this route on a timer; one repo's backlog is cached this
+ * long so polling can never hammer `gh`. Failures cache too — a down gh must
+ * not turn polling into a retry storm.
+ */
+const FLEET_BACKLOG_CACHE_MS = 60_000;
+const FLEET_BACKLOG_CACHE_MAX = 128;
+const MAX_ENROLLED_RESOLVES = 50;
 
 /** Proposal ids are `prop-<ts>-<hex>`; accept that shape and nothing exotic. */
 const PROPOSAL_ID_RE = /^[A-Za-z0-9._-]+$/;
@@ -76,6 +91,16 @@ export interface VerseGithubApiDeps {
   loadProposal?: (id: string) => VersePrPlanProposal | null;
   knownRoots?: () => string[] | Promise<string[]>;
   readOptions?: VerseGithubReadOptions;
+  /**
+   * Fleet-backlog route: enrolled repos as `owner/name` identities. Defaults
+   * to the enrolled half of discoverProjectsAsync resolved through each
+   * checkout's origin (the async reader — never a blocking probe).
+   */
+  enrolledRepos?: () => string[] | Promise<string[]>;
+  /** Fleet-backlog read seams — `repo` is filled in from the request. */
+  fleetBacklog?: Omit<MergeBacklogReadInput, 'repo'>;
+  /** ms clock for the per-repo backlog cache (tests advance it past 60 s). */
+  fleetBacklogCacheNow?: () => number;
 }
 
 const ERROR_STATUS: Record<VerseControlErrorCode, 400 | 409 | 413 | 503> = {
@@ -145,6 +170,11 @@ export async function handleVerseGithubApi(
       // Awaited so a rejected read lands in the catch below (500) rather than
       // escaping as an unhandled rejection with the response left open.
       await handleRepos(req, res, deps);
+      return true;
+    }
+
+    if (path === VERSE_GITHUB_FLEET_BACKLOG_ROUTE) {
+      await handleFleetBacklog(req, res, deps);
       return true;
     }
 
@@ -269,4 +299,89 @@ function handlePrPlans(req: IncomingMessage, res: ServerResponse, deps: VerseGit
     observedAt: new Date().toISOString(),
   };
   sendJson(res, 200, body);
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/verse/github/fleet-backlog?repo=<owner/name>
+// ---------------------------------------------------------------------------
+
+/**
+ * One repo's cached backlog body and when it was read. Module scope: the
+ * cache must outlive a single request for the 60 s bound to mean anything.
+ */
+const fleetBacklogCache = new Map<string, { at: number; body: MergeBacklogReadV1 }>();
+
+/** Test hook: drop every cached backlog so a suite starts clean. */
+export function resetVerseGithubFleetBacklogCache(): void {
+  fleetBacklogCache.clear();
+}
+
+/**
+ * The `owner/name` of every repo the operator enrolled — the same discovery
+ * the `?repo=` index uses (discoverProjectsAsync), filtered to `enrolled`
+ * checkouts and resolved through each checkout's origin by
+ * resolveGitHubOriginAuthorityAsync. Enrolled-only is deliberate: a session
+ * opened on an ad-hoc folder must not turn it into a fleet query target, and
+ * a repo that matches nothing gets the same 404 whether it exists or not.
+ */
+async function defaultEnrolledRepos(): Promise<string[]> {
+  let sessions: { projectPath: string }[] = [];
+  try {
+    sessions = peekVerseEngine()?.listSessions() ?? [];
+  } catch {
+    sessions = [];
+  }
+  try {
+    const projects = await discoverProjectsAsync({ sessions });
+    const paths = projects.filter((p) => p.enrolled).map((p) => p.path).slice(0, MAX_ENROLLED_RESOLVES);
+    const names = await Promise.all(paths.map((path) => resolveGitHubOriginAuthorityAsync(path).catch(() => null)));
+    return names.filter((name): name is string => name !== null);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The console's stuck-PR table: every open PR of one enrolled repo with its
+ * GitHub merge state, the fleet job it came from, and the merge-backlog
+ * planner's advice. Read-only — the only gh call the read makes is `pr list`.
+ *
+ * `?repo=` is an `owner/name`, not a path: 400 when it is missing or cannot
+ * be one (so `../x` never reaches anything), 404 when it is well-formed but
+ * not an enrolled repo, 503 with `source: 'gh-failed'` when gh cannot answer
+ * (the body is still the v1 shape with empty items).
+ */
+async function handleFleetBacklog(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: VerseGithubApiDeps,
+): Promise<void> {
+  const requested = queryParam(req, 'repo');
+  if (requested === null || !REPO_NAME_RE.test(requested)) {
+    sendError(res, 'VERSE_INVALID', 'repo must be <owner/name>');
+    return;
+  }
+
+  const enrolled = await (deps.enrolledRepos ?? defaultEnrolledRepos)();
+  const canonical = enrolled.find((name) => name.toLowerCase() === requested.toLowerCase());
+  if (!canonical) {
+    sendJson(res, 404, { error: 'repo is not an enrolled repository' });
+    return;
+  }
+
+  const cacheNow = (deps.fleetBacklogCacheNow ?? Date.now)();
+  const key = canonical.toLowerCase();
+  const hit = fleetBacklogCache.get(key);
+  if (hit && cacheNow - hit.at < FLEET_BACKLOG_CACHE_MS) {
+    sendJson(res, hit.body.source === 'ok' ? 200 : 503, hit.body);
+    return;
+  }
+
+  const body = await readMergeBacklog({ repo: canonical, ...deps.fleetBacklog });
+  fleetBacklogCache.set(key, { at: cacheNow, body });
+  // The key set is the enrolled repos — already small — but bound it anyway.
+  if (fleetBacklogCache.size > FLEET_BACKLOG_CACHE_MAX) {
+    fleetBacklogCache.delete(fleetBacklogCache.keys().next().value!);
+  }
+  sendJson(res, body.source === 'ok' ? 200 : 503, body);
 }

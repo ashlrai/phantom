@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="t">
+  <title id="t">Review the diff and the record</title>
+  <rect width="640" height="360" rx="24" fill="#141A2A"/>
+  <text x="40" y="78" fill="#93A0B8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="18">recorded run</text>
+  <text x="40" y="150" fill="#3DDC97" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="28">+ checked change</text>
+  <text x="40" y="200" fill="#E8EEF9" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="28">- old line</text>
+  <text x="40" y="270" fill="#93A0B8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22">You accept the diff. The fleet does not merge it</text>
+  <text x="40" y="304" fill="#93A0B8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22">unless a signed macOS grant says so.</text>
+</svg>

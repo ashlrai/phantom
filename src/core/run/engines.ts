@@ -1,4 +1,5 @@
 import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
+import { checkHostHeadroom } from './host-headroom.js';
 /**
  * engines.ts — M11: hardened per-engine adapters.
  *
@@ -46,6 +47,7 @@ import {
 import { attachStallMonitor } from './run-monitor.js';
 import type { TerminationReason } from './run-monitor.js';
 import { recordClaudeRateLimitEventLine } from '../fabric/claude-rate-limit-event.js';
+import { spawnSessionChild } from '../verse/process-registry.js';
 // LOCAL-ONLY last-resort gate. spawnEngine is the ONE funnel every CLI-agent
 // subprocess in the hub passes through — orchestrator, fleet manager, director,
 // strategist, goal-loop and sandboxed-engine all land here — so gating it is
@@ -116,7 +118,7 @@ let _phantomInstalled: boolean | undefined;
 function phantomInstalled(): boolean {
   if (_phantomInstalled === undefined) {
     try {
-      execFileSync(process.platform === 'win32' ? 'where' : 'which', ['phantom'], { stdio: 'ignore' });
+      execFileSync(process.platform === 'win32' ? 'where' : 'which', ['phantom'], { stdio: 'ignore', timeout: 2_000 });
       _phantomInstalled = true;
     } catch {
       _phantomInstalled = false;
@@ -231,7 +233,7 @@ export function resolveBinAbsolute(bin: string): string {
   if (!bin || bin.includes('/')) return bin;
   try {
     const probe = process.platform === 'win32' ? 'where' : 'which';
-    const out = execFileSync(probe, [bin], { encoding: 'utf8' }).trim().split('\n')[0]?.trim();
+    const out = execFileSync(probe, [bin], { encoding: 'utf8', timeout: 2_000 }).trim().split('\n')[0]?.trim();
     return out && out.length > 0 ? out : bin;
   } catch {
     return bin;
@@ -293,7 +295,9 @@ export function engineInstalled(engine: EngineId, cfg?: AshlrConfig): boolean {
   const candidates = spec?.bins ?? [spec?.bin ?? engine];
   for (const bin of candidates) {
     try {
-      execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore' });
+      // RQ-DAEMONTICK-UNBLOCK: bounded — a PATH probe that never exits must
+      // not freeze the tick that reached it.
+      execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore', timeout: 2_000 });
       return true;
     } catch {
       // try next
@@ -370,6 +374,8 @@ export function phantomWrap(cmd: EngineCommand, _cfg: AshlrConfig): EngineComman
 // ---------------------------------------------------------------------------
 
 export interface SpawnEngineOptions {
+  /** Session owning this invocation's child and orphan watchdog. */
+  sessionId?: string;
   /** Source-owned bounded prompt/request; absent preserves closed stdin. */
   stdin?: string;
   /** Native profiles retain their host-selected Claude/Codex protocol identity. */
@@ -960,13 +966,19 @@ async function spawnEngineInner(
       resolve(cancelledEngineResult());
       return;
     }
-    const child = spawn(spawnBin, spawnArgs, {
+    const hostHeadroom = checkHostHeadroom();
+    if (!hostHeadroom.allowed) {
+      resolve({ ok: false, output: '', error: hostHeadroom.reason ?? 'Host memory pressure; launch held.',
+        terminationReason: 'error-exit' });
+      return;
+    }
+    const child = spawnSessionChild(spawnBin, spawnArgs, {
       cwd: effective.cwd,
       env: childEnv,
       // pipe stdout + stderr for line reading; stdin closed (no input).
       stdio: [opts?.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       ...(ownsProcessGroup ? { detached: true } : {}),
-    });
+    }, opts?.sessionId ?? 'engine', spawn);
     child.once('spawn', () => { try { opts?.onSpawn?.(); } catch { /* metadata never grants authority */ } });
 
     // A detached POSIX child is its process-group leader, so its invocation-local
@@ -990,6 +1002,7 @@ async function spawnEngineInner(
       // and unref the ChildProcess so those inherited descriptors cannot keep the
       // daemon alive after this invocation's bounded settlement deadline.
       child.stdin?.destroy();
+      child.stdio?.[3]?.destroy();
       child.stdout?.removeAllListeners();
       child.stderr?.removeAllListeners();
       if (typeof child.stdout?.destroy === 'function') child.stdout.destroy();

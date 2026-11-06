@@ -149,6 +149,7 @@ import {
   laneStates,
   planLanes,
   grokDispatchBatchCapacity,
+  landFirstPriority,
   planFanoutReserve,
   planStandingBestOfN,
   grantHasDevinProducer,
@@ -202,6 +203,7 @@ import {
 } from './fleet-runtime-journal.js';
 import { repoIdentityOfPath, resolveRepoLabel } from './repo-identity.js';
 import { noteTickPhase } from '../daemon/tick-progress.js';
+import { runTickPhase } from '../daemon/tick-phases.js';
 import { DEVIN_CLI_LANE, FLEET_ENGINES, grantEngineOfLane, type DispatchOutcome, type FleetEngine, type LandingRecord, type RepoHold, type RepoHoldChange, type SetRepoHoldRequest } from './fleet-types.js';
 
 // ---------------------------------------------------------------------------
@@ -1372,11 +1374,71 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       const mirrorPaused: { path: string; repo: string; reason: string }[] = [];
       let readyMirrors: MirrorTickPreparation['ready'] = [];
       if (!hookCtx.dryRun) {
-        try {
+        const { MIRROR_TICK_PREP_DEADLINE_MS, MIRROR_TICK_ABORT_GRACE_MS } = await import('./mirrors.js');
+        const mirrorPhase = await runTickPhase('mirror-prep', async (signal) => {
           noteTickPhase('mirror prep', `${policy.repos.length} repo(s)`);
-          const prep = await deps.prepareMirrors(policy, hookCtx.signal);
+          // Lane observations belong to the running tick, not its completion.
+          // Re-probe while mirror prep waits; never renew an old usage reading.
+          let observing = false;
+          let observationClosed = false;
+          const observe = async (): Promise<void> => {
+            if (observationClosed || observing || signal.aborted) return;
+            observing = true;
+            try {
+              const at = deps.now();
+              const currentPolicy = deps.standingPolicy();
+              if (!currentPolicy || currentPolicy.grantId !== policy.grantId) return;
+              const snapshot = deps.capacitySnapshot();
+              const reading = await deps.probeLocalRuntime(cfg, snapshot);
+              const observed = planLanes({
+                policy: currentPolicy,
+                directives: clampLeaderDirectives(deps.directives(), currentPolicy),
+                presence: await deps.presence(at),
+                localServingSlots: reading.reachable === true ? reading.slots : null,
+                engineUnavailable: resolveLaneEngines({
+                  allowedBackends: cfg.foundry?.allowedBackends ?? ['builtin'],
+                  installed: engine => installed(engine, cfg, at),
+                  localFleetEngine: deps.localFleetEngine(cfg),
+                  devinCli: await devinCliReadiness(cfg, currentPolicy,
+                    deps.clampBudget(deps.loadBudget(), currentPolicy, [...(snapshot?.seats ?? []).filter(seat => seat.engine !== 'local'), localSeat(reading)].map(seat => seat.seatId)), deps), cfg,
+                }).unavailable,
+                leaderPreferences: resolveLeaderPreferences(deps.liveLeaderConfig(cfg)),
+                admittedBatchCapacity: grokDispatchBatchCapacity(cfg),
+              });
+              const idle = measuredLocalIdle(reading, at);
+              if (idle !== null) observed.local.slots = Math.min(observed.local.slots, idle);
+              else if (localFleetEnabled(cfg)) observed.local = { lane: 'local', slots: 0,
+                capReason: 'Current llama-server slots, activity, or per-slot context could not be verified.' };
+              if (observationClosed || signal.aborted) return;
+              deps.writeTick({
+                ...emptyState('Mirror preparation is in progress.', unknownPresence),
+                at: new Date(at).toISOString(),
+                standing: { grantId: currentPolicy.grantId, stageId: currentPolicy.rollout.stageId, switch: currentPolicy.switch },
+                lanes: laneStates(observed, {}),
+              });
+            } catch { /* A failed observation expires naturally; no fabricated capacity. */ }
+            finally { observing = false; }
+          };
+          await observe();
+          if (signal.aborted) throw new Error('Mirror preparation cancelled.');
+          const laneTimer = setInterval(() => { void observe(); }, 60_000);
+          laneTimer.unref?.();
+          const stopObserving = (): void => { observationClosed = true; clearInterval(laneTimer); };
+          signal.addEventListener('abort', stopObserving, { once: true });
+          if (signal.aborted) stopObserving();
+          try { return await deps.prepareMirrors(policy, signal); }
+          finally { stopObserving(); signal.removeEventListener('abort', stopObserving); }
+        }, {
+          deadlineMs: MIRROR_TICK_PREP_DEADLINE_MS + MIRROR_TICK_ABORT_GRACE_MS + 30_000,
+          parentSignal: hookCtx.signal,
+          log: (line) => console.warn('[ashlr] daemon:tick', line),
+        });
+        if (mirrorPhase.status === 'ok' && mirrorPhase.value !== undefined) {
+          const prep = mirrorPhase.value;
           readyMirrors = prep.ready;
           for (const failed of prep.failed) {
+            deps.audit({ action: 'daemon:mirror-prep', repo: failed.nameWithOwner,
+              summary: `Mirror skipped: ${failed.reason}`, result: 'error' });
             if (!failed.path) continue;
             mirrorPaused.push({ path: failed.path, repo: failed.nameWithOwner, reason: `Its mirror is not current (${failed.reason}).` });
           }
@@ -1385,8 +1447,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
               mirrorPaused.push({ path, repo: dirLabel(path), reason: 'Its mirror is not current.' });
             }
           }
-        } catch (err) {
-          mirrorProblem = `The fleet mirrors could not be prepared (${describeError(err)}), so no repo is known to be current.`;
+        } else if (mirrorPhase.status === 'timeout') {
+          mirrorProblem = 'The fleet mirrors could not be prepared in time (mirror-prep exceeded its deadline), so no repo is known to be current.';
+        } else {
+          mirrorProblem = `The fleet mirrors could not be prepared (${mirrorPhase.error ?? 'unavailable'}), so no repo is known to be current.`;
         }
         if (mirrorProblem === null) {
           try {
@@ -1929,6 +1993,10 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           lanes,
           laneEngines: laneEngines.engines,
           demotions,
+          // Land-first scheduling reads the same reconciled open-PR counts
+          // backpressure computed for this tick (null when they could not be
+          // counted — feature launches then fail closed there too).
+          openPrsByRepo: openPrs,
           // The λ weights used to reach only best-of-N (bonThreshold); the
           // seat ranking now reads them too (routing/router.ts seatScore).
           weights: routing,
@@ -2140,6 +2208,11 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
           const advice = Number(b.id === current.advisedPair.taskId)-Number(a.id === current.advisedPair.taskId);
           if (advice) return advice;
         }
+        // Land-first: LAND and FIXUP jobs on a saturated repo take its free
+        // slots before any other work; a feature launch there sorts last (it
+        // is held at route time anyway). Healthy repos all rank 2 here.
+        const landFirst = landFirstPriority(a, current.router) - landFirstPriority(b, current.router);
+        if (landFirst) return landFirst;
         const priority = (id:string) => Object.values(current.itemScheduling.get(id) ?? {}).reduce((best,view)=>Math.max(best,opportunityPriority(view,current.nowMs)),0);
         return priority(b.id)-priority(a.id);
       }).map((item) => item.id);

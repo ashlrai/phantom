@@ -52,6 +52,7 @@ import { readAuthHeaders, startServer } from './helpers/authenticated-web-server
 // ---------------------------------------------------------------------------
 
 const FLEET_HISTORY_PATH = '/api/verse/fleet/history';
+const RUNS_HISTORY_PATH = '/api/verse/runs-history';
 
 interface Call { id: MountedApiModuleId; path: string; method: string }
 
@@ -186,9 +187,9 @@ async function boot(opts: Partial<WebServerOptions> = {}) {
 // ---------------------------------------------------------------------------
 
 describe('the real mount table', () => {
-  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin and jev — in that order', () => {
+  it('mounts health, reasoning, fleet history, budget, the cloud timeline, cloud, devin, jev, runs-history, release-pr, fleet-holds, fleet-graph-live, fleet-ci-runs, fleet-usage-audit, fleet-memory, fleet-inbox-acks, fleet-apps, fleet-standby, fleet-self-tick, fleet-graph, fleet-main-red-age, fleet-merge-pace and fleet-landed-closes — in that order', () => {
     setMountedApiModulesForTest(null);
-    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev']);
+    expect(mountedApiModules().map((m) => m.id)).toEqual(['health', 'reasoning', 'fleet-history', 'budget', 'cloud-timeline', 'cloud', 'devin', 'jev', 'runs-history', 'release-pr', 'fleet-holds', 'fleet-graph-live', 'fleet-ci-runs', 'fleet-usage-audit', 'fleet-memory', 'fleet-inbox-acks', 'fleet-apps', 'fleet-standby', 'fleet-self-tick', 'fleet-graph', 'fleet-main-red-age', 'fleet-merge-pace', 'fleet-landed-closes']);
   });
 
   it('every entry resolves to a handler function (the owning units exported what the contract names)', async () => {
@@ -225,6 +226,16 @@ describe('the real mount table', () => {
       cloud: VERSE_CLOUD_PATH,
       devin: VERSE_DEVIN_PATH,
       jev: VERSE_JEV_PATH,
+      'runs-history': RUNS_HISTORY_PATH,
+      'release-pr': '/api/verse/release-pr',
+      'fleet-holds': '/api/verse/fleet/control/holds',
+      'fleet-graph-live': '/api/verse/fleet/graph/live',
+      'fleet-graph': '/api/verse/fleet/graph',
+      'fleet-ci-runs': '/api/verse/fleet/ci-runs',
+      'fleet-usage-audit': '/api/verse/fleet/usage-audit',
+      'fleet-memory': '/api/verse/fleet/memory',
+      'fleet-self-tick': '/api/verse/fleet/self-tick',
+      'fleet-main-red-age': '/api/verse/fleet/main-red-age',
     };
     for (const [owner, p] of Object.entries(representative) as Array<[MountedApiModuleId, string]>) {
       for (const { id, handler } of handlers) {

@@ -1,0 +1,18 @@
+version: 2
+
+issueRules:
+  didYouMean: true
+  installScripts: true
+  telemetry: true
+  troll: true
+  malware: true
+  hasNativeCode: true
+  shellScriptOverride: true
+  gitDependency: true
+  httpDependency: true
+  invalidPackageJSON: true
+  unresolvedRequire: true
+
+projectIgnorePaths:
+  - "test/fixtures/**"
+  - ".github/tests/helpers/**"

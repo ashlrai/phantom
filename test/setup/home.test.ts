@@ -33,6 +33,20 @@ it('honors the validated local-gate worker-home parent when configured', () => {
   expect(dirname(process.env.HOME!)).toBe(parent);
 });
 
+it('isolates every XDG directory, including in child processes', () => {
+  const home = process.env.HOME!;
+  expect(realpathSync(home)).toBe(home);
+  for (const key of ['XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR']) {
+    const directory = process.env[key]!;
+    expect(directory.startsWith(join(home, '.xdg') + sep)).toBe(true);
+    expect(lstatSync(directory).isDirectory()).toBe(true);
+    if (process.platform !== 'win32') expect(lstatSync(directory).mode & 0o777).toBe(0o700);
+    expect(execFileSync(process.execPath, ['-e', 'process.stdout.write(process.env[process.argv[1]])', key], {
+      encoding: 'utf8',
+    })).toBe(directory);
+  }
+});
+
 /**
  * True when every ancestor of `path` passes the worker-home custody walk:
  * a real directory owned by root or the current user with no group/other
@@ -89,13 +103,17 @@ it('rejects a non-absolute or non-private explicit worker-home parent', () => {
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
-  if (process.platform === 'darwin') {
-    const unsafeParent = mkdtempSync('/private/tmp/ashlr-vitest-parent-validation-');
-    try {
-      expect(() => resolveWorkerHomeParent(unsafeParent)).toThrow(/custody ancestors/u);
-    } finally {
-      rmSync(unsafeParent, { recursive: true, force: true });
-    }
+  // Build the unsafe ancestry ourselves instead of assuming a particular
+  // host-wide temporary path exists or has world-writable permissions.
+  const unsafeAncestor = mkdtempSync(join(workerHome, 'ashlr-vitest-unsafe-ancestor-'));
+  try {
+    chmodSync(unsafeAncestor, 0o777);
+    const unsafeParent = mkdtempSync(join(unsafeAncestor, 'private-parent-'));
+    expect(lstatSync(unsafeParent).mode & 0o7777).toBe(0o700);
+    expect(() => resolveWorkerHomeParent(unsafeParent)).toThrow(/custody ancestors/u);
+  } finally {
+    chmodSync(unsafeAncestor, 0o700);
+    rmSync(unsafeAncestor, { recursive: true, force: true });
   }
 });
 

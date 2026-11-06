@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+
+import { darwinCapacityDiagnostics } from '../scripts/test-ci-capacity-diagnostics.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const wrapper = resolve(here, '..', 'scripts', 'test-ci.mjs');
@@ -20,7 +22,7 @@ afterEach(() => {
 
 function runFixture(
   source: string,
-  options: { hardMs?: number; idleMs?: number; heartbeatMs?: number; args?: string[] } = {},
+  options: { hardMs?: number; idleMs?: number; heartbeatMs?: number; args?: string[]; freeMiB?: number; nodeVersion?: string } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'ashlr-test-ci-wrapper-'));
   roots.push(root);
@@ -28,7 +30,24 @@ function runFixture(
   mkdirSync(dirname(vitest), { recursive: true });
   writeFileSync(vitest, source, 'utf8');
 
-  return spawnSync(process.execPath, [wrapper, ...(options.args ?? [])], {
+  const fixtureWrapper = join(root, 'scripts', 'test-ci.mjs');
+  mkdirSync(dirname(fixtureWrapper), { recursive: true });
+  // These inert CLIs measure watchdog/forwarding behavior, so give their
+  // synthetic host deterministic capacity instead of inheriting host pressure.
+  expect(readFileSync(wrapper, 'utf8'), 'Fixture capacity call must match production').toContain('boundedVitestJob(process.env, process.argv.slice(2))');
+  writeFileSync(fixtureWrapper, readFileSync(wrapper, 'utf8').replace(
+    'const [nodeMajor, nodeMinor]',
+    `${options.nodeVersion ? `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(options.nodeVersion)} });` : ''}\nconst [nodeMajor, nodeMinor]`,
+  ).replace(
+    'boundedVitestJob(process.env, process.argv.slice(2))',
+    `boundedVitestJob(process.env, process.argv.slice(2), ${(options.freeMiB ?? 65536) * 1048576}, 8)`,
+  ));
+  const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
+  mkdirSync(dirname(policy), { recursive: true });
+  copyFileSync(resolve(here, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
+  copyFileSync(resolve(here, '..', 'scripts', 'vitest-progress-reporter.mjs'), join(root, 'scripts', 'vitest-progress-reporter.mjs'));
+
+  return spawnSync(process.execPath, [fixtureWrapper, ...(options.args ?? [])], {
     cwd: root,
     encoding: 'utf8',
     timeout: 5_000,
@@ -43,6 +62,44 @@ function runFixture(
 }
 
 describe('test-ci watchdog', () => {
+  it.each(['18.18.0', '20.19.0', '22.14.0'])('explains the engine requirement on Node %s', (nodeVersion) => {
+    const result = runFixture("console.log('must-not-run')", { nodeVersion });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Node >=22.15.0 is required');
+    expect(result.stderr).not.toContain('TypeError');
+    expect(result.stdout).not.toContain('must-not-run');
+  });
+
+  it('serializes both inline projects under low memory despite larger CLI overrides', () => {
+    const result = runFixture(`
+      if (process.env.ASHLR_VITEST_UNIT_MAX_WORKERS !== '1') process.exit(8);
+      console.log(JSON.stringify(process.argv.slice(2)));
+    `, { freeMiB: 512, args: ['--max-workers=20', '--fileParallelism=true'] });
+    expect(result.status).toBe(0);
+    const argv = JSON.parse(result.stdout.trim()) as string[];
+    expect(argv).toContain('--maxWorkers=1');
+    expect(argv).toContain('--no-file-parallelism');
+    expect(argv).toContain('--pool=forks');
+    expect(argv).not.toContain('--fileParallelism=true');
+  });
+
+  it('applies the test heap cap and emits a class-labelled RSS receipt on failure', () => {
+    const result = runFixture(`
+      import { getHeapStatistics } from 'node:v8';
+      const heapMiB = getHeapStatistics().heap_size_limit / 1048576;
+      if (heapMiB < 1024 || heapMiB > 1152) process.exit(8);
+      console.log('heap-cap-ok'); process.exit(7);
+    `);
+    expect(result.status).toBe(7);
+    expect(result.stdout).toContain('heap-cap-ok');
+    const receipt = result.stderr.split('\n').find(line => line.startsWith('[job-memory] '));
+    expect(receipt).toBeDefined();
+    const record = JSON.parse(receipt!.slice('[job-memory] '.length));
+    expect(record.jobClass).toBe('test');
+    expect(record.peakRssKiB).toBeGreaterThan(0);
+    expect(record.pid).toEqual(expect.any(Number));
+  });
+
   it('forwards shard argv without globally disabling project worker budgets', () => {
     const result = runFixture(
       'console.log(JSON.stringify(process.argv.slice(2)));',
@@ -231,5 +288,33 @@ describe('test-ci watchdog', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(124);
     expect(result.stderr).toContain('idle-timeout');
+  });
+});
+
+
+describe('value-free Darwin capacity observations', () => {
+  it('keeps independently observed counters distinct without counting purgeable twice', () => {
+    const calls: Array<[string, string[]]> = [];
+    const report = darwinCapacityDiagnostics({ cpuCount: 3, totalBytes: 1_000_000,
+      rawFreeBytes: 123, availableBytes: 456, read: (file: string, args: string[]) => {
+        calls.push([file, args]);
+        return file === '/usr/bin/vm_stat'
+          ? 'Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free: 2.\nPages inactive: 3.\nPages speculative: 4.\nPages purgeable: 1.\n'
+          : '1\n';
+      } });
+    expect(report).toEqual({ schema: 'phantom-test-capacity/v1', sample: 'after-worker-policy',
+      cpuCount: 3, totalBytes: 1_000_000, rawFreeBytes: 123, availableBytes: 456,
+      vmFreeBytes: 8192, inactiveBytes: 12288, speculativeBytes: 16384, purgeableBytes: 4096, pressureLevel: 1 });
+    expect(calls).toEqual([['/usr/bin/vm_stat', []], ['/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']]]);
+    expect(Object.keys(report)).not.toContain('allowed');
+  });
+  it('does not expose private command failures or infer capacity from malformed observations', () => {
+    const report = darwinCapacityDiagnostics({ cpuCount: 2, totalBytes: 10, rawFreeBytes: 4, availableBytes: 4,
+      read: () => { throw new Error('PRIVATE-COMMAND-DETAIL'); } });
+    expect(report).toMatchObject({ vmFreeBytes: null, inactiveBytes: null, speculativeBytes: null, purgeableBytes: null, pressureLevel: null });
+    expect(JSON.stringify(report)).not.toContain('PRIVATE');
+    const malformed = darwinCapacityDiagnostics({ totalBytes: 10, read: (file: string) =>
+      file === '/usr/bin/vm_stat' ? '(page size of 4096 bytes)\nPages free: 2.\nPages free: 3.\n' : '0' });
+    expect(malformed).toMatchObject({ vmFreeBytes: null, inactiveBytes: null, speculativeBytes: null, purgeableBytes: null, pressureLevel: null });
   });
 });

@@ -38,9 +38,19 @@ function runFixture(
     writeFileSync(join(root, 'test', 'helpers', 'test-durations.json'), durations);
   }
   mkdirSync(join(root, 'node_modules', 'vitest'), { recursive: true });
+  const policy = join(root, 'src', 'core', 'run', 'tool-path.ts');
+  mkdirSync(dirname(policy), { recursive: true });
+  copyFileSync(resolve(sourceScripts, '..', 'src', 'core', 'run', 'tool-path.ts'), policy);
   for (const file of ['test-ci.mjs', 'test-ci-sharded.mjs', 'test-shard-plan.mjs']) {
     copyFileSync(join(sourceScripts, file), join(root, 'scripts', file));
   }
+  // Keep fixture capacity deterministic; policy tests cover low-memory inputs.
+  const fixtureWrapper = join(root, 'scripts', 'test-ci.mjs');
+  expect(readFileSync(fixtureWrapper, 'utf8'), 'Fixture capacity call must match production').toContain('boundedVitestJob(process.env, process.argv.slice(2))');
+  writeFileSync(fixtureWrapper, readFileSync(fixtureWrapper, 'utf8').replace(
+    'boundedVitestJob(process.env, process.argv.slice(2))',
+    'boundedVitestJob(process.env, process.argv.slice(2), 68719476736, 8)',
+  ));
   let reportDirectory: string | undefined;
   if (report !== undefined) {
     reportDirectory = join(realpathSync(root), 'reports');
@@ -284,12 +294,12 @@ describe('local exhaustive prepublish shards', () => {
   });
 
   it.each([
-    ['--general-shard=0/4'], ['--general-shard=5/4'], ['--general-shard=1/3'], ['--general-shard=01/4'],
-    ['--general-shard=1/4', '--isolated-only'], ['--isolated-only', '--isolated-only'],
-    ['--general-shard=1/4', '--general-shard=2/4'], ['--isolated-only', '-t', 'arbitrary'],
-    ['test/other.test.ts'], ['--shard=1/4'], ['--help'],
-    ['--workers=0'], ['--workers=9'], ['--workers=04'], ['--workers'], ['--workers=4', '--isolated-only'],
-  ])('rejects invalid selectors without launching children: %j', (...args) => {
+    [['--general-shard=0/4']], [['--general-shard=5/4']], [['--general-shard=1/3']], [['--general-shard=01/4']],
+    [['--general-shard=1/4', '--isolated-only']], [['--isolated-only', '--isolated-only']],
+    [['--general-shard=1/4', '--general-shard=2/4']], [['--isolated-only', '-t', 'arbitrary']],
+    [['test/other.test.ts']], [['--shard=1/4']], [['--help']],
+    [['--workers=0']], [['--workers=9']], [['--workers=04']], [['--workers']], [['--workers=4', '--isolated-only']],
+  ])('rejects invalid selectors without launching children: %j', (args) => {
     const result = runFixture('none', {}, args);
     expect(result.error).toBeUndefined(); expect(result.status).toBe(2);
     expect(result.stdout).toBe('');
@@ -415,7 +425,6 @@ describe('paired isolated acceptance', () => {
     'test/resource-engineering-successor-acceptance.test.ts',
     'test/universe-firm-engineering-control.test.ts',
     'test/resource-engineering-supervisor-admission-acceptance.test.ts',
-    'test/m342.dispatch-production-ledger.test.ts',
     'campaign false',
     'test/resource-engineering-supervisor-acceptance.test.ts',
     'test/resource-console-engineering-acceptance.test.ts',
@@ -425,6 +434,7 @@ describe('paired isolated acceptance', () => {
     'campaign true',
     'test/m446.external-skill-git-capture.test.ts',
     'test/m395.effect-terminal-retention.test.ts',
+    'test/m342.dispatch-production-ledger.test.ts',
   ];
   const events = (stderr: string) => stderr.split('\n').flatMap((line) => {
     const start = /^\[test-ci:sharded\] started isolated acceptance (.+) \(pid /.exec(line);
@@ -433,7 +443,7 @@ describe('paired isolated acceptance', () => {
     return end ? [{ kind: 'end' as const, label: end[1]! }] : [];
   });
 
-  it('runs every case once, longest first, with at most two active and original report names', () => {
+  it('runs pooled cases longest first and the capacity ledger alone with original report names', () => {
     const result = runFixture('none', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '150' },
       ['--isolated-only'], 'private');
     expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
@@ -441,7 +451,11 @@ describe('paired isolated acceptance', () => {
     expect(ordered.filter(event => event.kind === 'start').map(event => event.label)).toEqual(longestFirst);
     const active = new Set<string>(); let maximum = 0;
     for (const event of ordered) {
-      if (event.kind === 'start') { active.add(event.label); maximum = Math.max(maximum, active.size); }
+      if (event.kind === 'start') {
+        if (event.label === isolatedFiles[0]) expect(active.size).toBe(0);
+        else expect(active.has(isolatedFiles[0]!)).toBe(false);
+        active.add(event.label); maximum = Math.max(maximum, active.size);
+      }
       else expect(active.delete(event.label)).toBe(true);
     }
     expect(maximum).toBe(2); expect(active.size).toBe(0);
@@ -463,6 +477,15 @@ describe('paired isolated acceptance', () => {
     const starts = events(result.stderr).filter(event => event.kind === 'start').map(event => event.label);
     expect(starts).toEqual(longestFirst.slice(0, 2));
     expect(result.stderr).toMatch(/isolated test\/resource-engineering-setup-acceptance\.test\.ts exited (?!0\b)/);
+    expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
+  });
+
+  it('never launches the exclusive capacity ledger after a later pooled failure', () => {
+    const result = runFixture('isolated', { ASHLR_TEST_CI_ISOLATED_CONCURRENCY: '2', ASHLR_FAKE_ISOLATED_DELAY_MS: '150' }, ['--isolated-only']);
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(9);
+    const starts = events(result.stderr).filter(event => event.kind === 'start').map(event => event.label);
+    expect(starts).toContain('campaign true');
+    expect(starts).not.toContain(isolatedFiles[0]);
     expect(result.stderr).not.toContain('[test-ci:sharded] PASS');
   });
 

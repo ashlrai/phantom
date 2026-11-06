@@ -110,4 +110,11 @@ describe('CLI registry anti-drift (structural, parses src/cli/index.ts)', () => 
     const missing = dispatched.filter((cmd) => !helpCmds.has(cmd));
     expect(missing, `help.ts HELP_ENTRIES is missing: ${missing.join(', ')}`).toEqual([]);
   });
+
+  it('every dispatched command has a non-empty help description', () => {
+    const missing = dispatched.filter((cmd) => !HELP_ENTRIES.some(
+      (entry) => entry.cmd.split(/\s+/)[0] === cmd && entry.desc.trim().length > 0,
+    ));
+    expect(missing, `commands without descriptions: ${missing.join(', ')}`).toEqual([]);
+  });
 });

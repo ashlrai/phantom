@@ -10,7 +10,7 @@ import { autonomousDevinIdentityCurrent, buildAutonomousEnvOverlay, applyAutonom
 
 import { devinCliIdentityCurrent, devinCliBindingCurrent, parseDevinCliPrincipal, peekDevinCliExecutionBinding, refreshDevinCliExecutionBinding, resetDevinCliAdmissionForTest, type DevinCliAdmissionOptions } from '../src/core/devin/cli-admission.js';
 
-const NOW = Date.parse('2026-10-05T17:00:00Z');
+const NOW = Date.parse('2026-11-06T17:00:00Z');
 const STATUS = 'Logged in\n  Email: fixture@example.invalid\n  User ID: native-user-1\n  Team ID: native-team-1\n  API server: https://server.codeium.com\n  Devin API: https://api.devin.ai\n';
 const catalog = (meta = '262K context, Free', model = 'swe-2-high') => `Available models (1 family)\nSWE-2 (swe-2)\n  ${model}  Fixture Model  [${meta}]\n`;
 
@@ -63,6 +63,38 @@ describe.runIf(process.platform !== 'win32')('native Devin execution admission',
     expect(run).toHaveBeenCalledTimes(3);
   });
 
+  it('backs off failed metadata for ten minutes even with forced refresh, then retries', async () => {
+    let clock = NOW;
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => args[0] === 'auth' ? STATUS : catalog());
+    run.mockRejectedValueOnce(new Error('Fixture metadata unavailable'));
+    const opts = { ...options(run, () => clock), forceRefresh: true };
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', opts)).toBeNull();
+    clock = NOW + 600_000 - 1;
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', opts)).toBeNull();
+    expect(run).toHaveBeenCalledTimes(1);
+    clock += 1;
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', opts)).not.toBeNull();
+    expect(run).toHaveBeenCalledTimes(4);
+  });
+
+  it('refuses an aborted caller before metadata and leaves a fresh caller able to refresh', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => args[0] === 'auth' ? STATUS : catalog());
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', { ...options(run), signal: controller.signal })).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', options(run))).not.toBeNull();
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it('force-refreshes valid cached evidence and refuses a newly paid catalog', async () => {
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => args[0] === 'auth' ? STATUS : catalog());
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', options(run))).not.toBeNull();
+    run.mockImplementation(async (_bin, args) => args[0] === 'auth' ? STATUS : catalog('262K context, $2 / 1M Input'));
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', { ...options(run), forceRefresh: true })).toBeNull();
+    expect(run).toHaveBeenCalledTimes(6);
+  });
+
   it.each(['256K context', '256K context, $2 / 1M Input · $8 / 1M Output', 'Free', '256K context, Free, $2 / 1M Input'])('holds unknown/paid/incomplete/contradictory evidence: %s', async meta => {
     expect(await refreshDevinCliExecutionBinding('swe-2-high', options(vi.fn(async (_bin,args) => args[0] === 'auth' ? STATUS : catalog(meta))))).toBeNull();
   });
@@ -101,12 +133,37 @@ describe.runIf(process.platform !== 'win32')('native Devin execution admission',
   it('refuses partial declared catalogs and never uses source fallback models', async () => {
     expect(await refreshDevinCliExecutionBinding('swe-2-high', options(vi.fn(async (_bin,args) => args[0] === 'auth' ? STATUS : catalog().replace('(1 family)','(2 families)'))))).toBeNull();
   });
-  it('does not permanently authorize promotional IDs after the conservative host boundary, even on a new Free reading', async () => {
-    const boundary = Date.parse('2026-10-16T00:00:00Z');
-    const binding = await refreshDevinCliExecutionBinding('swe-2-high', options(undefined,() => boundary-1));
-    expect(binding).not.toBeNull(); expect(binding!.validUntil).toBe(boundary);
-    expect(devinCliBindingCurrent(binding, 'swe-2-high', boundary)).toBe(false);
-    expect(await refreshDevinCliExecutionBinding('swe-2-high', options(undefined,() => boundary))).toBeNull();
+  it.each(['swe-2-high', 'swe-2-medium', 'swe-2-max', 'another-free'])('admits a fresh exact Free row for %s for exactly 60 seconds after the old boundary', async model => {
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => args[0] === 'auth' ? STATUS : catalog('262K context, Free', model));
+    const binding = await refreshDevinCliExecutionBinding(model, options(run));
+    expect(binding).toMatchObject({ model, observedAt: NOW, validUntil: NOW + 60_000 });
+    expect(devinCliBindingCurrent(binding, model, NOW + 59_999)).toBe(true);
+    expect(devinCliBindingCurrent(binding, model, NOW + 60_000)).toBe(false);
+    expect(devinCliBindingCurrent(binding, `${model}-other`, NOW)).toBe(false);
+  });
+  it('refuses a different model even when the catalog has a Free row', async () => {
+    expect(await refreshDevinCliExecutionBinding('swe-2-high', options(vi.fn(async (_bin, args) => args[0] === 'auth' ? STATUS : catalog('262K context, Free', 'another-free'))))).toBeNull();
+  });
+  it('refuses an abort during a shared refresh for both callers', async () => {
+    let release!: () => void; const wait = new Promise<void>(r => { release = r; });
+    const controller = new AbortController();
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => { await wait; return args[0] === 'auth' ? STATUS : catalog(); });
+    const opts = { ...options(run), signal: controller.signal };
+    const first = refreshDevinCliExecutionBinding('swe-2-high', opts);
+    const second = refreshDevinCliExecutionBinding('swe-2-high', opts);
+    controller.abort(); release();
+    expect(await first).toBeNull(); expect(await second).toBeNull();
+    expect(run).toHaveBeenCalledOnce();
+  });
+  it('refuses an independently aborted joining caller while the refresh owner succeeds', async () => {
+    let release!: () => void; const wait = new Promise<void>(r => { release = r; });
+    const run = vi.fn(async (_bin: string, args: readonly string[]) => { await wait; return args[0] === 'auth' ? STATUS : catalog(); });
+    const controller = new AbortController();
+    const owner = refreshDevinCliExecutionBinding('swe-2-high', options(run));
+    const joiner = refreshDevinCliExecutionBinding('swe-2-high', { ...options(run), signal: controller.signal });
+    controller.abort(); release();
+    expect(await owner).not.toBeNull(); expect(await joiner).toBeNull();
+    expect(run).toHaveBeenCalledTimes(3);
   });
   it('refuses stale/future evidence and a forged host object', async () => {
     const binding = await refreshDevinCliExecutionBinding('swe-2-high', options());
@@ -131,8 +188,8 @@ describe.runIf(process.platform !== 'win32')('native Devin execution admission',
     renameSync(file,`${file}.old`); writeFileSync(file,'replacement',{mode:which === 'executable' ? 0o755 : 0o600});
     expect(devinCliBindingCurrent(binding,'swe-2-high',NOW)).toBe(false);
   });
-  it.each(['auth','models'])('rejects epoch mutation during %s and never issues a binding', async when => {
-    const run = vi.fn(async (_bin: string,args:readonly string[]) => { if(args[0] === when) writeFileSync(credentials,'changed'); return args[0] === 'auth' ? STATUS : catalog(); });
+  it.each(['auth','models'].flatMap(when => ['credentials', 'executable'].map(file => [when, file])))('rejects %s-time %s epoch mutation and never issues a binding', async (when, file) => {
+    const run = vi.fn(async (_bin: string,args:readonly string[]) => { if(args[0] === when) writeFileSync(file === 'credentials' ? credentials : bin,'changed'); return args[0] === 'auth' ? STATUS : catalog(); });
     expect(await refreshDevinCliExecutionBinding('swe-2-high',options(run))).toBeNull();
     expect(run).toHaveBeenCalledTimes(when === 'auth' ? 1 : 2);
   });

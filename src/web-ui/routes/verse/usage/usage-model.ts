@@ -57,6 +57,7 @@ import type { FrontierEngineUsage } from '../../../../core/usage/frontier-usage.
 import { localDateKey } from '../autonomy/format.js';
 import { calendarDayStart } from '../growth/calendar-day.js';
 import { engineColor } from '../../../components/charts/colors.js';
+import { visibleWindows } from './provider-windows.js';
 
 type SubscriptionEngineUsage = ControlSnapshot['subscriptionUsage'][number];
 type ControlLimit = ControlSnapshot['limits'][number];
@@ -186,7 +187,8 @@ export function resolveWindowSignal(input: {
   if (engine === 'local') return { kind: 'not-applicable', reason: LOCAL_NOT_APPLICABLE };
 
   // 1. Per-account observations are the finest-grained real reading we have.
-  const observed = (seat?.health.windows ?? []).filter(
+  //    A stale `five_hour` in a Claude observation is dropped at the source.
+  const observed = visibleWindows(engine, seat?.health.windows ?? []).filter(
     (w): w is { id: string; usedPercent: number; resetsAt: string | null } =>
       typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent),
   );
@@ -209,11 +211,16 @@ export function resolveWindowSignal(input: {
   }
 
   // 2. A `hasData` subscription entry is proof the tracker actually read something.
-  if (subscription && subscription.hasData && subscription.windows.length > 0) {
+  //    Subscription windows carry a label ('5h', '1w'), not an id — the label
+  //    is what provider-windows matches on.
+  const subWindows = subscription
+    ? visibleWindows(engine, subscription.windows.map((w) => ({ ...w, id: w.label })))
+    : [];
+  if (subscription && subscription.hasData && subWindows.length > 0) {
     return measured(
       'subscription-tracker',
       engineSeatCount > 1 ? 'engine' : 'account',
-      subscription.windows.map((w, i) => {
+      subWindows.map((w, i) => {
         const pct = clampPct(w.usedPercent);
         return {
           id: `${w.label}-${i}`,

@@ -10,12 +10,18 @@
  * conventions established in test/m49.fleet-status.test.ts.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { cmdFleetWatch, tailErrLog } from '../src/cli/fleet.js';
+// cmdFleetWatch lazy-imports these on first call; loading them here keeps the
+// one-time module transform out of each test's budget (same convention as
+// test/m49.fleet-status.test.ts, which statically imports the status graph).
+import '../src/core/config.js';
+import '../src/core/fleet/status.js';
+import '../src/core/sandbox/audit.js';
 
 // ---------------------------------------------------------------------------
 // HOME isolation
@@ -54,7 +60,7 @@ function captureStdout(fn: () => Promise<number>): Promise<{ output: string; exi
   const origWrite = process.stdout.write.bind(process.stdout);
   const origLog = console.log.bind(console);
 
-  process.stdout.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
+  process.stdout.write = (chunk: string | Uint8Array) => {
     chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
     return true;
   };
@@ -119,7 +125,7 @@ describe('tailErrLog', () => {
 // cmdFleetWatch — JSON mode
 // ---------------------------------------------------------------------------
 
-describe('cmdFleetWatch — JSON mode', () => {
+describe('cmdFleetWatch JSON mode', () => {
   it('returns exit code 0 and emits valid JSON', async () => {
     const { output, exitCode } = await captureStdout(() => cmdFleetWatch(true));
     expect(exitCode).toBe(0);
@@ -127,6 +133,8 @@ describe('cmdFleetWatch — JSON mode', () => {
     let parsed: Record<string, unknown>;
     expect(() => { parsed = JSON.parse(output); }).not.toThrow();
     parsed = JSON.parse(output);
+    expect(output).toBe(JSON.stringify(parsed) + '\n');
+    expect({ fields: Object.keys(parsed), fleetFields: Object.keys(parsed.fleet as object) }).toMatchSnapshot();
     expect(parsed).toHaveProperty('fleet');
     expect(parsed).toHaveProperty('recentActions');
     expect(parsed).toHaveProperty('recentErrors');

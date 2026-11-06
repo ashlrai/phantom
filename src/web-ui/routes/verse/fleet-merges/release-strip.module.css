@@ -1,0 +1,6 @@
+.strip { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; font-size: var(--text-xs-size); }
+.line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.line > span { height: auto; min-height: var(--density-row-sm); white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.strip a { color: var(--accent-500); }
+.strip summary { cursor: pointer; }
+.checks { margin: var(--space-1) 0 0; padding-left: var(--space-4); overflow-wrap: anywhere; }

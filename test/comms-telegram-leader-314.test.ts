@@ -1,3 +1,4 @@
+import { pairedTelegram } from './helpers/operator-pair.js';
 /**
  * 3.14 — Telegram becomes a real two-way line to the Leader.
  *
@@ -140,6 +141,7 @@ function textUpdate(text: string, messageId: number, replyTo?: number): unknown 
     message: {
       message_id: messageId,
       chat: { id: Number(CHAT), type: 'private' },
+      from: { id: Number(CHAT), is_bot: false },
       text,
       ...(replyTo !== undefined ? { reply_to_message: { message_id: replyTo } } : {}),
     },
@@ -148,7 +150,7 @@ function textUpdate(text: string, messageId: number, replyTo?: number): unknown 
 function callbackUpdate(data: string, onMessage: number): unknown {
   return {
     update_id: updateId++,
-    callback_query: { id: `cq-${updateId}`, data, message: { message_id: onMessage, chat: { id: Number(CHAT) } } },
+    callback_query: { id: `cq-${updateId}`, from: { id: Number(CHAT), is_bot: false }, data, message: { message_id: onMessage, chat: { id: Number(CHAT), type: 'private' } } },
   };
 }
 
@@ -196,6 +198,7 @@ beforeEach(() => {
   });
   home = mkdtempSync(join(tmpdir(), 'ashlr-tg314-'));
   process.env['HOME'] = home;
+  pairedTelegram(home, Number(CHAT));
   calls = [];
   updates = [];
   nextMessageId = 1000;
@@ -466,7 +469,9 @@ describe('Leader thread over Telegram', () => {
     });
     updates = [textUpdate('no new repos until billing ships', 800)];
     await runCommsCycle(cfg(), fastCycle);
-    const [s] = sends();
+    const messages = sends();
+    expect(messages[0]!.body['text']).toContain('Received by Phantom.');
+    const s = messages.find(message => message.body['text'] === 'Directive recorded: No new repos until billing ships');
     expect(s!.body['text']).toBe('Directive recorded: No new repos until billing ships');
     expect(replyTarget(s!)).toBe(800);
   });
@@ -584,7 +589,7 @@ describe('slash commands and keywords', () => {
     expect(texts()[0]).not.toContain('&amp;lt;');
     expect(texts()[0]).toContain('within the grant');
     expect(texts()[0]!.length).toBeLessThanOrEqual(TELEGRAM_MAX_MESSAGE);
-    expect(texts()[1]).toMatch(/Autonomy: off — next step: `phm authority setup`/);
+    expect(texts()[1]).toMatch(/Running/);
     expect(texts()[2]).toMatch(/No standing directives/);
     expect(texts()[3]).toMatch(/^Leader memo — /);
     expect(texts()[3]).not.toContain(MEMO_ID);

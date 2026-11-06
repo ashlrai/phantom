@@ -1,3 +1,5 @@
+import { readPoolBudgets } from './pool-budget-store.js';
+import type { PoolBudgetSnapshot } from './pool-budget.js';
 /**
  * M49: fleet control plane + observability — read-only aggregation.
  *
@@ -18,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { basename, resolve } from 'node:path';
+import { readFleetMemory, type FleetMemoryPaths, type FleetMemoryStatus } from './memory-state.js';
 import { readBuildIdentity, type BuildIdentity } from '../build-identity.js';
 import type {
   AshlrConfig,
@@ -1511,6 +1514,12 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
+  /** Advisory per-pool observations, independent of dispatch authority. */
+  budgets?: PoolBudgetSnapshot;
+  /** Additive fleet.v1 contract marker; absent in legacy snapshots. */
+  schema?: 'fleet.v1';
+  /** Local memory admission observations; absent in legacy snapshots. */
+  memory?: FleetMemoryStatus;
   /** ISO timestamp this snapshot was generated. */
   generatedAt: string;
   /** Canonical build-produced identity. Optional for legacy serialized snapshots. */
@@ -2529,7 +2538,10 @@ function laneQueueSourceQuality(
   };
 }
 
-export async function buildFleetStatus(cfg: AshlrConfig): Promise<FleetStatus> {
+export async function buildFleetStatus(
+  cfg: AshlrConfig,
+  options: { memoryPaths?: FleetMemoryPaths } = {},
+): Promise<FleetStatus> {
   const generatedAt = new Date().toISOString();
   let dispatchLearningEvents: DispatchProductionEvent[] | undefined;
   let initialDispatchRead: ReturnType<typeof readDispatchProductionYieldDetailed> | undefined;
@@ -3265,7 +3277,10 @@ export async function buildFleetStatus(cfg: AshlrConfig): Promise<FleetStatus> {
   }
 
   const status: FleetStatus = {
+    schema: 'fleet.v1',
+    memory: await readFleetMemory(options.memoryPaths),
     generatedAt,
+    budgets: await readPoolBudgets(undefined, new Date(generatedAt)),
     buildIdentity: readBuildIdentity(),
     daemon,
     backends,

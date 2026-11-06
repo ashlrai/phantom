@@ -16,6 +16,8 @@
  *                       MAX_AUTO_FIX_ATTEMPTS per agent. Off: Needs you.
  *   CI green          → Auto-merge on and the verdict allows it (checks.ts):
  *                       squash-merge, then archive (worktree + branch).
+ *   already merged    → retry archive for an opted-in, unpinned, idle agent;
+ *                       preserve its work through the same snapshot path.
  *
  * GitHub is asked at most every CHECKS_ACTIVE_MS per agent with a PR in play
  * and every CHECKS_IDLE_MS otherwise, never for archived agents, never while
@@ -41,6 +43,7 @@ import type { ScriptLauncher } from './scripts.js';
 import type { AgentStore } from './store.js';
 import { MAX_AUTO_FIX_ATTEMPTS, SPEND_WARN_FRACTION, type AgentChecksSummary, type AgentRecord } from './types.js';
 import { readWorkspaceConfig } from './workspace-config.js';
+import { reapFinishedAgentWorktree } from './worktree-reaper.js';
 
 export const TICK_MS = 4_000;
 export const CHECKS_ACTIVE_MS = 30_000;
@@ -189,10 +192,28 @@ export async function superviseAgent(deps: SupervisorDeps, initial: AgentRecord)
   }
   rememberChecks(agent.id, read, now);
   const pr = read.detail.pr;
+  if (pr?.state === 'merged' && agent.autoMerge && !agent.pinned) {
+    try {
+      const held = await (deps.mutationFence ?? withOutwardMutationFence)(async () => {
+        const [killed, paused] = await Promise.all([(deps.checksDeps?.killOn ?? defaultKillOn)(), (deps.checksDeps?.pausedOn ?? defaultPausedOn)()]);
+        if (killed || paused) return killed ? 'the kill switch is engaged' : 'Phantom is paused';
+        agent = await reapFinishedAgentWorktree(ad, agent, read.detail);
+        return null;
+      });
+      if (held) return (await note(store, agent.id, `Workspace cleanup is holding: ${held}.`)) ?? agent;
+      if (agent.archived) {
+        agent = (await note(store, agent.id, `Merged PR #${pr.number} and archived the workspace; a snapshot is kept.`)) ?? agent;
+        checksCache.delete(agent.id);
+      }
+    } catch (err) {
+      agent = (await note(store, agent.id, `Merged PR #${pr.number}, but archiving failed: ${describe(err)}`)) ?? agent;
+    }
+    return agent;
+  }
   if (!pr || (pr.state !== 'open' && pr.state !== 'draft')) return agent;
 
   // 4a. Auto-fix: failing CI goes back to the seat that wrote it, once per head.
-  if (read.detail.ci === 'failing' && agent.autoFix) {
+  if (read.detail.ci === 'failing' && !read.detail.mergeVerdict.allowed && agent.autoFix) {
     const head = pr.headSha ?? `pr${pr.number}`;
     if (agent.autoFixSentFor.includes(head)) return agent;
     if (agent.autoFixAttempts >= MAX_AUTO_FIX_ATTEMPTS) {
@@ -317,7 +338,3 @@ export function supervisorRunning(): boolean {
   return timer !== null;
 }
 
-export function stopSupervisor(): void {
-  if (timer) clearInterval(timer);
-  timer = null;
-}

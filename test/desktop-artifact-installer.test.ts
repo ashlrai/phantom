@@ -8,7 +8,7 @@ import {gzipSync} from 'node:zlib';
 import {Header} from 'tar';
 import {canonicalJson} from '../src/core/authority/canonical-json.js';
 import {authoritySurfaceDigest,verifyAuthoritySurfaceAt} from '../src/core/authority/surface.js';
-import {readPinnedRuntimeArchive,extractPinnedRuntimeArchive} from '../src/core/local-runtime/archive.js';
+import {readPinnedRuntimeArchive,extractPinnedRuntimeArchive,extractPinnedRuntimeArchiveWithTiming} from '../src/core/local-runtime/archive.js';
 import {verifyUpdateManifest,verifyCompatibleUpdateManifest,desktopUpdateProfileForPackage,getDesktopUpdateProfile,verifyMinisign,verifyUpdateBundleRecord} from '../src/core/desktop/update-manifest.js';
 import {inspectSignedAppArchive,extractSignedAppArchive,verifyInstalledRuntimeArchive} from '../src/core/desktop/qualified-update.js';
 import {qualifiedFixture} from '../.github/tests/helpers/hosted-artifact-fixture.mjs';
@@ -101,7 +101,7 @@ function fixture(profileName:DesktopUpdateProfileName='legacy-v1',currentPackage
   ports.source.mockImplementation(()=>({revision,tree,tracked:[],inputs:[]}));
   const initialImplementation={source:'exact independently qualified installer',build:'fixed compiled snapshot'};
   const implementationSnapshot=vi.fn(async()=>structuredClone(initialImplementation));
-  const primitives={verifyUpdateManifest,verifyCompatibleUpdateManifest,desktopUpdateProfileForPackage,verifyMinisign,verifyUpdateBundleRecord,inspectSignedAppArchive,extractSignedAppArchive,verifyInstalledRuntimeArchive,readPinnedRuntimeArchive,extractPinnedRuntimeArchive,verifyAuthoritySurfaceAt,trust,appleSigner:m.app.signer};
+  const primitives={verifyUpdateManifest,verifyCompatibleUpdateManifest,desktopUpdateProfileForPackage,verifyMinisign,verifyUpdateBundleRecord,inspectSignedAppArchive,extractSignedAppArchive,verifyInstalledRuntimeArchive,readPinnedRuntimeArchive,extractPinnedRuntimeArchive,extractPinnedRuntimeArchiveWithTiming,verifyAuthoritySurfaceAt,trust,appleSigner:m.app.signer};
   const deps={home,environment:{HOME:home,PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},primitives,implementationSnapshot,initialImplementation,
     transport:{githubRead:vi.fn(()=>{throw new Error('live network forbidden');}),attestRun:vi.fn(()=>{throw new Error('live network forbidden');})}};
   const oldRevision='a'.repeat(40),old=join(home,'.local/share/ashlr/releases',oldRevision),current=join(home,'.local/share/ashlr/current');
@@ -168,10 +168,21 @@ describe.skipIf(process.platform==='win32')('manual original paired artifact ins
     },{emit:(record:any)=>records.push(record),now:()=>++clock});
     expect(result).toMatchObject({state:'installed',installationPerformed:true,authorityResumed:false});
     expect(ports.verify).toHaveBeenCalledTimes(4);
+    const summary=records.find(record=>record.kind==='artifact-runtime-extraction-timing');
+    expect(summary).toMatchObject({schemaVersion:1,outcome:'returned'});
+    expect(summary.buckets['leaf-fsync'].completed).toBe(summary.buckets['leaf-open'].completed);
+    expect(summary.buckets['leaf-close'].completed).toBe(summary.buckets['leaf-open'].completed);
+    expect(summary.durationMs).toBeGreaterThanOrEqual(0);
+    expect(summary.unattributedMs).toBeGreaterThanOrEqual(0);
+    expect(Object.keys(summary).sort()).toEqual(['schemaVersion','kind','sequence','parentSpanId','outcome','durationMs','unattributedMs','writtenBytes','buckets'].sort());
+    for(const label of ['install-total','native-app-extraction','native-app-inspection']) {
+      expect(records.filter(record=>record.event==='finished' && record.label===label)).toHaveLength(1);
+    }
     const starts=records.filter(record=>record.event==='started'),finishes=records.filter(record=>record.event==='finished');
     expect(starts.length).toBeGreaterThan(20);expect(finishes).toHaveLength(starts.length);
     expect(new Set(starts.map(record=>record.spanId)).size).toBe(starts.length);
     expect(starts.some(record=>record.parentSpanId!==null)).toBe(true);
+    expect(starts.find(record=>record.spanId===summary.parentSpanId)?.label).toBe('staging');
     expect(starts.filter(record=>record.label==='late-hosted-proof')).toHaveLength(3);
     for(const finish of finishes) {
       expect(finish).toMatchObject({schemaVersion:1,kind:'artifact-install-timing',outcome:'returned'});
@@ -422,6 +433,25 @@ describe.skipIf(process.platform==='win32')('manual original paired artifact ins
     expect(fs.readlinkSync(f.current)).toBe(join(f.home,'.local/share/ashlr/releases',f.m.source.revision));
     await expect(applyInspectedDesktopArtifacts(fresh)).rejects.toThrow(/replayed/);
   });
+  it('verifies admitted runtime entries larger than 16MiB and rejects changed lengths or bytes',async()=> {
+    const f=fixture('canonical-v2');
+    const original=await readPinnedRuntimeArchive({artifactPath:join(f.artifacts,f.m.cli.filename),sha256:f.m.cli.sha256,revision:f.m.source.revision,version:f.m.version,identityProfile:'canonical-v2'});
+    const large=Buffer.alloc(16*1024*1024+1,0x5a);
+    const leaf='dist/core/universe/builtins/preparation/preparation-bridge.mjs';
+    const data=tar([...original.entries.map(entry=>({path:`package/${entry.path}`,data:entry.bytes,mode:entry.executable?0o755:0o644})),{path:`package/${leaf}`,data:large,mode:0o644}]);
+    const artifactPath=join(f.root,'large-runtime.tgz');write(artifactPath,data);
+    const pins={artifactPath,sha256:hash(data),revision:f.m.source.revision,version:f.m.version,identityProfile:'canonical-v2' as const};
+    const archive=await readPinnedRuntimeArchive(pins);
+    expect(archive.entries.find(entry=>entry.path===leaf)?.bytes.length).toBe(large.length);
+    const pkg=join(f.root,'large-package');fs.mkdirSync(pkg,{mode:0o700});extractPinnedRuntimeArchive(archive,pkg);
+    await verifyInstalledRuntimeArchive(pkg,pins);
+    const path=join(pkg,leaf);
+    write(path,large.subarray(0,-1));await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    write(path,Buffer.concat([large,Buffer.from([0])]));await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    const changed=Buffer.from(large);changed[changed.length-1]^=1;
+    write(path,changed);await expect(verifyInstalledRuntimeArchive(pkg,pins)).rejects.toThrow('installed-current-unverified');
+    write(path,large);await verifyInstalledRuntimeArchive(pkg,pins);
+  });
   it('bounded extractor refuses nonempty/link destinations and original package verifier rejects added members and modes',async()=> {
     const f=fixture(),dest=join(f.root,'extract');fs.mkdirSync(dest,{mode:0o700});write(join(dest,'foreign'),'leave alone');
     expect(()=>extractSignedAppArchive(f.app,dest)).toThrow(/destination/);expect(fs.readFileSync(join(dest,'foreign'),'utf8')).toBe('leave alone');
@@ -506,9 +536,9 @@ function publishedFixture() {
 describe.skipIf(process.platform==='win32')('commissioned public historical manual proof',()=> {
   let publicationFixture: ReturnType<typeof publishedFixture>;
   beforeEach(() => { publicationFixture=publishedFixture(); },5_000);
-  // These filesystem/Git protocol integrations perform multiple complete verifications.
-  // Observed runs exceeded the unit default (CI 5.362s; local 14.106s); only
-  // these two cases get 20s. Setup and all other cases retain their 5s limits.
+  // Keep the two compound-proof cases' existing 20s bounds (CI 5.362s; local 14.106s).
+  // Setup retains its explicit 5s bound. Other real filesystem/Git/signature proofs
+  // inherit the real-I/O lane's 60s harness budget; they assert no elapsed-time SLO.
   it('runs genuine complete original evidence after master advances; historical success cannot authorize either hosted adopter or a replay',async()=> {
     const p=publicationFixture;
     const cap=await realHosted.inspectCommissionedManualPublication(p.envelope());

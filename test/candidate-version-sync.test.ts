@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { syncCandidateVersion } from '../scripts/sync-candidate-version.mjs';
+import { syncReleaseNotes } from '../scripts/sync-release-notes.mjs';
+import { readFacts, synchronize } from '../scripts/site-freshness.mjs';
 
 const roots: string[] = [];
 const paths = [
   'package.json', 'package-lock.json', 'desktop/package.json',
   'desktop/src-tauri/tauri.conf.json', 'desktop/src-tauri/Cargo.toml', 'desktop/src-tauri/Cargo.lock',
+  'server.json',
   'CHANGELOG.md', '.github/workflows/release.yml',
   'desktop/README.md',
   'README.md', 'docs/QUICKSTART.md',
@@ -32,6 +35,9 @@ function fixture() {
     { label: 'main', url: 'http://127.0.0.1:7777/verse/?v=3.27.0&keep=yes#anchor' },
     { label: 'launch', url: 'index.html' },
   ] }, bundle: { shortDescription: 'Phantom — workbench' } });
+  putJson('server.json', { name: 'io.github.ashlrai/phantom', version: '3.27.0', packages: [
+    { registryType: 'npm', identifier: '@ashlr/phantom', version: '3.27.0', runtimeHint: 'npx' },
+  ] });
   writeFileSync(join(root, 'desktop/src-tauri/Cargo.toml'), '[package]\nname = "ashlr-desktop"\nversion = "3.27.0" # own version\n\n[dependencies]\nunrelated = "3.27.0"\n');
   writeFileSync(join(root, 'desktop/src-tauri/Cargo.lock'), '# Locked dependencies\nversion = 4\n\n[[package]]\nname = "unrelated"\nversion = "3.27.0"\nchecksum = "preserve-me"\n\n[[package]]\nname = "ashlr-desktop"\nversion = "3.27.0"\ndependencies = ["unrelated"]\n');
   writeFileSync(join(root, 'CHANGELOG.md'), '## [3.27.0] — historical published release\n');
@@ -43,6 +49,41 @@ function fixture() {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('candidate version synchronization', () => {
+  it('refreshes managed site facts after a future release-note and candidate update', () => {
+    const root = fixture(); const sourceRoot = join(__dirname, '..');
+    // Reuse the real CLI/model/MCP facts without importing or executing them.
+    for (const path of ['.mcp.json', 'src/cli/index.ts', 'src/cli/completions.ts', 'src/cli/resources.ts',
+      'src/cli/resource-profile.ts', 'src/core/verse/model-windows.ts', 'site/index.html', 'site/ecosystem.html']) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      copyFileSync(join(sourceRoot, path), join(root, path));
+    }
+    const sourcePackage = json(sourceRoot, 'package.json');
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ ...json(root, 'package.json'), bin: sourcePackage.bin, engines: sourcePackage.engines }, null, 2) + '\n');
+    // The generator scans source spelling for flags. Preserve that complete
+    // actual inventory in a comment instead of copying the whole application.
+    writeFileSync(join(root, 'src/site-fixture-flags.ts'), `// ${[...readFacts(sourceRoot).srcFlags].sort().join(' ')}\n`);
+    writeFileSync(join(root, '.release-please-manifest.json'), JSON.stringify({ '.': '3.27.0' }) + '\n');
+    const historical = '## [3.27.0] — 2026-10-01\n\nHistorical release notes stay byte-for-byte intact after the future source update.\n';
+    const baseline = `# Changelog\n\n## [Unreleased]\n\nUnreleased work stays first.\n\n${historical}`;
+    writeFileSync(join(root, 'CHANGELOG.md'), baseline);
+    synchronize(root);
+    const prose = (text: string) => text.replace(/(<!-- fresh:begin [a-z-]+ -->)[\s\S]*?(<!-- fresh:end -->)/g, '$1$2');
+    const beforeProse = ['index.html', 'ecosystem.html'].map(file => prose(read(root, `site/${file}`)));
+    const future = '## [3.28.0] — 2026-11-06\n\nThis future source release verifies that notes, candidate metadata and managed site facts stay coherent.\n\n';
+    writeFileSync(join(root, 'CHANGELOG.md'), baseline.replace('## [Unreleased]', `${future}## [Unreleased]`));
+    syncReleaseNotes(root, '3.28.0');
+    expect(syncCandidateVersion(root, '3.28.0', { check: true }).matches).toBe(true);
+    expect(json(root, '.release-please-manifest.json')).toEqual({ '.': '3.28.0' });
+    expect(synchronize(root, { check: true })).toEqual([]);
+    const notes = read(root, 'CHANGELOG.md');
+    expect(notes.indexOf('## [Unreleased]')).toBeLessThan(notes.indexOf('## [3.28.0]'));
+    expect(notes.endsWith(historical)).toBe(true);
+    const html = read(root, 'site/index.html');
+    expect(html).toContain('"softwareVersion": "3.28.0"');
+    expect(html).toContain('"dateModified": "2026-11-06"');
+    expect(['index.html', 'ecosystem.html'].map(file => prose(read(root, `site/${file}`)))).toEqual(beforeProse);
+  });
+
   it('derives only read-only checks from the root and reports CLI drift without editing', () => {
     const root = fixture();
     mkdirSync(join(root, 'scripts'));
@@ -66,12 +107,13 @@ describe('candidate version synchronization', () => {
     const before = paths.map((path) => read(root, path));
     const check = syncCandidateVersion(root, '3.28.0', { check: true });
     expect(check.matches).toBe(false);
-    expect(check.changed).toHaveLength(9);
+    expect(check.changed).toHaveLength(10);
     expect(paths.map((path) => read(root, path))).toEqual(before);
-    expect(syncCandidateVersion(root, '3.28.0').changed).toHaveLength(9);
-    for (const path of ['package.json', 'package-lock.json', 'desktop/package.json', 'desktop/src-tauri/tauri.conf.json']) {
+    expect(syncCandidateVersion(root, '3.28.0').changed).toHaveLength(10);
+    for (const path of ['package.json', 'package-lock.json', 'desktop/package.json', 'desktop/src-tauri/tauri.conf.json', 'server.json']) {
       expect(json(root, path).version).toBe('3.28.0');
     }
+    expect(json(root, 'server.json').packages[0].version).toBe('3.28.0');
     expect(json(root, 'package-lock.json').packages[''].version).toBe('3.28.0');
     expect(json(root, 'package-lock.json').packages['node_modules/unrelated']).toEqual({ version: '3.27.0', integrity: 'preserve-me' });
     expect(json(root, 'package.json').dependencies.unrelated).toBe('3.27.0');
@@ -83,8 +125,8 @@ describe('candidate version synchronization', () => {
     expect(read(root, 'desktop/src-tauri/Cargo.toml')).toContain('unrelated = "3.27.0"');
     expect(read(root, 'desktop/src-tauri/Cargo.lock')).toContain('name = "unrelated"\nversion = "3.27.0"\nchecksum = "preserve-me"');
     expect(read(root, 'desktop/src-tauri/Cargo.lock')).toContain('name = "ashlr-desktop"\nversion = "3.28.0"');
-    expect(read(root, 'CHANGELOG.md')).toBe(before[6]);
-    expect(read(root, '.github/workflows/release.yml')).toBe(before[7]);
+    expect(read(root, 'CHANGELOG.md')).toBe(before[7]);
+    expect(read(root, '.github/workflows/release.yml')).toBe(before[8]);
     expect(read(root, 'desktop/README.md')).toContain('This source tree targets version 3.28.0;');
     expect(read(root, 'desktop/README.md')).toContain('The published 3.27.0 release is historical.');
     for (const path of ['README.md', 'docs/QUICKSTART.md']) {
@@ -133,6 +175,22 @@ describe('candidate version synchronization', () => {
       writeFileSync(join(root, path), `${JSON.stringify(value, null, 2)}\n`);
       const before = paths.map((file) => read(root, file));
       expect(() => syncCandidateVersion(root, '3.28.0')).toThrow();
+      expect(paths.map((file) => read(root, file))).toEqual(before);
+    }
+  });
+
+  it('refuses an MCP registry manifest that is not the Phantom npm package, without editing', () => {
+    for (const mutate of [
+      (manifest: { name: string }) => { manifest.name = 'io.github.someone/else'; },
+      (manifest: { packages: { identifier: string }[] }) => { manifest.packages[0].identifier = '@someone/else'; },
+      (manifest: { packages: { registryType: string }[] }) => { manifest.packages[0].registryType = 'oci'; },
+    ]) {
+      const root = fixture();
+      const manifest = json(root, 'server.json');
+      mutate(manifest);
+      writeFileSync(join(root, 'server.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+      const before = paths.map((file) => read(root, file));
+      expect(() => syncCandidateVersion(root, '3.28.0')).toThrow(/MCP registry manifest/);
       expect(paths.map((file) => read(root, file))).toEqual(before);
     }
   });

@@ -1,5 +1,5 @@
 /** Value-blind executable inventory. Version/help evidence never grants execution authority. */
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { constants, accessSync, closeSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
@@ -22,13 +22,13 @@ export const COMPANION_RELEASES: readonly CompanionRelease[] = Object.freeze([
     sourceCommit: '7a51ce512ec4aee12cc29ff859036af63fbe93db',
     releaseUrl: 'https://github.com/ashlrai/phantom-secrets/releases/tag/v0.7.9',
     contract: 'Separate phantom CLI; metadata readiness and supervised exec require separate verification.' },
-  { id: 'locus', name: 'Locus', binary: 'locus', version: '0.5.0',
-    sourceCommit: 'e7bced3cd4cb4adf08bbba020f2e05f163b55941',
-    releaseUrl: 'https://github.com/ashlrai/locus/releases/tag/v0.5.0',
+  { id: 'locus', name: 'Locus', binary: 'locus', version: '0.7.0',
+    sourceCommit: '94c3a0cc419faf348b635783c586c72388eee72f',
+    releaseUrl: 'https://github.com/ashlrai/locus/releases/tag/v0.7.0',
     contract: 'Identity CLI; pin, tenant, MCP and session readiness are not inspected.' },
-  { id: 'lexicon', name: 'Lexicon', binary: 'lexicon', version: '0.5.4',
-    sourceCommit: '6ebc0721e33de2dafafbb54d89a6af50a362046a',
-    releaseUrl: 'https://github.com/ashlrai/lexicon/releases/tag/v0.5.4',
+  { id: 'lexicon', name: 'Lexicon', binary: 'lexicon', version: '0.5.9',
+    sourceCommit: 'd704451dce0247ae97b4f7b125e4780b22ba3e7b',
+    releaseUrl: 'https://github.com/ashlrai/lexicon/releases/tag/v0.5.9',
     contract: 'Voice correction CLI; project trust and native service availability are not inspected.' },
 ]);
 
@@ -95,6 +95,33 @@ export function companionExecutableKind(path: string): 'native' | 'script' | 'bo
     return /^#![^\r\n]*(?:\bnode|\bnodejs)(?:\s|$)/u.test(source) ? 'script' : 'unknown';
   } catch { return 'unknown'; }
   finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
+/** How long a PATH locator probe may run before it is abandoned. */
+const LOCATOR_TIMEOUT_MS = 3_000;
+
+/**
+ * Where `binary` resolves on PATH, and whether it may be executed. A bootstrap
+ * launcher (the npm `locus-cli` shim runs `cargo install` even for a probe) is
+ * `unsupported-launcher` and must never be run. A locator that reported success
+ * without a path cannot be classified, so it stays `available` rather than
+ * inventing a refusal. Never throws.
+ */
+export type CompanionExecutableState = 'missing' | 'unsupported-launcher' | 'available';
+
+export function companionExecutableState(binary: string): CompanionExecutableState {
+  try {
+    const stdout = execFileSync(
+      process.platform === 'win32' ? 'where' : 'which',
+      [binary],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: LOCATOR_TIMEOUT_MS },
+    );
+    const located = stdout.split(/\r?\n/u).map(line => line.trim()).find(Boolean);
+    if (located && companionExecutableKind(located) === 'bootstrap') return 'unsupported-launcher';
+    return 'available';
+  } catch {
+    return 'missing';
+  }
 }
 
 /** Never inherit provider credentials, user config roots or executable discovery PATH. */

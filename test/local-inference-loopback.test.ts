@@ -16,6 +16,17 @@ import {
 const PIN = '@sha256:' + 'a'.repeat(64);
 
 describe('validateLocalBaseUrl', () => {
+  it.each([
+    ['http://LOCALHOST:8000/v1/', 'http://127.0.0.1:8000/v1'],
+    ['https://localhost:8443/custom/v1', 'https://127.0.0.1:8443/custom/v1'],
+    ['http://localhost:80', 'http://127.0.0.1'],
+    ['https://localhost:443/', 'https://127.0.0.1'],
+  ])('pins %s without changing its scheme, port or path', (input, baseUrl) => {
+    expect(validateLocalBaseUrl(input)).toEqual({
+      ok: true, baseUrl, host: 'localhost', loopback: true, warning: null,
+    });
+  });
+
   it('accepts 127.0.0.1, [::1] and localhost over http', () => {
     for (const u of ['http://127.0.0.1:11434/v1', 'http://[::1]:8000/v1', 'http://localhost:8000/v1', 'http://LOCALHOST:8000/v1/']) {
       const r = validateLocalBaseUrl(u);
@@ -92,8 +103,8 @@ describe('parseLocalInferenceConfig', () => {
 
 describe('resolveOpenAICompatTarget (OPENAI_COMPAT_BASE_URL gate)', () => {
   const base = { defaultBaseUrl: 'http://localhost:8000/v1', apiKey: '' };
-  it('default and loopback env pass unchanged', () => {
-    expect(resolveOpenAICompatTarget(base)).toMatchObject({ ok: true, baseUrl: 'http://localhost:8000/v1', loopback: true });
+  it('default and loopback env pass (localhost dials 127.0.0.1, no DNS)', () => {
+    expect(resolveOpenAICompatTarget(base)).toMatchObject({ ok: true, baseUrl: 'http://127.0.0.1:8000/v1', loopback: true });
     expect(resolveOpenAICompatTarget({ ...base, envBaseUrl: 'http://127.0.0.1:4000/v1' })).toMatchObject({ ok: true, baseUrl: 'http://127.0.0.1:4000/v1' });
   });
 

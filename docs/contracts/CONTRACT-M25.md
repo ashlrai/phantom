@@ -76,6 +76,40 @@ export function loadChunks(repo?: string): KnowledgeChunk[];
   repo path). Returns `[]` when nothing indexed. Never scans repo source — reads
   only the persisted index.
 
+#### Per-agent chat memory
+
+```ts
+export interface AgentMemory {
+  readonly agentId: string;
+  readonly text: string;
+  readonly updatedAt: string;
+}
+export const MAX_AGENT_MEMORY_BYTES = 65536;
+export function readAgentMemory(agentId: string): AgentMemory | null;
+export function writeAgentMemory(agentId: string, text: string): AgentMemory;
+```
+
+These local APIs store a separate whole document per case-sensitive agent ID
+under `~/.ashlr/knowledge/agents/<sha256-of-agent-id>.json`. IDs must match
+`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$` and contain no secret pattern.
+Callers must derive the ID from their
+authorized agent context; an ID supplied in chat text is not authorization.
+Memory is independent of repository enrollment and never enters source chunks,
+embeddings, or another agent's fallback context.
+
+Writes replace the document atomically with a private 0600 file, return an ISO
+timestamp, and reject text exceeding 64 KiB of UTF-8 or matching either the
+shared or knowledge-specific secret scrubber. Rejection happens before I/O and
+preserves previous memory. Use Phantom Secrets references instead of credentials.
+Empty text explicitly clears remembered content; concurrent replacements use
+last-writer-wins semantics, so callers must serialize read/modify/write flows.
+
+Reads create nothing and return `null` only for absent memory. Invalid identities,
+corrupt records, unsafe filesystem entries and storage failures throw value-blind
+errors. Reads also validate the size, version, identity and secret patterns of
+persisted data. Store directory symlinks and file symlink reads are refused.
+These explicit errors are separate from the best-effort indexing contract.
+
 ### `src/core/knowledge/ask.ts`
 ```ts
 export async function ask(

@@ -175,7 +175,7 @@ function normalize(base: Appearance, patch: Partial<Appearance> | Partial<Stored
         ? base.motion
         : 'system';
   return {
-    theme: merged.theme === 'light' || merged.theme === 'dark' ? merged.theme : 'system',
+    theme: merged.theme === 'light' || merged.theme === 'dark' || merged.theme === 'high-contrast' ? merged.theme : 'system',
     accentH: Number.isFinite(merged.accentH) ? ((Math.round(merged.accentH) % 360) + 360) % 360 : DEFAULT_ACCENT.h,
     accentS: Number.isFinite(merged.accentS) ? clamp(Math.round(merged.accentS), 0, 100) : DEFAULT_ACCENT.s,
     accentL: Number.isFinite(merged.accentL)

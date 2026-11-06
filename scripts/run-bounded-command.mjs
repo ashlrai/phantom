@@ -66,6 +66,10 @@ function processGroupHasOnlyZombies(pgid) {
     const fields = stat.slice(stat.lastIndexOf(') ') + 2).split(' ');
     if (Number(fields[2]) !== pgid) continue;
     if (fields[0] !== 'Z' && fields[0] !== 'X') return false;
+    // A Z leader whose main thread called pthread_exit still runs its other
+    // threads; num_threads (field 20) counts them, an exited process at most 1.
+    const threads = Number(fields[17]);
+    if (!fields[17] || !Number.isSafeInteger(threads) || threads > 1) return false;
     members += 1;
   }
   return members > 0;

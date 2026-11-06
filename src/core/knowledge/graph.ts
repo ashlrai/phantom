@@ -140,10 +140,29 @@ function safeReadFile(filePath: string): string | null {
 
 function safeReaddir(dir: string): fs.Dirent[] {
   try {
-    return fs.readdirSync(dir, { withFileTypes: true });
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .sort((a, b) => comparePaths(a.name, b.name));
   } catch {
     return [];
   }
+}
+
+function comparePaths(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Resolve aliases, verify enrollment against that identity, and scan each root once. */
+function enrolledRoots(repos: string[]): string[] {
+  const roots = new Set<string>();
+  for (const repo of repos) {
+    try {
+      const root = fs.realpathSync(repo);
+      if (!roots.has(root) && isEnrolled(repo) && fs.realpathSync(repo) === root) roots.add(root);
+    } catch {
+      // Missing or inaccessible roots cannot be scanned.
+    }
+  }
+  return [...roots].sort(comparePaths);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,40 +249,40 @@ function collectDeps(pkg: PackageJson): string[] {
  * Returns both external package names and relative path imports.
  * Never throws.
  */
-function extractImports(source: string): string[] {
-  const imports: string[] = [];
+function extractImports(source: string): Set<string> {
+  const imports = new Set<string>();
 
   try {
     // ES module: import ... from 'target'  /  import 'target'
     const esImportRe = /\bimport\s+(?:[^'"]*\s+from\s+)?['"]([^'"]+)['"]/g;
     let m: RegExpExecArray | null;
     while ((m = esImportRe.exec(source)) !== null) {
-      if (m[1]) imports.push(m[1]);
+      if (m[1]) imports.add(m[1]);
     }
 
     // CommonJS: require('target')
     const cjsRe = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
     while ((m = cjsRe.exec(source)) !== null) {
-      if (m[1]) imports.push(m[1]);
+      if (m[1]) imports.add(m[1]);
     }
 
     // Dynamic import: import('target')
     const dynRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
     while ((m = dynRe.exec(source)) !== null) {
-      if (m[1]) imports.push(m[1]);
+      if (m[1]) imports.add(m[1]);
     }
 
     // Python: from target import  /  import target
     const pyFromRe = /^from\s+([\w.]+)\s+import/gm;
     while ((m = pyFromRe.exec(source)) !== null) {
-      if (m[1]) imports.push(m[1]);
+      if (m[1]) imports.add(m[1]);
     }
     const pyImportRe = /^import\s+([\w.,\s]+)/gm;
     while ((m = pyImportRe.exec(source)) !== null) {
       if (m[1]) {
         for (const part of m[1].split(',')) {
           const trimmed = part.trim().split(' ')[0];
-          if (trimmed) imports.push(trimmed);
+          if (trimmed) imports.add(trimmed);
         }
       }
     }
@@ -415,7 +434,7 @@ export function buildGraph(repos?: string[]): KnowledgeGraph {
   const graph: KnowledgeGraph = { nodes: [], edges: [], crossRepo: [] };
 
   try {
-    const targetRepos = repos ?? withoutFleetMirrors(listEnrolled());
+    const targetRepos = enrolledRoots(repos ?? withoutFleetMirrors(listEnrolled()));
     if (targetRepos.length === 0) return graph;
 
     const nodeIds = new Set<string>();
@@ -440,11 +459,6 @@ export function buildGraph(repos?: string[]): KnowledgeGraph {
     const analyses: RepoAnalysis[] = [];
     for (const repoPath of targetRepos) {
       try {
-        // ENROLLMENT-SCOPED (docs/contracts/CONTRACT-M25.md invariant 3): only ever walk enrolled
-        // repos — an explicit repos list from the CLI (--repo / positional) is
-        // validated here so a non-enrolled directory is never read.
-        if (!isEnrolled(repoPath)) continue;
-        if (!fs.existsSync(repoPath)) continue;
         const analysis = analyseRepo(repoPath);
         analyses.push(analysis);
       } catch {
@@ -556,7 +570,7 @@ export function impact(target: string, repos?: string[]): ImpactResult {
   try {
     if (!target || target.trim().length === 0) return result;
 
-    const targetRepos = repos ?? withoutFleetMirrors(listEnrolled());
+    const targetRepos = enrolledRoots(repos ?? withoutFleetMirrors(listEnrolled()));
     if (targetRepos.length === 0) return result;
 
     const cleanTarget = target.trim();
@@ -572,26 +586,23 @@ export function impact(target: string, repos?: string[]): ImpactResult {
     const targetNoExt = targetBasename.replace(/\.[^.]+$/, '');
 
     const dependentSet = new Set<string>();
+    const referenceKeys = new Set<string>();
+    const symbolRe = isFilePath ? null : new RegExp(`\\b${escapeRegex(cleanTarget)}\\b`);
 
     for (const repoPath of targetRepos) {
+      if (result.references.length >= MAX_REFERENCES) break;
       try {
-        // ENROLLMENT-SCOPED (docs/contracts/CONTRACT-M25.md invariant 3): never walk a directory
-        // that is not enrolled, even if passed explicitly via --repo.
-        if (!isEnrolled(repoPath)) continue;
-        if (!fs.existsSync(repoPath)) continue;
-
         const sourceFiles = walkSourceFiles(repoPath);
+        let absTarget = isFilePath ? path.resolve(repoPath, cleanTarget) : '';
+        if (isFilePath) {
+          try { absTarget = fs.realpathSync(absTarget); } catch { /* target may not exist */ }
+        }
 
         for (const filePath of sourceFiles) {
           if (result.references.length >= MAX_REFERENCES) break;
 
           // Skip the target file itself if it's a file path
-          if (isFilePath) {
-            const absTarget = path.isAbsolute(cleanTarget)
-              ? cleanTarget
-              : path.join(repoPath, cleanTarget);
-            if (filePath === absTarget) continue;
-          }
+          if (isFilePath && filePath === absTarget) continue;
 
           const src = safeReadFile(filePath);
           if (!src) continue;
@@ -619,8 +630,7 @@ export function impact(target: string, repos?: string[]): ImpactResult {
             } else {
               // Symbol target: look for usage of the symbol name in source
               // Use word-boundary-style matching to avoid partial matches
-              const symbolRe = new RegExp(`\\b${escapeRegex(cleanTarget)}\\b`);
-              if (symbolRe.test(line)) {
+              if (symbolRe?.test(line)) {
                 matched = true;
               }
             }
@@ -628,6 +638,9 @@ export function impact(target: string, repos?: string[]): ImpactResult {
             if (matched) {
               const relFile = path.relative(repoPath, filePath);
               const repo = path.basename(repoPath);
+              const key = JSON.stringify([repo, relFile, i + 1]);
+              if (referenceKeys.has(key)) continue;
+              referenceKeys.add(key);
               result.references.push({
                 repo,
                 file: relFile,

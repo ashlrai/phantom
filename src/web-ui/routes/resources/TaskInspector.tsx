@@ -26,9 +26,39 @@ export function taskOwnership(row: ResourceTaskRow): string {
   return 'Recorded external task';
 }
 
+const TASK_HISTORY_LIMIT = 8;
+interface TaskObservation { at: string; worker: string; state: string }
+
+function observeTask(row: ResourceTaskRow): TaskObservation | null {
+  const at = row.job?.updatedAt ?? row.receipt?.finishedAt ?? row.receipt?.startedAt;
+  if (!at || !Number.isFinite(Date.parse(at))) return null;
+  return { at: new Date(at).toISOString(), worker: row.job?.workerId ?? row.receipt?.workerId ?? 'Not assigned', state: taskState(row) };
+}
+
+/** Session-local evidence only. Sort before bounding so late arrivals cannot evict newer evidence. */
+function retainTaskObservation(history: TaskObservation[], observation: TaskObservation | null): TaskObservation[] {
+  if (!observation || history.some(item => item.at === observation.at && item.worker === observation.worker && item.state === observation.state)) return history;
+  const retained = [...history, observation].sort((a, b) => b.at.localeCompare(a.at) || a.worker.localeCompare(b.worker) || a.state.localeCompare(b.state))
+    .slice(0, TASK_HISTORY_LIMIT);
+  return retained.length === history.length && retained.every((item, index) => item === history[index]) ? history : retained;
+}
+
 export function TaskInspector({ row, fleetTask, enabled, busy, onCancel }: {
   row: ResourceTaskRow; fleetTask?: ResourceFleetTask; enabled: boolean; busy: boolean; onCancel: (id: string) => void;
 }) {
+  const observation = observeTask(row);
+  const [history, setHistory] = useState<{ id: string; entries: TaskObservation[] }>(() => ({
+    id: row.id, entries: retainTaskObservation([], observation),
+  }));
+  const entries = retainTaskObservation(history.id === row.id ? history.entries : [], observation);
+  const { at, worker, state } = observation ?? {};
+  useEffect(() => {
+    setHistory(previous => {
+      const retained = retainTaskObservation(previous.id === row.id ? previous.entries : [],
+        at !== undefined && worker !== undefined && state !== undefined ? { at, worker, state } : null);
+      return previous.id === row.id && retained === previous.entries ? previous : { id: row.id, entries: retained };
+    });
+  }, [row.id, at, worker, state]);
   const [output, setOutput] = useState<ResourceConsoleOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -67,6 +97,13 @@ export function TaskInspector({ row, fleetTask, enabled, busy, onCancel }: {
       <div><dt>Verified accepted work</dt><dd>Not measured</dd></div>
     </dl>
     {fleetTask?.stateDisagreement ? <p className={styles.warning}>Supervisor and receipt states differ in this snapshot. These sources are sampled separately; refresh to reconcile them.</p> : null}
+    <section aria-label="Routing observation history">
+      <h3>Routing observation history</h3>
+      <p className={styles.caption}>Up to {TASK_HISTORY_LIMIT} unique observations from this inspector session, newest first. Observations do not establish routing quality or accepted work.</p>
+      {entries.length ? <table><thead><tr><th>Observed update</th><th>Worker</th><th>Task state</th></tr></thead>
+        <tbody>{entries.map(item => <tr key={JSON.stringify(item)}><td>{resourceTime(item.at)}</td><td>{item.worker}</td><td>{item.state}</td></tr>)}</tbody>
+      </table> : <p>No timestamped task observations available.</p>}
+    </section>
     <TaskDiagnosis receipt={row.receipt} />
     {['unresolved', 'uncertain', 'reserved'].includes(taskState(row)) ? <p className={styles.warning}>This reservation is occupancy evidence, not a process heartbeat. The console cannot cancel work it does not currently own.</p> : null}
     {row.job?.cancellable ? <button type="button" className={styles.secondaryButton} disabled={!enabled || busy}

@@ -25,16 +25,16 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('explicit foreground resource console CLI', () => {
-  it.each([[], ['--help', '--json'], ['--root', '/'], ['--root', 'relative'], [...args, '--unknown'],
-    [...args, '--port', '-1'], [...args, '--port', '65536'], [...args, '--port', '01'], [...args, '--port', '1.5'],
-    [...args, '--execute'], [...args, '--workspace', '/private/work'], [...args, '--max-parallel', '2'],
-    [...args, '--execute', '--execute', '--workspace', '/private/work'],
-    [...args, '--execute', '--workspace', '/private/work', '--max-parallel', '17'],
-    [...args, '--execute', '--workspace', '/private/work', '--max-parallel', '0'],
-    [...args, '--json', '--json'], [...args, '--root', '/private/other'], [...args, '--observations', '/private/secret'],
-    [...args, '--port', '1\n'], [...args, '--workspace', '/private/\u0085'],
-    ['--root', '/private/\0'], ['--root', '/private/..'], ['--root', `/${'x'.repeat(4096)}`], Array(25).fill('--json'),
-  ])('rejects invalid flags before backend import/start: %j', async (...input) => {
+  it.each([[[]], [['--help', '--json']], [['--root', '/']], [['--root', 'relative']], [[...args, '--unknown']],
+    [[...args, '--port', '-1']], [[...args, '--port', '65536']], [[...args, '--port', '01']], [[...args, '--port', '1.5']],
+    [[...args, '--execute']], [[...args, '--workspace', '/private/work']], [[...args, '--max-parallel', '2']],
+    [[...args, '--execute', '--execute', '--workspace', '/private/work']],
+    [[...args, '--execute', '--workspace', '/private/work', '--max-parallel', '17']],
+    [[...args, '--execute', '--workspace', '/private/work', '--max-parallel', '0']],
+    [[...args, '--json', '--json']], [[...args, '--root', '/private/other']], [[...args, '--observations', '/private/secret']],
+    [[...args, '--port', '1\n']], [[...args, '--workspace', '/private/\u0085']],
+    [['--root', '/private/\0']], [['--root', '/private/..']], [['--root', `/${'x'.repeat(4096)}`]], [Array(25).fill('--json')],
+  ])('rejects invalid flags before backend import/start: %j', async (input) => {
     const imported = backend.imported.mock.calls.length;
     expect(await cmdResourceConsole(input)).toBe(2); expect(backend.start).not.toHaveBeenCalled();
     expect(backend.imported).toHaveBeenCalledTimes(imported);

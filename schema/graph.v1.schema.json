@@ -1,0 +1,203 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ashlr.ai/schema/graph.v1.schema.json",
+  "title": "Phantom graph.v1 registry",
+  "description": "Read-only inventory of agents, engine accounts, model catalogs and MCP identities. Membership and routes confer no execution authority or live readiness. GRAPH-1 must separately check derived IDs, unique identities, endpoint existence and canonical ordering.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "readOnly", "complete", "sources", "nodes", "edges", "issues"],
+  "properties": {
+    "schema": { "const": "graph.v1" },
+    "readOnly": { "const": true },
+    "complete": { "type": "boolean" },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fleet", "seats"],
+      "properties": {
+        "fleet": { "$ref": "#/definitions/sourceState" },
+        "seats": { "$ref": "#/definitions/sourceState" }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/definitions/agent" },
+          { "$ref": "#/definitions/engineAccount" },
+          { "$ref": "#/definitions/model" },
+          { "$ref": "#/definitions/mcp" }
+        ]
+      }
+    },
+    "edges": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/edge" }
+    },
+    "issues": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/issue" }
+    }
+  },
+  "if": { "properties": { "complete": { "const": true } } },
+  "then": {
+    "properties": {
+      "sources": {
+        "properties": {
+          "fleet": { "const": "loaded" },
+          "seats": { "const": "loaded" }
+        }
+      },
+      "issues": { "maxItems": 0 }
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "description": "Public identity component, never a command, path or credential. The final negative lookahead rejects trailing line terminators too.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/+%-]*$(?![\\s\\S])"
+    },
+    "agentId": {
+      "type": "string",
+      "maxLength": 772,
+      "pattern": "^agent:[A-Za-z0-9](?:[A-Za-z0-9_.-]|%[0-9A-F]{2})*$(?![\\s\\S])"
+    },
+    "engineAccountId": {
+      "type": "string",
+      "maxLength": 1548,
+      "pattern": "^engine-account:[A-Za-z0-9](?:[A-Za-z0-9_.-]|%[0-9A-F]{2})*/[A-Za-z0-9](?:[A-Za-z0-9_.-]|%[0-9A-F]{2})*$(?![\\s\\S])"
+    },
+    "modelId": {
+      "type": "string",
+      "maxLength": 1539,
+      "pattern": "^model:[A-Za-z0-9](?:[A-Za-z0-9_.-]|%[0-9A-F]{2})*/[A-Za-z0-9](?:[A-Za-z0-9_.-]|%[0-9A-F]{2})*$(?![\\s\\S])"
+    },
+    "mcpId": {
+      "type": "string",
+      "maxLength": 770,
+      "pattern": "^mcp:[A-Za-z0-9](?:[A-Za-z0-9_.-]|%[0-9A-F]{2})*$(?![\\s\\S])"
+    },
+    "nodeId": {
+      "oneOf": [
+        { "$ref": "#/definitions/agentId" },
+        { "$ref": "#/definitions/engineAccountId" },
+        { "$ref": "#/definitions/modelId" },
+        { "$ref": "#/definitions/mcpId" }
+      ]
+    },
+    "sourceState": { "enum": ["loaded", "missing", "invalid", "unavailable"] },
+    "source": { "enum": ["fleet", "seats"] },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "agentId"],
+      "properties": {
+        "id": { "$ref": "#/definitions/agentId" },
+        "kind": { "const": "agent" },
+        "agentId": { "$ref": "#/definitions/identifier" }
+      }
+    },
+    "engineAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "engine", "accountId", "seatIds"],
+      "properties": {
+        "id": { "$ref": "#/definitions/engineAccountId" },
+        "kind": { "const": "engine-account" },
+        "engine": { "$ref": "#/definitions/identifier" },
+        "accountId": { "$ref": "#/definitions/identifier" },
+        "seatIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": { "type": "string", "$ref": "#/definitions/identifier" }
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "engine", "modelId"],
+      "properties": {
+        "id": { "$ref": "#/definitions/modelId" },
+        "kind": { "const": "model" },
+        "engine": { "$ref": "#/definitions/identifier" },
+        "modelId": { "$ref": "#/definitions/identifier" }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "serverId"],
+      "properties": {
+        "id": { "$ref": "#/definitions/mcpId" },
+        "kind": { "const": "mcp" },
+        "serverId": { "$ref": "#/definitions/identifier" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "from", "to", "source"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(can-message|can-delegate|reviews|routes-to):(?:[A-Za-z0-9_.-]|%[0-9A-F]{2})+/(?:[A-Za-z0-9_.-]|%[0-9A-F]{2})+$(?![\\s\\S])"
+        },
+        "kind": { "enum": ["can-message", "can-delegate", "reviews", "routes-to"] },
+        "from": { "$ref": "#/definitions/nodeId" },
+        "to": { "$ref": "#/definitions/nodeId" },
+        "source": { "$ref": "#/definitions/source" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "enum": ["can-message", "can-delegate", "reviews"] },
+            "from": { "$ref": "#/definitions/agentId" },
+            "to": { "$ref": "#/definitions/agentId" },
+            "source": { "const": "fleet" }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "routes-to" },
+            "from": { "$ref": "#/definitions/agentId" },
+            "to": {
+              "oneOf": [
+                { "$ref": "#/definitions/engineAccountId" },
+                { "$ref": "#/definitions/modelId" },
+                { "$ref": "#/definitions/mcpId" }
+              ]
+            },
+            "source": { "const": "fleet" }
+          }
+        },
+        {
+          "properties": {
+            "kind": { "const": "routes-to" },
+            "from": { "$ref": "#/definitions/engineAccountId" },
+            "to": { "$ref": "#/definitions/modelId" },
+            "source": { "const": "seats" }
+          }
+        }
+      ]
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "code"],
+      "properties": {
+        "source": { "$ref": "#/definitions/source" },
+        "code": {
+          "enum": ["missing", "invalid", "unavailable", "unknown-seat", "unknown-model", "unknown-mcp", "unknown-agent"]
+        }
+      }
+    }
+  }
+}

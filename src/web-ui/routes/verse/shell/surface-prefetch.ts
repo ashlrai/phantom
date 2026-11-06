@@ -34,6 +34,8 @@ import { fleetControlQuery, fleetQueueQuery } from '../fleet/fleet-control-queri
 import { outcomesQuery } from '../fleet/outcomes-queries.js';
 import { adoptionQuery } from '../growth/adoption-data.js';
 import { lessonsQuery } from '../growth/lessons-data.js';
+import { runsNowQuery } from '../command/runs-now-queries.js';
+import { operatorGlanceQuery } from '../mobile/operator-glance-query.js';
 import { verseBootstrapQuery, verseSessionsQuery, verseWorkspacesQuery } from '../verse-queries.js';
 import type { VerseSectionId } from '../verse-ui-store.js';
 
@@ -47,7 +49,7 @@ export const SURFACE_PREFETCH: Readonly<Partial<Record<VerseSectionId, readonly 
   // paints "Reading the cloud lane…" under the seat strip.
   // leaderThreadQuery: the Leader card's latest-message line (leader/LeaderLine).
   // fleetControlQuery (3.15): Command's one line about the fleet (fleet/FleetStatusLink).
-  command: [authorityQuery, fleetLiveQuery, leaderQuery, learningQuery, fleetHistoryQuery, budgetQuery, cloudQuery, leaderThreadQuery, fleetControlQuery],
+  command: [authorityQuery, fleetLiveQuery, leaderQuery, learningQuery, fleetHistoryQuery, budgetQuery, cloudQuery, leaderThreadQuery, fleetControlQuery, operatorGlanceQuery, runsNowQuery],
   // authorityQuery + fleetLiveQuery on Fleet, Growth and Mind: the shared
   // "Autonomy is off" state (autonomy/AutonomyOffState) reads both.
   // fleetControlQuery + fleetQueueQuery (3.15): the control surface and the steer panel.

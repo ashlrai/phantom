@@ -2,18 +2,38 @@ name: CI
 
 on:
   # PRs and the merge queue run only the seconds-fast gate (Mason, Oct 28 2026:
-  # merge fast, test later, fix forward daily). Full suites run once a day on
+  # merge fast, test later, fix forward daily). Full suites run every six hours on
   # master, on manual dispatch, and on reusable workflow_call.
   pull_request:
     branches: ["**"]
     types: [opened, synchronize, reopened]
   merge_group:
+  # Master pushes also run the seconds-fast gate only: a required "Merge Gate"
+  # check run must exist on the exact commit before auto-tag can create v*; a
+  # direct (non-queue) merge otherwise lands with no check runs and the tag —
+  # and therefore everything downstream of it — can never be produced.
+  push:
+    branches: [master]
   workflow_call:
-  # Daily full suite on master at 06:00 ET (10:00 UTC).
+  # Full suite on master every six hours at 17 minutes past the hour.
   schedule:
-    - cron: "0 10 * * *"
+    - cron: "17 */6 * * *"
+    # Release preparation reuses green push CI; it never reruns full suites.
+    - cron: "0,30 * * * *"
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
+  # The scheduled run rotates the Mac exhaustive work over seven daily slices
+  # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
   workflow_dispatch:
+    inputs:
+      release_gate:
+        description: Reuse green push CI and prepare the fast desktop release handoff
+        type: boolean
+        default: false
+      mac_shard:
+        description: Mac exhaustive slice (all = complete set, 0-6 = one daily slice)
+        type: choice
+        default: all
+        options: [all, '0', '1', '2', '3', '4', '5', '6']
 
 permissions:
   contents: read
@@ -53,11 +73,14 @@ jobs:
           perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
 
   quick:
-    # The only per-PR build step: install plus the core TypeScript no-emit check.
-    # Docs-only PRs skip it. Full suites run in the daily run.
+    # Per-PR, merge-queue and master-push typecheck plus authority drift checks.
+    # Start alongside classification so the longest fast job has no serial wait.
+    # This also checks docs-only PRs. Full suites run in the daily run.
+    # A push event whose ref is a TAG is the reusable M33 verify call — it keeps
+    # its own deferred-quick behavior, so the fast path is keyed on the master
+    # branch ref exactly.
     name: Quick typecheck
-    needs: classify
-    if: needs.classify.outputs.lane != 'docs' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -71,10 +94,71 @@ jobs:
         with:
           node-version: '22.22.3'
           cache: npm
+      # Source-identical fast path (pull_request and merge_group only): the
+      # exact whole tracked tree of the checked-out candidate is compared with
+      # the authenticated current canonical base. The proof code is fetched
+      # from the canonical base tip, never from candidate bytes; every unknown,
+      # malformed, drifted or unavailable input falls back to the unchanged
+      # normal steps below, and master pushes never reach this step.
+      - name: Prove source-identical history fast path
+        id: history
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          verdict=fallback
+          case "${GITHUB_REPOSITORY:-}:${GITHUB_REPOSITORY_ID:-}:${GITHUB_REPOSITORY_OWNER_ID:-}" in
+            ashlrai/phantom:1263526319:258113726|ashlrai/ashlr-hub:1263526319:258113726) ;;
+            *) echo "equal=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          dir="${RUNNER_TEMP}/ci-history-source"
+          rm -rf -- "$dir"
+          mkdir -p -- "$dir"
+          api() { timeout 20 gh api --hostname github.com "$1" 2>/dev/null || true; }
+          decode() {
+            node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);if(r.type!=="file"||r.encoding!=="base64"||typeof r.content!=="string"||r.content.length>700000)process.exit(1);process.stdout.write(Buffer.from(r.content.replace(/[^A-Za-z0-9+/=]/g,""),"base64"))}catch{process.exit(1)}})'
+          }
+          tip="$(api "repos/${GITHUB_REPOSITORY}/git/ref/heads/master" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s).object?.sha;process.stdout.write(/^[0-9a-f]{40}$/.test(v??"")?v:"")}catch{}})')"
+          if [ -n "$tip" ]; then
+            ok=1
+            for f in ci-history-source.mjs github-repository-binding.mjs; do
+              api "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/${f}?ref=${tip}" | decode > "$dir/$f" || ok=0
+            done
+            if [ "$ok" = 1 ] && [ -s "$dir/ci-history-source.mjs" ] && [ -s "$dir/github-repository-binding.mjs" ]; then
+              out="$(ASHLR_HISTORY_PROOF_SOURCE_SHA="$tip" timeout 75 node "$dir/ci-history-source.mjs" 2>"$dir/helper.log" || true)"
+              case "$out" in equal) verdict=equal ;; esac
+              cat "$dir/helper.log" >&2 2>/dev/null || true
+            fi
+          fi
+          if [ "$verdict" = equal ]; then echo "equal=true" >> "$GITHUB_OUTPUT"; else echo "equal=false" >> "$GITHUB_OUTPUT"; fi
+          exit 0
       - name: Install dependencies
+        if: steps.history.outputs.equal != 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Restore protected-branch compiler state
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: node_modules/.cache/phantom-backend.tsbuildinfo
+          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-
       - name: Core no-emit type check
+        if: steps.history.outputs.equal != 'true'
         run: npx tsc --noEmit -p tsconfig.json
+      - name: Save protected-branch compiler state
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: node_modules/.cache/phantom-backend.tsbuildinfo
+          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
+      # Full authority shards are deferred; drift must still fail the required gate.
+      - name: Check authority drift (hermetic)
+        if: steps.history.outputs.equal != 'true'
+        run: >-
+          HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
+          test/authority-codeowners-310b.test.ts
+          test/authority-tier1-closure-310b.test.ts
 
   classify:
     name: Classify PR site lane
@@ -82,10 +166,15 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
+      release_gate: ${{ (github.event_name == 'schedule' && github.event.schedule == '0,30 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.release_gate == true) }}
+      mac_slice: ${{ steps.mac.outputs.mac_slice }}
+      mac_general_exclude: ${{ steps.mac.outputs.mac_general_exclude }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Keep ancestry for behind PR validation without downloading historical blobs.
+          filter: blob:none
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -99,11 +188,17 @@ jobs:
           ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-site-lane.mjs
+      - name: Select daily Mac rotation
+        id: mac
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MAC_SHARD_INPUT: ${{ github.event.inputs.mac_shard }}
+        run: node .github/scripts/ci-mac-rotation.mjs plan
 
   site:
     name: Site PR (ecosystem)
     needs: classify
-    if: needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -140,9 +235,9 @@ jobs:
     # leaves them for the full lane, which builds first. The Merge Gate still reports.
     name: Docs PR (docs-only)
     needs: classify
-    if: needs.classify.outputs.lane == 'docs' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: needs.classify.outputs.lane == 'docs' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -173,7 +268,9 @@ jobs:
 
   ci:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    # Direct master pushes take the seconds-fast gate only; a push event whose
+    # ref is a tag is the reusable M33 verify call and keeps the full matrix.
+    if: needs.classify.outputs.lane == 'full' && !(github.event_name == 'push' && github.ref == 'refs/heads/master') && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     # Node 22.15 is the hard minimum — install.sh and CONTRIBUTING.md both enforce it.
     # Ubuntu is the exhaustive authority, partitioned by Vitest's deterministic
     # file sharding so the full suite has margin below the hermetic hard cap.
@@ -264,7 +361,10 @@ jobs:
               test/activation-readiness-package.test.ts
               test/activation-readiness-windows.test.ts
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Ubuntu authority 1/3 runs the complete web suite before its existing
+    # thirty-minute backend wrapper, then verifies and uploads the original pack.
+    # Other matrix roles retain their existing twenty-five-minute outer limit.
+    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}
     env: &node_ci_environment
       ASHLR_VITEST_TEST_TIMEOUT_MS: ${{ matrix.os == 'windows-latest' && '30000' || '5000' }}
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: ${{ matrix.native_launchd || '0' }}
@@ -352,6 +452,12 @@ jobs:
       - name: Check documentation
         if: matrix.label == 'ubuntu, authority 3/3'
         run: npm run check:docs
+
+      - name: Memory benchmark regression gate
+        if: matrix.label == 'ubuntu, authority 3/3'
+        # Offline and deterministic. Fails when governed memory drops below the floors in
+        # src/core/local-eval/memory-benchmark-floors.ts or any pack goes over its budget.
+        run: npm run --silent bench:memory -- --check > /dev/null
 
       - name: Build
         run: npm run build
@@ -504,7 +610,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -528,7 +634,7 @@ jobs:
               test/m466.host-merge-revocation-protocol.test.ts
               test/m467.detached-post-merge-verification.test.ts
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 15
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
@@ -549,9 +655,11 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
+    # Complete single-worker partitions measured 60–65 minutes. Match the
+    # existing 90-minute hermetic wrapper; individual test bounds stay intact.
     timeout-minutes: 90
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
@@ -565,6 +673,8 @@ jobs:
       max-parallel: 4
       matrix:
         shard: [1, 2, 3, 4]
+        # Daily rotation keeps leg 1 only; the complete set excludes nothing.
+        exclude: ${{ fromJSON(needs.classify.outputs.mac_general_exclude || '[]') }}
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
       ASHLR_RUN_NATIVE_LAUNCHD_TEST: '1'
@@ -590,9 +700,11 @@ jobs:
       - name: Build
         run: npm run build
       - name: Test complete Mac general partition
+        if: needs.classify.outputs.mac_slice == ''
         id: lane
         run: node .github/scripts/ci-qualification-lane.mjs mac-general-${{ matrix.shard }}
       - name: Observe advisory Mac impact shadow
+        if: needs.classify.outputs.mac_slice == ''
         id: shadow
         continue-on-error: true
         timeout-minutes: 2
@@ -610,6 +722,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Upload Mac qualification
+        if: needs.classify.outputs.mac_slice == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ashlr-qualification-mac-general-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -617,16 +730,21 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Test daily Mac rotation slice
+        if: needs.classify.outputs.mac_slice != ''
+        env:
+          MAC_SLICE: ${{ needs.classify.outputs.mac_slice }}
+        run: node .github/scripts/ci-mac-rotation.mjs run general
       - name: Clean disposable native launchd fixture
         if: always()
         run: node scripts/cleanup-launchd-test.mjs
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     name: Mac exhaustive (isolated)
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 30
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
@@ -662,9 +780,11 @@ jobs:
       - name: Build
         run: npm run build
       - name: Test complete Mac isolated suites
+        if: needs.classify.outputs.mac_slice == ''
         id: lane
         run: node .github/scripts/ci-qualification-lane.mjs mac-isolated
       - name: Observe advisory Mac impact shadow
+        if: needs.classify.outputs.mac_slice == ''
         id: shadow
         continue-on-error: true
         timeout-minutes: 2
@@ -682,6 +802,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Upload Mac qualification
+        if: needs.classify.outputs.mac_slice == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ashlr-qualification-mac-isolated-${{ github.run_id }}-${{ github.run_attempt }}
@@ -689,6 +810,11 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Test daily Mac rotation slice
+        if: needs.classify.outputs.mac_slice != ''
+        env:
+          MAC_SLICE: ${{ needs.classify.outputs.mac_slice }}
+        run: node .github/scripts/ci-mac-rotation.mjs run isolated
       - name: Clean disposable native launchd fixture
         if: always()
         run: node scripts/cleanup-launchd-test.mjs
@@ -698,9 +824,9 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     # Master runs each Mac lane one push at a time: a newer push replaces the
     # one still waiting, so a burst of merges cannot stack hours of Mac work
     # ahead of every PR. Merge Gate accepts that replacement only once master
@@ -889,10 +1015,10 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: "30000"
     steps:
@@ -931,13 +1057,13 @@ jobs:
 
   merge-gate:
     # One stable required check. PR and merge_group: Secret-shape scan, Classify
-    # and (unless docs-only) Quick typecheck must pass, and every full lane must
+    # and Quick typecheck must pass, and every full lane must
     # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
     # selected full lanes. Exact dependency keys; anything skipped, cancelled or
     # missing that should have run is a failure.
     name: Merge Gate
     # macOS lanes are not needed: they never run on PR or merge_group (waiver).
-    needs: [secret-shape, classify, quick, site, docs, ci, windows-service-authority]
+    needs: [secret-shape, classify, quick, site, docs, ci, windows-service-authority, release-build, release-smoke]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -945,12 +1071,13 @@ jobs:
       - name: Require selected CI lane
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           GATE_NEEDS: ${{ toJSON(needs) }}
         run: |
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'windows-service-authority'];
-          const expected = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full];
+          const expected = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build', 'release-smoke'];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -960,11 +1087,17 @@ jobs:
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
           if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
-          const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
-          const lanes = ['site', 'docs', ...full];
+          // Direct master pushes take the same seconds-fast gate as PRs; a push
+          // event carrying a TAG ref is the reusable M33 verify call and keeps
+          // its full-lane requirement.
+          const masterPush = process.env.EVENT_NAME === 'push' && process.env.REF === 'refs/heads/master';
+          const fast = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group' || masterPush;
+          const release = jobs.classify.outputs?.release_gate === 'true';
+          if (release && (!['schedule', 'workflow_dispatch'].includes(process.env.EVENT_NAME) || process.env.REF !== 'refs/heads/master')) throw new Error('Invalid release event');
+          const lanes = ['site', 'docs', ...full, 'release-build', 'release-smoke'];
           const selected = lane === 'full' ? full : [lane];
-          // PR and merge queue: only the quick check, and none for docs-only.
-          const chosen = fast ? (lane === 'docs' ? [] : ['quick']) : selected;
+          // PR and merge queue: the independent quick check runs for every lane.
+          const chosen = release ? ['release-build', ...(jobs['release-build'].outputs?.ready === 'true' ? ['release-smoke'] : [])] : fast ? ['quick'] : selected;
           const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
@@ -985,7 +1118,7 @@ jobs:
     # logs, env or API reads, default read-only token, output passed through the
     # pinned scrub.pl. Retention 7 days.
     name: Daily fixup queue
-    needs: [secret-shape, classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate]
+    needs: [secret-shape, classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build, release-smoke]
     if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1000,6 +1133,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
+          MAC_SLICE: ${{ needs.classify.outputs.mac_slice }}
         run: |
           set -euo pipefail
           echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
@@ -1007,13 +1141,17 @@ jobs:
           const needs = JSON.parse(process.env.NEEDS);
           const sha7 = process.env.GITHUB_SHA.slice(0, 7);
           const run = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+          const slice = /^[0-6]$/.test(process.env.MAC_SLICE ?? '') ? process.env.MAC_SLICE : 'all';
           let n = 0;
           for (const [job, { result }] of Object.entries(needs)) {
             if (result !== 'failure' && result !== 'cancelled') continue;
             n += 1;
-            console.log(`- READY RQ-FIXUP-PHANTOM-${sha7}-${n} (P0, pool=any, repo=phantom, lead=CI-Efficiency, owner=ci-efficiency, job=${job}, result=${result}, run=${run}, sha=${sha7}): daily full suite job ${job} concluded ${result}; first error is in the run's failed step.`);
+            const mac = job.startsWith('mac-') ? `, mac_shard=${slice}` : '';
+            console.log(`- READY RQ-FIXUP-PHANTOM-${sha7}-${n} (P0, pool=any, tier=work, repo=phantom, lead=CI-Efficiency, owner=ci-efficiency, job=${job}, result=${result}${mac}, run=${run}, sha=${sha7}): daily full suite job ${job} concluded ${result}; first error is in the run's failed step.`);
           }
           NODE
+          node -e 'const s=process.env.MAC_SLICE;console.log(JSON.stringify({schemaVersion:1,repo:"phantom",run_id:process.env.GITHUB_RUN_ID,sha:process.env.GITHUB_SHA.slice(0,7),event:process.env.GITHUB_EVENT_NAME,mac_shard:/^[0-6]$/.test(s??"")?Number(s):"all",mac_shards:7}))' | perl .github/tests/secret-shape/scrub.pl > mac-shard.json
+          echo "Mac shard: $(cat mac-shard.json)" >> "$GITHUB_STEP_SUMMARY"
           perl .github/tests/secret-shape/scrub.pl < raw.txt > fixup-queue.txt
           echo "fixup_lines=$(wc -l < fixup-queue.txt)"
           cat fixup-queue.txt >> "$GITHUB_STEP_SUMMARY"
@@ -1021,6 +1159,145 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: phantom-fixup-queue
-          path: fixup-queue.txt
+          path: |
+            fixup-queue.txt
+            mac-shard.json
           if-no-files-found: error
+          retention-days: 7
+
+  release-build:
+    needs: [secret-shape, classify]
+    name: Prepare unsigned desktop release
+    if: github.ref == 'refs/heads/master' && needs.classify.outputs.release_gate == 'true'
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ready: ${{ steps.eligible.outputs.ready }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact master
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Reuse successful push CI and existing prepared artifact
+        id: eligible
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-fast-smoke.mjs push
+      - name: Find existing immutable build
+        if: steps.eligible.outputs.ready == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-fast-smoke.mjs build
+      - name: Set up Node
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22.23.2'
+          cache: npm
+      - name: Download existing immutable build
+        if: steps.existing.outputs.ready == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.existing.outputs.artifact }}
+          path: ${{ runner.temp }}/release-prepared
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.existing.outputs.run }}
+          digest-mismatch: error
+      - name: Set up Bun
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.3.14'
+      - name: Set up Rust
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: '1.97.1'
+      - name: Cache native compiler inputs
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/db/
+            desktop/src-tauri/target/
+          key: release-native-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: release-native-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}-
+      - name: Install pinned build tools
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        run: |
+          npm install --global npm@10.9.8 @tauri-apps/cli@2.11.4
+      - name: Build unsigned desktop and original package once
+        if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
+        id: build
+        env:
+          PHANTOM_RELEASE_REVISION: ${{ github.sha }}
+        run: |
+          npm run build:desktop:nightly -- --existing-icons
+          node .github/scripts/release-fast-smoke.mjs prepare
+      - name: Upload immutable release input
+        id: artifact
+        if: steps.build.outputs.directory != '' || steps.existing.outputs.ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phantom-release-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-prepared
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release-smoke:
+    needs: release-build
+    name: Desktop release smoke
+    if: needs.release-build.outputs.ready == 'true'
+    permissions:
+      contents: read
+      actions: read
+    runs-on: macos-15
+    # Execution budget includes checkout, download, smoke and upload; queued
+    # runner time is measured separately by GitHub, never reported as smoke.
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact master
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22.23.2'
+      - name: Verify green master push CI
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-fast-smoke.mjs push
+      - name: Download immutable prepared artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: phantom-release-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-prepared
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Smoke desktop release artifact
+        id: smoke
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUSH_CI_RUN: ${{ steps.push.outputs.run }}
+          PUSH_CI_ATTEMPT: ${{ steps.push.outputs.attempt }}
+          PREPARED_DIRECTORY: ${{ runner.temp }}/release-prepared
+        run: node .github/scripts/release-fast-smoke.mjs smoke
+      - name: Upload qualified build handoff
+        if: steps.smoke.outputs.bundle != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ashlr-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.smoke.outputs.bundle }}
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 7

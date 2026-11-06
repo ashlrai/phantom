@@ -240,3 +240,38 @@ retries inside third-party clients require an adapter-owned request hook.
 The gate reports checks and base/head changes and enforces the existing desktop
 and phone first-paint byte budgets. Passing it is separate from npm publication,
 native installation, phone pairing, and resident activation.
+
+## Scheduled routines
+
+`phm automations templates` lists ready-to-customize routines, also available in
+Verse's Automations form:
+
+| Template | Local schedule | Task |
+| --- | --- | --- |
+| `nightly-drain` | Daily at 02:00 | Complete one ready, unblocked backlog item per repo and report what remains |
+| `morning-summary` | Daily at 08:00 | Read-only brief of the last 24 hours, CI, blockers and next priorities |
+| `weekly-review` | Monday at 09:00 | Read-only review of seven days of outcomes and evidence, with ranked recommendations |
+
+```sh
+phm automations add --template nightly-drain --repos owner/repo
+phm automations add --template morning-summary --repos owner/repo
+phm automations add --template weekly-review --repos owner/repo
+phm automations list
+phm automations enable au_morning-summary
+```
+
+Templates start disabled. Review repo scope before enabling: the default `*`
+resolves to repos in the standing grant's current stage. Each routine uses the
+fleet lane, one task at a time, up to 20 dispatches per day and 20 waiting tasks,
+with no cloud spend allocation or automatic lane selection. Existing fleet
+resource budgets, standing authority, Stop/pause and merge gates still apply.
+Summary and review instructions request reports in the task result; they do not
+send notifications. These are agent instructions, not a separate read-only
+sandbox permission mode.
+
+Schedules use the machine's local time and the existing RRULE scheduler. On
+first observation, a newly enabled schedule starts with its next future
+occurrence; it does not replay earlier runs. Keep Verse running for scheduled
+ticks, and keep an authorized fleet running to execute queued tasks. Adding a
+routine alone does not start either service. Use `add --file` with a schedule
+trigger to customize the RRULE, limits or instructions.

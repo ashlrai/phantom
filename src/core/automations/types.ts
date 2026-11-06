@@ -20,7 +20,7 @@ export const AUTOMATION_STATE_SCHEMA_VERSION = 1 as const;
 export const AUTOMATION_LANES = ['fleet', 'cloud', 'devin', 'leader-review'] as const;
 export type AutomationLane = (typeof AUTOMATION_LANES)[number];
 
-export const AUTOMATION_TRIGGER_KINDS = ['github-issues', 'ci-red', 'schedule', 'webhook', 'telegram'] as const;
+export const AUTOMATION_TRIGGER_KINDS = ['github-issues', 'ci-red', 'schedule', 'webhook', 'telegram', 'watch'] as const;
 export type AutomationTriggerKind = (typeof AUTOMATION_TRIGGER_KINDS)[number];
 
 /** Issues (and optionally PRs) carrying ALL of `labels`, or matching a search `query`, on the automation's repos. */
@@ -64,7 +64,17 @@ export interface TelegramTrigger {
   kind: 'telegram';
 }
 
-export type AutomationTrigger = GithubIssuesTrigger | CiRedTrigger | ScheduleTrigger | WebhookTrigger | TelegramTrigger;
+/** Read-only GitHub JSON probe. Matches create a notification draft in Needs-you. */
+export interface WatchTrigger {
+  kind: 'watch';
+  rrule: string;
+  /** argv, including gh; no shell, arbitrary flags or credentials. */
+  command: string[];
+  condition: { path: string; equals: string | number | boolean | null };
+  repeat: boolean;
+}
+
+export type AutomationTrigger = WatchTrigger | GithubIssuesTrigger | CiRedTrigger | ScheduleTrigger | WebhookTrigger | TelegramTrigger;
 
 /** `repos: ['*']` = every repo in the standing grant (resolved at firing time). */
 export const AUTOMATION_ALL_GRANT_REPOS = '*' as const;
@@ -188,8 +198,6 @@ export const AUTOMATION_ID_PATTERN = /^au_[a-z0-9][a-z0-9-]{1,47}$/;
 export const AUTOMATION_FIRING_ID_PATTERN = /^af_\d{8}T\d{6}_[a-z0-9]{6}$/;
 export const AUTOMATION_REPO_PATTERN = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 export const AUTOMATION_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 :._/+-]{0,49}$/;
-/** A playbook ref as src/core/playbooks writes it: `id` or `id@vN` (validate.ts canonicalises `!macro` / `id@N`). */
-export const AUTOMATION_PLAYBOOK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}(?:@v\d{1,6})?$/;
 
 // ---------------------------------------------------------------------------
 // Firings

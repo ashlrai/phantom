@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 
 import { adapterFor, type VerseAdapter, type VerseAdapterTurnContext, type VerseParsedEvent } from '../src/core/verse/adapters/index.js';
 import { createVerseEngine, preflightLocalEndpoint, VerseError, buildTurnEnv, type VerseEngineHandle, type VerseEngineOptions, type VerseSeatLaunch } from '../src/core/verse/session-engine.js';
@@ -110,7 +111,9 @@ if (argv[0] === 'exec') {
     out({ type: 'message_stop' });
     process.exit(0);
   }
-  out({ type: 'system', subtype: 'init', session_id: sid, model: flag('--model') });
+  // MODELSWITCH: the CLI reports running a model other than --model — an
+  // automatic switch the engine must log and surface.
+  out({ type: 'system', subtype: 'init', session_id: sid, model: prompt.includes('MODELSWITCH') ? 'claude-haiku-4-5' : flag('--model') });
   if (prompt.includes('HANG')) return hang();
   if (prompt.includes('FAIL')) return fail();
   // NOCONV: the vendor conversation is gone — exactly what claude prints when
@@ -376,7 +379,8 @@ describe('sendTurn — claude via account launcher', () => {
     const events = await untilTurnDone(engine, created.id);
     const types = events.map((e) => e.type);
     expect(types[0]).toBe('user-message');
-    expect(types[1]).toBe('turn-started');
+    expect(events[1]).toMatchObject({ type: 'assistant-status', phase: 'acknowledgement', turnId });
+    expect(types[2]).toBe('turn-started');
     expect(types).toContain('text-delta');
     expect(types).toContain('assistant-message');
     expect(types).toContain('usage');
@@ -450,6 +454,27 @@ describe('sendTurn — claude via account launcher', () => {
     const env = buildTurnEnv({ ANTHROPIC_AUTH_TOKEN: 'ollama', MY_SECRET: 'x' }, { PATH: '/bin', HOME: '/h', AWS_SECRET_ACCESS_KEY: 'k', GITHUB_PAT: 'p' });
     expect(env).toEqual({ PATH: '/bin', HOME: '/h', ANTHROPIC_AUTH_TOKEN: 'ollama' });
   });
+
+  it('an automatic model switch is noticed live and written to the log with both ids', async () => {
+    const logged: string[] = [];
+    engine.close();
+    engine = createEngine({ root, killGraceMs: 200, log: (level, message) => { logged.push(`${level}:${message}`); } });
+    const created = engine.createSession({ projectPath: project, seatId: 'claude-max', model: 'claude-opus-5' }, nativeLaunch(CLAUDE_SEAT));
+    const statuses: VerseEvent[] = [];
+    // Transient `status` events reach subscribers with the last persisted seq.
+    const off = engine.subscribe(created.id, 0, (event) => { if (event.type === 'status') statuses.push(event); });
+    const done = untilTurnDone(engine, created.id);
+    engine.sendTurn(created.id, 'MODELSWITCH please');
+    await done;
+    off();
+
+    const switchNotice = statuses.filter((e) => e.type === 'status' && e.kind === 'model-switch');
+    expect(switchNotice).toHaveLength(1);
+    expect((switchNotice[0] as { message: string }).message)
+      .toBe('requested claude-opus-5, running claude-haiku-4-5');
+    // The durable log line carries the same original→new pair.
+    expect(logged).toContain(`warn:session ${created.id}: model switch — requested claude-opus-5, running claude-haiku-4-5`);
+  });
 });
 
 describe('sendTurn — local via plain claude on PATH', () => {
@@ -468,7 +493,7 @@ describe('sendTurn — local via plain claude on PATH', () => {
     mkdirSync(installDir, { recursive: true });
     const installed = join(installDir, 'claude');
     const fixture = join(binDir, 'claude');
-    writeFileSync(fixture, fakeCliSource(side).replace('#!/usr/bin/env node', `#!${process.execPath}`), { mode: 0o700 });
+    writeFileSync(fixture, fakeCliSource(side).replace('#!/usr/bin/env node', nodeFixtureHeader().trimEnd()), { mode: 0o700 });
     symlinkSync(fixture, installed);
     process.env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
     try {
@@ -737,8 +762,9 @@ process.exit(1);
     try {
       const events = restarted.getEvents(created.id);
       const types = events.map((e) => e.type);
-      expect(types.slice(-2)).toEqual(['error', 'turn-done']);
-      expect(events[events.length - 2]).toMatchObject({ type: 'error', turnId: 'orphan-turn', message: 'turn interrupted: server restarted' });
+      expect(types.slice(-3)).toEqual(['error', 'assistant-status', 'turn-done']);
+      expect(events[events.length - 3]).toMatchObject({ type: 'error', turnId: 'orphan-turn', message: 'turn interrupted: server restarted' });
+      expect(events[events.length - 2]).toMatchObject({ type: 'assistant-status', phase: 'result', turnId: 'orphan-turn' });
       expect(events[events.length - 1]).toMatchObject({ type: 'turn-done', turnId: 'orphan-turn', ok: false });
       const after = restarted.getSession(created.id)!;
       expect(after.status).toBe('error');

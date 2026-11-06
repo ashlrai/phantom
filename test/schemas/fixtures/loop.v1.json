@@ -1,0 +1,23 @@
+{
+  "schema": "loop.v1",
+  "generated_at": "2026-10-26T12:00:00.000Z",
+  "summary": {
+    "goalsAdvanced": 1,
+    "milestonesAdvanced": 1,
+    "proposalsFiled": 1,
+    "goalsDone": 0,
+    "daemonFallback": false,
+    "killSwitchTripped": false,
+    "staleLanesRecovered": 0,
+    "goalActivity": [
+      {
+        "goalId": "schema-registry",
+        "objective": "Validate versioned telemetry contracts",
+        "fractionDone": 0.5,
+        "milestoneTitle": "Add the registry",
+        "proposalFiled": true,
+        "goalCompleted": false
+      }
+    ]
+  }
+}

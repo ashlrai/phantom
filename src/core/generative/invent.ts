@@ -13,9 +13,9 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AshlrConfig, WorkItem } from '../types.js';
-import { resolveFrontierJudgeClient } from '../fleet/manager.js';
+import type { FrontierJudgeClient } from '../fleet/manager.js';
 import { ecosystemSummary, northStarDocSummary } from '../ecosystem/map.js';
-import { scoreItem } from '../portfolio/backlog.js';
+import { scoreItem } from '../portfolio/scoring.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 // ---------------------------------------------------------------------------
@@ -109,8 +109,119 @@ function recordInvented(ledger: InventedLedger, repo: string, title: string): vo
 
 type CompleteFn = (system: string, user: string) => Promise<string>;
 
-function buildInventComplete(cfg: AshlrConfig): CompleteFn | null {
-  const client = resolveFrontierJudgeClient(cfg);
+export interface PlanningClientInventory {
+  id: string;
+  engine: string;
+  model: string | null;
+  /** Adapter resolved, not proof of authentication, capacity or a completed call. */
+  available: boolean;
+  reason: string;
+}
+
+interface PlanningCandidate {
+  inventory: PlanningClientInventory;
+  client: FrontierJudgeClient | null;
+}
+
+/**
+ * Planning shares the guarded judge adapters, but searches every CLI lane when
+ * auto's Claude-first resolver falls back to local. It never launches a CLI,
+ * inspects credentials or changes CODEX_HOME during discovery. In particular,
+ * a Codex pinned-seat refusal is preserved, not retried with personal auth.
+ * Keep this in the existing planning module: the authority import closure is
+ * reviewed separately and must not grow as a side effect of this repair.
+ */
+async function planningCandidates(cfg: AshlrConfig): Promise<PlanningCandidate[]> {
+  // Prompt inspection and injected completions need no runtime discovery.
+  const [{ resolveFrontierJudgeClient }, { reviewModelFamily }, { enginePermitted, isLoopbackEndpoint }, { peekBackendAvailability }] = await Promise.all([
+    import('../fleet/manager.js'),
+    import('../fleet/reviewer-independence.js'),
+    import('../policy/local-only.js'),
+    import('../fabric/resource-monitor.js'),
+  ]);
+  const foundry = cfg.foundry as Record<string, unknown> | undefined;
+  const configured = foundry?.['managerJudgeEngine'];
+  const explicit = typeof configured === 'string' && configured !== 'auto';
+  const primary = explicit ? resolveFrontierJudgeClient(cfg) : null;
+  const localEndpoint = cfg.models?.ollama ?? 'http://localhost:11434';
+  const localAllowed = isLoopbackEndpoint(localEndpoint);
+  const candidates: PlanningCandidate[] = [];
+  for (const engine of ['codex', 'grok-cli', 'claude'] as const) {
+    let client: FrontierJudgeClient | null = null;
+    const permitted = enginePermitted(engine, cfg).permitted;
+    const availability = peekBackendAvailability(engine);
+    const available = !['exhausted', 'unreachable', 'throttled'].includes(availability ?? '');
+    if ((!explicit || configured === engine) && permitted && available) {
+      client = explicit ? primary : resolveFrontierJudgeClient({
+        ...cfg,
+        foundry: { ...cfg.foundry, managerJudgeEngine: engine } as AshlrConfig['foundry'],
+      });
+      // A guarded resolver can return a local fallback. Never label it Codex
+      // or Claude, or turn local planning into frontier merge evidence.
+      const family = reviewModelFamily(client?.model);
+      const matches = engine === 'codex' ? family === 'openai'
+        : engine === 'claude' ? family === 'claude'
+          : client?.model?.startsWith('grok-cli:') === true && family === 'xai';
+      if (!matches) client = null;
+    }
+    candidates.push({
+      inventory: {
+        id: engine, engine, model: client?.model ?? null, available: client !== null,
+        reason: explicit && configured !== engine ? 'not-selected'
+          : !permitted ? 'policy-refused' : !available ? 'resource-unavailable'
+            : client ? 'adapter-resolved' : 'unavailable-or-not-admitted',
+      },
+      client,
+    });
+  }
+  // Preserve configured adapters, including model identities unknown to the
+  // classifier. The existing resolver remains the authority for their use.
+  // Its local adapter speaks OpenAI chat completions, including a loopback
+  // oMLX endpoint configured through models.ollama; no cloud key is introduced.
+  const localCandidate = explicit ? primary : localAllowed ? resolveFrontierJudgeClient({
+    ...cfg,
+    foundry: { ...cfg.foundry, managerJudgeEngine: 'local' } as AshlrConfig['foundry'],
+  }) : null;
+  const localFamily = reviewModelFamily(localCandidate?.model);
+  const isLocal = localFamily !== 'claude' && localFamily !== 'openai' && localFamily !== 'xai';
+  const local = isLocal && localAllowed ? localCandidate : null;
+  candidates.push({
+    inventory: {
+      id: 'local', engine: 'local', model: local?.model ?? null, available: local !== null,
+      reason: !localAllowed ? 'non-loopback-refused' : local ? 'adapter-resolved' : 'unavailable-or-not-selected',
+    },
+    client: local,
+  });
+  return candidates;
+}
+
+/** Metadata only. This does not claim live account authentication or capacity. */
+export async function listFrontierClients(cfg: AshlrConfig): Promise<PlanningClientInventory[]> {
+  return (await planningCandidates(cfg)).map(({ inventory }) => inventory);
+}
+
+/** JEV advises only among adapters the existing resolver already permits. */
+export async function resolvePlanningClient(cfg: AshlrConfig): Promise<FrontierJudgeClient | null> {
+  const candidates = (await planningCandidates(cfg)).filter(
+    (candidate): candidate is PlanningCandidate & { client: FrontierJudgeClient } => candidate.client !== null,
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!.client;
+  const { adviseResourceChoice } = await import('../decide/resource-choice.js');
+  const digest = createHash('sha256').update(JSON.stringify(candidates.map(({ inventory }) => inventory))).digest('hex');
+  const chosen = await adviseResourceChoice(candidates.map(({ inventory }) => ({
+    id: inventory.id, taskId: 'planning', seatId: inventory.id,
+    engine: inventory.engine, model: inventory.model, taskKind: 'goal',
+    headroomPercent: null, resetAt: null, durationP75Ms: null,
+    reason: inventory.reason,
+  })), { digest, cfg });
+  // No credentials, prompts or personal profile paths are sent to JEV. A
+  // missing or invalid advisory decision retains the deterministic CLI order.
+  return (candidates.find(({ inventory }) => inventory.id === chosen) ?? candidates[0])!.client;
+}
+
+async function buildInventComplete(cfg: AshlrConfig): Promise<CompleteFn | null> {
+  const client = await resolvePlanningClient(cfg);
   if (!client) return null;
   return client.complete;
 }
@@ -334,9 +445,9 @@ export async function inventWorkItems(
   const n = opts.n ?? DEFAULT_N;
 
   try {
-    const complete = opts._testComplete ?? buildInventComplete(cfg);
+    const complete = opts._testComplete ?? await buildInventComplete(cfg);
     if (!complete) {
-      console.error('[invent] no frontier client available — check claude CLI or Ollama');
+      console.error('[invent] no planning client resolved; run ashlr daemon health --json');
       return [];
     }
 

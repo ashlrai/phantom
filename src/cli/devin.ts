@@ -36,6 +36,7 @@ import type { DevinConnectResult, DevinMessageResult } from '../core/devin/servi
 import { localWhen, readOriginRepo } from './cloud.js';
 import { isTty } from './ui.js';
 import { rejectUnknownOptions } from './args.js';
+import type { DevinBusRequest } from '../core/fleet/bus-adapters/devin.js';
 
 const USAGE = `ashlr devin — Devin (Cognition) sessions that deliver PRs through the standing gates
 
@@ -63,6 +64,11 @@ Usage:
       Read each live session's status and ACUs, and ask GitHub for its PR.
   ashlr devin message <task-id> "<text>"
       Reply to a Devin session that is waiting for you.
+  ashlr devin bus --inbox <file> --outbox <file> [--cwd <dir>] [--model <id>]
+                  [--stall-window-ms <ms>] [--timeout-ms <ms>]
+      Reply to one untrusted inbox using the local Devin CLI. Requires current native free-model admission.
+      Only a successful reply replaces the outbox. This does not enroll or dispatch a fleet lane.
+      Select a currently qualified free model with --model; historical SWE-2 promotion IDs do not admit execution.
   ashlr devin budget [--acu N] [--spent N] [--per-session N] [--per-day N] [--reserve N] [--pause-at PCT]
                      [--usd-per-acu N] [--max-concurrent N] [--max-per-day N]
                      [--fleet-concurrent N] [--fleet-per-day N] [--json]
@@ -75,6 +81,7 @@ Dollar figures are estimates; ACUs come from Devin's own readings.`;
 // ---------------------------------------------------------------------------
 
 export interface DevinCliDeps {
+  runBus?: (request: DevinBusRequest) => Promise<{ bytes: number }>;
   connect: (input: { key: string; orgId: string | null }) => Promise<DevinConnectResult>;
   disconnect: () => Promise<{ removedKey: boolean }>;
   selectHumanSeat?: (email: string) => Promise<{ email: string; selectedAt: string }>;
@@ -107,6 +114,7 @@ async function defaultDeps(): Promise<DevinCliDeps> {
     import('../core/devin/tracker.js'),
   ]);
   return {
+    runBus: async (request) => (await import('../core/fleet/bus-adapters/devin.js')).runDevinBusAdapter(request),
     connect: (input) => service.connectDevin(input),
     disconnect: () => service.disconnectDevin(),
     selectHumanSeat: (email) => service.selectDevinHumanSeat(email),
@@ -479,6 +487,40 @@ function cmdBudget(deps: DevinCliDeps, args: string[]): number {
   return 0;
 }
 
+async function cmdBus(deps: DevinCliDeps, args: string[]): Promise<number> {
+  const inboxPath = takeOption(args, '--inbox');
+  const outboxPath = takeOption(args, '--outbox');
+  const cwd = takeOption(args, '--cwd') ?? deps.cwd();
+  const model = takeOption(args, '--model');
+  const stallWindowMs = takeNumber(args, '--stall-window-ms', { whole: true, safe: true });
+  const timeoutMs = takeNumber(args, '--timeout-ms', { whole: true, safe: true });
+  rejectLeftovers(args);
+  if (!inboxPath || !outboxPath) throw new UsageError('Pass --inbox <file> and --outbox <file>.');
+  if (stallWindowMs === 0 || timeoutMs === 0 ||
+    (stallWindowMs !== null && stallWindowMs > 2_147_483_647) ||
+    (timeoutMs !== null && timeoutMs > 2_147_483_647) ||
+    (model !== null && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(model))) throw new UsageError('Invalid model or timeout.');
+  const request: DevinBusRequest = {
+    inboxPath, outboxPath, cwd,
+    ...(model !== null ? { model } : {}),
+    ...(stallWindowMs !== null ? { stallWindowMs } : {}),
+    ...(timeoutMs !== null ? { timeoutMs } : {}),
+  };
+  const run = deps.runBus ?? (await import('../core/fleet/bus-adapters/devin.js')).runDevinBusAdapter;
+  const controller = new AbortController();
+  const stop = (): void => controller.abort();
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  try {
+    const { bytes } = await run({ ...request, signal: controller.signal });
+    deps.out(`Devin bus reply delivered (${bytes} bytes).`);
+    return 0;
+  } finally {
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -502,6 +544,7 @@ function clean(text: string): string {
 const HELP_VALUE_OPTIONS = new Set([
   '--acu', '--fleet-concurrent', '--fleet-per-day', '--max-concurrent', '--max-per-day', '--pause-at', '--per-day',
   '--per-session', '--reserve', '--spent', '--usd-per-acu', '--base', '--email', '--org', '--repo', '--title',
+  '--inbox', '--outbox', '--cwd', '--model', '--stall-window-ms', '--timeout-ms',
 ]);
 
 function wantsHelp(args: readonly string[]): boolean {
@@ -522,7 +565,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
     (sub ? print : printErr)(USAGE);
     return sub ? 0 : 2;
   }
-  const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget'];
+  const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget', 'bus'];
   if (!known.includes(sub)) {
     printErr(`Unknown devin command "${sub}".\n\n${USAGE}`);
     return 2;
@@ -545,6 +588,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
   const deps: DevinCliDeps = injected && isComplete(injected) ? injected : { ...(await defaultDeps()), ...injected };
   try {
     switch (sub) {
+      case 'bus': return await cmdBus(deps, args);
       case 'connect': return await cmdConnect(deps, args);
       case 'disconnect': return await cmdDisconnect(deps, args);
       case 'seat': return await cmdSeat(deps, args);

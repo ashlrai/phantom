@@ -80,7 +80,7 @@ function makeStubHost(overrides?: Partial<PluginHost>): PluginHost {
 // 1. readManifest returns ok:true
 // ---------------------------------------------------------------------------
 
-describe('manifest validation', () => {
+describe('manifest validation (template plugin)', () => {
   it('readManifest returns ok:true for the reference plugin', () => {
     const result = readManifest(PLUGIN_DIR);
     expect(result.ok).toBe(true);
@@ -140,7 +140,7 @@ describe('manifest validation', () => {
 // 3. activate() with stub host contributes exactly one template
 // ---------------------------------------------------------------------------
 
-describe('plugin activate()', () => {
+describe('plugin activate() (template plugin)', () => {
   it('returns exactly one template contribution', async () => {
     // Vitest transpiles .ts in-process; import the source via the .js specifier
     // (same pattern as m58 uses for the scanner plugin).

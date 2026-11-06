@@ -26,6 +26,12 @@ See `desktop/README.md` for full setup, build, and open-item details, and
 - The webview only ever loads `http://127.0.0.1:7777`; the CSP and the
   init-script origin check both pin it there.
 
+## Watch and steer
+
+Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append to
+`~/.ashlr-runs/leader/MASON-INBOX.md`. Updates and kill switches are covered in
+[Watch and steer the fleet](docs/VERSE.md#watch-and-steer-the-fleet-330).
+
 ## Desktop control ("computer use", macOS)
 
 Chat seats can drive apps on this Mac through the `computer_*` tools
@@ -63,6 +69,14 @@ macOS build (from the repo root): `npm run build:binary` →
 `node desktop/scripts/prepare-sidecar.mjs` → `cd desktop && npm run icons`
 (once) → `npm run build:debug` or `npm run build`. The `.app` lands in
 `desktop/src-tauri/target/{debug,release}/bundle/macos/Phantom.app`.
+
+Nightly dev build (scheduled master CI): `npm run build:desktop:nightly` runs
+the whole pipeline reproducibly and packs an **unsigned** debug `Phantom.app`
+tarball plus provenance manifest under `desktop/dist-nightly/` — macOS only, no
+release output, 7-day artifact retention. See the
+[nightly section](desktop/README.md#nightly-dev-build-scheduled-master-ci) of
+`desktop/README.md` for the job contract and
+`node scripts/build-desktop-nightly.mjs --check` for a preflight-only plan.
 
 Current releases provide the signed `Phantom_<version>_aarch64.app.tar.gz`
 archive and paired `latest.json`, rather than a DMG. The historical 3.27.0
@@ -107,3 +121,27 @@ quarantine above is active.
 
 **This directory is entirely self-contained.**  It does not modify `src/`,
 `package.json`, or any other file in the repo root.
+
+
+## Background update discovery and local status
+
+The native shell checks signed releases every 15 minutes. A polling gap over
+30 seconds triggers a check after wake, including while the window is hidden.
+Checks use the existing background download and minisign verification path.
+Disabled updates stay disabled and concurrent checks are coalesced.
+
+Copy and paste: `phm app update status --json`. For a readable report, run
+`phm app update status`. This inspects the remembered local stage through the
+installed consumer policy without downloading or applying an update.
+`available` is the inspected stage version. `deferredReason` preserves host
+admission holds. Lease counts cover all host execution leases, including
+unknown leases; they do not identify sidecar ownership. `current` and
+`runningJobs` are null because app identity and attached job IDs are not yet
+exported. Missing or unsafe local status returns exit 1, never a false current
+or idle result. Invalid arguments return exit 2.
+
+Automatic relaunch remains unavailable: the installed consumer requires
+authority Stop and zero execution leases and requests an operator restart.
+This change preserves those gates. Daemon-specific admission, bounded
+sidecar-job deferral in the app, and automatic relaunch need a coordinated
+host installer change before seamless application can ship.

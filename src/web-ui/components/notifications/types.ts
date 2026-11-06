@@ -15,8 +15,6 @@ import type { SourceQuality } from '../../data/api-types.js';
 
 export type NotificationSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
-export const SEVERITY_ORDER: NotificationSeverity[] = ['critical', 'high', 'medium', 'low', 'info'];
-
 export function severityToTone(severity: NotificationSeverity): Tone {
   switch (severity) {
     case 'critical':
@@ -40,7 +38,8 @@ export type NotificationCategory =
   | 'daemon-health'
   | 'proposal'
   | 'run'
-  | 'log-source';
+  | 'log-source'
+  | 'fleet';
 
 export const NOTIFICATION_CATEGORY_LABEL: Record<NotificationCategory, string> = {
   'action-required': 'Action required',
@@ -51,6 +50,7 @@ export const NOTIFICATION_CATEGORY_LABEL: Record<NotificationCategory, string> =
   proposal: 'Proposals',
   run: 'Runs',
   'log-source': 'Log source',
+  fleet: 'Fleet on this Mac',
 };
 
 export interface AppNotification {
@@ -65,8 +65,11 @@ export interface AppNotification {
   detail: string;
   /** ISO timestamp of the underlying event, when known; falls back to first-seen. */
   ts: string;
-  /** Hash-router path to jump straight to the relevant view. */
+  /** Hash-router path or absolute workbench deep link to the relevant view. */
   actionHref?: string;
+  /** An action that has no URL form at all — switching the console's
+   * surface, say — rendered as a button instead of a link when present. */
+  actionRun?: () => void;
   actionLabel?: string;
   /** Present when the notification is itself ABOUT degraded/unknown source
    * data (e.g. "daemon state unknown") — distinct from Epistemic's per-field

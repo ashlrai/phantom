@@ -230,6 +230,9 @@ export async function distillAndPersist(
     /** When true, persist distilled playbooks to the genome hub. Default false
      *  (report-only — no genome write, no future-agent behaviour change). */
     persist?: boolean;
+    /** RQ-DAEMONTICK-UNBLOCK: the calling tick phase's signal — aborting skips
+     *  the label-priming model call. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<PlaybookResult> {
   // 1. Read recent swarms (READ-ONLY, BOUNDED).
@@ -243,7 +246,10 @@ export async function distillAndPersist(
   // 2. Deterministic distillation (classifyGoal consults Jev labels primed
   //    here in one batched call; unkeyed, the keyword table decides).
   try {
-    await primeTaskClasses(swarms.map((s) => s?.goal), { cfg });
+    await primeTaskClasses(swarms.map((s) => s?.goal), {
+      cfg,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
   } catch {
     /* the keyword table decides */
   }

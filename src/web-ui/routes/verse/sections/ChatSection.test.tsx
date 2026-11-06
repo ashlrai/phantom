@@ -30,6 +30,7 @@ import { getVerseUiState, openVerseSession, requestVerseCommand, resetVerseUi, V
 import { resetCommandBus, runCommand } from '../shell/command-bus.js';
 import { mockCompactViewport, mockViewport } from '../shell/viewport.test-support.js';
 import { getDockSnapshot, requestTerminal, resetDockStore } from '../dock/dock-store.js';
+import { resetAutoOpenForTests } from '../dock/fleet-workspace-auto.js';
 import { setFocusMode } from '../shell/focus-mode.js';
 import { resetLocalSeen } from '../chat/use-chat-activity.js';
 import { CHAT_PANEL_RANGES, CHAT_PANEL_SIZING_KEY, resetChatPanelSizing } from '../chat-panel-sizing.js';
@@ -60,6 +61,7 @@ beforeEach(() => {
   resetVerseStore();
   resetVerseUi();
   resetDockStore();
+  resetAutoOpenForTests();
   resetLocalSeen();
   resetCommandBus();
   resetChatPanelSizing();
@@ -75,6 +77,20 @@ afterEach(() => {
 });
 
 describe('ChatSection bootstrap', () => {
+  it('opens the fleet workspace from a closed dock when workers are running', async () => {
+    const { fetch } = verseFetch();
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/verse/fleet/runs') {
+        return Promise.resolve(new Response(JSON.stringify({ workers: [{ job: 'worker' }], leaders: [] }), { headers: { 'Content-Type': 'application/json' } }));
+      }
+      return fetch(input, init);
+    }));
+    expect(getDockSnapshot().state.open).toBe(false);
+    mount();
+    await screen.findByText('Fleet is running on this Mac. Opened the fleet workspace.');
+    expect(getDockSnapshot().state).toMatchObject({ open: true, active: 'fleet-hub', splitWith: 'fleet-lanes', tabs: ['fleet-hub', 'fleet-lanes', 'fleet-merges', 'fleet-inbox'] });
+  });
+
   it('settles selected sidebar activity from a matching streamed terminal without waiting for the activity poll', async () => {
     const { fetch, state } = verseFetch();
     const baseFetch = fetch as typeof globalThis.fetch;
@@ -446,7 +462,7 @@ describe('ChatSection layout', () => {
 
     // "+" adds Context; it is the ResourcesPanel minus the accounts.
     await user.click(within(dock).getByRole('button', { name: 'Add a pane' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Context' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Add a pane' })).getByRole('button', { name: 'Context' }));
     const context = screen.getByRole('complementary', { name: 'Dock: Context' });
     expect(within(context).getByRole('tab', { name: 'Context' })).toHaveAttribute('aria-selected', 'true');
     expect(await within(context).findByLabelText('Context efficiency')).toBeInTheDocument();
@@ -751,7 +767,7 @@ describe('ChatSection — context orchestration wiring', () => {
     // The Context pane is the dock's; open it the way ⌘\ + "+" would.
     await user.click(screen.getByRole('button', { name: 'Dock' }));
     await user.click(await screen.findByRole('button', { name: 'Add a pane' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Context' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Add a pane' })).getByRole('button', { name: 'Context' }));
     const efficiency = await screen.findByLabelText('Context efficiency');
     await waitFor(() => expect(within(efficiency).getByText('Peak context', { selector: 'dt' }).nextElementSibling).toHaveTextContent('50k'));
     expect(within(efficiency).getByText('Avg context / turn', { selector: 'dt' }).nextElementSibling).toHaveTextContent('40k');
@@ -906,7 +922,7 @@ describe('ChatSection — commands and keys (3.10)', () => {
     act(() => { runCommand('dock.toggle'); });
     const dock = await screen.findByRole('complementary', { name: 'Dock: Tasks' });
     await user.click(within(dock).getByRole('button', { name: 'Add a pane' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Context' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Add a pane' })).getByRole('button', { name: 'Context' }));
     await user.click(await screen.findByRole('button', { name: 'Accounts & capacity →' }));
     expect(getVerseUiState().section).toBe('apps');
   });
@@ -1115,9 +1131,9 @@ describe('ChatSection — the workbench (3.16)', () => {
   });
 
   it('toggles a registered pane with its OWN shortcut (a key the catalog does not have)', async () => {
-    const { registerPane } = await import('../panes/index.js');
+    const { registerPane, listPanes } = await import('../panes/index.js');
     const dispose = registerPane({
-      id: 'test-runner', title: 'Tests', icon: () => null, shortcut: 'mod+alt+t', needsSession: false,
+      id: 'test-runner', title: 'Tests', icon: () => null, shortcut: 'mod+alt+z', needsSession: false,
       component: () => <p>test runner body</p>,
     });
     try {
@@ -1125,11 +1141,12 @@ describe('ChatSection — the workbench (3.16)', () => {
       vi.stubGlobal('fetch', fetch);
       mount();
       await screen.findByRole('navigation', { name: 'Chats' });
-      // The registry loads just after first paint; the key works once it is in.
-      await waitFor(() => {
-        fireEvent.keyDown(document.body, { key: 't', code: 'KeyT', ctrlKey: true, altKey: true });
-        expect(getDockSnapshot().state).toMatchObject({ open: true, active: 'test-runner' });
-      });
+      // Check registration before dispatch: a collision must fail rather than
+      // repeatedly firing a different pane's shortcut inside waitFor.
+      expect(listPanes().find((pane) => pane.id === 'test-runner')?.shortcut).toBeTruthy();
+      await act(async () => { await Promise.resolve(); });
+      fireEvent.keyDown(document.body, { key: 'z', code: 'KeyZ', ctrlKey: true, altKey: true });
+      expect(getDockSnapshot().state).toMatchObject({ open: true, active: 'test-runner' });
       expect(await screen.findByText('test runner body')).toBeInTheDocument();
     } finally {
       dispose();

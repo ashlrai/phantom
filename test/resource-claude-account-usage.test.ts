@@ -79,7 +79,11 @@ describe('display-only native usage parser', () => {
     { result: TEXT.replace(RESET, 'Sep 11 at 99pm (America/New_York)') },
     { result: TEXT.replace('2% used', '2% used\u001b[31m') },
   ])('rejects unsupported, incomplete or inference-bearing payload %#', (patch) => {
-    expect(parseClaudeNativeUsage(JSON.stringify(envelope(patch)))).toBeNull();
+    const parsed = parseClaudeNativeUsage(JSON.stringify(envelope(patch)));
+    // Oct 31 order: Claude removed this account's session limit; weekly-only is complete.
+    if (patch.result === TEXT.replace('Current session: 0% used\n', '')) {
+      expect(parsed).toEqual(parseClaudeNativeUsage(JSON.stringify(envelope()))!.slice(1));
+    } else expect(parsed).toBeNull();
   });
   it.each(['not json', 'null', '[]', 'x'.repeat(32769)])('rejects malformed or oversized payload %#', (raw) => {
     expect(parseClaudeNativeUsage(raw)).toBeNull();
@@ -152,14 +156,15 @@ describe('bounded version-gated report collection', () => {
   });
   it.each(CLAUDE_USAGE_VERIFIED_VERSIONS)('reads usage on every verified build (%s)', async (version) => {
     const { subprocess, authentication } = mocks();
+    const structured = version !== '2.1.257'; // 2.1.257 is the only legacy text build
     authentication.mockResolvedValue(status({ startedAt: OBSERVED }));
     subprocess.mockImplementation(async (argv, config) => {
       scratchDirs.push(config.cwd);
       return nativeResult(argv.at(-1) === '--version' ? `${version} (Claude Code)\n`
-        : version === '2.1.280' ? stream() : JSON.stringify(envelope()));
+        : structured ? stream() : JSON.stringify(envelope()));
     });
     const result = await probeClaudeAccountUsage(options());
-    expect(result).toMatchObject({ status: 'observed', reason: version === '2.1.280' ? 'usage-native-current' : 'usage-native-reported' });
+    expect(result).toMatchObject({ status: 'observed', reason: structured ? 'usage-native-current' : 'usage-native-reported' });
     expect(result.windows.map((w) => w.id)).toEqual(['five_hour', 'seven_day', 'seven_day_fable']);
   });
   it.each(['2.1.256 (Claude Code)', '2.1.258 (Claude Code)', '2.1.279 (Claude Code)', '2.1.281 (Claude Code)', '2.1.280', 'PRIVATE_VERSION'])('never sends /usage to unverified version %s', async (version) => {
@@ -334,7 +339,12 @@ describe('current structured quota-only usage', () => {
     ['expired reset', (f: any[]) => { f[1].usage_report.rate_limits.limits[1].resets_at = OBSERVED; }],
   ])('refuses %s without invented snapshot', (_name, mutate) => {
     const frames = usageFrames(); mutate(frames);
-    expect(parseClaudeNativeUsageStream(stream(frames), OBSERVED)).toBeNull();
+    const parsed = parseClaudeNativeUsageStream(stream(frames), OBSERVED);
+    // Oct 31 order: Claude removed this account's session limit; weekly-only is complete.
+    if (_name === 'missing session meter') {
+      expect(parsed).toEqual({ ...parseClaudeNativeUsageStream(stream(), OBSERVED),
+        windows: parseClaudeNativeUsageStream(stream(), OBSERVED)!.windows.slice(1) });
+    } else expect(parsed).toBeNull();
   });
   it.each([
     ['2028-02-29T12:00:00.123456Z', '2028-02-29T12:00:00.123Z'],
@@ -385,7 +395,7 @@ describe('current structured quota-only usage', () => {
 });
 
 describe('current native usage credits control',()=>{
-  it.each([false,true,null,0,'false',undefined])('retains only literal endpoint boolean %s',value=>{
+  it.each([false,true,null,0,'false',undefined])('retains only literal endpoint boolean %j',value=>{
     const frames=usageFrames();
     Object.assign(frames[1]!.usage_report!.rate_limits,{extra_usage:{is_enabled:value}});
     const parsed=parseClaudeNativeUsageStream(stream(frames),OBSERVED);

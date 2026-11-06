@@ -82,6 +82,22 @@ describe('VoiceInput — desktop (native engine)', () => {
     expect(String(start.session)).toMatch(/^v-/);
   });
 
+  it('keeps hands-free dictation active when oMLX falls back to Parakeet', async () => {
+    const sent = installBridge();
+    render(<><Box /><VoiceHud /></>);
+    fireEvent.click(screen.getByRole('button', { name: 'Start dictation' }));
+    const session = String(sent.find((m) => m.op === 'start')!.session);
+    const listening = { id: session, origin: 'button' as const, mode: 'prose' as const, phase: 'listening' as const, latched: true };
+    nativeEvent({ event: 'voice://state', state: state({ engine: { ...state().engine, id: 'whisper', label: 'local Whisper (oMLX)' }, session: listening }) });
+    expect(screen.getByText('Listening · local Whisper (oMLX)')).toBeInTheDocument();
+    nativeEvent({ event: 'voice://state', state: state({ session: listening }) });
+    expect(screen.getByText('Listening · local Parakeet')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(sent.at(-1)).toEqual({ op: 'stop', session });
+    nativeEvent({ event: 'voice://final', session, text: 'Recovered locally.', mode: 'prose', engine: 'parakeet', lexicon: 'none', latencyMs: 20, audioMs: 1000 });
+    await vi.waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Recovered locally.'));
+  });
+
   it('shows dimmed partials in the pill and inserts the final solid', () => {
     const sent = installBridge();
     render(<><Box /><VoiceHud /></>);

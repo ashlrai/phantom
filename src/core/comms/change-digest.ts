@@ -16,9 +16,9 @@
  * honest line per idle stretch ("Fleet idle 3d: autonomy is off — next step:
  * `ashlr authority setup`"). No judge κ / vision-% lines: they were noise.
  *
- * Every source is a LOCAL read (authority ledger, inbox, cloud task store,
- * capacity snapshot, Leader memos, standing policy) — no git, no network, no
- * model. Sources are injectable for tests. State (what was already reported)
+ * Merge activity comes from GitHub via gh; dispatch counts and other activity
+ * come from local stores. No model calls or new credential reads. Sources are
+ * injectable for tests. State (what was already reported)
  * lives in ~/.ashlr/comms/digest-state.json. Never throws.
  */
 
@@ -58,9 +58,16 @@ export interface DigestFacts {
   /** null = capacity snapshot unavailable (seat changes are then not judged). */
   seats: DigestSeat[] | null;
   autonomy: { on: boolean; mode: string | null };
+  /** GitHub could not be read, so the merge count is unknown (never "nothing merged"). */
+  mergeCountUnavailable: boolean;
+  /** Fleet running/queued from the runs dir; null = unknown. */
+  fleet: { running: number | null; queued: number | null; blocked?: number | null } | null;
+  evidence?: { sinceMs: number; asOfMs: number; truncated: boolean };
 }
 
 export interface DigestSources {
+  /** Live GitHub merges and dispatch counts for the explicit window. */
+  fleetTruth?: (sinceMs: number, nowMs?: number) => Promise<import('../fleet/fleet-truth.js').FleetTruth>;
   /** Ledger entries since `sinceIso` for the given kinds (oldest first). */
   ledger?: (sinceIso: string) => Promise<Array<{ kind: string; at: string; repo: string | null; data: unknown }>>;
   /** Proposals with status 'applied' (inbox). */
@@ -112,6 +119,10 @@ async function resolveSources(overrides: DigestSources): Promise<Required<Digest
     capacity: () => null,
     memos: () => [],
     autonomy: () => ({ on: false, mode: null }),
+    fleetTruth: async (sinceMs, nowMs) => {
+      const { getFleetTruth } = await import('../fleet/fleet-truth.js');
+      return getFleetTruth(sinceMs, { nowMs, fresh: true, githubOnly: true });
+    },
   };
   const safe = async (fn: () => Promise<void>): Promise<void> => {
     try {
@@ -172,14 +183,15 @@ function call<T>(fn: () => T, fallback: T): T {
 }
 
 /** Gather everything that happened since `sinceMs`. Never throws. */
-export async function collectDigestFacts(sinceMs: number, overrides: DigestSources = {}): Promise<DigestFacts> {
+export async function collectDigestFacts(sinceMs: number, overrides: DigestSources = {}, nowMs = Date.now()): Promise<DigestFacts> {
   const src = await resolveSources(overrides);
   const sinceIso = new Date(sinceMs).toISOString();
   const events: DigestEvent[] = [];
   const seen = new Set<string>();
   const push = (e: DigestEvent): void => {
-    if (seen.has(e.key)) return;
-    seen.add(e.key);
+    const id = e.key.toLowerCase();
+    if (seen.has(id)) return;
+    seen.add(id);
     events.push(e);
   };
 
@@ -255,6 +267,40 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
     });
   }
 
+  // Fleet merges from GitHub (dispatchd publish + auto-merge never touch the ledger).
+  // Same key shape as the ledger/inbox merges above, so a PR seen twice counts once.
+  let mergeCountUnavailable = false;
+  let fleet: DigestFacts['fleet'] = null;
+  let evidence: DigestFacts['evidence'];
+  try {
+    const truth = await src.fleetTruth(sinceMs, nowMs);
+    mergeCountUnavailable = truth.mergeCountState === 'unavailable';
+    fleet = { running: truth.running, queued: truth.queued, blocked: truth.blocked };
+    evidence = { sinceMs, asOfMs: truth.windowEndMs, truncated: truth.truncated };
+    // A successful GitHub query is authoritative; local observations are not extra merges.
+    if (!mergeCountUnavailable) {
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i]!.kind === 'merge') {
+          seen.delete(events[i]!.key.toLowerCase());
+          events.splice(i, 1);
+        }
+      }
+    }
+    for (const m of truth.merged) {
+      if (m.number <= 0) continue;
+      push({
+        key: `pr:${m.repo}#${m.number}:merged`,
+        kind: 'merge',
+        at: new Date(m.mergedAtMs).toISOString(),
+        text: `${m.repo}#${m.number}${m.title ? `: ${clip(m.title, 80)}` : ''}`,
+        url: m.url,
+        work: true,
+      });
+    }
+  } catch {
+    mergeCountUnavailable = true;
+  }
+
   // Cloud tasks that reached a terminal state.
   const terminal = new Set(['merged', 'closed', 'failed', 'expired']);
   for (const task of call(() => src.cloudTasks(), [])) {
@@ -319,7 +365,7 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
   }
 
   const autonomy = call(() => src.autonomy(), { on: false, mode: null });
-  return { events, seats, autonomy };
+  return { events, seats, autonomy, mergeCountUnavailable, fleet, evidence };
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +412,18 @@ function section(title: string, events: DigestEvent[]): string[] {
   return lines;
 }
 
+function digestEvidenceLines(facts: DigestFacts): string[] {
+  const lines: string[] = [];
+  if (facts.fleet) {
+    lines.push(`Dispatch: ${facts.fleet.running ?? 'unknown'} running, ${facts.fleet.queued ?? 'unknown'} ready, ${facts.fleet.blocked ?? 'unknown'} blocked`);
+  }
+  if (facts.evidence) {
+    const { sinceMs, asOfMs, truncated } = facts.evidence;
+    lines.push(`Source: gh search prs --owner ashlrai --merged; ~/.ashlr-runs (or ASHLR_RUNS_DIR)/queue/admission.json (or live workers) + queue/ready.tsv; as-of ${new Date(asOfMs).toISOString()}; window ${new Date(sinceMs).toISOString()}..${new Date(asOfMs).toISOString()}${truncated ? '; merge count is a lower bound (search cap)' : ''}`);
+  }
+  return lines;
+}
+
 export interface DigestPlan {
   /** Message to post, or null for silence. */
   text: string | null;
@@ -380,7 +438,11 @@ export interface DigestPlan {
 export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, nowMs: number): DigestPlan {
   const nowIso = new Date(nowMs).toISOString();
   const reported = new Set(prev?.reported ?? []);
-  const fresh = facts.events.filter((e) => !reported.has(e.key)).sort((a, b) => (a.at < b.at ? -1 : 1));
+  const fresh = facts.events
+    .map((event) => ({ event, time: Date.parse(event.at) }))
+    .filter(({ event, time }) => !reported.has(event.key) && Number.isFinite(time))
+    .sort((a, b) => a.time - b.time || (a.event.key < b.event.key ? -1 : a.event.key > b.event.key ? 1 : 0))
+    .map(({ event }) => event);
 
   // Seat transitions (only judged when we have a baseline and a snapshot).
   const seatLines: string[] = [];
@@ -396,9 +458,15 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
     }
   }
 
-  const workAt = fresh.filter((e) => e.work).map((e) => e.at).sort().pop();
-  const baselineActivity = prev?.lastActivityAt ?? new Date(nowMs - IDLE_MS).toISOString();
-  const lastActivityAt = workAt && workAt > baselineActivity ? workAt : baselineActivity;
+  const previousTime = prev ? Date.parse(prev.lastActivityAt) : nowMs - IDLE_MS;
+  // Recover a corrupt or future stored watermark conservatively from this check.
+  const baselineTime = Number.isFinite(previousTime) && previousTime <= nowMs ? previousTime : nowMs;
+  const baselineActivity = prev && baselineTime === previousTime ? prev.lastActivityAt : new Date(baselineTime).toISOString();
+  // Future events can be reported once, but do not establish activity until a
+  // real, non-future event arrives; otherwise clock skew could suppress idle indefinitely.
+  const work = fresh.filter((e) => e.work && Date.parse(e.at) <= nowMs).at(-1);
+  const activityAdvanced = work !== undefined && Date.parse(work.at) > baselineTime;
+  const lastActivityAt = activityAdvanced ? work.at : baselineActivity;
 
   const next: DigestState = {
     v: 1,
@@ -420,7 +488,7 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
     const reverts = [...by('revert'), ...by('revert-failed')];
     const cloud = by('cloud');
     const memos = by('memo');
-    const since = prev?.lastSentAt ?? prev?.lastCheckAt ?? null;
+    const since = prev ? (facts.evidence ? new Date(facts.evidence.sinceMs).toISOString() : prev.lastSentAt ?? prev.lastCheckAt) : null;
     const counts = [
       merges.length ? `${merges.length} merged` : null,
       opened.length ? `${opened.length} PR${opened.length === 1 ? '' : 's'} opened` : null,
@@ -428,8 +496,18 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
       cloud.length ? `${cloud.length} cloud task${cloud.length === 1 ? '' : 's'} finished` : null,
     ].filter(Boolean);
     const header = `Fleet update${since ? ` since ${since.slice(0, 16).replace('T', ' ')} UTC` : ' (last 24h)'}${counts.length ? `: ${counts.join(', ')}` : ''}`;
+    const windowMerges = facts.events.filter((event) => event.kind === 'merge');
+    const perRepo = new Map<string, number>();
+    for (const event of windowMerges) {
+      const repo = parsePrUrl(event.url)?.repo;
+      if (repo) perRepo.set(repo, (perRepo.get(repo) ?? 0) + 1);
+    }
     const lines = [
       header,
+      ...(facts.evidence ? [facts.mergeCountUnavailable
+        ? 'Window merges: unavailable (GitHub unreachable)'
+        : `Window merges: ${facts.evidence.truncated ? 'at least ' : ''}${windowMerges.length}${perRepo.size ? ` (${[...perRepo].sort(([a], [b]) => a.localeCompare(b)).map(([repo, count]) => `${repo}: ${count}`).join(', ')})` : ''}`] : []),
+      ...digestEvidenceLines(facts),
       ...section('Merged', merges),
       ...section('PRs opened', opened),
       ...section('Reverts', reverts),
@@ -441,7 +519,7 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
     if (!facts.autonomy.on && (opened.length > 0 || merges.length > 0)) lines.push(autonomyLine(facts.autonomy));
     next.lastSentAt = nowIso;
     // Activity resets the idle stretch.
-    if (workAt) next.idleNoticeFor = null;
+    if (activityAdvanced) next.idleNoticeFor = null;
     return { text: lines.join('\n'), reason: 'changes', next };
   }
 
@@ -450,10 +528,12 @@ export function planChangeDigest(prev: DigestState | null, facts: DigestFacts, n
     next.idleNoticeFor = lastActivityAt;
     next.lastSentAt = nowIso;
     const span = prev ? fmtDuration(idleFor) : '24h+';
-    const text = facts.autonomy.on
+    const text = facts.mergeCountUnavailable
+      ? `Fleet quiet ${span}: merge count unavailable (GitHub unreachable), no other activity recorded, check \`phm doctor\`.`
+      : facts.autonomy.on
       ? `Fleet idle ${span}: nothing merged, opened or finished with autonomy on (${facts.autonomy.mode ?? 'standing grant'}) — check \`phm doctor\`.`
       : `Fleet idle ${span}: autonomy is off — next step: \`phm authority setup\`.`;
-    return { text, reason: 'idle', next };
+    return { text: [text, ...digestEvidenceLines(facts)].join('\n'), reason: 'idle', next };
   }
 
   return { text: null, reason: prev ? 'unchanged' : 'first-run', next };
@@ -510,8 +590,8 @@ export async function runChangeDigest(opts: { nowMs?: number; sources?: DigestSo
   const nowMs = opts.nowMs ?? Date.now();
   try {
     const prev = readDigestState();
-    const sinceMs = prev ? Date.parse(prev.lastCheckAt) - OVERLAP_MS : nowMs - IDLE_MS;
-    const facts = await collectDigestFacts(Number.isFinite(sinceMs) ? sinceMs : nowMs - IDLE_MS, opts.sources);
+    const sinceMs = prev ? Math.max(nowMs - IDLE_MS, Date.parse(prev.lastSentAt ?? prev.lastCheckAt) - OVERLAP_MS) : nowMs - IDLE_MS;
+    const facts = await collectDigestFacts(Number.isFinite(sinceMs) ? sinceMs : nowMs - IDLE_MS, opts.sources, nowMs);
     const plan = planChangeDigest(prev, facts, nowMs);
     let requestId: string | null = null;
     if (plan.text) {

@@ -8,16 +8,20 @@ import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
 
 export const OPERATOR_DOCUMENTATION = Object.freeze([
-  'README.md', 'docs/README.md', 'docs/PHANTOM-BRAND.md', 'docs/QUICKSTART.md', 'docs/DEMO.md', 'docs/ARCHITECTURE.md',
+  'README.md', 'docs/README.md', 'docs/PHANTOM-BRAND.md', 'docs/QUICKSTART.md', 'docs/SELF-HOSTING.md', 'docs/DEMO.md', 'docs/ARCHITECTURE.md',
   'docs/COMPANIONS.md',
+  'docs/MEMORY-FOUNDATION.md', 'docs/MEMORY-EVALUATION.md',
   'docs/ASHLR-UNIVERSE.md', 'docs/RESOURCE-POOLS.md', 'docs/NORTH-STAR.md', 'docs/MISSION-OS.md',
   'docs/VERSE.md', 'docs/AUTONOMY-SETUP.md', 'docs/AUTOMATIC-OUTCOMES.md',
+  'docs/FLEET-API.md',
   'docs/RESIDENT-RUNTIME.md',
   'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
   'docs/AUTHORITY.md',
   'docs/STANDING-AUTHORITY.md',
   'docs/CLOUD.md',
   'docs/LEADER.md',
+  'docs/LEADER-NETWORK.md',
+  'docs/DISK-MAINT.md',
   'docs/DEVIN.md',
   'docs/VERSE-CONTEXT.md',
   'docs/VERSE-BROWSER.md',
@@ -29,6 +33,9 @@ const SOURCE_PREFIXES = Object.freeze([
   'https://github.com/ashlrai/phantom/blob/master/',
 ]);
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
+// The frozen 3.3.0 CHANGELOG record is hash-pinned by test/authority-release-truth.test.ts
+// and links a guide that was deliberately removed. Only that exact link is exempt.
+const FROZEN_DEAD_LINKS = Object.freeze({ 'CHANGELOG.md': Object.freeze(['docs/RUNTIME-FLEET-ACTIVATION.md']) });
 
 function inside(root, target) {
   const rel = relative(root, target);
@@ -156,11 +163,17 @@ export function checkDocumentation({ root, mode = 'source', entrypoints = OPERAT
         if (mode === 'package') continue;
         local = href.slice(sourcePrefix.length);
         base = canonicalRoot;
+      } else if (file === 'docs/FLEET-API.md' && /^\.\.\/src\/(?:[\w.-]+\/)*[\w.-]+(?:#[\w-]+)?$/u.test(href)
+        && !href.slice('../src/'.length).split('/').includes('..')) {
+        // The guide links to the checkout; source files are not in npm.
+        sourceLinks++;
+        if (mode === 'package') continue;
       } else if (/^[a-z][a-z\d+.-]*:/iu.test(href) || href.startsWith('//')) {
         externalLinks++;
         continue;
       } else {
         localLinks++;
+        if (FROZEN_DEAD_LINKS[file]?.includes(href)) continue;
       }
       try {
         const hash = local.indexOf('#');

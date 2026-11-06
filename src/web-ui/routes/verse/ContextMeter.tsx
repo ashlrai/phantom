@@ -28,27 +28,12 @@
  */
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import type { VerseContextMode, VerseEngine, VerseModelOption, VerseSession, VerseWindowSource } from '../../data/api-types.js';
-import {
-  budgetFor,
-  CACHE_IDLE_TTL_MS,
-  expansiveAdvice,
-  handoffAdvice,
-  hasExpansiveMode,
-  occupancy,
-  OCCUPANCY_DANGER,
-  OCCUPANCY_WARN,
-  type VerseHandoffAdvice,
-  type VerseOccupancyTone,
-} from '../../../core/verse/context-math.js';
+import { budgetFor, CACHE_IDLE_TTL_MS, expansiveAdvice, handoffAdvice, hasExpansiveMode, occupancy, type VerseHandoffAdvice, type VerseOccupancyTone } from '../../../core/verse/context-math.js';
 import { CODEX_EXPANSIVE_METERING_NOTE, formatContextWindow, windowSourceText, type SessionContextBudget } from './verse-model.js';
 import { dismissVerseAdvice, isVerseAdviceDismissed } from './verse-ui-store.js';
 import { formatTokens } from './verse-readouts.js';
 import { usedPercentTextWithOverflow } from './percent-text.js';
 import styles from './Workspace.module.css';
-
-/** Percent-of-compaction thresholds, re-exported so copy can quote them. */
-export const CONTEXT_WARN_PERCENT = Math.round(OCCUPANCY_WARN * 100);
-export const CONTEXT_DANGER_PERCENT = Math.round(OCCUPANCY_DANGER * 100);
 
 export const CONTEXT_MODE_LABEL: Record<VerseContextMode, string> = {
   standard: 'Standard',

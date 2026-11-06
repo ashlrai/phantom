@@ -95,3 +95,76 @@ export function autoSelectVerseMobile(win: Window = window): boolean {
   }
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Console layout: the one set of width breakpoints every shell shares
+// ---------------------------------------------------------------------------
+
+/**
+ * The width classes for the console shell (the Hub app and the scoped
+ * consoles). These are pure widths, unlike VERSE_MOBILE_MEDIA_QUERY: a
+ * narrowed desktop window should still collapse to the compact layout.
+ *
+ *   compact  < 720   phone: chrome stacks into a top strip, one column
+ *   regular  720–1919  laptop: sidebar plus the panel column
+ *   wide     ≥ 1920  external monitor: content centers and spreads
+ *
+ * CSS modules cannot read these numbers — media queries take literal
+ * pixels — so `syncConsoleLayout` resolves them through matchMedia and
+ * stamps the class on `<html>` as `data-console-layout`, which is what the
+ * stylesheets key off (`:root[data-console-layout='compact']`).
+ */
+export const CONSOLE_LAYOUT_BREAKPOINTS = Object.freeze({
+  /** Below this width: the compact (phone) layout. */
+  compact: 720,
+  /** At or above this width: the wide-monitor layout. */
+  wide: 1920,
+});
+
+export type ConsoleLayout = 'compact' | 'regular' | 'wide';
+
+export const CONSOLE_LAYOUT_QUERIES = Object.freeze({
+  compact: `(max-width: ${CONSOLE_LAYOUT_BREAKPOINTS.compact - 0.02}px)`,
+  wide: `(min-width: ${CONSOLE_LAYOUT_BREAKPOINTS.wide}px)`,
+});
+
+/** The class a width falls in (pure; for layout math and tests). */
+export function consoleLayoutForWidth(width: number): ConsoleLayout {
+  if (width < CONSOLE_LAYOUT_BREAKPOINTS.compact) return 'compact';
+  if (width < CONSOLE_LAYOUT_BREAKPOINTS.wide) return 'regular';
+  return 'wide';
+}
+
+function readConsoleLayout(win: Window): ConsoleLayout {
+  if (typeof win.matchMedia === 'function') {
+    if (win.matchMedia(CONSOLE_LAYOUT_QUERIES.compact).matches) return 'compact';
+    return win.matchMedia(CONSOLE_LAYOUT_QUERIES.wide).matches ? 'wide' : 'regular';
+  }
+  // Old webviews without matchMedia: the window's own width.
+  return win.innerWidth ? consoleLayoutForWidth(win.innerWidth) : 'regular';
+}
+
+/**
+ * Stamp the current class on `data-console-layout` and keep it true across
+ * resizes. Called once by main.tsx before the picked app renders, so every
+ * console surface shares the same breakpoints without importing matchMedia.
+ * Returns an unsubscribe function.
+ */
+export function syncConsoleLayout(
+  target: HTMLElement = document.documentElement,
+  win: Window = window,
+): () => void {
+  const apply = () => {
+    target.dataset.consoleLayout = readConsoleLayout(win);
+  };
+  apply();
+  if (typeof win.matchMedia !== 'function') {
+    win.addEventListener('resize', apply);
+    return () => win.removeEventListener('resize', apply);
+  }
+  const lists = [win.matchMedia(CONSOLE_LAYOUT_QUERIES.compact), win.matchMedia(CONSOLE_LAYOUT_QUERIES.wide)];
+  for (const list of lists) list.addEventListener('change', apply);
+  return () => {
+    for (const list of lists) list.removeEventListener('change', apply);
+  };
+}

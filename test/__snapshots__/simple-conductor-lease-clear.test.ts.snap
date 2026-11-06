@@ -1,0 +1,44 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ashlr loop leases (CLI wiring) > shows the fencing token and holder per lease (JSON snapshot) 1`] = `
+{
+  "ok": true,
+  "tasks": [
+    {
+      "attempts": 2,
+      "claimedAt": "2026-10-14T06:00:00.000Z",
+      "expiresAt": "2026-10-15T06:00:00.000Z",
+      "fencingToken": "12345678-1234-4123-8123-123456789abc",
+      "holder": {
+        "pid": 4242,
+      },
+      "id": "stuck-owned",
+      "leaseState": "expired",
+      "ownerPid": 4242,
+      "repo": "/tmp/enrolled-repo",
+    },
+    {
+      "attempts": 2,
+      "claimedAt": "2026-10-14T06:00:00.000Z",
+      "expiresAt": "2026-10-15T06:00:00.000Z",
+      "fencingToken": "12345678-1234-4123-8123-123456789abc",
+      "holder": null,
+      "id": "stuck-legacy",
+      "leaseState": "expired",
+      "ownerPid": null,
+      "repo": "/tmp/enrolled-repo",
+    },
+  ],
+}
+`;
+
+exports[`ashlr loop leases (CLI wiring) > shows the fencing token and holder per lease (text snapshot) 1`] = `
+"  stuck-owned  /tmp/enrolled-repo
+    lease expired · claimed 2026-10-14T06:00:00.000Z · holder pid 4242 · attempts 2
+    fencing token 12345678-1234-4123-8123-123456789abc
+  stuck-legacy  /tmp/enrolled-repo
+    lease expired · claimed 2026-10-14T06:00:00.000Z · holder unrecorded · attempts 2
+    fencing token 12345678-1234-4123-8123-123456789abc
+
+  Clear one with \`ashlr loop leases clear <task-id>\` (add --dry-run to preview)."
+`;

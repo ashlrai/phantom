@@ -1,0 +1,90 @@
+[
+  {
+    "schemaVersion": 1,
+    "kind": "spend",
+    "timestamp": "2026-10-26T12:00:00Z",
+    "repo": "ashlrai/phantom",
+    "taskId": "task-a",
+    "attemptId": "attempt-1",
+    "pool": "codex-personal",
+    "taskClass": "bugfix",
+    "engine": "codex",
+    "model": "fixture-model",
+    "tokensIn": 100,
+    "tokensOut": 40,
+    "costUsd": 0.25,
+    "costBasis": "reported",
+    "recordId": "spend-1"
+  },
+  {
+    "schemaVersion": 1,
+    "kind": "spend",
+    "timestamp": "2026-10-26T12:00:00Z",
+    "repo": "ashlrai/phantom",
+    "taskId": "task-a",
+    "attemptId": "attempt-2",
+    "pool": "codex-personal",
+    "taskClass": "bugfix",
+    "engine": "codex",
+    "model": "fixture-model",
+    "tokensIn": 50,
+    "tokensOut": 10,
+    "costUsd": 0.1,
+    "costBasis": "estimated",
+    "recordId": "spend-2"
+  },
+  {
+    "schemaVersion": 1,
+    "kind": "spend",
+    "timestamp": "2026-10-26T12:00:00Z",
+    "repo": "ashlrai/phantom",
+    "taskId": "task-b",
+    "attemptId": "attempt-1",
+    "pool": "codex-personal",
+    "taskClass": "docs",
+    "engine": "codex",
+    "model": "fixture-model",
+    "tokensIn": null,
+    "tokensOut": null,
+    "costUsd": null,
+    "costBasis": "unknown",
+    "recordId": "spend-3"
+  },
+  {
+    "schemaVersion": 1,
+    "kind": "merged",
+    "timestamp": "2026-10-26T13:00:00Z",
+    "repo": "ashlrai/phantom",
+    "prNumber": 42,
+    "taskIds": [
+      "task-a"
+    ]
+  },
+  {
+    "schemaVersion": 1,
+    "kind": "spend",
+    "timestamp": "2026-10-26T12:00:00Z",
+    "repo": "ashlrai/phantom",
+    "taskId": "task-a",
+    "attemptId": "attempt-1",
+    "pool": "codex-personal",
+    "taskClass": "bugfix",
+    "engine": "codex",
+    "model": "fixture-model",
+    "tokensIn": 100,
+    "tokensOut": 40,
+    "costUsd": 0.25,
+    "costBasis": "reported",
+    "recordId": "spend-1"
+  },
+  {
+    "schemaVersion": 1,
+    "kind": "merged",
+    "timestamp": "2026-10-26T13:00:00Z",
+    "repo": "ashlrai/phantom",
+    "prNumber": 42,
+    "taskIds": [
+      "task-a"
+    ]
+  }
+]

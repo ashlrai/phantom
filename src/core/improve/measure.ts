@@ -6,7 +6,7 @@
  * agent-written code does. Any failure yields an unknown measurement with a
  * reason; it never yields a number.
  */
-import { execFileSync } from 'node:child_process';
+import { credentialExecFileSync as execFileSync } from '../integrations/secrets.js';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

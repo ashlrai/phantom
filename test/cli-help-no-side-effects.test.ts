@@ -39,16 +39,20 @@
  * grammar is intentionally strict: they answer `--help` with their usage and
  * exit 2. They must still show usage and have no side effect.
  *
- * KNOWN_HELP_ACTS lists cases that still do not honor `--help` even with the
- * help-safety fixes merged. Each entry is asserted to STILL violate the
- * contract, so the list can only shrink: when a command is fixed this test
- * fails until its entry is deleted. Entries not in KNOWN_HELP_SIDE_EFFECTS are
- * still held to the no-side-effect assertion; entries in it are asserted to
- * still show their effect, so that list can only shrink too.
+ * KNOWN_HELP_ACTS listed cases that still did not honor `--help` even with the
+ * help-safety fixes merged. Every entry has since been fixed - the list is
+ * empty and the full contract now holds for every enumerated case. If a
+ * regression must be pinned temporarily, re-add an entry here (it will be
+ * asserted to STILL violate the contract, so the list can only shrink);
+ * KNOWN_HELP_SIDE_EFFECTS pins the subset whose `--help` writes, spawns or
+ * connects.
  *
  * Speed: the cases run concurrently from one beforeAll. CI builds dist/ before
  * the hermetic tests, so the compiled entry is used when every src module has
- * an up-to-date dist/ counterpart (about 45s for ~750 cases on 4 cores).
+ * an up-to-date dist/ counterpart (~45s for ~750 cases on 4-core CI; a slower
+ * spawn-heavy local box can take several minutes - each case is a real node
+ * spawn plus template-copy and snapshot work on the shared event loop, so the
+ * beforeAll budget below is generous rather than tuned to the fastest host).
  * Otherwise (a local edit without a rebuild) the source entry runs through tsx,
  * which is correct but about three times slower.
  *
@@ -90,10 +94,8 @@ const STRICT_VERB_PARSER = 'its option parser turns every unrecognized flag, --h
 
 /** Intentionally strict: exit 2 with usage, no side effects (still asserted). */
 const HELP_STRICT_REFUSALS: Record<string, string> = {
-  'config set': '`config set` takes exactly <key> <value>; anything else prints its usage line and exits 2 before the config is touched',
   team: 'the team dispatcher prints its Usage for anything that is not one of its verbs (src/cli/team.ts) and exits 2',
   improve: '`improve` only has the `propose` verb; anything else prints its Usage line and exits 2 (src/cli/improve.ts)',
-  'mcp install': 'install requires an explicit client target and refuses with its usage before reading or writing any client config',
   'desktop install': 'release installer with an exact grammar; an unrecognized token is a usage error before any download or stage',
   'desktop-update inspect': 'release updater with an exact grammar; an unrecognized token is a usage error before any stage is read',
   'desktop-update apply': 'release updater with an exact grammar; an unrecognized token is a usage error before any stage is applied',
@@ -102,7 +104,8 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'fleet automerge-canary status': 'auto-merge canary custody verbs accept only their exact flags; anything else prints the canary usage and exits 2',
   'fleet automerge-canary halt': 'auto-merge canary custody verbs accept only their exact flags; anything else prints the canary usage and exits 2',
   'fleet automerge-canary reconcile': 'auto-merge canary custody verbs accept only their exact flags; anything else prints the canary usage and exits 2',
-  skills: '`skills` only has the `audit` verb; anything else prints its Usage and exits 2',
+  skills: '`skills` only has the `list` and `audit` verbs; anything else prints its Usage and exits 2',
+  'skills list': '`list` is read-only but takes an exact grammar; a help flag is refused with the Usage and exit 2 before the corpus is read',
   'skills audit': 'audit requires <pack-path>; a flag is refused with its Usage before any pack is read',
   'local-runtime status': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'local-runtime start': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
@@ -113,43 +116,68 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'local-runtime uninstall': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'local-runtime logs': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'local-runtime resolve-model': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
+  'local-runtime missing-model-guard': `parseFlags in src/cli/local-runtime.ts: ${STRICT_VERB_PARSER}`,
   'openai-agents sessions': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents inspect': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'openai-agents turns': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
+  'config set editor --help': '`config set` refuses a help flag in either operand with its usage line (exit 2) instead of storing it',
+  'app update': 'src/cli/app.ts accepts only `update status [--json]`; anything else prints the usage line and exits 2 before the stage is inspected',
+  'app status': 'same exact grammar as `app update` (src/cli/app.ts); anything else prints the usage line and exits 2',
+  'fleet session': 'src/cli/fleet-session.ts requires `<job> --json` with an exact flag grammar; anything else prints its usage line and exits 2',
+  'verify': '`verify` only has the `change` verb with an exact flag grammar (src/cli/verify.ts); anything else prints the usage line and exits 2 before any worktree check runs',
+  'signals': '`signals` accepts only --json (src/cli/signals.ts); anything else prints the usage line and exits 2 before signals are read',
+  'channels add': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
+  'channels status': `rejectUnknownOptions in src/cli/args.ts: ${STRICT_VERB_PARSER}`,
+  'route': '`route` only has the `explain` verb and accepts only --json (src/cli/route.ts); anything else prints the usage line and exits 2',
+  'radar list': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before sources load',
+  'radar run': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before any fetch',
+  'radar diff': 'radar verbs take an exact grammar of only --json (src/cli/radar.ts); anything else prints the usage block and exits 2 before snapshots are read',
+  'agents bus': 'runAgentsCli accepts only `bus contract [--json]` (src/cli/agents-bus-contract.ts); anything else prints the contract help and exits 2',
+  'capacity publish': '`publish` accepts only --json (src/cli/capacity.ts); anything else prints the usage line and exits 2 before the publisher is built',
 };
 
 /**
- * Still broken with the help-safety fixes merged: the command runs (or treats
- * the flag as an operand) instead of printing usage. Asserted to STILL violate
- * the contract; delete an entry when its command is fixed. Value: what it does.
+ * Cases that still act on `--help` (or treat the flag as an operand) instead
+ * of printing usage. Asserted to STILL violate the contract; delete an entry
+ * when its command is fixed. Value: what it does. Currently empty - every
+ * enumerated command and verb honors `--help` / `-h`.
  */
-const KNOWN_HELP_ACTS: Record<string, string> = {
-  config: 'exit 0: prints the config',
-  'config get': 'exit 1: looks the flag up as a config key',
-  'config path': 'exit 0: prints the config path',
-  'config effective': 'exit 0: prints the effective config snapshot (read-only)',
-  setup: 'exit 1: runs the setup preflight ("setup incomplete")',
-  'mcp list': 'exit 0: discovers and lists MCP servers',
-  'mcp doctor': 'exit 0: probes MCP servers',
-  'mcp ecosystem': 'exit 0: scans PATH for ecosystem MCP servers',
-  'mcp run': 'exit 13: starts the MCP aggregation gateway on stdio',
-  'run show': 'exit 1: looks the flag up as a run id',
-  runs: 'exit 0: lists past runs',
-  'completions zsh': 'exit 0: prints the zsh completion script',
-  'completions bash': 'exit 0: prints the bash completion script',
-  version: 'exit 0: prints the version only',
-};
+const KNOWN_HELP_ACTS: Record<string, string> = {};
 
 /** Subset of KNOWN_HELP_ACTS whose `--help` still writes, spawns or connects. Value: the effect. */
-const KNOWN_HELP_SIDE_EFFECTS: Record<string, string> = {
-  'mcp list': 'spawns `which` for every ecosystem binary',
-};
+const KNOWN_HELP_SIDE_EFFECTS: Record<string, string> = {};
 
 /**
  * Deeper verbs the registry cannot enumerate (completion stops at the first
  * verb). Pinned because they were real incidents, not to replace enumeration.
  */
 const PINNED_NESTED: string[][] = [['gh', 'pr', 'create']];
+
+/**
+ * Full argv with the help flag after operands or other flags, which the
+ * `<cmd> [verb] <flag>` enumeration never produces. Each one used to act:
+ * deploy, self-update, start a run, write the genome, scaffold or enable a
+ * plugin, launch a playbook session or open an editor, or rewrite the config.
+ */
+const PINNED_ARGV: string[][] = [
+  ['ship', '--deploy', 'gh', '--confirm', '--help'],
+  ['ship', '--json', '-h'],
+  ['update', '--yes', '--help'],
+  ['upgrade', '--json', '-h'],
+  ['run', '--json', '-h'],
+  ['run', '--allow-cloud', '--help'],
+  ['learn', '--json', '-h'],
+  ['genome', 'learn', '--json', '-h'],
+  ['recall', '--json', '-h'],
+  ['plugins', 'init', 'zz-plugin', '--help'],
+  ['plugins', 'init', '--help', 'zz-plugin'],
+  ['plugins', 'enable', 'zz-plugin', '--yes', '-h'],
+  ['playbook', 'run', 'add-tests-for-module', '-h'],
+  ['playbook', 'new', 'zz-playbook', '-h'],
+  ['playbook', 'edit', 'add-tests-for-module', '--help'],
+  ['config', 'set', 'editor', '--help'],
+  ['website', 'pause', 'zz-operand', '--help'],
+];
 
 // ---------------------------------------------------------------------------
 // CLI entry: fresh dist/ when available, otherwise the source through tsx
@@ -216,6 +244,7 @@ function enumerate(): { cases: HelpCase[]; verbs: Map<string, string[]> } {
     const cases = bases.flatMap((base) => FLAGS.map((flag) => ({
       key: [...base, flag].join(' '), base: base.join(' '), argv: [...base, flag], cmd: base[0]!,
     })));
+    for (const argv of PINNED_ARGV) cases.push({ key: argv.join(' '), base: argv.join(' '), argv, cmd: argv[0]! });
     return { cases, verbs };
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -465,7 +494,7 @@ describe.skipIf(IS_WINDOWS)('`<cmd> [verb] --help` and `-h` print usage and have
         RESULTS.set(helpCase.key, await runCase(helpCase, index));
       }
     }));
-  }, USE_DIST ? 300_000 : 900_000);
+  }, USE_DIST ? 600_000 : 900_000);
 
   afterAll(() => {
     if (BASE) rmSync(BASE, { recursive: true, force: true });

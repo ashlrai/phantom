@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 /**
  * 3.10 Track B unit U7 — engines & judges (SPEC-310B §3, §7 U7).
  *
@@ -22,6 +23,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AshlrConfig, EngineCommand, EngineId, Proposal } from '../src/core/types.js';
+
+// These inert subprocess fixtures test engine I/O, not the runner's live RAM.
+// Host admission thresholds and hysteresis have their own host-headroom suite.
+vi.mock('../src/core/run/host-headroom.js', () => ({
+  checkHostHeadroom: () => ({ allowed: true, reading: { freePercent: 50, swapGb: 0 }, reason: null }),
+}));
 
 const hoisted = vi.hoisted(() => ({
   engineInstalled: null as null | ((engine: string) => boolean),
@@ -88,8 +95,7 @@ const SUPPORTS_PROFILES = process.platform !== 'win32' && typeof process.execve 
 
 /** Inert "grok": records argv/env/cwd into GROK_HOME, prints GROK_HOME/response.ndjson. */
 function inertGrokSource(): string {
-  return `#!${process.execPath}
-const fs = require('fs'); const path = require('path');
+  return `${nodeFixtureHeader(process.execPath)}const fs = require('fs'); const path = require('path');
 const home = process.env.GROK_HOME;
 fs.writeFileSync(path.join(home, 'last-call.json'), JSON.stringify({
   args: process.argv.slice(2), env: process.env, cwd: process.cwd(), cwdEntries: fs.readdirSync(process.cwd()),

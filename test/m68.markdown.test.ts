@@ -18,7 +18,7 @@
  */
 
 import type { SpawnSyncReturns } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
@@ -34,13 +34,20 @@ import {
   resolveMdopen,
 } from '../src/core/integrations/markdown.js';
 
-function spawnResult(status: number | null, stderr = '', error?: Error): SpawnSyncReturns<string> {
-  return { pid: 1, output: [], stdout: '', stderr, status, signal: null, error };
+/**
+ * A fake mdopen run: writes `stderr` to the fd openInAshlrMd hands it as
+ * stdio[2] (a temp file, never a pipe), then returns `status`/`error`.
+ */
+function mdopenRun(status: number | null, stderr = '', error?: Error) {
+  return (_cmd: string, _args: string[], opts: { stdio: [unknown, unknown, number] }): SpawnSyncReturns<Buffer> => {
+    if (stderr) writeSync(opts.stdio[2], stderr);
+    return { pid: 1, output: [], stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), status, signal: null, error };
+  };
 }
 
 beforeEach(() => {
   // Default: a headless mdopen that cannot open a window.
-  spawnSync.mockReset().mockReturnValue(spawnResult(1, 'mdopen: no display'));
+  spawnSync.mockReset().mockImplementation(mdopenRun(1, 'mdopen: no display'));
 });
 
 /** Paths written during a test, to clean up in afterEach. */
@@ -293,13 +300,13 @@ describe('resolveMdopen / openInAshlrMd with a resolved mdopen', () => {
     const result = openInAshlrMd('/tmp/doc.md');
     expect(result).toEqual({ ok: false, detail: 'mdopen exit 1: mdopen: no display' });
     expect(spawnSync).toHaveBeenCalledWith(join(dir, 'mdopen'), ['/tmp/doc.md'], expect.objectContaining({
-      timeout: 15_000, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8',
+      timeout: 15_000, stdio: ['ignore', 'ignore', expect.any(Number)],
     }));
   });
 
   it('reports ok:true only when mdopen exits 0 (including launched-but-unconfirmed)', () => {
     process.env['PATH'] = binDir('mdopen');
-    spawnSync.mockReturnValueOnce(spawnResult(0, 'mdopen: launched, not confirmed'));
+    spawnSync.mockImplementationOnce(mdopenRun(0, 'mdopen: launched, not confirmed'));
     const result = openInAshlrMd('/tmp/doc.md');
     expect(result.ok).toBe(true);
     expect(result.detail).toContain('not confirmed');
@@ -307,7 +314,7 @@ describe('resolveMdopen / openInAshlrMd with a resolved mdopen', () => {
 
   it('reports a timeout or launch error as ok:false', () => {
     process.env['PATH'] = binDir('mdopen');
-    spawnSync.mockReturnValueOnce(spawnResult(null, '', Object.assign(new Error('spawnSync mdopen ETIMEDOUT'), { code: 'ETIMEDOUT' })));
+    spawnSync.mockImplementationOnce(mdopenRun(null, '', Object.assign(new Error('spawnSync mdopen ETIMEDOUT'), { code: 'ETIMEDOUT' })));
     expect(openInAshlrMd('/tmp/doc.md')).toEqual({ ok: false, detail: 'mdopen failed: spawnSync mdopen ETIMEDOUT' });
   });
 

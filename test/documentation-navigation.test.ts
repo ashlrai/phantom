@@ -18,6 +18,34 @@ function fixture(files: Record<string, string>): string {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('operator documentation navigation', () => {
+  const swarmResearch = 'docs/research/agent-swarms-rsi.md';
+
+  it('resolves the swarm research implementation references in the source checkout', () => {
+    const result = checkDocumentation({ root: process.cwd(), entrypoints: [swarmResearch] });
+    expect(result).toMatchObject({ ok: true, errors: [], externalRequests: 0 });
+    expect(result.localLinks).toBeGreaterThan(0);
+    expect(result.externalLinks).toBeGreaterThan(0);
+  });
+
+  it('detects a stale implementation reference in the swarm research report', () => {
+    const source = readFileSync(join(process.cwd(), swarmResearch), 'utf8');
+    const target = '../../src/core/swarm/planner.ts';
+    expect(source).toContain(target);
+    const files: Record<string, string> = { [swarmResearch]: source };
+    for (const href of inspectMarkdown(source).links as string[]) {
+      if (href.startsWith('../../src/')) files[join(dirname(swarmResearch), href)] = '// implementation fixture\n';
+    }
+    const root = fixture(files);
+    expect(checkDocumentation({ root, entrypoints: [swarmResearch] }).ok).toBe(true);
+    writeFileSync(join(root, swarmResearch), source.replace(target, '../../src/core/swarm/missing.ts'));
+    const result = checkDocumentation({ root, entrypoints: [swarmResearch] });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: swarmResearch, href: '../../src/core/swarm/missing.ts' }),
+    ]));
+  });
+
   it('checks reference links, nested links, duplicate heading anchors and explicit anchors', () => {
     const root = fixture({
       'README.md': '[Install][guide]\n\n[guide]: docs/guide.md#hello-world-1\n\n- [Named](docs/guide.md#named)\n\n![Image](docs/icon.svg)',
@@ -61,6 +89,18 @@ describe('operator documentation navigation', () => {
   it('still rejects missing relative targets in package mode', () => {
     const root = fixture({ 'README.md': '[Unbundled](docs/source.md)' });
     expect(checkDocumentation({ root, mode: 'package', entrypoints: ['README.md'] }).ok).toBe(false);
+  });
+
+  it('checks the Fleet API source references in a checkout, while allowing them in the package', () => {
+    const root = fixture({ 'docs/FLEET-API.md': '[Source](../src/core/fleet.ts)' });
+    const entrypoints = ['docs/FLEET-API.md'];
+    expect(checkDocumentation({ root, entrypoints }).ok).toBe(false);
+    expect(checkDocumentation({ root, mode: 'package', entrypoints }).ok).toBe(true);
+    mkdirSync(join(root, 'src/core'), { recursive: true });
+    writeFileSync(join(root, 'src/core/fleet.ts'), '// source\n');
+    expect(checkDocumentation({ root, entrypoints }).ok).toBe(true);
+    writeFileSync(join(root, 'docs/FLEET-API.md'), '[Escape](../src/../../outside.ts)');
+    expect(checkDocumentation({ root, mode: 'package', entrypoints }).ok).toBe(false);
   });
 
   it.each(['<a href=missing.md>Broken</a>', '<A HREF="missing.md">Broken</A>',
@@ -121,6 +161,7 @@ describe('operator documentation navigation', () => {
     expect(OPERATOR_DOCUMENTATION).toEqual(expect.arrayContaining([
       'docs/PHANTOM-BRAND.md', 'docs/VERSE.md', 'docs/AUTONOMY-SETUP.md', 'docs/RESIDENT-RUNTIME.md', 'docs/DEVIN.md',
       'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
+      'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md',
     ]));
   });
 
@@ -145,9 +186,26 @@ describe('operator documentation navigation', () => {
     const result = checkDocumentation({ root, mode: 'package' });
     expect(result).toMatchObject({ ok: true, errors: [], externalRequests: 0 });
     expect(result.sourceLinks).toBeGreaterThan(0);
-    for (const excluded of ['src', 'artifacts', 'desktop', 'docs/VERSE-CONTRACT-V1.md', 'docs/HUB-REFERENCE.md']) {
+    for (const excluded of ['src', 'artifacts', 'desktop', 'docs/VERSE-CONTRACT-V1.md', 'docs/HUB-REFERENCE.md', 'docs/BRIDGE-WORKTREES.md']) {
       expect(existsSync(join(root, excluded))).toBe(false);
     }
+  });
+
+  it.each(['fleet-health.md', 'VERIFY-CHANGE.md'])(
+    'links the source-only %s guide from the packaged documentation index', (guide) => {
+      const root = packagedDocumentation();
+      const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
+      expect(index).toContain(`https://github.com/ashlrai/phantom/blob/master/docs/${guide}`);
+      expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+    },
+  );
+
+  it('links the source-only model inventory guide from the packaged documentation index', () => {
+    const root = packagedDocumentation();
+    const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
+    expect(index).toContain('https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md');
+    expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+    expect(checkDocumentation({ root: process.cwd(), entrypoints: ['docs/README.md'] }).errors).toEqual([]);
   });
 
   it.each(['RESIDENT-RUNTIME', 'DEVIN'])('refuses an omitted %s operator guide in the package', (guide) => {
@@ -169,6 +227,19 @@ describe('operator documentation navigation', () => {
       expect.objectContaining({ file: 'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md', href: null }),
       expect.objectContaining({ file: 'docs/RESOURCE-POOLS.md', href: 'RESOURCE-POOL-COMMISSIONING-CHECK.md' }),
     ]));
+  });
+
+  it('exempts only the frozen 3.3.0 CHANGELOG link to the removed activation guide', () => {
+    const frozen = '[guide](docs/RUNTIME-FLEET-ACTIVATION.md)\n';
+    const changelog = fixture({ 'CHANGELOG.md': frozen });
+    expect(checkDocumentation({ root: changelog, entrypoints: ['CHANGELOG.md'] }).errors).toEqual([]);
+
+    const other = fixture({ 'CHANGELOG.md': '[guide](docs/MISSING.md)\n', 'NOTES.md': frozen });
+    const result = checkDocumentation({ root: other, entrypoints: ['CHANGELOG.md', 'NOTES.md'] });
+    expect(result.errors).toEqual([
+      expect.objectContaining({ file: 'CHANGELOG.md', href: 'docs/MISSING.md' }),
+      expect.objectContaining({ file: 'NOTES.md', href: 'docs/RUNTIME-FLEET-ACTIVATION.md' }),
+    ]);
   });
 
   it('keeps checked source entrypoints and their heading targets navigable', () => {

@@ -127,7 +127,7 @@ describe('inventory and filters', () => {
     [['test/a.test.ts'], ['test/a.test.ts', 'test/xtest/a.test.ts'], 'would select 2'],
     [['test/A.test.ts'], ['test/a.test.ts', 'test/A.test.ts'], 'would select 2'],
     [['test/a.test.ts'], ['test/b.test.ts'], 'would select 0'],
-  ])('rejects ambiguous or missing filter %j', (selected, collected, message) => {
+  ])('rejects ambiguous or missing filter %j (row %#)', (selected, collected, message) => {
     expect(() => assertExactFilters(selected, collected)).toThrow(message);
   });
 });

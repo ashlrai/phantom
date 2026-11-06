@@ -5,8 +5,12 @@
  * of every read that shows the fleet — the control aggregate, the live view
  * and activity's autonomy badge — so the new state shows at once.
  */
+import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import { invalidate } from '../../../data/cache.js';
+import { ApiError, apiPost } from '../../../data/client.js';
+import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import { SURFACE_KEYS } from '../command/surface-data.js';
+import { LANE_HOLDS_PATH } from '../fleet-lanes/lane-hold-release.js';
 import { refreshActivity } from '../shell/useActivity.js';
 import { getMobileFleetClient } from './fleet-client.js';
 import type { DaemonVerb, FleetPrimaryAction } from './fleet-state.js';
@@ -29,6 +33,30 @@ export function refreshFleetReads(): void {
   void refreshActivity();
 }
 
+/**
+ * Release a lane hold the fleet placed on itself. Same step-up path as a lane
+ * target change: held mutation token, then apiPost — which the remote session
+ * turns into a begin/finish step-up when this phone drives the gateway. The
+ * Hub releases only autobackoff holds; `reason` lands in its unheld_by audit.
+ */
+export async function releaseLaneHold(lane: string, reason?: string): Promise<unknown> {
+  const token = getMutationToken();
+  if (!token) throw new VerseControlLockedError();
+  const body: Record<string, unknown> = { lane, action: 'release' };
+  if (reason !== undefined) body.reason = reason;
+  try {
+    const result = await apiPost<unknown>(LANE_HOLDS_PATH, body, token);
+    touchMutationHold();
+    return result;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      const message = 'This Phantom server cannot release holds yet; update the app.';
+      throw new ApiError(message, 404, LANE_HOLDS_PATH, message);
+    }
+    throw error;
+  }
+}
+
 export function runFleetAction(action: Extract<FleetPrimaryAction, { kind: 'daemon' }>): boolean {
   let note: string | null = null;
   return runMobileAction({
@@ -45,4 +73,15 @@ export function runFleetAction(action: Extract<FleetPrimaryAction, { kind: 'daem
       showMobileToast(note ?? DONE_TEXT[action.verb], 'success');
     },
   });
+}
+
+/** Persist an owner hold through the existing Hub route and remote step-up. */
+export async function holdApprovalRepo(repo: string): Promise<void> {
+  const token = getMutationToken();
+  if (!token) throw new VerseControlLockedError();
+  await apiPost('/api/verse/fleet/live', {
+    action: 'pause-repo', repo, reason: 'Held for review from the phone approval panel.',
+  }, token);
+  touchMutationHold();
+  refreshFleetReads();
 }

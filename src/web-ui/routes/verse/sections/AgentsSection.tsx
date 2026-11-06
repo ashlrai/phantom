@@ -1,11 +1,12 @@
-/** Both agent surfaces remain inside the existing lazy Agents section. */
+/** Agent surfaces remain inside the existing lazy Agents section. */
 import { lazy, Suspense, useState } from 'react';
 import { Segmented } from '../../../components/primitives/Segmented.js';
 import { AgentsBoard } from '../agents/AgentsBoard.js';
 import styles from '../agents/Agents.module.css';
 const ProactiveAgents = lazy(() => import('../proactive/ProactiveAgents.js').then(module => ({ default: module.ProactiveAgents })));
-type AgentsView = 'coding' | 'proactive';
-const VIEWS = [{ value: 'coding' as const, label: 'Coding agents' }, { value: 'proactive' as const, label: 'Proactive agents' }];
+const AgentRooms = lazy(() => import('../rooms/AgentRooms.js').then(module => ({ default: module.AgentRooms })));
+type AgentsView = 'coding' | 'proactive' | 'rooms';
+const VIEWS = [{ value: 'coding' as const, label: 'Coding agents' }, { value: 'proactive' as const, label: 'Proactive agents' }, { value: 'rooms' as const, label: 'Rooms' }];
 export function AgentsSection() {
   const [view, setView] = useState<AgentsView>('coding');
   return <div className={styles.surface}>
@@ -20,6 +21,6 @@ export function AgentsSection() {
       }}>
       <Segmented<AgentsView> size="sm" aria-label="Agent views" options={VIEWS} value={view} onChange={setView} />
     </div>
-    <div className={styles.viewBody}>{view === 'coding' ? <AgentsBoard /> : <Suspense fallback={<p role="status" aria-busy="true">Loading proactive agents…</p>}><ProactiveAgents /></Suspense>}</div>
+    <div className={styles.viewBody}>{view === 'coding' ? <AgentsBoard /> : <Suspense fallback={<p role="status" aria-busy="true">Loading agent view…</p>}>{view === 'rooms' ? <AgentRooms /> : <ProactiveAgents />}</Suspense>}</div>
   </div>;
 }

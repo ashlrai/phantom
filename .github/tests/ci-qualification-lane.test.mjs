@@ -9,6 +9,7 @@ import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import { collectLane, normalizeReport, reportNames } from '../scripts/ci-qualification-lane.mjs';
 import { bindSource } from '../scripts/ci-source-binding.mjs';
+import { classifyLane } from '../scripts/ci-site-lane.mjs';
 
 function fixture(t) {
   const parent = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'ashlr-ci-lane-fixture-')));
@@ -97,6 +98,111 @@ for (const differentTree of [false, true]) {
     assert.equal(f.git(['rev-parse', 'HEAD']), f.revision);
   });
 }
+
+// Behind-base PR: base moved after head branched; GitHub's event revision is merge(base, head).
+function behindFixture(t, { conflict = false } = {}) {
+  const f = fixture(t);
+  const head = f.revision;
+  f.git(['checkout', '--quiet', '-b', 'base-line', `${head}`]);
+  f.git(['reset', '--quiet', '--hard', head]);
+  fs.writeFileSync(join(f.root, conflict ? 'tracked.txt' : 'base-only.txt'), 'base moved\n'); f.git(['add', '.']);
+  f.commit('base moved'); const base = f.git(['rev-parse', 'HEAD']);
+  // head branch: one more commit on top of the fixture
+  f.git(['checkout', '--quiet', '--detach', head]);
+  fs.writeFileSync(join(f.root, conflict ? 'tracked.txt' : 'head-only.txt'), 'head change\n'); f.git(['add', '.']);
+  f.commit('head change'); const prHead = f.git(['rev-parse', 'HEAD']);
+  return { f, base, prHead };
+}
+function syntheticMerge(f, base, prHead, { tree, parents } = {}) {
+  const mergedTree = tree ?? f.git(['merge-tree', '--write-tree', '--no-messages', base, prHead]);
+  const args = ['-c', 'user.name=GitHub', '-c', 'user.email=noreply@example.invalid', 'commit-tree', mergedTree, '-m', 'Merge'];
+  for (const p of parents ?? [base, prHead]) args.push('-p', p);
+  return f.git(args);
+}
+function publish(f, prHead) {
+  const remote = join(f.parent, 'origin.git');
+  execFileSync('git', ['clone', '--quiet', '--bare', '--mirror', f.root, remote], { stdio: ['ignore', 'pipe', 'pipe'] });
+  f.git(['remote', 'add', 'origin', remote]); f.git(['checkout', '--quiet', '--detach', prHead]);
+}
+
+test('up-to-date PR: merge tree equals head tree and binds without merge-tree', (t) => {
+  const f = fixture(t);
+  const merge = f.git(['-c', 'user.name=GitHub', '-c', 'user.email=noreply@example.invalid', 'commit-tree', f.tree, '-p', f.revision, '-m', 'Merge']);
+  f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, f.revision);
+  const calls = [];
+  const bound = bindSource({ root: f.root, candidate: f.revision, eventSha: merge, eventBase: f.revision, eventHead: f.revision,
+    runGit: (args) => { calls.push(args); return f.git(args); } });
+  assert.deepEqual(bound, { revision: f.revision, tree: f.tree, eventSha: merge });
+  assert.equal(calls.some((args) => args[0] === 'merge-tree'), false);
+});
+
+test('behind PR binds to the event merge of pinned base and head', (t) => {
+  const { f, base, prHead } = behindFixture(t);
+  const merge = syntheticMerge(f, base, prHead); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+  const bound = bindSource({ root: f.root, candidate: prHead, eventSha: merge, eventBase: base, eventHead: prHead });
+  assert.equal(bound.revision, prHead); assert.equal(bound.eventSha, merge); assert.equal(bound.eventBase, base);
+  assert.equal(bound.eventTree, f.git(['rev-parse', `${merge}^{tree}`]));
+});
+
+test('blobless checkout preserves behind PR binding and full lane classification', (t) => {
+  const { f, base, prHead } = behindFixture(t);
+  const merge = syntheticMerge(f, base, prHead);
+  f.git(['update-ref', 'refs/pull/1/merge', merge]);
+  f.git(['config', 'uploadpack.allowFilter', 'true']);
+  const root = join(f.parent, 'filtered');
+  execFileSync('git', ['clone', '--quiet', '--no-checkout', '--filter=blob:none',
+    `file://${f.root}`, root], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const git = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  assert.equal(git(['config', '--get', 'remote.origin.partialclonefilter']), 'blob:none');
+  const missing = git(['rev-list', '--objects', '--all', '--missing=print']);
+  assert.match(missing, /^\?[a-f0-9]{40}$/m);
+  git(['checkout', '--quiet', '--detach', prHead]);
+  const bound = bindSource({ root, candidate: prHead, eventSha: merge, eventBase: base, eventHead: prHead });
+  assert.equal(bound.eventTree, f.git(['rev-parse', `${merge}^{tree}`]));
+  assert.equal(classifyLane({ cwd: root, base, head: prHead, eventName: 'pull_request' }), 'full');
+  assert.equal(git(['rev-parse', 'HEAD']), prHead);
+});
+
+test('behind PR without event base and head still refuses', (t) => {
+  const { f, base, prHead } = behindFixture(t);
+  const merge = syntheticMerge(f, base, prHead); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+  assert.throws(() => bindSource({ root: f.root, candidate: prHead, eventSha: merge }), /tree differs/);
+});
+
+test('tampered event merge tree refuses', (t) => {
+  const { f, base, prHead } = behindFixture(t);
+  fs.writeFileSync(join(f.root, 'smuggled.txt'), 'swap\n'); f.git(['add', '.']);
+  const badTree = f.git(['write-tree']); f.git(['reset', '--quiet', '--hard']); fs.rmSync(join(f.root, 'smuggled.txt'), { force: true });
+  const merge = syntheticMerge(f, base, prHead, { tree: badTree }); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+  assert.throws(() => bindSource({ root: f.root, candidate: prHead, eventSha: merge, eventBase: base, eventHead: prHead }), /merge tree differs/);
+});
+
+for (const kind of ['swapped parents', 'foreign base', 'single parent', 'candidate is not event head']) {
+  test(`behind PR refuses ${kind}`, (t) => {
+    const { f, base, prHead } = behindFixture(t);
+    let parents = [base, prHead], eventBase = base;
+    if (kind === 'swapped parents') parents = [prHead, base];
+    if (kind === 'single parent') parents = [prHead];
+    if (kind === 'foreign base') eventBase = f.revision;
+    const merge = syntheticMerge(f, base, prHead, { parents }); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+    const opts = { root: f.root, candidate: prHead, eventSha: merge, eventBase, eventHead: prHead };
+    if (kind === 'candidate is not event head') opts.eventHead = base;
+    assert.throws(() => bindSource(opts), kind === 'candidate is not event head' ? /tree differs/ : /parents differ/);
+  });
+}
+
+test('behind PR whose base and head conflict refuses', (t) => {
+  const { f, base, prHead } = behindFixture(t, { conflict: true });
+  const merge = syntheticMerge(f, base, prHead, { tree: f.git(['rev-parse', `${base}^{tree}`]) });
+  f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+  assert.throws(() => bindSource({ root: f.root, candidate: prHead, eventSha: merge, eventBase: base, eventHead: prHead }), /merge cleanly/);
+});
+
+test('merge_group: candidate is the event head_sha and binds on identical tree', (t) => {
+  const f = fixture(t);
+  assert.deepEqual(bindSource({ root: f.root, candidate: f.revision, eventSha: f.revision }), { revision: f.revision, tree: f.tree, eventSha: f.revision });
+});
 
 for (const kind of ['invalid candidate', 'invalid event', 'head mismatch', 'dirty tracked', 'dirty untracked']) {
   test(`source binding refuses ${kind} before fetching`, (t) => {

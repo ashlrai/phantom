@@ -11,6 +11,7 @@ import * as path from 'node:path';
 
 import { appendUserBacklogItems } from '../src/core/cloud/backlog.js';
 import { BUILTIN_IMPROVEMENT_BACKLOG } from '../src/core/cloud/improvement-backlog.js';
+import { CONSTITUTION_PROMPT_RULES_V1 } from '../src/core/cloud/delivery-contract.js';
 import { cloudSeatCommandPath } from '../src/core/cloud/launcher.js';
 import {
   cloudOverview,
@@ -199,7 +200,7 @@ describe('launchCloudTask — playbooks (3.15)', () => {
     const res = await launchCloudTask(REQ, h.deps);
     expect(res.task).not.toHaveProperty('playbookRef');
     expect(h.prompts[0]).not.toContain('## Playbook:');
-    expect(h.prompts[0]!.startsWith(`${REQ.prompt}\n\n---\nDELIVERY CONTRACT`)).toBe(true);
+    expect(h.prompts[0]!.startsWith(`${REQ.prompt}\n\n${CONSTITUTION_PROMPT_RULES_V1}\n\n---\nDELIVERY CONTRACT`)).toBe(true);
   });
 
   it('a !macro in the text pins the playbook version on the task and inlines it before the contract', async () => {
@@ -298,7 +299,7 @@ describe('launchCloudTask — each launch failure is persisted as failed with a 
     ['unknown', { output: 'Error: something odd happened' }],
     ['no-remote', { gitStderr: "fatal: Remote branch master not found in upstream origin" }],
     ['checkout-failed', { gitStderr: 'fatal: unable to write' }],
-  ] as const)('%s', async (failure, opts) => {
+  ] as const)('%s (%j)', async (failure, opts) => {
     const h = harness(opts);
     const res = await launchCloudTask({ ...REQ, baseBranch: 'master' }, h.deps);
     expect(res.ok).toBe(false);

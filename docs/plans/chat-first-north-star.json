@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 1,
+  "id": "RQ-PLAN-NORTHSTAR",
+  "repo": "phantom",
+  "status": "planning-only",
+  "sourceDocuments": [
+    "docs/NORTH-STAR.md",
+    "docs/VERSE.md",
+    "docs/AUTOMATIC-OUTCOMES.md",
+    "CONSTITUTION.md"
+  ],
+  "objective": "One chat turns engineering intent into scoped, observable, interruptible work and reviewable results, while preserving evidence, resource limits and existing authority.",
+  "capabilities": [
+    "journey",
+    "onboarding",
+    "continuity",
+    "context",
+    "delegation",
+    "progress",
+    "review",
+    "resources",
+    "composition",
+    "learning",
+    "integration"
+  ],
+  "jobs": [
+    {
+      "id": "RQ-NS-CONTRACT",
+      "title": "Pin the chat-first journey and evidence contract",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [],
+      "capabilities": [
+        "journey"
+      ],
+      "entrypoints": [
+        "docs/VERSE.md",
+        "docs/AUTOMATIC-OUTCOMES.md",
+        "src/core/verse/multimodel/types.ts"
+      ],
+      "problem": "Chat, Manager and Fleet already exist; their shared user journey needs a pinned acceptance contract before adding another orchestration layer.",
+      "deliverable": "One contract mapping conversation, turn, delegated task and result identities to existing owning types, plus deterministic fixtures for the golden journey.",
+      "acceptance": [
+        "A fixture follows intent \u2192 scoped plan \u2192 execution \u2192 reviewable artifact \u2192 follow-up using stable references.",
+        "Existing versus proposed behavior is explicitly marked, with a baseline for each journey scenario.",
+        "The contract names the existing owner of each state and rejects a second task or permission store."
+      ],
+      "validation": [
+        "Add contract fixture tests for missing task references and mismatched result revisions.",
+        "Run npm run typecheck and the new contract tests."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-FIRST-TURN",
+      "title": "Make the first useful chat turn recoverable",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-CONTRACT"
+      ],
+      "capabilities": [
+        "onboarding"
+      ],
+      "entrypoints": [
+        "src/web-ui/routes/verse/onboarding/OnboardingFlow.tsx",
+        "src/web-ui/routes/verse/chat/start-chat.ts",
+        "src/core/verse/seat-readiness.ts"
+      ],
+      "problem": "Existing onboarding and Automatic selection need a measured path from empty state to useful response with actionable unavailable-resource states.",
+      "deliverable": "A single primary first-turn action that preserves the project and draft through readiness failures.",
+      "acceptance": [
+        "With an eligible fake resource, select a project, send a task and display the first response without choosing a model.",
+        "With no eligible resource, show the specific readiness blocker and preserve the draft for retry.",
+        "Double submission and readiness retries produce at most one accepted turn; keyboard focus reaches the recovery action."
+      ],
+      "validation": [
+        "Extend start-chat and OnboardingFlow tests with unavailable, retry and double-submit cases.",
+        "Run npm run test:web for the touched onboarding/chat suites and affected backend readiness tests."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-CONTINUITY",
+      "title": "Keep one conversation coherent across interruption",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-CONTRACT"
+      ],
+      "capabilities": [
+        "continuity"
+      ],
+      "entrypoints": [
+        "src/core/verse/turn-queue.ts",
+        "src/core/verse/multimodel/store.ts",
+        "src/web-ui/routes/verse/chat/composer-state.ts"
+      ],
+      "problem": "Persisted chat and turn queue primitives need an explicit reconnect and interrupted-turn acceptance boundary.",
+      "deliverable": "Recovery behavior for an interrupted foreground conversation using existing turn identities and storage.",
+      "acceptance": [
+        "Reload during a streamed turn restores committed messages and distinguishes interrupted from completed work.",
+        "Repeated or out-of-order events cannot duplicate a message or attribute another turn\u2019s output to this turn.",
+        "Retry requires an explicit action and retains the previous attempt reference; cancellation cannot later display success without evidence."
+      ],
+      "validation": [
+        "Add hermetic interruption/replay tests around the existing store and turn queue.",
+        "Add DOM tests for reconnect, draft preservation and canceled-turn display."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-CONTEXT",
+      "title": "Make project context inspectable and correctable",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-CONTRACT"
+      ],
+      "capabilities": [
+        "context"
+      ],
+      "entrypoints": [
+        "src/core/verse/project-memory.ts",
+        "src/core/verse/context-fit.ts",
+        "src/web-ui/routes/verse/chat/SourceList.tsx"
+      ],
+      "problem": "Project memory and sources exist; users need to understand which evidence affected a turn and correct stale context.",
+      "deliverable": "Task-scoped source provenance and exclusion controls wired to existing context assembly.",
+      "acceptance": [
+        "Each included source shows its origin and freshness; unavailable evidence is labelled unknown.",
+        "Excluding a stale source removes it from the next assembled context without deleting unrelated project memory.",
+        "Cross-project context is excluded; token overflow retains a visible omission record rather than silently claiming complete coverage."
+      ],
+      "validation": [
+        "Extend verse-project-memory and context-fit tests for project isolation, exclusion and bounded context.",
+        "Extend SourceList DOM tests for provenance, freshness and keyboard-accessible exclusion."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-DELEGATE",
+      "title": "Trace chat intent into bounded delegated work",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-CONTRACT",
+        "RQ-NS-CONTINUITY"
+      ],
+      "capabilities": [
+        "delegation"
+      ],
+      "entrypoints": [
+        "docs/AUTOMATIC-OUTCOMES.md",
+        "src/core/verse/manager-conversation.ts",
+        "src/core/verse/manager-scope.ts"
+      ],
+      "problem": "Manager already delegates; the remaining slice is a tested chat-to-task handoff with visible scope and durable deduplication.",
+      "deliverable": "A handoff receipt linking the original message, scope, existing task IDs and any blocking reason, under owner review for protected Manager changes.",
+      "acceptance": [
+        "Repeated delivery of the same message reference creates one logical handoff, including after restart.",
+        "Unenrolled or ambiguously matched projects produce a scoped blocker and no dispatch.",
+        "Dormant execution, exhausted allowance, Stop and pause remain refusals; a chat message cannot grant permissions or widen enrollment."
+      ],
+      "validation": [
+        "Extend existing Manager conversation/scope tests with duplicate handoff and restart cases in the owner lane.",
+        "Run affected authority/refusal regressions unchanged; attach exact commands and results."
+      ],
+      "ownerReviewRequired": true,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-PROGRESS",
+      "title": "Explain work and blockers in the originating chat",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-DELEGATE"
+      ],
+      "capabilities": [
+        "progress"
+      ],
+      "entrypoints": [
+        "src/web-ui/routes/verse/chat/TasksTray.tsx",
+        "src/web-ui/routes/verse/chat/tasks-model.ts",
+        "src/web-ui/routes/verse/chat/LiveStatus.tsx"
+      ],
+      "problem": "Task and activity views exist; delegated work needs consistent progress, blockers and control acknowledgements in the originating conversation.",
+      "deliverable": "A projection of existing task state into chat with navigation to detail and explicit pending control states.",
+      "acceptance": [
+        "Queued, running, blocked, failed, canceled and completed fixtures render distinct states with source timestamps.",
+        "A stale observation cannot overwrite a newer terminal state; missing evidence is unknown, not success.",
+        "Pause or cancel shows pending until acknowledged by the existing control API; a refusal remains visible and retryable."
+      ],
+      "validation": [
+        "Extend tasks-model and LiveStatus tests for stale events and every terminal state.",
+        "Add TasksTray DOM coverage for control acknowledgement, refusal and focus preservation."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-REVIEW",
+      "title": "Close the loop with reviewable evidence",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-CONTEXT",
+        "RQ-NS-PROGRESS"
+      ],
+      "capabilities": [
+        "review"
+      ],
+      "entrypoints": [
+        "src/web-ui/routes/verse/chat/DiffBlock.tsx",
+        "src/web-ui/routes/verse/chat/SourceList.tsx",
+        "src/web-ui/routes/verse/chat/turn-files.ts"
+      ],
+      "problem": "Diff and source components exist; a completed task must lead to its exact artifact and validation rather than a prose success claim.",
+      "deliverable": "A completion summary that links task, changed files, candidate revision and check evidence, with follow-up in the same conversation.",
+      "acceptance": [
+        "A successful fixture exposes the exact tested revision, changed files and check results.",
+        "A failed check or missing artifact cannot render as verified completion; stale evidence is labelled.",
+        "A follow-up references the reviewed result and preserves project scope; review does not itself merge, publish or deploy."
+      ],
+      "validation": [
+        "Extend DiffBlock, SourceList and turn-files tests for mismatched revisions, missing artifacts and failed checks.",
+        "Add a DOM journey from completed task to evidence to follow-up draft."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-RESOURCES",
+      "title": "Explain Automatic choices without hiding limits",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-FIRST-TURN"
+      ],
+      "capabilities": [
+        "resources"
+      ],
+      "entrypoints": [
+        "src/core/verse/multimodel/advisor.ts",
+        "src/web-ui/routes/verse/chat/turn-resource-evidence.ts",
+        "docs/AUTOMATIC-OUTCOMES.md"
+      ],
+      "problem": "Automatic routing and usage views already exist; their rationale must remain grounded in account-specific eligibility and observed usage.",
+      "deliverable": "A concise per-turn resource explanation and blocked-selection recovery using existing admission results.",
+      "acceptance": [
+        "Show chosen account/model and observed selection reasons while preserving manual pinning and local-only scope.",
+        "Unknown or stale usage is never presented as available quota, zero cost or a measured saving.",
+        "Unavailable selected resources preserve the draft and expose a recovery action; explanations cannot override admission, reserves or account exclusions."
+      ],
+      "validation": [
+        "Extend turn-resource-evidence tests for missing/stale measurements and account identity.",
+        "Run affected advisor and start-chat tests using fake capacity observations."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-COMPANIONS",
+      "title": "Make companion capability gaps actionable in chat",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-CONTEXT",
+        "RQ-NS-RESOURCES"
+      ],
+      "capabilities": [
+        "composition"
+      ],
+      "entrypoints": [
+        "docs/AGENT-TOOLCHAIN.md",
+        "src/core/verse/mcp-seat-view.ts",
+        "src/core/verse/seats.ts"
+      ],
+      "problem": "Companion availability differs by seat; a chat should explain the capabilities actually available for this task without claiming every seat has every tool.",
+      "deliverable": "Task-scoped capability receipts and recovery guidance for existing companion discovery.",
+      "acceptance": [
+        "Fixtures distinguish unavailable, unapproved and ready capabilities for the selected seat.",
+        "Phantom Secrets references remain opaque; Locus handles access needs without returning credentials to the transcript.",
+        "Tool results carry source references and untrusted content cannot alter scope or permissions; no companion is installed or commissioned merely by viewing a suggestion."
+      ],
+      "validation": [
+        "Add seat-view tests for missing companion, rejected permission and malicious tool-result text.",
+        "Verify transcript/error fixtures contain references and redacted errors rather than secret values."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-MEASURE",
+      "title": "Measure chat outcomes against a fixed baseline",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P2",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-REVIEW",
+        "RQ-NS-RESOURCES"
+      ],
+      "capabilities": [
+        "learning"
+      ],
+      "entrypoints": [
+        "src/core/vision/north-star.ts",
+        "test/north-star-measured-leverage.test.ts",
+        "docs/NORTH-STAR.md"
+      ],
+      "problem": "The measured leverage ledger exists; chat-first improvements need scenario-level evidence without inventing hours saved or counting messages as progress.",
+      "deliverable": "A fixed offline evaluation corpus and report for first useful result, recovery, reviewability and accepted task outcomes.",
+      "acceptance": [
+        "Report success counts and denominators, elapsed time and token coverage independently; missing usage stays unknown.",
+        "Compare baseline and candidate on identical fixtures and acceptance rules; a candidate cannot select itself by rewriting its evaluator.",
+        "Include failed/interrupted runs and rework; report local fixture evidence separately from installed/provider/user acceptance."
+      ],
+      "validation": [
+        "Add deterministic evaluation/report tests including zero observations, partial token coverage and regressions.",
+        "Run existing measured-leverage tests unchanged alongside the new evaluation suite."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    },
+    {
+      "id": "RQ-NS-ACCEPT",
+      "title": "Verify the combined chat-first assistant journey",
+      "parent": "RQ-PLAN-NORTHSTAR",
+      "repo": "phantom",
+      "priority": "P1",
+      "tier": "frontier",
+      "status": "planned",
+      "dependsOn": [
+        "RQ-NS-FIRST-TURN",
+        "RQ-NS-CONTINUITY",
+        "RQ-NS-CONTEXT",
+        "RQ-NS-DELEGATE",
+        "RQ-NS-PROGRESS",
+        "RQ-NS-REVIEW",
+        "RQ-NS-RESOURCES",
+        "RQ-NS-COMPANIONS",
+        "RQ-NS-MEASURE"
+      ],
+      "capabilities": [
+        "integration"
+      ],
+      "entrypoints": [
+        "docs/VERSE.md",
+        "docs/AUTOMATIC-OUTCOMES.md",
+        "src/web-ui/routes/verse/chat/TasksTray.tsx"
+      ],
+      "problem": "Independent feature checks do not prove that the combined assistant works from intent through result and recovery.",
+      "deliverable": "A combined acceptance suite and evidence report tied to one candidate revision, plus updated user guidance for demonstrated behavior.",
+      "acceptance": [
+        "Run a single journey: new chat \u2192 scoped task \u2192 delegated work \u2192 inspect checks/diff \u2192 follow-up, with one coherent identity chain.",
+        "Run no-resource, local-only, stale-context, disconnect, duplicate-event, failed-check and Stop scenarios; each must preserve scope and avoid false success.",
+        "Record the candidate revision, exact commands, pass/fail counts and evidence artifacts; label live-provider and installed-app checks unverified until separately performed.",
+        "No release claim is made from local tests; retained regressions remain required and missing owner-lane work blocks completion."
+      ],
+      "validation": [
+        "Run the combined hermetic journey suite plus all affected backend and web suites with temporary HOME.",
+        "Run npm run typecheck, npm run lint and npm run check:docs on the combined candidate."
+      ],
+      "ownerReviewRequired": false,
+      "nonGoals": [
+        "No new authority, paid resources, release or deployment activation."
+      ]
+    }
+  ]
+}

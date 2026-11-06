@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://phm.dev/schemas/ci_time.v1.schema.json",
+  "title": "Phantom CI job timings v1",
+  "description": "Observed CI job wall times for an exact source revision and run attempt. Null means unknown, not zero or success. Timings do not qualify a release.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_at", "repository", "revision", "run", "jobs"],
+  "properties": {
+    "schema": { "const": "ci_time.v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "attempt"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "attempt": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "description": "Only observed jobs. An empty list does not prove that a run had no jobs or that collection was complete.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "startedAt", "finishedAt", "durationMs", "conclusion"],
+        "properties": {
+          "id": { "$ref": "#/definitions/id" },
+          "name": { "type": "string", "minLength": 1 },
+          "startedAt": { "$ref": "#/definitions/nullableDateTime" },
+          "finishedAt": { "$ref": "#/definitions/nullableDateTime" },
+          "durationMs": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "Observed wall time in milliseconds, never an inferred CPU time or future runtime promise."
+          },
+          "conclusion": {
+            "enum": [
+              "success", "failure", "cancelled", "skipped", "timed_out",
+              "action_required", "neutral", "stale", "startup_failure", null
+            ]
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "description": "Positive decimal identifier encoded as a string to avoid JSON number precision loss."
+    },
+    "nullableDateTime": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

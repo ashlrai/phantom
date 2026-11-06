@@ -268,16 +268,24 @@ test('unchanged attestation selector excludes separately named shadow artifacts 
     GITHUB_REPOSITORY_ID: String(hub.repositoryId), GITHUB_REPOSITORY_OWNER_ID: String(hub.ownerId), GITHUB_SHA: revision,
     CANDIDATE_SHA: revision, CI_RUN_ID: '100', CI_RUN_ATTEMPT: '2', BUILD_ARTIFACT_ID: '301', RUNNER_TEMP: f.parent };
   const cwd = process.cwd();
+  const jobLookups = [];
   try {
     process.chdir(f.root);
     const result = prepare({ env, read: (endpoint) => {
       if (endpoint === `repos/${hub.legacyName}`) return repositoryMetadata();
       if (endpoint.includes('/git/commits/')) return { sha: revision, tree: { sha: tree } };
       if (endpoint.includes('/artifacts?')) return { total_count: artifacts.length, artifacts };
+      if (endpoint.includes('/jobs?')) {
+        jobLookups.push(endpoint);
+        return { total_count: 1, jobs: [{ id: 150, run_id: 100, head_sha: revision,
+          name: 'Desktop release smoke', status: 'completed', conclusion: 'skipped' }] };
+      }
       if (endpoint.includes('/attempts/')) return { id: 100, run_attempt: 2, head_sha: revision, repository: repositoryMetadata(), path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success' };
       throw new Error('Unexpected API lookup');
     } });
     assert.equal(result.map.lanes.length, 5); assert.equal(result.map.producer.id, 301);
+    assert.deepEqual(jobLookups, [`repos/${hub.legacyName}/actions/runs/100/attempts/2/jobs?per_page=100&page=1`]);
+    assert.equal(result.map.profile, undefined, 'skipped smoke does not qualify the fast profile');
     assert.equal(JSON.stringify(result.map).includes('phantom-impact-shadow'), false);
   } finally { process.chdir(cwd); }
 });

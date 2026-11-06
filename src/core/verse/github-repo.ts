@@ -37,7 +37,7 @@
  * fixed sentence, not a passthrough of whatever the tool printed.
  */
 
-import { execFile, spawnSync } from 'node:child_process';
+import { credentialExecFile as execFile, credentialSpawnSync as spawnSync } from '../integrations/secrets.js';
 import { readFileSync, statSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';

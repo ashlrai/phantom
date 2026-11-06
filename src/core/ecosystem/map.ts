@@ -21,6 +21,20 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { StrategicTier } from './focus.js';
+
+export { STRATEGIC_TIER_RANK as ECOSYSTEM_TIER_RANK } from './focus.js';
+
+export interface EcosystemChangelogRepository {
+  repository: string;
+  directory: string;
+  tier: StrategicTier;
+}
+
+/** Changelog scope, separate from the broader aggregate-statistics inventory. */
+export const ECOSYSTEM_CHANGELOG_REPOSITORIES: readonly EcosystemChangelogRepository[] = [
+  'phantom', 'phantom-secrets', 'locus', 'lexicon', 'ashlr-md', 'ashlr-stack', 'ashlr-plugin',
+].map((name) => ({ repository: `ashlrai/${name}`, directory: name, tier: 'core-fleet' }));
 
 // ---------------------------------------------------------------------------
 // Repo-root resolution

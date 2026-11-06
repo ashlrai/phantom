@@ -18,7 +18,7 @@
  * again once v3 exists.
  *
  * LAUNCH RULE. Return to the saved surface on every launch; a fresh install
- * starts in Chat. Opening a new day must not take someone out of their chat.
+ * starts in Home. Opening a new day must not take someone out of their chat.
  *
  * NOT PERSISTED, on purpose: the overlays, `command` (a one-shot hand-off to
  * the chat), history, the keep-alive list and `activeSessionId` — all
@@ -39,7 +39,7 @@ import {
   type WorkbenchSectionId,
 } from '../../../core/verse/workbench-types.js';
 import { getDockState, subscribeDockState } from './dock/dock-store.js';
-import { VERSE_UI_STORAGE_KEY as V3_KEY, VERSE_UI_STORAGE_KEY_V2 as V2_KEY } from './shell/dock-catalog.js';
+import { normalizePaneId, VERSE_UI_STORAGE_KEY as V3_KEY, VERSE_UI_STORAGE_KEY_V2 as V2_KEY } from './shell/dock-catalog.js';
 import {
   cycleRecent,
   pushNav,
@@ -91,6 +91,8 @@ export const VERSE_SECTIONS: readonly VerseSectionEntry[] = [
   { id: 'wiki', label: 'Repo wiki', module: 'WikiSection', placement: 'tray' },
   { id: 'playbooks', label: 'Playbooks', module: 'PlaybooksSection', placement: 'tray' },
   { id: 'automations', label: 'Automations', module: 'AutomationsSection', placement: 'tray' },
+  { id: 'ops', label: 'Ops', module: 'OpsSection', placement: 'tray' },
+  { id: 'live', label: 'Home', module: 'LiveStatusSection', placement: 'tray' },
 ];
 
 export const RAIL_SECTIONS: readonly VerseSectionEntry[] = VERSE_SECTIONS.filter((s) => s.placement === 'rail');
@@ -176,7 +178,7 @@ export const VERSE_UI_STORAGE_KEY = V3_KEY;
 export const VERSE_UI_STORAGE_KEY_V2 = V2_KEY;
 
 const DEFAULTS: VerseUiState = {
-  section: 'chat',
+  section: 'live',
   railExpanded: false,
   sidebarWidth: VERSE_SIDEBAR.def,
   sidebarCollapsed: false,
@@ -184,11 +186,11 @@ const DEFAULTS: VerseUiState = {
   resourcesWidth: VERSE_RESOURCES.def,
   recentActions: [],
   recentChats: [],
-  mounted: ['chat'],
+  mounted: ['live'],
   overlay: null,
   needsYouSplit: 'all',
   needsYouFocus: null,
-  history: { entries: [{ section: 'chat', sessionId: null }], index: 0 },
+  history: { entries: [{ section: 'live', sessionId: null }], index: 0 },
   activeSessionId: null,
   command: null,
   announceChatMoved: false,
@@ -226,11 +228,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function stringList(value: unknown, limit: number, re: RegExp): string[] {
+function stringList(value: unknown, limit: number, re: RegExp, normalize: (id: string) => string = (id) => id): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
   for (const v of value) {
-    if (typeof v === 'string' && re.test(v) && !out.includes(v)) out.push(v);
+    if (typeof v !== 'string' || !re.test(v)) continue;
+    const id = normalize(v);
+    if (!out.includes(id)) out.push(id);
     if (out.length >= limit) break;
   }
   return out;
@@ -291,7 +295,11 @@ export function loadVerseUi(options: LoadOptions = {}): VerseUiState {
     sidebarCollapsed: src['sidebarCollapsed'] === true,
     resourcesOpen: src['resourcesOpen'] !== false,
     resourcesWidth: clampWidth(src['resourcesWidth'], VERSE_RESOURCES),
-    recentActions: stringList(src['recentActions'], RECENT_ACTIONS_LIMIT, /^[a-z][a-z0-9.-]{0,63}$/),
+    recentActions: stringList(src['recentActions'], RECENT_ACTIONS_LIMIT, /^[a-z][a-z0-9.-]{0,63}$/, (id) => {
+      if (!id.startsWith('pane.')) return id;
+      const paneId = normalizePaneId(id.slice('pane.'.length));
+      return paneId === null ? id : `pane.${paneId}`;
+    }),
     recentChats: stringList(src['recentChats'], RECENT_CHATS_LIMIT, /^[\w.-]{1,200}$/),
     mounted: [section],
     overlay,
@@ -551,16 +559,8 @@ export function setVerseSidebarCollapsed(collapsed: boolean): void {
   patch({ sidebarCollapsed: collapsed });
 }
 
-export function toggleVerseSidebar(): void {
-  patch({ sidebarCollapsed: !state.sidebarCollapsed });
-}
-
 export function setVerseResourcesOpen(open: boolean): void {
   patch({ resourcesOpen: open });
-}
-
-export function setVerseResourcesWidth(width: number): void {
-  patch({ resourcesWidth: clampWidth(width, VERSE_RESOURCES) });
 }
 
 /** The palette ran a catalog action: remember it for the empty-query list. */
@@ -695,8 +695,6 @@ export function rememberVerseSeat(projectPath: string, seat: VerseSeatMemory): v
     /* best-effort */
   }
 }
-
-export const VERSE_SEAT_STORAGE_KEY = SEAT_STORAGE_KEY;
 
 // ---------------------------------------------------------------------------
 // Dismissed context advice, per session (NOT persisted)

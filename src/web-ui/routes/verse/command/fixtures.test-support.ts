@@ -345,7 +345,7 @@ export function fleetLive(kind: FixtureKind = 'live', now = Date.now()): FleetLi
     lastActivityAt: iso(now - 2 * MIN),
     summary: sparse
       ? { building: 1, queued: 0, parked: 0, waitingVerify: 1, mergedToday: 0, revertsToday: 0, merged7d: 2, postMergeGreenPct7d: null, cycleTimeP50Ms7d: null }
-      : { building: 5, queued: 1, parked: 2, waitingVerify: 1, mergedToday: 7, revertsToday: 1, merged7d: 23, postMergeGreenPct7d: 96, cycleTimeP50Ms7d: 2 * HOUR + 14 * MIN },
+      : { building: 5, queued: 1, parked: 2, waitingVerify: 1, mergedToday: 7, revertsToday: 1, merged7d: 23, postMergeGreenPct7d: 96, cycleTimeP50Ms7d: 2 * HOUR + 14 * MIN, dispatchToMergeP50Ms7d: 2 * HOUR + 14 * MIN, dispatchToMergeP50MsPrior7d: 3 * HOUR },
     lanes: [
       { lane: 'local', slots: sparse ? 4 : 2, busy: sparse ? 1 : 2, capReason: sparse ? null : 'you are present (live chat) — 2 of 4 slots' },
       { lane: 'grok-cli', slots: 2, busy: sparse ? 0 : 2, capReason: null },

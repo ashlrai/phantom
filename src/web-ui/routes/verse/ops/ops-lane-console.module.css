@@ -1,0 +1,7 @@
+/* The one shape ops.module.css lacks: the remaining-credit meter under a
+ * lane row's credit line. Unfilled half is --meter-track (the call
+ * usage.module.css documents); an unknown credit draws no bar at all. */
+.track { display: block; position: relative; height: 4px; max-width: 16rem; margin-top: var(--space-1); border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; border-radius: inherit; background: var(--status-success-solid); transition: width var(--duration-base) var(--ease-decelerate); }
+.track[data-tone='warn'] .fill { background: var(--status-warning-solid); }
+.track[data-tone='bad'] .fill { background: var(--status-danger-solid); }

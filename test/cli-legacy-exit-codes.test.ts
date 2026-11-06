@@ -51,4 +51,22 @@ describe('legacy command exit codes', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('keeps detailed help ahead of invalid-option validation', () => {
+    const home = mkdtempSync(join(tmpdir(), 'phm-exit-codes-'));
+    try {
+      const result = spawnSync(process.execPath, ['--import', loader, entry, 'go', '--invalid', '--help'], {
+        cwd: home,
+        env: { PATH: process.env['PATH'], HOME: home, ASHLR_HOME: join(home, '.ashlr'), NO_COLOR: '1' },
+        encoding: 'utf8', timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('best match wins');
+      expect(result.stdout).toContain('phm go <query> --cd');
+      expect(result.stderr).toBe('');
+      expect(readdirSync(home)).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

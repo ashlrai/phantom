@@ -26,6 +26,8 @@
  * All four hooks are single fire-and-forget lines: void emitXxx(…).catch(() => {})
  */
 
+import { readEnvironmentCredential } from './secrets.js';
+
 import type { AshlrConfig } from '../types.js';
 import {
   exportFleetEvents,
@@ -72,9 +74,9 @@ function exporterCfg(cfg: AshlrConfig): import('./pulse-exporter.js').PulseExpor
 /** Resolve PAT for the emit (same env chain as pulse-sync). */
 function resolveEmitPat(): string | undefined {
   const pat =
-    process.env['PULSE_FLEET_PAT'] ??
-    process.env['ASHLR_PULSE_READ_PAT'] ??
-    process.env['ASHLR_PULSE_PAT'];
+    readEnvironmentCredential('PULSE_FLEET_PAT') ??
+    readEnvironmentCredential('ASHLR_PULSE_READ_PAT') ??
+    readEnvironmentCredential('ASHLR_PULSE_PAT');
   return pat && pat.length > 0 ? pat : undefined;
 }
 

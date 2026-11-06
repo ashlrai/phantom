@@ -269,3 +269,7 @@ describe('getCachedRollup (stale-while-revalidate)', () => {
     expect(withoutGit(() => rollup.buildRollup('7d', cfg()).totals.commits)).toBe(4);
   });
 });
+
+// Run shared rollup transport acceptance in this existing real-I/O lane.
+import { registerDriveStateCases } from './helpers/drive-state-cases.js';
+registerDriveStateCases();

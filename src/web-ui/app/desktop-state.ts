@@ -1,5 +1,16 @@
-/** Optional desktop preference store; loaded only by desktop controls. */
+/** Desktop preferences and shared UI opt-ins; native state stays optional. */
 import { useSyncExternalStore } from 'react';
+import { getFeatureFlag, subscribeFeatureFlags, type FeatureFlag } from '../data/feature-flags.js';
+
+// UI opt-ins also work in a browser; they do not cross the native preference bridge.
+export { getFeatureFlag, setFeatureFlag } from '../data/feature-flags.js';
+export type { FeatureFlag } from '../data/feature-flags.js';
+
+/** Live presentation gate, default off even when no native bridge is available. */
+export function useFeatureFlag(name: FeatureFlag): boolean {
+  return useSyncExternalStore(subscribeFeatureFlags, () => getFeatureFlag(name), () => false);
+}
+
 interface DesktopBridge {
   getState?: () => unknown;
   refreshState?: () => boolean;

@@ -38,6 +38,7 @@ const STORED_KEYS = new Set([...INPUT_KEYS, 'v', 'createdAt', 'updatedAt']);
 const TRIGGER_KEYS: Record<AutomationTrigger['kind'], ReadonlySet<string>> = {
   'github-issues': new Set(['kind', 'labels', 'query', 'includePrs', 'pollMinutes']),
   'ci-red': new Set(['kind', 'branch', 'pollMinutes']),
+  watch: new Set(['kind', 'rrule', 'command', 'condition', 'repeat']),
   schedule: new Set(['kind', 'rrule']),
   webhook: new Set(['kind']),
   telegram: new Set(['kind']),
@@ -131,6 +132,27 @@ export function normaliseTrigger(value: unknown): AutomationTrigger {
       const parsed = parseRrule(value['rrule']);
       if (!parsed.ok) return fail(parsed.error);
       return { kind: 'schedule', rrule: String(value['rrule']).trim().replace(/^RRULE:/i, '').toUpperCase() };
+    }
+    case 'watch': {
+      const parsed = parseRrule(value['rrule']);
+      if (!parsed.ok) return fail(parsed.error);
+      if (parsed.rule.byMinute.length !== 1) return fail('Watch intervals must be at least one hour; use one BYMINUTE.');
+      const command = value['command'];
+      // Exact grammar prevents shell execution, mutation flags and credential arguments.
+      if (!Array.isArray(command) || command.length !== 8 || command.some((arg) => typeof arg !== 'string' || /\s/.test(arg))
+        || !/^gh (pr|issue) view [1-9][0-9]* --repo [A-Za-z0-9-]+\/[A-Za-z0-9._-]+ --json (state|mergedAt|closedAt|number)(,(state|mergedAt|closedAt|number))*$/.test(command.join(' '))) {
+        return fail('watch.command must be gh pr|issue view NUMBER --repo OWNER/REPO --json state,number (or mergedAt,closedAt).');
+      }
+      const condition = value['condition'];
+      if (!isRecord(condition)) return fail('watch.condition must contain path and equals.');
+      rejectUnknown(condition, new Set(['path', 'equals']), 'trigger.condition.');
+      if (typeof condition['path'] !== 'string' || !/^\$?(\.[A-Za-z_][A-Za-z0-9_]*|\.[0-9]+)+$/.test(condition['path'])
+        || condition['path'].length > 200 || condition['path'].split('.').some((part) => ['__proto__', 'constructor', 'prototype'].includes(part))) return fail('watch.condition.path must be a simple dotted JSON path, e.g. $.state.');
+      const equals = condition['equals'];
+      if (equals !== null && typeof equals !== 'string' && typeof equals !== 'boolean' && !(typeof equals === 'number' && Number.isFinite(equals))) return fail('watch.condition.equals must be a JSON scalar.');
+      if (typeof equals === 'string' && !/^[A-Za-z0-9 _.:/-]{0,160}$/.test(equals)) return fail('watch.condition.equals must be short plain text.');
+      if (value['repeat'] !== undefined && typeof value['repeat'] !== 'boolean') return fail('watch.repeat must be boolean.');
+      return { kind: 'watch', rrule: (value['rrule'] as string).trim(), command: command as string[], condition: { path: condition['path'], equals: equals as string | number | boolean | null }, repeat: value['repeat'] === true };
     }
     case 'webhook':
       return { kind: 'webhook' };

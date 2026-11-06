@@ -11,7 +11,7 @@
  * layer BEFORE calling stackRun; the runner itself is intentionally neutral.
  */
 
-import { spawnSync } from 'node:child_process';
+import { credentialSpawnSync as spawnSync } from './secrets.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 

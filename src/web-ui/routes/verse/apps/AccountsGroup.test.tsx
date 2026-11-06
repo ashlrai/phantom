@@ -140,7 +140,7 @@ describe('AccountsGroup', () => {
 
     cleanup();
 
-    const zeroWindow = seatWindow({ id: 'five_hour', usedPercent: 0, resetsAt: RESET });
+    const zeroWindow = seatWindow({ id: 'seven_day', usedPercent: 0, resetsAt: RESET });
     const measured = nativeSeat(capacity({ planType: 'max', windows: [zeroWindow], binding: zeroWindow,
       usability: 'ready', observedAt: CHECKED, quotaReadReason: 'usage-output-invalid' }),
     { id: 'claude-zero', engine: 'claude', label: 'Claude zero usage', accountId: 'claude-zero' });
@@ -148,6 +148,34 @@ describe('AccountsGroup', () => {
     const measuredRow = rowOf(measuredList, 'Claude zero usage');
     expect(within(measuredRow).getByText('0%')).toBeInTheDocument();
     expect(within(measuredRow).queryByText('usage-output-invalid')).toBeNull();
+  });
+
+  it('hides a stale five_hour window on a Claude seat and notes the lifted limit', () => {
+    const session = seatWindow({ id: 'five_hour', usedPercent: 75, resetDescription: 'resets Sep 25 at 9:34pm (America/New_York)' });
+    const week = seatWindow({ id: 'seven_day', usedPercent: 62, resetDescription: 'resets Sep 30 at 7pm (America/New_York)' });
+    const stale = nativeSeat(capacity({ planType: 'max', windows: [session, week], binding: session,
+      usability: 'ready', observedAt: CHECKED }),
+    { id: 'claude-stale', engine: 'claude', label: 'Claude stale window', accountId: 'claude-stale' });
+    const { list } = renderGroup({ seats: [stale], health: [report('claude-stale', { engine: 'claude' })] });
+    const row = rowOf(list, 'Claude stale window');
+    // The retired window is never drawn, even when the server names it binding.
+    expect(row.textContent).not.toContain('5-hour window');
+    expect(row.textContent).not.toContain('75%');
+    expect(row.textContent).toContain('62% of weekly window used');
+    expect(within(row).getByText(/Anthropic removed the 5-hour limit on this plan\. Only the weekly window applies\./)).toBeInTheDocument();
+  });
+
+  it('still shows a Codex seat’s 5-hour window', () => {
+    const session = seatWindow({ id: 'five_hour', usedPercent: 75, resetsAt: RESET });
+    const week = seatWindow({ id: 'codex_codex_secondary', usedPercent: 31, resetsAt: RESET });
+    const codex = nativeSeat(capacity({ planType: 'pro', windows: [session, week], binding: session,
+      usability: 'ready', observedAt: CHECKED }),
+    { id: 'codex-both', engine: 'codex', label: 'Codex both windows', accountId: 'codex-both' });
+    const { list } = renderGroup({ seats: [codex], health: [report('codex-both')] });
+    const row = rowOf(list, 'Codex both windows');
+    expect(row.textContent).toContain('75% of 5-hour window used');
+    expect(row.textContent).toContain('secondary');
+    expect(row.textContent).not.toContain('5-hour limit');
   });
 
   it('Check again runs a sweep with the token, reads "Checking…" in place, and says when it is done', async () => {

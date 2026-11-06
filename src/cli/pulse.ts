@@ -14,6 +14,7 @@
  * are built, matching the M3/M4 lazy-import pattern.
  */
 
+import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import type { ActivityRollup, BudgetAlert, CostForecast, GovernanceStatus } from '../core/types.js';
 import type { AshlrConfig } from '../core/types.js';
 import { tokenEvidenceLabel } from '../core/run/token-evidence.js';
@@ -425,6 +426,10 @@ function renderDashboard(rollup: ActivityRollup, forecast?: CostForecast | null,
  * Returns process exit code: 0 = ok/warn, 1 = budget over.
  */
 export async function cmdPulse(args: string[]): Promise<number> {
+  if (args[0] === 'memory') {
+    const { cmdPulseMemory } = await import('./pulse-memory.js');
+    return cmdPulseMemory(args.slice(1));
+  }
   // M62: dispatch `connect` subcommand before dashboard flag parsing
   if (args[0] === 'connect') {
     return cmdPulseConnect(args.slice(1));
@@ -549,6 +554,7 @@ function printPulseHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    phm pulse [options]`);
+  console.log(`    phm pulse memory --samples <file> [--json] [--send]`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');
@@ -687,7 +693,7 @@ async function cmdPulseExport(args: string[]): Promise<number> {
     return 0;
   }
 
-  const pat = process.env['ASHLR_PULSE_PAT'];
+  const pat = readEnvironmentCredential('ASHLR_PULSE_PAT');
   if (!pat) {
     process.stderr.write(
       `${C.yellow}warning:${C.reset} ASHLR_PULSE_PAT is not set — nothing exported.\n` +

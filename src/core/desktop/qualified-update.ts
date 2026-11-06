@@ -386,7 +386,9 @@ export async function verifyInstalledRuntimeArchive(root: string, pins: PinnedRu
   const parents = new Set<string>(['']);
   for (const entry of archive.entries) {
     expected.add(entry.path); const path = join(root, entry.path);
-    if (fs.realpathSync(path) !== path || !installedBytes(path, 16 * 1024 * 1024, true).equals(entry.bytes) || Boolean(fs.lstatSync(path).mode & 0o111) !== entry.executable) hold('installed-current-unverified');
+    // The admitted archive already bounds each entry; installed bytes must fit
+    // that exact entry length, including legitimate large compiled bundles.
+    if (fs.realpathSync(path) !== path || !installedBytes(path, entry.bytes.length, true).equals(entry.bytes) || Boolean(fs.lstatSync(path).mode & 0o111) !== entry.executable) hold('installed-current-unverified');
     const parts = entry.path.split('/'); for (let i=1;i<parts.length;i++) parents.add(parts.slice(0,i).join('/'));
   }
   const scan = (relative: string) => {

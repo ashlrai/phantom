@@ -107,7 +107,7 @@ describe('managed Agents CLI', () => {
     expect(d.out.mock.calls[0][0]).toContain('separate from Codex'); expect(d.client.listSessions).not.toHaveBeenCalled();
     expect(AGENT_COMMANDS.some(c => c.usage.includes('openai-agents'))).toBe(true);
   });
-  it.each([['create'], ['sessions', '--key', KEY], ['sessions', '--limit', '101'], ['sessions', '--limit', '1', '--limit', '2'], ['inspect'], ['inspect', '--delete'], ['turns', '-h'], ['inspect', 'sess_123', '--after', 'turn_1'], ['turns', '../escape']])('rejects unsupported input %j without reads', async args => {
+  it.each([[['create']], [['sessions', '--key', KEY]], [['sessions', '--limit', '101']], [['sessions', '--limit', '1', '--limit', '2']], [['inspect']], [['inspect', '--delete']], [['turns', '-h']], [['inspect', 'sess_123', '--after', 'turn_1']], [['turns', '../escape']]])('rejects unsupported input %j without reads', async args => {
     const d = deps(); expect(await runOpenaiAgentsCli(args, d)).toBe(2);
     expect(d.client.listSessions).not.toHaveBeenCalled(); expect(d.client.inspectSession).not.toHaveBeenCalled(); expect(d.client.listTurns).not.toHaveBeenCalled();
     expect(d.err.mock.calls[0][0]).not.toContain(KEY);

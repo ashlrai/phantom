@@ -13,10 +13,15 @@
  *   doctor                     One-glance health check (config, phantom, providers).
  *   init [--yes]               Idempotent onboarding; NON-TTY safe with --yes.
  *   mcp [list|doctor|install]  MCP aggregation gateway and registry management.
+ *   radar [list|run|diff]      Observe public documentation and package changes.
+ *   drafts [list|show|approve|reject]  Outbound drafts waiting for your approval.
  *   run "<goal>" [opts]        Local-first agent orchestrator; decompose & execute a goal.
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
+ *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
+ *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
+ *   skills list [--json]       List skills learned from merged PRs (read-only).
  *   skills audit <path>        Quarantine-audit an external skill pack (read-only).
  *   new <name> [opts]          Scaffold a new project and register it in the index.
  *   ship [path] [opts]         Run pre-ship gate (lint/test/build/deps) + optional deploy.
@@ -43,6 +48,7 @@
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
  *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
+ *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
  *   gh pr create               Create a PR (explicit + confirm-gated mutation).
  *   vercel <ls|logs>           Read Vercel deployments / latest logs (read-only via vercel CLI).
@@ -67,7 +73,7 @@ import { VERSE_MCP_STDIO_COMMAND } from '../core/verse/verse-mcp-stdio-invocatio
 import { planTidy, applyTidy } from '../core/tidy.js';
 import { openInEditor } from './open.js';
 import { pick } from './picker.js';
-import { classifyRepos, printStatusJson } from './status.js';
+import { classifyRepos } from './status.js';
 import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
@@ -337,6 +343,11 @@ const loadDesktopCmd = lazyCmd(
   'desktop command requires the installed compiled consumer installer.',
 );
 
+const loadAppsCmd = lazyCmd(
+  () => import('./apps-control.js'), (m) => m.cmdApps as Cmd,
+  'apps command requires src/cli/apps-control.ts.',
+);
+
 const loadDesktopUpdateCmd = lazyCmd(
   () => import('./desktop-update.js'), (m) => m.cmdDesktopUpdate as Cmd,
   'desktop-update command requires the installed compiled update consumer.',
@@ -459,6 +470,12 @@ const loadTelemetryCmd = lazyCmd(
 
 // ─── M21 command loaders ────────────────────────────────────────────
 
+const loadNodeCmd = lazyCmd(
+  () => import('./node.js'),
+  (m) => m['cmdNode'] as Cmd,
+  'node command requires src/cli/node.ts.',
+);
+
 const loadSandboxCmd = lazyCmd(
   () => import('./sandbox.js'),
   (m) => m.cmdSandbox as Cmd,
@@ -503,6 +520,12 @@ const loadDaemonCmd = lazyCmd(
   () => import('./daemon.js'),
   (m) => m.cmdDaemon as Cmd,
   'daemon command requires src/cli/daemon.ts (M24 module not yet built).',
+);
+
+const loadDriveCmd = lazyCmd(
+  () => import('./drive.js'),
+  (m) => m.cmdDrive as Cmd,
+  'drive command requires src/cli/drive.ts.',
 );
 
 // ─── M25 command loaders ────────────────────────────────────────────
@@ -664,6 +687,12 @@ const loadCommsCmd = lazyCmd(
   'comms command requires src/cli/comms.ts (M137 module not yet built).',
 );
 
+const loadChannelsCmd = lazyCmd(
+  () => import('./channels.js'),
+  (m) => m.cmdChannels as Cmd,
+  'channels command requires src/cli/channels.ts (RQ-CHANNELS-18 module not yet built).',
+);
+
 // ─── M257 director command loader ────────────────────────────────────────────
 
 const loadDirectorCmd = lazyCmd(
@@ -763,6 +792,12 @@ const loadOpenaiAgentsCmd = lazyCmd(
   'openai-agents command requires a current build of src/cli/openai-agents.ts.',
 );
 
+const loadAgentsCmd = lazyCmd(
+  () => import('./agents-bus-contract.js'),
+  (m) => m.runAgentsCli as Cmd,
+  'agents command requires a current build of src/cli/agents-bus-contract.ts.',
+);
+
 // ─── 3.15 Automations ───────────────────────────────────────────────
 const loadAutomationsCmd = lazyCmd(
   () => import('./automations.js'),
@@ -831,6 +866,29 @@ function die(msg: string, code = 1): never {
   process.exit(code);
 }
 
+/**
+ * True when `--help` or `-h` appears in argv. The core commands below honor it
+ * by printing usage and exiting 0 before any index/config/side-effect work -
+ * `phm status --help` used to build the index and `phm ls -h` treated -h as a
+ * category filter. Guarded end-to-end by test/cli-help-no-side-effects.test.ts.
+ */
+function wantsHelp(args: string[]): boolean {
+  return args.includes('--help') || args.includes('-h');
+}
+
+/** Render a core command's usage block: a `phm <cmd>` title line plus usage rows. */
+function printCoreUsage(cmd: string, desc: string, rows: readonly (readonly [string, string])[]): void {
+  console.log('');
+  console.log(bold(`  phm ${cmd}`) + dim(` - ${desc}`));
+  console.log('');
+  console.log('  ' + bold('Usage:'));
+  console.log('');
+  const w = Math.max(...rows.map(([r]) => r.length));
+  for (const [usage, detail] of rows) {
+    console.log(`    ${cyan(pad(usage, w))}${detail ? `  ${dim(detail)}` : ''}`);
+  }
+  console.log('');
+}
 
 /** Ensure the index exists; auto-build if missing. Returns the index. */
 function requireIndex(cfg: AshlrConfig): AshlrIndex {
@@ -993,6 +1051,12 @@ function persistConfigSet(
 // ─── Command: index ───────────────────────────────────────────────────────────
 
 function cmdIndex(args: string[]): void {
+  if (wantsHelp(args)) {
+    printCoreUsage('index', 'Rebuild the desktop index; print counts by category.', [
+      ['phm index [--refresh]', 'build (or force-rebuild) the index, then show counts by category'],
+    ]);
+    return;
+  }
   const refresh = args.includes('--refresh');
   const cfg = loadConfig();
 
@@ -1047,6 +1111,14 @@ function cmdIndex(args: string[]): void {
 // ─── Command: go ─────────────────────────────────────────────────────────────
 
 async function cmdGo(args: string[]): Promise<void> {
+  if (wantsHelp(args)) {
+    printCoreUsage('go', 'Find an item; open in editor, print its path for cd, or show a summary.', [
+      ['phm go [query]', 'best match wins; ambiguous matches open the picker'],
+      ['phm go <query> --open', 'open the match in your editor'],
+      ['phm go <query> --cd', 'print the match path only - for `cd $(phm go <query> --cd)`'],
+    ]);
+    return;
+  }
   const openFlag = args.includes('--open');
   const cdFlag   = args.includes('--cd');
   const queryArgs = args.filter(a => !a.startsWith('--'));
@@ -1151,20 +1223,23 @@ function printNoReposHelp(cfg: AshlrConfig): void {
 }
 
 async function cmdStatus(args: string[]): Promise<void> {
-  const cfg = loadConfig();
-  const idx = requireIndex(cfg);
-
-  if (args.includes('--json')) {
-    await printStatusJson(cfg, idx, {
-      getToolsRegistry: tryGetToolsRegistry,
-      discoverMcpServers: tryDiscoverMcpServers,
-      buildRollup: tryBuildRollup,
-      githubStatus: tryGithubStatus,
-      vercelStatus: tryVercelStatus,
-      getIdentity: tryGetIdentity,
-    });
+  if (wantsHelp(args)) {
+    printCoreUsage('status', 'Attention board: dirty, off-sync and stale repos; ecosystem summary.', [
+      ['phm status', 'human attention board'],
+      ['phm status --json', 'running, merged (24h), blocked and pool usage'],
+    ]);
     return;
   }
+  if (args.includes('--json')) {
+    const { buildFleetLiveSnapshot } = await import('../core/verse/fleet-live-api.js');
+    const { readResourceView } = await import('../core/fabric/resource-view-store.js');
+    const { projectLiveStatus } = await import('../core/fleet/live-status.js');
+    const [live, resources] = await Promise.all([buildFleetLiveSnapshot(), readResourceView()]);
+    console.log(JSON.stringify(projectLiveStatus(live.snapshot, resources), null, 2));
+    return;
+  }
+  const cfg = loadConfig();
+  const idx = requireIndex(cfg);
 
   const { repos, dirty, offSync, stale } = classifyRepos(idx, cfg.staleDays);
 
@@ -1357,6 +1432,10 @@ async function cmdStatus(args: string[]): Promise<void> {
           `  ${dim('·')}  ${cyan(`${gs.openIssues} open issue${gs.openIssues !== 1 ? 's' : ''}`)}` +
           `  ${dim('·')}  ${ciStr}${repoLabel}`
         );
+        if (gs.repo) {
+          const { collectMergeEtas, formatMergeEta } = await import('../core/merge-eta.js');
+          for (const eta of collectMergeEtas(cwd, gs.repo)) console.log(`    ${formatMergeEta(eta)}`);
+        }
         console.log('');
       }
     }
@@ -1440,6 +1519,12 @@ async function cmdStatus(args: string[]): Promise<void> {
 // ─── Command: ls ─────────────────────────────────────────────────────────────
 
 function cmdLs(args: string[]): void {
+  if (wantsHelp(args)) {
+    printCoreUsage('ls', 'List all indexed items, optionally filtered by category.', [
+      ['phm ls [category]', 'exact category match first, then partial match fallback'],
+    ]);
+    return;
+  }
   const catFilter = args.filter(a => !a.startsWith('--'))[0] ?? null;
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
@@ -1494,6 +1579,12 @@ function cmdLs(args: string[]): void {
 // ─── Command: open ────────────────────────────────────────────────────────────
 
 async function cmdOpen(args: string[]): Promise<void> {
+  if (wantsHelp(args)) {
+    printCoreUsage('open', 'Open the best match in your editor; no query opens the picker.', [
+      ['phm open [query]', 'top match opens directly; no query opens the interactive picker'],
+    ]);
+    return;
+  }
   const query = args.filter(a => !a.startsWith('--')).join(' ');
   const cfg = loadConfig();
   const idx = requireIndex(cfg);
@@ -1526,6 +1617,14 @@ async function cmdOpen(args: string[]): Promise<void> {
 // ─── Command: tidy ────────────────────────────────────────────────────────────
 
 function cmdTidy(args: string[]): void {
+  if (wantsHelp(args)) {
+    printCoreUsage('tidy', 'Show (or apply) tidy moves for loose Desktop files.', [
+      ['phm tidy', 'dry-run: print the planned moves'],
+      ['phm tidy --apply', 'apply the moves'],
+      ['phm tidy --json', 'emit the TidyPlan as JSON (with --apply, the post-apply plan)'],
+    ]);
+    return;
+  }
   const apply = args.includes('--apply');
   const json  = args.includes('--json');
   const cfg = loadConfig();
@@ -1648,6 +1747,26 @@ function formatEffectiveConfigSnapshot(snapshot: EffectiveConfigSnapshot): strin
 
 async function cmdConfig(args: string[]): Promise<void> {
   const subCmd = args[0];
+  const CONFIG_USAGE =
+    'Usage: ashlr config [path|list|get <key>|set <key> <value>|set <key> --json <value>|effective [--json]]';
+
+  // `config set <key> --help` (or `set --help <value>`) used to store "--help"
+  // as the value or the key. If the flag is the first operand (no key given),
+  // print usage to stdout and exit 0; otherwise refuse with exit 2.
+  if (subCmd === 'set' && (args.includes('--help') || args.includes('-h'))) {
+    if (args[1] === '--help' || args[1] === '-h') {
+      console.log('Usage: ashlr config set <key> <value>');
+      return;
+    }
+    die('Usage: ashlr config set <key> <value>', 2);
+  }
+
+  if (wantsHelp(args) || subCmd === 'help') {
+    console.log(CONFIG_USAGE);
+    console.log('  (no args) or path  print the config file path');
+    console.log('  list               print a summary of the config');
+    return;
+  }
 
   if (subCmd === 'effective') {
     const jsonMode = args.includes('--json');
@@ -1665,6 +1784,11 @@ async function cmdConfig(args: string[]): Promise<void> {
     }
     console.log('');
     return;
+  }
+
+  // A typo such as `config gt roots` used to print the summary and exit 0.
+  if (subCmd && !['path', 'list', 'show', 'get', 'set'].includes(subCmd)) {
+    die(`Unknown config subcommand: ${subCmd}\n${CONFIG_USAGE}`, 2);
   }
 
   const cfg = loadConfig();
@@ -1763,7 +1887,7 @@ async function cmdConfig(args: string[]): Promise<void> {
     return;
   }
 
-  // No sub-command: print a formatted summary
+  // `config list` (or `show`): print a formatted summary
   console.log('');
   console.log(bold('  ashlr config') + gray(` — ${CONFIG_PATH}`));
   console.log('');
@@ -1871,8 +1995,8 @@ async function main(): Promise<void> {
   const cmd  = argv[0] ?? 'help';
   const rest = argv.slice(1);
 
-  // These legacy commands parse their own arguments after loading the index.
-  // Handle help and invalid options before any configuration or index access.
+  // Reject malformed legacy invocations before they load configuration or the index.
+  // Help remains handled by each command so its detailed usage is preserved.
   const legacyUsage: Record<string, { usage: string; flags: string[]; maxOperands?: number }> = {
     index: { usage: 'phm index [--refresh]', flags: ['--refresh'], maxOperands: 0 },
     go: { usage: 'phm go [query] [--open] [--cd]', flags: ['--open', '--cd'] },
@@ -1882,11 +2006,7 @@ async function main(): Promise<void> {
     tidy: { usage: 'phm tidy [--apply] [--json]', flags: ['--apply', '--json'], maxOperands: 0 },
   };
   const legacy = Object.hasOwn(legacyUsage, cmd) ? legacyUsage[cmd] : undefined;
-  if (legacy) {
-    if (rest.includes('--help') || rest.includes('-h')) {
-      console.log(`Usage: ${legacy.usage}`);
-      return;
-    }
+  if (legacy && !wantsHelp(rest)) {
     const operands = rest.filter((arg) => !arg.startsWith('-'));
     if (rest.some((arg) => arg.startsWith('-') && !legacy.flags.includes(arg)) ||
         (legacy.maxOperands !== undefined && operands.length > legacy.maxOperands)) {
@@ -1898,6 +2018,17 @@ async function main(): Promise<void> {
 
   try {
     switch (cmd) {
+      case 'route': {
+        const { cmdRoute } = await import('./route.js');
+        process.exitCode = await cmdRoute(rest);
+        break;
+      }
+      case 'router-calibration': {
+        const { cmdRouterCalibration } = await import('./router-calibration.js');
+        process.exitCode = await cmdRouterCalibration(rest);
+        break;
+      }
+
       case 'index':
         cmdIndex(rest);
         break;
@@ -1933,6 +2064,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'autopilot': {
+        const { cmdAutopilot } = await import('./autopilot.js');
+        process.exitCode = await cmdAutopilot(rest);
+        break;
+      }
+
+      case 'metrics': {
+        const { cmdMetrics } = await import('./metrics.js');
+        process.exitCode = await cmdMetrics(rest);
+        break;
+      }
+
       case 'improve': {
         const { cmdImprove } = await import('./improve.js');
         process.exitCode = await cmdImprove(rest);
@@ -1945,6 +2088,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'lanes': {
+        const { cmdLanes } = await import('./lanes.js');
+        process.exitCode = await cmdLanes(rest);
+        break;
+      }
+
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);
@@ -1954,6 +2103,12 @@ async function main(): Promise<void> {
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);
+        break;
+      }
+
+      case 'graph': {
+        const { cmdGraph } = await import('./graph.js');
+        process.exitCode = await cmdGraph(rest);
         break;
       }
 
@@ -1972,6 +2127,12 @@ async function main(): Promise<void> {
       case 'mcp': {
         const cmdMcp = await loadMcpCmd();
         process.exitCode = await cmdMcp(rest);
+        break;
+      }
+
+      case 'sessions': {
+        const { cmdSessions } = await import('./sessions.js');
+        process.exitCode = await cmdSessions(rest);
         break;
       }
 
@@ -1994,6 +2155,26 @@ async function main(): Promise<void> {
         // prompts OFF vs ON and reports steps/done/tokens.
         const cmdEval = await loadEvalCmd();
         process.exitCode = await cmdEval(rest);
+        break;
+      }
+
+      case 'queue': {
+        process.exitCode = await (await import('./queue.js')).cmdQueue(rest);
+        break;
+      }
+
+      case 'issues': {
+        process.exitCode = await (await import('./issues.js')).cmdIssues(rest);
+        break;
+      }
+
+      case 'select': {
+        process.exitCode = await (await import('./select.js')).cmdSelect(rest);
+        break;
+      }
+
+      case 'pool': {
+        process.exitCode = await (await import('./pool.js')).cmdPool(rest);
         break;
       }
 
@@ -2064,12 +2245,25 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'app': {
+        process.exitCode = await (await import('./app.js')).cmdApp(rest);
+        break;
+      }
       case 'desktop': {
         process.exitCode = await (await loadDesktopCmd())(rest);
         break;
       }
+      case 'apps': {
+        process.exitCode = await (await loadAppsCmd())(rest);
+        break;
+      }
       case 'desktop-update': {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
+        break;
+      }
+      case 'self-swap': {
+        const { cmdSelfSwap } = await import('./self-swap.js');
+        process.exitCode = await cmdSelfSwap(rest);
         break;
       }
       // People try `phm upgrade` first; it used to be an unknown command.
@@ -2099,6 +2293,12 @@ async function main(): Promise<void> {
       case 'swarms': {
         const cmdSwarms = await loadSwarmsCmd();
         process.exitCode = await cmdSwarms(rest);
+        break;
+      }
+
+      case 'top': {
+        const { cmdTop } = await import('./top.js');
+        process.exitCode = await cmdTop(rest);
         break;
       }
 
@@ -2166,6 +2366,30 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'worktrees': {
+        const { cmdWorktrees } = await import('./worktrees.js');
+        process.exitCode = cmdWorktrees(rest);
+        break;
+      }
+
+      case 'disk': {
+        const { cmdDisk } = await import('./disk.js');
+        process.exitCode = await cmdDisk(rest);
+        break;
+      }
+
+      case 'disk-maint': {
+        const { cmdDiskMaint } = await import('./disk-maint.js');
+        process.exitCode = await cmdDiskMaint(rest);
+        break;
+      }
+
+      case 'node': {
+        const cmdNode = await loadNodeCmd();
+        process.exitCode = await cmdNode(rest);
+        break;
+      }
+
       case 'sandbox': {
         const cmdSandbox = await loadSandboxCmd();
         process.exitCode = await cmdSandbox(rest);
@@ -2199,6 +2423,11 @@ async function main(): Promise<void> {
       case 'daemon': {
         const cmdDaemon = await loadDaemonCmd();
         process.exitCode = await cmdDaemon(rest);
+        break;
+      }
+
+      case 'drive': {
+        process.exitCode = await (await loadDriveCmd())(rest);
         break;
       }
 
@@ -2324,6 +2553,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'sweep': {
+        const { cmdSweep } = await import('./sweep.js');
+        process.exitCode = await cmdSweep(rest);
+        break;
+      }
+
       case 'digest': {
         const cmdDigest = await loadDigestCmd();
         process.exitCode = await cmdDigest(rest);
@@ -2333,6 +2568,12 @@ async function main(): Promise<void> {
       case 'seams': {
         const cmdSeams = await loadSeamsCmd();
         process.exitCode = await cmdSeams(rest);
+        break;
+      }
+
+      case 'verify': {
+        const { cmdVerify } = await import('./verify.js');
+        process.exitCode = await cmdVerify(rest);
         break;
       }
 
@@ -2378,6 +2619,17 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'drafts': {
+        // Outbound drafts awaiting approval (src/core/cos/drafts.ts); approve records, never sends.
+        process.exitCode = await (await import('./drafts.js')).cmdDrafts(rest);
+        break;
+      }
+
+      case 'radar': {
+        process.exitCode = await (await import('./radar.js')).cmdRadar(rest);
+        break;
+      }
+
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);
@@ -2405,6 +2657,30 @@ async function main(): Promise<void> {
       case 'comms': {
         const cmdComms = await loadCommsCmd();
         process.exitCode = await cmdComms(rest);
+        break;
+      }
+
+      case 'imessage': {
+        const { cmdIMessage } = await import('./imessage.js');
+        process.exitCode = await cmdIMessage(rest);
+        break;
+      }
+
+      case 'memory': {
+        const { cmdMemory } = await import('./memory.js');
+        process.exitCode = await cmdMemory(rest);
+        break;
+      }
+
+      case 'connectors': {
+        const { cmdConnectors } = await import('./connectors.js');
+        process.exitCode = await cmdConnectors(rest);
+        break;
+      }
+
+      case 'channels': {
+        const cmdChannels = await loadChannelsCmd();
+        process.exitCode = await cmdChannels(rest);
         break;
       }
 
@@ -2522,6 +2798,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'agents': {
+        // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        const cmdAgents = await loadAgentsCmd();
+        process.exitCode = await cmdAgents(rest);
+        break;
+      }
+
       case 'automations': {
         // 3.15: standing triggers → lane tasks (src/cli/automations.ts). `fire`
         // goes through the lanes' own gates; `fire --dry-run` writes nothing.
@@ -2530,10 +2813,40 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'resource': {
+        const { cmdResource } = await import('./resource.js');
+        process.exitCode = await cmdResource(rest);
+        break;
+      }
+
       case 'resources': {
         // M253: Resource Control Plane god-view — per-backend availability/used%/cap/resets.
         const cmdResources = await loadResourcesCmd();
         process.exitCode = await cmdResources(rest);
+        break;
+      }
+
+      case 'capacity': {
+        const { cmdCapacity } = await import('./capacity.js');
+        process.exitCode = await cmdCapacity(rest);
+        break;
+      }
+
+      case 'signals': {
+        const { cmdSignals } = await import('./signals.js');
+        process.exitCode = await cmdSignals(rest);
+        break;
+      }
+
+      case 'friction': {
+        const { cmdFriction } = await import('./friction.js');
+        process.exitCode = await cmdFriction(rest);
+        break;
+      }
+
+      case 'budget': {
+        const { cmdBudget } = await import('./budget.js');
+        process.exitCode = await cmdBudget(rest);
         break;
       }
 
@@ -2547,6 +2860,12 @@ async function main(): Promise<void> {
       case 'version':
       case '--version':
       case '-v': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('version', 'Print the installed ashlr version.', [
+            ['phm version', 'aliases: --version, -v'],
+          ]);
+          break;
+        }
         // ASHLR_VERSION is set by the Bun SEA shim (build-sea.mjs) because
         // createRequire(import.meta.url) cannot resolve package.json from
         // inside Bun's virtual FS (/$bunfs/root/…) at runtime.

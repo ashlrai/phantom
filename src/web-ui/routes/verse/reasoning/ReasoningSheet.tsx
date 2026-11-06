@@ -4,7 +4,7 @@
  * in (V3.15).
  *
  * In the chat, the transcript's Reasoning / Sources toggles open the dock
- * panes (reasoning.pane.tsx registers them for ⇧⌘Y / ⇧⌘S). A transcript
+ * panes (reasoning.pane.tsx and sources.pane.tsx register ⇧⌘Y / ⇧⌘S). A transcript
  * rendered where no dock handles those commands falls back to this sheet: a
  * panel over the right edge of the conversation, two tabs, Escape to close,
  * focus returned to the button that opened it. Lazy — nothing here loads

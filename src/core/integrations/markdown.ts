@@ -23,7 +23,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -104,13 +104,23 @@ export function openInAshlrMd(filePath: string): { ok: boolean; detail: string }
     return { ok: false, detail: 'mdopen not found on PATH — ashlr-md not installed' };
   }
 
+  // mdopen's stderr goes to a temp file, not a pipe. mdopen hands the URL to
+  // xdg-open/gio with that stderr inherited and, when the launcher is still
+  // running at its deadline, exits 0 and leaves it running ("not
+  // confirmed"). A pipe would then stay open until the launcher exits, so
+  // spawnSync would wait for the launcher instead of mdopen and report
+  // ETIMEDOUT for an open mdopen had accepted. A file has no EOF to wait for.
+  let errDir: string | null = null;
+  let errFd: number | null = null;
   try {
+    errDir = mkdtempSync(join(tmpdir(), 'ashlr-mdopen-'));
+    const errPath = join(errDir, 'stderr');
+    errFd = openSync(errPath, 'w+', 0o600);
     const res = spawnSync(bin, [filePath], {
       timeout: MDOPEN_TIMEOUT_MS,
-      stdio: ['ignore', 'ignore', 'pipe'],
-      encoding: 'utf8',
+      stdio: ['ignore', 'ignore', errFd],
     });
-    const stderr = (res.stderr ?? '').trim();
+    const stderr = readCapped(errFd).trim();
     if (res.error) {
       return { ok: false, detail: `mdopen failed: ${res.error.message}${stderr ? ` — ${stderr}` : ''}` };
     }
@@ -122,6 +132,26 @@ export function openInAshlrMd(filePath: string): { ok: boolean; detail: string }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, detail: `mdopen spawn failed: ${msg}` };
+  } finally {
+    if (errFd !== null) {
+      try { closeSync(errFd); } catch { /* already closed */ }
+    }
+    if (errDir !== null) {
+      // A launcher left running may still hold the file (Windows refuses the
+      // unlink then); best-effort, the OS temp dir is reclaimed later.
+      try { rmSync(errDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  }
+}
+
+/** Up to 8 KiB from the start of `fd`, as UTF-8. Never throws. */
+function readCapped(fd: number): string {
+  try {
+    const buf = Buffer.alloc(8 * 1024);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).toString('utf8');
+  } catch {
+    return '';
   }
 }
 
