@@ -20,6 +20,12 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [3.30.21] — 2026-11-06
 
+### Fixes
+
+- Keep fresh quota-custody validation off the desktop HTTP thread with a bounded single-flight worker and main-owned guarded commit ([#3799](https://github.com/ashlrai/phantom/pull/3799)).
+- Show distinct resource accounts separately from supplementary usage evidence, expire session readings at their original deadlines, and label historical planning controls accurately ([#3800](https://github.com/ashlrai/phantom/pull/3800)).
+- Preserve the guarded complete self-tick stage and deduplicated bus-meter behavior ([#3275](https://github.com/ashlrai/phantom/pull/3275)).
+
 
 ### Changes
 
