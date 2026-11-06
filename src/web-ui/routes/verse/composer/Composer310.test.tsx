@@ -119,6 +119,7 @@ function installServer(over: Partial<Pick<FakeServer, 'controls' | 'queue' | 'fi
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
     state.calls.push({ method, url, body });
     if (url === '/api/verse/fleet/runs/inbox') return json({ at: '2026-10-31 00:13' });
+    if (url === '/api/verse/leader/planner/run' && body?.['reason'] === 'check') return json({ v: 1, outcome: 'ran', exitCode: 0, provider: 'local' });
     if (url.startsWith('/api/verse/session-controls/')) {
       if (method === 'POST') {
         if (body?.['permissionMode'] === 'bypass' && body['confirmBypass'] !== true) return json({ code: 'VERSE_INVALID', error: 'confirm it' }, 400);
@@ -511,20 +512,24 @@ describe('@ files and / commands', () => {
     expect(p.onStop).not.toHaveBeenCalled();
   });
 
-  it('/ offers the commands; /plan switches to Plan and clears itself', async () => {
+  it('/ offers the commands; /plan completes and runs a planner pass', async () => {
     const user = userEvent.setup();
     await renderReady();
     const box = screen.getByRole('textbox', { name: 'Message' });
     await user.type(box, '/');
     const list = await screen.findByRole('listbox', { name: 'Commands' });
     expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      expect.stringContaining('/handoff'), expect.stringContaining('/compact'), expect.stringContaining('/new'),
-      expect.stringContaining('/plan'), expect.stringContaining('/effort'), expect.stringContaining('/model'), expect.stringContaining('/fleet'), expect.stringContaining('/lane'),
+      expect.stringContaining('/job'), expect.stringContaining('/handoff'), expect.stringContaining('/compact'), expect.stringContaining('/new'),
+      expect.stringContaining('/plan'), expect.stringContaining('/effort'), expect.stringContaining('/model'), expect.stringContaining('/bus'),
+      expect.stringContaining('/fleet'), expect.stringContaining('/lane'), expect.stringContaining('/release'), expect.stringContaining('/pane'),
     ]);
     // No handoff wired by the owner: listed, disabled, and says where it is.
-    expect(within(list).getAllByRole('option')[0]).toHaveAttribute('aria-disabled', 'true');
+    expect(within(list).getByRole('option', { name: /\/handoff/ })).toHaveAttribute('aria-disabled', 'true');
     await user.type(box, 'pl{Enter}');
-    await waitFor(() => expect(server.posts(/session-controls/).at(-1)!.body).toEqual({ permissionMode: 'plan' }));
+    expect(box).toHaveValue('/plan ');
+    await user.type(box, 'check{Enter}');
+    await waitFor(() => expect(server.posts(/leader\/planner\/run/).at(-1)!.body).toEqual({ reason: 'check' }));
+    expect(await screen.findByText('Planner pass ran on local: ran (exit 0)')).toBeInTheDocument();
     expect(box).toHaveValue('');
   });
 
@@ -539,7 +544,8 @@ describe('@ files and / commands', () => {
     await waitFor(() => expect(box).toHaveFocus());
     fireEvent.change(box, { target: { value: '/fleet Please prioritize tests' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await screen.findByText('Sent to the leaders · 00:13');
+    await screen.findByText("Sent to the leaders' inbox · 00:13 · open Inbox to confirm");
+    expect(screen.getByRole('button', { name: 'Open inbox' })).toBeInTheDocument();
     expect(server.posts(/fleet\/runs\/inbox/)[0]?.body).toEqual({ text: 'Please prioritize tests', source: 'Phantom desktop chat' });
     expect(server.posts(/queue/)).toHaveLength(0);
     expect(p.onSend).not.toHaveBeenCalled();

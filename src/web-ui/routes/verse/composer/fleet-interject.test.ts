@@ -16,7 +16,7 @@ describe('postFleetInterjection', () => {
   it('returns the acknowledgement and sends the desktop chat source', async () => {
     const ack = { at: '2026-10-31 00:13' };
     vi.mocked(apiPost).mockResolvedValue(ack);
-    await expect(postFleetInterjection('hello')).resolves.toEqual(ack);
+    await expect(postFleetInterjection('hello')).resolves.toEqual({ ...ack, outcome: 'accepted' });
     expect(apiPost).toHaveBeenCalledWith('/api/verse/fleet/runs/inbox', { text: 'hello', source: 'Phantom desktop chat' }, 'fixture-mutation-token');
     expect(touchMutationHold).toHaveBeenCalledOnce();
   });

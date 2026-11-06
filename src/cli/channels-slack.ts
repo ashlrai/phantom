@@ -246,6 +246,10 @@ export async function cmdChannelsSlack(args: string[]): Promise<number> {
     console.log('  matching workspace/bot identity and explicitly approved team recipients.');
     return 0;
   }
+  if (['status', 'map', 'probe', 'run'].includes(sub) && args.slice(1).some((arg) => arg === '--help' || arg === '-h')) {
+    console.log(SLACK_USAGE);
+    return 0;
+  }
   if (sub === 'status') return cmdSlackStatus(args.slice(1));
   if (sub === 'map') return cmdSlackMap(args.slice(1));
   if (sub === 'probe') return cmdSlackTransport(args.slice(1), false);

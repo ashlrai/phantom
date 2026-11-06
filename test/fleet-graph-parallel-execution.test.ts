@@ -113,13 +113,16 @@ it('cancels and reaps both active children, leaves queued work and restores list
   expect(existsSync(join(dir, 'queued'))).toBe(false);
   expect(['SIGINT', 'SIGTERM'].map(s => process.listenerCount(s))).toEqual(before);
 });
-it('timeout frees capacity and blocks descendants', async () => {
+it('timeout holds one slot while the other runs, then the spent shared deadline keeps descendants from starting', async () => {
+  // The timeout is one deadline for the whole apply: once the hung node consumes it, nothing
+  // queued behind it (independent or dependent) may start, so the dependent reports
+  // deadline-exhausted rather than blocked. A second slot lets the independent node finish first.
   const r = await graphArgvRun(graph([
     { id: 'timeout', argv: argv('setInterval(()=>{},1000)') },
     { id: 'independent', argv: argv(touch('independent')) },
     { id: 'blocked', dependsOn: ['timeout'], argv: argv(touch('blocked')) },
-  ]), true, 5000, 1);
-  expect(r.nodes.map(n => n.status)).toEqual(['timeout', 'success', 'blocked']);
+  ]), true, 5000, 2);
+  expect(r.nodes.map(n => n.status)).toEqual(['timeout', 'success', 'deadline-exhausted']);
   expect(existsSync(join(dir, 'independent'))).toBe(true);
   expect(existsSync(join(dir, 'blocked'))).toBe(false);
 });
