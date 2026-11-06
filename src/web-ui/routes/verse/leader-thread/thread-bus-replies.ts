@@ -11,14 +11,20 @@ export interface BusReply {
   expired: boolean;
 }
 
-export function busRepliesToMason(receipts: readonly AgentBusReceipt[], nowMs: number): BusReply[] {
+export function busRepliesToMason(receipts: readonly AgentBusReceipt[], nowMs: number, outbox: readonly { text: string }[] = []): BusReply[] {
   const seen = new Set<string>();
+  const recordedReplies = new Set(outbox.map(entry => entry.text.trim()));
   return [...receipts].sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor).flatMap(({ receivedAt, envelope }) => {
     if (envelope.to.toLowerCase() !== 'mason' || seen.has(envelope.id)) return [];
     seen.add(envelope.id);
     const body = envelope.body !== null && typeof envelope.body === 'object' && !Array.isArray(envelope.body)
       ? envelope.body as Record<string, unknown> : null;
     const text = typeof body?.text === 'string' ? body.text : JSON.stringify(envelope.body);
+    // The CEO bridge records the full reply in OUTBOX before mirroring it to
+    // the bus. Prefer that durable full-text line, while retaining a bus-only
+    // fallback when the record could not be read or falls outside its tail.
+    if (envelope.from === 'leader' && 'origin_bridge' in envelope && envelope.origin_bridge === 'leader-network' &&
+      (body?.kind === 'leader-reply' || body?.kind === 'leader-away-digest') && typeof body.text === 'string' && recordedReplies.has(body.text.trim())) return [];
     return [{ key: `bus-${envelope.id}`, at: new Date(receivedAt).toISOString(), from: envelope.from,
       kind: typeof body?.kind === 'string' ? body.kind : 'message',
       // eslint-disable-next-line no-control-regex -- reject control bytes in untrusted text.

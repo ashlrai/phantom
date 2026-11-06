@@ -50,7 +50,7 @@ All fleet reads observe the host runs directory `~/.ashlr-runs` and the
 
 ```sh
 phm fleet runs --json       # lanes, running vs target, queued, held, last tick
-phm fleet parked --json     # parked queue: totals, ready/parked by lane, hold reasons
+phm fleet parked --json     # parked queue: totals, ready/parked by lane, hold reasons, unmetDeps for PARKED-DEP gates
 phm fleet journal --json    # leader journal: recent passes, ingest and reject rows
 ```
 

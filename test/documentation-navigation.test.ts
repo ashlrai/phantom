@@ -190,6 +190,15 @@ describe('operator documentation navigation', () => {
     }
   });
 
+  it.each(['fleet-health.md', 'VERIFY-CHANGE.md'])(
+    'links the source-only %s guide from the packaged documentation index', (guide) => {
+      const root = packagedDocumentation();
+      const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
+      expect(index).toContain(`https://github.com/ashlrai/phantom/blob/master/docs/${guide}`);
+      expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+    },
+  );
+
   it('links the source-only model inventory guide from the packaged documentation index', () => {
     const root = packagedDocumentation();
     const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
@@ -217,6 +226,19 @@ describe('operator documentation navigation', () => {
       expect.objectContaining({ file: 'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md', href: null }),
       expect.objectContaining({ file: 'docs/RESOURCE-POOLS.md', href: 'RESOURCE-POOL-COMMISSIONING-CHECK.md' }),
     ]));
+  });
+
+  it('exempts only the frozen 3.3.0 CHANGELOG link to the removed activation guide', () => {
+    const frozen = '[guide](docs/RUNTIME-FLEET-ACTIVATION.md)\n';
+    const changelog = fixture({ 'CHANGELOG.md': frozen });
+    expect(checkDocumentation({ root: changelog, entrypoints: ['CHANGELOG.md'] }).errors).toEqual([]);
+
+    const other = fixture({ 'CHANGELOG.md': '[guide](docs/MISSING.md)\n', 'NOTES.md': frozen });
+    const result = checkDocumentation({ root: other, entrypoints: ['CHANGELOG.md', 'NOTES.md'] });
+    expect(result.errors).toEqual([
+      expect.objectContaining({ file: 'CHANGELOG.md', href: 'docs/MISSING.md' }),
+      expect.objectContaining({ file: 'NOTES.md', href: 'docs/RUNTIME-FLEET-ACTIVATION.md' }),
+    ]);
   });
 
   it('keeps checked source entrypoints and their heading targets navigable', () => {

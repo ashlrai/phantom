@@ -208,3 +208,20 @@ const SERIES_QUERIES: Record<SeriesWindow, QueryDef<OptionalRead>> = {
 export function usageSeriesQuery(window: SeriesWindow): QueryDef<OptionalRead> {
   return SERIES_QUERIES[window];
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/verse/usage-resources — the "Every resource" panel (RQ-NIGHT-USAGE-1).
+//
+// Same optional-read posture as the rest of this module: a server that
+// predates the route answers 404 and the panel renders "unavailable" rather
+// than breaking the section. The body itself narrows through
+// usage-resources-model.ts — a drifted payload degrades to unavailable too.
+// ---------------------------------------------------------------------------
+
+export const USAGE_RESOURCES_KEY = 'verse-usage-resources';
+
+/** GET /api/verse/usage-resources — all twelve operator resources, one read. */
+export const usageResourcesQuery: QueryDef<OptionalRead> = {
+  key: USAGE_RESOURCES_KEY,
+  fetch: optionalGet('/api/verse/usage-resources'),
+};

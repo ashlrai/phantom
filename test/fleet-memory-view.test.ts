@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { memoryView, FLEET_MEMORY_STALE_MS } from '../src/core/fleet/memory-view.js';
 import { cmdFleetMemory } from '../src/cli/fleet-memory.js';
+import { ENGINE_ADMISSION_THRESHOLDS, type EngineAdmissionView } from '../src/core/fleet/engine-admission-view.js';
 
 const now = Date.parse('2026-11-01T19:30:00Z');
 const memstat = { free_pct: 42.5, swap_gb: 1.2, swapouts_per_min: 0.25, disk_gb: 118.4, ts: '2026-11-01T19:29:30Z' };
@@ -69,11 +70,17 @@ describe('memoryView', () => {
 });
 
 describe('cmdFleetMemory', () => {
+  const ADMISSION: EngineAdmissionView = {
+    gated: true, allowed: true, free_pct: 61.5, swap_gb: 0.5, reason: null,
+    thresholds: ENGINE_ADMISSION_THRESHOLDS,
+  };
+  const readAdmission = () => ADMISSION;
+
   it('prints the exact text view for a full fixture', async () => {
     await writeFile(join(root, 'memstat.json'), JSON.stringify(memstat));
     await writeFile(join(root, '.memguard2.json'), JSON.stringify(memguard));
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetMemory(['--root', root], undefined, now)).toBe(0);
+    expect(await cmdFleetMemory(['--root', root], undefined, now, readAdmission)).toBe(0);
     expect(String(output.mock.calls[0]![0])).toBe([
       'free_pct: 42.5',
       'swap_gb: 1.2',
@@ -84,6 +91,7 @@ describe('cmdFleetMemory', () => {
       'stale: no',
       'memguard_level: normal',
       'memguard_stopped: RQ-PHX-A, RQ-PHX-B',
+      'engine launch: allowed (61.5% free, 0.50 GiB swap)',
     ].join('\n'));
   });
 
@@ -91,7 +99,7 @@ describe('cmdFleetMemory', () => {
     await writeFile(join(root, 'memstat.json'), JSON.stringify(memstat));
     await writeFile(join(root, '.memguard2.json'), JSON.stringify(memguard));
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetMemory(['--root', root, '--json'], undefined, now)).toBe(0);
+    expect(await cmdFleetMemory(['--root', root, '--json'], undefined, now, readAdmission)).toBe(0);
     expect(JSON.parse(String(output.mock.calls[0]![0]))).toEqual({
       schema: 'fleet.memory.v1',
       generatedAt: '2026-11-01T19:30:00.000Z',
@@ -100,22 +108,23 @@ describe('cmdFleetMemory', () => {
         sampled_at: '2026-11-01T19:29:30.000Z', age_ms: 30_000, stale: false,
       },
       memguard: { level: 'normal', stopped: ['RQ-PHX-A', 'RQ-PHX-B'] },
+      engine_admission: ADMISSION,
     });
   });
 
   it('marks a stale sample in text and JSON', async () => {
     await writeFile(join(root, 'memstat.json'), JSON.stringify({ ...memstat, ts: '2026-11-01T19:20:00Z' }));
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetMemory(['--root', root], undefined, now)).toBe(0);
+    expect(await cmdFleetMemory(['--root', root], undefined, now, readAdmission)).toBe(0);
     expect(String(output.mock.calls[0]![0])).toContain('sample_age: 10.0m\nstale: yes');
-    expect(await cmdFleetMemory(['--root', root, '--json'], undefined, now)).toBe(0);
+    expect(await cmdFleetMemory(['--root', root, '--json'], undefined, now, readAdmission)).toBe(0);
     expect(JSON.parse(String(output.mock.calls[1]![0])).sample).toMatchObject({ age_ms: 600_000, stale: true });
     expect(JSON.parse(String(output.mock.calls[1]![0])).memguard).toEqual({ level: null, stopped: null });
   });
 
   it('exits 0 with every field unknown when both files are missing', async () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetMemory(['--root', root], undefined, now)).toBe(0);
+    expect(await cmdFleetMemory(['--root', root], undefined, now, readAdmission)).toBe(0);
     expect(String(output.mock.calls[0]![0])).toBe([
       'free_pct: unknown',
       'swap_gb: unknown',
@@ -126,6 +135,7 @@ describe('cmdFleetMemory', () => {
       'stale: unknown',
       'memguard_level: unknown',
       'memguard_stopped: unknown',
+      'engine launch: allowed (61.5% free, 0.50 GiB swap)',
     ].join('\n'));
   });
 
@@ -133,7 +143,7 @@ describe('cmdFleetMemory', () => {
     await writeFile(join(root, 'memstat.json'), '{broken');
     await writeFile(join(root, '.memguard2.json'), 'not json either');
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetMemory(['--root', root, '--json'], undefined, now)).toBe(0);
+    expect(await cmdFleetMemory(['--root', root, '--json'], undefined, now, readAdmission)).toBe(0);
     expect(JSON.parse(String(output.mock.calls[0]![0]))).toMatchObject({
       sample: { free_pct: null, swap_gb: null, swapouts_per_min: null, disk_gb: null, sampled_at: null, age_ms: null, stale: null },
       memguard: { level: null, stopped: null },
@@ -144,7 +154,7 @@ describe('cmdFleetMemory', () => {
     await writeFile(join(root, 'memstat.json'), JSON.stringify(memstat));
     await writeFile(join(root, '.memguard2.json'), '{"level":"warn","stopped":{}}');
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetMemory(['--root', root], undefined, now)).toBe(0);
+    expect(await cmdFleetMemory(['--root', root], undefined, now, readAdmission)).toBe(0);
     const text = String(output.mock.calls[0]![0]);
     expect(text).toContain('free_pct: 42.5');
     expect(text).toContain('memguard_level: warn');
@@ -154,19 +164,24 @@ describe('cmdFleetMemory', () => {
   it('rejects invalid flags before reading', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const read = vi.fn(async () => ({ memstat: null, memguard: null }));
+    const admission = vi.fn(() => ADMISSION);
     for (const args of [['--wat'], ['--root'], ['--root', '--json'], ['--json', '--json'], ['--root', '/tmp', '--root', '/tmp'], ['--help', 'x']]) {
-      expect(await cmdFleetMemory(args, read, now)).toBe(2);
+      expect(await cmdFleetMemory(args, read, now, admission)).toBe(2);
     }
     expect(read).not.toHaveBeenCalled();
+    expect(admission).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalled();
   });
 
   it('prints usage for --help and reports a reader failure without leaking it', async () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await cmdFleetMemory(['--help'], undefined, now)).toBe(0);
+    const admission = vi.fn(() => ADMISSION);
+    expect(await cmdFleetMemory(['--help'], undefined, now, admission)).toBe(0);
     expect(String(output.mock.calls[0]![0])).toContain('Usage: ashlr fleet memory');
-    expect(await cmdFleetMemory([], async () => { throw new Error('private path'); }, now)).toBe(1);
+    expect(String(output.mock.calls[0]![0])).toContain('engine launch gate');
+    expect(await cmdFleetMemory([], async () => { throw new Error('private path'); }, now, admission)).toBe(1);
     expect(error).toHaveBeenCalledWith('fleet memory: samples unavailable');
+    expect(admission).not.toHaveBeenCalled();
   });
 });

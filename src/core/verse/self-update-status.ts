@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { scrubSecrets } from '../util/scrub.js';
 import type { OpsSelfUpdateActionResult } from './ops-types.js';
 
 import { readSelfUpdateLastApply, type OpsSelfUpdateWithLastApply, type SelfUpdateLastApply } from './self-update-last.js';
@@ -63,6 +64,25 @@ export function resetProcessHeadShaForTests(): void {
   processHeadSha = null;
 }
 
+function unquote(path: string): string {
+  return path.length >= 2 && path.startsWith('"') && path.endsWith('"') ? path.slice(1, -1) : path;
+}
+
+/** Repo-relative path from one `git status --porcelain` line ('XY path'; 'a -> b' keeps b). */
+function porcelainPath(line: string): string {
+  // 'XY path'. The first output line loses a leading-space status column to
+  // the stdout trim, so accept one or two status columns before the separator.
+  const rest = line.replace(/^[ MADRCU?!]{1,2} /, '');
+  let inQuote = false;
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i];
+    if (ch === '\\' && inQuote) { i++; continue; }
+    if (ch === '"') { inQuote = !inQuote; continue; }
+    if (!inQuote && rest.startsWith(' -> ', i)) return unquote(rest.slice(i + 4));
+  }
+  return unquote(rest);
+}
+
 export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<OpsSelfUpdateWithLastApply> {
   const now = (deps.now ?? Date.now)();
   const uptimeSeconds = process.uptime();
@@ -72,6 +92,7 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
     lastApply, v: 1, generatedAt: new Date(now).toISOString(), sourceState: 'healthy',
     installedVersion: null, candidateVersion: null, repoRoot: false, headSha: null, processHeadSha, headAt: null, originSha: null,
     branch: null, behindSubjects: null, behind: null, ahead: null, dirty: null, lastFetchAt: null,
+    dirtyPaths: null, dirtyCount: null,
     processStartedAt: new Date(now - uptimeSeconds * 1000).toISOString(), uptimeSeconds, pid: process.pid,
     canFastForward: null,
   };
@@ -127,6 +148,11 @@ export async function readSelfUpdateStatus(deps: SelfUpdateDeps = {}): Promise<O
     } catch { /* Commit subjects are advisory; preserve the status probes. */ }
   }
   result.dirty = status === null ? null : status.length > 0;
+  if (status !== null) {
+    const lines = status.split('\n').filter((line) => line.trim().length > 0);
+    result.dirtyCount = lines.length;
+    result.dirtyPaths = lines.slice(0, 8).map((line) => scrubSecrets(porcelainPath(line)).slice(0, 200));
+  }
   if (result.behind !== null && result.ahead !== null && result.dirty !== null) {
     result.canFastForward = result.behind > 0 && result.ahead === 0 && result.dirty === false;
   }

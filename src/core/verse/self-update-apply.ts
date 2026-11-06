@@ -90,10 +90,24 @@ function failureNote(r: SelfUpdateRunResult, timeoutMs: number): string {
 }
 
 /** The `ashlr update --json` payload fields we read (src/cli/update.ts UpdateResult). */
-function updateReport(stdout: string): { updated?: unknown; upToDate?: unknown; commitAfter?: unknown; versionAfter?: unknown } | null {
+function updateReport(stdout: string): { updated?: unknown; upToDate?: unknown; commitAfter?: unknown; versionAfter?: unknown; versionLatest?: unknown } | null {
   const text = stdout.trim();
   if (!text.startsWith('{')) return null;
   try { return JSON.parse(text); } catch { return null; }
+}
+
+/**
+ * Why an exit-0 payload proved no outcome — one fixed short category, never
+ * raw stdout: a truncated write can carry install output or secrets.
+ */
+function invalidUpdatePayloadNote(stdout: string, report: ReturnType<typeof updateReport>): string {
+  if (stdout.trim() === '') return 'updater exited 0 without output';
+  if (report === null) return 'updater stdout is not a JSON report';
+  if (report.updated === false) {
+    const u = report.upToDate;
+    return `updater reported updated=false, upToDate ${u === undefined ? 'absent' : u === null || typeof u === 'boolean' ? String(u) : `type ${typeof u}`}`;
+  }
+  return `updater report.updated is ${report.updated === undefined ? 'absent' : `type ${typeof report.updated}`}`;
 }
 
 /** tmp + rename (connector-manager convention); advisory — a failed write must not mask the outcome. */
@@ -257,10 +271,19 @@ async function runApply(deps: SelfUpdateApplyDeps): Promise<SelfUpdateApplyResul
   if (update.code !== 0) {
     return step('update', t0, false, tail(scrubSecrets(update.stderr || update.stdout), STDERR_TAIL_LINES) || `exit ${update.code}`, 'failed', 'update failed')!;
   }
+  // Exit 0 alone proves nothing — the desktop trusts this outcome to restart
+  // itself, so only the producer's explicit shapes count (src/cli/update.ts
+  // emits `updated:true` solely after pull+install+build, and `updated:false`
+  // + `upToDate:true` for its already-current shapes). Absent, malformed,
+  // wrong-typed or negative payloads are failed applies and never restart.
   const report = updateReport(update.stdout);
+  if (report?.updated === true) {
+    if (typeof report.commitAfter === 'string' && report.commitAfter) toCommit = report.commitAfter;
+    const version = [report.versionAfter, report.versionLatest].find((v): v is string => typeof v === 'string' && v !== '') ?? null;
+    return step('update', t0, true, version ? `updated to ${version}` : null, 'updated')!;
+  }
   if (report?.updated === false && report.upToDate === true) {
     return step('update', t0, true, 'already up to date', 'already-current')!;
   }
-  if (typeof report?.commitAfter === 'string' && report.commitAfter) toCommit = report.commitAfter;
-  return step('update', t0, true, typeof report?.versionAfter === 'string' && report.versionAfter ? `updated to ${report.versionAfter}` : null, 'updated')!;
+  return step('update', t0, false, invalidUpdatePayloadNote(update.stdout, report), 'failed', 'invalid update report')!;
 }

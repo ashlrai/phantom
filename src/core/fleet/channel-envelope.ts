@@ -11,20 +11,31 @@ import { CROSS_CHANNEL_WINDOW_MS, decideCrossChannelMerge, normalizeForDedupe } 
 import { addInboxSource, appendInboxEntry, INBOX_MAX_CHARS, readRecentChannelEntries, type InboxAppendOptions, type InboxAppendResult } from './mason-inbox.js';
 import { publishChannelEnvelope, type ChannelPublishState } from './channel-bus-publish.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { queueCosEnvelope } from '../cos/intake.js';
 
 export type { ChannelPublishState } from './channel-bus-publish.js';
 
-export const INBOUND_CHANNELS = ['email', 'telegram', 'mobile', 'desktop', 'page', 'cli'] as const;
+export const INBOUND_CHANNELS = ['email', 'telegram', 'imessage', 'mobile', 'desktop', 'page', 'cli'] as const;
 export type InboundChannel = typeof INBOUND_CHANNELS[number];
 export const CHANNEL_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 export const CHANNEL_ACK_TIMEOUT_MS = 2_000;
 export const CHANNEL_PUBLISH_TIMEOUT_MS = 2_000;
 const MAX_TIMER_MS = 2_147_483_647;
 
+/** The person-canonical sender id every operator surface shares — the same value
+ * the desktop console already posts as (`CONSOLE_SENDER` in bus-leader-inbox.ts). */
+export const OPERATOR_SENDER_ID = 'mason';
+
 export interface ChannelMessage {
+  /** Adapter-verified originating message or thread, never parsed from body text. */
+  threadId?: string;
   channel: InboundChannel;
-  /** Authenticated canonical identity supplied by the trusted adapter. No credentials. */
+  /** Authenticated channel identity supplied by the trusted adapter. No credentials. */
   verifiedSenderId: string;
+  /** Optional adapter-mapped canonical person id. When present it — not
+   * verifiedSenderId — keys the dedupe receipt and cross-channel merge, so the
+   * same person resending on another surface merges instead of duplicating. */
+  canonicalSenderId?: string;
   body: string;
 }
 export interface ChannelEnvelope extends ChannelMessage {
@@ -43,6 +54,8 @@ export type ChannelReceiveResult =
   | { ok: false; reason: 'dedupe-store-unavailable' | 'sender-not-allowed' | 'invalid' | 'full' | 'write-failed' | Exclude<InboxAppendResult, { ok: true }>['reason'] };
 
 export interface ChannelReceiverOptions extends Pick<InboxAppendOptions, 'runsDir' | 'now'> {
+  /** Custom desktop sinks can opt into the shared durable background queue. */
+  backgroundQueue?: boolean;
   allowedSenderIds: ReadonlySet<string>;
   /** Custom sinks without runsDir remain memory-only unless a store is supplied.
    * Default inbox sinks use a local receipt store under runsDir. */
@@ -96,6 +109,10 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   let tail = Promise.resolve();
   let lastTime = 0;
   async function success(envelope: ChannelEnvelope, status: ChannelAck['status'], original?: ChannelEnvelope, entryId?: string): Promise<ChannelReceiveResult> {
+    if (options.backgroundQueue ?? !options.write) {
+      try { await queueCosEnvelope(envelope, options.runsDir); }
+      catch { return { ok: false, reason: 'write-failed' }; }
+    }
     const ack: ChannelAck = { channel: envelope.channel, dedupeKey: envelope.dedupeKey, status, ...(entryId ? { entryId } : {}) };
     // Bus mirroring is best effort and observational: it runs after the durable
     // write committed, before acknowledge, and outside the ack timeout. Its
@@ -149,6 +166,13 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
     if (!INBOUND_CHANNELS.includes(input.channel) || typeof input.body !== 'string' ||
         !input.verifiedSenderId.trim() || input.verifiedSenderId.length > 128 ||
         scrubSecrets(input.verifiedSenderId) !== input.verifiedSenderId) return { ok: false, reason: 'invalid' };
+    if (input.threadId !== undefined && (typeof input.threadId !== 'string' ||
+        !/^[!-~]{1,998}$/.test(input.threadId) || /[<>]/.test(input.threadId) || scrubSecrets(input.threadId) !== input.threadId)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (input.canonicalSenderId !== undefined && (typeof input.canonicalSenderId !== 'string' ||
+        !input.canonicalSenderId.trim() || input.canonicalSenderId.length > 128 ||
+        scrubSecrets(input.canonicalSenderId) !== input.canonicalSenderId)) return { ok: false, reason: 'invalid' };
     if (input.body.length > INBOX_MAX_CHARS) return { ok: false, reason: 'too-long' };
     // Check before normalization too: normalization must never hide a credential.
     if (scrubSecrets(input.body) !== input.body) return { ok: false, reason: 'secret-shaped' };
@@ -165,21 +189,24 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
         if (now - receipt.at >= CHANNEL_DEDUPE_WINDOW_MS) receipts.delete(hash);
       }
       // Normalized text: cross-channel resends differing only in case/spacing are one instruction.
-      const hash = createHash('sha256').update(JSON.stringify([input.verifiedSenderId, normalizeForDedupe(body)])).digest('hex');
+      // The dedupe domain is the canonical person id when the adapter mapped one.
+      const senderKey = input.canonicalSenderId ?? input.verifiedSenderId;
+      const hash = createHash('sha256').update(JSON.stringify([senderKey, normalizeForDedupe(body)])).digest('hex');
       const previous = receipts.get(hash);
       const dedupeKey = previous?.key ?? createHash('sha256').update(JSON.stringify([hash, now])).digest('hex');
       const envelope: ChannelEnvelope = {
         channel: input.channel, verifiedSenderId: input.verifiedSenderId,
         receivedAt: new Date(now).toISOString(), body, dedupeKey,
+        ...(input.threadId ? { threadId: input.threadId } : {}),
       };
       let entryId: string | undefined;
       if (previous && !options.write) {
         // The receipt proves sender+text; pinning to the receipt time identifies its exact entry.
-        const runsDir = options.runsDir ?? join(homedir(), '.ashlr-runs');
+        const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
         const decision = decideCrossChannelMerge(
-          { text: body, channel: inboxChannelSlug(envelope.channel), senderId: input.verifiedSenderId, receivedAt: now },
+          { text: body, channel: inboxChannelSlug(envelope.channel), senderId: senderKey, receivedAt: now },
           readRecentChannelEntries(runsDir, now, CROSS_CHANNEL_WINDOW_MS)
-            .map((entry) => ({ ...entry, senderId: entry.receivedAt === previous.at ? input.verifiedSenderId : undefined })),
+            .map((entry) => ({ ...entry, senderId: entry.receivedAt === previous.at ? senderKey : undefined })),
         );
         if (decision.action === 'merge' && addInboxSource(decision.entryId, decision.addSource, { runsDir })) entryId = decision.entryId;
       }
@@ -208,7 +235,7 @@ export function createChannelReceiver(options: ChannelReceiverOptions): (input: 
   }
   return (input) => {
     // Snapshot before queuing: callers cannot change identity/body while waiting.
-    const snapshot = { channel: input?.channel, verifiedSenderId: input?.verifiedSenderId, body: input?.body };
+    const snapshot = { channel: input?.channel, verifiedSenderId: input?.verifiedSenderId, canonicalSenderId: input?.canonicalSenderId, body: input?.body, threadId: input?.threadId };
     const result = tail.then(() => receive(snapshot));
     tail = result.then(() => undefined, () => undefined);
     return result;

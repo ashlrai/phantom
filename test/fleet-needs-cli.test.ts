@@ -16,7 +16,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 it('prints each item and the count', async () => {
   expect(await cmdFleetNeeds([], { list: () => items })).toBe(0);
-  expect(out).toEqual(['nm-123456789abc  Review fake plan\nnm-abcdef123456  Choose fake color\n2 item(s) need Mason.']);
+  expect(out).toEqual(['nm-123456789abc  Review fake plan\nnm-abcdef123456  Choose fake color\n2 item(s) need Mason.\nResolve: ashlr fleet needs-resolve <id> --reply "..."']);
 });
 
 it('reports an empty list', async () => {
@@ -26,7 +26,7 @@ it('reports an empty list', async () => {
 
 it('outputs the versioned JSON shape', async () => {
   expect(await cmdFleetNeeds(['--json'], { list: () => items })).toBe(0);
-  expect(JSON.parse(out[0]!)).toEqual({ v: 1, count: 2, items });
+  expect(JSON.parse(out[0]!)).toEqual({ v: 1, status: 'available', count: 2, items });
 });
 
 it('rejects bad and duplicate arguments and shows help', async () => {
@@ -53,7 +53,7 @@ it('reads open items from the specified runs directory without modifying the fil
     await writeFile(path, fixture);
     expect(await cmdFleetNeeds(['--json', '--runs-dir', dir])).toBe(0);
     const openId = `nm-${createHash('sha256').update('Review fake new plan').digest('hex').slice(0, 12)}`;
-    expect(JSON.parse(out[0]!)).toEqual({ v: 1, count: 1, items: [{ id: openId, text: 'Review fake new plan' }] });
+    expect(JSON.parse(out[0]!)).toEqual({ v: 1, status: 'available', count: 1, items: [{ id: openId, text: 'Review fake new plan' }] });
     expect(await readFile(path, 'utf8')).toBe(fixture);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

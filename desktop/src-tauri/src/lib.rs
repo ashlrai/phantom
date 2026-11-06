@@ -12,3 +12,4 @@ pub mod native_update_client;
 
 #[cfg(target_os = "macos")]
 pub mod native_metadata_launch;
+pub mod release_smoke;

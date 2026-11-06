@@ -57,6 +57,7 @@ vi.mock('../src/core/fleet/status.js', () => ({
 
 vi.mock('../src/core/sandbox/audit.js', () => ({
   readAudit: () => mockAuditEntries,
+  audit: vi.fn(),
 }));
 
 // Mock runAutoMergePass — used in loop.ts tick().
