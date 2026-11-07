@@ -49,3 +49,9 @@ four-list projection without requiring a repository index. Missing readings
 remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
+
+The phone Home screen brings the fleet glance, links to active sessions,
+Needs you approvals and the comms inbox, the leader order box, and the recent
+merge list together. These links open the existing screens and preserve their
+permissions and confirmation flows. The merge list uses the live fleet runs
+read and shows unknown or unavailable data as such.

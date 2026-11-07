@@ -10,6 +10,8 @@ import { refetchQuery } from '../../../../data/cache.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { MobileInterject } from '../MobileInterject.js';
+import { HomeRuns } from '../HomeRuns.js';
+import { useMobile } from '../mobile-context.js';
 import { operatorGlanceQuery } from '../operator-glance-query.js';
 import { isHomeFleetRuns } from '../home-runs-model.js';
 import { homeRunsQuery } from '../home-runs-query.js';
@@ -51,6 +53,7 @@ function withUsage(glance: OperatorGlance, runs: unknown): OperatorGlance {
 }
 
 export function OperatorGlance() {
+  const { navigate, needsCount, workingCount } = useMobile();
   const glance = useQuery(operatorGlanceQuery);
   const runs = useQuery(homeRunsQuery);
   const refetchGlance = useRefetch(operatorGlanceQuery);
@@ -84,7 +87,13 @@ export function OperatorGlance() {
           </div>
         ) : null}
       </section>
+      <nav className={styles.shortcuts} aria-label="Fleet shortcuts">
+        <Button variant="tinted" onClick={() => navigate({ screen: 'agents' })}>Sessions{workingCount === null ? '' : ` · ${workingCount}`}</Button>
+        <Button variant="tinted" onClick={() => navigate({ screen: 'needs' })}>Approvals{needsCount === null ? '' : ` · ${needsCount}`}</Button>
+        <Button variant="tinted" onClick={() => navigate({ screen: 'inbox' })}>Comms inbox</Button>
+      </nav>
       <MobileInterject title="Order" placeholder="Tell the leaders in plain language." />
+      <HomeRuns />
     </>
   );
 }
