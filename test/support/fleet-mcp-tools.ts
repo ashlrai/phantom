@@ -34,10 +34,12 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_email_outbox',
   'fleet_email_outbox_await',
   'fleet_comms_readiness',
+  'fleet_email_outbox_batch_await',
   'fleet_email_diagnosis',
   'fleet_imessage_path',
   'fleet_imessage_acks',
   'fleet_ci_resume_inputs',
   'fleet_ci_receipt_await',
   'fleet_ci_receipt_await_batch',
+  'fleet_release_candidate',
 ]);

@@ -47,6 +47,8 @@ import { MAX_FLEET_EMAIL_OUTBOX_ENTRIES, parseFleetEmailOutboxArgs, readFleetEma
 import { MAX_FLEET_EMAIL_OUTBOX_AWAIT_MS, MIN_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, MAX_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS,
   DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, parseFleetEmailOutboxAwaitArgs, readFleetEmailOutboxAwait,
   type FleetEmailOutboxAwaitArgs } from './fleet-email-outbox-await.js';
+import { MAX_FLEET_EMAIL_OUTBOX_BATCH_AWAIT_NAMES, parseFleetEmailOutboxBatchAwaitArgs,
+  readFleetEmailOutboxBatchAwait, type FleetEmailOutboxBatchAwaitArgs } from './fleet-email-outbox-batch-await.js';
 import { parseFleetEmailDiagnosisArgs, readFleetEmailDiagnosis } from './fleet-email-diagnosis.js';
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
@@ -99,6 +101,7 @@ export interface FleetReaders {
   trim?: () => Promise<unknown>;
   emailOutbox?: (input: FleetEmailOutboxArgs) => Promise<unknown>;
   emailOutboxAwait?: (input: FleetEmailOutboxAwaitArgs, signal: AbortSignal) => Promise<unknown>;
+  emailOutboxBatchAwait?: (input: FleetEmailOutboxBatchAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   emailDiagnosis?: () => Promise<unknown>;
   commsReadiness?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
@@ -414,6 +417,25 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_email_outbox_batch_await',
+      description: 'Wait for up to 50 named email reply artifacts in the local outbox to leave queued in one bounded call — reporting each row\'s state (queued, drafted, sent, stuck or missing) with a fixed stuck reason, or timedOut/cancelled — as metadata evidence: never recipients, subjects, bodies, absolute paths or transport errors. The saved email-drop config is resolved at the server-owned runs dir exactly like `phm fleet email-outbox-batch-await` (outboxDir, else the sibling of inboxDir); missing or invalid config and a missing or unreadable outbox each report their own sourceState with sourceFailure true and null rows, never an invented healthy observation. A terminal row is observation evidence only — drafted means drafted, never sent or delivered, and nothing here is permission to send — and request cancellation stops the wait. No caller directory, root, cwd or send option is accepted, and the tool never creates directories, sends, drafts, archives, retries or alters comms configuration.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          names: {
+            type: 'array', minItems: 1, maxItems: MAX_FLEET_EMAIL_OUTBOX_BATCH_AWAIT_NAMES, uniqueItems: true,
+            items: { type: 'string' },
+            description: 'Distinct exact artifact file names such as order-1.reply.eml; each must end in .reply.eml and is never a path. Rows come back in this order.',
+          },
+          timeoutMs: { type: 'integer', minimum: 1, maximum: MAX_FLEET_EMAIL_OUTBOX_AWAIT_MS },
+          pollMs: { type: 'integer', minimum: MIN_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, maximum: MAX_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, default: DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS, description: 'Poll interval; defaults to 1000.' },
+        },
+        required: ['names', 'timeoutMs'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_email_diagnosis',
       description: 'Diagnose why local email replies are not flowing, through the same shared diagnoseEmailDrop collector as `phm comms diagnose` — never a second classifier: fixed-code config, polling, sendReplies, outbox and replies states with observed outbox counts when readable, plus the email checks and the local-evidence-only coverage marker — never recipients, subjects, bodies, absolute paths, transport errors or raw exception text. The saved email-drop config resolves at the server-owned runs dir; a missing or invalid config, a paused poll, draft-only mode and a missing or unreadable outbox each report their own fixed state and never invent healthy counts, and a collector failure is reported as fixed unavailable evidence. This is local config/outbox observation only — never proof of Gmail triage, LinkedIn coverage, sending or end-to-end delivery. Takes no arguments: no caller directory, root, cwd, path or send option is accepted, and the tool never creates directories, sends, drafts, retries or alters comms configuration.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -516,7 +538,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate') {
+    if (name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -543,6 +565,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const jobPrecheckBatch = name === 'fleet_job_precheck_batch' ? parseFleetJobPrecheckBatchArgs(args) : null;
     const emailOutbox = name === 'fleet_email_outbox' ? parseFleetEmailOutboxArgs(args) : null;
     const emailOutboxAwait = name === 'fleet_email_outbox_await' ? parseFleetEmailOutboxAwaitArgs(args) : null;
+    const emailOutboxBatchAwait = name === 'fleet_email_outbox_batch_await' ? parseFleetEmailOutboxBatchAwaitArgs(args) : null;
     const commsReadinessArgs = name === 'fleet_comms_readiness' ? parseFleetCommsReadinessArgs(args) : null;
     const emailDiagnosisArgs = name === 'fleet_email_diagnosis' ? parseFleetEmailDiagnosisArgs(args) : null;
     const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
@@ -561,6 +584,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
         name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
+        name === 'fleet_email_outbox_batch_await' ? emailOutboxBatchAwait === null :
         name === 'fleet_email_outbox_await' ? emailOutboxAwait === null :
         name === 'fleet_email_outbox' ? emailOutbox === null :
         name === 'fleet_job_precheck_batch' ? jobPrecheckBatch === null :
@@ -608,6 +632,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_waste_risk' ? await (readers.wasteRisk ?? readFleetWasteRiskTool)()
         : name === 'fleet_kept' ? await (readers.kept ?? readFleetKeptTool)()
         : name === 'fleet_trim' ? await (readers.trim ?? readFleetTrimTool)()
+        : name === 'fleet_email_outbox_batch_await' ? await (readers.emailOutboxBatchAwait ?? readFleetEmailOutboxBatchAwait)(emailOutboxBatchAwait as FleetEmailOutboxBatchAwaitArgs, extra.signal)
         : name === 'fleet_email_outbox_await' ? await (readers.emailOutboxAwait ?? readFleetEmailOutboxAwait)(emailOutboxAwait as FleetEmailOutboxAwaitArgs, extra.signal)
         : name === 'fleet_email_outbox' ? await (readers.emailOutbox ?? readFleetEmailOutbox)(emailOutbox as FleetEmailOutboxArgs)
         : name === 'fleet_comms_readiness' ? await (readers.commsReadiness ?? readFleetCommsReadiness)()
