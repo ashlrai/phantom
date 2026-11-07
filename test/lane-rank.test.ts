@@ -30,6 +30,23 @@ describe('lane ranking', () => {
   it.each([0, -1, NaN, Infinity, 1.5, null, undefined])('excludes unavailable or invalid slots: %s', count => {
     expect(rankLanes('frontier', snapshot(), { 'codex-cmp': count })).toEqual([]);
   });
+  it('prefers an eligible lane over one forecast to exhaust within an hour', () => {
+    const input = snapshot();
+    input.budgets.pools['codex-personal'].buckets.weeklyPct!.projectedExhaustion = '2026-10-30T12:30:00.000Z';
+    const ranked = rankLanes('frontier', input, slots);
+    expect(ranked.map(l => l.pool)).toEqual(['codex-cmp', 'codex-personal']);
+    expect(ranked[1]).toMatchObject({ spillRecommended: true, projectedExhaustion: '2026-10-30T12:30:00.000Z' });
+  });
+  it('does not use stale or post-reset forecasts to recommend spill', () => {
+    const input = snapshot();
+    const bucket = input.budgets.pools['codex-personal'].buckets.weeklyPct!;
+    bucket.timestamp = '2026-10-30T09:00:00.000Z';
+    bucket.projectedExhaustion = '2026-10-30T12:30:00.000Z';
+    expect(rankLanes('frontier', input, slots)[0]?.spillRecommended).toBe(false);
+    bucket.timestamp = now;
+    bucket.projectedExhaustion = later;
+    expect(rankLanes('frontier', input, slots)[0]?.spillRecommended).toBe(false);
+  });
   it('excludes exhausted, held, unknown and reset-pending budgets', () => {
     for (const state of ['exhausted', 'held', 'unknown', 'reset-pending'] as const) {
       const input = snapshot(); const view = input.budgets.pools['codex-cmp'];
