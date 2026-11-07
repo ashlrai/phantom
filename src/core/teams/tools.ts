@@ -3,6 +3,7 @@ import { CONSEQUENTIAL_ACTIONS, validId, type TeamActor } from './protocol.js';
 import { appendEvent } from './store.js';
 import { acquireClaim, releaseClaim, requestHandoff, teamState, transitionHandoff } from './state.js';
 import { addContext, retrieveContext, type ContextScope } from './context.js';
+import { TenancyError, assertTeamAccess } from '../tenancy/index.js';
 
 export const DEFAULT_TEAM = 'default';
 const s = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
@@ -14,7 +15,15 @@ export function agentActor(args: Record<string, unknown>): TeamActor {
   const actorId = id.startsWith('agent:') ? id : `agent:${id}`;
   return { kind: 'agent', id: actorId, ...(s(args.provider) ? { provider: s(args.provider) } : {}), ...(s(args.onBehalfOf) ? { onBehalfOf: s(args.onBehalfOf) } : {}) };
 }
-const team = (args: Record<string, unknown>): string => s(args.team) ?? DEFAULT_TEAM;
+/** Forum threads and context packs are team-scoped: refuse another tenant's team, with the fix inline. */
+const team = (args: Record<string, unknown>): string => {
+  const id = s(args.team) ?? DEFAULT_TEAM;
+  try { assertTeamAccess(id); } catch (err) {
+    if (err instanceof TenancyError) throw new Error(`${err.message} Fix: ${err.fix}`);
+    throw err;
+  }
+  return id;
+};
 
 export async function teamRegister(args: Record<string, unknown>) {
   const actor = agentActor(args);

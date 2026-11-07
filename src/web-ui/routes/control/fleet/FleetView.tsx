@@ -111,6 +111,8 @@ export function FleetView() {
         </div>
       </header>
 
+      <p>Agent control: <code>phm app steer pause --json</code> or <code>phm app steer resume --json</code>.</p>
+
       {fleetQuery.status === 'loading' ? (
         <SkeletonLine width="60%" />
       ) : fleetQuery.status === 'error' || !fleet ? (

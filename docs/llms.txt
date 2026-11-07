@@ -47,6 +47,7 @@ Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent
 - [Fleet brief-send](BRIEF-SEND.md): Morning (7:30 ET) and overnight (22:30 ET) fleet briefs with a needs-you list of at most 5 items; `phm fleet brief-send --json` dry-runs, `--apply` sends.
 - [Fleet API](FLEET-API.md): Loopback HTTP projections for desktop, phone, and Leader coordination.
 - [Cloud lane](CLOUD.md): Claude Code cloud sessions from chat, Command, or CLI.
+- [Tenancy](TENANCY.md): `phm whoami --json` and `phm org list --json`. Nodes, jobs, leases, forum threads and context packs are scoped to a person, team or org, using only local auth.
 - [Add a computer in 60 seconds](add-a-computer.md): install, join, choose capabilities, verify, and leave.
 - Node router: `phm node join|pull|plan|status --json`, guide in `docs/NODE-ROUTER.md`. Nodes advertise caps, jobs carry an owner scope and a fenced lease, auth stays local.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
@@ -353,3 +354,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Desktop update status](../DESKTOP.md#background-update-discovery-and-local-status): `phm app update status --json` reports the inspected local stage, host deferral and lease counts; unknown identities remain null.
 
 - [Agent network](AGENT-NETWORK.md): SSH multi-Mac node pool; first join needs explicit aliases and owner, repeat node join --json reuses config; RAM/disk pressure admission, local auth, mobile control only, split-brain fencing and primary-only publication.
+
+- [App control](APP-CONTROL.md): phm app steer and prefs --json, app.control.v1 writes through existing console guards.

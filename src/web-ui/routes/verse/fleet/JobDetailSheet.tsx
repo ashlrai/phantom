@@ -16,6 +16,8 @@ import { busTellPrefill, requestBusPost } from '../fleet-bus/bus-post-request.js
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { jobBusMentions, mentionSummary } from './job-bus-mentions.js';
 import { changesHeadline, collisionTell, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
+import { costHeadline } from '../fleet-job-log/worker-cost-model.js';
+import { jobCostQuery } from '../fleet-job-log/worker-cost-queries.js';
 import { openInterjectDialog } from './interject-dialog-store.js';
 import { sheetActions, steerPrefill } from './job-sheet-actions.js';
 import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
@@ -39,6 +41,8 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   const read = useQuery(query);
   const changesQuery = jobChangesQuery(job);
   const changes = useQuery(changesQuery, { freshMs: 0 });
+  const costQuery = jobCostQuery(job);
+  const cost = useQuery(costQuery, { freshMs: 0 });
   const notesQuery = jobTextQuery(job, 'notes');
   const notes = useQuery(notesQuery, { freshMs: 0 });
   const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
@@ -56,6 +60,7 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   }, 10_000);
   usePollWhileVisible(() => { void runQuery(query.key, () => query.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
   usePollWhileVisible(() => { void runQuery(changesQuery.key, () => changesQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
+  usePollWhileVisible(() => { void runQuery(costQuery.key, () => costQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
   usePollWhileVisible(() => { void runQuery(notesQuery.key, () => notesQuery.fetch()); }, 10_000, { enabled: read.data?.state === 'running' });
   const busUnavailable = agentBusMissing() || !!busStatus.error || !!busPage.error || busStatus.data === null
     || (busStatus.data !== undefined && (busStatus.data.source !== 'available' || busStatus.data.retainedCount === null)) || busPage.data === null;
@@ -102,6 +107,19 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
             {changes.data.files.length > 40 && <p>+{changes.data.files.length - 40} more</p>}
             {changes.data.truncated && <p>Showing a limited set of changes.</p>}
           </>}
+        </>}
+      </section>
+      <section aria-label="Cost">
+        <h3>Cost</h3>
+        {cost.error ? <p role="status">Cost unavailable</p> : cost.data === null ? <p>Cost is not in this build yet</p> : !cost.data ? <SkeletonLine /> : <>
+          <p>{costHeadline(cost.data)}</p>
+          {cost.data.calls.length === 0 ? <p>No recorded model calls.</p> : <ul>
+            {cost.data.calls.map((call, index) => <li key={`${call.at ?? 'unknown'}-${index}`}><code>
+              {call.at ?? 'unknown'} · {call.model ?? 'unknown'} · {call.inputTokens === null ? 'unknown' : call.inputTokens.toLocaleString('en-US')}→{call.outputTokens === null ? 'unknown' : call.outputTokens.toLocaleString('en-US')} · {call.costUsd === null ? 'unknown' : `$${call.costUsd.toFixed(4)}`}{call.estimated ? ' (est.)' : ''}{call.error ? ' · error' : ''}
+            </code></li>)}
+          </ul>}
+          {cost.data.jobTotals.finishes > 0 ? <p>Worker-reported tokens_total {cost.data.jobTotals.tokensTotal === null ? 'unknown' : cost.data.jobTotals.tokensTotal.toLocaleString('en-US')} across {cost.data.jobTotals.finishes} finish {cost.data.jobTotals.finishes === 1 ? 'event' : 'events'}.</p> : null}
+          {cost.data.truncated && <p>Showing the most recent read window.</p>}
         </>}
       </section>
       <section aria-label="Bridge notes">
