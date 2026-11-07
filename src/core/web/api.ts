@@ -18,6 +18,9 @@
  *   GET /api/pulse?window=7d   -> buildRollup(window, cfg)
  *   GET /api/genome[?q=...]    -> recall(q, cfg) | loadGenome(cfg)
  *   GET /api/inbox             -> listProposals({status:'pending'}) (read-only; M23)
+ *   GET /api/approvals         -> pending consent requests across proposals,
+ *                                 email drafts and team approvals — value-blind
+ *                                 metadata + per-source quality (read-only)
  *   GET /api/autonomy/evidence -> list autonomy evidence packs (metadata only)
  *   GET /api/daemon            -> strict provenance-bearing daemon observation
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
@@ -1654,6 +1657,19 @@ export async function handleApi(
         truncated: matched.length > shown.length,
         filters: { status: effectiveStatus, since: sinceParam ?? null, limit: limit ?? null },
       });
+      return true;
+    }
+
+    // ── GET /api/approvals — pending consent requests, value-blind (read-only) ──
+    // One bounded list across the durable approval stores (inbox proposals,
+    // outbound email drafts, team consequential-action approvals). Every row
+    // carries a `decide` descriptor naming the only safe path that exists —
+    // web consent decision, terminal phm command, or review-only deep link —
+    // and per-source quality so the UI never claims an all-clear it cannot
+    // prove. See src/core/web/pending-approvals.ts for the contract.
+    if (path === '/api/approvals' && method === 'GET') {
+      const { readPendingApprovals } = await import('./pending-approvals.js');
+      sendJson(res, 200, await readPendingApprovals({ allowDispatch: ctx.allowDispatch }));
       return true;
     }
 

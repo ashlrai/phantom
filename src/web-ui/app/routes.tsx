@@ -40,6 +40,7 @@ import { FleetView } from '../routes/control/fleet/FleetView.js';
 import { SecurityView } from '../routes/control/security/SecurityView.js';
 import { GoalsView } from '../routes/goals/GoalsView.js';
 import { InboxView } from '../routes/inbox/InboxView.js';
+import { PendingApprovalsView } from '../routes/approvals/PendingApprovalsView.js';
 import { AgentOsView } from '../routes/agent-os/AgentOsView.js';
 import { ConnectView } from '../routes/connect/ConnectView.js';
 import { UniverseView } from '../routes/universe/UniverseView.js';
@@ -80,6 +81,7 @@ export function AppRoutes() {
         <Route path="/control/security" element={<SecurityView />} />
         <Route path="/goals" element={<GoalsView />} />
         <Route path="/verse/inbox" element={<DecisionInbox />} />
+        <Route path="/approvals" element={<PendingApprovalsView />} />
         <Route path="/inbox" element={<InboxView />} />
         <Route path="/inbox/:id" element={<InboxView />} />
         <Route path="*" element={<Navigate to="/overview" replace />} />

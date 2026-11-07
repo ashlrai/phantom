@@ -1,0 +1,254 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  max-width: 1200px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-2xl-size);
+  line-height: var(--text-2xl-line);
+  font-weight: var(--font-weight-bold);
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 68ch;
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+}
+
+.freshness {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.freshnessLabel {
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+}
+
+.dispatchBanner,
+.sourceBanner {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+  font-size: var(--text-sm-size);
+}
+
+.sourceBanner {
+  background: var(--status-warning-bg, var(--bg-selected));
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+.panel {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow-x: auto;
+}
+
+.empty {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm-size);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm-size);
+  table-layout: fixed;
+}
+
+.table th {
+  text-align: left;
+  padding: var(--space-2);
+  color: var(--text-tertiary);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--text-xs-size);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.requestCell {
+  width: 24%;
+}
+
+.paramsCell {
+  width: 26%;
+}
+
+.age {
+  width: 7%;
+  white-space: nowrap;
+}
+
+.titleLink {
+  color: var(--accent-600);
+  text-decoration: none;
+  font-weight: var(--font-weight-medium);
+}
+
+.titleLink:hover {
+  text-decoration: underline;
+}
+
+.titleText {
+  font-weight: var(--font-weight-medium);
+}
+
+.detail {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+}
+
+.param {
+  font-size: var(--text-xs-size);
+  color: var(--text-secondary, var(--text-primary));
+  white-space: nowrap;
+}
+
+.paramKey {
+  color: var(--text-tertiary);
+}
+
+.paramMore {
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+}
+
+.muted {
+  color: var(--text-tertiary);
+}
+
+.decide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
+}
+
+.consentActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Same weight rule as ProposalDetail/ApprovalCard: Approve is the
+   consequential direction (consent that can later execute), so it carries
+   the accent fill; Deny stays neutral — it only discards a request. */
+.approveButton {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-600);
+  background: var(--accent-600);
+  color: var(--text-on-accent);
+  font-size: var(--text-xs-size);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.approveButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.denyButton {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--text-xs-size);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.denyButton:hover:not(:disabled) {
+  border-color: var(--status-danger-solid);
+  color: var(--status-danger-fg);
+}
+
+.reviewLink {
+  font-size: var(--text-xs-size);
+  color: var(--accent-600);
+  text-decoration: none;
+}
+
+.reviewLink:hover {
+  text-decoration: underline;
+}
+
+.reason {
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+  max-width: 34ch;
+}
+
+.terminal {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.terminalLabel {
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+}
+
+.command {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs-size);
+  background: var(--bg-input, var(--bg-surface));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+  color: var(--text-primary);
+  user-select: all;
+}
+
+.truncated {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sourceNote {
+  margin: 0;
+  font-size: var(--text-xs-size);
+  color: var(--text-tertiary);
+}

@@ -28,6 +28,7 @@ import type {
   RecallHit,
   PortfolioSummary,
   ModelStatsReadResult,
+  PendingApprovalsResponse,
 } from './api-types.js';
 import type { SourceQuality } from './api-types.js';
 
@@ -212,6 +213,18 @@ export interface InboxProposal {
 export const inboxQuery: QueryDef<{ pending: number; proposals: InboxProposal[] }> = {
   key: 'inbox',
   fetch: (signal) => apiGet('/api/inbox', signal),
+};
+
+/**
+ * GET /api/approvals — every pending consent request across proposals,
+ * outbound email drafts and team approvals, value-blind (src/core/web/
+ * pending-approvals.ts). The 'inbox' SSE event invalidates this key too
+ * (data/sse.ts) so proposal decisions refresh it live; draft/team sources
+ * have no push channel and rely on the freshness window + mount refetch.
+ */
+export const pendingApprovalsQuery: QueryDef<PendingApprovalsResponse> = {
+  key: 'pending-approvals',
+  fetch: (signal) => apiGet<PendingApprovalsResponse>('/api/approvals', signal),
 };
 
 /**
