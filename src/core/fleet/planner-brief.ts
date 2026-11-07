@@ -49,6 +49,8 @@ export interface PlannerBriefOptions {
   orderCoverage?: () => Promise<OrderTraceV1>;
   /** Optional waste-risk projections; failures render an unavailable section. */
   wasteRisk?: () => Promise<WasteRiskProjection[]>;
+  /** The friction ledger's top open items (RQ-FRICTION-3); absent → no section, a throw → unavailable. */
+  frictionTop?: () => Promise<readonly { id: string; score: number; title: string }[]>;
 }
 const lines = (text: string): string[] => text === '' ? [] : text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -219,6 +221,13 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
       missing.push('order-coverage');
     }
   }
+  let friction: string[] | null = null;
+  if (opts.frictionTop !== undefined) {
+    try {
+      friction = (await opts.frictionTop()).map((item) => `${item.id} score=${item.score} — ${item.title.replace(CONTROL, ' ')}`);
+      if (friction.length === 0) friction = ['(ledger empty: no open friction items — ideate as usual)'];
+    } catch { friction = ['(unavailable: friction ledger read failed)']; missing.push('friction-ledger'); }
+  }
   // eslint-disable-next-line no-control-regex -- tick notes must remain a single printable line.
   const note = opts.note?.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 500);
   const text = scrubSecrets([
@@ -233,11 +242,12 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     '## RECENT PHANTOM MERGES', mergeText,
     `## IN FLIGHT (ingested in the last ${IN_FLIGHT_WINDOW_HOURS}h, not yet merged on origin/master)`, ...inFlight,
     ...(orderCoverage === null ? [] : ['## ORDER COVERAGE', 'Orders marked UNSERVED have no job citing them; prefer them.', ...orderCoverage]),
+    ...(friction === null ? [] : ['## FRICTION TOP (open friction-ledger items, highest score first — new jobs come from these; a job answering one carries friction_id=<item id> in its body)', ...friction]),
     '## MASON INBOX (newest last)', ...inboxBody,
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
   await acknowledgeInboxEntries(ackEntries, root, new Date(opts.now ?? Date.now()).toISOString(), opts.inboxAckSenders);
-  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(wasteRisk === null ? {} : { wasteRisk: wasteRisk.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
+  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(wasteRisk === null ? {} : { wasteRisk: wasteRisk.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }), ...(friction === null ? {} : { friction: friction.length }) }, missing };
 }
 
 /** Publish only a prompt the planner's bounded input reader can consume. */

@@ -68,6 +68,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  docs: ['sync', '--agent', '--json', '--help'],
   graph: ['nodes', 'edges', 'status', '--json', '--help'],
   sweep: ['report'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
@@ -79,7 +80,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   radar: ['list', 'run', 'diff', '--json', '--help'],
   apps: ['list', 'open', 'quit', 'focus', 'status', '--json', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
-  agents: ['bus', 'help'],
+  agents: ['bus', 'list', 'show', 'validate', 'versions', 'help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],

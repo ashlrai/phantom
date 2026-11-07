@@ -2839,6 +2839,12 @@ async function main(): Promise<void> {
 
       case 'agents': {
         // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        // `agents list|show|validate|versions` read portable profiles (docs/AGENT-PROFILES.md).
+        if (rest[0] === undefined || ['list', 'show', 'validate', 'versions', 'help', '--help', '-h'].includes(rest[0])) {
+          const { cmdAgents } = await import('./agents.js');
+          process.exitCode = await cmdAgents(rest);
+          break;
+        }
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);
         break;

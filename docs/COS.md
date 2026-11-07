@@ -41,6 +41,10 @@ One bounded pass; call it once per tick, it never loops. It claims the oldest
 READY `cos-*` job whose dependencies are done and runs one headless model turn
 on the declared planner slate (10 minute timeout, output capped at 64 KB, draft
 at 16,000 characters, secrets scrubbed). The request is passed as untrusted data.
+`ashlr fleet cos-loop --duration-ms 3600000 --json` repeats that pass for a
+bounded window — a host timer (for example launchd) or an agent can start it
+once and queued tasks get drafted without a person; the loop only drafts, and
+sending still needs digest approval.
 
 - **paused:** the PAUSE runs switch is on; the queue is not touched.
 - **idle:** no workable job, or another claim won the race.

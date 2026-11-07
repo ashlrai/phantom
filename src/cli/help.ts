@@ -561,6 +561,35 @@ export async function cmdDocs(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const agent = args.includes('--agent');
 
+  if (args[0] === 'sync') {
+    if (args.includes('--help') || args.includes('-h')) {
+      process.stdout.write('Usage: ashlr docs sync [--repo <name>] [--check] [--json]\n'
+        + 'Regenerate documentation indexes and report command coverage and drift. See docs/DOCS-SYNC.md.\n');
+      return 0;
+    }
+    try {
+      let repo: string | undefined;
+      let check = false;
+      for (let i = 1; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === '--json') continue;
+        if (arg === '--check') { check = true; continue; }
+        if (arg === '--repo' && args[i + 1] && !repo) { repo = args[++i]; continue; }
+        throw new Error(`Unknown or incomplete argument: ${arg}`);
+      }
+      const { syncDocs } = await import('../core/docs-sync.js');
+      const result = syncDocs(process.cwd(), repo, check);
+      if (json) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      else process.stdout.write(`${result.ok ? 'Docs are current' : result.fix}\n`);
+      return result.ok ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (json) process.stdout.write(JSON.stringify({ ok: false, error: message }) + '\n');
+      else process.stderr.write(`${message}\n`);
+      return 2;
+    }
+  }
+
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
     printDocsHelp();
     return 0;
@@ -660,6 +689,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
+  { cmd: 'docs sync [--repo <name>] [--check] [--json]', desc: 'Regenerate documentation indexes and report command coverage and drift.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
   { cmd: 'plugins init|list|info|enable|disable', desc: 'Scaffold + manage plugins (~/.ashlr/plugins/) — default-off, integrity-pinned, audited (see docs/PLUGINS.md).', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },

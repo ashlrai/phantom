@@ -68,7 +68,7 @@ describe('cmdFleetCosWork bus post', () => {
     worker.result = blocked;
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { cmdFleetCosWork } = await import('../src/cli/fleet-cos-work.js');
-    expect(await cmdFleetCosWork([])).toBe(1);
+    expect(await cmdFleetCosWork(['--apply'])).toBe(1);
     expect(log).toHaveBeenCalledWith(`blocked ${JOB}: no provider available`);
     vi.unstubAllEnvs();
   });

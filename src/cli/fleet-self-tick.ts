@@ -1,8 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the eight
+ * a host timer or an agent with no desktop app open. It calls the nine
  * existing one-shot verbs in the fixed order reset-release → lane-autohold
- * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → landed-sweep, each with --json (plus --apply and --runs-dir when given),
+ * → stray-stop → meter-incident → planner-tick → inbox-acks → order-notices → landed-sweep → cos-work, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
@@ -13,6 +13,8 @@ import { cmdFleetLaneAutohold } from './fleet-lane-autohold.js';
 import { cmdFleetPlannerTick } from './fleet-planner-tick.js';
 import { cmdFleetInboxAcks, type FleetInboxAcksDeps } from './fleet-inbox-acks.js';
 import { cmdFleetOrderNotices, type FleetOrderNoticesDeps } from './fleet-order-notices.js';
+import { QueueStore } from '../core/queue/store.js';
+import { cmdFleetCosWork } from './fleet-cos-work.js';
 import { cmdFleetLandedSweep } from './fleet-landed-sweep.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
@@ -31,7 +33,7 @@ frees counts as a free slot for the planner step), then lane-autohold, then
 stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
 notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then order-notices
 (tells Mason when a merged job served one of his orders), then landed-sweep (closes DIRTY PRs whose work already landed;
-last because it is the slowest). Without --apply nothing is released, held, spawned, acknowledged or notified — the
+followed by cos-work, which drafts at most one reply with a 3-minute cap). Without --apply nothing is released, held, spawned, acknowledged or notified — the
 planner step still appends its observational PLANNER_TICK line to
 queue/dispatch-events.log either way. Only one self-tick runs per runs dir:
 a held queue/self-tick.lock reports 'busy' and exits 0. A step that fails or
@@ -76,6 +78,9 @@ function summary(step: string, report: unknown): string {
   if (typeof report !== 'object' || report === null) return '';
   const row = report as Record<string, unknown>;
   const count = (value: unknown): number => Array.isArray(value) ? value.length : 0;
+  if (step === 'cos-work') {
+    return row['mode'] === 'dry-run' ? `pending=${row['pending']}` : `outcome=${row['outcome']}`;
+  }
   if (step === 'reset-release') {
     return `released=${count(row['released'])} planned=${count(row['planned'])}`;
   }
@@ -121,7 +126,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all eight steps: the verbs' own fallbacks
+  // One root for the lock and all nine steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -191,6 +196,17 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     'inbox-acks': bind(cmdFleetInboxAcks, { now: () => new Date(now()), senders: deps.senders }),
     'order-notices': bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders }),
     'landed-sweep': bind(cmdFleetLandedSweep, { now }),
+    'cos-work': async (argv) => {
+      const result = await bind(cmdFleetCosWork, { now, spawn: deps.spawn, timeoutMs: 180_000 })(argv);
+      if (result.exitCode === 1) {
+        const report = JSON.parse(result.output) as { outcome?: string; id?: string };
+        if (report.outcome === 'blocked' && typeof report.id === 'string') {
+          const jobs = (await new QueueStore(join(root, 'queue')).read()).jobs;
+          if (jobs.some(job => job.id === report.id && job.status === 'READY')) return { ...result, exitCode: 0 };
+        }
+      }
+      return result;
+    },
   };
   const steps = { ...defaults, ...deps.steps };
   const inboxAcks = steps['inbox-acks'];
