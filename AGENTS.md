@@ -177,6 +177,26 @@ Allowlisted apps only, through the desktop adapter, every action logged to the
 feed. A quit with unsaved work goes to needs-you (exit 3). No keystrokes, no
 reading app contents, no TCC changes.
 
+## Desktop control
+
+`phm desktopctl capabilities|status|run <resource> [--json]` drives the Claude,
+Codex and Devin desktop apps as interchangeable resources through the
+`computer_*` tools, off until `~/.ashlr/desktopctl.json` holds
+`{"enabled": true}`. Copy and paste these commands; see
+[DESKTOPCTL](docs/DESKTOPCTL.md):
+
+```sh
+phm desktopctl capabilities --json
+phm desktopctl status claude --json
+phm desktopctl run claude --task "summarise this repo" --json
+```
+
+`capabilities` (the doctor) always runs and reports the connection, each macOS
+TCC grant and per-resource reasons for what is blocked. `run` needs a `full`
+grant and returns untrusted screen text. `browser` is read-only — act on the
+web through the Phantom Browser pane. Nothing prompts for or changes TCC
+grants; every action is feed-logged and refuses to run unlogged.
+
 ## Drafts
 
 `phm drafts list|show|approve|reject --json` handles outbound mail waiting for

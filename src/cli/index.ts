@@ -357,6 +357,11 @@ const loadAppsCmd = lazyCmd(
   'apps command requires src/cli/apps-control.ts.',
 );
 
+const loadDesktopctlCmd = lazyCmd(
+  () => import('./desktopctl.js'), (m) => m.cmdDesktopctl as Cmd,
+  'desktopctl command requires src/cli/desktopctl.ts.',
+);
+
 const loadDesktopUpdateCmd = lazyCmd(
   () => import('./desktop-update.js'), (m) => m.cmdDesktopUpdate as Cmd,
   'desktop-update command requires the installed compiled update consumer.',
@@ -2287,6 +2292,10 @@ async function main(): Promise<void> {
       }
       case 'apps': {
         process.exitCode = await (await loadAppsCmd())(rest);
+        break;
+      }
+      case 'desktopctl': {
+        process.exitCode = await (await loadDesktopctlCmd())(rest);
         break;
       }
       case 'desktop-update': {
