@@ -545,6 +545,7 @@ function rootPackageIsPortable(
     'docs/RESOURCE-POOL-COMMISSIONING-CHECK.md',
     'docs/RUNTIME_ACTIVATION_AUTHORITY.md',
     'docs/REMOTE-PHONE.md',
+    'docs/MACHINE-TELEMETRY.md',
     'docs/contracts/CONTRACT-M515.md',
     'docs/contracts/CONTRACT-M521.md',
     'docs/contracts/CONTRACT-M568.md',

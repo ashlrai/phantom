@@ -41,8 +41,9 @@ const BASE_EXCLUDE = [
 
 export default defineConfig({
   test: {
-    // Disabled by default: explicit calibration never changes case inventory.
-    ...(process.env['ASHLR_TEST_CI_WEIGHTED_PARTITION'] === '1'
+    // Independent opt-ins share the adapter; weighted sharding keeps its own
+    // flag inside the sequencer. Neither option changes collected cases.
+    ...(process.env['ASHLR_TEST_CI_WEIGHTED_PARTITION'] === '1' || process.env['ASHLR_TEST_CI_FAILURE_FIRST'] === '1'
       ? { sequence: { sequencer: WeightedCalibrationSequencer } } : {}),
     // Make os.homedir() follow process.env.HOME on every platform (Windows
     // ignores $HOME natively). Without this, every HOME-isolated test resolves
