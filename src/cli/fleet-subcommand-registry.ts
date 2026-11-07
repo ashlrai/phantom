@@ -221,6 +221,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'queue-latency': () => import('./fleet-queue-latency.js'),
   'queue-counts': () => import('./fleet-queue-counts.js'),
   'queue-shape': () => import('./fleet-queue-shape.js'),
+  'ready-bad': () => import('./fleet-ready-bad.js'),
   'ready-supply': () => import('./fleet-ready-supply.js'),
   'real-supply': () => import('./fleet-real-supply.js'),
   'reassign': () => import('./fleet-reassign.js'),
