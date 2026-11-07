@@ -205,3 +205,14 @@ waiting job has missing or conflicting enqueue timestamps. The command reads
 at most 2 MiB of metrics and treats a larger ledger as unavailable. Without
 `--json`, the same command prints a plain-language report. Use `--root /path`
 to inspect a different runs directory.
+
+## Lint the router queue
+
+Run `phm fleet queue-lint --json` for a read-only health read of the dispatch
+queue: it reports each `- READY` line in `~/.ashlr-runs/queue/router-queue.md`
+that is missing its id, priority, pool, tier, repo or goal text (first missing
+field only, never the goal itself), plus the dispatcher's own
+`invalid_queue_lines` count from `queue/status.json`. Exit 1 when either count
+is nonzero or an input is unreadable; `--json` prints
+`{ schema: 'fleet.queue-lint.v1', readOnly: true, total, invalid_queue_lines, failures, errors }`.
+`ASHLR_RUNS_DIR` selects a different runs directory.
