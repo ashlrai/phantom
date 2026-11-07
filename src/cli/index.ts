@@ -2127,6 +2127,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'whoami': {
+        const { cmdWhoami } = await import('./tenancy.js');
+        process.exitCode = await cmdWhoami(rest);
+        break;
+      }
+
+      case 'org': {
+        const { cmdOrg } = await import('./tenancy.js');
+        process.exitCode = await cmdOrg(rest);
+        break;
+      }
+
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);
@@ -2202,6 +2214,11 @@ async function main(): Promise<void> {
 
       case 'select': {
         process.exitCode = await (await import('./select.js')).cmdSelect(rest);
+        break;
+      }
+
+      case 'job': {
+        process.exitCode = await (await import('./job.js')).cmdJob(rest);
         break;
       }
 

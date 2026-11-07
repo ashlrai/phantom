@@ -100,6 +100,18 @@ export type {
   JudgeDecisionReasonCode,
 } from '../../core/types.js';
 export type { PublicDaemonObservation, DaemonSourceQuality } from '../../core/daemon/public-observation.js';
+/**
+ * GET /api/approvals contract — the pending-approvals surface
+ * (routes/approvals/). Value-blind by construction on the backend; the UI
+ * renders `decide` verbatim and never invents an action path.
+ */
+export type {
+  PendingApprovalDecide,
+  PendingApprovalItem,
+  PendingApprovalSource,
+  PendingApprovalSourceQuality,
+  PendingApprovalsResponse,
+} from '../../core/web/pending-approvals.js';
 
 /**
  * Journal / notification centre additions (M416): `FleetStatus.nextActions`

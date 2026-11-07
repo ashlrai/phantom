@@ -359,6 +359,7 @@
 /test/engines-stream-family-310b.test.ts @masonwyatt23
 /test/enroll-secrets-offer.test.ts @masonwyatt23
 /test/enrollment-read-directory-churn.test.ts @masonwyatt23
+/test/episodic-memory.test.ts @masonwyatt23
 /test/execution-feedback-case.test.ts @masonwyatt23
 /test/execution-leases-310b.test.ts @masonwyatt23
 /test/external-skill-audit-trust-roots.test.ts @masonwyatt23
@@ -411,6 +412,7 @@
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-batch.test.ts @masonwyatt23
 /test/fleet-merge-delay.test.ts @masonwyatt23
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
@@ -1098,6 +1100,9 @@
 /test/schemas/fixtures/loop.v1.json @masonwyatt23
 /test/scrub-310.test.ts @masonwyatt23
 /test/scrub-corpus.test.ts @masonwyatt23
+/test/send-policy-email-outbox.test.ts @masonwyatt23
+/test/send-policy-recut2.test.ts @masonwyatt23
+/test/send-policy.test.ts @masonwyatt23
 /test/skill-library-wire-31.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23

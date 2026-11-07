@@ -122,7 +122,6 @@ const HELP_STRICT_REFUSALS: Record<string, string> = {
   'openai-agents turns': `read-only inventory with an exact option grammar: ${STRICT_VERB_PARSER}`,
   'config set editor --help': '`config set` refuses a help flag in either operand with its usage line (exit 2) instead of storing it',
   'app update': 'src/cli/app.ts accepts only `update status [--json]`; anything else prints the usage line and exits 2 before the stage is inspected',
-  'app status': 'same exact grammar as `app update` (src/cli/app.ts); anything else prints the usage line and exits 2',
   'fleet session': 'src/cli/fleet-session.ts requires `<job> --json` with an exact flag grammar; anything else prints its usage line and exits 2',
   'verify': '`verify` only has the `change` verb with an exact flag grammar (src/cli/verify.ts); anything else prints the usage line and exits 2 before any worktree check runs',
   'signals': '`signals` accepts only --json (src/cli/signals.ts); anything else prints the usage line and exits 2 before signals are read',

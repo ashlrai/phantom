@@ -1,6 +1,7 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
+import { scrubSecrets } from '../../util/scrub.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';
@@ -290,7 +291,8 @@ export class DriveNodes implements QueueV1 {
       if (!this.currentClaim(state, claim, now)) return false;
       const job = state.jobs.find(j => j.id === claim.jobId)!;
       job.state = 'completed';
-      job.result = result;
+      // Results are shared logs: never persist a credential-shaped value.
+      job.result = scrubSecrets(result);
       return true;
     });
   }

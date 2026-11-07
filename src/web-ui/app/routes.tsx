@@ -43,6 +43,7 @@ const FleetView = lazy(() => import('../routes/control/fleet/FleetView.js').then
 const SecurityView = lazy(() => import('../routes/control/security/SecurityView.js').then((module) => ({ default: module.SecurityView })));
 const GoalsView = lazy(() => import('../routes/goals/GoalsView.js').then((module) => ({ default: module.GoalsView })));
 const InboxView = lazy(() => import('../routes/inbox/InboxView.js').then((module) => ({ default: module.InboxView })));
+const PendingApprovalsView = lazy(() => import('../routes/approvals/PendingApprovalsView.js').then((module) => ({ default: module.PendingApprovalsView })));
 const AgentOsView = lazy(() => import('../routes/agent-os/AgentOsView.js').then((module) => ({ default: module.AgentOsView })));
 const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((module) => ({ default: module.ConnectView })));
 const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
@@ -82,6 +83,7 @@ export function AppRoutes() {
         <Route path="/control/security" element={<SecurityView />} />
         <Route path="/goals" element={<GoalsView />} />
         <Route path="/verse/inbox" element={<DecisionInbox />} />
+        <Route path="/approvals" element={<PendingApprovalsView />} />
         <Route path="/inbox" element={<InboxView />} />
         <Route path="/inbox/:id" element={<InboxView />} />
         <Route path="*" element={<Navigate to="/overview" replace />} />
