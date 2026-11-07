@@ -305,3 +305,5 @@ canonical release guide for required hosted qualification and publication.
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
+
+- [Merge cockpit](MERGE-COCKPIT.md) — read-only PR pipeline snapshots and rework links.
