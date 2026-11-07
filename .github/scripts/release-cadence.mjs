@@ -74,6 +74,17 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
   return { due: true, reason: 'green-master-cadence-due', version, revision, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
 }
 
+class MetadataRateLimitError extends Error {}
+
+export async function planReleaseCadenceWhenAvailable(input) {
+  try {
+    return await planReleaseCadence(input);
+  } catch (error) {
+    if (error instanceof MetadataRateLimitError) return { due: false, reason: 'metadata-rate-limited' };
+    throw error;
+  }
+}
+
 // Public reads deliberately carry no credential. The existing release-please
 // job has no Actions permission; adding a scheduling read must not widen it.
 export function createPublicMetadataReader({ fetchImpl = fetch, now = () => performance.now(),
@@ -121,7 +132,11 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
         continue;
       }
       if (response.status === 404 && endpoint.includes('/git/ref/tags/')) return null;
-      assert.equal(response.status, 200, `release metadata unavailable (${response.status})`);
+      if ([403, 429].includes(response.status) && response.headers?.get('x-ratelimit-remaining') === '0') {
+        report(`release metadata rate limited at ${endpoint}; deferring until the next run`);
+        throw new MetadataRateLimitError('release metadata rate limited');
+      }
+      assert.equal(response.status, 200, `release metadata unavailable (${response.status}) at ${endpoint}`);
       assert.ok(text.length <= 4 * 1024 * 1024, 'release metadata too large');
       return JSON.parse(text);
     }
@@ -131,7 +146,7 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
-    const plan = await planReleaseCadence({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
+    const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
       minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '30'), read: createPublicMetadataReader() });
     assert.ok(process.env.GITHUB_OUTPUT);
     appendFileSync(process.env.GITHUB_OUTPUT, `due=${plan.due}\nversion=${plan.version ?? ''}\n`);
