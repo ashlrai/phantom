@@ -18,6 +18,16 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [Unreleased]
 
+### Changed
+
+- Pinned the repository's Stack MCP server and CLI to the qualified 0.3.6 release. ([#3774](https://github.com/ashlrai/phantom/pull/3774))
+- Preserved managed site release facts when synchronizing release notes. ([#3773](https://github.com/ashlrai/phantom/pull/3773))
+
+### Fixed
+
+- Kept resource pool ledger reads coherent during atomic publication. ([#3772](https://github.com/ashlrai/phantom/pull/3772))
+- Restored dispatcher visibility with bounded reads of run state. ([#3771](https://github.com/ashlrai/phantom/pull/3771))
+
 ## [3.30.12] — 2026-11-06
 
 

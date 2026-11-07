@@ -108,7 +108,7 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 
 ![Phantom 3.24.3 compiled browser Demo chat with labeled sample accounts. No provider ran.](https://github.com/ashlrai/phantom/blob/master/docs/images/verse-work-with-me-3.24.3-demo.jpg)
 
-*Compiled 3.24.3 browser UI with labeled Demo accounts. No provider ran and no fleet was active. The screenshot shows the browser UI, not the native app window.*
+*Historical 3.24.3 browser demo with labeled sample accounts. The current interface may differ. No provider ran and no fleet was active; this is not the native app window.*
 
 ## Features
 
@@ -116,6 +116,7 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 | --- | --- |
 | ![CLI JSON](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-cli.svg) | **CLI for agents.** `phm docs --agent --json` lists commands. Add `--json` on commands that offer it. |
 | ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **One MCP gateway.** Claude, Cursor, and Codex use `ashlr-hub`. |
+| ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **Companion inventory.** `phm companions --json` checks separately installed Secrets, Locus, and Lexicon CLI identities. It does not establish runtime readiness. |
 | ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Phantom does not ask for or store the vendor credential. |
 | ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. A finished run is not proof the outcome shipped. |
 
