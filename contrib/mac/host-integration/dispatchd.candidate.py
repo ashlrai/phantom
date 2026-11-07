@@ -263,6 +263,11 @@ def ab_scan(lane, alive_):
     for bp in glob.glob(R + "/*.base"):
         j = os.path.basename(bp)[:-5]
         if not JID.match(j) or j in alive_: continue
+        # Reject old history before decoding metadata. Keep the original
+        # post-metadata age/seen checks below; logs remain mutable observations.
+        try:
+            if not ab_log_fresh(s_, os.path.getmtime("%s/%s.log" % (R, j)), NOW): continue
+        except Exception: continue
         b = rd(bp).split()
         if len(b) < 4 or b[3] != lane: continue
         lp = "%s/%s.log" % (R, j); mk = "%s/%s.autobackoff.seen" % (RUN, j)
@@ -607,9 +612,15 @@ def global_cap():   # Network-bound agents may outnumber CPUs; the operator ceil
 # ---- (c) adapt
 def ratelimited(lane, since):
     for bp in glob.glob(R + "/*.base"):
-        j = os.path.basename(bp)[:-5]; b = base(j)
-        if not b or b[3] != lane: continue
+        j = os.path.basename(bp)[:-5]
         lp = "%s/%s.log" % (R, j)
+        # No snapshot or lane cache: every call sees current paths/mtimes,
+        # and the original final age check still runs after fresh metadata.
+        try:
+            if os.path.getmtime(lp) <= max(since, NOW - 1800): continue
+        except Exception: continue
+        b = base(j)
+        if not b or b[3] != lane: continue
         try:
             if os.path.getmtime(lp) <= max(since, NOW - 1800): continue
             with open(lp, "rb") as f:
