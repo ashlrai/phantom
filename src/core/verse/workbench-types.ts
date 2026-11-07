@@ -611,6 +611,9 @@ export const VERSE_SESSION_CONTROL_DEFAULTS_PATH = '/api/verse/session-controls/
 export const VERSE_ATTACHMENTS_PATH = '/api/verse/attachments';
 export const VERSE_QUEUE_PATH = '/api/verse/queue';
 export const VERSE_FILES_PATH = '/api/verse/files';
+/** The Files pane's browser: privileged reads, so POSTs behind the mutation gate. */
+export const VERSE_FILES_BROWSE_PATH = '/api/verse/files/browse';
+export const VERSE_FILES_READ_PATH = '/api/verse/files/read';
 
 /** One picker option. Unavailable options are shown DISABLED with `reason`, never hidden. */
 export interface VerseControlOption<T extends string = string> {
@@ -749,6 +752,56 @@ export interface VerseFilesResponse {
    * older server omits it and every match is shown with its root.
    */
   primaryRoot?: string | null;
+}
+
+/**
+ * POST /api/verse/files/browse {sessionId, root?, path?} — one directory of
+ * the Files pane's browser. `root` names one of the chat's roots (absent =
+ * the primary); `path` is a `/`-joined path relative to it (absent or '' =
+ * the root itself). Both are privileged reads: the route is a POST, so the
+ * mount's mutation gate applies before this module runs.
+ */
+export interface VerseFileBrowseRequest {
+  sessionId: string;
+  root?: string;
+  path?: string;
+}
+export interface VerseFileBrowseEntry {
+  name: string;
+  /** `/`-joined, relative to `root`. */
+  path: string;
+  kind: 'directory' | 'file';
+  /** File size in bytes; null for a directory. */
+  sizeBytes: number | null;
+}
+export interface VerseFileBrowseResponse {
+  sessionId: string;
+  /** The resolved absolute root (sanitised like every response: home → `~`). */
+  root: string;
+  /** The directory browsed, relative to `root` ('' = the root itself). */
+  path: string;
+  entries: VerseFileBrowseEntry[];
+}
+
+/**
+ * POST /api/verse/files/read {sessionId, root?, path} — a bounded text
+ * preview. No digest field: a bare sha256 is secret-shaped to
+ * sanitizePublicJson and would leave as `[REDACTED]`; size + truncation is
+ * the snapshot identity the pane shows.
+ */
+export interface VerseFileReadRequest {
+  sessionId: string;
+  root?: string;
+  path: string;
+}
+export interface VerseFileReadResponse {
+  sessionId: string;
+  root: string;
+  path: string;
+  text: string;
+  sizeBytes: number;
+  byteLength: number;
+  truncated: boolean;
 }
 
 // ===========================================================================

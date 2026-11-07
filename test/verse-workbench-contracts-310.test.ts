@@ -75,7 +75,9 @@ import {
   VERSE_ACTIVITY_SEEN_PATH,
   VERSE_APPS_PATH,
   VERSE_ATTACHMENTS_PATH,
+  VERSE_FILES_BROWSE_PATH,
   VERSE_FILES_PATH,
+  VERSE_FILES_READ_PATH,
   VERSE_GIT_DIFF_PATH,
   VERSE_GIT_STATUS_PATH,
   VERSE_PREVIEW_RAW_PATH,
@@ -249,6 +251,7 @@ describe('workbench route families — claims', () => {
     expect(workbenchFamilyFor('/api/verse/git/status')?.id).toBe('git');
     expect(workbenchFamilyFor('/api/verse/github')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/gitx')).toBeNull();
+    expect(workbenchFamilyFor('/api/verse/filesx')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/applications')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/activity-log')).toBeNull();
     expect(workbenchFamilyFor('/api/verse/terminals')).toBeNull();
@@ -266,6 +269,8 @@ describe('workbench route families — claims', () => {
       [`${VERSE_QUEUE_PATH}/s-1`, 'session-controls'],
       [`${VERSE_QUEUE_PATH}/s-1/q-1/delete`, 'session-controls'],
       [VERSE_FILES_PATH, 'session-controls'],
+      [VERSE_FILES_BROWSE_PATH, 'session-controls'],
+      [VERSE_FILES_READ_PATH, 'session-controls'],
       [VERSE_TERMINAL_PATH, 'terminal'],
       [`${VERSE_TERMINAL_PATH}/t-1/stream`, 'terminal'],
       [VERSE_PREVIEW_TARGETS_PATH, 'preview'],
