@@ -713,6 +713,35 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertEqual(self.claims(home), ['RQ-FIX-MAIN-A', 'RQ-FIX-MAIN-B'])
         self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-FIX-MAIN-C'])
 
+    def test_refix_drains_serialize_per_pr_and_skip_empty_duplicates(self):
+        home, env = self.fixture(('codex-cmp', 'codex-personal'))
+        empty = 'RQ-DRAIN-phantom-7-aaaaaaa'
+        (home / '.ashlr-runs' / f'{empty}.publish').write_text('RESULT EMPTY\n')
+        for job, lane, repo in [(empty, 'codex-cmp', 'phantom'),
+                                ('RQ-DRAIN-phantom-8-aaaaaaa', 'codex-cmp', 'phantom'),
+                                ('RQ-DRAIN-phantom-8-bbbbbbb', 'codex-personal', 'phantom'),
+                                ('RQ-DRAIN-phantom-9-aaaaaaa', 'codex-personal', 'phantom'),
+                                ('RQ-DRAIN-locus-8-aaaaaaa', 'codex-personal', 'locus'),
+                                ('RQ-ORDINARY', 'codex-personal', 'phantom')]:
+            queue_job(home, job, lane, repo=repo)
+        queue_job(home, empty, 'codex-cmp')
+        self.run_tick(home, env)
+        self.assertEqual(set(self.claims(home)), {'RQ-DRAIN-phantom-8-aaaaaaa',
+                         'RQ-DRAIN-phantom-9-aaaaaaa', 'RQ-DRAIN-locus-8-aaaaaaa', 'RQ-ORDINARY'})
+        self.assertEqual([line.split('\t')[0] for line in ready_lines(home)], ['RQ-DRAIN-phantom-8-bbbbbbb'])
+
+    def test_active_refix_reservation_releases_after_terminal_result(self):
+        home, env = self.fixture()
+        active = 'RQ-DRAIN-phantom-8-aaaaaaa'
+        r = self.active_fix(home, job=active)
+        queue_job(home, 'RQ-DRAIN-phantom-8-bbbbbbb', 'codex-cmp')
+        queue_job(home, 'RQ-ORDINARY', 'codex-cmp')
+        self.run_tick(home, env)
+        self.assertEqual(self.claims(home), ['RQ-ORDINARY'])
+        (r / f'{active}.publish').write_text('RESULT EMPTY\n')
+        self.run_tick(home, env)
+        self.assertEqual(self.claims(home), ['RQ-ORDINARY', 'RQ-DRAIN-phantom-8-bbbbbbb'])
+
     def active_fix(self, home, job='RQ-FIX-MAIN-A', line=True, base=True):
         r = home / '.ashlr-runs'
         if line:
