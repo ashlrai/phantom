@@ -506,7 +506,7 @@ describe('fresh public facts are data, not saved release authority', () => {
     }
     return value;
   }
-  function withMergeGateJobs(endpoint: string, raw: unknown): unknown {
+  function withMergeGateJobs(endpoint: string, raw: unknown, separateProducer = false): unknown {
     const value = withAncillaryJobs(endpoint, raw) as Record<string, unknown>;
     if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
       const jobs = value['jobs'] as Record<string, unknown>[];
@@ -520,8 +520,10 @@ describe('fresh public facts are data, not saved release authority', () => {
       for (const [id, name, conclusion] of [[904, 'Secret-shape scan', 'success'], [905, 'Quick typecheck', 'skipped'], [906, 'Daily fixup queue', 'skipped']] as const) {
         jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion, labels: ['ubuntu-latest'], steps: [] });
       }
-      // Complete false/all qualification never executes the separate fast producer.
+      // Both complete inventories skip every fast producer. Historical source
+      // retains its separate preparation role; the reviewed combined source does not.
       for (const [id, name] of [[907, 'Prepare unsigned desktop release'], [908, 'Desktop release smoke']] as const) {
+        if (name === 'Prepare unsigned desktop release' && !separateProducer) continue;
         jobs.push({ id, name, run_id: 20, head_sha: SOURCE, status: 'completed', conclusion: 'skipped', labels: ['macos-15'], steps: [] });
       }
       const scan = jobs.find(job => job['name'] === 'Secret-shape scan')!;
@@ -559,6 +561,54 @@ describe('fresh public facts are data, not saved release authority', () => {
     const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
+  it('retains the immutable C22 separate-producer workflow and its complete 24-job inventory', async () => {
+    const bytes = readFileSync(join(process.cwd(), 'test/fixtures/release-public-facts/ci-complete-c22-94ba873.yml'));
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe('94ba87387e1f97e1b1e22a01f152b0b580b3476e45206909e2abca6a23c14a44');
+    const reader = fixtureReader((endpoint, raw) => withMergeGateJobs(endpoint, raw, true), { workflowBytes: bytes });
+    expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
+  });
+  it('still refuses a preparation producer that ran under the legacy complete topology', async () => {
+    const bytes = readFileSync(join(process.cwd(), 'test/fixtures/release-public-facts/ci-complete-c22-94ba873.yml'));
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw, true) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        jobs.find(job => job['name'] === 'Prepare unsigned desktop release')!['conclusion'] = 'success';
+      }
+      return value;
+    }, { workflowBytes: bytes });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow(/excluded job outcome/);
+  });
+  it.each(['smoke-missing', 'smoke-duplicate', 'legacy-skipped', 'daily-ran', 'daily-missing'])('refuses a mixed or incomplete combined producer inventory: %s', async kind => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        const smoke = jobs.find(job => job['name'] === 'Desktop release smoke')!;
+        if (kind === 'smoke-missing') jobs.splice(jobs.indexOf(smoke), 1);
+        if (kind === 'smoke-duplicate') jobs.push({ ...smoke, id: 909 });
+        if (kind === 'legacy-skipped') jobs.push({ ...smoke, id: 907, name: 'Prepare unsigned desktop release' });
+        const daily = jobs.find(job => job['name'] === 'Daily fixup queue')!;
+        if (kind === 'daily-ran') daily['conclusion'] = 'success';
+        if (kind === 'daily-missing') jobs.splice(jobs.indexOf(daily), 1);
+        value['total_count'] = jobs.length;
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
+  it.each(RELEASE_CI_JOBS)('the combined producer cannot replace complete release role %s', async name => {
+    const reader = fixtureReader((endpoint, raw) => {
+      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
+        const jobs = value['jobs'] as Record<string, unknown>[];
+        jobs.splice(jobs.findIndex(job => job['name'] === name), 1);
+        value['total_count'] = jobs.length;
+      }
+      return value;
+    }, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
+  });
   it.each(['full-skipped', 'full-step-skipped', 'full-step-missing', 'scan-skipped', 'scan-step-skipped', 'scan-runner', 'producer-ran', 'smoke-ran', 'excluded-step-ran'])('refuses incomplete current release qualification: %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
       const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
@@ -572,7 +622,11 @@ describe('fresh public facts are data, not saved release authority', () => {
         if (kind === 'scan-skipped') scan['conclusion'] = 'skipped';
         if (kind === 'scan-step-skipped') (scan['steps'] as Record<string, unknown>[])[0]!['conclusion'] = 'skipped';
         if (kind === 'scan-runner') scan['labels'] = ['ubuntu-latest', 'self-hosted'];
-        if (kind === 'producer-ran') jobs.find(job => job['name'] === 'Prepare unsigned desktop release')!['conclusion'] = 'success';
+        if (kind === 'producer-ran') {
+          jobs.push({ id: 907, name: 'Prepare unsigned desktop release', run_id: 20, head_sha: SOURCE,
+            status: 'completed', conclusion: 'success', labels: ['macos-15'], steps: [] });
+          value['total_count'] = jobs.length;
+        }
         if (kind === 'smoke-ran') jobs.find(job => job['name'] === 'Desktop release smoke')!['conclusion'] = 'success';
         if (kind === 'excluded-step-ran') jobs.find(job => job['name'] === 'Desktop release smoke')!['steps'] = [{ name: 'fast smoke', status: 'completed', conclusion: 'success' }];
       }
@@ -582,19 +636,17 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it('retains the exact legacy complete topology and refuses unreviewed outer limits', async () => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
-    // The previously pinned revision is recoverable by removing exactly the
-    // reviewed source-identical fast-path wiring; any other drift fails loudly.
-    const previous = current
-      .replace(/ {6}# Source-identical fast path[\s\S]*?(?= {6}- name: Install dependencies)/, '')
-      .replaceAll("        if: steps.history.outputs.equal != 'true'\n", '');
+    // Original workflow bytes from bd0c161c11cb3850fe075847b985347b2b1e42b8.
+    const previous = readFileSync(join(process.cwd(), 'test/fixtures/release-public-facts/ci-complete-95714a1.yml'), 'utf8');
     expect(createHash('sha256').update(previous).digest('hex')).toBe('95714a1fd967c9a5b072761c1aff68ec9ea3792ac5e7058a62e0cde2a18bbd21');
     const macEnvelope = previous.replace("    # Ubuntu authority 1/3 runs the complete web suite before its existing\n    # thirty-minute backend wrapper, then verifies and uploads the original pack.\n    # Other matrix roles retain their existing twenty-five-minute outer limit.\n    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}", '    timeout-minutes: 25');
     expect(createHash('sha256').update(macEnvelope).digest('hex')).toBe('5d88a822dabe4b188e44683991cd921623470c0fa0e20fb96df883cb4f173444');
-    expect(await verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(macEnvelope) }), NOW))
+    const separateJobs = (endpoint: string, raw: unknown): unknown => withMergeGateJobs(endpoint, raw, true);
+    expect(await verifyPublishedRelease(proposed, fixtureReader(separateJobs, { workflowBytes: Buffer.from(macEnvelope) }), NOW))
       .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
     const legacy = macEnvelope.replace('    # Complete single-worker partitions measured 60–65 minutes. Match the\n    # existing 90-minute hermetic wrapper; individual test bounds stay intact.\n    timeout-minutes: 90', '    timeout-minutes: 45');
     expect(createHash('sha256').update(legacy).digest('hex')).toBe('ed6a2ba96a8c6a46e5aa216509212d5f829b0cee491cf6bab73e339e3fd2e390');
-    expect(await verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(legacy) }), NOW))
+    expect(await verifyPublishedRelease(proposed, fixtureReader(separateJobs, { workflowBytes: Buffer.from(legacy) }), NOW))
       .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
     for (const edited of [current.replace('    timeout-minutes: 90', '    timeout-minutes: 91'),
       current.replace("matrix.label == 'ubuntu, authority 1/3' && 60 || 25", "matrix.label == 'ubuntu, authority 1/3' && 61 || 25")]) {
@@ -682,7 +734,7 @@ describe('fresh public facts are data, not saved release authority', () => {
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         const gate = jobs.find((job) => job['name'] === 'Merge Gate')!;
-        if (kind === 'missing') jobs.pop();
+        if (kind === 'missing') jobs.splice(jobs.indexOf(gate), 1);
         if (kind === 'failure') gate['conclusion'] = 'failure';
         if (kind === 'skipped-step') (gate['steps'] as Record<string, unknown>[])[0]!['conclusion'] = 'skipped';
         if (kind === 'wrong-runner') gate['labels'] = ['self-hosted'];

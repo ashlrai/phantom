@@ -25,6 +25,7 @@
 | grok-usage | `src/cli/fleet-grok-usage.ts` | Reads Grok usage metrics from a configured source | no |
 | job-class-share | `src/cli/fleet-job-class-share.ts` | Offline accounting only; share of finished-job tokens by class per lane | no |
 | job-read | `src/cli/fleet-job-read.ts` | Reads job detail, changes, text and bus inbox for a job ID | no |
+| kept-age | `src/cli/fleet-kept-age.ts` | Read-only kept worktree ages from `.base` modification times, existence, and age-band totals; supports `--json` and `ASHLR_RUNS_DIR` / `ASHLR_WT_DIR` overrides | no |
 | kept | `src/cli/fleet-kept.ts` | Read-only why worktrees were kept: one line per reason (`abort_push`, `abort_pr`, `empty`, `other`, `unknown`) with its count and the 3 oldest job IDs, from `kept_worktrees` in `~/.ashlr-runs/queue/status.json` and the last 3000 lines of `~/.ashlr-runs/metrics/jobs.jsonl` | no |
 | lane-models | `src/cli/fleet-lane-models.ts` | The effective model per lane and tier from models.json, cross-checked against the newest launch row in metrics/jobs.jsonl; read-only | no |
 | lane-share | `src/cli/fleet-lane-share.ts` | Read-only lane share from `~/.ashlr-runs/queue/status.json`: one line per lane with running of target and queued, marked `starved` (10 or more queued, none running) or `full` (running equals target), then fleet running against `admission.cap`; red (exit 1) when a lane is starved while the admission reason starts with `at_cap` | no |
@@ -48,3 +49,5 @@
 | workers | `src/cli/fleet-workers.ts` | Lists live workers, filterable by lane, repo and age; watch mode | no |
 
 **Convention for adding a new verb.** Create `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>` (each dash-separated part title-cased and concatenated). The dispatcher in `resolveFleetSubcommand` resolves it automatically; no edits to `fleet.ts`, `index.ts`, completions or help are needed. Update this doc to keep it in sync.
+
+`dirty-landed --json` includes `diffAnomaly` for a complete PR diff of at least 1,000 files with zero added or deleted text lines in every file. Causes distinguish unchanged-content mode changes, generated-looking paths (a naming heuristic), and other zero-line changes. Binary, incomplete, and ordinary large text diffs are not classified as zero-line anomalies. The recut loop and recut sweep skip confirmed anomalies; inspect them before deciding what to do. The existing landed class remains independent of this diagnostic.

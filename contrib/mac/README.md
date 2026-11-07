@@ -2,11 +2,12 @@
 
 `restock.py` and `dispatchd.py` are reviewable repository copies of the
 deterministic Mac queue scripts that run under `~/.ashlr-runs` on the dispatch
-host. `dispatchd.py` here is the single source for the live dispatcher (see
-[Installing the dispatcher](#installing-the-dispatcher)). They are pinned artifacts: changes
-land by PR review, and Security re-pins the sha before any live install. Both
-are deterministic (no model or network calls of their own) and neither creates
-tokens.
+host. A repository snapshot can be older than the installed controller: compare
+its exact input hash before adoption. Current-host changes under
+`host-integration/` are surgical patches against their declared input, not
+permission to overwrite the whole controller with an older copy. Changes land
+by PR review and the adoption owner verifies immutable source hashes before any
+live install. The queue scripts are deterministic and do not create tokens.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
@@ -133,6 +134,11 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+The reaper consults the job ledger before handoff: a merged outcome for the
+current launch, including one linked through its published PR URL, prevents a
+leftover `.base` from triggering another publication. Repeated handoffs for an
+unfinished attempt record its finish only once; a later launch starts a new
+attempt. These records do not remove the worktree or replace publisher recovery.
 
 ## Adaptive concurrency and batching
 
@@ -529,6 +535,15 @@ phm fleet parked --json
 # … "unmetDeps": [{"job":"RQ-WAIT","lane":"devin","unmet":["RQ-UPSTREAM"]}] …
 ```
 
+Restock measures lane demand from distinct valid ready rows with nonempty prompts,
+not the previous dispatcher status count. Parked, invalid, empty and duplicate
+rows do not fill a lane. Its JSON output reports `queue_diagnostics` and
+`parked_diagnostics` counts; parked rows with missing gates, invalid fields,
+unmerged dependencies or duplicate job IDs remain in place for inspection.
+A merged dependency releases at most one row per job, preserving its prompt.
+These diagnostics do not modify or delete invalid rows. Restock source changes
+require Security re-pinning before host installation.
+
 Restock also cuts NOOP churn (RQ-PSEL-4-NOOPCUT): within one pass it keeps a
 single line per target PR and per `file=` target, and it parks a job for 24 h
 once its last 2 runs both retired as `DONE-NOOP` (skip reason `noop-streak`).
@@ -678,4 +693,79 @@ for rollback and inspect any partial push before retrying.
 python3 -m unittest contrib/mac/tests/test_integrated_merge.py -v
 python3 -m unittest contrib/mac/tests/test_publish_dependency_links.py -v
 bash -n contrib/mac/publish.sh
+```
+
+
+## Host and session resource observations
+
+The fixed `host_session_tick.py` composes `host_session_runtime.py`,
+`host_session_observation.py` and `host_session_disk_cache.py`. The existing
+controller invokes it under its existing `dispatchd.lock`; there is no new
+service. Its fixed observation file is descriptive, not a quota, identity,
+permission, or capacity grant. CPU is the OS-reported per-core average; RSS
+sums shared resident pages and is not unique physical RAM. Disk is historical
+allocated worktree attribution excluding `node_modules`, never free or
+reclaimable capacity. Census, disk and UI freshness are independent.
+
+The launcher registers the actual just-launched child with PID birth, current
+boot and protected dispatch-record pins. Registration failure does not undo or
+kill a launched process. The private claim-directory lock serializes only
+registration and retirement. Each tick examines at most 512 current claims;
+archived history is excluded from the active 256-row budget. A current root
+must be absent in both complete fresh process censuses before retirement, with
+unchanged protected input/name pins and a matching recorded attempt, terminal
+exit receipt, or complete reaped-record absence. Reused PIDs, incomplete
+observations, changed records and legacy claims lacking registration pins stay
+unknown and are not retired. Archival does not prove provider quiescence or
+make an empty inventory healthy. It grants no launch or reclamation authority.
+
+`host_pressure_admission.py` reuses the bounded kernel observer. The surgical
+host patches check pressure before selection and again immediately before
+unreserved native Codex/Devin execution. On macOS only known-normal pressure
+permits new work; non-Darwin behavior is retained. A late hold uses the existing
+launch grace/requeue path, including reuse of its prepared worktree; retired
+jobs remain cancelled. No worker is stopped, no percentage reserve or new
+concurrency cap is added. Seven paced-lane final reservation/cancellation
+integration and the separate product machine producer are outside this patch.
+
+The existing whole `install.sh` is not the adoption transaction for these
+current-host patches. Immutable helper closure, exact current-input comparison,
+existing controller/ready locks, backups and post-adoption checks must be
+reviewed separately. Source tests and a synthetic locked-tick measurement do
+not by themselves establish live adoption or worst-case host latency.
+
+
+## Host release observer source
+
+`release-autorun.sh` is the reviewable source mirror for the existing
+`ai.ashlr.release-autorun` LaunchAgent and fixed stock signing wrapper. It
+selects immutable proof using the existing `gh` authentication; it
+does not create credentials, version PRs, tags, qualification runs or npm
+dispatches. The unchanged stock signer independently verifies the selected
+source, run attempts, original artifacts, audit and signing/publication guards.
+Selection metadata is not a reusable qualification grant.
+
+The observer considers at most 20 newest successful attestors on current master.
+A missing handoff does not hide an older ready attestor or create new permanent
+seen state. Complete bounded artifact inventories must contain one exact
+current-attempt handoff and build with matching run, source and repository.
+Every completed per-source rc remains final. A started record without a
+completion is uncertain and blocks before network or signing; no automatic
+replay or legacy-state migration occurs. Existing seen records are preserved.
+
+`RELEASE_AUTORUN_OFF`, the existing observer/signer locks and keychain gate remain
+unchanged. `install.sh` intentionally does not install this observer. Adoption
+requires review of the exact merged source and current host input, an unchanged
+owned OFF marker, private backup/journal, existing observer exclusion, a
+single-file compare-and-swap replacement and readback. It must not overwrite
+legacy outcomes or replace/restart launchd, the dispatcher, signer, keys or
+other host controls. Clearing OFF is a separate explicit operator action.
+
+The original rev1 input is retained only as an inert counterfactual fixture.
+The following tests use fake GET-only GitHub and fake Bash signing processes
+inside private temporary roots; they never contact a real publisher or keychain:
+
+```sh
+python3 -I contrib/mac/tests/test_release_autorun.py
+bash -n contrib/mac/release-autorun.sh
 ```

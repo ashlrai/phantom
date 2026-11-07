@@ -106,6 +106,7 @@
 /scripts/install-desktop-artifacts.mjs @masonwyatt23
 /scripts/publish-desktop-release.mjs @masonwyatt23
 /scripts/verify-release-policy.mjs @masonwyatt23
+/contrib/mac/release-autorun.sh @masonwyatt23
 /tools/custody/** @masonwyatt23
 **/*.plist @masonwyatt23
 **/*.entitlements @masonwyatt23
@@ -150,6 +151,7 @@
 /desktop/src-tauri/src/main.rs @masonwyatt23
 /desktop/src-tauri/src/lib.rs @masonwyatt23
 /src/core/run/desktop-metadata-launch-trust.ts @masonwyatt23
+/src/core/resources/quota-evidence-worker.ts @masonwyatt23
 /src/core/run/gateway-target.ts @masonwyatt23
 /src/cli/desktop-update.ts @masonwyatt23
 /src/cli/desktop.ts @masonwyatt23
@@ -286,6 +288,7 @@
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/bus-loop-active-control-01sole2.test.ts @masonwyatt23
 /test/bus-mirror-dispatch.test.ts @masonwyatt23
+/test/bus-wake-queue-custody.test.ts @masonwyatt23
 /test/channel-mirror-deadline-soln1.test.ts @masonwyatt23
 /test/channel-mirror-recovery-solu1.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
@@ -529,6 +532,7 @@
 /test/leader-cloud-311.test.ts @masonwyatt23
 /test/leader-comms-310b.test.ts @masonwyatt23
 /test/leader-conversation-gaps-315.test.ts @masonwyatt23
+/test/leader-devin-native-discovery.test.ts @masonwyatt23
 /test/leader-founder-mode-315.test.ts @masonwyatt23
 /test/leader-integration-310b.test.ts @masonwyatt23
 /test/leader-lessons-315.test.ts @masonwyatt23
@@ -983,6 +987,7 @@
 /test/post-merge-watch-310b.test.ts @masonwyatt23
 /test/post-merge-watch-suite-310b.test.ts @masonwyatt23
 /test/preparation-harness-custody.test.ts @masonwyatt23
+/test/pressure-launch-gate-e2e.test.ts @masonwyatt23
 /test/proactive-routing-lab.test.ts @masonwyatt23
 /test/process-group-liveness.test.ts @masonwyatt23
 /test/process-liveness-helper.test.ts @masonwyatt23
@@ -1046,6 +1051,7 @@
 /test/resource-profile-cli.test.ts @masonwyatt23
 /test/resource-profile-integration.test.ts @masonwyatt23
 /test/resource-profile-repin.test.ts @masonwyatt23
+/test/resource-quota-evidence-background.test.ts @masonwyatt23
 /test/resource-spark-enrollment-cli.test.ts @masonwyatt23
 /test/resource-spark-enrollment-files.test.ts @masonwyatt23
 /test/resource-spark-enrollment.test.ts @masonwyatt23

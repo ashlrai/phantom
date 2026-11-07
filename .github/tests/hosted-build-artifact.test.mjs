@@ -196,11 +196,11 @@ test('legacy exhaustive qualification still requires all fifteen source-owned ga
   const required = requiredJobPolicy(fileURLToPath(root));
   assert.equal(required.length, 15);
   // Lane selection and the stable merge result are ancillary to release
-  // authority. The separate fast profile has two dedicated jobs; all fifteen
+  // authority. The fast profile combines its build and smoke job; all fifteen
   // source-owned qualification jobs remain required by the legacy profile.
-  const laneNames = ['Secret-shape scan', 'Quick typecheck', 'Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Merge Gate', 'Daily fixup queue', 'Prepare unsigned desktop release', 'Desktop release smoke'];
-  assert.equal(names.length, 24);
-  assert.equal(new Set(names).size, 24);
+  const laneNames = ['Secret-shape scan', 'Quick typecheck', 'Classify PR site lane', 'Site PR (ecosystem)', 'Docs PR (docs-only)', 'Merge Gate', 'Daily fixup queue', 'Desktop release smoke'];
+  assert.equal(names.length, 23);
+  assert.equal(new Set(names).size, 23);
   assert.deepEqual([...required.map((job) => job.name), ...laneNames].sort(), names.sort());
   const f = official();
   const completed = required.map((job, index) => ({ ...f.job, id: index + 10, name: job.name, labels: job.labels,

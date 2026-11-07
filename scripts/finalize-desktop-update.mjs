@@ -3,7 +3,7 @@
 // clears Stop, or accepts a saved native/CI PASS receipt as admission.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import { dirname, join, resolve, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -34,11 +34,27 @@ function run(bin, argv, cwd, env, timeout = 120_000) {
   catch { throw new Error('Desktop update finalization held: trusted tool failed'); }
 }
 const githubEnvironment = home => ({HOME: home, GH_CONFIG_DIR: join(home, '.config/gh'), GH_HOST: 'github.com', PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C'});
+// Closed read-only publication metadata; no caller-supplied CLI arguments or URLs.
+const PUBLICATION_ENDPOINT = /^repos\/ashlrai\/(?:phantom|ashlr-hub)(?:|\/branches\/master|\/rules\/branches\/master\?per_page=100&page=(?:[1-9]|10)|\/git\/commits\/[a-f0-9]{40}|\/compare\/[a-f0-9]{40}\.\.\.[a-f0-9]{40}|\/releases\/tags\/v\d+\.\d+\.\d+|\/releases\/[1-9]\d*\/assets\?per_page=100&page=(?:[1-9]|10)|\/git\/ref\/tags\/v\d+\.\d+\.\d+|\/git\/tags\/[a-f0-9]{40})$/;
+function runPublicationRead(bin, args, options) {
+  return new Promise((resolve, reject) => execFile(bin, args, options,
+    (error, stdout) => error ? reject(new Error('Desktop update publication read failed')) : resolve(stdout)));
+}
 // The executable/runner seam is for hermetic transport tests, never CLI arguments.
-export function desktopPublisherGithub(root, tools = getDesktopReleaseToolchain(), execute = run) {
+export function desktopPublisherGithub(root, tools = getDesktopReleaseToolchain(), execute = run, executePublication = runPublicationRead) {
   const env = githubEnvironment(tools.home);
   return {
     read: endpoint => JSON.parse(execute(tools.gh, ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', endpoint], root, env)),
+    readMany: async endpoints => {
+      assert.ok(Array.isArray(endpoints) && endpoints.length > 0 && endpoints.length <= 3 && new Set(endpoints).size === endpoints.length &&
+        endpoints.every(endpoint => typeof endpoint === 'string' && PUBLICATION_ENDPOINT.test(endpoint)), 'unreviewed publication endpoints');
+      const settled = await Promise.allSettled(endpoints.map(async endpoint => JSON.parse(await executePublication(tools.gh,
+        ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', endpoint],
+        {cwd:root, env, encoding:'utf8', timeout:120_000, maxBuffer:32*1024*1024}))));
+      const refused = settled.find(row => row.status === 'rejected');
+      if (refused) throw new Error('Desktop update publication reads unavailable');
+      return settled.map(row => row.value);
+    },
     attestRun: (bin, args) => {assert.equal(bin, 'gh'); return execute(tools.gh, args, root, env);},
   };
 }

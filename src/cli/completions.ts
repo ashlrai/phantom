@@ -54,8 +54,12 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'playbook',
   // receipt.v1: `receipt` is the same as `fleet receipt`.
   'receipt',
+  // Shared task board: `bus` is the same as `fleet bus`.
+  'bus',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions',
+  // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
+  'estates', 'ci-metrics',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
@@ -107,8 +111,11 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'job-latency', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs',
+    'job-latency', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'bus',
   ],
+  bus: ['thread', 'task', '--peer', '--root', '--queue-root', '--json', '--help'],
+  estates: ['--repo', '--json', '--help'],
+  'ci-metrics': ['--json', '--help'],
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
   ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],

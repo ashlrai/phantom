@@ -141,7 +141,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'windows-service-authority'];
-    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build', 'release-smoke'];
+    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
@@ -193,10 +193,10 @@ describe('M30 CI workflow', () => {
       }
     }
     // Release mode reuses prior push CI, but still requires preparation and smoke.
-    const releaseOk = { ...ok, 'release-build': 'success', 'release-smoke': 'success' };
+    const releaseOk = { ...ok, 'release-build': 'success' };
     for (const event of ['schedule', 'workflow_dispatch']) {
       expect(execute(event, 'full', releaseOk, undefined, 'refs/heads/master', true)).not.toThrow();
-      for (const job of ['release-build', 'release-smoke']) {
+      for (const job of ['release-build']) {
         for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
           expect(execute(event, 'full', { ...releaseOk, [job]: outcome }, undefined, 'refs/heads/master', true)).toThrow();
         }
@@ -235,7 +235,6 @@ describe('M30 CI workflow', () => {
       .map(([name, job]) => [name, (job as { permissions: unknown }).permissions]);
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
-      ['release-smoke', { contents: 'read', actions: 'read' }],
     ]);
     expect(ciYml).toContain("concurrency:\n  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     // Master pushes run the seconds-fast gate only so the required Merge Gate
@@ -338,7 +337,6 @@ describe('M30 CI workflow', () => {
         expect(evaluateIf(jobs[id]!.if, event, 'full', masterRef, 'true'), `release ${id}`).toBe(false);
       }
       expect(evaluateIf(jobs['release-build']!.if, event, 'full', masterRef, 'true')).toBe(true);
-      expect(evaluateIf(jobs['release-smoke']!.if, event, 'full', masterRef, 'true', 'true')).toBe(true);
     }
   });
 
@@ -347,10 +345,16 @@ describe('M30 CI workflow', () => {
     const quick = workflow.jobs.quick;
     expect(quick.name).toBe('Quick typecheck');
     expect(quick['continue-on-error']).toBeUndefined();
-    for (const name of ['Restore protected-branch compiler state', 'Save protected-branch compiler state']) {
-      const cache = quick.steps.find((step: { name?: string }) => step.name === name);
-      expect(cache.if).toContain("github.event_name == 'push' && github.ref == 'refs/heads/master'");
-    }
+    const restore = quick.steps.find((step: { name?: string }) => step.name === 'Restore protected-branch compiler state');
+    expect(restore.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(restore.uses).toBe('actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809');
+    expect(restore.with.path).toBe('node_modules/.cache/phantom-backend.tsbuildinfo');
+    expect(restore.with.key).toBe("master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}");
+    const save = quick.steps.find((step: { name?: string }) => step.name === 'Save protected-branch compiler state');
+    expect(save.if).toBe("success() && github.event_name == 'push' && github.ref == 'refs/heads/master'");
+    const compiler = quick.steps.find((step: { name?: string }) => step.name === 'Core no-emit type check');
+    expect(compiler.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(compiler.run).toBe('npx tsc --noEmit -p tsconfig.json');
     const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
     expect(drift.if).toBe("steps.history.outputs.equal != 'true'");
@@ -390,7 +394,7 @@ describe('M30 CI workflow', () => {
     expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
     expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
     // Every expensive step shares the exact same trusted flag — no variant.
-    const expensive = ['Install dependencies', 'Core no-emit type check', 'Check authority drift (hermetic)'];
+    const expensive = ['Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)'];
     for (const name of expensive) {
       expect(step(name).if, name).toBe("steps.history.outputs.equal != 'true'");
     }
@@ -410,8 +414,8 @@ describe('M30 CI workflow', () => {
     for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
       expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
     }
-    // Only the three expensive steps may key off the proof output — nothing
-    // else in Quick (caches, checkout, setup) may silently join the fast path.
+    // Only these four steps may key off the proof output — checkout, setup
+    // and protected-branch cache saving must never join the exemption.
     const gated = quick.steps
       .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
       .map((entry) => entry.name)
@@ -508,7 +512,7 @@ describe('M30 CI workflow', () => {
     const isolated = workflowJob('mac-isolated');
     expect(general).toContain('name: Mac exhaustive (${{ matrix.shard }}/4)');
     expect(general).toContain('shard: [1, 2, 3, 4]');
-    expect(general).toContain('max-parallel: 4');
+    expect(general).toContain('max-parallel: 2');
     expect(general).toContain('fail-fast: false');
     expect(general).toContain('run: node .github/scripts/ci-qualification-lane.mjs mac-general-${{ matrix.shard }}');
     expect(isolated).toContain('name: Mac exhaustive (isolated)');
@@ -682,7 +686,7 @@ describe('M30 CI workflow', () => {
     }
     expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }, { cron: '0,30 * * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
-    expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(4);
+    expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(2);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
     // dispatch run rotates; the complete qualification steps run otherwise.
     expect(ciYml).toContain("exclude: ${{ fromJSON(needs.classify.outputs.mac_general_exclude || '[]') }}");
@@ -709,9 +713,8 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(24);
-    expect(new Set(names).size).toBe(24);
-    expect(names).toContain('Prepare unsigned desktop release');
+    expect(names).toHaveLength(23);
+    expect(new Set(names).size).toBe(23);
     expect(names).toContain('Desktop release smoke');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
@@ -1352,8 +1355,12 @@ describe('M30 CI workflow', () => {
     expect(effectText).not.toMatch(/\b(npm\s+publish|gh\s+release|git\s+(?:push|tag)|(?:vercel|netlify)\s+deploy)\b/i);
     expect(ciYml).not.toMatch(/(?:contents|attestations|id-token):\s*write|secrets\./);
     const workflow = parse(ciYml);
-    expect(workflow.jobs['release-smoke']['timeout-minutes']).toBe(5);
-    expect(workflow.jobs['release-smoke'].steps.some((step: { run?: string }) => /npm (ci|install|run build)/.test(step.run ?? ''))).toBe(false);
+    expect(workflow.jobs['release-build']['timeout-minutes']).toBe(90);
+    const steps = workflow.jobs['release-build'].steps;
+    const phaseStart = steps.findIndex((step: { name?: string }) => step.name === 'Start bounded release smoke phase');
+    expect(phaseStart).toBeGreaterThan(steps.findIndex((step: { id?: string }) => step.id === 'build'));
+    expect(steps.slice(phaseStart).some((step: { run?: string }) => /npm (ci|install|run build)/.test(step.run ?? ''))).toBe(false);
+    expect(readFileSync(resolve(repoRoot, '.github/scripts/release-smoke-phase.mjs'), 'utf8')).toContain('SMOKE_PHASE_MS = 300_000');
     expect(workflow.jobs['release-build'].steps.find((step: { id?: string }) => step.id === 'build').run).toContain('npm run build:desktop:nightly');
     expect(readFileSync(resolve(repoRoot, 'scripts/build-desktop-nightly.mjs'), 'utf8')).toContain("'--no-sign'");
     expect(ciYml).not.toMatch(/vercel|netlify|gh-pages|pages-deploy/i);
@@ -1387,4 +1394,47 @@ describe('combined Ubuntu authority runtime envelope', () => {
     expect(readFileSync(resolve(repoRoot, 'scripts/test-ci.mjs'), 'utf8')).toContain('const DEFAULT_HARD_TIMEOUT_MS = 30 * 60_000;');
     expect(workflowJob('mac-isolated')).toContain('timeout-minutes: 30');
   });
+});
+
+describe('full Mac runner capacity shared across workflow runs', () => {
+  type ReservedJob = {
+    concurrency: { group: string; queue?: string; 'cancel-in-progress': boolean };
+    strategy: { 'max-parallel': number; 'fail-fast': boolean; matrix: { shard: number[] } };
+  };
+  const reservationJobs = () => (parse(ciYml) as { jobs: Record<string, ReservedJob> }).jobs;
+  const checkReservation = (jobs: Record<string, ReservedJob>) => {
+    const general = jobs['mac-general']!;
+    expect(general.strategy['max-parallel']).toBe(2);
+    expect(general.strategy['fail-fast']).toBe(false);
+    expect(general.strategy.matrix.shard).toEqual([1, 2, 3, 4]);
+    const groups: Record<string, string> = {
+      'mac-general': "ci-full-mac-general-${{ contains(fromJSON('[1,3]'), matrix.shard) && 'odd' || 'even' }}",
+      'mac-isolated': 'ci-full-mac-isolated',
+      'ci-shared-macos': 'ci-full-mac-shared-and-broker',
+      'native-macos-broker-foundation': 'ci-full-mac-shared-and-broker',
+    };
+    for (const [name, group] of Object.entries(groups)) {
+      expect(jobs[name]!.concurrency).toEqual({ group, queue: 'max', 'cancel-in-progress': false });
+      expect(group).not.toMatch(/run_id|github\.ref/);
+    }
+    const generalPools = general.strategy.matrix.shard.map(shard => shard % 2 ? 'general-odd' : 'general-even');
+    expect(new Set([...generalPools, groups['mac-isolated'], groups['ci-shared-macos'], groups['native-macos-broker-foundation']]).size).toBe(4);
+  };
+  it('keeps all four shards and every existing body in four bounded FIFO pools', () => {
+    checkReservation(reservationJobs());
+  });
+  it.each(['missing queue', 'single pending', 'cancel pending', 'per-run group', 'fifth pool', 'missing shard', 'duplicate shard', 'four parallel'])(
+    'refuses capacity drift: %s', mutation => {
+      const jobs = reservationJobs();
+      if (mutation === 'missing queue') delete jobs['mac-general']!.concurrency.queue;
+      if (mutation === 'single pending') jobs['mac-isolated']!.concurrency.queue = 'single';
+      if (mutation === 'cancel pending') jobs['mac-isolated']!.concurrency['cancel-in-progress'] = true;
+      if (mutation === 'per-run group') jobs['mac-general']!.concurrency.group += '-${{ github.run_id }}';
+      if (mutation === 'fifth pool') jobs['native-macos-broker-foundation']!.concurrency.group += '-separate';
+      if (mutation === 'missing shard') jobs['mac-general']!.strategy.matrix.shard.pop();
+      if (mutation === 'duplicate shard') jobs['mac-general']!.strategy.matrix.shard[3] = 3;
+      if (mutation === 'four parallel') jobs['mac-general']!.strategy['max-parallel'] = 4;
+      expect(() => checkReservation(jobs)).toThrow();
+    },
+  );
 });

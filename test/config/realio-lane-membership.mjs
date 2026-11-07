@@ -43,12 +43,15 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
   'test/changelog-sync-bridge-04.test.ts', // Runs the changelog script in real child processes.
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
   'test/fleet-job-path-history-nov04-spb2.test.ts', // Creates and renames real git history for exact job lookup.
   'test/fleet-path-history-cli.test.ts', // Creates and reads real git history through the CLI.
+  'test/fleet-path-history-literal-cli-04-spq1.test.ts', // Creates real temp git repos (git init/commit via execFileSync) for literal path-history CLI coverage.
+  'test/fleet-path-history-preservation-06stl2.test.ts', // Creates a real temp git repo (git init via execFileSync) to prove path-history preservation.
   'test/fleet-draft-check-stdin-04-spf2.test.ts', // Creates real git repositories and invokes the stdin CLI.
   'test/fleet-job-current-04-spv1.test.ts', // Creates real git history and invokes the current-job CLI.
   'test/fleet-job-history-batch-04-spn1.test.ts', // Creates real git history for batch job lookup.
@@ -158,6 +161,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-ci-input-digests-05srm2.test.ts', // Builds real temp git repos for CI input digest seeds.
   'test/fleet-ci-resume-plan-05srr2.test.ts', // Builds a real temp git repo for CI resume plan coverage.
   'test/fleet-ci-resume-plan-name-05srv1.test.ts', // Builds a real temp git repo for CI resume plan name coverage.
+  'test/fleet-ci-resume-plan-preservation-05stk1.test.ts', // Builds a real temp git repo (git init via execFileSync) to prove CI resume plan preservation.
   'test/fleet-ci-resume-real-pipe-05srn1.test.ts', // Builds real temp git repos and spawns a real Node child for the resume stdin pipe.
   'test/fleet-ci-resume-stdin-05srl2.test.ts', // Builds real temp git repos for stdin resume-input reads.
   'test/fleet-staging-batch-dispatch-05ssx1.test.ts', // Spawns the real tsx CLI for staging inventory batch dispatch.
@@ -351,6 +355,7 @@ export const REAL_IO_TEST_FILES = [
   'test/resource-quota-registered-recovery.test.ts', // durable command phases and passive group-absence recovery
   'test/resource-collector-diagnostics.test.ts', // acquisition-time evidence and private loopback console
   'test/resource-native-idle-lifecycle.test.ts', // owned child exit and strict process-group receipt
+  'test/resource-quota-evidence-background.test.ts', // real private commits and kernel-verified quota lease custody
   'test/resource-quota-shared-evidence.test.ts', // private snapshots and verified process/lease identity
   'test/resource-shared-admission.test.ts', // current evidence inside atomic durable reservation
   'test/resource-worker-access.test.ts', // durable worker pauses and alias-aware atomic admission

@@ -76,6 +76,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Plan a persistent Linux node with local capacity limits and cloud cost estimates | [Node VM design](https://github.com/ashlrai/phantom/blob/master/docs/NODES-SANDBOX-VM.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
+| Sample local machine resources | [Machine telemetry](MACHINE-TELEMETRY.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
@@ -229,6 +230,7 @@ canonical release guide for required hosted qualification and publication.
 - [Ashlr — Reliability: failure modes & recovery](https://github.com/ashlrai/phantom/blob/master/docs/RELIABILITY.md)
 - [Autonomy authority](AUTHORITY.md)
 - [Autonomy setup](AUTONOMY-SETUP.md)
+- [Bus threads and task board](https://github.com/ashlrai/phantom/blob/master/docs/BUS-THREADS.md)
 - [CLI failure handling for agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-CLI-CONTRACTS.md)
 - [Channel delivery contract](https://github.com/ashlrai/phantom/blob/master/docs/CHANNEL-DELIVERY-CONTRACT.md)
 - [Channel guide](https://github.com/ashlrai/phantom/blob/master/docs/CHANNELS.md)

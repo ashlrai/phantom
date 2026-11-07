@@ -28,8 +28,8 @@ export interface KnownSwitch {
 export const KNOWN_SWITCHES: readonly KnownSwitch[] = [
   { id: 'HOLD', label: 'Saved lane holds', meaning: 'Individual lane holds are preserved. Disable the queue to pause all new launches.', tone: 'warning' },
   { id: 'PAUSE', label: 'Pause workers', meaning: 'Running jobs finish; nothing new starts.', tone: 'warning' },
-  { id: 'ORCH_OFF', label: 'Stop leader passes', meaning: 'New Claude and Sol leader passes stop; workers keep running.', tone: 'warning' },
-  { id: 'OPUS_LEADER_OFF', label: 'Stop the Opus leader', meaning: 'The hourly Opus leader does not run.', tone: 'warning' },
+  { id: 'ORCH_OFF', label: 'Stop scheduled planning passes', meaning: 'Scheduled Claude and Sol planning pauses; workers keep running. The Leader uses its own schedule.', tone: 'warning' },
+  { id: 'OPUS_LEADER_OFF', label: 'Stop the Claude planning loop', meaning: 'The supplementary hourly Opus loop pauses. The Leader can use any available provider.', tone: 'warning' },
   { id: 'PUBLISH_HOLD', label: 'Hold publishing', meaning: 'Finished jobs are not published as pull requests.', tone: 'warning' },
   { id: 'QUEUE_DISABLE', label: 'Disable the queue', meaning: 'Queued jobs are not claimed.', tone: 'danger' },
 ];
@@ -132,12 +132,12 @@ const CONFIRM: Readonly<Record<Exclude<SwitchId, 'HOLD'>, { on: SwitchConfirm; o
     off: { title: 'Resume workers on your Mac?', body: 'New jobs may start again.', confirmLabel: 'Resume workers', done: 'Workers resumed.' },
   },
   ORCH_OFF: {
-    on: { title: 'Stop leader passes on your Mac?', body: 'New Claude and Sol leader passes stop; workers keep running.', confirmLabel: 'Stop leader passes', done: 'Leader passes stopped.' },
-    off: { title: 'Resume leader passes on your Mac?', body: 'The orchestrator may run Claude and Sol passes again.', confirmLabel: 'Resume leader passes', done: 'Leader passes resumed.' },
+    on: { title: 'Stop scheduled planning passes on your Mac?', body: 'Scheduled Claude and Sol planning pauses; workers keep running. The Leader uses its own schedule.', confirmLabel: 'Stop scheduled planning passes', done: 'Scheduled planning passes stopped.' },
+    off: { title: 'Resume scheduled planning passes on your Mac?', body: 'Scheduled Claude and Sol planning may run again. The Leader uses its own schedule.', confirmLabel: 'Resume scheduled planning passes', done: 'Scheduled planning passes resumed.' },
   },
   OPUS_LEADER_OFF: {
-    on: { title: 'Stop the Opus leader on your Mac?', body: 'The hourly Opus leader will not run.', confirmLabel: 'Stop the Opus leader', done: 'Opus leader stopped.' },
-    off: { title: 'Resume the Opus leader on your Mac?', body: 'The hourly Opus leader may run again.', confirmLabel: 'Resume the Opus leader', done: 'Opus leader resumed.' },
+    on: { title: 'Stop the Claude planning loop on your Mac?', body: 'The supplementary hourly Opus loop pauses. The Leader can use any available provider.', confirmLabel: 'Stop the Claude planning loop', done: 'Claude planning loop stopped.' },
+    off: { title: 'Resume the Claude planning loop on your Mac?', body: 'The supplementary hourly Opus loop may run again. The Leader can use any available provider.', confirmLabel: 'Resume the Claude planning loop', done: 'Claude planning loop resumed.' },
   },
   PUBLISH_HOLD: {
     on: { title: 'Hold publishing on your Mac?', body: 'Finished jobs are not published as pull requests.', confirmLabel: 'Hold publishing', done: 'Publishing held.' },

@@ -65,6 +65,7 @@ export interface AshlrConfig {
   };
   /** Telemetry hooks (e.g. Pulse) + local budget caps. All fields optional. */
   telemetry: {
+    machine?: import('../resources/telemetry.js').MachineTelemetryConfig;
     pulse?: string;
     /** Optional spend cap (USD) for the budget window; alerts when over/near. */
     budgetUsd?: number;

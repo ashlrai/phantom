@@ -184,13 +184,102 @@ for (const kind of ['swapped parents', 'foreign base', 'single parent', 'candida
     let parents = [base, prHead], eventBase = base;
     if (kind === 'swapped parents') parents = [prHead, base];
     if (kind === 'single parent') parents = [prHead];
-    if (kind === 'foreign base') eventBase = f.revision;
+    if (kind === 'foreign base') {
+      // A real divergent base remains foreign. The former ancestor fixture
+      // is now the explicit forward-advancement positive below.
+      f.git(['checkout', '--quiet', '--detach', f.revision]);
+      fs.writeFileSync(join(f.root, 'foreign.txt'), 'foreign base\n'); f.git(['add', '.']);
+      f.commit('foreign base'); eventBase = f.git(['rev-parse', 'HEAD']);
+      f.git(['checkout', '--quiet', '--detach', prHead]);
+    }
     const merge = syntheticMerge(f, base, prHead, { parents }); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
     const opts = { root: f.root, candidate: prHead, eventSha: merge, eventBase, eventHead: prHead };
     if (kind === 'candidate is not event head') opts.eventHead = base;
     assert.throws(() => bindSource(opts), kind === 'candidate is not event head' ? /tree differs/ : /parents differ/);
   });
 }
+
+test('payload ancestor of the immutable event base binds instead of requiring redundant resynchronization', (t) => {
+  const { f, base, prHead } = behindFixture(t);
+  const merge = syntheticMerge(f, base, prHead); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+  // Preserve the exact former "foreign base" input as a positive for the
+  // authorized advance-only policy; no source or head identity is relaxed.
+  const bound = bindSource({ root: f.root, candidate: prHead, eventSha: merge, eventBase: f.revision, eventHead: prHead });
+  assert.equal(bound.eventBase, f.revision); assert.equal(bound.eventMergeBase, base);
+  assert.equal(bound.eventTree, f.git(['rev-parse', `${merge}^{tree}`]));
+  assert.equal(bound.revision, prHead); assert.equal(f.git(['rev-parse', 'HEAD']), prHead);
+});
+
+function advancedBaseFixture(t) {
+  const { f, base, prHead } = behindFixture(t);
+  f.git(['checkout', '--quiet', '--detach', base]);
+  for (let step = 1; step <= 3; step++) {
+    fs.writeFileSync(join(f.root, `advanced-${step}.txt`), `base advancement ${step}\n`);
+    f.git(['add', '.']); f.commit(`advance ${step}`);
+  }
+  const actualBase = f.git(['rev-parse', 'HEAD']);
+  f.git(['checkout', '--quiet', '--detach', prHead]);
+  return { f, base, actualBase, prHead };
+}
+
+test('an advanced event base reconstructs the exact tree using its actual parent, not the older payload base', (t) => {
+  const { f, base, actualBase, prHead } = advancedBaseFixture(t);
+  const merge = syntheticMerge(f, actualBase, prHead); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+  const calls = [];
+  const bound = bindSource({ root: f.root, candidate: prHead, eventSha: merge, eventBase: base, eventHead: prHead,
+    runGit: args => { calls.push(args); return f.git(args); } });
+  assert.equal(bound.eventBase, base); assert.equal(bound.eventMergeBase, actualBase);
+  assert.deepEqual(calls.find(args => args[0] === 'merge-base'), ['merge-base', '--is-ancestor', base, actualBase]);
+  assert.deepEqual(calls.find(args => args[0] === 'merge-tree'), ['merge-tree', '--write-tree', '--no-messages', actualBase, prHead]);
+  assert.notEqual(f.git(['merge-tree', '--write-tree', '--no-messages', base, prHead]), bound.eventTree);
+  assert.equal(bound.eventTree, f.git(['rev-parse', `${merge}^{tree}`]));
+});
+
+for (const kind of ['rewound base', 'unknown base', 'extra parent', 'tampered advanced tree', 'ancestor proof unavailable', 'unexpected ancestor output']) {
+  test(`advanced event binding refuses ${kind}`, (t) => {
+    const { f, base, actualBase, prHead } = advancedBaseFixture(t);
+    const eventParent = kind === 'rewound base' ? base : actualBase;
+    const eventBase = kind === 'rewound base' ? actualBase : kind === 'unknown base' ? 'f'.repeat(40) : base;
+    let tree;
+    if (kind === 'tampered advanced tree') {
+      fs.writeFileSync(join(f.root, 'smuggled.txt'), 'not in the legitimate merge\n'); f.git(['add', '.']);
+      tree = f.git(['write-tree']); f.git(['reset', '--quiet', '--hard']);
+    }
+    const merge = syntheticMerge(f, eventParent, prHead, { tree,
+      ...(kind === 'extra parent' ? { parents: [eventParent, prHead, f.revision] } : {}) });
+    f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+    const options = { root: f.root, candidate: prHead, eventSha: merge, eventBase, eventHead: prHead,
+      runGit: args => {
+        if (args[0] === 'merge-base' && kind === 'ancestor proof unavailable') throw new Error('fixture unavailable');
+        if (args[0] === 'merge-base' && kind === 'unexpected ancestor output') return 'not a proof';
+        return f.git(args);
+      } };
+    assert.throws(() => bindSource(options), kind === 'tampered advanced tree' ? /merge tree differs/ : /parents differ/);
+    assert.equal(f.git(['rev-parse', 'HEAD']), prHead); assert.equal(f.git(['status', '--porcelain']), '');
+  });
+}
+
+test('the actual source-binding CLI records both immutable base SHAs on advancement and refusal', (t) => {
+  const { f, base, actualBase, prHead } = advancedBaseFixture(t);
+  const merge = syntheticMerge(f, actualBase, prHead); f.git(['update-ref', 'refs/pull/1/merge', merge]); publish(f, prHead);
+  const eventPath = join(f.parent, 'event.json'), envPath = join(f.parent, 'github-env');
+  const script = fileURLToPath(new URL('../scripts/ci-source-binding.mjs', import.meta.url));
+  const invoke = payloadBase => {
+    fs.writeFileSync(eventPath, JSON.stringify({ pull_request: { base: { sha: payloadBase }, head: { sha: prHead } } }));
+    return spawnSync(process.execPath, [script], { cwd: f.root, env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request',
+      GITHUB_EVENT_PATH: eventPath, GITHUB_ENV: envPath, GITHUB_SHA: merge, ASHLR_CANDIDATE_SHA: prHead },
+    encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024 });
+  };
+  const accepted = invoke(base);
+  assert.equal(accepted.error, undefined); assert.equal(accepted.signal, null); assert.equal(accepted.status, 0, accepted.stderr);
+  assert.ok(accepted.stdout.includes(`of base ${actualBase} (payload base ${base})`));
+  const before = fs.readFileSync(envPath, 'utf8');
+  assert.equal(before, `ASHLR_CI_SOURCE_SHA=${prHead}\nASHLR_CI_EVENT_SHA=${merge}\n`);
+  const unknown = 'f'.repeat(40), refused = invoke(unknown);
+  assert.equal(refused.error, undefined); assert.equal(refused.signal, null); assert.equal(refused.status, 1);
+  assert.ok(refused.stderr.includes(`payload base ${unknown}; merge base ${actualBase}`));
+  assert.equal(fs.readFileSync(envPath, 'utf8'), before, 'refusal must not write an accepted source binding');
+});
 
 test('behind PR whose base and head conflict refuses', (t) => {
   const { f, base, prHead } = behindFixture(t, { conflict: true });

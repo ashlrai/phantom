@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { URL } from 'node:url';
+import { preparedArchiveFixture } from './fixtures/release-prepared.mjs';
 import { checkFeed, checkLaunch, readUpdaterFeed, restorePreparedDist, selectRun, stockedFeedTag } from '../scripts/release-fast-smoke.mjs';
 
 const repository = 'ashlrai/phantom', revision = 'a'.repeat(40);
@@ -43,6 +43,16 @@ function setup(kind = 'build') {
 
 for (const kind of ['push', 'build', 'attest']) test(`selects exact-source successful ${kind} evidence`, () => {
   const f = setup(kind); assert.deepEqual(f.select(), { run: 30, attempt: 2, sha: revision, ...(kind === 'push' ? {} : { artifact: 100 }) });
+});
+
+test('combined canonical smoke job reuses the same immutable input without a second prepare role', () => {
+  const f = setup(); f.jobs[0].name = 'Desktop release smoke';
+  assert.equal(f.select().artifact, 100);
+});
+
+test('legacy two-job producer still selects only its original preparation role', () => {
+  const f = setup(); f.jobs.push({ ...f.jobs[0], id: 201, name: 'Desktop release smoke' }); f.jobResponse.total_count++;
+  assert.equal(f.select().artifact, 100);
 });
 
 test('reuses the immutable build only when its download step passed and compilation was skipped', () => {
@@ -130,33 +140,6 @@ test('a successful upload with no artifact cannot silently fall back', () => {
   const f = setup(); f.inventory.artifacts = []; f.inventory.total_count = 0;
   assert.throws(f.select, /successful release upload missing artifact/);
 });
-
-function preparedArchiveFixture(t, prefix = 'dist') {
-  const root = mkdtempSync(join(tmpdir(), 'release-dist-test-'));
-  const prepared = mkdtempSync(join(tmpdir(), 'release-input-test-'));
-  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(prepared, { recursive: true, force: true }); });
-  const content = Buffer.from('original build bytes');
-  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-  const entries = [{ path: prefix, type: 'directory', mode: 0o755 },
-    { path: `${prefix}/worker.js`, type: 'file', mode: 0o755, bytes: content.length, sha256: hash(content) },
-    { path: `${prefix}/inventory.json`, type: 'file', mode: 0o400, bytes: content.length, sha256: hash(content) }];
-  const parts = [];
-  for (const entry of entries) {
-    const header = Buffer.alloc(512);
-    const octal = (value, width) => `${value.toString(8).padStart(width - 1, '0')}\0`;
-    header.write(entry.path, 0); header.write(octal(entry.mode, 8), 100);
-    header.write(octal(0, 8), 108); header.write(octal(0, 8), 116);
-    header.write(octal(entry.bytes ?? 0, 12), 124); header.write(octal(0, 12), 136);
-    header.fill(32, 148, 156); header[156] = entry.type === 'directory' ? 53 : 48;
-    header.write('ustar\0', 257); header.write('00', 263);
-    header.write(`${header.reduce((sum, value) => sum + value, 0).toString(8).padStart(6, '0')}\0 `, 148);
-    parts.push(header);
-    if (entry.type === 'file') parts.push(content, Buffer.alloc(512 - content.length));
-  }
-  const bytes = Buffer.concat([...parts, Buffer.alloc(1024)]);
-  writeFileSync(join(prepared, 'dist.tar'), bytes);
-  return { root, prepared, manifest: { archive: { bytes: bytes.length, sha256: hash(bytes), entries } }, bytes, content };
-}
 
 test('prepared tar preserves executable and readonly modes across artifact ZIP transport', t => {
   const f = preparedArchiveFixture(t); restorePreparedDist(f);
