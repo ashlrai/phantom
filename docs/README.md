@@ -84,6 +84,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
+| Serve a measured local model on 8/16 GB Macs as `omlx` pool lanes | [oMLX on the small Macs](https://github.com/ashlrai/phantom/blob/master/docs/OMLX-SMALL-MACS.md) |
 | Explore the proposed path from personal nodes to shared compute | [Node scale path](https://github.com/ashlrai/phantom/blob/master/docs/architecture/scale-path.md) |
 | See the skills learned from merged PRs | [Learned skills](https://github.com/ashlrai/phantom/blob/master/docs/SKILLS.md) |
 | Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
@@ -261,6 +262,7 @@ canonical release guide for required hosted qualification and publication.
 - [Locus firm profile — production fleet checklist](https://github.com/ashlrai/phantom/blob/master/docs/LOCUS-FIRM-FLEET.md)
 - [MILESTONE-CONTRACT — the Goal Loop runner](https://github.com/ashlrai/phantom/blob/master/docs/MILESTONE-CONTRACT.md)
 - [Offline native pool commissioning](RESOURCE-POOL-COMMISSIONING-CHECK.md)
+- [oMLX on the small Macs](https://github.com/ashlrai/phantom/blob/master/docs/OMLX-SMALL-MACS.md)
 - [Open-PR triage — 2026-09-22](https://github.com/ashlrai/phantom/blob/master/docs/PR-TRIAGE-2026-09.md)
 - [Overnight Autonomous Buildout — Quality Review Findings](https://github.com/ashlrai/phantom/blob/master/docs/REVIEW-FINDINGS.md)
 - [Personal meter provenance](https://github.com/ashlrai/phantom/blob/master/docs/PERSONAL-METER-PROVENANCE.md)
