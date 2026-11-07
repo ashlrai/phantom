@@ -24,8 +24,8 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (enroll, …)
-    observability   Observability - cost, telemetry, audit (radar, router-calibration, queue, …)
-    integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, sessions, …)
+    observability   Observability - cost, telemetry, audit (radar, router, router-calibration, …)
+    integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, sessions, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
     scaffold        Scaffold - new projects + shipping (new, ship, …)
@@ -190,10 +190,13 @@ Phantom - every command (phm or ashlr)
     openai-agents sessions|inspect|turns [session-id] [--json]                                                                                                    Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.
     agents bus channels list|test <id> [--json]                                                                                                                   List or test channel types offline without sending.
     agents bus contract [--json]                                                                                                                                  Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.
+    bus thread|task <verb> [--peer <id>] [--json]                                                                                                                 Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.
     metrics ingest --jobs <file> --status <file>                                                                                                                  Read local lane and tier merge metrics and advisory routing priors; always JSON.
+    metrics levers [--window <7d|30d>] [--json]                                                                                                                   Rank three opportunity proxies from local activity and fleet rollups.
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
+    routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance                                                       Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.
     jev status [--json]                                                                                                                                           Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.
@@ -247,36 +250,42 @@ Phantom - every command (phm or ashlr)
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
 
   Observability - cost, telemetry, audit
-    radar list|run|diff [--json]                                                        Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
-    router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]             Compare recorded router predictions with outcomes and usage.
-    queue report --events <file> [--json]                                               Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
-    signals [--json]                                                                    Read real repository adoption signals.
-    radar list|run|diff [--json]                                                        Observe public docs and package metadata; GET only, six-hour per-source floor.
-    friction [--json]                                                                   Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.
-    pulse [--window 1d|7d|30d]                                                          Local observability dashboard: tokens, cost, sessions, commits.
-    pulse --json                                                                        Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
-    pulse --project <name>                                                              Restrict pulse rollup to a single project.
-    pulse-export                                                                        Fleet→pulse OTLP backfill/manual export.
-    pulse-test                                                                          Fleet→pulse connectivity + auth probe (read-only).
-    resource [--json] [--directory <fleet-directory>]                                   Refresh the shared resource.v1 view in fleet.json from recorded inputs.
-    resources [--json] [--watch]                                                        Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
-    capacity publish [--json]                                                           Refresh local subscription usage metadata once with this node’s local authentication.
-    budget <show|add> [--json]                                                          Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
-    usage                                                                               Frontier usage table: per-engine calls/tokens/cost + window state.
-    queue stats [--json] [--window <seconds>]                                           Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
-    telemetry [status]                                                                  M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
-    telemetry test                                                                      Emit a synthetic metadata-only test span; report sink+ok.
-    audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]  Tail the append-only audit trail; --team lists workspace actions (read-only).
-    receipt list|status|show <run>|verify <run>|timeline <run> [--json]                 Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
-    lanes health [--json]                                                               Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
+    radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
+    router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]  Rank supplied router decisions by pool budget reset; advisory, no writes.
+    router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
+    queue report --events <file> [--json]                                                      Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
+    signals [--json]                                                                           Read real repository adoption signals.
+    radar list|run|diff [--json]                                                               Observe public docs and package metadata; GET only, six-hour per-source floor.
+    friction [--json]                                                                          Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.
+    pulse [--window 1d|7d|30d]                                                                 Local observability dashboard: tokens, cost, sessions, commits.
+    pulse --json                                                                               Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
+    pulse --project <name>                                                                     Restrict pulse rollup to a single project.
+    pulse-export                                                                               Fleet→pulse OTLP backfill/manual export.
+    pulse-test                                                                                 Fleet→pulse connectivity + auth probe (read-only).
+    resource [--json] [--directory <fleet-directory>]                                          Refresh the shared resource.v1 view in fleet.json from recorded inputs.
+    resources [--json] [--watch]                                                               Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
+    capacity publish [--json]                                                                  Refresh local subscription usage metadata once with this node’s local authentication.
+    estates [--json] [--repo <repo-id>]                                                        Per-repo estate cards: health, CI, security. Read-only portfolio view.
+    ci-metrics [--json]                                                                        Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.
+    daily-fix validate|filter|dispatch|parse-fixup [--json]                                    Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.
+    budget <show|add> [--json]                                                                 Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
+    usage                                                                                      Frontier usage table: per-engine calls/tokens/cost + window state.
+    queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
+    job cost <id> [--json]                                                                     Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
+    telemetry [status]                                                                         M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
+    telemetry test                                                                             Emit a synthetic metadata-only test span; report sink+ok.
+    audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
+    receipt list|status|show <run>|verify <run>|timeline <run> [--json]                        Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
+    lanes health [--json]                                                                      Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
 
   Integrations - MCP, GitHub, Vercel, editors
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
+    checkpoint resume <file> [--json]                                                Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.
     sessions list|revoke <id> [--json]                                               See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.
     mcp list                                                                         List native ashlr tools + discovered MCP servers with per-server tool counts.
     mcp doctor                                                                       Per-server MCP health: does it start? how many tools?
     autopilot <pr> [--apply] [--watch]                                               Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR.
-    metrics <summary|dashboard|record|recommend|ingest>                              Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest.
+    metrics <summary|dashboard|record|recommend|ingest|levers>                       Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.
     improve propose [--open-pr --repo <dir>]                                         Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.
     improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons  Record a proposal's deterministic metric, measure it at the PR's exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.
     steward disk [--apply] [--json]                                                  Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).
@@ -297,6 +306,8 @@ Phantom - every command (phm or ashlr)
     daemon activation-preflight --request <path> [--json]                              Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]  Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
     worktrees report [--dir <path>] [--json]                                           Report worktree age, size, last log time and job state.
+    whoami [--json]                                                                    Who am I: person, teams, orgs and owner scopes from local auth (no tokens).
+    org list|add <org> [--team <team>] [--json]                                        List your orgs or add one grouping teams; nodes, jobs, forum and packs are owner-scoped.
     disk [--wt-dir <abs>] [--json]                                                     Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                   Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
     node join|beat|enqueue|plan|pull|complete|status [--json]                          Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.

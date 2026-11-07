@@ -213,7 +213,7 @@ const loadSkillsAuditWorkerCmd = lazyCmd(
 // ─── M49 fleet control plane + observability ──────────────────────────────────
 
 const loadFleetCmd = lazyCmd(
-  () => import('./fleet.js' as unknown as string),
+  () => import('./fleet-entry.js'),
   (m) => m.cmdFleet as Cmd,
   'fleet command requires src/cli/fleet.ts (M49 module not yet built).',
 );
@@ -2122,6 +2122,18 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'whoami': {
+        const { cmdWhoami } = await import('./tenancy.js');
+        process.exitCode = await cmdWhoami(rest);
+        break;
+      }
+
+      case 'org': {
+        const { cmdOrg } = await import('./tenancy.js');
+        process.exitCode = await cmdOrg(rest);
+        break;
+      }
+
       case 'companions': {
         const cmdCompanions = await loadCompanionsCmd();
         process.exitCode = await cmdCompanions(rest);
@@ -2197,6 +2209,11 @@ async function main(): Promise<void> {
 
       case 'select': {
         process.exitCode = await (await import('./select.js')).cmdSelect(rest);
+        break;
+      }
+
+      case 'job': {
+        process.exitCode = await (await import('./job.js')).cmdJob(rest);
         break;
       }
 
@@ -2841,6 +2858,12 @@ async function main(): Promise<void> {
         // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);
+        break;
+      }
+
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
         break;
       }
 

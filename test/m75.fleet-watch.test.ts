@@ -15,7 +15,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { cmdFleetWatch, tailErrLog } from '../src/cli/fleet.js';
+import { cmdFleetWatch, tailErrLog } from '../src/cli/fleet-entry.js';
 // cmdFleetWatch lazy-imports these on first call; loading them here keeps the
 // one-time module transform out of each test's budget (same convention as
 // test/m49.fleet-status.test.ts, which statically imports the status graph).

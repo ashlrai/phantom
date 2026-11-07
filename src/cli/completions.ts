@@ -23,7 +23,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
-  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
+  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'whoami', 'org', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'verify-safety', 'verify-pr', 'release-articles', 'preflight',
@@ -43,9 +43,10 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'devin',
   'openai-agents',
   'agents',
-  'benchmark', 'queue', 'issues', 'select', 'pool',
+  'benchmark', 'queue', 'job', 'issues', 'select', 'pool',
   // 3.15 automations.
   'automations',
+  'routines',
   // 3.15 Jev decision layer.
   'jev',
   // 3.15 private repo wiki.
@@ -75,13 +76,14 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   desktop: ['install', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
-  app: ['update', 'status', '--json', '--help'],
+  app: ['update', 'status', 'resources', 'budgets', 'state', 'steer', 'prefs', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
   apps: ['list', 'open', 'quit', 'focus', 'status', '--json', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   agents: ['bus', 'help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
   queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
+  job: ['cost', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'help'],
   config: ['get', 'set', 'path', 'effective'],
@@ -111,7 +113,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'job-latency', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'bus',
+    'job-latency', 'merge-batch', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'bus',
   ],
   bus: ['thread', 'task', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
@@ -164,6 +166,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
+  // Mirror the verb switch in src/cli/routines.ts (runRoutinesCli).
+  routines: ['list', 'status', 'tick', 'migrate', 'launchd', 'run', 'explain', 'export', 'import', 'rebalance', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
   automations: ['list', 'templates', 'add', 'enable', 'disable', 'remove', 'fire', 'help'],
   // Mirrors the dispatch in src/cli/universe.ts (cmdUniverse).

@@ -6,6 +6,7 @@ import { userInfo } from 'node:os';
 import {
   inviteMember, joinWithInvite, localHumanActor, memberIdForGithubUser, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, releaseClaim, teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
+import { TenancyError, assertTeamAccess } from '../core/tenancy/index.js';
 
 const USAGE = `Usage: phm team <view|join|invite|remove|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
   view                         Members, presence, claims, handoffs and pending approvals
@@ -41,8 +42,13 @@ export async function cmdTeam(argv: string[]): Promise<number> {
   const name = (flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username).toLowerCase().replace(/[^a-z0-9._-]/g, '');
   const me: TeamActor = { kind: 'human', id: `human:${name || 'me'}` };
   const [sub = 'view', ...rest] = args;
+  // Workspace and approval verbs carry their own human owner/admin checks, and
+  // `join <invite>` is authorized by the invite itself; the rest are team-scoped.
+  const inviteJoin = sub === 'join' && !!rest[0] && !rest[0].startsWith('-');
+  const scoped = ['view', 'claim', 'release', 'say'].includes(sub) || (sub === 'join' && !inviteJoin);
   const out = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
   try {
+    if (scoped) assertTeamAccess(team);
     switch (sub) {
       case 'view': {
         const s = teamState(team);
@@ -97,6 +103,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
     }
   } catch (err) {
     console.error(`phm team: ${err instanceof Error ? err.message : String(err)}`);
+    if (err instanceof TenancyError) console.error(`fix: ${err.fix}`);
     return 1;
   }
 }

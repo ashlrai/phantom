@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -81,3 +82,5 @@ it('groups mixed-case UUID observations into the latest retained verdict', async
   const result = await callNativeTool('phantom_fleet_apps_recovery_check', { invocationId: id, maxAgeMs: 60000 });
   expect(JSON.parse(result.content[0]!.text)).toMatchObject({ verdict: 'healthy', latestCursor: 2 });
 });
+
+registerFleetNativeTools();
