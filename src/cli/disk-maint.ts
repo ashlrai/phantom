@@ -91,7 +91,8 @@ function schedule(argv: string[], deps: DiskMaintCliDeps): number {
 /** Human view: one line per class, refused evidence, then the freed total. */
 export function formatDiskMaint(plan: DiskMaintPlan, applied?: Awaited<ReturnType<typeof applyDiskMaint>>): string[] {
   const lines: string[] = [applied ? 'disk maintenance - applied' : 'disk maintenance - dry run, deletes nothing'];
-  lines.push(`free now: ${plan.freeGb === null ? 'unknown' : `${plan.freeGb} GB`} (DISKGUARD reuse line: ${plan.diskguardReuseOnlyGb} GB, unchanged)`);
+  const freeGb = applied ? applied.freeGb : plan.freeGb;
+  lines.push(`free now: ${freeGb === null ? 'unknown' : `${freeGb} GB`} (DISKGUARD reuse line: ${plan.diskguardReuseOnlyGb} GB, unchanged)`);
   if (plan.jobsSource !== 'healthy') lines.push(`jobs ledger ${plan.jobsSource === 'missing' ? 'missing' : 'unreadable'} - worktrees stay kept, logs fall to orphan ages`);
   const results = new Map(applied?.classes.map(c => [c.id, c]) ?? []);
   for (const cls of plan.classes) {
@@ -180,9 +181,9 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
     ...deps.plan, roots, only: only.size ? only : undefined, allow, policy, now: deps.now,
     deadlineMs: deps.deadlineMs,
   });
-  const applied = apply ? await applyDiskMaint(plan, { roots, runner: deps.runner, now: deps.now }) : undefined;
+  const applied = apply ? await applyDiskMaint(plan, { roots, runner: deps.runner, now: deps.now, readJobs: deps.readJobs, freeBytes: deps.freeBytes }) : undefined;
   if (json) {
-    out.log(JSON.stringify(sanitizePublicJson({ ...plan, apply, ...(applied ? { results: applied.classes, totals: { ...plan.totals, freedBytes: applied.totals.freedBytes, failures: applied.totals.failures } } : {}) }), null, 2));
+    out.log(JSON.stringify(sanitizePublicJson({ ...plan, apply, ...(applied ? { freeGb: applied.freeGb, results: applied.classes, totals: { ...plan.totals, freedBytes: applied.totals.freedBytes, failures: applied.totals.failures } } : {}) }), null, 2));
   } else {
     for (const line of formatDiskMaint(plan, applied)) out.log(line);
   }

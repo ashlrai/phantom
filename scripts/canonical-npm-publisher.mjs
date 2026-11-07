@@ -114,10 +114,14 @@ export function verifyHandoff(directory, expectedAdmissionHash, expectedPackageH
   return record;
 }
 
-export function assertRegistryPackage(record, metadata, bytes) {
+function assertRegistryMetadata(record, metadata) {
   assert.equal(metadata.name, record.name); assert.equal(metadata.version, record.version);
   assert.equal(metadata.dist?.integrity, record.integrity);
   assert.equal(metadata.dist?.attestations?.provenance?.predicateType, 'https://slsa.dev/provenance/v1');
+}
+
+export function assertRegistryPackage(record, metadata, bytes) {
+  assertRegistryMetadata(record, metadata);
   assert.equal(sha(bytes), record.sha256);
   assert.equal(`sha512-${createHash('sha512').update(bytes).digest('base64')}`, record.integrity);
   return true;
@@ -184,12 +188,29 @@ async function registryFetch(url, timeoutMs = 30_000, {headers, onStatus} = {}) 
   return response;
 }
 
-async function registry(record, directory, onStatus) {
+async function registry(record, directory, onStatus, deadline) {
   const response = await registryFetch(`https://registry.npmjs.org/@ashlr%2Fphantom/${record.version}`, 30_000, {headers: {'Cache-Control': 'no-cache'}, onStatus});
   const metadata = await response.json();
+  assertRegistryMetadata(record, metadata);
   const url = new URL(metadata.dist?.tarball);
   assert.equal(url.origin, 'https://registry.npmjs.org');
   assert.equal(url.pathname, `/@ashlr/phantom/-/phantom-${record.version}.tgz`);
+  // npm install consumes this abbreviated catalog, which may lag the version
+  // endpoint. Check it before downloading the archive on every pending read.
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
+  const catalogResponse = await registryFetch('https://registry.npmjs.org/@ashlr%2Fphantom', Math.min(30_000, remaining),
+    {headers: {Accept: 'application/vnd.npm.install-v1+json'}, onStatus});
+  const catalog = await catalogResponse.json();
+  assert.equal(catalog.name, record.name, 'Public install catalog package differs');
+  assert.ok(catalog.versions && typeof catalog.versions === 'object' && !Array.isArray(catalog.versions), 'Malformed public install catalog');
+  if (!Object.hasOwn(catalog.versions, record.version)) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
+  const version = catalog.versions[record.version];
+  assert.equal(version?.name, record.name, 'Public install catalog package differs');
+  assert.equal(version?.version, record.version, 'Public install catalog version differs');
+  assert.equal(version?.dist?.integrity, record.integrity, 'Public install catalog integrity differs');
+  assert.equal(version?.dist?.tarball, url.href, 'Public install catalog archive differs');
+  if (Date.now() >= deadline) throw new RegistryReadPending('Public install catalog is still processing or unavailable');
   const archive = await registryFetch(url);
   const bytes = Buffer.from(await archive.arrayBuffer());
   assertRegistryPackage(record, metadata, bytes);
@@ -207,7 +228,7 @@ export async function reconcileRegistry(record, directory) {
     let status = 'unavailable';
     attempt++;
     try {
-      try {await registry(record, directory, value => {status = value;});}
+      try {await registry(record, directory, value => {status = value;}, deadline);}
       finally {console.log(`Registry verification attempt ${attempt}: elapsed=${Date.now() - started}ms HTTP status=${status}`);}
       return;
     }
