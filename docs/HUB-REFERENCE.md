@@ -262,10 +262,11 @@ Static assets and the minimal `{ "ok": true }` liveness response remain public
 on loopback; every proprietary API read requires the read token or the ticket
 plus its matching client proof.
 
-Headless clients send the read token as a header:
+Headless clients send the read token as a header. In this example, READ_TOKEN
+is a shell variable holding the read token issued by the server:
 
 ```sh
-curl -H "X-Ashlr-Token: $ASHLR_DASHBOARD_READ_TOKEN" \
+curl -H "X-Ashlr-Token: $READ_TOKEN" \
   http://127.0.0.1:7777/api/snapshot
 ```
 
