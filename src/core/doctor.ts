@@ -627,7 +627,7 @@ export function checkReceiptVerify(
  * protected or unpinned (human must `locus enter` / `locus agent setup`). Pass
  * only when ready + healthy oneline. Names/status only — never secret values.
  */
-export function checkLocus(): DoctorCheck {
+export function checkLocus(opts: { available?: boolean } = {}): DoctorCheck {
   try {
     // A bootstrap launcher (the npm locus-cli shim runs `cargo install` on any
     // invocation, even a probe) is never executed: locusAvailable() and
@@ -646,7 +646,7 @@ export function checkLocus(): DoctorCheck {
         'Install: cargo install --git https://github.com/ashlrai/locus locus-cli --locked  (or brew install ashlrai/tap/locus)',
       );
     }
-    if (!locusAvailable()) {
+    if (!(opts.available ?? locusAvailable())) {
       const enforce = resolveLocusEnforceMode() === 'enforce';
       return check(
         'locus',
@@ -706,10 +706,10 @@ export function checkLocus(): DoctorCheck {
  * Never fails (non-blocking). Fresh empty installs and firm=true pass quietly.
  * See docs/LOCUS-FIRM-FLEET.md.
  */
-export function checkLocusFirm(cfg: AshlrConfig): DoctorCheck {
+export function checkLocusFirm(cfg: AshlrConfig, opts: { available?: boolean } = {}): DoctorCheck {
   const label = 'Locus firm profile';
   try {
-    if (!locusAvailable()) {
+    if (!(opts.available ?? locusAvailable())) {
       return check(
         'locus-firm',
         label,
@@ -1447,6 +1447,9 @@ export function prewarmDoctor(): void {
     import('./resources/worker-bindings.js'),
     import('./resources/pool-cli-versions.js'),
     import('./run/verify-commands.js'),
+    // M33 plugin layer — loaded lazily by checkPlugins when plugins enabled.
+    import('./plugins/registry.js'),
+    import('./plugins/integrity.js'),
   ]).catch(() => undefined);
 }
 
@@ -1467,11 +1470,14 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     .then((m) => m.getProviderRegistry(cfg))
     .catch(() => null);
 
-  // --- Pre-fetch M3 + M5 + M7 + M19 + pool-CLI registry results (all async-safe, never throw) ---
+  // --- Pre-fetch M3 + M5 + M7 + M19 + M33 + pool-CLI registry results (all async-safe, never throw) ---
   // The receipt-store and worktree-reaper graphs are heavy, so their probe
   // modules load inside this parallel wave too and are injected into the
-  // checks; both keep their test seams for direct injected callers.
-  const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo, poolCliChecks, receiptMod, reaperMod] = await Promise.all([
+  // checks; both keep their test seams for direct injected callers. The M33
+  // plugin check and the loopback local-inference probe run here too so their
+  // imports and bounded waits overlap the rest of the wave instead of sitting
+  // in a serial tail; results land at their original position in `checks`.
+  const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo, poolCliChecks, receiptMod, reaperMod, pluginsCheck, localInferenceCheck] = await Promise.all([
     tryDiscoverMcpServers(),
     tryGetToolsRegistry(),
     tryBuildBudgetRollup(cfg),
@@ -1482,6 +1488,8 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     tryCheckPoolCliVersions(),
     import('./receipt/receipt-store.js').catch(() => null),
     import('./inbox/temp-worktree-reaper.js').catch(() => null),
+    checkPlugins(cfg),
+    checkLocalInference(cfg),
   ]);
 
   // --- Synchronous checks ---
@@ -1501,8 +1509,10 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkPhantom(phantom));
   checks.push(checkPhantomPreflight({ status: phantom }));
   checks.push(checkReceiptVerify({ status: receiptMod?.receiptStatus }));
-  checks.push(checkLocus());
-  checks.push(checkLocusFirm(cfg));
+  // One `which locus` spawn serves both locus checks.
+  const locusAvail = locusAvailable();
+  checks.push(checkLocus({ available: locusAvail }));
+  checks.push(checkLocusFirm(cfg, { available: locusAvail }));
   // Upgraded: also accepts discovery via discoverMcpServers (mcpRegistry)
   const mcpPlugin = checkMcpPlugin(mcpRegistry);
   checks.push(mcpPlugin);
@@ -1545,8 +1555,8 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(checkGitLocks());
 
   // --- M33: plugin layer (read-only; discovery never executes plugin code) ---
-  checks.push(await checkPlugins(cfg));
-  checks.push(await checkLocalInference(cfg));
+  checks.push(pluginsCheck);
+  checks.push(localInferenceCheck);
 
   // --- Async: provider registry ---
   try {
