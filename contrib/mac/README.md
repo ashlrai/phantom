@@ -143,6 +143,34 @@ The shared ledger reader also recognizes terminal records written by
 `metrics-outcomes reconcile`, including records written before a restart; their
 position in the ledger preserves the same launch boundaries.
 
+## Empty launch suppression
+
+`dispatchd.py` records `repo`, `base_sha`, and `prompt_hash` on each claim.
+The base is the local `refs/remotes/origin/HEAD` commit; this check does not
+fetch. Successful empty finishes suppress the same prompt and base for 24
+hours. `RQ-UPKEEP-*` jobs whose latest finish on that base was successfully
+empty are also excluded during restocking, until the base changes. Failed or
+unknown exits remain eligible, so authentication failures do not become cached
+no-ops. Missing refs, malformed metrics, and Git errors allow launch. Batch
+membership applies the same check, so a suppressed job cannot ride into a
+batch session either.
+
+Suppressed work records `event=skipped_empty`, with a reason, instead of a
+model launch or finish; restock writes the same event when it declines to
+re-enqueue. Shell precheck skips keep their separate `precheck_skip` event.
+Committed changes count as work even when the worktree is clean. Claim metadata
+starts with this version; older finishes without a matching claim identity do
+not suppress work. Install through the dispatcher installation and Security
+pin process above; do not copy this code into the live dispatcher directly.
+
+Measure real progress from a 48-hour ledger window: count only `finish` rows
+with `empty=true`, sum their numeric `wall_s` divided by 60, and independently
+count `outcome` rows with `state=MERGED`. Do not count `skipped_empty` as an
+empty finish or a merge. The synthetic replay regression demonstrates this
+accounting, not a prediction of fleet savings. Recheck the live window after
+installation; the target is fewer than 100 empty finishes and 120 empty
+minutes, while preserving MERGED throughput.
+
 ## Adaptive concurrency and batching
 
 RQ-QUEUE-BATCH-1 retires the fixed fleet cap of 18 and the `ncpu` bound beside it.

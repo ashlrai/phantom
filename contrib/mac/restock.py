@@ -4,7 +4,8 @@
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
 # + RQ-QUEUE-AUTOUNPARK-1 (PARKED-DEP / DEPENDENCY GATE / UNPARK). Security must re-pin before live bin/ install.
 import os, re, sys, json, time, fcntl, subprocess
-from launch_precheck import precheck, park, parked as precheck_parked, park_key
+from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
+                             attempt_identity, empty_reason, read_attempts)
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 DRY = "--dry-run" in sys.argv
 PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.argv else None
@@ -162,7 +163,7 @@ def prompt_body(j, repo, l, tier, attrs, text, gate=None):
             "that meets every acceptance item above, with new or updated tests that you run. Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
             f"{pin_line}")
-noops = load_noops(); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
+noops = load_noops(); empty_attempts = read_attempts(R); seen_pr = set(); seen_file = set()   # seen_*: PRs / target files already picked this pass
 skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked = set(); task_keys = {}; ts = int(time.time())   # after-unlanded -> PARKED-DEP rows this pass
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
@@ -262,7 +263,16 @@ for i, j, attrs, text, raw in sorted(recs, key=ordk):
     if len(picks[lane]) >= need[lane]: continue
     if pc_left <= 0: break
     checked.add(j); pc_left -= 1
-    pc = precheck(j, rm.group(1), prompt_body(j, rm.group(1), lane, tier, attrs, text), H, R)
+    p = prompt_body(j, rm.group(1), lane, tier, attrs, text)
+    reason = empty_reason(j, attempt_identity(rm.group(1), p, H), empty_attempts, ts)
+    if reason:
+        skip(j, reason)
+        if not DRY:
+            with open(R + '/metrics/jobs.jsonl', 'a') as stream:
+                stream.write(json.dumps(dict(event='skipped_empty', job=j, repo=rm.group(1), lane=lane,
+                                             reason=reason, ts=time.strftime('%Y-%m-%dT%H:%M:%S%z'))) + '\n')
+        continue
+    pc = precheck(j, rm.group(1), p, H, R)
     if pc and pc[0] in (11, 12, 13):
         # Open PRs and legacy existence heuristics are not acceptance evidence.
         # Keep the author row READY; unchanged retries share dispatch's backoff.

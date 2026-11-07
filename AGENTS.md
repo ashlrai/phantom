@@ -153,9 +153,10 @@ lane-owned CODEX_HOME under `~/.ashlr-runs`, never `~/.codex`.
 
 ## Chief-of-staff intake
 
-See [docs/COS.md](docs/COS.md) for the planned chief-of-staff ask and status commands.
-The handler is implemented; top-level CLI and
-desktop custom-sink registration require an explicit named-file scope extension.
+See [docs/COS.md](docs/COS.md) for the chief-of-staff ask and status commands:
+`phm fleet cos ask "<text>" --channel <channel> --json` queues an intake job and
+`phm fleet cos status <id> --json` reads it back. Top-level `cos` dispatch and
+desktop custom-sink wiring still require an explicit named-file scope extension.
 Intake jobs use `phm queue`; `done --result <text> --json` drafts the reply and
 surfaces a needs-you item. Outbound results require explicit approval of the
 displayed draft digest. Do not treat a queued job or result draft as send authority.
@@ -251,3 +252,5 @@ production dispatchd cutover or runner installation is performed. See
 [Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
 
 Agent network channels: `phm agents bus channels list --json` and `phm agents bus channels test email --json` are offline dry runs. See [agent network channels](docs/AGENT-NETWORK-CHANNELS.md) for the default-deny policy and adapter contract.
+
+Fleet HTTP contract: [docs/api/fleet-openapi.json](docs/api/fleet-openapi.json) is the machine-readable contract for the `phm verse` hub API: every route the remote phone gateway admits plus hub-only fleet routes, including version, runs glance, CI runs, drop-jobs and agent-bus. Read-only routes return JSON; see [docs/FLEET-API.md](docs/FLEET-API.md) and [llms.txt](docs/llms.txt) for copy-paste examples.

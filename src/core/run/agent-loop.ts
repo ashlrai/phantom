@@ -34,6 +34,12 @@ import type {
 } from '../types.js';
 import { assertLocusJobDispatch, hasInheritedLocusSession, hasLocusJobEnv } from '../integrations/locus-job-env.js';
 import { fitTaskContext } from './context-window.js';
+import { randomUUID } from 'node:crypto';
+import {
+  buildCheckpointContext, checkpointsEnabled, CheckpointStore, checkpointToolDefinition,
+  defaultCheckpointOptions, freshCheckpointRepoState,
+  type AgentCheckpoint, type CheckpointOptions,
+} from './checkpoints.js';
 import { addUsage, overBudget, newUsage } from './budget.js';
 import { nullSink } from './streaming.js';
 import type { StreamSink } from './streaming.js';
@@ -88,6 +94,8 @@ interface ToolSpec {
 
 /** Context bag for {@link runTask} / {@link runTaskBody}. */
 export type RunTaskContext = {
+  /** Host-owned checkpoint identity and restart selection. Inert unless PHANTOM_CHECKPOINTS=1. */
+  checkpoint?: CheckpointOptions;
   tools?: unknown[];
   /** Qualified effective runtime window, never a profile/trained maximum. */
   contextWindowTokens?: number;
@@ -279,11 +287,22 @@ async function runTaskBody(
   }
 
   // Resolve tools: only use them if client supports them AND tools provided.
+  const checkpointStore = checkpointsEnabled()
+    ? new CheckpointStore(ctx.checkpoint ?? defaultCheckpointOptions(`${ctx.effectJournal?.scopeId ?? randomUUID()}:${task.id}`))
+    : undefined;
+  let pendingCheckpoint: AgentCheckpoint | undefined;
+  if (checkpointStore && ctx.checkpoint?.resume) {
+    pendingCheckpoint = checkpointStore.load() ?? undefined;
+    if (!pendingCheckpoint) throw new Error('Checkpoint requested for resume is missing.');
+  }
+  const availableTools = checkpointStore ? [...(ctx.tools ?? []), checkpointToolDefinition] : ctx.tools;
+  if (checkpointStore && ctx.tools?.some(tool => (tool as ToolSpec).name === checkpointToolDefinition.name))
+    throw new Error('Checkpoint tool name is reserved.');
   const useTools =
     client.supportsTools &&
-    ctx.tools !== undefined &&
-    ctx.tools.length > 0;
-  const toolSpecs = useTools ? (ctx.tools as unknown[]) : undefined;
+    availableTools !== undefined &&
+    availableTools.length > 0;
+  const toolSpecs = useTools ? availableTools : undefined;
 
   // Build a tool executor map keyed by name (best-effort; tools may lack fn).
   const toolExecutors = new Map<string, ToolExecutor>();
@@ -314,7 +333,7 @@ async function runTaskBody(
       useTools,
       ...(hostVerificationTools !== undefined ? { hostVerificationTools } : {}),
       profile,
-      memory: ctx.memory,
+      memory: checkpointStore ? undefined : ctx.memory,
       charCap: profile.promptCharCap,
     }).system;
 
@@ -344,6 +363,8 @@ async function runTaskBody(
 
   // M264: prepend local-context bundle when provided.
   // When systemPrefix is absent (default) this is a no-op — systemContent unchanged.
+  const checkpointSystemContent = systemContent;
+  if (checkpointStore) systemContent += '\nUse phantom_checkpoint to preserve explicit working memory before context fills. Tool results include evidence_ref IDs for verified_facts.';
   if (ctx.systemPrefix && ctx.systemPrefix.length > 0) {
     systemContent = ctx.systemPrefix + '\n\n' + systemContent;
   }
@@ -361,6 +382,12 @@ async function runTaskBody(
     // Main agent loop.
     while (true) {
       if (cancelIfRequested()) break;
+
+      if (pendingCheckpoint && checkpointStore) {
+        messages.splice(0, messages.length, ...buildCheckpointContext(pendingCheckpoint,
+          freshCheckpointRepoState(checkpointStore.repoRoot), checkpointSystemContent));
+        pendingCheckpoint = undefined;
+      }
 
       // Pre-step budget check.
       if (overBudget(ctx.usage, ctx.budget)) {
@@ -548,8 +575,20 @@ async function runTaskBody(
           let toolResultContent: string;
           const executor = toolExecutors.get(tc.name);
           const safety = toolSafety.get(tc.name);
+          let toolSucceeded = false;
 
-          if (executor) {
+          if (checkpointStore && tc.name === checkpointToolDefinition.name) {
+            if (result.toolCalls.length !== 1) {
+              toolResultContent = 'Checkpoint must be the only tool call in its batch; no checkpoint was saved.';
+            } else {
+              try {
+                pendingCheckpoint = checkpointStore.save(tc.arguments);
+                toolResultContent = `Checkpoint revision ${pendingCheckpoint.revision} saved.`;
+              } catch {
+                toolResultContent = 'Checkpoint could not be validated or persisted; working context retained.';
+              }
+            }
+          } else if (executor) {
             const effectful = safety !== undefined && safety !== 'read';
             if (effectful && !ctx.effectJournal) {
               task.status = 'failed';
@@ -591,6 +630,7 @@ async function runTaskBody(
                 typeof rawResult === 'string'
                   ? rawResult
                   : JSON.stringify(rawResult);
+              toolSucceeded = true;
             } catch (toolErr) {
               if (prepared?.ok) {
                 releasePreparedToolEffect(prepared.effect);
@@ -614,6 +654,10 @@ async function runTaskBody(
             toolResultContent = `Tool '${tc.name}' is not available in this context. Please proceed without it.`;
           }
 
+          if (checkpointStore && toolSucceeded) {
+            const event = checkpointStore.recordToolEvent(tc.id, tc.name, toolResultContent);
+            toolResultContent += `\n[checkpoint evidence_ref: ${event.id}]`;
+          }
           messages.push({
             role: 'tool',
             content: toolResultContent,
