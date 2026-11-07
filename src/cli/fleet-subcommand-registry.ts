@@ -257,6 +257,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'reset-watch': () => import('./fleet-reset-watch.js'),
   'resources': () => import('./fleet-resources.js'),
   'route-moves': () => import('./fleet-route-moves.js'),
+  'route-pins': () => import('./fleet-route-pins.js'),
   'running': () => import('./fleet-running.js'),
   'runs-read': () => import('./fleet-runs-read.js'),
   'safari-import': () => import('./fleet-safari-import.js'),
