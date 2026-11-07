@@ -26,7 +26,7 @@ not just the exit code: several report commands exit 0 even with problems.
 | Engines | `ashlr fleet doctor --json` | `ready: true` is ok; unknown authentication is warn; a missing or blocked engine is red. Does not start workers. |
 | Fleet overview | `ashlr fleet status --json` | Daemon, queue and engine evidence; inspect missing or degraded sources before trusting totals. |
 | Lanes | `ashlr fleet lanes --json` | Lane capacity, queue depth and live jobs; unknown readings need attention. |
-| Idle lanes | `ashlr fleet idle-lanes --json` | Ok: a readable report with no listed lanes. Warn: queued work is held. Red: queued work is not held and `running < target`; exits 1. Missing or invalid evidence exits 2, not ok. |
+| Idle lanes | `ashlr fleet idle-lanes --json` | Ok: a readable report with no listed lanes. Warn: queued work is held. Red: queued work is not held and `running < target`; exits 1. A red lane with no ledger event for at least 30 minutes is marked `stuck` when a usable event exists. Missing lane age is unknown, not proof that a lane is healthy. Missing or invalid lane status exits 2, not ok. |
 | API pools | `ashlr fleet api-pools --json` | No color status or health thresholds. Ok: pacing figures and `slot_target` are known. Warn: any figure is unknown (`null`); missing cost or ceiling can leave the target unknown. Red: observations cannot be read; exits 1. Reports open Claude API pools only; a readable empty list is not proof of healthy pools. |
 | Host load | `ashlr fleet load --json` | Ok: all measurements are known and there are no warnings. Warn: load exceeds `load_max`, worktrees exceed 40, measurements are unknown or admission warnings exist. Red: load exceeds twice `load_max`, the daemon tick is over 1800 seconds old or admission data is unavailable; exits 1. Red takes priority over warn. |
 | Admission | `ashlr fleet admission --json` | Ok: no lane is blocked by the global cap with 5 or more queued. Red: a lane has queued work, is under its target, is not held, and global running is at the cap, with 5 or more queued; exits 1. Missing or invalid evidence exits 2. For other waits, use `ashlr fleet lane-idle`. |
@@ -46,5 +46,9 @@ not just the exit code: several report commands exit 0 even with problems.
 | Evidence source | `ashlr fleet evidence doctor decisions --json` | Source state and reason; healthy, cold-start and recovered retry exit 0. Other states exit 1; cold-start still means little evidence. |
 
 Follow the reason in the affected result, fix that problem, then rerun that check.
+Idle-lane ages come from pooled, dated events in `~/.ashlr-runs/queue/jobs.jsonl`.
+If the ledger is missing, unreadable, oversized or has no usable pooled event,
+age fields are omitted. A lane without a matching event has null age and is not
+marked stuck; this does not establish that it is healthy.
 These commands inspect health; they do not authorize dispatch, cleanup or merge.
 See [all fleet verbs](FLEET-VERBS.md) for other fleet tools.

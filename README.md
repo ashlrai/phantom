@@ -116,7 +116,8 @@ Details: [self-hosting](docs/SELF-HOSTING.md#connect-claude-code-and-codex-over-
 | --- | --- |
 | ![CLI JSON](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-cli.svg) | **CLI for agents.** `phm docs --agent --json` lists commands. Add `--json` on commands that offer it. |
 | ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **One MCP gateway.** Claude, Cursor, and Codex use `ashlr-hub`. |
-| ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Phantom does not ask for or store the vendor credential. |
+| ![MCP gateway](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-mcp.svg) | **Companion inventory.** `phm companions --json` checks separately installed Secrets, Locus, and Lexicon CLI identities. It does not establish runtime readiness. |
+| ![Accounts and local models](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-local.svg) | **Your accounts.** Claude Code, Codex, Grok, Devin, API credits, and tool-capable local models. Vendor CLIs manage their own sign-in; the optional Devin API connection stores its key in the macOS Keychain. |
 | ![Review](https://github.com/ashlrai/phantom/blob/master/docs/images/feature-review.svg) | **A record you can review.** Chats, diffs, checkpoints, and fleet runs stay in the console. A finished run is not proof the outcome shipped. |
 
 **Work with me** is the chat. **Work for me** is the fleet. Saving a fleet outcome does not start work and does not widen permission. The fleet runs only in enrolled repositories under a signed grant. Autonomy ships **dormant** and is macOS-only.
@@ -156,7 +157,7 @@ Independent ready tasks can use more than one admitted resource. Slots, quotas, 
 ## FAQ
 
 **Does Phantom store my API keys?**
-No. Each vendor CLI signs itself in. Phantom does not ask for or store that credential.
+Vendor CLIs manage their own sign-in. The optional `phm devin connect` command asks for a Devin API key at a hidden prompt and stores it in the macOS Keychain, not in a file. See [Devin](docs/DEVIN.md) for the connection and custody details.
 
 **What Node version do I need?**
 22.15.0 or newer. `node --version` must print that before `npm install -g @ashlr/phantom`.
@@ -201,7 +202,7 @@ phm verse
 
 `phm verse` serves [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/). The package exports `@ashlr/phantom`, `@ashlr/phantom/core`, `@ashlr/phantom/types`, `@ashlr/phantom/plugin`, and `@ashlr/phantom/universe`.
 
-Optional cloud handoff, off unless you launch it:
+Optional cloud handoff, off unless you launch it. Cloud launch spends Claude credits. The Devin API connection requires macOS and Devin sessions spend ACUs:
 
 ```sh
 phm cloud launch "<task>" --repo owner/name

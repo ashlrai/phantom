@@ -91,6 +91,11 @@ Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
 plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
 See [DISK-MAINT](docs/DISK-MAINT.md).
 
+Report pages: `phm pages publish <file.md|file.json> --json` renders a report
+into the loopback console at `/pages/<slug>`; `phm pages list --json` lists
+published pages. Store is `~/.ashlr/pages`; nothing leaves the machine. See
+[report pages](docs/PAGES.md).
+
 ## Publish subscription capacity
 
 Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;
