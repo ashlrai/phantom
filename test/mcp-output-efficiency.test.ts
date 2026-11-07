@@ -55,6 +55,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_apps_ensure',
   'phantom_fleet_apps_changes',
   'phantom_fleet_apps_status',
+  'phantom_fleet_doctor',
   'phantom_fleet_apps_await',
   'phantom_fleet_orders',
   'phantom_fleet_graph',
@@ -97,12 +98,12 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(53);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(54);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
     expect(classified.unallocated).toEqual([]);
-    expect(classifyNativeNames([...names, 'unallocated_54th_tool']).unallocated).toEqual(['unallocated_54th_tool']);
+    expect(classifyNativeNames([...names, 'unallocated_55th_tool']).unallocated).toEqual(['unallocated_55th_tool']);
 
     const addedNames = new Set<string>(ADDED_NATIVE_NAMES);
     const oldTools = tools.filter(tool => !addedNames.has(tool.name));
@@ -112,10 +113,13 @@ describe('native MCP tool inventory', () => {
     expect(responseBytes(oldTools)).toBeLessThan(24205);
     // The 18 legitimate additions measured 9,177 object bytes plus 18 commas.
     // Their fixed 9,195-byte allowance has no unmeasured growth headroom.
-    const addedBytes = addedTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    const doctor = addedTools.find(tool => tool.name === 'phantom_fleet_doctor')!;
+    const doctorBytes = Buffer.byteLength(JSON.stringify(doctor)) + 1;
+    expect(doctorBytes).toBeLessThanOrEqual(250);
+    const addedBytes = addedTools.filter(tool => tool !== doctor).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9195);
     // 24,205 + 9,195 preserves only the historical headroom for all 53 tools.
-    expect(responseBytes(tools)).toBeLessThan(33400);
+    expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes);
   });
 });
 
