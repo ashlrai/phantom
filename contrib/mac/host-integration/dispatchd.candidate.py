@@ -263,6 +263,11 @@ def ab_scan(lane, alive_):
     for bp in glob.glob(R + "/*.base"):
         j = os.path.basename(bp)[:-5]
         if not JID.match(j) or j in alive_: continue
+        # Reject old history before decoding metadata. Keep the original
+        # post-metadata age/seen checks below; logs remain mutable observations.
+        try:
+            if not ab_log_fresh(s_, os.path.getmtime("%s/%s.log" % (R, j)), NOW): continue
+        except Exception: continue
         b = rd(bp).split()
         if len(b) < 4 or b[3] != lane: continue
         lp = "%s/%s.log" % (R, j); mk = "%s/%s.autobackoff.seen" % (RUN, j)
@@ -384,6 +389,7 @@ def mem():
         m = re.search(r"used = ([\d.]+)M", out); swap = float(m.group(1)) / 1024 if m else None
     except Exception: pass
     return free, swap
+machine_sample_started_ms = int(time.time() * 1000)
 free, swap = mem()
 
 # ---- liveness: map processes to jobs by cmdline and cwd
@@ -607,9 +613,15 @@ def global_cap():   # Network-bound agents may outnumber CPUs; the operator ceil
 # ---- (c) adapt
 def ratelimited(lane, since):
     for bp in glob.glob(R + "/*.base"):
-        j = os.path.basename(bp)[:-5]; b = base(j)
-        if not b or b[3] != lane: continue
+        j = os.path.basename(bp)[:-5]
         lp = "%s/%s.log" % (R, j)
+        # No snapshot or lane cache: every call sees current paths/mtimes,
+        # and the original final age check still runs after fresh metadata.
+        try:
+            if os.path.getmtime(lp) <= max(since, NOW - 1800): continue
+        except Exception: continue
+        b = base(j)
+        if not b or b[3] != lane: continue
         try:
             if os.path.getmtime(lp) <= max(since, NOW - 1800): continue
             with open(lp, "rb") as f:
@@ -1030,6 +1042,8 @@ pubs.sort(reverse=True)
 evs = rd(EV).splitlines()[-25:]
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
+      "machine_sample": {"schema": "dispatchd.machine-sample.v1", "startedAtMs": machine_sample_started_ms,
+                         "memoryPressureFreePct": free, "swapUsedGiB": swap},
       "autopilot": AP,
       "lanes": {l: {"running": running[l], "target": slots[l]["target"], "floor": slots[l]["floor"],
                     "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),

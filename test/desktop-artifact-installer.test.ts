@@ -598,6 +598,77 @@ function publishedFixture() {
 describe.skipIf(process.platform==='win32')('commissioned public historical manual proof',()=> {
   let publicationFixture: ReturnType<typeof publishedFixture>;
   beforeEach(() => { publicationFixture=publishedFixture(); },5_000);
+  it('overlaps independent reads within fresh observation brackets and retains the synchronous third proof',async()=> {
+    const p=publicationFixture,timings:any[]=[];let active=0,peak=0;
+    const batch=vi.fn(async(endpoints:string[])=>Promise.all(endpoints.map(async endpoint=>{
+      active++;peak=Math.max(peak,active);try {await new Promise(resolve=>setTimeout(resolve,5));return p.read(endpoint);} finally {active--;}
+    })));
+    const cap=await realHosted.inspectCommissionedManualPublication({...p.envelope(),githubReadMany:batch,onObservationTiming:(value:any)=>timings.push(value)});
+    expect(peak).toBeGreaterThan(1);expect(peak).toBeLessThanOrEqual(3);expect(active).toBe(0);
+    expect(timings).toHaveLength(2);expect(timings.every(row=>row.mode==='bounded' && row.outcome==='returned' && row.durationMs>=0)).toBe(true);
+    const counts=new Map<string,number>();for(const endpoint of batch.mock.calls.flatMap(([endpoints])=>endpoints))counts.set(endpoint,(counts.get(endpoint)??0)+1);
+    expect([...counts.values()].every(count=>count===2)).toBe(true);
+    const before=batch.mock.calls.length;
+    expect(realHosted.verifyPublishedManualArtifact({...p.hosted.options,githubRead:p.read},cap).publication.tag).toBe(p.m.source.revision);
+    expect(batch).toHaveBeenCalledTimes(before);
+  },20_000);
+  it('refuses movement between bounded observation brackets',async()=> {
+    const p=publicationFixture;
+    const batch=async(endpoints:string[])=>Promise.all(endpoints.map(async endpoint=>p.read(endpoint)));
+    p.download.mockImplementation(async(url:string)=>{p.setMaster('e'.repeat(40));return Buffer.from(url.endsWith('/manifest.json')?p.envelope().manifestText:p.envelope().signature);});
+    await expect(realHosted.inspectCommissionedManualPublication({...p.envelope(),githubReadMany:batch})).rejects.toThrow(/changed during observation/);
+  },20_000);
+  it('retains bounded pagination and fails closed before using malformed dependent identifiers',async()=> {
+    const p=publicationFixture,original=p.read.getMockImplementation()!;
+    p.read.mockImplementation((endpoint:string)=>endpoint.includes('/rules/branches/master?')
+      ? endpoint.endsWith('page=1')?Array.from({length:100},()=>p.rules[0]):p.rules : original(endpoint));
+    const batch=vi.fn(async(endpoints:string[])=>endpoints.map(endpoint=>p.read(endpoint)));
+    expect((await realHosted.publicationObservationSnapshot(p.m,batch)).tag).toBe(p.m.source.revision);
+    expect(batch.mock.calls.flatMap(([endpoints])=>endpoints).some(endpoint=>endpoint.includes('rules/branches/master?per_page=100&page=2'))).toBe(true);
+    p.read.mockImplementation((endpoint:string)=>endpoint.includes('/rules/branches/master?')?Array.from({length:100},()=>p.rules[0]):original(endpoint));
+    await expect(realHosted.publicationObservationSnapshot(p.m,batch)).rejects.toThrow(/pagination limit/);
+    batch.mockClear();p.read.mockImplementation((endpoint:string)=>endpoint.endsWith('/branches/master')?{commit:{sha:'invalid'}}:original(endpoint));
+    await expect(realHosted.publicationObservationSnapshot(p.m,batch)).rejects.toThrow();
+    expect(batch.mock.calls.flatMap(([endpoints])=>endpoints).some(endpoint=>endpoint.includes('/compare/'))).toBe(false);
+  },20_000);
+  it.each(['rules','tag','asset'])('bounded snapshots retain the original %s validator',async kind=> {
+    const p=publicationFixture;
+    const batch=async(endpoints:string[])=>endpoints.map(endpoint=>{
+      const value=p.read(endpoint);
+      if(kind==='rules' && endpoint.includes('/rules/'))return p.rules.slice(1);
+      if(kind==='tag' && endpoint.includes('/git/ref/'))return {...value,object:{type:'commit',sha:'f'.repeat(40)}};
+      if(kind==='asset' && endpoint.includes('/assets?'))return value.slice(1);
+      return value;
+    });
+    await expect(realHosted.inspectCommissionedManualPublication({...p.envelope(),githubReadMany:batch})).rejects.toThrow();
+  },20_000);
+  it.each(['valid','cycle','too-deep'])('bounded snapshot handles annotated tag chain: %s',async kind=> {
+    const p=publicationFixture,original=p.read.getMockImplementation()!,sha=(n:number)=>n.toString(16).padStart(40,'0');
+    p.read.mockImplementation((endpoint:string)=>{
+      if(endpoint.includes('/git/ref/'))return {ref:'refs/tags/v3.24.3',object:{type:'tag',sha:sha(1)}};
+      if(endpoint.includes('/git/tags/')) {
+        const id=endpoint.split('/').at(-1)!,n=Number.parseInt(id,16);
+        return {sha:id,object:kind==='cycle'?{type:'tag',sha:sha(1)}:kind==='too-deep'?{type:'tag',sha:sha(n+1)}:{type:'commit',sha:p.m.source.revision}};
+      }
+      return original(endpoint);
+    });
+    const batch=async(endpoints:string[])=>endpoints.map(endpoint=>p.read(endpoint));
+    if(kind==='valid')expect((await realHosted.publicationObservationSnapshot(p.m,batch)).tag).toBe(p.m.source.revision);
+    else await expect(realHosted.publicationObservationSnapshot(p.m,batch)).rejects.toThrow(/tag chain/);
+  },20_000);
+  it('drains sibling pagination before reporting a failed page',async()=> {
+    const p=publicationFixture,original=p.read.getMockImplementation()!;let finish:(value:unknown[])=>void=()=>{};
+    p.read.mockImplementation((endpoint:string)=>endpoint.includes('/rules/branches/master?') || endpoint.includes('/releases/500/assets?')
+      ? Array.from({length:100},()=>({})) : original(endpoint));
+    let settled=false;const batch=async(endpoints:string[])=>{
+      if(endpoints[0]?.includes('/rules/branches/master?') && endpoints[0].endsWith('page=2'))throw new Error('page refused');
+      if(endpoints[0]?.includes('/releases/500/assets?') && endpoints[0].endsWith('page=2'))return await new Promise<unknown[]>(resolve=>{finish=resolve;});
+      return endpoints.map(endpoint=>p.read(endpoint));
+    };
+    const pending=realHosted.publicationObservationSnapshot(p.m,batch);pending.catch(()=>{settled=true;});
+    await new Promise(resolve=>setTimeout(resolve,0));expect(settled).toBe(false);finish([[]]);
+    await expect(pending).rejects.toThrow('page refused');
+  },20_000);
   // Keep the two compound-proof cases' existing 20s bounds (CI 5.362s; local 14.106s).
   // Setup retains its explicit 5s bound. Other real filesystem/Git/signature proofs
   // inherit the real-I/O lane's 60s harness budget; they assert no elapsed-time SLO.
