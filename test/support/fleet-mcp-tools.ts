@@ -22,8 +22,10 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_job_history',
   'fleet_job_history_batch',
   'fleet_job_overlap',
+  'fleet_job_current_snapshot',
   'fleet_job_current',
   'fleet_job_patch',
+  'fleet_path_cochanges',
   'fleet_path_history',
   'fleet_job_precheck',
   'fleet_job_precheck_batch',
@@ -40,4 +42,5 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_ci_resume_inputs',
   'fleet_ci_receipt_await',
   'fleet_ci_receipt_await_batch',
+  'fleet_release_candidate',
 ]);
