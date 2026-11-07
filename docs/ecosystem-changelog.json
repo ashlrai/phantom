@@ -1,0 +1,189 @@
+{
+  "schema": "ecosystem-changelog.v1",
+  "generatedAt": "2026-11-07T22:50:58.682Z",
+  "complete": false,
+  "window": {
+    "since": null
+  },
+  "totals": {
+    "repositories": 7,
+    "changes": 0,
+    "changelog": 0,
+    "releases": 0,
+    "pullRequests": 0,
+    "crossRepo": 0
+  },
+  "recent14d": {
+    "days": 14,
+    "since": "2026-10-24T22:50:58.682Z",
+    "changes": 0,
+    "changelogEntries": 0,
+    "releases": 0,
+    "pullRequests": 0,
+    "crossRepo": 0,
+    "repositories": 0
+  },
+  "repositories": [
+    {
+      "repository": "ashlrai/ashlr-md",
+      "directory": "ashlr-md",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "release",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    },
+    {
+      "repository": "ashlrai/ashlr-plugin",
+      "directory": "ashlr-plugin",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "release",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    },
+    {
+      "repository": "ashlrai/ashlr-stack",
+      "directory": "ashlr-stack",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "release",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    },
+    {
+      "repository": "ashlrai/lexicon",
+      "directory": "lexicon",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "release",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    },
+    {
+      "repository": "ashlrai/locus",
+      "directory": "locus",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "release",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    },
+    {
+      "repository": "ashlrai/phantom",
+      "directory": "phantom",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "release",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    },
+    {
+      "repository": "ashlrai/phantom-secrets",
+      "directory": "phantom-secrets",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "release",
+          "status": "error",
+          "reason": "unavailable"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    }
+  ]
+}

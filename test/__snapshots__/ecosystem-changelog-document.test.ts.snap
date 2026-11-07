@@ -1,0 +1,399 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderEcosystemChangelogDocument > matches the golden JSON document snapshot 1`] = `
+"{
+  "schema": "ecosystem-changelog.v1",
+  "generatedAt": "2026-10-28T12:00:00.000Z",
+  "complete": false,
+  "window": {
+    "since": null
+  },
+  "totals": {
+    "repositories": 3,
+    "changes": 6,
+    "changelog": 3,
+    "releases": 1,
+    "pullRequests": 2,
+    "crossRepo": 2
+  },
+  "recent14d": {
+    "days": 14,
+    "since": "2026-10-14T12:00:00.000Z",
+    "changes": 3,
+    "changelogEntries": 1,
+    "releases": 0,
+    "pullRequests": 2,
+    "crossRepo": 2,
+    "repositories": 2
+  },
+  "repositories": [
+    {
+      "repository": "fixture/zeta",
+      "directory": "zeta",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "complete"
+        },
+        {
+          "source": "release",
+          "status": "complete"
+        },
+        {
+          "source": "pull-request",
+          "status": "complete"
+        }
+      ],
+      "changes": [
+        {
+          "id": "fixture/zeta:pull-request:7",
+          "repository": "fixture/zeta",
+          "source": "pull-request",
+          "title": "Ships the renderer",
+          "date": "2026-10-25T12:00:00.000Z",
+          "url": "https://github.com/fixture/zeta/pull/7",
+          "crossRepo": true,
+          "relatedPullRequests": [
+            "fixture/middle#3"
+          ],
+          "number": 7
+        },
+        {
+          "id": "fixture/zeta:changelog:1.1.0",
+          "repository": "fixture/zeta",
+          "source": "changelog",
+          "title": "[1.1.0] - 2026-10-20",
+          "date": "2026-10-20T00:00:00.000Z",
+          "url": "https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md",
+          "crossRepo": false,
+          "relatedPullRequests": [],
+          "version": "1.1.0"
+        },
+        {
+          "id": "fixture/zeta:changelog:Unreleased",
+          "repository": "fixture/zeta",
+          "source": "changelog",
+          "title": "[Unreleased]",
+          "date": null,
+          "url": "https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md",
+          "crossRepo": false,
+          "relatedPullRequests": [],
+          "version": "Unreleased",
+          "unreleased": true
+        },
+        {
+          "id": "fixture/zeta:release:v1.2.0",
+          "repository": "fixture/zeta",
+          "source": "release",
+          "title": "v1.2.0",
+          "date": "2026-10-10T12:00:00.000Z",
+          "url": "https://github.com/fixture/zeta/releases/tag/v1.2.0",
+          "crossRepo": false,
+          "relatedPullRequests": [],
+          "version": "v1.2.0",
+          "prerelease": false
+        }
+      ]
+    },
+    {
+      "repository": "fixture/middle",
+      "directory": "middle",
+      "tier": "force-multiplier",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "complete"
+        },
+        {
+          "source": "release",
+          "status": "complete"
+        },
+        {
+          "source": "pull-request",
+          "status": "complete"
+        }
+      ],
+      "changes": [
+        {
+          "id": "fixture/middle:pull-request:3",
+          "repository": "fixture/middle",
+          "source": "pull-request",
+          "title": "Companion change",
+          "date": "2026-10-22T12:00:00.000Z",
+          "url": "https://github.com/fixture/middle/pull/3",
+          "crossRepo": true,
+          "relatedPullRequests": [
+            "fixture/zeta#7"
+          ],
+          "number": 3
+        },
+        {
+          "id": "fixture/middle:changelog:0.9.0",
+          "repository": "fixture/middle",
+          "source": "changelog",
+          "title": "[0.9.0] - 2026-10-01",
+          "date": "2026-10-01T00:00:00.000Z",
+          "url": "https://github.com/fixture/middle/blob/HEAD/CHANGELOG.md",
+          "crossRepo": false,
+          "relatedPullRequests": [],
+          "version": "0.9.0"
+        }
+      ]
+    },
+    {
+      "repository": "fixture/alpha",
+      "directory": "alpha",
+      "tier": "supporting",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "missing"
+        },
+        {
+          "source": "release",
+          "status": "truncated",
+          "reason": "page-limit"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    }
+  ]
+}
+"
+`;
+
+exports[`renderEcosystemChangelogDocument > matches the golden windowed JSON document snapshot 1`] = `
+"{
+  "schema": "ecosystem-changelog.v1",
+  "generatedAt": "2026-10-28T12:00:00.000Z",
+  "complete": false,
+  "window": {
+    "since": "2026-10-21T12:00:00.000Z"
+  },
+  "totals": {
+    "repositories": 3,
+    "changes": 3,
+    "changelog": 1,
+    "releases": 0,
+    "pullRequests": 2,
+    "crossRepo": 2
+  },
+  "recent14d": {
+    "days": 14,
+    "since": "2026-10-14T12:00:00.000Z",
+    "changes": 2,
+    "changelogEntries": 0,
+    "releases": 0,
+    "pullRequests": 2,
+    "crossRepo": 2,
+    "repositories": 2
+  },
+  "repositories": [
+    {
+      "repository": "fixture/zeta",
+      "directory": "zeta",
+      "tier": "core-fleet",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "complete"
+        },
+        {
+          "source": "release",
+          "status": "complete"
+        },
+        {
+          "source": "pull-request",
+          "status": "complete"
+        }
+      ],
+      "changes": [
+        {
+          "id": "fixture/zeta:pull-request:7",
+          "repository": "fixture/zeta",
+          "source": "pull-request",
+          "title": "Ships the renderer",
+          "date": "2026-10-25T12:00:00.000Z",
+          "url": "https://github.com/fixture/zeta/pull/7",
+          "crossRepo": true,
+          "relatedPullRequests": [
+            "fixture/middle#3"
+          ],
+          "number": 7
+        },
+        {
+          "id": "fixture/zeta:changelog:Unreleased",
+          "repository": "fixture/zeta",
+          "source": "changelog",
+          "title": "[Unreleased]",
+          "date": null,
+          "url": "https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md",
+          "crossRepo": false,
+          "relatedPullRequests": [],
+          "version": "Unreleased",
+          "unreleased": true
+        }
+      ]
+    },
+    {
+      "repository": "fixture/middle",
+      "directory": "middle",
+      "tier": "force-multiplier",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "complete"
+        },
+        {
+          "source": "release",
+          "status": "complete"
+        },
+        {
+          "source": "pull-request",
+          "status": "complete"
+        }
+      ],
+      "changes": [
+        {
+          "id": "fixture/middle:pull-request:3",
+          "repository": "fixture/middle",
+          "source": "pull-request",
+          "title": "Companion change",
+          "date": "2026-10-22T12:00:00.000Z",
+          "url": "https://github.com/fixture/middle/pull/3",
+          "crossRepo": true,
+          "relatedPullRequests": [
+            "fixture/zeta#7"
+          ],
+          "number": 3
+        }
+      ]
+    },
+    {
+      "repository": "fixture/alpha",
+      "directory": "alpha",
+      "tier": "supporting",
+      "sources": [
+        {
+          "source": "changelog",
+          "status": "missing"
+        },
+        {
+          "source": "release",
+          "status": "truncated",
+          "reason": "page-limit"
+        },
+        {
+          "source": "pull-request",
+          "status": "error",
+          "reason": "unavailable"
+        }
+      ],
+      "changes": []
+    }
+  ]
+}
+"
+`;
+
+exports[`renderEcosystemChangelogMarkdown > matches the golden llms-style markdown snapshot 1`] = `
+"# Ashlr.AI ecosystem changelog
+
+> 3 repositories, 6 changes (2 merged pull requests, 1 published release, 3 changelog entries; 2 cross-repo). Generated 2026-10-28T12:00:00.000Z by \`phm ecosystem changelog\`; deterministic for the same inputs. Machine-readable form: [docs/ecosystem-changelog.json](docs/ecosystem-changelog.json) (\`ecosystem-changelog.v1\`).
+
+> Coverage incomplete: fixture/alpha changelog missing; fixture/alpha release truncated (page-limit); fixture/alpha pull-request error (unavailable).
+
+## Last 14 days
+
+Activity since 2026-10-14T12:00:00.000Z: 3 changes across 2 repositories (2 pull requests, 0 releases, 1 changelog entry).
+
+### fixture/zeta (core-fleet)
+
+- [#7 Ships the renderer](https://github.com/fixture/zeta/pull/7): pull-request; 2026-10-25; cross-repo fixture/middle#3
+- [\\[1.1.0\\] - 2026-10-20](https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md): changelog; 2026-10-20
+
+### fixture/middle (force-multiplier)
+
+- [#3 Companion change](https://github.com/fixture/middle/pull/3): pull-request; 2026-10-22; cross-repo fixture/zeta#7
+
+## Pending release notes
+
+Changelog sections without a release date.
+
+### fixture/zeta (core-fleet)
+
+- [\\[Unreleased\\]](https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+## Repositories
+
+### fixture/zeta (core-fleet)
+
+- [#7 Ships the renderer](https://github.com/fixture/zeta/pull/7): pull-request; 2026-10-25; cross-repo fixture/middle#3
+- [\\[1.1.0\\] - 2026-10-20](https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md): changelog; 2026-10-20
+- [\\[Unreleased\\]](https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+- [v1.2.0](https://github.com/fixture/zeta/releases/tag/v1.2.0): release; 2026-10-10
+
+### fixture/middle (force-multiplier)
+
+- [#3 Companion change](https://github.com/fixture/middle/pull/3): pull-request; 2026-10-22; cross-repo fixture/zeta#7
+- [\\[0.9.0\\] - 2026-10-01](https://github.com/fixture/middle/blob/HEAD/CHANGELOG.md): changelog; 2026-10-01
+
+### fixture/alpha (supporting)
+
+Source status: changelog missing; release truncated (page-limit); pull-request error (unavailable)
+
+_No changes in scope._
+"
+`;
+
+exports[`renderEcosystemChangelogMarkdown > matches the golden windowed markdown snapshot 1`] = `
+"# Ashlr.AI ecosystem changelog
+
+> 3 repositories, 3 changes (2 merged pull requests, 0 published releases, 1 changelog entry; 2 cross-repo). Generated 2026-10-28T12:00:00.000Z by \`phm ecosystem changelog\`; deterministic for the same inputs. Machine-readable form: [docs/ecosystem-changelog.json](docs/ecosystem-changelog.json) (\`ecosystem-changelog.v1\`). Window: dated changes since 2026-10-21T12:00:00.000Z.
+
+> Coverage incomplete: fixture/alpha changelog missing; fixture/alpha release truncated (page-limit); fixture/alpha pull-request error (unavailable).
+
+## Last 14 days
+
+Activity since 2026-10-14T12:00:00.000Z: 2 changes across 2 repositories (2 pull requests, 0 releases, 0 changelog entries).
+
+### fixture/zeta (core-fleet)
+
+- [#7 Ships the renderer](https://github.com/fixture/zeta/pull/7): pull-request; 2026-10-25; cross-repo fixture/middle#3
+
+### fixture/middle (force-multiplier)
+
+- [#3 Companion change](https://github.com/fixture/middle/pull/3): pull-request; 2026-10-22; cross-repo fixture/zeta#7
+
+## Pending release notes
+
+Changelog sections without a release date.
+
+### fixture/zeta (core-fleet)
+
+- [\\[Unreleased\\]](https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+## Repositories
+
+### fixture/zeta (core-fleet)
+
+- [#7 Ships the renderer](https://github.com/fixture/zeta/pull/7): pull-request; 2026-10-25; cross-repo fixture/middle#3
+- [\\[Unreleased\\]](https://github.com/fixture/zeta/blob/HEAD/CHANGELOG.md): changelog; undated; unreleased
+
+### fixture/middle (force-multiplier)
+
+- [#3 Companion change](https://github.com/fixture/middle/pull/3): pull-request; 2026-10-22; cross-repo fixture/zeta#7
+
+### fixture/alpha (supporting)
+
+Source status: changelog missing; release truncated (page-limit); pull-request error (unavailable)
+
+_No changes in scope._
+"
+`;

@@ -365,6 +365,7 @@
 /test/fixture-custody.test.ts @masonwyatt23
 /test/fixtures/eval/routing.ts @masonwyatt23
 /test/fixtures/fleet-graph/router-queue.md @masonwyatt23
+/test/fixtures/fleet-queue-lint/router-queue.md @masonwyatt23
 /test/fixtures/m454/agent-skills-ff2df4c.provenance.json @masonwyatt23
 /test/fixtures/m518/visionquality-gate-robustness-false-positive-mer-c9c62c.json.b64 @masonwyatt23
 /test/fixtures/queue/router-queue-live.md @masonwyatt23
@@ -433,6 +434,7 @@
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
 /test/fleet-ship-gap-stage.test.ts @masonwyatt23
 /test/fleet-staging-budget-reconcile-05-stf2.test.ts @masonwyatt23
+/test/fleet-sticky-loop.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
@@ -1066,6 +1068,7 @@
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/reward-signal.test.ts @masonwyatt23
 /test/role-completion.test.ts @masonwyatt23
+/test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
@@ -1073,6 +1076,7 @@
 /test/router-queue-events.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
+/test/router-task-arms.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23
 /test/routing-arms.test.ts @masonwyatt23
 /test/routing-bandit.test.ts @masonwyatt23

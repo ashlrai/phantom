@@ -893,6 +893,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
+  { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },
 
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
   { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },
@@ -921,6 +922,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve [--port N]',             desc: 'Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).', topic: 'web' },
   { cmd: 'serve --open',                 desc: 'Start dashboard and open browser automatically.', topic: 'web' },
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
+  { cmd: 'pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]', desc: 'Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).', topic: 'web' },
+  { cmd: 'pages list [--json]',          desc: 'List published report pages, newest first.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Open the Phantom console at /verse/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },

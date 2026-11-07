@@ -43,6 +43,8 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/ecosystem-changelog-generator.test.ts', // offline CLI subprocesses and fixture filesystem I/O
+
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.

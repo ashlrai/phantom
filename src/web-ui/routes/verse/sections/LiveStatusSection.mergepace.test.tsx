@@ -45,5 +45,5 @@ it('shows Unknown when only the merge-pace fetch fails', async () => {
   render(<LiveStatusSection />);
   await waitFor(() => expect(screen.getByText('example/one: Job · build')).toBeTruthy());
   expect(screen.getByRole('heading', { name: 'Merged (24h)' })).toBeTruthy();
-  expect(screen.getByText('Unknown')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Merge pace (6h)' }).nextElementSibling?.textContent).toBe('Unknown');
 });
