@@ -2145,6 +2145,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'checkpoint': {
+        const { cmdCheckpoint } = await import('./checkpoint.js');
+        process.exitCode = await cmdCheckpoint(rest);
+        break;
+      }
       case 'sessions': {
         const { cmdSessions } = await import('./sessions.js');
         process.exitCode = await cmdSessions(rest);
