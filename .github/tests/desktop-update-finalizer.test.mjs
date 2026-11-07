@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import {dirname, join} from 'node:path';
 import {tmpdir, userInfo} from 'node:os';
+import {setImmediate} from 'node:timers';
 import {fileURLToPath, pathToFileURL, URL} from 'node:url';
 import {createHash, generateKeyPairSync, sign} from 'node:crypto';
 import {execFileSync, spawnSync} from 'node:child_process';
@@ -193,6 +194,22 @@ test('GitHub API and attestation use the fixed executable with only normal profi
   }
   assert.deepEqual(calls[0].args, ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.github+json', 'repos/ashlrai/ashlr-hub']);
   assert.deepEqual(calls[1].args, ['attestation', 'verify', '/private/subject']);
+});
+test('bounded publication transport uses pinned tools and drains every started read on failure', async () => {
+  const calls=[], root='/private/test-source', gh='/private/pinned/gh', home='/private/test-home';let finish;
+  const transport=desktopPublisherGithub(root,{gh,home},()=>{throw new Error('unexpected sync read');},(bin,args,options)=>{
+    calls.push({bin,args,options});
+    return args.at(-1).endsWith('/branches/master')?Promise.reject(new Error('fixture refusal')):new Promise(resolve=>{finish=resolve;});
+  });
+  const pending=transport.readMany(['repos/ashlrai/phantom/branches/master','repos/ashlrai/phantom']);let settled=false;
+  pending.catch(()=>{settled=true;});await new Promise(resolve=>setImmediate(resolve));assert.equal(settled,false);
+  finish('{}');await assert.rejects(pending,/publication reads unavailable/);assert.equal(calls.length,2);
+  for(const call of calls){assert.equal(call.bin,gh);assert.equal(call.options.cwd,root);assert.equal(call.options.timeout,120_000);
+    assert.equal(call.options.maxBuffer,32*1024*1024);assert.deepEqual(call.options.env,{HOME:home,GH_CONFIG_DIR:join(home,'.config/gh'),GH_HOST:'github.com',PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'});}
+  await assert.rejects(transport.readMany(['repos/other/repo']));
+  await assert.rejects(transport.readMany(['repos/ashlrai/phantom','repos/ashlrai/phantom']));
+  await assert.rejects(transport.readMany(['a','b','c','d']));
+  assert.equal(calls.length,2);
 });
 test('public CLI accepts only complete exact identity and has no tool/key/publication override', t => {
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'phantom-finalizer-arguments-')));
