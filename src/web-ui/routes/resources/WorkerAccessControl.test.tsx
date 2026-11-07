@@ -15,6 +15,25 @@ const checkbox = (id = 'codex-a') => accessPanel().getByRole('checkbox', { name:
 const saveButton = () => accessPanel().getByRole('button', { name: 'Save account access' });
 
 describe('fleet account access control', () => {
+  it.each([' CODEX-A ', 'codex', 'configured-codex', 'codex-account'])('filters worker identities locally: %s', (query) => {
+    render(<WorkerAccessControl workers={workers} policy={PAUSED} writable onSave={vi.fn()} />);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search worker access' }), { target: { value: query } });
+    expect(screen.getByRole('status')).toHaveTextContent('2 of 3 worker access entries');
+    expect(checkbox()).not.toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: 'Allow local-a for fleet work' })).not.toBeInTheDocument();
+  });
+  it('retains hidden drafts and saved pauses while filtering', async () => {
+    const save = vi.fn().mockResolvedValue(false);
+    render(<WorkerAccessControl workers={workers} policy={PAUSED} writable onSave={save} />);
+    fireEvent.click(checkbox('codex-alias'));
+    const search = screen.getByRole('searchbox', { name: 'Search worker access' });
+    fireEvent.change(search, { target: { value: 'missing' } });
+    expect(screen.getByText('No worker access entries match your search.')).toBeVisible();
+    fireEvent.change(search, { target: { value: 'local' } });
+    fireEvent.click(checkbox('local-a'));
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith(['codex-a', 'codex-alias', 'local-a'], 1));
+  });
   it('shows shared-account pauses even when an alias checkbox has no explicit pause', () => {
     render(<WorkerAccessControl workers={workers} policy={PAUSED} writable quotaReservationsAvailable onSave={vi.fn()} />);
     expect(checkbox('codex-alias')).toBeChecked();
