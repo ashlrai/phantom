@@ -11,8 +11,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   decidePlannerAutorun, readPlannerAutorunInput, type PlannerAutorunInput,
-} from './planner-autorun.js';
-import type { PlannerHealth } from './planner-failover.js';
+} from '../src/core/fleet/planner-autorun.js';
+import type { PlannerHealth } from '../src/core/fleet/planner-failover.js';
 
 // Fixed local clock: Nov 1 2026 12:00. Fixture stamps sit relative to it.
 const NOW = new Date(2026, 10, 1, 12, 0, 0).getTime();

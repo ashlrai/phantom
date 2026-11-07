@@ -2,8 +2,8 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { DROP_JOB_ID, DROP_JOB_MAX_FILE_BYTES } from './drop-job-writer.js';
-import { nextReissueId, reissueJob } from './job-reissue.js';
+import { DROP_JOB_ID, DROP_JOB_MAX_FILE_BYTES } from '../src/core/fleet/drop-job-writer.js';
+import { nextReissueId, reissueJob } from '../src/core/fleet/job-reissue.js';
 
 let runsDir: string;
 beforeEach(async () => { runsDir = await realpath(await mkdtemp(join(tmpdir(), 'reissue-'))); });

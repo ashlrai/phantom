@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseReadyTsv } from '../fleet/lane-console.js';
-import type { PlannerHealth } from '../fleet/planner-failover.js';
-import { readStatusSupply, summarizeStatusSupply, supplyLines, type StatusSupply } from './status-supply-line.js';
+import { parseReadyTsv } from '../src/core/fleet/lane-console.js';
+import type { PlannerHealth } from '../src/core/fleet/planner-failover.js';
+import { readStatusSupply, summarizeStatusSupply, supplyLines, type StatusSupply } from '../src/core/comms/status-supply-line.js';
 
 const at = '2026-11-01T10:56:44.000Z';
 const ok: PlannerHealth = { status: 'ok', lastGoodPassAt: at, failingSince: null, resetAt: null, reason: null };

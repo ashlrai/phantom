@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleetTeammates } from './fleet-teammates.js';
-import type { TeammateChatEvent } from '../core/fleet/teammate-status.js';
-import type { AshlrConfig } from '../core/types.js';
+import { cmdFleetTeammates } from '../src/cli/fleet-teammates.js';
+import type { TeammateChatEvent } from '../src/core/fleet/teammate-status.js';
+import type { AshlrConfig } from '../src/core/types.js';
 
 const SELF = '+15555550199';
 const DOT = '+15555550100';

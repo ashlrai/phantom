@@ -2,8 +2,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FLEET_RUNS_INBOX_MAX_CHARS } from '../verse/fleet-runs-types.js';
-import { parseOutbox, readOutboxEntries } from './mason-outbox.js';
+import { FLEET_RUNS_INBOX_MAX_CHARS } from '../src/core/verse/fleet-runs-types.js';
+import { parseOutbox, readOutboxEntries } from '../src/core/fleet/mason-outbox.js';
 
 let runsDir: string;
 const outboxPath = (): string => join(runsDir, 'leader', 'MASON-OUTBOX.md');

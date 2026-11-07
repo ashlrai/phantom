@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseReleaseCommand, renderReleaseReply } from './telegram-release-command.js';
+import { parseReleaseCommand, renderReleaseReply } from '../src/core/comms/telegram-release-command.js';
 
 describe('Telegram release command', () => {
   it('accepts only known, well-formed lanes', () => {

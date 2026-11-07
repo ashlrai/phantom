@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { expect, it, vi } from 'vitest';
-import { handleLeaderApi } from './leader-api.js';
-import type { VerseApiContext } from './verse-api.js';
+import { handleLeaderApi } from '../src/core/verse/leader-api.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
-vi.mock('../fleet/usage-reset-detect.js', () => ({
+vi.mock('../src/core/fleet/usage-reset-detect.js', () => ({
   readUsageResets: async () => ({ v: 1, generatedAt: new Date(0).toISOString(), sourceState: 'healthy', rows: [] }),
 }));
 it.each([['GET', '', 200], ['POST', '', 405], ['GET', '?x=1', 400], ['GET', '?', 400]])('usage resets %s %s returns %i', async (method, query, expected) => {

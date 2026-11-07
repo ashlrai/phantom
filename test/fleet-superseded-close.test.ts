@@ -2,8 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleetSupersededClose, type FleetSupersededCloseDeps } from './fleet-superseded-close.js';
-import type { OpenFleetPr } from '../core/fleet/superseded-prs.js';
+import { cmdFleetSupersededClose, type FleetSupersededCloseDeps } from '../src/cli/fleet-superseded-close.js';
+import type { OpenFleetPr } from '../src/core/fleet/superseded-prs.js';
 
 const open = (number: number, title = 'original', mergeStateStatus = 'DIRTY'): OpenFleetPr =>
   ({ number, title, mergeStateStatus });

@@ -2,8 +2,8 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseReadyTsv } from './lane-console.js';
-import { readReadySupply, summarizeReadySupply } from './ready-supply.js';
+import { parseReadyTsv } from '../src/core/fleet/lane-console.js';
+import { readReadySupply, summarizeReadySupply } from '../src/core/fleet/ready-supply.js';
 
 const now = () => new Date('2026-11-01T00:00:00Z');
 const dirs: string[] = [];
