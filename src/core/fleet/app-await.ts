@@ -75,3 +75,5 @@ export async function awaitAppState(opts: AppAwaitOptions): Promise<AppAwaitResu
     if (slept.kind === 'aborted') return result('cancelled');
   }
 }
+
+export const FLEET_APPS = ['Phantom', 'Codex', 'Claude', 'Grok Bot', 'ChatGPT', 'Cursor', 'Safari', 'Google Chrome'] as const;

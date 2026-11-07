@@ -2,7 +2,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { awaitAppState, type AppAwaitResult, type AppAwaitTarget } from '../core/fleet/app-await.js';
-import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
+import { FLEET_APPS } from '../core/fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExec } from './fleet-app.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

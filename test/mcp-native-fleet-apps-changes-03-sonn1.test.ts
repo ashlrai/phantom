@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, expect, it, vi } from 'vitest';
 import { FLEET_APPS } from '../src/core/verse/fleet-apps-api.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -58,3 +59,5 @@ describe('native fleet app changes', () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual({ error: 'Fleet observation unavailable' });
   });
 });
+
+registerFleetNativeTools();

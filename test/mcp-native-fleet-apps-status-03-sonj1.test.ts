@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as inventory from '../src/cli/fleet-apps-status.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -58,3 +59,5 @@ describe('native fleet apps status', () => {
     expect(exec).toHaveBeenCalledTimes(8);
   });
 });
+
+registerFleetNativeTools();

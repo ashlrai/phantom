@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { awaitAppState } from '../core/fleet/app-await.js';
-import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
+import { FLEET_APPS } from '../core/fleet/app-await.js';
 import { findAppControlScript, findInstalledAppControlScript, type FleetAppExecOptions } from './fleet-app.js';
 
 const execFileAsync = promisify(execFile);
