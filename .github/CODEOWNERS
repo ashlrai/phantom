@@ -106,6 +106,7 @@
 /scripts/install-desktop-artifacts.mjs @masonwyatt23
 /scripts/publish-desktop-release.mjs @masonwyatt23
 /scripts/verify-release-policy.mjs @masonwyatt23
+/contrib/mac/release-autorun.sh @masonwyatt23
 /tools/custody/** @masonwyatt23
 **/*.plist @masonwyatt23
 **/*.entitlements @masonwyatt23

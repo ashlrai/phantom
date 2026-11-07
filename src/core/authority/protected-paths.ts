@@ -326,6 +326,8 @@ const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
       'scripts/publish-desktop-release.mjs',
       // Release-path policy verifier gating npm `latest` on the live publisher.
       'scripts/verify-release-policy.mjs',
+      // This external host observer invokes the stock signing/publication boundary.
+      'contrib/mac/release-autorun.sh',
       'tools/custody/**', '**/*.plist', '**/*.entitlements', '**/src-tauri/capabilities/**',
       '**/src-tauri/tauri.conf.json', '**/src-tauri/tauri.*.conf.json',
     ],
