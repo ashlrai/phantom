@@ -315,3 +315,5 @@ canonical release guide for required hosted qualification and publication.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
+
+- [App restart](APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.

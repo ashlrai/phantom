@@ -193,7 +193,7 @@ phm desktopctl run claude --task "summarise this repo" --json
 
 `capabilities` (the doctor) always runs and reports the connection, each macOS
 TCC grant and per-resource reasons for what is blocked. `run` needs a `full`
-grant and returns untrusted screen text. `browser` is read-only — act on the
+grant and returns untrusted screen text. `browser` is read-only -- act on the
 web through the Phantom Browser pane. Nothing prompts for or changes TCC
 grants; every action is feed-logged and refuses to run unlogged.
 
@@ -280,3 +280,5 @@ enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md)
 ## Import scheduled routines
 
 Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
+
+App restart: `phm app restart --json` currently exits 1 with a held result and performs no restart. See [ownership audit and acceptance work](docs/APP-RESTART.md). Do not infer session survival from an app relaunch.
