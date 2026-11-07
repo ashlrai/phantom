@@ -2,18 +2,21 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { createAppsChangesPublisher } from '../core/fleet/apps-changes-bus.js';
 import { FLEET_APPS } from '../core/verse/fleet-apps-api.js';
 import { selfCliPrefix, type AppsEnsureChildRunner } from './fleet-apps-ensure.js';
 
 const exec = promisify(execFile);
-const usage = 'Usage: ashlr fleet apps-changes --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--app <name>]... [--jsonl]';
+const usage = 'Usage: ashlr fleet apps-changes --duration-ms <1..300000> [--interval-ms <100..60000>] [--root <dir>] [--stop-file <path>] [--app <name>]... [--jsonl] [--bus]';
 export type State = 'running' | 'stopped' | 'unknown';
 export interface FleetAppsChangesDeps {
   runChild?: AppsEnsureChildRunner;
   now?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
+  createBusPublisher?: typeof createAppsChangesPublisher;
 }
 
 function inventory(code: number | null, stdout: string, selected: ReadonlySet<number>): { states: State[]; valid: boolean } {
@@ -46,13 +49,14 @@ function inventory(code: number | null, stdout: string, selected: ReadonlySet<nu
 export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChangesDeps = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   const invalid = (): number => { console.error(`error: invalid fleet apps-changes arguments\n${usage}`); return 2; };
-  let duration = 0, interval = 1000, root: string | undefined, stopFile: string | undefined, jsonl = false;
+  let duration = 0, interval = 1000, root: string | undefined, stopFile: string | undefined, jsonl = false, bus = false;
   const seen = new Set<string>();
   const requestedApps = new Set<number>();
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
-    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--jsonl', '--app'].includes(flag) || (flag !== '--app' && seen.has(flag))) return invalid();
+    if (!['--duration-ms', '--interval-ms', '--root', '--stop-file', '--jsonl', '--bus', '--app'].includes(flag) || (flag !== '--app' && seen.has(flag))) return invalid();
     seen.add(flag);
+    if (flag === '--bus') { bus = true; continue; }
     if (flag === '--jsonl') { jsonl = true; continue; }
     const value = args[++i];
     if (!value || value.startsWith('-')) return invalid();
@@ -70,17 +74,27 @@ export async function cmdFleetAppsChanges(args: string[], deps: FleetAppsChanges
     else { if (n < 100 || n > 60000) return invalid(); interval = n; }
   }
   if (!duration) return invalid();
+  let publisher: ReturnType<typeof createAppsChangesPublisher> | undefined;
+  let published = 0, failed = 0;
+  if (bus) {
+    try { publisher = (deps.createBusPublisher ?? createAppsChangesPublisher)(root ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs')); }
+    catch { /* Publication remains best effort. */ }
+  }
   let result: Awaited<ReturnType<typeof observeFleetAppsChanges>>;
   try { result = await observeFleetAppsChanges({ durationMs: duration, intervalMs: interval, root, stopFile, apps: [...requestedApps].map(i => FLEET_APPS[i]!) }, deps, event => {
-    if (jsonl) process.stdout.write(`${JSON.stringify(event)}\n`);
-    else if (event.type === 'summary') console.log(`Summary: ${event.outcome}, ${event.samples} samples, ${event.transitions} transitions`);
+    if (bus) {
+      try { if (publisher?.(event)) published++; else failed++; } catch { failed++; }
+    }
+    const output = bus && event.type === 'summary' ? { ...event, published, failed } : event;
+    if (jsonl) process.stdout.write(`${JSON.stringify(output)}\n`);
+    else if (event.type === 'summary') console.log(`Summary: ${event.outcome}, ${event.samples} samples, ${event.transitions} transitions${bus ? `, ${published} published, ${failed} failed` : ''}`);
     else console.log(`${event.time} ${event.type} ${event.app}: ${event.state}`);
   }); } catch { console.error('fleet apps-changes: cannot resolve the ashlr CLI entry'); return 1; }
   return result.outcome === 'complete' ? 0 : 1;
 }
 
-type ChangeEvent = { type: 'baseline' | 'transition'; app: string; state: State; time: string };
-type SummaryEvent = { type: 'summary'; outcome: 'complete' | 'cancelled' | 'unavailable'; samples: number; transitions: number };
+export type ChangeEvent = { type: 'baseline' | 'transition'; app: string; state: State; time: string };
+export type SummaryEvent = { type: 'summary'; outcome: 'complete' | 'cancelled' | 'unavailable'; samples: number; transitions: number };
 export async function observeFleetAppsChanges(
   options: { durationMs: number; intervalMs?: number; root?: string; stopFile?: string; apps?: readonly string[]; maxEvents?: number },
   deps: FleetAppsChangesDeps = {}, onEvent?: (event: ChangeEvent | SummaryEvent) => void,
