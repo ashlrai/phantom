@@ -205,6 +205,16 @@ export async function inspectDesktopArtifactInstall(input,dependencies) {
   return result;
 }
 
+/** Explicit apply checks the existing local drain before expensive hosted proof. */
+export async function runDesktopArtifactInstall(input,dependencies) {
+  if (input.apply) {
+    const io=createInstallerIo(dependencies);
+    await boundary('quiescence',()=>transaction.requireLocalQuiescence(io));
+  }
+  const inspected=await boundary('preflight',()=>inspectDesktopArtifactInstall(input,dependencies));
+  return input.apply?applyInspectedDesktopArtifacts(inspected):inspected;
+}
+
 function safeInstallParents(home,path) {
   assert.ok(path.startsWith(home+'/'),'installation path outside account home');directory(home,false);
   let at=home;
@@ -228,10 +238,7 @@ function newerCurrent(previous,manifest,io) {
 }
 function sameApp(actual,expected) {assert.ok(actual && actual.path===expected.path && actual.dev===expected.dev && actual.ino===expected.ino && actual.inventory===expected.inventory,'app changed');}
 
-export async function applyInspectedDesktopArtifacts(result) {
-  const admitted=admissions.get(result);assert.ok(admitted && !admitted.attempted,'missing or replayed in-process admission');
-  admitted.attempted=true; // every uncertain/failed attempt is non-replayable
-  const {input,dependencies:d,observed,implementation,proof,source,hosted}=admitted,m=observed.manifest;
+function createInstallerIo(d) {
   const io=transaction.createLocalAppTransactionIo({packageRoot:ROOT,home:d.home});
   // Child commands see only the normal OS account and system tools, never
   // ambient signing credentials, candidate arguments or candidate executables.
@@ -244,6 +251,14 @@ export async function applyInspectedDesktopArtifacts(result) {
     if (status!==0 && !['/bin/ps','/usr/sbin/lsof'].includes(bin)) throw phaseError(bin==='/usr/bin/open'?'app-launch':bin==='/usr/bin/codesign'?'app-signature':bin==='/usr/bin/plutil'?'app-identity':'app-transaction',new Error('Installer command refused'));
     return {status,stdout:child.stdout??''};
   };
+  return io;
+}
+
+export async function applyInspectedDesktopArtifacts(result) {
+  const admitted=admissions.get(result);assert.ok(admitted && !admitted.attempted,'missing or replayed in-process admission');
+  admitted.attempted=true; // every uncertain/failed attempt is non-replayable
+  const {input,dependencies:d,observed,implementation,proof,source,hosted}=admitted,m=observed.manifest;
+  const io=createInstallerIo(d);
   // Fresh hosted proof may be slow. Reprove each exact app immediately at the
   // existing exclusive-move boundary, including rollback; never move a merely
   // inode-matching bundle whose contents changed during that earlier proof.
@@ -374,8 +389,8 @@ async function main() {
     const home=userInfo().homedir;for(const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env,{HOME:home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'});
     const install=async()=> {
-      const deps=await boundary('implementation',productionInstallerDependencies), inspected=await boundary('preflight',()=>inspectDesktopArtifactInstall(input,deps));
-      console.log(JSON.stringify(input.apply?await applyInspectedDesktopArtifacts(inspected):inspected));
+      const deps=await boundary('implementation',productionInstallerDependencies);
+      console.log(JSON.stringify(await runDesktopArtifactInstall(input,deps)));
     };
     if (input.timings) await withArtifactInstallTiming(install,{emit:record=>console.error(JSON.stringify(record))});
     else await install();
