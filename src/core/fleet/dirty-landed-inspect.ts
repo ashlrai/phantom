@@ -33,6 +33,8 @@ export interface DirtyLandedPr {
   remainingPaths: string[];
   /** Fixed machine token explaining an `unknown` class — never stderr text. */
   reason?: string;
+  /** Bounded evidence for unusually wide zero-line diffs, when available. */
+  diffAnomaly?: { kind: 'zero-line'; files: number; causes: ('mode-only' | 'generated-path' | 'other-zero-line')[] };
 }
 
 export interface DirtyRow {
@@ -60,6 +62,36 @@ async function diffPaths(dir: string, a: string, b: string): Promise<string[] | 
   const diff = await git(dir, ['diff', '--name-only', '-z', a, b]);
   if (diff.code !== 0 || diff.timedOut || diff.truncated) return null;
   return diff.stdout.split('\0').filter(path => path.length > 0);
+}
+
+
+/** Report only complete, non-binary zero-line diffs; generated paths are a naming heuristic. */
+async function classifyWideDiff(dir: string, base: string, head: string, paths: string[]): Promise<DirtyLandedPr['diffAnomaly']> {
+  if (paths.length < 1000) return undefined;
+  const [stats, raw] = await Promise.all([
+    git(dir, ['diff', '--no-renames', '--numstat', '-z', base, head]),
+    git(dir, ['diff', '--no-renames', '--raw', '-z', base, head]),
+  ]);
+  if ([stats, raw].some(r => r.code !== 0 || r.timedOut || r.truncated)) return undefined;
+  const entries = stats.stdout.split('\0').filter(Boolean);
+  if (entries.length !== paths.length || entries.some(e => !/^0\t0\t/.test(e))) return undefined;
+  const parts = raw.stdout.split('\0');
+  if (parts.at(-1) === '') parts.pop();
+  if (parts.length !== paths.length * 2) return undefined;
+  let modes = 0, generated = 0, other = 0;
+  for (let i = 0; i < parts.length; i += 2) {
+    const match = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) [A-Z]$/.exec(parts[i]!);
+    if (!match) return undefined;
+    const path = parts[i + 1]!;
+    if (match[1] !== match[2] && match[3] === match[4]) modes++;
+    else if (/(?:^|\/)(?:generated|dist|build|vendor|node_modules)(?:\/|$)|(?:\.generated|\.min)\.[^/]+$/i.test(path)) generated++;
+    else other++;
+  }
+  const causes: NonNullable<DirtyLandedPr['diffAnomaly']>['causes'] = [];
+  if (modes) causes.push('mode-only');
+  if (generated) causes.push('generated-path');
+  if (other) causes.push('other-zero-line');
+  return { kind: 'zero-line', files: paths.length, causes };
 }
 
 export function unknownDirtyLanded(row: DirtyRow, reason: string): DirtyLandedPr {
@@ -92,10 +124,12 @@ export async function inspectDirtyLanded(dir: string, row: DirtyRow, remote: str
   if (changedPaths === null) return unknownDirtyLanded(row, 'diff-failed');
   const differing = await diffPaths(dir, base, head);
   if (differing === null) return unknownDirtyLanded(row, 'diff-failed');
+  const diffAnomaly = await classifyWideDiff(dir, mergeBase, head, changedPaths);
   const stillDiffering = new Set(differing);
   return {
     number: row.number, title: row.title, head: row.headSha, base: row.baseRef,
     class: classifyDirtyLanded(changedPaths, stillDiffering),
+    ...(diffAnomaly ? { diffAnomaly } : {}),
     changedPaths,
     landedPaths: changedPaths.filter(path => !stillDiffering.has(path)),
     remainingPaths: changedPaths.filter(path => stillDiffering.has(path)),

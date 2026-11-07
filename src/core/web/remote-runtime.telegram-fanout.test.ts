@@ -14,6 +14,11 @@ vi.mock('../config.js', async (original) => ({
   loadConfigReadOnly: () => ({ comms: { enabled: true, channel: 'telegram', telegram: { chatId: '12345', botToken: 'fake-token-123' } } }),
 }));
 vi.mock('../integrations/telegram.js', () => ({ sendTelegramMessage: mocks.telegram }));
+// The fan-out contract does not depend on real asynchronous email-config I/O.
+vi.mock('../fleet/operator-glance-read.js', async (original) => ({
+  ...await original<typeof import('../fleet/operator-glance-read.js')>(),
+  writeSignificantEmail: vi.fn(async () => undefined),
+}));
 vi.mock('./server.js', () => ({ assetsDir: () => mocks.assets }));
 vi.mock('./remote-device-store.js', () => ({ createRemoteDeviceStore: () => ({}) }));
 vi.mock('./remote-pairing.js', () => ({ createRemotePairing: () => ({}) }));

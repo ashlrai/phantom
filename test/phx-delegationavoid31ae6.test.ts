@@ -68,7 +68,7 @@ describe('delegation path exclusions', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it.each([['--avoid'], ['--avoid', '--from'], ['--avoid', '  ']])('rejects a missing exclusion value: %j', async (...invalid) => {
+  it.each([['--avoid'], ['--avoid', '--from'], ['--avoid', '  ']])('rejects a missing exclusion value: %j (%#)', async (...invalid) => {
     const load = vi.fn(async () => graph);
     expect(await query([...endpoints, ...invalid], load)).toMatchObject({ exit: 2, result: { error: { code: 'GRAPH_USAGE' } } });
     expect(load).not.toHaveBeenCalled();

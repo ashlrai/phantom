@@ -40,7 +40,7 @@ describe('fleet repo-rate', () => {
   });
 
   it.each([['--hours', '0'], ['--hours', 'Infinity'], ['--target', '-1'], ['--target', '1.5'],
-    ['--target'], ['--hours', ' '], ['--all', '--all'], ['--json', '--json'], ['--wat']])('rejects invalid flags %j before reading', async (...args) => {
+    ['--target'], ['--hours', ' '], ['--all', '--all'], ['--json', '--json'], ['--wat']])('rejects invalid flags %j before reading (%#)', async (...args) => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const read = vi.fn();
     expect(await cmdFleetRepoRate(args, { read, now: () => now })).toBe(2);

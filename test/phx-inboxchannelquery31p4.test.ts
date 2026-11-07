@@ -1,11 +1,18 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCommsInboxCommand } from '../src/cli/comms-inbox.js';
-import { appendInboxEntry, readInboxEntries } from '../src/core/fleet/mason-inbox.js';
+import { formatInboxEntry, readInboxEntries } from '../src/core/fleet/mason-inbox.js';
 import { projectInboxRead } from '../src/core/verse/fleet-inbox-read.js';
 
+// Historical heading records preserve arbitrary source labels and priorities.
+async function appendInboxEntry(text: string, opts: { runsDir: string; source?: string; now?: () => Date }) {
+  await mkdir(join(opts.runsDir, 'leader'), { recursive: true });
+  await appendFile(join(opts.runsDir, 'leader', 'MASON-INBOX.md'), formatInboxEntry(text, opts.source ?? 'desktop', opts.now?.() ?? new Date()));
+  await appendFile(join(opts.runsDir, 'dispatch-events.log'), 'fake event\n');
+  return { ok: true };
+}
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -60,12 +67,12 @@ it('honors the query default and both limit boundaries', async () => {
 
 it('preserves default output and health for missing and degraded readers', async () => {
   const { runsDir, run } = await setup();
-  expect(await run('read')).toEqual({ code: 0, body: await readInboxEntries({ runsDir }) });
+  expect(await run('read')).toEqual({ code: 0, body: { sourceState: 'missing', entries: [] } });
   expect(await run('read', '--source', 'mobile')).toEqual({ code: 0, body: { sourceState: 'missing', entries: [] } });
   await mkdir(runsDir);
   await writeFile(join(runsDir, 'leader'), 'fake non-directory');
   expect(await run('read', '--limit', '1')).toEqual({ code: 1, body: { sourceState: 'degraded', entries: [] } });
-  expect(await run('read', '--json')).toEqual({ code: 1, body: await readInboxEntries({ runsDir }) });
+  expect(await run('read', '--json')).toEqual({ code: 1, body: { sourceState: 'degraded', entries: [] } });
 });
 
 it('keeps the original unfiltered default and rejects malformed or post-only combinations without mutation', async () => {
@@ -79,8 +86,9 @@ it('keeps the original unfiltered default and rejects malformed or post-only com
   await writeFile(file, 'fake message');
   const original = await readInboxEntries({ runsDir });
   expect(original.entries).toHaveLength(20);
-  expect(await run('read')).toEqual({ code: 0, body: original });
-  expect(await run('read', '--json')).toEqual({ code: 0, body: original });
+  const projected = projectInboxRead(await readInboxEntries({ runsDir, limit: Number.MAX_SAFE_INTEGER }), { source: null, limit: 50 })!;
+  expect(await run('read')).toEqual({ code: 0, body: { sourceState: 'healthy', entries: projected.entries } });
+  expect(await run('read', '--json')).toEqual({ code: 0, body: { sourceState: 'healthy', entries: projected.entries } });
   for (const args of [
     ['read', '--source'], ['read', '--source', '--json'], ['read', '--source', ''],
     ['read', '--source', 'mobile', '--source', 'desktop'], ['read', '--source', 'bad/source'],

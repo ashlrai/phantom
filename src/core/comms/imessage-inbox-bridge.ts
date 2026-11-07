@@ -50,6 +50,8 @@ export interface IMessageIngestDeps {
   /** Shared runs context (inbox, receipts, queue, cursor). Default ~/.ashlr-runs. */
   runsDir?: string;
   now?: () => Date;
+  /** Intake availability seam; never changes the native transport or filesystem platform. */
+  platform?: NodeJS.Platform;
   /** chat.db seams for tests. */
   poll?: (afterRowId: number, cfg: AshlrConfig) => Promise<IntakePoll>;
   maxRowId?: typeof readMaxRowId;
@@ -98,7 +100,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
   const result: IMessageIngestResult = { ok: false, state: 'error', scanned: 0, accepted: 0, notMason: 0, teammate: 0, duplicate: 0, refused: 0, deferred: false, cursor: null };
   try {
     if (cfg.comms?.enabled !== true || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
-    if (process.platform !== 'darwin') return { ...result, state: 'unsupported' };
+    if ((deps.platform ?? process.platform) !== 'darwin') return { ...result, state: 'unsupported' };
     const now = deps.now ?? (() => new Date());
 
     const start = readCursor(deps.runsDir);

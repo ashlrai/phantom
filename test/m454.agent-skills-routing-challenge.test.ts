@@ -579,6 +579,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/README.md',
       'docs/SIGNALS.md', // PR #3076
       'docs/FLEET-API.md', // PR #2899
+      'docs/model-registry.json', // reviewed shipped model metadata
       'docs/PHANTOM-BRAND.md',
       'docs/COMPANIONS.md',
       'docs/CONNECTORS.md', // PR #3290
@@ -597,6 +598,8 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/STANDING-AUTHORITY.md',
       'docs/CLOUD.md',
       'docs/LEADER.md',
+      'docs/LEADER-NETWORK.md',
+      'docs/DISK-MAINT.md',
       'docs/DEVIN.md',
       'docs/VERSE-CONTEXT.md',
       'docs/VERSE-BROWSER.md',
@@ -626,6 +629,11 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/contracts/CONTRACT-M568.md',
       'docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md',
     ]);
+    // Explicit review of newly shipped members preserves challenge isolation.
+    for (const file of ['docs/model-registry.json', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md']) {
+      const source = readFileSync(join(REPO_ROOT, file), 'utf8');
+      for (const canary of consumerCanaries) expect(source).not.toContain(canary);
+    }
     expect(JSON.stringify(packageManifest.exports ?? {})).not.toContain('m454');
     expect(packageManifest.files).not.toContain('test');
     expect(packageManifest.files).not.toContain('scripts/generate-m454-agent-skills-challenge.mjs');
@@ -656,6 +664,9 @@ describe('M454 pinned upstream routing challenge', () => {
       expect(packedPaths).toContain('docs/STANDING-AUTHORITY.md');
       expect(packedPaths).toContain('docs/CLOUD.md');
       expect(packedPaths).toContain('docs/LEADER.md');
+      expect(packedPaths).toContain('docs/model-registry.json');
+      expect(packedPaths).toContain('docs/LEADER-NETWORK.md');
+      expect(packedPaths).toContain('docs/DISK-MAINT.md');
       expect(packedPaths).toContain('docs/DEVIN.md');
       expect(packedPaths).toContain('docs/VERSE-CONTEXT.md');
       expect(packedPaths).toContain('docs/VERSE-BROWSER.md');

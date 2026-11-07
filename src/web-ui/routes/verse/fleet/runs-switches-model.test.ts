@@ -4,8 +4,8 @@ import type { RunsSwitch } from './runs-switches-queries.js';
 
 describe('fleet switches model', () => {
   it.each([
-    ['ORCH_OFF', 'Leader passes'], ['OPUS_LEADER_OFF', 'Opus leader'], ['PAUSE', 'Launches'],
-    ['PUBLISH_HOLD', 'Publishing'], ['HOLD', 'Dispatcher'], ['QUEUE_DISABLE', 'Queue'], ['NEW_FLAG', 'NEW_FLAG'], ['toString', 'toString'],
+    ['ORCH_OFF', 'Scheduled planning passes'], ['OPUS_LEADER_OFF', 'Claude planning loop'], ['PAUSE', 'Launches'],
+    ['PUBLISH_HOLD', 'Publishing'], ['HOLD', 'Saved lane holds'], ['QUEUE_DISABLE', 'Queue'], ['NEW_FLAG', 'NEW_FLAG'], ['toString', 'toString'],
   ])('labels %s', (id, label) => expect(switchLabel(id)).toBe(label));
 
   it('summarizes the disabled running states', () => {
@@ -13,6 +13,7 @@ describe('fleet switches model', () => {
     expect(switchSummary([row('PAUSE', false)])).toBe('All on');
     expect(switchSummary([row('PAUSE', true)])).toBe('1 switch off: Launches');
     expect(switchSummary([row('PAUSE', true), row('PUBLISH_HOLD', true)])).toBe('2 switches off: Launches, Publishing');
+    expect(switchSummary([row('HOLD', true), row('PAUSE', false)])).toBe('All on');
   });
 
   it('formats known elapsed times and omits invalid or future dates', () => {

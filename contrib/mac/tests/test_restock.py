@@ -449,6 +449,56 @@ class AutoUnparkTests(unittest.TestCase):
         self.assertIn('RQ-NEED', md)
 
 
+class ReplenishmentDiagnosticsTests(unittest.TestCase):
+    def test_local_and_personal_parked_rows_do_not_fill_lanes_or_loop(self):
+        rows = [line('RQ-LOCAL-NEW', pool='codex-local', repo='phantom'),
+                line('RQ-PERSONAL-NEW', pool='codex-personal', repo='phantom')]
+        slots = {l: {'held': True} for l in LANES}
+        slots.update({'codex-local': {'target': 1}, 'codex-personal': {'target': 1}})
+        tmp = build('\n'.join(rows) + '\n', slots=slots,
+                    lanes_status={l: {'queued': 20} for l in LANES})
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        empty = q / 'prompts/empty.md'
+        empty.write_text('')
+        waiting = q / 'prompts/wait.md'
+        waiting.write_text('DEPENDENCY GATE: RQ-UPSTREAM\n')
+        row = f'PARKED-DEP.codex-local\tRQ-WAIT\tcodex-local\twork\tphantom\t{waiting}'
+        (q / 'ready.tsv').write_text('\n'.join([row, row,
+            f'PARKED-DEP.codex-personal\tRQ-EMPTY\tcodex-personal\twork\tphantom\t{empty}',
+            'PARKED-DEP.codex-local\tbroken', 'bad\tphantom\tcodex-personal']) + '\n')
+        result = restock(home, '--per-lane', '1', '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertEqual(out['queued'], 2)
+        self.assertEqual(out['parked_diagnostics'], {'invalid': 1, 'empty_gate': 1, 'waiting': 1, 'duplicate': 1})
+        self.assertEqual(out['queue_diagnostics']['invalid'], 1)
+        ready = (q / 'ready.tsv').read_text()
+        self.assertIn('RQ-LOCAL-NEW\tphantom\tcodex-local\t', ready)
+        self.assertIn('RQ-PERSONAL-NEW\tphantom\tcodex-personal\t', ready)
+        again = json.loads(restock(home, '--per-lane', '1', '--json').stdout)
+        self.assertEqual(again['queued'], 0)
+        self.assertEqual((q / 'ready.tsv').read_text(), ready)
+
+    def test_duplicate_parked_rows_unpark_once(self):
+        tmp = build('')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        pf = q / 'prompts/wait.md'
+        pf.write_text('DEPENDENCY GATE: RQ-DEP\n')
+        row = f'PARKED-DEP.devin\tRQ-WAIT\tdevin\twork\tphantom\t{pf}'
+        (q / 'ready.tsv').write_text(row + '\n' + row + '\n')
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(json.dumps(
+            {'event': 'outcome', 'state': 'MERGED', 'job': 'RQ-DEP'}) + '\n')
+        result = json.loads(restock(home, '--per-lane', '1', '--json').stdout)
+        self.assertEqual(len(result['unpark']), 1)
+        self.assertEqual((q / 'ready.tsv').read_text().count('RQ-WAIT\tphantom'), 1)
+        again = json.loads(restock(home, '--per-lane', '1', '--json').stdout)
+        self.assertEqual(again['unpark'], [])
+
+
 class NoopCutTests(unittest.TestCase):
     """RQ-PSEL-4-NOOPCUT: PR/file dedupe and the 2-NOOPs-in-24h park."""
 
@@ -554,6 +604,7 @@ class PrecheckAuthoringTests(unittest.TestCase):
             self.assertIn(f'{job}\tphantom\tdevin\t', (q / 'ready.tsv').read_text())
             self.assertTrue((q / f'prompts/{job}.md').exists())
             self.assertIn(blocked, (q / 'router-queue.md').read_text())
+            (q / 'ready.tsv').write_text('')  # dispatcher consumed this job
         checks = (home / 'checks').read_text()
         self.assertEqual(checks.count('RQ-UNCERTAIN'), 1)  # One precheck across three fresh processes
         self.assertNotIn('RQ-SATISFIED', checks)

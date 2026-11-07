@@ -3,6 +3,7 @@ import { validateDropJob } from './drop-job-writer.js';
 
 /** Keep the desktop's UTC id so both entry points spend the same drop id. */
 export function recutDropJob(pr: DirtyLandedPr, nowMs: number) {
+  if (pr.diffAnomaly) return { reason: 'diff-anomaly' } as const;
   if (pr.class !== 'needs-recut' && pr.class !== 'partly-landed') return { reason: 'class' } as const;
   if (!/^bridge: RQ-PHX-/.test(pr.title)) return { reason: 'title' } as const;
   if (!pr.remainingPaths.length) return { reason: 'empty' } as const;

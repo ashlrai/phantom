@@ -15,6 +15,7 @@ type BusDeps = DrainDeps & {
 // --bus-delivery-timeout-ms to 1..60000. This does not cancel the write.
 const DEFAULT_DELIVERY_TIMEOUT_MS = 1000;
 const MAX_DELIVERY_TIMEOUT_MS = 60000;
+export const usage = 'Usage: ashlr fleet guardian-bus [guardian-drain args] [--bus-from <label>] [--bus-to <address>] [--bus-run-id <id>] [--bus-runs-dir <abs>] [--bus-delivery-timeout-ms <1..60000>]';
 
 /** Route sanitized drain observations to the shared inbox. Routing labels are not authority. */
 export async function cmdFleetGuardianBus(args: string[], deps: BusDeps = {}): Promise<number> {

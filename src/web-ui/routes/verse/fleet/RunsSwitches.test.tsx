@@ -26,6 +26,10 @@ describe('RunsSwitches', () => {
     const launches = within(group).getByRole('switch', { name: 'Launches' });
     expect(launches).toHaveAttribute('aria-checked', 'false');
     expect(within(group).getByRole('switch', { name: 'Queue' })).toHaveAttribute('aria-checked', 'true');
+    const savedHolds = within(group).getByRole('switch', { name: 'Saved lane holds' });
+    expect(savedHolds).toBeDisabled();
+    fireEvent.click(savedHolds);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
     fireEvent.click(launches);
     expect(launches).toBeDisabled();
     expect(launches).toHaveAttribute('aria-checked', 'false');

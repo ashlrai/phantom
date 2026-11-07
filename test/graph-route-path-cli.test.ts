@@ -103,7 +103,7 @@ describe('graph path CLI', () => {
     ['path', 'a', 'b', '--edge-kind', 'reviews', '--max-hops', '17'], ['path', 'a', 'b', '--edge-kind', 'reviews', '--max-hops', '1.0'],
     ['path', 'a', 'b', '--edge-kind', 'reviews', '--max-hops', '1', '--max-hops', '2'],
     ['path', 'a', 'b', '--edge-kind', 'reviews', '--json'],
-  ])('rejects invalid or duplicate arguments %j before loading', async (...invalid) => {
+  ])('rejects invalid or duplicate arguments %j before loading (%#)', async (...invalid) => {
     expect(await query(invalid, 2)).toMatchObject({ status: 'error', error: { code: 'GRAPH_USAGE' } });
     expect(loader.loadGraph).not.toHaveBeenCalled();
   });

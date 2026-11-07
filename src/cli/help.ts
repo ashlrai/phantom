@@ -341,6 +341,30 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'ChannelAddResult {ok, kind, changed, credential, next}',
   },
   {
+    usage: 'phm channels slack status [--json]',
+    description: 'Offline Slack-bridge rollup: agent-network.toml parse state, bridge and workspace ids, phm_ reference names (never values), journal counts and the next step. No socket, API call or credential IO. Exit 0 report, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'SlackBridgeStatus {v:1, config, slackSection, bridge, credentials, mappings, teamIdentities, comms, journal, ready, next}',
+  },
+  {
+    usage: 'phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]',
+    description: 'Dry-run the Slack bridge mapping: topic/channel table, one topic\'s route, and (with a saved conversations.info/members snapshot) the audience gates and send-policy verdict. Never sends. Exit 0 report, 1 input error, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'SlackMapReport {v:1, dryRun:true, mappings[], route?, audience?, sendPolicy?, comms, note}',
+  },
+  {
+    usage: 'phm channels slack probe [--json]',
+    description: 'Authenticate the configured Slack workspace and bot through host-injected credentials. No sends or token output; reports actual identity and observation time.',
+    safety: 'read',
+    jsonShape: '{ok, teamId?, userId?, botId?, observedAt, reason?}',
+  },
+  {
+    usage: 'phm channels slack run --seconds <1-300> [--json]',
+    description: 'Run a bounded authenticated Slack Socket Mode session on the existing durable bus. Requires approved team audience; persists outbound intent before sending and reconciles uncertain sends. Private iMessage/email bodies stay local.',
+    safety: 'append',
+    jsonShape: '{ok, mode?, sent, duplicate, uncertain, refused, observedAt, reason?}',
+  },
+  {
     usage: 'ashlr ask "<question>" [--json] | ashlr ask status [--jobs <path>] [--json]',
     description: 'Local RAG over the indexed portfolio; cites repo/file:line. Local models only unless --allow-cloud. status prints the ask.status.v1 stream derived from the metrics jobs ledger.',
     safety: 'read',
@@ -480,6 +504,10 @@ export function agentDocsText(): string {
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_orders,');
   lines.push('phantom_fleet_graph, phantom_fleet_session. Tool discovery is not authorization.');
+  lines.push('App recovery observation tools: phantom_fleet_apps_history,');
+  lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
+  lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
+  lines.push('These read retained local evidence only; they never query or launch apps.');
   lines.push('Website tools: ashlr_website_status reads publication mode, phase and holds;');
   lines.push('ashlr_website_publish requests the exact normally merged website revision with');
   lines.push('profile=phantom-public-web and expectedMerge=<40-hex SHA>. The commissioned host');
@@ -753,7 +781,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
   { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
-  { cmd: 'channels add <kind> | status [--json]', desc: 'Bring a channel up (config only, credentials stay in custody) or read the per-channel rollup.', topic: 'autonomy' },
+  { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
   { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },

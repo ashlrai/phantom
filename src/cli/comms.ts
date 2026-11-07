@@ -581,7 +581,7 @@ function printCommsHelp(): void {
   console.log('');
   console.log('  Phantom comms — bidirectional operator channel (Telegram/iMessage)');
   console.log('');
-  console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand>');
+  console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|pair-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read                durable local JSON inbox (bus --help)');
@@ -599,6 +599,7 @@ function printCommsHelp(): void {
   console.log('    ask-vision                   run a Leader tick + deliver the latest memo via the Leader thread');
   console.log('    ask-merges                   post ship proposals for approval + run cycle');
   console.log('    setup-telegram               print Telegram setup steps + discover chat id');
+  console.log('    pair-telegram [--json]       locally pair the configured private owner; never prints credentials');
   console.log('    telegram-brand [--json]      preview the configured bot’s Phantom display profile');
   console.log('      --apply --expected-bot-id <id>  update default-locale profile and verify readback');
   console.log('');
@@ -625,6 +626,7 @@ const COMMS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> 
 };
 
 export async function cmdComms(args: string[]): Promise<number> {
+  if (args[0] === 'pair-telegram') return (await import('./comms-telegram-pair.js')).cmdPairTelegram(args.slice(1));
   if (args[0] === 'bus') return cmdCommsBus(args.slice(1));
   if (args[0] === 'inbox') return cmdCommsInbox(args.slice(1));
   if (args[0] === 'email-drop') return cmdCommsEmailDrop(args.slice(1));
@@ -675,7 +677,7 @@ export async function cmdComms(args: string[]): Promise<number> {
       return cmdSetupTelegram();
     default:
       console.error(`unknown subcommand: ${sub}`);
-      console.error('usage: phm comms <status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|telegram-brand|email-drop>');
+      console.error('usage: phm comms <status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|pair-telegram|telegram-brand|email-drop>');
       return 2;
   }
 }

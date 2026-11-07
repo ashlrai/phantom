@@ -118,16 +118,16 @@ describe('phm resources personal', () => {
   });
 
   it('reports missing, invalid and stale evidence honestly', async () => {
-    expect(await cmdResources(['personal', '--json'])).toBe(0);
+    expect(await cmdResources(['personal', '--json'])).toBe(1);
     expect(report().resources[0]).toMatchObject({ state: 'unavailable', observedAt: null, session: null, weekly: null });
     const personal = join(root, '.codex-2');
     rollout(personal, limits(window(-1, 300, '2036-06-14T17:00:00Z'), null));
-    expect(await cmdResources(['personal', '--json'])).toBe(0);
+    expect(await cmdResources(['personal', '--json'])).toBe(1);
     expect(report().resources[0]).toMatchObject({ state: 'unavailable', session: null, weekly: null });
     rollout(personal, limits(window(46, 300, '2036-06-12T17:00:00Z'), null), '2036-06-12T12:00:00Z');
-    expect(await cmdResources(['personal', '--json'])).toBe(0);
+    expect(await cmdResources(['personal', '--json'])).toBe(1);
     expect(report().resources[0]).toMatchObject({ state: 'stale', session: { usedPct: 46 }, weekly: null });
-    expect(await cmdResources(['personal'])).toBe(0);
+    expect(await cmdResources(['personal'])).toBe(1);
     expect(output.mock.calls.map((call) => call[0]).join('\n')).toContain('Weekly: unavailable');
   });
 
