@@ -230,6 +230,7 @@ canonical release guide for required hosted qualification and publication.
 - [Ashlr — Reliability: failure modes & recovery](https://github.com/ashlrai/phantom/blob/master/docs/RELIABILITY.md)
 - [Autonomy authority](AUTHORITY.md)
 - [Autonomy setup](AUTONOMY-SETUP.md)
+- [Bus threads and task board](https://github.com/ashlrai/phantom/blob/master/docs/BUS-THREADS.md)
 - [CLI failure handling for agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-CLI-CONTRACTS.md)
 - [Channel delivery contract](https://github.com/ashlrai/phantom/blob/master/docs/CHANNEL-DELIVERY-CONTRACT.md)
 - [Channel guide](https://github.com/ashlrai/phantom/blob/master/docs/CHANNELS.md)

@@ -76,7 +76,7 @@ export async function cmdFleetPrRepeats(
     const arg = args[i]!;
     if (seen.has(arg)) { console.error(USAGE); return 2; }
     seen.add(arg);
-    if (arg === '--json') continue;
+    if (arg === '--json') { json = true; continue; }
     if (arg === '--hours') {
       const value = args[++i] ?? '';
       hours = Number(value);
