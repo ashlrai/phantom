@@ -87,6 +87,8 @@ describe('bootstrap launchers are never executed', () => {
       for (const marker of markers) expect(existsSync(marker)).toBe(false);
     });
 
+    // The registry spawns a real probe per tool; that alone runs close to the
+    // 5s default, so give this subprocess-bound test explicit headroom.
     it('a non-launcher tool whose version probe fails is not installed, even with a version on stderr', () => {
       const dir = fixtureDir();
       const path = join(dir, 'morphkit');
@@ -96,7 +98,7 @@ describe('bootstrap launchers are never executed', () => {
 
       expect(getToolsRegistry().tools.find(tool => tool.id === 'morphkit'))
         .toMatchObject({ installed: false, version: null, path: null });
-    });
+    }, 20_000);
   });
 
   describe('Locus install hint', () => {
