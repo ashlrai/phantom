@@ -133,6 +133,11 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+The reaper consults the job ledger before handoff: a merged outcome for the
+current launch, including one linked through its published PR URL, prevents a
+leftover `.base` from triggering another publication. Repeated handoffs for an
+unfinished attempt record its finish only once; a later launch starts a new
+attempt. These records do not remove the worktree or replace publisher recovery.
 
 ## Adaptive concurrency and batching
 

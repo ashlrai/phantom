@@ -558,6 +558,20 @@ for p in glob.glob(RUN + "/*.dispatched"):
 
 # ---- (a) reap
 running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
+# A leftover .base is not evidence that an already merged attempt needs another
+# publisher. A later launch starts a new attempt with the same job id.
+_attempts = {}; _merged_urls = set()
+for row in batcher.read_rows(MD + "/jobs.jsonl"):
+    if not isinstance(row, dict): continue
+    event, job = row.get("event"), row.get("job")
+    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED":
+        if isinstance(row.get("url"), str) and row["url"]: _merged_urls.add(row["url"])
+    if not isinstance(job, str): continue
+    if event == "launch": _attempts[job] = {"finished": False, "merged": False, "urls": set()}
+    attempt = _attempts.setdefault(job, {"finished": False, "merged": False, "urls": set()})
+    if event == "finish": attempt["finished"] = True
+    if event == "publish" and isinstance(row.get("url"), str) and row["url"]: attempt["urls"].add(row["url"])
+    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED": attempt["merged"] = True
 # A new marker covers the spawn-to-ps race. Old orphan markers still protect
 # their own job, but must not stop every other publisher forever.
 def _reap_starting(j):
@@ -620,6 +634,8 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
     if not os.path.isdir(wt) or j in reaping or j in publishing: continue
+    attempt = _attempts.get(j, {})
+    if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
     if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
@@ -659,7 +675,7 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
         try: bsize = reap_batch(j, wt, pool, wall_s)
         except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
-        if not os.path.exists(RUN + "/" + j + ".timeout"):
+        if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
             metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
                 "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
                 "diff_files": nf, "diff_lines": (int(ins.group(1)) if ins else 0) + (int(dele.group(1)) if dele else 0), "empty": nf == 0,
