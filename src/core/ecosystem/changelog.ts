@@ -54,7 +54,7 @@ const SOURCES: readonly ChangelogSource[] = ['changelog', 'release', 'pull-reque
 const REPOSITORY = /^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._-]*$/i;
 const DIRECTORY = /^[a-z0-9][a-z0-9._-]*$/i;
 const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
-const clean = (value: string): string => value.replace(/\r\n?/g, '\n').replace(/\u2014/g, ' - ').trim();
+const clean = (value: string): string => value.replace(/\r\n?/g, '\n').replace(/[\u2010-\u2015]/g, ' - ').trim();
 class InvalidResponse extends Error {}
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidResponse();
@@ -113,6 +113,13 @@ export function parseEcosystemChangelog(repository: string, markdown: string): E
     if (!inFence && /^##\s+/.test(line)) sections.push({ heading: line, body: [] });
     else sections.at(-1)?.body.push(line);
   }
+  // A section's identity is its normalized heading, not just its version:
+  // Phantom keeps many pending milestone sections under one `[Unreleased]`
+  // version whose bodies legitimately differ. Distinct headings get deterministic
+  // `~N` keys in document order; identical headings keep the same key so
+  // conflicting bodies still fail in unique().
+  const keys = new Map<string, string>();
+  const perVersion = new Map<string, number>();
   const entries = sections.flatMap(({ heading, body }) => {
     const match = /^##\s+(?:\[([^\]]+)\](?:\([^)]*\))?|([^\s(]+))(.*)$/.exec(heading);
     if (!match) return [];
@@ -122,8 +129,17 @@ export function parseEcosystemChangelog(repository: string, markdown: string): E
     if (!pendingHeading && !/^v?\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/.test(version)) return [];
     const day = /\b\d{4}-\d{2}-\d{2}\b/.exec(match[3])?.[0];
     const date = !unreleased && day ? timestamp(`${day}T00:00:00Z`) : null;
+    const title = clean(heading.replace(/^##\s+/, ''));
+    const identity = `${version}\n${title}`;
+    let key = keys.get(identity);
+    if (key === undefined) {
+      const ordinal = (perVersion.get(version) ?? 0) + 1;
+      perVersion.set(version, ordinal);
+      key = ordinal === 1 ? version : `${version}~${ordinal}`;
+      keys.set(identity, key);
+    }
     return [{
-      ...change(repository, 'changelog', version, clean(heading.replace(/^##\s+/, '')), clean(body.join('\n')), date,
+      ...change(repository, 'changelog', key, title, clean(body.join('\n')), date,
         `https://github.com/${repository}/blob/HEAD/CHANGELOG.md`),
       version, unreleased,
     }];
