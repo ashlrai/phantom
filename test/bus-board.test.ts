@@ -120,6 +120,32 @@ describe('fleet claim handoff (SharedStore.handoffClaim)', () => {
 });
 
 describe('bus board threads', () => {
+  it('records recipient acknowledgements idempotently and exposes only sender metadata', async () => {
+    const store = board();
+    const thread = threadWith('alice', 'bob', 'carol');
+    await store.post('alice', thread, 'private body');
+    const delivery = store.readThread('bob', thread)[0]!;
+    expect(store.receipts('alice', thread)).toEqual([]);
+    expect(() => store.acknowledge('carol', thread, delivery.id)).toThrow('Bus delivery not found');
+    const receipt = store.acknowledge('bob', thread, delivery.id);
+    expect(board().acknowledge('bob', thread, delivery.id)).toEqual(receipt);
+    expect(board().receipts('alice', thread)).toEqual([receipt]);
+    expect(store.receipts('carol', thread)).toEqual([]);
+    expect(JSON.stringify(receipt)).not.toContain('private body');
+    expect(() => store.receipts('outsider', thread)).toThrow('Thread missing or peer has not joined');
+  });
+
+  it('fails closed on corrupt acknowledgement state', async () => {
+    const store = board();
+    const thread = threadWith('alice', 'bob');
+    await store.post('alice', thread, 'hello');
+    const file = join(boardRoot, 'state.json');
+    const state = JSON.parse(readFileSync(file, 'utf8'));
+    state.receipts = [{ deliveryId: 'missing', recipient: 'bob', receivedAt: new Date().toISOString() }];
+    writeFileSync(file, JSON.stringify(state));
+    expect(() => store.receipts('alice', thread)).toThrow('Invalid bus receipt');
+  });
+
   it('creates, joins, posts, reads, hops and lists with membership gating', async () => {
     const store = board();
     const threadId = threadWith('alice', 'bob');

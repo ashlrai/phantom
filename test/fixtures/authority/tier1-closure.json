@@ -656,6 +656,7 @@
     "src/core/fleet/status.ts",
     "src/core/fleet/stray-slots.ts",
     "src/core/fleet/stray-stop.ts",
+    "src/core/fleet/stuck-fixes.ts",
     "src/core/fleet/subscription-usage.ts",
     "src/core/fleet/superseded-prs.ts",
     "src/core/fleet/task-ready-frontier.ts",
