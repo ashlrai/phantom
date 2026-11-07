@@ -271,6 +271,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ship-gap': () => import('./fleet-ship-gap.js'),
   'skill-calibration': () => import('./fleet-skill-calibration.js'),
   'skip-forecast': () => import('./fleet-skip-forecast.js'),
+  'skip-reasons': () => import('./fleet-skip-reasons.js'),
   'skips': () => import('./fleet-skips.js'),
   'slow-prs': () => import('./fleet-slow-prs.js'),
   'staging-inventory': () => import('./fleet-staging-inventory.js'),
