@@ -42,6 +42,7 @@ import { InboxView } from '../routes/inbox/InboxView.js';
 import { AgentOsView } from '../routes/agent-os/AgentOsView.js';
 import { ConnectView } from '../routes/connect/ConnectView.js';
 import { UniverseView } from '../routes/universe/UniverseView.js';
+import { PagesView } from '../routes/pages/PagesView.js';
 import { ConnectorsSettings } from '../routes/settings/connectors/ConnectorsView.js';
 import { NAV_GROUPS, ALL_NAV_LEAVES } from './nav-config.js';
 
@@ -65,6 +66,8 @@ export function AppRoutes() {
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />
         <Route path="/journal" element={<JournalView />} />
+        <Route path="/pages" element={<PagesView />} />
+        <Route path="/pages/:slug" element={<PagesView />} />
         <Route path="/intelligence/pulse" element={<PulseView />} />
         <Route path="/intelligence/genome" element={<GenomeView />} />
         <Route path="/intelligence/production" element={<ProductionView />} />
