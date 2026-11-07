@@ -584,7 +584,7 @@ function printCommsHelp(): void {
   console.log('  Usage: phm comms <inbox|bus|email-drop|email-cycle|setup-email|status|diagnose|send-test|cycle|ask|digest|ask-vision|ask-merges|setup-telegram|pair-telegram|telegram-brand>');
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
-  console.log('    bus post|read                durable local JSON inbox (bus --help)');
+  console.log('    bus post|read|watch|next|claim  durable local agent message plane (bus --help)');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
   console.log('    email-cycle                  process the enabled saved email drop configuration');
