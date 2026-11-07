@@ -51,6 +51,7 @@ const ALLOW_LIST: Record<string, string> = {
   'fleet-red-fix.test.ts': 'test stub — exported functions are test fixtures',
   'fleet-superseded-close.test.ts': 'test stub — exported functions are test fixtures',
   'fleet-teammates.test.ts': 'colocated vitest suite — tests the verb, is not itself a verb',
+  'fleet-outcome-why.test.ts': 'colocated vitest suite — tests the verb, is not itself a verb',
 };
 
 const CLI_DIR = join(__dirname, '..', 'src', 'cli');

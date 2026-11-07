@@ -49,6 +49,8 @@
  *   swarms [--json]            List past swarm runs.
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+ *   pages publish <file> [opts]  Publish a Markdown/JSON report into the local dashboard (/pages/<slug>).
+ *   pages list [--json]          List published report pages.
  *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
@@ -426,6 +428,14 @@ const loadDashboardCmd = lazyCmd(
   () => import('./dashboard.js' as unknown as string),
   (m) => m.cmdDashboard as Cmd,
   'dashboard command requires src/cli/dashboard.ts (M211 module not yet built).',
+);
+
+// ─── COS report pages command loader ────────────────────────────────
+
+const loadPagesCmd = lazyCmd(
+  () => import('./pages.js' as unknown as string),
+  (m) => m.cmdPages as Cmd,
+  'pages command requires src/cli/pages.ts.',
 );
 
 // ─── M14 command loader ────────────────────────────────────────────
@@ -2349,6 +2359,14 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pages': {
+        // COS report pages: publish a .md/.json report into the loopback
+        // dashboard at /pages/<slug>, or list published pages.
+        const cmdPages = await loadPagesCmd();
+        process.exitCode = await cmdPages(rest);
+        break;
+      }
+
       case 'serve': {
         const cmdServe = await loadServeCmd();
         process.exitCode = await cmdServe(rest);
@@ -2613,6 +2631,12 @@ async function main(): Promise<void> {
       case 'verify': {
         const { cmdVerify } = await import('./verify.js');
         process.exitCode = await cmdVerify(rest);
+        break;
+      }
+
+      case 'engineering-receipt': {
+        const { cmdReceipt } = await import('./engineering-receipt.js');
+        process.exitCode = await cmdReceipt(rest);
         break;
       }
 
