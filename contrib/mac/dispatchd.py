@@ -646,6 +646,12 @@ def _prio(bp):
 # but release the repo as soon as the worker has an explicit terminal outcome.
 fix_main_repos = {_job_repo(j) for j in alive if j.startswith("RQ-FIX-MAIN-")
                   and _rc(j) is None and not result(j)}
+def drain_target(j, repo):
+    # Only the refix producer's exact ID identifies a PR; other DRAIN jobs
+    # must remain independent, including repos whose names contain hyphens.
+    m = re.fullmatch(r"RQ-DRAIN-" + re.escape(repo) + r"-([1-9][0-9]*)-[0-9a-fA-F]{7}", j) if repo else None
+    return (repo, m.group(1)) if m else None
+drain_targets = {drain_target(j, _job_repo(j)) for j in alive if _rc(j) is None and not result(j)} - {None}
 LANDONLY_PREFIXES = ("RQ-DESK-",)   # fixed strings in code; never read from the file
 def _landonly_ids():   # exact tokens only (whitespace-split, as before); tokens that are not valid job ids are ignored
     return {t for t in rd(R + "/PUBLISH_LANDONLY").split() if JID.match(t)}
@@ -665,6 +671,9 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
     except Exception: recent = NOW
     if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
         if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
+        if _rc(j) is None and not result(j):
+            target = drain_target(j, _job_repo(j))
+            if target: drain_targets.add(target)
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
@@ -1025,7 +1034,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return None
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (batcher.batchable_id(m) and f[2] in batcher.BATCH_LANES and (lead or m not in seen) and not retired(m)
+        return (batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
                 and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
                 and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
@@ -1056,6 +1065,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
         if res and res.startswith("RESULT PR"):
             ev("SKIP_DONE %s already has a PR" % j); seen.add(j); continue
+        target = drain_target(j, repo)
+        if target and res and res.startswith("RESULT EMPTY"):
+            ev("SKIP_DONE %s already finished empty" % j); seen.add(j); continue
         if os.path.exists(RUN + "/" + j + ".batched"):   # a running batch owns it and re-queues it unless done
             ev("SKIP_BATCHED %s owned by %s" % (j, rd(RUN + "/" + j + ".batched").strip())); seen.add(j); continue
         if disk_reuse_only and not _kind(j, REUSE_KINDS):
@@ -1063,6 +1075,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if not os.path.exists(mk): open(mk, "w").close(); ev("DISKGUARD defer %s %dG" % (j, disk_free_gb))
             rest.append(line); seen.add(j); continue
         if j.startswith("RQ-FIX-MAIN-") and repo in fix_main_repos:
+            rest.append(line); seen.add(j); continue
+        if target and target in drain_targets:
             rest.append(line); seen.add(j); continue
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
                 or running[lane] >= s["target"] or sum(running.values()) >= GCAP or j in alive or j in reaping or j in publishing):
@@ -1139,6 +1153,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
         if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
+        if target: drain_targets.add(target)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
         mj = jload(R + "/models.json", {}); model = mj.get(fam + "." + tier) or mj.get(fam)
         metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap,
