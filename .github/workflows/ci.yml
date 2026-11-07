@@ -137,11 +137,13 @@ jobs:
         if: steps.history.outputs.equal != 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Restore protected-branch compiler state
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        # Read the protected base's incremental graph; tsc still validates the
+        # candidate below. Only a successful master push saves compiler state.
+        if: steps.history.outputs.equal != 'true'
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: node_modules/.cache/phantom-backend.tsbuildinfo
-          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.sha }}
+          key: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
           restore-keys: master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-
       - name: Core no-emit type check
         if: steps.history.outputs.equal != 'true'
@@ -635,12 +637,11 @@ jobs:
               test/m467.detached-post-merge-verification.test.ts
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Full-audit FIFO pools are shared across runs; release jobs use other groups.
+    # FIFO preserves up to 100 pending jobs per pool; GitHub cancels overflow.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-shared' || format('ci-mac-{0}-shared', github.run_id) }}
+      group: ci-full-mac-shared-and-broker
+      queue: max
       cancel-in-progress: false
     env: *node_ci_environment
     steps: *node_ci_steps
@@ -661,16 +662,15 @@ jobs:
     # Complete single-worker partitions measured 60–65 minutes. Match the
     # existing 90-minute hermetic wrapper; individual test bounds stay intact.
     timeout-minutes: 90
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Full-audit FIFO pools are shared across runs; release jobs use other groups.
+    # FIFO preserves up to 100 pending jobs per pool; GitHub cancels overflow.
     concurrency:
-      group: ${{ github.event_name == 'push' && format('ci-master-mac-general-{0}', matrix.shard) || format('ci-mac-{0}-general-{1}', github.run_id, matrix.shard) }}
+      group: ci-full-mac-general-${{ contains(fromJSON('[1,3]'), matrix.shard) && 'odd' || 'even' }}
+      queue: max
       cancel-in-progress: false
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 2
       matrix:
         shard: [1, 2, 3, 4]
         # Daily rotation keeps leg 1 only; the complete set excludes nothing.
@@ -745,12 +745,11 @@ jobs:
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 30
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Full-audit FIFO pools are shared across runs; release jobs use other groups.
+    # FIFO preserves up to 100 pending jobs per pool; GitHub cancels overflow.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-isolated' || format('ci-mac-{0}-isolated', github.run_id) }}
+      group: ci-full-mac-isolated
+      queue: max
       cancel-in-progress: false
     env:
       ASHLR_VITEST_TEST_TIMEOUT_MS: '5000'
@@ -827,12 +826,11 @@ jobs:
     if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
     runs-on: macos-latest
     timeout-minutes: 20
-    # Master runs each Mac lane one push at a time: a newer push replaces the
-    # one still waiting, so a burst of merges cannot stack hours of Mac work
-    # ahead of every PR. Merge Gate accepts that replacement only once master
-    # has moved past this commit. PR runs get a group of their own.
+    # Full-audit FIFO pools are shared across runs; release jobs use other groups.
+    # FIFO preserves up to 100 pending jobs per pool; GitHub cancels overflow.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'ci-master-mac-broker' || format('ci-mac-{0}-broker', github.run_id) }}
+      group: ci-full-mac-shared-and-broker
+      queue: max
       cancel-in-progress: false
     steps:
       - name: Checkout
