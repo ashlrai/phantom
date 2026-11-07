@@ -33,6 +33,7 @@ export type DecisionKind =
   | 'interrupt-worthiness'
   | 'lane-choice'
   | 'resource-choice'
+  | 'job-shape'
   | 'trigger-triage'
   | 'action-class'
   | 'operator-intent';

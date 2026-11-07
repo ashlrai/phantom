@@ -364,6 +364,7 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
 | `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
+| `phm top --v1 [--fleet <path>]` | Read-only `top.v1` snapshot of the saved fleet map (pools, agents, jobs) plus per-pool usage, engine-window quota counts, reset assessment and required pace-to-reset. Exit 0 means the fleet map was read, 1 means it was unavailable, 2 means invalid arguments. The closed output contract is [schema/top.v1.schema.json](../schema/top.v1.schema.json); IDs are bounded identifiers and measurements stay `null` when a source is unavailable. |
 | `phm resources [--json]`, `phm usage` | Per-backend capacity and usage, read-only |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
 
