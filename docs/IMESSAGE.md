@@ -65,7 +65,9 @@ The private `imessage/teammate-replies.json` journal records bounded work claims
 drafts and send attempts before native delivery. Restarted workers reconcile
 exact outgoing text, including attributed-body-only macOS records; an uncertain
 send is never automatically repeated. Pure acknowledgements and artifact-only
-updates produce no reply. Pending and uncertain records are preserved when
+updates produce no reply. Requests for approval, decisions, or certain actions stay
+pending for leader review; they do not prevent later replyable messages in the
+same pass from being examined. Pending and uncertain records are preserved when
 storage is full. A native transport return alone does not prove delivery.
 
 A healthy pass with an empty inbox establishes that the worker ran. Qualify a
