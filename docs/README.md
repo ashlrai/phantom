@@ -62,13 +62,14 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
-| Audit fleet manifest, tag, release, registry and website versions with public reads | [Version audit](VERSION-AUDIT.md) |
+| Audit fleet manifest, tag, release, registry and website versions with public reads | [Version audit](https://github.com/ashlrai/phantom/blob/master/docs/VERSION-AUDIT.md) |
 | Install Phantom locally, connect agents over MCP, upgrade and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Install companion tools separately and distinguish CLI inventory from MCP setup | [Companion setup and inspection](COMPANIONS.md) |
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
 | Replay policies over frozen router lines with known outcomes | [Router eval harness](https://github.com/ashlrai/phantom/blob/master/docs/router/eval.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
+| Use the one-ask scope preflight in code | [One-ask intake boundary — source guide](https://github.com/ashlrai/phantom/blob/master/docs/ONE-ASK-INTAKE.md) |
 | Understand the current components and their boundaries | [Architecture](ARCHITECTURE.md#current-runtime-map) |
 | Follow source responsibilities, flows and extension points | [Architecture knowledge map](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE-KNOWLEDGE.md) |
 | Review documentation inventory and audit coverage | [Documentation audit](https://github.com/ashlrai/phantom/blob/master/docs/DOCUMENTATION-AUDIT.md) |
@@ -107,12 +108,12 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
-| Estimate lane idle capacity and identify long-running jobs | [Idle allowance](IDLE-ALLOWANCE.md) |
+| Estimate lane idle capacity and identify long-running jobs | [Idle allowance](https://github.com/ashlrai/phantom/blob/master/docs/IDLE-ALLOWANCE.md) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
-| Refresh standalone advertised model metadata through Phantom Secrets | [Model capability cache](MODELCAPS.md) |
+| Refresh standalone advertised model metadata through Phantom Secrets | [Model capability cache](https://github.com/ashlrai/phantom/blob/master/docs/MODELCAPS.md) |
 | Read real repository adoption signals | [Repository signals](SIGNALS.md) |
 | Record operations usage only on bridge events and inspect burn estimates and Grok cut signals | [Usage signals source guide](https://github.com/ashlrai/phantom/blob/master/docs/USAGE-SIGNALS.md) |
 | Record Grok Ultra points and inspect burn and projected runway | [Grok Ultra runway](https://github.com/ashlrai/phantom/blob/master/docs/GROK-ULTRA-RUNWAY.md) |
@@ -222,7 +223,7 @@ canonical release guide for required hosted qualification and publication.
 ## All documents
 
 - [Agent network channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK-CHANNELS.md)
-- [Group chat rooms, topics, subscriptions, and presence](GROUP-CHAT.md)
+- [Group chat rooms, topics, subscriptions, and presence](https://github.com/ashlrai/phantom/blob/master/docs/GROUP-CHAT.md)
 - [Durable agent bus: read, write, envelope, and conventions](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md)
 - [ASHLR Agentic Inference Fabric — Definitive Architecture Specification](https://github.com/ashlrai/phantom/blob/master/docs/SPEC-INFERENCE-FABRIC.md)
 - [Agent OS Doctrine](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OS-DOCTRINE.md)
