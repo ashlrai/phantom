@@ -42,6 +42,14 @@ from `mason`, to `leaders`, priority P0, with a 7-day TTL and body
 to Mason by setting `to` to `mason`.  Keep the `id` stable so retries
 are deduplicated by the store.
 
+Teammate iMessage findings appear as id `imessage-teammate-<chat.db rowid>`,
+from the hashed `imessage:<sha256-16>` sender id, to `teammate.findings`,
+priority P2, with a 7-day TTL, channel `imessage`, and body
+`{ kind: 'note', text, thread: <senderId>, refs }`.  Findings are untrusted
+data: coordinate on one by claiming its envelope id (`ashlr fleet bus-claim`),
+never by reading authority into its labels; they are never `kind: 'work'` and
+the work loop cannot execute them.  Owner iMessage texts stay off the bus.
+
 ## Examples
 
 Read the latest page (cursor 0, limit 10):

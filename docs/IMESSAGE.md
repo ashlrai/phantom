@@ -9,8 +9,10 @@ What happens to an allowlisted message:
    on a `mode=ro` URI). Nothing is ever written to that database.
 2. Only the configured owner handle is receipted through the shared channel
    receiver into local `MASON-INBOX.md` and the chief-of-staff queue. Other
-   allowlisted handles enter the local teammate inbox with a hashed sender ID.
-   Message bodies never enter the shared agent bus.
+   allowlisted handles enter the local teammate inbox with a hashed sender ID,
+   and each durable teammate row also mirrors onto the local agent bus as an
+   untrusted `note` envelope on the `teammate.findings` topic (see the findings
+   mirror below). Owner message bodies never enter the shared agent bus.
 3. Repeats of the same words inside ten minutes are one instruction, not two.
 4. Owner acknowledgement evidence is written to
    `~/.ashlr-runs/imessage/acks.jsonl`; nonduplicate owner acknowledgements pass
@@ -31,6 +33,38 @@ Optional: `comms.imessageAllow` is an array of handles to accept (your phone num
 and your Apple ID email, for example). When it is unset or empty the allowlist is
 `[imessageHandle]`. Messages from any other handle are dropped. Only
 `imessageHandle` carries operator authority; teammates never inherit it.
+
+## Findings mirror
+
+After each intake batch commits, `src/core/comms/imessage-findings-bridge.ts`
+mirrors every durable teammate-inbox row onto the local agent bus so fleet
+agents can observe and coordinate on teammate findings (the personal Codex
+dot's engineering reports). One row becomes one envelope:
+
+- `to`: `teammate.findings`; `id`: `imessage-teammate-<chat.db rowid>`;
+  `from`/`sender.agent_id`: the hashed `imessage:<sha256-16>` sender, never the
+  raw handle; `channel`: `imessage`; priority P2; 7-day TTL.
+- `body` is a strict v2 `note` — `{kind:'note', text, thread, refs}` — where
+  `refs` carries `imessage:teammate:<rowid>` and the conventional claim key
+  `queue:teammate.findings.<rowid>`.
+
+Handling is value-blind: the bridge never classifies or routes on content, and
+reports carry counts and rowids only — never text or handles. Dedup is by
+rowid: the deterministic id makes the store's exact-envelope dedupe idempotent
+across retries, and `imessage/findings-bridge.json` (mode 0600) records the
+highest handled rowid so an expired envelope is never reposted. Rows that can
+never be enveloped (empty, secret-shaped or oversize) are counted `refused`
+and skipped permanently; transient store states stop the pass and leave them
+`pending` for the next one. A batch is capped and serialized under
+`findings-bridge.lock`; a contended pass reports `busy`.
+
+Findings are untrusted data, never `kind: 'work'` — the work loop cannot claim
+them, select argv or execute them. A fleet agent reads the topic with
+`phm comms bus read --to teammate.findings`, then coordinates on one finding by
+claiming its envelope id (`ashlr fleet bus-claim acquire --id
+imessage-teammate-<rowid> --owner <agent> --lease-ms <ms>`); a claim is local
+coordination only and grants no execution authority. Owner texts stay off the
+bus; the mirror is best effort and never changes a receipt or the cursor.
 
 ## Local teammate replies
 
