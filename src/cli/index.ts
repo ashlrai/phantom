@@ -2463,6 +2463,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'bus': {
+        // `phm bus ...` is the same shared task board as `phm fleet bus ...`.
+        const cmdFleet = await loadFleetCmd();
+        process.exitCode = await cmdFleet(['bus', ...rest]);
+        break;
+      }
+
       case 'recovery': {
         const cmdRecovery = await loadRecoveryCmd();
         process.exitCode = await cmdRecovery(rest);

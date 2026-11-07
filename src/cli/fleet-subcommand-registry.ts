@@ -30,6 +30,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'brains': () => import('./fleet-brains.js'),
   'bridge-install': () => import('./fleet-bridge-install.js'),
   'brief-send': () => import('./fleet-brief-send.js'),
+  'bus': () => import('./fleet-bus.js'),
   'bus-claim': () => import('./fleet-bus-claim.js'),
   'bus-claimed-run': () => import('./fleet-bus-claimed-run.js'),
   'bus-follow': () => import('./fleet-bus-follow.js'),
