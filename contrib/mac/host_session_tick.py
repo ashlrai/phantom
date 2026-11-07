@@ -50,6 +50,8 @@ def main(argv):
     try:
         if argv == ['tick']:
             tick(runs)
+        elif len(argv) == 2 and argv[0] == 'prepare-private':
+            runtime.prepare_private_phase(runs, argv[1])
         elif len(argv) == 3 and argv[0] == 'register':
             runtime.register_claim(runs, argv[1], int(argv[2]))
         else:

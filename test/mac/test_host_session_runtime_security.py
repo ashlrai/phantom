@@ -89,6 +89,84 @@ class RuntimeCustodyTest(unittest.TestCase):
         (self.root / 'RQ-1.base').write_text('a' * 40 + ' codex-bridge/RQ-1 ' + str(self.wt / 'sibling') + ' codex')
         with self.assertRaises(ValueError): self.ordinary_register()
 
+    def private_phase(self):
+        self.ordinary()
+        (self.run / 'RQ-1.dispatched').unlink()
+        owner = self.run / 'RQ-1.root-owner'
+        owner.mkdir()
+        (owner / 'owner.json').write_text(json.dumps({'owner': 'test'}))
+
+    def test_private_marker_binds_and_rechecks_owned_attempt(self):
+        self.private_phase()
+        with self.assertRaises(ValueError): self.ordinary_register()
+        runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        claim = self.ordinary_register()
+        self.assertTrue(runtime.verify_current_claim(str(self.root), claim, worktree_root=str(self.wt)))
+        (self.root / 'RQ-1.base').write_text('b' * 40 + ' codex-bridge/RQ-1 ' + str(self.wt / 'RQ-1') + ' codex\n')
+        self.assertFalse(runtime.verify_current_claim(str(self.root), claim, worktree_root=str(self.wt)))
+        with self.assertRaises(ValueError): self.ordinary_register()
+
+    def test_private_claim_populates_existing_session_observation(self):
+        self.private_phase()
+        runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        claim = self.ordinary_register()
+        result = runtime.collect_observation([claim], lambda c: runtime.verify_current_claim(str(self.root), c, worktree_root=str(self.wt)),
+                                             census=self.census, boot=self.boot, pressure=lambda: {'state': 'normal'})
+        self.assertEqual(result['sessionsState'], 'known')
+        self.assertEqual(len(result['sessions']), 1)
+        self.assertEqual(result['sessions'][0]['state'], 'known')
+        self.assertEqual(result['sessions'][0]['processCount'], 1)
+
+    def test_private_marker_is_exclusive_and_rejects_owner_change(self):
+        self.private_phase()
+        runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        with self.assertRaises(FileExistsError): runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        (self.run / 'RQ-1.root-owner' / 'owner.json').write_text(json.dumps({'owner': 'different'}))
+        with self.assertRaises(ValueError): self.ordinary_register()
+
+    def test_new_owned_attempt_preserves_stale_marker_without_reusing_it(self):
+        self.private_phase()
+        runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        owner = self.run / 'RQ-1.root-owner' / 'owner.json'
+        owner.write_text(json.dumps({'owner': 'next'}))
+        with self.assertRaises(ValueError): self.ordinary_register()
+        runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        self.assertEqual(len(list(owner.parent.glob('private-session-*.json'))), 2)
+        claim = self.ordinary_register()
+        self.assertTrue(runtime.verify_current_claim(str(self.root), claim, worktree_root=str(self.wt)))
+
+    def test_private_marker_rejects_missing_owner_or_dispatched_attempt(self):
+        self.ordinary()
+        with self.assertRaises(ValueError): runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        (self.run / 'RQ-1.dispatched').unlink()
+        with self.assertRaises(ValueError): runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+
+    def test_private_marker_rejects_changed_worktree_and_reused_pid(self):
+        self.private_phase()
+        runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        snapshots = iter([self.rows, [dict(self.rows[0], start='reused'), self.rows[1]]])
+        with self.assertRaises(ValueError):
+            runtime.register_claim(str(self.root), 'RQ-1', 10, boot=self.boot, census=lambda: next(snapshots), worktree_root=str(self.wt))
+        (self.wt / 'RQ-1').rename(self.wt / 'old')
+        (self.wt / 'RQ-1').mkdir()
+        with self.assertRaises(ValueError): self.ordinary_register()
+
+    def test_private_marker_rejects_symlink_partial_and_line_changes(self):
+        self.private_phase()
+        with runtime.claim_directory(str(self.root), create=True) as (run_directory, _):
+            with runtime.runs_directory(str(self.root)) as root:
+                digest = runtime._owner_witness(root, run_directory, 'RQ-1', str(self.wt), prepare_private=True)
+        marker = self.run / 'RQ-1.root-owner' / ('private-session-' + digest + '.json')
+        marker.symlink_to(self.root / 'RQ-1.base')
+        with self.assertRaises(OSError): self.ordinary_register()
+        marker.unlink()
+        marker.write_text('{')
+        with self.assertRaises(ValueError): self.ordinary_register()
+        marker.unlink()
+        runtime.prepare_private_phase(str(self.root), 'RQ-1', worktree_root=str(self.wt))
+        (self.run / 'RQ-1.line').write_text('RQ-1\tphantom\tcodex\twork\tchanged\n')
+        with self.assertRaises(ValueError): self.ordinary_register()
+
     def test_filename_must_match_job(self):
         runtime.register_claim(str(self.root), 'RQ-1', 10, boot=self.boot, census=self.census)
         claim = self.run / 'resource-sessions' / 'RQ-1.json'
