@@ -64,3 +64,12 @@ phm agents bus channels test email --json
 Adapters implement `ChannelAdapter` and must enforce the loop guard and shared
 send policy before any delivery. Credentials must be resolved at request time
 through Phantom Secrets references; do not put them in configuration or logs.
+
+The Slack owner path also implements `LeaderChannelAdapter`: the authenticated
+socket normalizes an event, the adapter verifies the configured human owner and
+routes it to the durable Leader inbox, and Leader delivers a reply through the
+same Slack thread. Socket acknowledgement follows durable receipt; failed or
+unconfirmed receipt is left for redelivery. The existing Slack send journal
+reconciles uncertain posts. This contract does not grant a channel or sender
+authority by itself. Slack credentials remain host-injected from the configured
+Phantom Secrets reference names; the adapter neither stores nor prints values.
