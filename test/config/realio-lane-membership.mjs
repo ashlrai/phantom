@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
   'test/changelog-sync-bridge-04.test.ts', // Runs the changelog script in real child processes.
