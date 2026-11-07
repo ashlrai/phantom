@@ -797,16 +797,15 @@ focused) and notifications are on — raises banners:
 
 | Banner | When |
 |---|---|
-| Finished: ‹chat title› — "Done in 2m 14s" | A turn ended cleanly |
-| Failed: ‹chat title› | A turn ended with an error |
+| Chat finished — "Done in 2m 14s" | A turn ended cleanly |
+| Chat failed | A turn ended with an error |
 | Finished: N chats, M failed | More than two turns ended in one poll |
 | Needs you: N new — "2 approvals · 1 fleet decision" | New Needs-you items |
 | Seat health (signed out, expiring, out of usage) | From the 30 s health poll |
 
-- **Every word is a Rust template** (`notify.rs`). The only server text that can
-  appear is a chat title, stripped of control and bidi-override characters and
-  capped at 60 characters. Needs-you items are described by category counts,
-  never by their own text.
+- **Banner text uses fixed templates** (`notify.rs`): chat and terminal titles
+  and Needs-you item text are withheld. Event categories, counts, durations and
+  exit codes may appear. Control banners in Settings ▸ Desktop ▸ Notifications.
 - The first poll is a baseline: nothing that finished or was waiting before the
   app started raises a banner. A cancelled turn (yours, or the tray's Stop) is
   not news. A failure announced as "Failed" is not announced again when its
