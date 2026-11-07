@@ -28,6 +28,12 @@ function output(): string {
 }
 
 describe('HELP_ENTRIES — the command table', () => {
+  it('documents failed-job grouping and explicit retries in command help', async () => {
+    expect(await cmdHelp(['issues'])).toBe(0);
+    expect(output()).toContain('issues [--retry] [--dir <queue-directory>] [--json]');
+    expect(output()).toContain('--retry queues one READY retry per failed job without duplicates');
+  });
+
   it.each([
     'universe campaign <init|status|run|resume|pause|stop>',
     'universe campaign check ',
@@ -109,7 +115,6 @@ describe('HELP_ENTRIES — the command table', () => {
   it('covers every top-level command (no drift vs completions)', () => {
     const tableCmds = new Set(HELP_ENTRIES.map((e) => e.cmd.split(' ')[0]));
     for (const cmd of TOP_LEVEL_COMMANDS) {
-      if (cmd === 'dash') continue; // alias of tui
       expect(tableCmds.has(cmd), `help table missing "${cmd}"`).toBe(true);
     }
   });

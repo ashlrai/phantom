@@ -428,7 +428,7 @@ export type EnrollmentListResponse =
 
 const ENROLL_USAGE: Record<'list' | 'add' | 'remove' | 'kill', string> = {
   list:   'Usage: ashlr enroll list [--json]',
-  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]',
+  add:    'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]',
   remove: 'Usage: ashlr enroll remove <repo> [--json]',
   kill:   'Usage: ashlr enroll kill on|off [--json]',
 };
@@ -494,7 +494,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return code;
     };
     // A typo such as `--locus-frm` used to enroll without Locus firm mode.
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--yes', '--locus-firm'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--yes', '--locus-firm', '--no-secrets-offer'] });
     if (bad) {
       if (json) return fail(2, bad.message);
       console.error(red('error: ') + bad.message);
@@ -502,7 +502,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return 2;
     }
     if (!repo) {
-      return fail(2, 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes]');
+      return fail(2, 'Usage: ashlr enroll add <repo> [--locus-firm] [--yes] [--no-secrets-offer]');
     }
     const policy = await loadPolicy();
     if (!policy) {
@@ -524,6 +524,14 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       const failure = result === undefined ? null : policyMutationFailure(result, 'Enrollment');
       if (failure) return fail(1, failure);
       if (!json) console.log(green('✓') + ` Enrolled: ${cyan(repo)}`);
+      if (!json && !args.includes('--no-secrets-offer')) {
+        try {
+          const { secretsSetupOffer } = await import('./enroll-secrets-offer.js');
+          for (const line of secretsSetupOffer(repo)) console.log(dim(line));
+        } catch {
+          // Advisory only; enrollment already succeeded.
+        }
+      }
 
       // Soft-offer Locus firm on FIRST successful enrollment only. Never forces
       // on CI/tests: non-TTY / --yes requires --locus-firm or ASHLR_LOCUS_FIRM=1.
@@ -555,10 +563,12 @@ export async function cmdEnroll(args: string[]): Promise<number> {
   }
 
   if (sub === 'remove' || sub === 'kill') {
-    // Positional is the first non-flag after sub, so `remove --json <repo>`
-    // removes <repo> (it used to "remove" the literal `--json`).
-    const target = args.slice(1).find((a) => !a.startsWith('--'));
-    const json = args.includes('--json');
+    // Options end at `--`; the first token after it can be an option-shaped repo.
+    const rest = args.slice(1);
+    const sep = rest.indexOf('--');
+    const options = sep === -1 ? rest : rest.slice(0, sep);
+    const target = options.find((a) => !a.startsWith('--')) ?? (sep === -1 ? undefined : rest[sep + 1]);
+    const json = options.includes('--json');
     // --json: exactly one JSON object on stdout; human prose goes to stderr.
     const fail = (code: number, error: string): number => {
       if (json) writeEnrollJson({ ok: false, error, ...(sub === 'remove' && target ? { repo: target } : {}) });
@@ -566,7 +576,7 @@ export async function cmdEnroll(args: string[]): Promise<number> {
       return code;
     };
     // Preserve the current-main typo guard for both mutation commands.
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'] });
+    const bad = rejectUnknownOptions(rest, { flags: ['--json'] });
     if (bad) return fail(2, `${bad.message}\n${ENROLL_USAGE[sub]}`);
     if (sub === 'remove' && !target) return fail(2, ENROLL_USAGE.remove);
     if (sub === 'kill' && target !== 'on' && target !== 'off') return fail(2, ENROLL_USAGE.kill);

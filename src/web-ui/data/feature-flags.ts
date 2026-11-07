@@ -1,50 +1,48 @@
 /** Per-browser UI opt-ins. These are presentation flags, never authority grants. */
-export type FeatureFlag = 'agentWorkspace';
+export type FeatureFlag = 'agentWorkspace' | 'oneAsk';
 export const FEATURE_FLAGS_STORAGE_KEY = 'ashlr.feature-flags.v1';
 
-let agentWorkspace: boolean | undefined;
+const KNOWN_FLAGS: readonly FeatureFlag[] = ['agentWorkspace', 'oneAsk'];
+
+const cache = new Map<FeatureFlag, boolean>();
 const listeners = new Set<() => void>();
 
-/** Read the allowlisted boolean; malformed or unavailable storage defaults off. */
-function readAgentWorkspace(): boolean {
+function readStored(): Record<string, unknown> {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(FEATURE_FLAGS_STORAGE_KEY) ?? 'null');
-    // Project only the known boolean; never retain arbitrary persisted fields.
-    return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      && Object.hasOwn(raw, 'agentWorkspace')
-      && (raw as Record<string, unknown>)['agentWorkspace'] === true;
+    // Project only the known booleans; never retain arbitrary persisted fields.
+    return typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
   } catch {
-    return false;
+    return {};
   }
 }
 
-/** Read the cached page-local choice, loading browser storage on first use. */
 export function getFeatureFlag(name: FeatureFlag): boolean {
-  if (name !== 'agentWorkspace') return false;
-  agentWorkspace ??= readAgentWorkspace();
-  return agentWorkspace;
+  if (!KNOWN_FLAGS.includes(name)) return false;
+  let value = cache.get(name);
+  if (value === undefined) {
+    value = readStored()[name] === true;
+    cache.set(name, value);
+  }
+  return value;
 }
 
-/**
- * Update a presentation preference and notify this page's subscribers on change.
- * Persistence is best effort: storage failure keeps the choice in memory until
- * reload. Unknown flags and non-booleans are ignored; no native or server
- * authority is requested. Other tabs observe the saved choice on their reload.
- */
 export function setFeatureFlag(name: FeatureFlag, enabled: boolean): void {
-  if (name !== 'agentWorkspace' || typeof enabled !== 'boolean') return;
+  if (!KNOWN_FLAGS.includes(name) || typeof enabled !== 'boolean') return;
   if (getFeatureFlag(name) === enabled) return;
-  agentWorkspace = enabled;
+  cache.set(name, enabled);
   try {
     // Write a fresh allowlisted object, never a merge with untrusted storage.
-    localStorage.setItem(FEATURE_FLAGS_STORAGE_KEY, JSON.stringify({ agentWorkspace: enabled }));
+    localStorage.setItem(
+      FEATURE_FLAGS_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(KNOWN_FLAGS.map((flag) => [flag, getFeatureFlag(flag)]))),
+    );
   } catch {
     /* The choice still holds for this page when persistence is unavailable. */
   }
   for (const listener of [...listeners]) listener();
 }
 
-/** Subscribe to page-local changes; call the returned function to unsubscribe. */
 export function subscribeFeatureFlags(listener: () => void): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
@@ -52,6 +50,6 @@ export function subscribeFeatureFlags(listener: () => void): () => void {
 
 /** Test seam: emulate a reload without changing the saved preference. */
 export function resetFeatureFlagsForTests(): void {
-  agentWorkspace = undefined;
+  cache.clear();
   for (const listener of [...listeners]) listener();
 }

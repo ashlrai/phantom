@@ -3,6 +3,10 @@ import type { HostSummary } from '../../../core/web/host-summary.js';
 import { Button } from '../../components/primitives/Button.js';
 import { Dialog } from '../../components/primitives/Dialog.js';
 import { apiGet } from '../../data/client.js';
+import { openFleetWorkspace } from './dock/dock-store.js';
+import { curatedWorkspace } from './fleet-hub/fleet-hub-model.js';
+import { usePanes } from './panes/pane-registry.js';
+import { setFocusMode } from './shell/focus-mode.js';
 import { usePollWhileVisible } from './shell/section-visibility.js';
 import { setVerseSection, setVerseSidebarCollapsed } from './verse-ui-store.js';
 import styles from './SidebarResources.module.css';
@@ -11,11 +15,24 @@ import styles from './SidebarResources.module.css';
 export const SidebarResources = memo(function SidebarResources() {
   const [machineOpen, setMachineOpen] = useState(false);
   const titleId = useId();
+  const fleetIds = curatedWorkspace(usePanes().map((pane) => pane.id));
+
+  // Match the shell's other navigation entries on the floating phone list.
+  function collapseOnNarrow() {
+    if (window.matchMedia?.('(max-width: 760px)')?.matches) setVerseSidebarCollapsed(true);
+  }
 
   function navigate(section: 'agents' | 'automations') {
     setVerseSection(section);
-    // Match the shell's other navigation entries on the floating phone list.
-    if (window.matchMedia?.('(max-width: 760px)')?.matches) setVerseSidebarCollapsed(true);
+    collapseOnNarrow();
+  }
+
+  function openFleet() {
+    // Same reveal order as dock/reveal-pane.ts: the dock only mounts in chat.
+    setFocusMode(false);
+    setVerseSection('chat');
+    openFleetWorkspace(fleetIds);
+    collapseOnNarrow();
   }
 
   return (
@@ -27,6 +44,10 @@ export const SidebarResources = memo(function SidebarResources() {
       <section aria-label="Routines">
         <h2 className={styles.heading}>Routines</h2>
         <button type="button" className={styles.entry} onClick={() => navigate('automations')}>View routines</button>
+      </section>
+      <section aria-label="Fleet">
+        <h2 className={styles.heading}>Fleet</h2>
+        <button type="button" className={styles.entry} disabled={fleetIds.length === 0} title={fleetIds.length === 0 ? 'Fleet panes are not in this build' : undefined} onClick={openFleet}>Open fleet workspace</button>
       </section>
       <section aria-label="Machine">
         <h2 className={styles.heading}>Machine</h2>

@@ -288,3 +288,105 @@ running. `resolveFrontierJudgeClient` checks `allowedBackends` and
 `engineInstalled('claude')`, not `providerChain`. The Claude CLI is installed
 and `claude` is in `allowedBackends`, so the judge runs via Claude CLI
 subprocess regardless of the ollama-only provider chain for engine runs.
+
+## Captured merge throughput diagnostic
+
+Run `npm run dev -- fleet merge-throughput --input snapshot.json --json`
+(or `telemetry merge-throughput`) to diagnose a captured window without config,
+credentials, network access or mutations. This does not collect GitHub evidence.
+The collector must supply exhaustive merge history for the stated window and
+backlog states as of its end, using one unique repository-qualified PR ID per row.
+Do not treat a truncated API page or a failed collection as complete.
+
+```json
+{
+  "start": "2026-10-28T10:00:00Z",
+  "end": "2026-10-28T12:00:00Z",
+  "complete": true,
+  "observations": [
+    {"id": "ashlrai/phantom#1", "state": "merged", "mergedAt": "2026-10-28T11:00:00Z"},
+    {"id": "ashlrai/phantom#2", "state": "waiting"}
+  ]
+}
+```
+
+This reports one completed merge, one waiting observation, and 0.5 merges/hour.
+The UTC window is start-inclusive and end-exclusive. Waiting work is an observed
+end-of-window stock, not a rate or a completed merge. Merged rows outside the
+window are excluded. `complete: false` or any `state: "unknown"` row makes
+`completedMerges` and `mergesPerHour` null (text: `unknown`), while observed
+counts remain available as lower bounds. Empty incomplete observations are
+unknown; only explicitly complete empty coverage establishes zero throughput.
+Unknown row counts do not quantify unobserved work. Coverage is collector-supplied,
+not independently verified. Input is limited to 1 MiB and 20,000 rows; duplicate
+IDs, invalid timestamps/states and nonpositive windows fail closed. Errors never
+echo captured contents. Exit codes: 0 report, 1 invalid/unreadable input,
+2 invalid command arguments.
+
+Executable regression tests are kept here to respect this job's named-file scope.
+Run with a temporary HOME:
+`HOME=$(mktemp -d) node --import tsx --input-type=module -e 'import {readFileSync} from "node:fs"; const doc=readFileSync("docs/DIAGNOSIS-MERGE-DRAIN.md","utf8"); await import("data:text/javascript,"+encodeURIComponent(doc.slice(doc.lastIndexOf("<!-- merge-throughput-tests -->")).split("```js")[1].split("```")[0]));'`
+
+<!-- merge-throughput-tests -->
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
+const { diagnoseMergeThroughput: diagnose, cmdMergeThroughput } =
+  await import(pathToFileURL(`${process.cwd()}/src/cli/telemetry.ts`).href);
+const base = { start: '2026-10-28T10:00:00Z', end: '2026-10-28T12:00:00Z', complete: true, observations: [] };
+test('empty evidence requires explicit completeness for zero', () => {
+  assert.equal(diagnose(base).mergesPerHour, 0);
+  assert.equal(diagnose({ ...base, complete: false }).mergesPerHour, null);
+  assert.throws(() => diagnose({ ...base, complete: undefined }));
+});
+test('partial and unknown observations never produce zero throughput', () => {
+  for (const complete of [true, false]) {
+    const report = diagnose({ ...base, complete, observations: [{ id: '1', state: 'unknown' }, { id: '2', state: 'waiting' }] });
+    assert.equal(report.completedMerges, null);
+    assert.equal(report.mergesPerHour, null);
+    assert.equal(report.waitingObservedAtEnd, 1);
+    assert.equal(report.unknownObservations, 1);
+  }
+});
+test('populated evidence uses merge timestamps and separates backlog', () => {
+  const observations = [
+    { id: '1', state: 'merged', mergedAt: base.start },
+    { id: '2', state: 'merged', mergedAt: '2026-10-28T11:00:00Z' },
+    { id: '3', state: 'merged', mergedAt: base.end },
+    { id: '4', state: 'waiting' },
+  ];
+  assert.equal(diagnose({ ...base, observations }).mergesPerHour, 1);
+  const partial = diagnose({ ...base, observations, complete: false });
+  assert.equal(partial.completedMergesObserved, 2);
+  assert.equal(partial.mergesPerHour, null);
+});
+test('malformed observations and windows fail closed', () => {
+  for (const change of [
+    { end: base.start }, { start: '2026-02-30T10:00:00Z' },
+    { observations: [{ id: '1', state: 'merged' }] },
+    { observations: [{ id: '1', state: 'done' }] },
+    { observations: [{ id: '1', state: 'waiting' }, { id: '1', state: 'unknown' }] },
+  ]) assert.throws(() => diagnose({ ...base, ...change }));
+});
+test('both CLI aliases render unknown and populated evidence', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const path = join(mkdtempSync(join(tmpdir(), 'merge-throughput-')), 'snapshot.json');
+  for (const command of ['fleet', 'telemetry']) {
+    for (const complete of [false, true]) {
+      writeFileSync(path, JSON.stringify({ ...base, complete }));
+      const run = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli/index.ts', command,
+        'merge-throughput', '--input', path, '--json'], { encoding: 'utf8' });
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(JSON.parse(run.stdout).mergesPerHour, complete ? 0 : null);
+    }
+  }
+});
+test('CLI rejects missing and unknown arguments', async () => {
+  assert.equal(await cmdMergeThroughput([]), 2);
+  assert.equal(await cmdMergeThroughput(['--typo']), 2);
+});
+```

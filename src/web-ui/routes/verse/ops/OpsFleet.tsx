@@ -8,6 +8,7 @@ import { useRefetch, useQuery } from '../../../data/hooks.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { opsFleetQuery } from './ops-queries.js';
+import { OpsLaneConsole } from './OpsLaneConsole.js';
 import type { OpsExperimentV1, OpsRouteDecision } from '../../../../core/verse/ops-types.js';
 import styles from './ops.module.css';
 
@@ -60,7 +61,8 @@ export function OpsFleet() {
   usePollWhileVisible(refetch, 15_000);
   const fleet = read.data;
 
-  return (
+  // The per-lane console (GET /api/fleet/lanes) mounts first, above the router's own read.
+  const fleetPanel = (
     <section className={styles.panel} aria-labelledby="ops-fleet-title">
       <div className={styles.header}>
         <div>
@@ -113,4 +115,5 @@ export function OpsFleet() {
           </>}
     </section>
   );
+  return (<><OpsLaneConsole />{fleetPanel}</>);
 }

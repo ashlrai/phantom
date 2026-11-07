@@ -12,6 +12,7 @@
 import type { ReactNode } from 'react';
 import { StatusBadge, type Tone } from '../../../components/primitives/StatusBadge.js';
 import { chartFormat } from '../../../components/charts/index.js';
+import { limitWindowLabel } from './limit-window-label.js';
 import type { UsageLimitRow } from './usage-model.js';
 import styles from './usage.module.css';
 
@@ -58,37 +59,44 @@ export function LimitsPanel({
         </p>
       ) : (
         <div className={styles.limitList}>
-          {rows.map((row) => (
-            <div key={row.id} className={styles.limitRow}>
-              <span className={styles.limitName}>
-                {row.backend}
-                <span className={styles.limitWindow}>per {row.window}</span>
-                <StatusBadge status={row.standing} tone={standingTone(row.standing)}>
-                  {row.standing === 'unknown' ? 'no reading' : row.standing}
-                </StatusBadge>
-              </span>
-              {row.usedPct === null ? (
-                <hr className={styles.unknownRule} aria-hidden="true" />
-              ) : (
-                <div
-                  className={styles.track}
-                  data-tone={row.usedPct >= 100 ? 'danger' : row.usedPct >= 80 ? 'warn' : 'ok'}
-                  role="meter"
-                  aria-label={`${row.backend} dispatches against its ${row.window} cap`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(row.usedPct)}
-                >
-                  <div className={styles.fill} style={{ width: `${Math.round(row.usedPct)}%` }} />
-                </div>
-              )}
-              <span className={styles.limitValue}>
-                {row.used === null
-                  ? `configured ${chartFormat.formatCompact(row.max)}`
-                  : `${chartFormat.formatCompact(row.used)} / ${chartFormat.formatCompact(row.max)}`}
-              </span>
-            </div>
-          ))}
+          {rows.map((row) => {
+            const label = limitWindowLabel(row.backend, row.window);
+            return (
+              <div key={row.id} className={styles.limitRow}>
+                <span className={styles.limitName}>
+                  {row.backend}
+                  <span className={styles.limitWindow} data-retired={label.retired ? 'true' : undefined} title={label.title ?? undefined}>
+                    {label.text}
+                  </span>
+                  {!label.retired ? (
+                    <StatusBadge status={row.standing} tone={standingTone(row.standing)}>
+                      {row.standing === 'unknown' ? 'no reading' : row.standing}
+                    </StatusBadge>
+                  ) : null}
+                </span>
+                {label.retired ? null : row.usedPct === null ? (
+                  <hr className={styles.unknownRule} aria-hidden="true" />
+                ) : (
+                  <div
+                    className={styles.track}
+                    data-tone={row.usedPct >= 100 ? 'danger' : row.usedPct >= 80 ? 'warn' : 'ok'}
+                    role="meter"
+                    aria-label={`${row.backend} dispatches against its ${row.window} cap`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(row.usedPct)}
+                  >
+                    <div className={styles.fill} style={{ width: `${Math.round(row.usedPct)}%` }} />
+                  </div>
+                )}
+                <span className={styles.limitValue}>
+                  {label.retired ? 'weekly only' : row.used === null
+                    ? `configured ${chartFormat.formatCompact(row.max)}`
+                    : `${chartFormat.formatCompact(row.used)} / ${chartFormat.formatCompact(row.max)}`}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>

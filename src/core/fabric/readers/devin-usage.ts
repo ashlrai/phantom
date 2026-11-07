@@ -3,6 +3,8 @@ import { scrubSecrets } from '../../util/scrub.js';
 import { DEVIN_USAGE_WORKER } from './devin-usage-worker.js';
 
 export const DEVIN_USAGE_TTL_MS = 5 * 60_000;
+const NEGATIVE_TTL_MS = 30_000;
+const MAX_RETRY_MS = 24 * 60 * 60_000;
 export interface DevinUsage {
   pool: 'devin';
   acuUsed: number;
@@ -19,6 +21,12 @@ export type DevinUsageResult = DevinUsage | DevinUsageUnknown;
 const unknown = (reason: string): DevinUsageUnknown => ({ status: 'unknown', reason });
 const reasons = new Set(['missing-key', 'missing-organization', 'rate-limited', 'unauthorized', 'forbidden',
   'api-unavailable', 'malformed-body', 'pagination-limit', 'unknown-cycle', 'unknown-limit', 'api-unreachable']);
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+const iso = (v: unknown): v is string => {
+  if (typeof v !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v)) return false;
+  const time = Date.parse(v);
+  return Number.isFinite(time) && new Date(time).toISOString() === v;
+};
 
 /** Pipes are captured, never inherited or logged, including Phantom's diagnostics. */
 function runCustodied(): Promise<string> {
@@ -47,26 +55,37 @@ export function createDevinUsageReader(deps: { run?: () => Promise<string>; now?
         let retryAt = 0;
         try {
           // Defense in depth. Only allowlisted fields survive parsing below.
-          const body = JSON.parse(scrubSecrets(await run())) as Record<string, unknown>;
+          const output = scrubSecrets(await run());
+          let body: Record<string, unknown> | null;
+          try { body = JSON.parse(output) as Record<string, unknown> | null; }
+          catch { body = null; }
+          const checkedAt = now();
           if (body?.['status'] === 'unknown') {
             const reason = body['reason'];
             result = unknown(typeof reason === 'string' && reasons.has(reason) ? reason : 'malformed-body');
-            if (reason === 'rate-limited' && typeof body['retryAt'] === 'number' && Number.isSafeInteger(body['retryAt'])) retryAt = body['retryAt'];
+            if (reason === 'rate-limited' && typeof body['retryAt'] === 'number' && Number.isSafeInteger(body['retryAt'])) {
+              retryAt = Math.min(body['retryAt'], checkedAt + MAX_RETRY_MS);
+            }
           } else {
-            const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-            const iso = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v) && Number.isFinite(Date.parse(v));
             if (!body || body['pool'] !== 'devin' || body['source'] !== 'devin-api-v3-org-cycle'
               || !finite(body['acuUsed']) || !finite(body['acuLimit'])
               || !(body['pctUsed'] === null || finite(body['pctUsed'])) || !iso(body['resetAt']) || !iso(body['fetchedAt'])) {
               result = unknown('malformed-body');
             } else {
-              result = { pool: 'devin', acuUsed: body['acuUsed'], acuLimit: body['acuLimit'], pctUsed: body['pctUsed'],
+              const pctUsed = body['acuLimit'] === 0 ? null : body['acuUsed'] / body['acuLimit'] * 100;
+              if (pctUsed !== null && !finite(pctUsed)) result = unknown('malformed-body');
+              else if (body['pctUsed'] !== pctUsed) result = unknown('inconsistent-percentage');
+              else if (Date.parse(body['fetchedAt']) > checkedAt) result = unknown('future-fetched-at');
+              else if (Date.parse(body['resetAt']) <= checkedAt) result = unknown('expired-cycle');
+              else result = { pool: 'devin', acuUsed: body['acuUsed'], acuLimit: body['acuLimit'], pctUsed,
                 resetAt: body['resetAt'], source: 'devin-api-v3-org-cycle', fetchedAt: body['fetchedAt'] };
             }
           }
         } catch { result = unknown('custody-unavailable'); }
         cached = result;
-        expiresAt = Math.max(now() + DEVIN_USAGE_TTL_MS, retryAt);
+        const completedAt = now();
+        expiresAt = 'status' in result ? Math.max(completedAt + NEGATIVE_TTL_MS, retryAt)
+          : Math.min(completedAt + DEVIN_USAGE_TTL_MS, Date.parse(result.resetAt));
         return result;
       })().finally(() => { flight = undefined; });
     }

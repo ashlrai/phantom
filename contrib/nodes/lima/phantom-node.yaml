@@ -1,0 +1,31 @@
+# Persistent Linux node, deliberately without host shares or credentials.
+# See docs/NODES-SANDBOX-VM.md before creating an instance.
+minimumLimaVersion: 2.0.0
+vmType: vz
+arch: aarch64
+cpus: 2
+memory: 4GiB
+disk: 40GiB
+images:
+  - location: https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img
+    arch: aarch64
+    digest: sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e
+mounts: []
+ssh:
+  localPort: 0
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+containerd:
+  system: false
+  user: false
+# Do not inherit proxy credentials from the invoking shell.
+propagateProxyEnv: false
+env: {}
+# Disable automatic application-port forwarding; Lima manages SSH separately.
+portForwards:
+  - guestIP: 0.0.0.0
+    guestPortRange: [1, 65535]
+    proto: any
+    ignore: true

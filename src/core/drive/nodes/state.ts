@@ -1,8 +1,20 @@
 import type { LeaderLease, NodeSession, QueueJobV1 } from './queue-v1.js';
 
+/** Local-auth status as observed by the node itself; never a credential. */
+export type NodeAuth = 'ok' | 'missing' | 'unknown';
+
 export interface NodeRecord extends NodeSession {
   heartbeatAt: number;
   expiresAt: number;
+  /** Owner scopes this node belongs to. */
+  owners?: string[];
+  /** Advertised capabilities. */
+  caps?: string[];
+  /** Live load in permille (0-1000), self-reported on each heartbeat. */
+  usage?: number;
+  /** Maximum concurrent claims; zero holds admission. Missing preserves legacy routing. */
+  slots?: number;
+  auth?: NodeAuth;
 }
 
 export interface NodesState {
@@ -12,6 +24,8 @@ export interface NodesState {
   nodes: NodeRecord[];
   leader: LeaderLease | null;
   jobs: QueueJobV1[];
+  /** One designated backup serializes admission for both hosts. */
+  pool?: { primary: string; backup: string; active: 'primary' | 'backup'; epoch: number; heartbeatAt: number };
 }
 
 export function emptyState(): NodesState {
@@ -20,6 +34,19 @@ export function emptyState(): NodesState {
 
 export function validId(value: unknown): value is string {
   return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}$/.test(value);
+}
+
+export function validCap(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9_.:-]{0,63}$/.test(value);
+}
+
+/** Secret references are SCREAMING_SNAKE names, which keeps pasted values out. */
+export function validSecretName(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value);
+}
+
+function list(value: unknown, ok: (v: unknown) => boolean): boolean {
+  return Array.isArray(value) && value.length <= 64 && value.every(ok) && new Set(value).size === value.length;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -36,13 +63,23 @@ export function parseState(value: unknown): NodesState {
   if (!object(value) || value.version !== 'drive.nodes.v1' || !integer(value.sequence) ||
       !integer(value.observedAt) || !Array.isArray(value.nodes) || !Array.isArray(value.jobs)) return fail();
   const sequence = value.sequence;
+  if (value.pool !== undefined && (!object(value.pool) || !validId(value.pool.primary) ||
+      !validId(value.pool.backup) || value.pool.primary === value.pool.backup ||
+      !['primary', 'backup'].includes(String(value.pool.active)) || !integer(value.pool.epoch) ||
+      value.pool.epoch < 1 || value.pool.epoch > sequence || !integer(value.pool.heartbeatAt) || value.pool.heartbeatAt > value.observedAt)) return fail();
   const token = (v: unknown): boolean => integer(v) && v > 0 && v <= sequence;
   const session = (v: Record<string, unknown>): boolean => validId(v.nodeId) && token(v.session);
   const lease = (v: Record<string, unknown>): boolean => session(v) && token(v.token) && integer(v.expiresAt);
-  if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt))) return fail();
+  if (!value.nodes.every(n => object(n) && session(n) && integer(n.heartbeatAt) && integer(n.expiresAt) &&
+    (n.owners === undefined || list(n.owners, validId)) && (n.caps === undefined || list(n.caps, validCap)) &&
+    (n.usage === undefined || (integer(n.usage) && n.usage <= 1000)) &&
+    (n.slots === undefined || (integer(n.slots) && n.slots <= 64)) &&
+    (n.auth === undefined || ['ok', 'missing', 'unknown'].includes(String(n.auth))))) return fail();
   if (new Set(value.nodes.map(n => n.nodeId)).size !== value.nodes.length) return fail();
   if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();
   if (!value.jobs.every(j => object(j) && validId(j.id) &&
+    (j.owner === undefined || validId(j.owner)) && (j.requires === undefined || list(j.requires, validCap)) &&
+    (j.pack === undefined || validId(j.pack)) && (j.secrets === undefined || list(j.secrets, validSecretName)) &&
     ['pending', 'running', 'completed'].includes(String(j.state)) &&
     (j.result === undefined || typeof j.result === 'string') &&
     (j.state !== 'completed' || typeof j.result === 'string') &&

@@ -21,7 +21,8 @@ list in a guide.
 ## Setup
 
 ```sh
-npm ci          # clean, lockfile-exact install of devDependencies
+npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
+# CI and release packaging: npm ci
 ```
 
 Run focused verification locally while developing. Pull requests and default-branch
@@ -49,7 +50,7 @@ To install the CLI while developing:
 | Command | What it does |
 |---------|-------------|
 | `npm run dev` | Run the CLI from source via `tsx` (no compile step). E.g. `npm run dev -- status` |
-| `npm test` | Run the backend unit and real-I/O lanes once (`vitest run`); web tests are separate |
+| `npm test` | Run the backend unit, real-I/O and serial-CPU projects once (`vitest run`); web tests are separate |
 | `npm run test:serial` | Run tests without file parallelism — required for tests that touch the same home dir |
 | `npm run test:ci` | Run backend lanes locally with isolated test homes, inactivity detection and a hard runtime cap |
 | `npm run test:ci:balanced` | Run the complete backend suite as four concurrent shards balanced by measured file durations |
@@ -57,11 +58,18 @@ To install the CLI while developing:
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
 | `npm run typecheck` | Strict backend and web type checks, without emitting files |
 | `npm run build` | Check candidate version sync, compile the backend, generate the authority surface, copy assets, build the built-in preparation evaluator and the web console, then generate dependency inventory and Git build identity in `dist/` |
+
+For explicit Bun-compatible test inventories, see the standalone
+[Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption
+is separate from these scripts.
+
+Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite, so the full CI check remains the merge gate. A working state that already passed exits early via a marker shared across worktrees; `--force` (or `PHANTOM_VERIFY_FORCE=1`) reruns it.
 
 `bin/ashlr` is a thin ESM shim that imports `dist/cli/index.js`, so the installed binary always runs the compiled output. For fast iteration, use `npm run dev` (runs `src/cli/index.ts` directly through `tsx`).
 
@@ -189,6 +197,22 @@ inactive process from an actively progressing suite that reaches the hard cap;
 only inactivity after Vitest's final summary is evidence of a possible leaked
 handle. The runner preserves the separate worker limits of the unit and
 serialized real-I/O lanes defined in [vitest.config.ts](vitest.config.ts).
+
+The complete synthetic memory performance file runs in the `serial-cpu` Vitest project after the unit and real-I/O groups. It keeps one worker and the same five-second case bound; all 1,024 events, alternating raw/prepared observations and receipts remain. Raw Ubuntu shards and Mac collection include this project automatically. `lint:realio-lane` accounts for the separate manifest and refuses overlapping or missing members.
+
+The Ubuntu authority 1/3 producer has a 60-minute outer job limit: it runs the
+complete web suite before the existing 30-minute backend wrapper, then verifies
+and uploads the original package. Measured setup/build took three minutes and
+web took eleven minutes; a 25-minute combined job cancelled healthy backend work.
+Other matrix roles retain their 25-minute limits. Test and worker bounds are unchanged.
+
+Hosted Mac general jobs use a 90-minute outer limit, matching their existing
+90-minute hermetic wrapper. Complete measured single-worker partitions took
+60–65 minutes; a 45-minute outer job could not finish them. Per-test deadlines,
+worker memory limits, idle detection and required qualification roles are unchanged.
+Hosted Darwin runs print numeric capacity observations after the worker policy:
+raw free/available memory, VM free/inactive/speculative/purgeable pages and kernel
+pressure stay separate; diagnostic values never change admission or worker count.
 
 Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
@@ -368,3 +392,40 @@ docs/
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full module map and the autonomous loop.
+
+### Shared installs for trusted local worktrees
+
+Use `npm run install:worktree` in place of `npm ci` when preparing local agent
+worktrees. Install pnpm **10.28.2** first (`npm install -g pnpm@10.28.2`). The
+helper installs the frozen `pnpm-lock.yaml` with lifecycle scripts disabled and
+places the shared store in `<git-common-dir>/phantom-pnpm-store`. It checks that
+store and worktree are on the same device (the Data APFS volume on our Macs).
+Each worktree keeps its own `node_modules` links; dependency graphs are shared.
+All store writers must be trusted. Never edit package files through these links.
+
+The workspace's `enableGlobalVirtualStore: true` is pnpm 10's spelling of the
+newer `virtualStoreType: global`; do not upgrade pnpm without updating the helper
+and validating the layout. CI and releases continue to use `npm ci`; the helper
+refuses CI because pnpm 10 disables its global virtual store there. Existing
+npm installations should be removed before switching (`rm -rf node_modules` in
+the intended checkout only). Test and development commands still use `npm run`.
+The full `npm run build` includes the release inventory, which requires a real
+npm dependency tree and intentionally rejects shared dependency symlinks. Use
+an npm-installed release checkout for that command; local source execution,
+`npm run typecheck`, tests, and `vite build --config vite.config.web.ts` work
+with the shared installation. Do not relax the release inventory's path checks.
+
+When changing dependencies, update `package-lock.json` with npm, mirror security
+`overrides` in `pnpm-workspace.yaml`, then run `pnpm import` and include the
+updated `pnpm-lock.yaml`. Run `npm run install:worktree` to verify the frozen
+install. The store persists after worktree removal. Remove it only after all
+linked worktrees are retired; deleting it breaks their dependency links.
+
+To repeat the install comparison, run
+`node scripts/benchmark-worktree-install.mjs . worktree-install-benchmark.json`.
+It creates disposable manifest snapshots on the checkout volume, measures cold
+and warm npm/pnpm installs with scripts disabled equally, verifies that pnpm
+snapshots resolve Vitest to the same shared package directory, and removes its
+temporary trees. The JSON separates per-checkout `du -sk` allocation from shared
+store allocation. It is a single-trial local measurement, not a physical APFS
+extent accounting or a general performance guarantee.

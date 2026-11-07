@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="t">
+  <title id="t">Your accounts and local models</title>
+  <rect width="640" height="360" rx="24" fill="#141A2A"/>
+  <g font-family="ui-sans-serif, system-ui, sans-serif" font-size="24" fill="#E8EEF9">
+    <rect x="40" y="48" width="250" height="110" rx="16" fill="#0B1020" stroke="#2A3550"/>
+    <text x="64" y="112">Signed-in CLIs</text>
+    <rect x="350" y="48" width="250" height="110" rx="16" fill="#0B1020" stroke="#2A3550"/>
+    <text x="374" y="112">API credits</text>
+    <rect x="40" y="190" width="560" height="110" rx="16" fill="#0B1020" stroke="#3DDC97"/>
+    <text x="64" y="254">Local models on your machine</text>
+  </g>
+</svg>

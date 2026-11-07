@@ -29,10 +29,10 @@ export const VERSE_LEADER_DIRECTIVES_PATH = '/api/verse/leader/directives';
 /** Needs-you item id prefix for a Leader question; the rest of the id IS the questionId. */
 export const LEADER_QUESTION_ITEM_PREFIX = 'leader:leader-question:';
 
-export type LeaderThreadChannel = 'verse' | 'telegram' | 'cli' | 'system';
+export type LeaderThreadChannel = 'verse' | 'telegram' | 'cli' | 'system' | 'imessage' | 'email' | 'mobile';
 export type LeaderThreadKind = 'message' | 'question' | 'answer' | 'memo' | 'directive' | 'update' | 'action';
 
-export const LEADER_THREAD_CHANNELS: readonly LeaderThreadChannel[] = ['verse', 'telegram', 'cli', 'system'];
+export const LEADER_THREAD_CHANNELS: readonly LeaderThreadChannel[] = ['verse', 'telegram', 'cli', 'system', 'imessage', 'email', 'mobile'];
 export const LEADER_THREAD_KINDS: readonly LeaderThreadKind[] = ['message', 'question', 'answer', 'memo', 'directive', 'update', 'action'];
 
 export type LeaderThreadMessage = {
@@ -88,6 +88,8 @@ export interface OperatorDirective {
 }
 
 export interface AppendMasonMessageResult {
+  /** Present for sourceEventId calls only. Pending also covers interrupted work. */
+  outcome?: 'pending' | 'completed';
   message: LeaderThreadMessage;
   reply: LeaderThreadMessage | null;
   directive?: OperatorDirective;

@@ -15,7 +15,9 @@ import type {
   DashboardSnapshot,
   DecisionEntry,
   FleetActivitySnapshot,
+  FleetLaneSnapshot,
   FleetStatus,
+  ApprovalRequest,
   Proposal,
   ProposalStatus,
   PublicDaemonObservation,
@@ -121,6 +123,16 @@ export const fleetStatusQuery: QueryDef<FleetStatus> = {
 export const fleetActivityQuery: QueryDef<FleetActivitySnapshot> = {
   key: 'fleet-activity',
   fetch: (signal) => apiGet<FleetActivitySnapshot>('/api/fleet-activity', signal),
+};
+
+/**
+ * RQ-PHANTOM-ENG-CONSOLE: per-lane engineering console projection —
+ * credit left, queue depth, live jobs and merges/hour per router lane.
+ * Read-only loopback read (GET /api/fleet/lanes → getFleetLaneSnapshot()).
+ */
+export const fleetLanesQuery: QueryDef<FleetLaneSnapshot> = {
+  key: 'fleet-lanes',
+  fetch: (signal) => apiGet<FleetLaneSnapshot>('/api/fleet/lanes', signal),
 };
 
 /**
@@ -274,11 +286,11 @@ export interface InboxDecisionEvidence {
  * or via inboxListQuery's history view) still resolves here as long as its
  * on-disk record hasn't been pruned.
  */
-export function proposalDetailQuery(id: string): QueryDef<Proposal & { decisionEvidence: InboxDecisionEvidence }> {
+export function proposalDetailQuery(id: string): QueryDef<Proposal & { decisionEvidence: InboxDecisionEvidence; approvalRequest: ApprovalRequest | null }> {
   return {
     key: `proposal-detail-${id}`,
     fetch: (signal) =>
-      apiGet<Proposal & { decisionEvidence: InboxDecisionEvidence }>(`/api/inbox/${encodeURIComponent(id)}`, signal),
+      apiGet<Proposal & { decisionEvidence: InboxDecisionEvidence; approvalRequest: ApprovalRequest | null }>(`/api/inbox/${encodeURIComponent(id)}`, signal),
   };
 }
 

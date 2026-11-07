@@ -34,7 +34,7 @@
  * seed (`complete: true`) only when no issue was recorded.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
@@ -639,17 +639,35 @@ export type FleetInventoryRead =
 
 /** Read + parse fleet.json. Never throws; a bad file is a state, not an exception. */
 export function readFleetInventory(path: string = fleetInventoryPath()): FleetInventoryRead {
+  let fd: number | undefined;
   try {
-    const raw = readFileSync(path, 'utf8');
-    if (Buffer.byteLength(raw, 'utf8') > FLEET_GRAPH_SEED_LIMITS.maxFileBytes) {
+    // Non-blocking open prevents a FIFO from hanging before the file-type check.
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return { ok: false, path, reason: 'unreadable' };
+    const limit = FLEET_GRAPH_SEED_LIMITS.maxFileBytes;
+    if (stat.size > limit) {
       return { ok: false, path, reason: 'too-large' };
     }
-    return { ok: true, path, inventory: JSON.parse(raw) as unknown };
+    // Read one byte beyond the limit so growth after fstat cannot bypass it.
+    const bytes = Buffer.allocUnsafe(limit + 1);
+    let count = 0;
+    while (count < bytes.length) {
+      const read = readSync(fd, bytes, count, bytes.length - count, null);
+      if (read === 0) break;
+      count += read;
+    }
+    if (count > limit) return { ok: false, path, reason: 'too-large' };
+    return { ok: true, path, inventory: JSON.parse(bytes.toString('utf8', 0, count)) as unknown };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return { ok: false, path, reason: 'missing' };
     if (error instanceof SyntaxError) return { ok: false, path, reason: 'malformed' };
     return { ok: false, path, reason: 'unreadable' };
+  } finally {
+    if (fd !== undefined) {
+      try { closeSync(fd); } catch { /* The read result must never throw. */ }
+    }
   }
 }
 

@@ -89,7 +89,7 @@ describe.each(['darwin', 'linux'] as const)('steward schedule CLI (%s)', (platfo
   });
   it.each([
     ['schedule', '--install', '--apply', '--help'], ['schedule', '-h'],
-  ])('help does not install: %j', async (...args) => {
+  ])('help does not install: %j (%#)', async (...args) => {
     expect(await cmdSteward(args)).toBe(0);
     expect(output.join('\n')).toContain('Usage:');
     expect(activate).not.toHaveBeenCalled();
@@ -98,7 +98,7 @@ describe.each(['darwin', 'linux'] as const)('steward schedule CLI (%s)', (platfo
   it.each([
     ['--hour'], ['--hour', 'NaN'], ['--hour', '24'], ['--hour', '3.5'],
     ['--hour', ''], ['--hour', '--apply'], ['--instal'], ['--install', '--install'], ['--json'],
-  ])('refuses invalid options before writing: %j', async (...args) => {
+  ])('refuses invalid options before writing: %j (%#)', async (...args) => {
     expect(await cmdSteward(['schedule', ...args])).toBe(2);
     expect(existsSync(units()[0]!.path)).toBe(false);
     expect(activate).not.toHaveBeenCalled();

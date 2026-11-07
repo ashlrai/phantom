@@ -74,9 +74,9 @@ describe('CLI process exit codes', () => {
   const home = mkdtempSync(join(tmpdir(), 'phm-help-exit-'));
   afterAll(() => rmSync(home, { recursive: true, force: true }));
 
-  function run(args: string[], executionHome = home) {
-    return spawnSync(process.execPath, ['--import', 'tsx', resolve('src/cli/index.ts'), ...args], {
-      cwd: resolve('.'),
+  function run(args: string[], executionHome = home, cwd = resolve('.')) {
+    return spawnSync(process.execPath, ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('src/cli/index.ts'), ...args], {
+      cwd,
       env: {
         ...process.env,
         HOME: executionHome,
@@ -160,6 +160,28 @@ describe('CLI process exit codes', () => {
       });
     });
 
+    it('treats tokens after -- as positional, even when they look like options', () => {
+      const f = fixture();
+      const repo = join(f.fixtureHome, '--json');
+      mkdirSync(repo);
+      writeFileSync(f.registry, JSON.stringify({ repos: [repo] }), { mode: 0o600 });
+      const result = run(['enroll', 'remove', '--', '--json'], f.fixtureHome, f.fixtureHome);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('Removed: --json');
+      expect(JSON.parse(readFileSync(f.registry, 'utf8'))).toEqual({ repos: [] });
+    });
+
+    it('accepts --json before -- while using the following option-shaped repo', () => {
+      const f = fixture();
+      const repo = join(f.fixtureHome, '--odd');
+      mkdirSync(repo);
+      writeFileSync(f.registry, JSON.stringify({ repos: [repo] }), { mode: 0o600 });
+      expect(jsonResult(run(['enroll', 'remove', '--json', '--', '--odd'], f.fixtureHome, f.fixtureHome))).toEqual({
+        ok: true, repo: '--odd', enrolled: false, removed: true,
+      });
+      expect(JSON.parse(readFileSync(f.registry, 'utf8'))).toEqual({ repos: [] });
+    });
+
     it.each(['before', 'after'])('toggles the real kill sentinel with --json %s the positional', (position) => {
       const f = fixture();
       for (const value of ['on', 'off']) {
@@ -175,7 +197,7 @@ describe('CLI process exit codes', () => {
       ['remove', '--json'],
       ['kill', '--json'],
       ['kill', '--json', 'maybe'],
-    ])('returns one JSON usage error for %j', (...args) => {
+    ])('returns one JSON usage error for %j (%#)', (...args) => {
       const f = fixture();
       expect(jsonResult(run(['enroll', ...args], f.fixtureHome), 2)).toMatchObject({
         ok: false, error: expect.stringContaining(`Usage: ashlr enroll ${args[0]}`),

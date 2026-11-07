@@ -527,6 +527,20 @@ describe('the post-PR loop', () => {
     expect((board.body['cards'] as Array<Record<string, unknown>>).find((c) => c['agentId'] === agent.id)!['reason']).toBe('ci-failed');
   });
 
+  it('does not send optional failures to Auto-fix when required merge evidence passed', async () => {
+    let agent = await readyAgent({ autoMerge: true, autoFix: true });
+    const merge = vi.fn(async () => undefined);
+    checksRead = readOf(detail({ ci: 'failing', mergeVerdict: { allowed: true, reason: 'Required CI passed; optional check failed.' } }));
+    const sentBefore = engine.sent.length;
+    agent = await superviseAgent(supervisorDeps({ merge, checksDeps: {
+      requiredAutoMergeChecks: () => ['CI'], killOn: async () => false, pausedOn: async () => false,
+    } }), agent);
+    expect(merge).toHaveBeenCalledOnce();
+    expect(engine.sent.length).toBe(sentBefore);
+    expect(agent.autoFixAttempts).toBe(0);
+    expect(agent.archived?.reason).toBe('merged');
+  });
+
   it('Auto-merge merges only on an allowed verdict, then archives the workspace (worktree and branch)', async () => {
     let agent = await readyAgent({ autoMerge: true });
     const merges: Array<{ number: number; headSha: string; requiredChecks?: readonly string[] }> = [];

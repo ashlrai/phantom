@@ -12,40 +12,14 @@
  * Pure data and pure functions — no React. On the chat's first-paint path:
  * keep it small.
  */
-import type { CommandId } from './command-catalog.js';
 import { VIEWPORT_BREAKPOINTS } from './viewport.js';
 
 /**
- * The FIRST-PARTY panes, in the order the dock's menus list them. This is
- * metadata only (no components): the pane REGISTRY (routes/verse/panes/)
- * turns each into a registered pane, and other units add or replace panes
- * there with `registerPane` — without touching this table or the dock.
- *
- * `slot` names the C0 slot a pane renders through when its body is another
- * unit's file; null = a component the workbench owns (panes/builtin-panes).
+ * The first-party panes' ids, in the order the dock's menus list them — the
+ * ids of DOCK_PANES (shell/dock-pane-catalog.ts, which carries their labels and
+ * groups and is lazy). dock-catalog.test.ts pins the two together.
  */
-export const DOCK_PANES = [
-  { id: 'terminal', label: 'Terminal', owner: 'C4', commandId: 'dock.terminal', slot: 'terminal-pane' },
-  { id: 'browser', label: 'Browser', owner: 'C4', commandId: 'dock.preview', slot: 'preview-pane' },
-  { id: 'diff', label: 'Changes', owner: 'C5', commandId: 'dock.diff', slot: 'diff-pane' },
-  { id: 'files', label: 'Files', owner: 'workbench', commandId: 'dock.files', slot: null },
-  { id: 'sources', label: 'Sources', owner: 'workbench', commandId: 'dock.sources', slot: null },
-  { id: 'reasoning', label: 'Reasoning', owner: 'workbench', commandId: 'dock.reasoning', slot: null },
-  { id: 'tasks', label: 'Tasks', owner: 'C2', commandId: null, slot: null },
-  { id: 'context', label: 'Context', owner: 'C2', commandId: null, slot: null },
-] as const satisfies readonly {
-  id: string;
-  label: string;
-  owner: string;
-  /** The catalog command that opens (and focuses) this pane; null = opened from its own affordance. */
-  commandId: CommandId | null;
-  /** Rendered through this slot when the pane is another unit's; null = the workbench's own component. */
-  slot: 'terminal-pane' | 'preview-pane' | 'diff-pane' | null;
-}[];
-
-/** A first-party pane's id. */
-export type BuiltinPaneId = (typeof DOCK_PANES)[number]['id'];
-export const DOCK_PANE_IDS: readonly BuiltinPaneId[] = DOCK_PANES.map((p) => p.id);
+export const DOCK_PANE_IDS: readonly string[] = ['terminal', 'browser', 'diff', 'files', 'sources', 'reasoning', 'tasks', 'context'];
 
 /**
  * Any pane's id — first-party or registered by another unit (panes/). Open

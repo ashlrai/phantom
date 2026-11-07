@@ -27,6 +27,7 @@ const TITLES: Record<string, string> = {
   'Current week (Fable)': 'seven_day_fable',
 };
 // Preserve the native display string, not an invented timestamp/year/timezone conversion.
+const DATE_ONLY_RESET = /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:[1-9]|[12]\d|3[01])$/;
 const RESET = /^(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:[1-9]|[12]\d|3[01]) at )?(?:[1-9]|1[0-2])(?::[0-5]\d)?(?:am|pm) \([A-Za-z_+-]+(?:\/[A-Za-z_+-]+){0,2}\)$/;
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -48,15 +49,16 @@ export function parseClaudeNativeUsage(raw: string): ResourceConnectionQuotaWind
     if (!line.startsWith('Current ')) continue; // Never publish activity/behavior diagnostics.
     const match = /^(Current [^:]+): (\d{1,3})% used(?: · resets (.+))?$/.exec(line);
     if (!match || !Object.hasOwn(TITLES, match[1]!) || Number(match[2]) > 100 ||
-      match[3] !== undefined && (match[3].length > 128 || !RESET.test(match[3]))) return null;
+      match[3] !== undefined && (match[3].length > 128 || (!RESET.test(match[3]) && !DATE_ONLY_RESET.test(match[3])))) return null;
     const id = TITLES[match[1]!]!;
     if (ids.has(id)) return null;
     ids.add(id);
     windows.push({ id, usedPercent: Number(match[2]), resetsAt: null,
       nativeReport: { source: 'claude-usage', resetDescription: match[3] ?? null } });
   }
-  // Do not turn a partial/native-changed response into a complete allowance claim.
-  return ids.has('five_hour') && ids.has('seven_day') ? windows : null;
+  // The provider removed this account's session window on 2026-10-31;
+  // a weekly-only report is now complete. Preserve a session window only when reported.
+  return ids.has('seven_day') ? windows : null;
 }
 
 /** Calendar-valid provider ISO, including fractional seconds and explicit offset. */
@@ -160,7 +162,8 @@ export function parseClaudeNativeUsageStream(raw: string, observedAt: string): {
   }
   const extra = report.rate_limits.extra_usage;
   const extraUsageEnabled = record(extra) && typeof extra.is_enabled === 'boolean' ? extra.is_enabled : null;
-  return ids.has('five_hour') && ids.has('seven_day') ? { windows, quotaFresh: true, extraUsageEnabled } : null;
+  // The provider removed this account's session window on 2026-10-31; weekly-only is complete.
+  return ids.has('seven_day') ? { windows, quotaFresh: true, extraUsageEnabled } : null;
 }
 
 /**
@@ -187,8 +190,15 @@ export function parseClaudeNativeUsageStream(raw: string, observedAt: string): {
  *           (five_hour, seven_day, seven_day_fable). Needed because Opus 5.5
  *           (`claude-opus-5-5`) exists only from 2.1.280, so seats re-pinned
  *           for it would otherwise lose their usage meter.
+ * 2.1.312 — verified 2026-11-02: `name:"usage"` is `type:"local"` with
+ *           `supportsNonInteractive:!0` in the binary; a live stream-json run
+ *           returned num_turns 0, total_cost_usd 0, duration_api_ms 0 and a
+ *           structured `usage_report` (weekly_all + weekly_scoped rows).
  */
-export const CLAUDE_USAGE_VERIFIED_VERSIONS: readonly string[] = ['2.1.257', '2.1.280'];
+export const CLAUDE_USAGE_VERIFIED_VERSIONS: readonly string[] = ['2.1.257', '2.1.280', '2.1.312'];
+
+/** Verified builds that emit the structured stream-json `usage_report`; 2.1.257 stays legacy text. */
+const CLAUDE_USAGE_STRUCTURED_VERSIONS: ReadonlySet<string> = new Set(['2.1.280', '2.1.312']);
 
 export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOptions): Promise<ClaudeAccountUsageResult> {
   const pinned = validateClaudeAccountStatusOptions(options);
@@ -234,7 +244,7 @@ export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOption
     if (!CLAUDE_USAGE_VERIFIED_VERSIONS.some((version) => reported === `${version} (Claude Code)`)) {
       return report('usage-version-unsupported');
     }
-    const structured = reported === '2.1.280 (Claude Code)';
+    const structured = CLAUDE_USAGE_STRUCTURED_VERSIONS.has(reported.replace(/ \(Claude Code\)$/, ''));
     const raw = await run(['--safe-mode', '--restricted', '--tools', '', '--strict-mcp-config', '--mcp-config',
       '{"mcpServers":{}}', '--no-chrome', '--no-session-persistence', '--output-format', ...(structured ? ['stream-json', '--verbose'] : ['json']), '-p', '/usage'], 'usage');
     const parsed = structured ? parseClaudeNativeUsageStream(raw, before.startedAt) : null;

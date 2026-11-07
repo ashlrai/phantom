@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "jobsSha256": "f9655f740b59382e7310a4734d89c17ffbb87bd5870cbb4fc786b7d6086396df",
+  "jobs": [
+    {
+      "id": "a-merge",
+      "outcome": "merged",
+      "tokens": 800,
+      "pr": "ashlrai/example#1",
+      "mergedAt": "2026-10-25T12:00:00.000Z",
+      "impact": 4,
+      "reverted": false
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+export function score(receipt: unknown): Array<{ arm: string; model: string; effort: string; lanes: Record<string, { passed: number; total: number; elapsedMs: number; inputTokens: number; outputTokens: number }> }>;

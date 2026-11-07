@@ -55,7 +55,6 @@ import { dirname, join } from 'node:path';
 import { existsSync, openSync, readSync, closeSync, readdirSync, readFileSync, statSync } from 'node:fs';
 
 import { validResetProvenance } from '../routing/reset-pressure.js';
-import { inspectPrivateDirectory } from '../universe/artifacts.js';
 import { readResourceJson } from '../resources/pool-runtime.js';
 import { createResourceReadingCache, normalizeResourceLastKnownUsage, type ResourceReadingCache } from '../resources/reading-cache.js';
 import type { ResourceLastKnownUsage } from '../resources/reading-cache-types.js';
@@ -79,9 +78,9 @@ import {
   resourceQuotaRefreshLeaseLooksHeld,
 } from '../resources/quota-refresh-lease.js';
 import {
-  publishSharedQuotaEvidence,
   readSharedQuotaEvidence,
 } from '../resources/quota-shared-evidence.js';
+import { createQuotaEvidencePublisher, type QuotaEvidencePublisher } from '../resources/quota-evidence-background.js';
 import {
   createResourceConnectionMonitor,
   expireConnectionRow,
@@ -178,7 +177,7 @@ const EVIDENCE_HEARTBEAT_MS = 1_000;
  * verified build, kept for display; the drift test asserts it is the last entry
  * of that list. Surfacing the gate is the point: a silent "unknown" would hide it.
  */
-export const VERSE_CLAUDE_USAGE_PINNED_VERSION = '2.1.280';
+export const VERSE_CLAUDE_USAGE_PINNED_VERSION = '2.1.312';
 
 /** The probe's verbatim reason when the installed Claude Code is not the pin. */
 export const VERSE_CLAUDE_VERSION_REASON = 'usage-version-unsupported';
@@ -1124,6 +1123,7 @@ export async function startVerseAccountCollector(
   let monitor: ResourceConnectionMonitor | null = null;
   let refresher: ResourceQuotaRefresher | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let evidencePublisher: QuotaEvidencePublisher | null = null;
   let watchdog: ReturnType<typeof setInterval> | null = null;
   let lastConnections: ResourceConnectionsSnapshot | null = null;
   let lastObservations: ResourceObservation[] = [];
@@ -1176,30 +1176,20 @@ export async function startVerseAccountCollector(
     }
   }
 
+  function publicationFault(): void {
+    if (publicationFailed) return;
+    publicationFailed = true;
+    if (heartbeat !== null) { clearInterval(heartbeat); heartbeat = null; }
+    log('Phantom account collector: shared quota evidence publication failed; readers fall back to the baseline.');
+  }
   function publishEvidence(): void {
-    if (!config?.quota || !lease || !refresher || publicationFailed) return;
+    if (!config?.quota || !lease || !refresher || !evidencePublisher || publicationFailed) return;
     try {
-      publishSharedQuotaEvidence({
-        root: config.ledgerRoot,
-        pool: config.pool,
-        bindings: config.bindings,
-        config: config.quota,
-        lease,
-        state: refresher.snapshot().state,
-        evidence: {
-          observations: refresher.readObservations([]),
-          unavailableWorkerIds: refresher.unavailableWorkerIds(true),
-          quotaUnavailableWorkerIds: refresher.quotaUnavailableWorkerIds(true),
-        },
-      });
-    } catch {
-      // Publication is the witness that this owner is live. Losing it makes
-      // every reader's evidence stale — which is correct — so stop republishing
-      // rather than emitting something that claims freshness.
-      publicationFailed = true;
-      if (heartbeat !== null) { clearInterval(heartbeat); heartbeat = null; }
-      log('Phantom account collector: shared quota evidence publication failed; readers fall back to the baseline.');
-    }
+      void evidencePublisher.publish({ state: refresher.snapshot().state, evidence: {
+        observations: refresher.readObservations([]), unavailableWorkerIds: refresher.unavailableWorkerIds(true),
+        quotaUnavailableWorkerIds: refresher.quotaUnavailableWorkerIds(true),
+      } }).catch(publicationFault);
+    } catch { publicationFault(); }
   }
 
   function captureLive(): void {
@@ -1254,6 +1244,15 @@ export async function startVerseAccountCollector(
         beginNativeActivity: () => lease!.beginNativeActivity(),
       });
       if (config.quota) {
+        if (!publicationFailed) {
+          const held = lease, ownedGeneration = generation;
+          const publisher = createQuotaEvidencePublisher({
+            scope: { root: config.ledgerRoot, pool: config.pool, bindings: config.bindings, config: config.quota }, lease: held,
+            isCurrent: () => !closing && !closed && mode === 'owned' && lease === held && generation === ownedGeneration && evidencePublisher === publisher,
+            onFault: publicationFault,
+          });
+          evidencePublisher = publisher;
+        }
         refresher = createResourceQuotaRefresher({
           pool: config.pool,
           bindings: config.bindings,
@@ -1309,7 +1308,7 @@ export async function startVerseAccountCollector(
 
   function suspend(): Promise<void> {
     if (suspending) return suspending;
-    if (!monitor && !refresher) { state = mode === 'owned' ? 'suspended' : state; return Promise.resolve(); }
+    if (!monitor && !refresher && !evidencePublisher) { state = mode === 'owned' ? 'suspended' : state; return Promise.resolve(); }
     suspending = doSuspend().finally(() => { suspending = null; });
     return suspending;
   }
@@ -1318,11 +1317,15 @@ export async function startVerseAccountCollector(
     captureLive();
     if (heartbeat !== null) { clearInterval(heartbeat); heartbeat = null; }
     coordinator?.dispose();
-    const current = { monitor, refresher };
+    const current = { monitor, refresher, publisher: evidencePublisher };
+    evidencePublisher = null;
+    // Revoke synchronously, then await worker drain before the lease can leave.
+    const publicationClose = current.publisher?.close();
     monitor = null;
     refresher = null;
     coordinator = null;
     const results = await Promise.allSettled([
+      publicationClose,
       Promise.resolve().then(() => current.refresher?.close()),
       // close() THROWS when any sample ended `uncertain`. That is information,
       // not a crash: catch it, record it, keep going.
@@ -1370,7 +1373,7 @@ export async function startVerseAccountCollector(
   function releaseIdleLease(): void {
     if (closing || closed || mode !== 'owned' || !lease) return;
     // Resumed while the teardown ran, or interest arrived meanwhile.
-    if (state !== 'suspended' || monitor || refresher || suspending) return;
+    if (state !== 'suspended' || monitor || refresher || evidencePublisher || suspending) return;
     if (Date.now() - lastRequestAt < idleSuspendMs) return;
     if (cleanupUncertain || publicationFailed || recoveryHold !== null || recovering || leaseRetry) return;
     const held = lease;
@@ -1816,6 +1819,11 @@ export async function startVerseAccountCollector(
     close: async () => {
       if (closed) return;
       closing = true;
+      // Revoke before the first await. Worker startup/completion may otherwise
+      // race the recovery/lease-retry drain and misclassify normal close as a fault.
+      const publicationClose = evidencePublisher?.close();
+      evidencePublisher = null;
+      try { await publicationClose; } catch { cleanupUncertain = true; }
       if (watchdog !== null) { clearInterval(watchdog); watchdog = null; }
       // Let an in-flight recovery finish its teardown + reclamation first, so
       // shutdown never races it into releasing the lock under a live probe.
@@ -2024,12 +2032,3 @@ export function buildVerseAccountsSnapshot(options: {
   };
 }
 
-/** Best-effort private-directory check used by callers before starting a collector. */
-export function accountsRootIsPrivate(accountsRoot: string): boolean {
-  try {
-    inspectPrivateDirectory(accountsRoot);
-    return true;
-  } catch {
-    return false;
-  }
-}

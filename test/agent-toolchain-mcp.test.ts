@@ -28,6 +28,7 @@ describe('repo .mcp.json companion servers', () => {
   it('pins Phantom Secrets, Locus and Lexicon to the reviewed companion releases', () => {
     const args = (name: string) => config.mcpServers[name]?.args.join(' ') ?? '';
     expect(args('phantom-secrets')).toContain(`phantom-secrets-mcp@${reviewed('secrets')}`);
+    // The published 0.7.0 CLI and MCP wrapper were both verified from the same release.
     expect(args('locus')).toContain(`@ashlrai/locus-mcp@${reviewed('locus')}`);
     expect(args('lexicon')).toContain(`@ashlr/lexicon@${reviewed('lexicon')}`);
     // Stack reads the vault through the phantom CLI, so it carries the same Secrets pin.

@@ -198,6 +198,8 @@ file, runs that suite in full. Logs, the eslint cache and vitest JSON reports go
 `--json` prints a machine-readable result instead of the table.
 
 The import graph cannot see a test that reads a changed file as text instead of importing it.
+Known dependencies are listed in `scripts/gate-text-reads.json`; add an entry when
+introducing a text-reading test. The gate validates mapped test paths before running.
 The web smoke set explicitly includes the existing density, UI-scale, style-token,
 micro-label-font and theme-contrast modules because they read stylesheet/token files.
 These fast design contracts run alongside the shell checks even when related selection
@@ -211,6 +213,13 @@ files with investigation notes; it does not waive failures. Every failed file
 is shown as `FAIL`, including listed files. Missing or invalid Vitest JSON,
 unhandled errors, and non-zero exits also fail the gate. Keep the notes current
 and remove an entry when its cause is fixed.
+
+**Quarantining a flaky test.** The only sanctioned way to land a test skip is a
+tracked row in `queue/quarantine.tsv` (test, repo, lead, expiry within 7 days).
+`npm run gate` verifies every added `.skip`/`.todo`/`x`-prefixed marker against
+it and fails on untracked or expired skips, born-disabled tests, leftover rows,
+and any attempt to quarantine `secret-shape`, `gitleaks`, `cargo-deny` or
+`ci-gate`. See [the quarantine ledger guide](QUARANTINE-LEDGER.md).
 
 **`npm run ship:local`** (`scripts/ship-local.mjs`, macOS only) refuses a dirty tree
 (`--allow-dirty` installs it as `releases/<sha>-dirty-<time>`), then:

@@ -36,7 +36,12 @@ export interface ProviderBackend<Session, Launch, Invocation, Parser> {
   readonly id: string;
   readonly capabilities: ProviderCapabilities;
   buildLaunch(session: Session, text: string, launch: Launch): Invocation;
-  createParser(turnId: string): Parser;
+  /**
+   * `session` is additive context for parsers that check the CLI's output
+   * against what the launch asked for; implementations that need nothing
+   * from it ignore it.
+   */
+  createParser(turnId: string, session?: Session): Parser;
 }
 
 // ---------------------------------------------------------------------------

@@ -241,6 +241,7 @@ describe('deterministic merge decision', () => {
   const clean = { codes: [], protectedRules: [], contentFlags: [], pathCount: 1 };
   const decide = (over: Partial<Parameters<typeof decideCrossReview>[0]> = {}) => decideCrossReview({
     request, policy: { allowedRepos: ['ashlrai/phantom'] }, review, currentHeadSha: SHA, diff, scan: clean,
+    checks: { headSha: SHA, code: null },
     killSwitch: false, paused: false, now: new Date('2026-10-26T01:00:00Z'), ...over,
   });
 
@@ -248,6 +249,11 @@ describe('deterministic merge decision', () => {
     const d = decide();
     expect(d.action).toBe('enable-auto-merge');
     expect(d.matchHeadCommit).toBe(SHA);
+  });
+
+  it('holds without check evidence or when evidence belongs to another head', () => {
+    expect(decide({ checks: undefined })).toMatchObject({ action: 'hold', codes: ['checks-unreadable'], matchHeadCommit: null });
+    expect(decide({ checks: { headSha: SHA2, code: null } })).toMatchObject({ action: 'hold', codes: ['checks-stale'], matchHeadCommit: null });
   });
 
   it('re-reviews when the head moved, the diff changed, or there is no review', () => {

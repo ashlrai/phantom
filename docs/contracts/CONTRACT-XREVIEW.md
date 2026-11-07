@@ -1,8 +1,8 @@
 # CONTRACT-XREVIEW: Cross-model review and SHA-bound merge decision v1
 
 Status: source-complete. This contract adds no merge authority. It never runs
-gh, never merges, and never reads a GitHub credential. It produces a review
-record and a decision. The supervisor that holds merge rights acts on them.
+gh and never merges. Host custody supplies scoped GitHub access for CI reads.
+It produces a review record and a decision. The supervisor that holds merge rights acts on them.
 Operator guide: [Cross-model review](../CROSS-REVIEW.md).
 
 ## Exports
@@ -26,7 +26,8 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
   `parseReviewVerdict(output)` accepts the closed schema
   (`REVIEW_REASON_CODES`) and nothing else.
 - `decideCrossReview(input): CrossReviewDecision` and `diffSha256`,
-  `isCommitSha`, `prUrl`.
+  `isCommitSha`, `prUrl`. The optional `checks` evidence binds `headSha` to a
+  hold code or `null` for success; omitted evidence holds with `checks-unreadable`.
 
 `src/core/fleet/cross-review-process.ts`:
 
@@ -38,7 +39,9 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
 `src/core/fleet/cross-review-run.ts`:
 
 - `runCrossReview(request, policy, deps?)` and
-  `decideCrossReviewAtHead(request, policy, head, { pauseFile?, now? })`.
+  `decideCrossReviewAtHead(request, policy, head, { pauseFile?, now? })` both
+  return promises. Before approval they read live required checks and exact-SHA
+  results through host custody, then re-read the PR head and stop states.
 - `latestCrossReview(repo, pr)` and `loadCrossReviewPolicy(path?)`.
 - `crossReviewPolicyPath`, `crossReviewLogPath`, `crossReviewPauseFile` and
   `readBoundedFile`.
@@ -55,7 +58,10 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
    - a clean sensitive scan;
    - a reviewer on another pool and an independent family;
    - an allowed repo;
-   - KILL off and PAUSE absent.
+   - KILL off and PAUSE absent;
+   - nonempty required checks, all completed successfully on the current head
+     with matching App identities. Missing, pending, failing, stale or unreadable
+     evidence holds with a structured reason; API error bodies are never logged.
 
    Only then is `matchHeadCommit` set.
 2. If the head moved or the diff changed, the action is `re-review`. A stale

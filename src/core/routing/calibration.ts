@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { isRewardSignalV1 } from '../metrics/reward-signal.js';
 
 type Row = Record<string, unknown>;
 type Metric = { predicted: number | null; actual: number | null; paired: number };
@@ -27,6 +28,8 @@ interface Job {
   finished?: number;
   merged?: boolean;
   launched: boolean;
+  /** A reward-signal row was seen: a self-contained outcome record, not a launch. */
+  rewarded?: boolean;
 }
 
 function object(value: unknown): Row | undefined {
@@ -111,6 +114,21 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   const rows = parseJsonl(jobsJsonl);
   let recognized = 0;
   for (const row of rows) {
+    // Reward-signal rows (metrics/reward-signals.jsonl) are complete per-job
+    // outcome records. They join with launch predictions by jobId and supply
+    // the verified outcome side the router calibrates against.
+    if (isRewardSignalV1(row)) {
+      recognized++;
+      const job = jobs.get(row.jobId) ?? { launched: false };
+      jobs.set(row.jobId, job);
+      job.rewarded = true;
+      if (row.pool !== null) assign(job, 'arm', row.pool);
+      assign(job, 'started', Date.parse(row.dispatchedAt));
+      if (row.mergedAt !== null) assign(job, 'finished', Date.parse(row.mergedAt));
+      if (row.ciWallMs !== null) assign(job, 'wallTimeMs', row.ciWallMs);
+      assign(job, 'merged', row.merged);
+      continue;
+    }
     const event = stringField(row, 'event', 'type');
     if (!event || !['launch', 'finish', 'publish', 'outcome'].includes(event)) continue;
     recognized++;
@@ -133,13 +151,16 @@ export function calibrateRouting(jobsJsonl: string, posthogJson?: string): Calib
   if (posthogJson !== undefined) for (const row of parseExport(posthogJson)) {
     const id = stringField(row, 'jobId', 'job_id');
     const job = id ? jobs.get(id) : undefined;
-    if (!job || !job.launched) { unmatchedPosthogRuns++; continue; }
+    if (!job || (!job.launched && !job.rewarded)) { unmatchedPosthogRuns++; continue; }
     metrics(job, row);
   }
   const groups = new Map<string, Job[]>();
   for (const job of jobs.values()) {
-    if (!job.launched) throw new Error('Event has no matching launch');
-    if (!job.arm) throw new Error('Launch is missing arm');
+    if (!job.launched && !job.rewarded) throw new Error('Event has no matching launch');
+    if (!job.arm) {
+      if (!job.rewarded) throw new Error('Launch is missing arm');
+      job.arm = 'unknown';
+    }
     if (job.started !== undefined && job.finished !== undefined) {
       if (job.finished < job.started) throw new Error('Finish precedes launch');
       const duration = job.finished - job.started;

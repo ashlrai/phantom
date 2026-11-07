@@ -10,7 +10,12 @@ import type { ResourceAccountConnection } from '../src/core/resources/connection
 import type { ResourceConnectionConfig } from '../src/core/resources/connection-monitor.js';
 
 const resolver = vi.hoisted(() => vi.fn());
-vi.mock('../src/core/resources/native-profile.js', () => ({ resolveNativeSeatLaunch: resolver }));
+// The display resolver shares the launch fixture's answer, projected to metadata only.
+vi.mock('../src/core/resources/native-profile.js', () => ({ resolveNativeSeatLaunch: resolver,
+  resolveNativeSeatDisplayMetadata: (options: unknown) => {
+    const r = resolver(options);
+    return r.ok ? { seatId: r.launch.seatId, provider: r.launch.provider, command: r.launch.command, nativeStatePath: r.launch.nativeStatePath } : null;
+  } }));
 let root: string; let state: string;
 type Account = ResourceConnectionConfig['accounts'][number];
 const account = (provider: Account['provider'] = 'codex'): Account => ({ id: `${provider}-a`, label: 'Demo', provider, command: ['/private/inert/node', '/private/inert/launcher.mjs'] });

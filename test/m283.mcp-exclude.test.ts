@@ -16,8 +16,9 @@
  * Uses vi.fn where needed; all values are fixed/deterministic.
  */
 
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterAll, afterEach, beforeAll, beforeEach } from 'vitest';
 import {
+  cpSync,
   mkdtempSync,
   writeFileSync,
   rmSync,
@@ -65,16 +66,30 @@ afterEach(() => {
   }
 });
 
+// The base repo is identical for every caller: build it once and hand each
+// test a private copy (5 git calls per repo -> one copy of a built repo).
+let repoTemplate: string;
+
+beforeAll(() => {
+  // Not tracked in tmpDirs: the template lives until afterAll.
+  repoTemplate = mkdtempSync(join(tmpdir(), 'm283-template-'));
+  execFileSync('git', ['init', repoTemplate], { stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.email', 'test@ashlr.test'], { cwd: repoTemplate, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.name', 'Ashlr Test'], { cwd: repoTemplate, stdio: 'pipe' });
+  // Initial commit so HEAD is resolvable.
+  writeFileSync(join(repoTemplate, 'README.md'), '# test\n', 'utf8');
+  execFileSync('git', ['add', 'README.md'], { cwd: repoTemplate, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', 'init'], { cwd: repoTemplate, stdio: 'pipe' });
+});
+
+afterAll(() => {
+  rmSync(repoTemplate, { recursive: true, force: true });
+});
+
 /** Initialise a bare git repo with an initial commit and return its path. */
 function initRepo(prefix: string): string {
   const dir = mkTmp(prefix);
-  execFileSync('git', ['init', dir], { stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.email', 'test@ashlr.test'], { cwd: dir, stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.name', 'Ashlr Test'], { cwd: dir, stdio: 'pipe' });
-  // Initial commit so HEAD is resolvable.
-  writeFileSync(join(dir, 'README.md'), '# test\n', 'utf8');
-  execFileSync('git', ['add', 'README.md'], { cwd: dir, stdio: 'pipe' });
-  execFileSync('git', ['commit', '-m', 'init'], { cwd: dir, stdio: 'pipe' });
+  cpSync(repoTemplate, dir, { recursive: true });
   return dir;
 }
 

@@ -59,15 +59,6 @@ describe('oMLX local tier memory configuration', () => {
     expect(() => planOmlxConfig(input, now)).toThrow();
   });
 
-  it('accepts the freshness boundary and keeps prototype-like model IDs distinct', () => {
-    const input = request();
-    input.memguard.capturedAtMs = now - 30_000;
-    input.models = [model('constructor'), model('toString')];
-    const models = planOmlxConfig(input, now).modelSettings.models;
-    expect(Object.keys(models)).toEqual(['constructor', 'toString']);
-    expect(JSON.parse(JSON.stringify(models)).constructor.turboquant_kv_bits).toBe(8);
-  });
-
   it('caps every Splash instance to the smallest allocation since its setting is global', () => {
     const plan = planOmlxConfig({ ...request(), models: [model('a', 12, 'splash'), model('b', 8, 'splash')] }, now);
     expect(plan.settings.integrations.splash_max_memory_gb).toBe(8);

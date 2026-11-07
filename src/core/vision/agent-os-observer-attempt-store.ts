@@ -42,7 +42,6 @@ const MAX_AGGREGATE_BYTES = 64 * 1_024 * 1_024;
 const MAX_LOCK_WAIT_MS = 2_000;
 const MAX_SNAPSHOT_SEQUENCE = 4_096;
 
-export const AGENT_OS_OBSERVER_ATTEMPT_GENESIS_DIGEST = GENESIS_DIGEST;
 export const AGENT_OS_OBSERVER_ATTEMPT_MAX_RECORDS = MAX_RECORDS;
 
 export type AgentOsObserverTerminalOutcomeV1 =
@@ -483,10 +482,6 @@ function receiptCodec(key: Buffer): ImmutablePrivateRecordCodec<AgentOsObserverA
       left.transitionOrdinal - right.transitionOrdinal ||
       left.receiptDigest.localeCompare(right.receiptDigest),
   };
-}
-
-export function agentOsObserverAttemptStoreRootPath(): string {
-  return resolve(join(homedir(), '.ashlr', 'agent-os-observer-attempts-v1'));
 }
 
 export function defaultAgentOsObserverAttemptStoreDependenciesV1(

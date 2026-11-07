@@ -5,6 +5,27 @@
   "description": "Read-only snapshot. Null means unknown. Cursor shares Grok Ultra capacity. Money is not inferred from pool units.",
   "type": "object",
   "additionalProperties": false,
+  "properties": {
+    "agents": {},
+    "coordination": {},
+    "edges": {},
+    "generated_at": {},
+    "kind": {},
+    "nodes": {},
+    "pools": {},
+    "readings": {},
+    "repos": {},
+    "router": {},
+    "schema": {
+      "const": "fleet.v1"
+    },
+    "sources": {},
+    "windows": {}
+  },
+  "oneOf": [
+  {
+  "type": "object",
+  "additionalProperties": false,
   "required": [
     "schema",
     "generated_at",
@@ -313,7 +334,128 @@
         "planner": {"$ref": "#/definitions/sourceState"}
       }
     }
+  }
   },
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "generated_at",
+    "nodes",
+    "edges",
+    "sources"
+  ],
+  "properties": {
+    "schema": {
+      "const": "fleet.v1"
+    },
+    "kind": {
+      "const": "graph"
+    },
+    "generated_at": {
+      "$ref": "#/definitions/dateTime"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "enum": [
+              "leader",
+              "lane",
+              "slot",
+              "job",
+              "pr",
+              "resource"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "target",
+          "relation"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "relation": {
+            "enum": [
+              "manages",
+              "contains",
+              "runs",
+              "produces",
+              "uses"
+            ]
+          }
+        }
+      }
+    },
+    "sources": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slots.json",
+    "router-queue.md",
+    "jobs.jsonl",
+    "status.json",
+    "leader-status.json"
+  ],
+  "properties": {
+    "slots.json": {
+      "$ref": "#/definitions/sourceState"
+    },
+    "router-queue.md": {
+      "$ref": "#/definitions/sourceState"
+    },
+    "jobs.jsonl": {
+      "$ref": "#/definitions/sourceState"
+    },
+    "status.json": {
+      "$ref": "#/definitions/sourceState"
+    },
+    "leader-status.json": {
+      "$ref": "#/definitions/sourceState"
+    }
+  }
+}
+  }
+}
+  ],
   "definitions": {
     "poolId": {
       "enum": [

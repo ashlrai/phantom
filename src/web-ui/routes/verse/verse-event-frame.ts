@@ -90,7 +90,7 @@ function frameFieldsValid(e: Record<string, unknown>): boolean {
         (e.tool === undefined || typeof e.tool === 'string') &&
         optionalCount(e.outTokens) && optionalCount(e.tokPerSec);
     case 'status':
-      return (e.kind === 'retry' || e.kind === 'preflight' || e.kind === 'watchdog') && typeof e.message === 'string';
+      return (e.kind === 'retry' || e.kind === 'preflight' || e.kind === 'watchdog' || e.kind === 'model-switch') && typeof e.message === 'string';
     case 'history-truncated':
       return typeof e.droppedBefore === 'number' && Number.isFinite(e.droppedBefore);
     case 'source': {

@@ -98,6 +98,8 @@ if (!workerHome || process.env[workerPidKey] !== String(process.pid)) {
 process.env.HOME = workerHome;
 process.env.USERPROFILE = workerHome;
 process.env.ASHLR_HOME = join(workerHome, '.ashlr');
+// Hermetic: fleet-truth never shells out to the real `gh` from a test (tests inject a runner).
+process.env.ASHLR_FLEET_TRUTH_GH = 'off';
 // HOME does not override explicit XDG locations inherited from the shell.
 // Reassert these for every module, just like HOME, including for subprocesses.
 for (const [key, name] of Object.entries({

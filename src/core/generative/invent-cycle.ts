@@ -264,6 +264,12 @@ export interface InventCycleOptions {
   skipDedup?: boolean;
   /** Borrow authority from a caller that already owns the outward fence. */
   authority?: OutwardMutationFence;
+  /**
+   * RQ-DAEMONTICK-UNBLOCK: the calling tick phase's signal. Aborting stops the
+   * repo loop between items; an in-flight model call is left to the provider's
+   * own bound (the phase runner already abandoned its await).
+   */
+  signal?: AbortSignal;
 }
 
 function inventCycleAuthority(
@@ -310,7 +316,7 @@ export async function runInventCycle(
 
     lifecycle = inventCycleAuthority(opts);
     const authorizedCycle = (): boolean =>
-      ownsOutwardMutationFence(lifecycle?.authority) && !killSwitchOn();
+      ownsOutwardMutationFence(lifecycle?.authority) && !killSwitchOn() && !opts.signal?.aborted;
     const authorizedRepo = (repo: string): boolean =>
       authorizedCycle() && isEnrolled(repo);
     if (!authorizedCycle()) return { invented: 0, enqueued: 0 };

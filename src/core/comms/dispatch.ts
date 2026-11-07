@@ -32,10 +32,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { hasLeaderNetworkConfig } from '../agents/leader-network-config.js';
+import { allowOperatorMessage } from '../fleet/operator-glance.js';
+import { acceptTelegramPair } from '../fleet/operator-glance-read.js';
 import { sendIMessage } from '../integrations/imessage.js';
 import {
   sendTelegramMessage,
   pollTelegramUpdates,
+  acknowledgeTelegramUpdate,
   answerCallbackQuery,
   telegramEnabled,
   type InboundEvent,
@@ -54,6 +58,7 @@ import {
 import { runCommsMigrationsOnce, type CommsMigrationSummary } from './migrations.js';
 import {
   converseWithLeader,
+  recordMappedTelegramReply,
   createPacer,
   drainLeaderThread,
   handleLeaderButton,
@@ -64,6 +69,9 @@ import {
   sendReportViaTelegram,
   type SendPacer,
 } from './telegram-channel.js';
+import { recordTelegramToInbox, TELEGRAM_FLEET_STATUS_RE } from './telegram-inbox-bridge.js';
+import { TELEGRAM_SHIP_RE } from './telegram-ship-command.js';
+import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { AshlrConfig } from '../types.js';
 
@@ -232,7 +240,7 @@ async function handleRevert(spec: string, event: InboundEvent, cfg: AshlrConfig)
 
 async function handleTelegramCallback(event: InboundEvent, cfg: AshlrConfig, result: CycleResult): Promise<void> {
   if (event.data?.startsWith(LEADER_CALLBACK_PREFIX)) {
-    await handleLeaderButton(event, cfg);
+    if (await handleLeaderButton(event, cfg)) result.resolved++;
     return;
   }
   if (event.data?.startsWith('revert:')) {
@@ -261,6 +269,10 @@ async function handleTelegramCallback(event: InboundEvent, cfg: AshlrConfig, res
 }
 
 async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrConfig, result: CycleResult): Promise<void> {
+  if (typeof event.senderUserId === 'number' && !allowOperatorMessage(`telegram:${event.senderUserId}`, Date.now())) {
+    await sendTelegramMessage('Slow down.', replyOpts(event), cfg);
+    return;
+  }
   // M212: pause/resume commands (comms soft-pause).
   if (/^\s*pause(\s+fleet)?\s*$/i.test(text)) {
     const { setPause } = await import('./pause.js');
@@ -293,8 +305,30 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
     return;
   }
 
+  // Ship is an owner-only bridge command, including replies to mapped messages.
+  if (TELEGRAM_SHIP_RE.test(text)) {
+    const inbox = await recordTelegramToInbox(event, text, cfg);
+    if (!inbox.ok && inbox.reason === 'status-send-failed') throw new Error('Telegram ship reply failed');
+    if (!inbox.ok && inbox.reason === 'status-replied') result.resolved++;
+    return;
+  }
+
   // 3.14: /help /start /status /leader /directives (unknown /x → help).
+  const { localTelegramCommand } = await import('./telegram-local.js');
+  const local = await localTelegramCommand(text, cfg);
+  if (local !== null) {
+    const sent = await sendTelegramMessage(local, replyOpts(event), cfg);
+    if (!sent.ok) throw new Error('Telegram command reply failed');
+    result.resolved++;
+    return;
+  }
   if (await handleSlashCommand(event, text, cfg)) return;
+  // /fleet-status is the inbox bridge's to answer — even a reply to a Leader
+  // message is a status request, never a mapped memo reply.
+  if (!TELEGRAM_FLEET_STATUS_RE.test(text) && await recordMappedTelegramReply(event, text, cfg)) {
+    result.resolved++;
+    return;
+  }
 
   // A Telegram reply to one of our Leader messages is conversation — even a
   // bare number ("2") answering a Leader question — so it never picks an
@@ -315,19 +349,60 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
 
   // Everything else is Mason talking to the Leader. Auth: telegram.ts already
   // dropped messages from foreign chat ids, so this path is Mason-only.
+  // The same verified message is also receipted into MASON-INBOX.md through
+  // the shared channel receiver (channel `telegram`, deduped, acked here).
+  const inbox = await recordTelegramToInbox(event, text, cfg);
+  // The bridge answered /fleet-status itself — resolved, never a Leader turn.
+  if (!inbox.ok && inbox.reason === 'status-replied') {
+    result.resolved++;
+    return;
+  }
+  // A failed status send is a dispatch failure, not a question for the Leader.
+  if (!inbox.ok && inbox.reason === 'status-send-failed') throw new Error('Telegram status reply failed');
+  if (inbox.ok && hasLeaderNetworkConfig()) {
+    const { readLeaderNetworkConfig } = await import('../agents/leader-network-runtime.js');
+    const { parseMasonIdentities } = await import('../agents/leader-network.js');
+    const owners = parseMasonIdentities(readLeaderNetworkConfig().configSource);
+    if (owners.some(owner => owner.channel === 'telegram' && owner.id === inbox.envelope.verifiedSenderId)) {
+      if (inbox.publishState !== 'published') throw new Error('Leader network receipt unavailable; retry retained.');
+      result.resolved++;
+      return;
+    }
+  }
   await converseWithLeader(event, text, cfg);
 }
 
 async function pollTelegram(cfg: AshlrConfig, result: CycleResult): Promise<void> {
-  const { updates } = await pollTelegramUpdates(cfg);
-  for (const event of updates ?? []) {
-    try {
-      if (event.kind === 'callback') await handleTelegramCallback(event, cfg, result);
-      else if (event.kind === 'text' && event.text) await handleTelegramText(event, event.text, cfg, result);
-    } catch {
-      // one bad event must not stop the rest
+  const dir = join(homedir(), '.ashlr', 'comms');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const lock = acquireLocalStoreLock(join(dir, '.telegram-poll.lock'), 0);
+  if (!lock) { console.error('Telegram poll: another local cycle is active'); return; }
+  try {
+    const { updates } = await pollTelegramUpdates(cfg, true);
+    for (const event of updates ?? []) {
+      try {
+        const owner = cfg.comms?.telegram?.chatId;
+        if (event.privateChat !== true || event.fromChatId !== owner ||
+            String(event.senderUserId) !== owner) continue;
+        const pair = event.kind === 'text' ? /^\/pair\s+(\S+)\s*$/.exec(event.text ?? '') : null;
+        if (!acceptTelegramPair(event.senderUserId!, undefined, pair?.[1])) {
+          if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+          continue;
+        }
+        if (pair) {
+          await sendTelegramMessage('Paired.', replyOpts(event), cfg);
+          if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+          continue;
+        }
+        if (event.kind === 'callback') await handleTelegramCallback(event, cfg, result);
+        else if (event.kind === 'text' && event.text) await handleTelegramText(event, event.text, cfg, result);
+        if (event.updateId !== undefined) acknowledgeTelegramUpdate(event.updateId, cfg);
+      } catch {
+        console.error('Telegram inbound handling failed; update retained for retry');
+        break;
+      }
     }
-  }
+  } finally { releaseLocalStoreLock(lock); }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +462,10 @@ async function sendNextQuestion(cfg: AshlrConfig, isTelegram: boolean, state: Co
 export async function runCommsCycle(cfg: AshlrConfig, opts: CycleOptions = {}): Promise<CycleResult> {
   const result: CycleResult = { sent: 0, resolved: 0 };
   const isTelegram = telegramEnabled(cfg);
+  if (cfg.comms?.enabled && cfg.comms.channel === 'telegram' && !isTelegram) {
+    await pollTelegramUpdates(cfg);
+    return result;
+  }
 
   try {
     const { isPaused } = await import('./pause.js');

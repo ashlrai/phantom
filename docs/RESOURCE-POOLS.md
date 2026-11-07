@@ -1436,7 +1436,7 @@ not model discovery, an entitlement claim, or a new concurrency identity:
 
 | Exact model | Worker `quotaScope` | Collector `bucketIds` |
 | --- | --- | --- |
-| `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | `codex-general-v1` | `["codex"]` |
+| `gpt-6.1-terra`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | `codex-general-v1` | `["codex"]` |
 | `gpt-5.3-codex-spark` | `codex-spark-v1` | `["codex_bengalfox"]` |
 
 General and Spark workers for one account must retain the **same `capacityKey`**,
@@ -1710,6 +1710,10 @@ boot UUID in both a version-2 preparation manifest and the launcher. A device nu
 volume and directory witnesses still match; any unavailable witness, replacement,
 permission change or device change during the preparation boot is refused.
 This adds a bounded local `df`/`diskutil`/`plutil` probe before native launch.
+Every launch, admission, identity capture and witness makes that probe afresh. Only
+historical last-known display of a seat may reuse a volume observation up to 60 seconds
+old (failures included); it yields display metadata that cannot launch anything and never
+a witness, capacity or financial evidence.
 Older profiles retain their original strict device and inode binding. Before
 their device changes, `ashlr resources profile upgrade-identity --directory
 <existing-profile> --dry-run` validates the old binding; repeat without
@@ -2667,6 +2671,14 @@ fresh-observation requirements still apply; portfolio concurrency does not add
 an automatic capacity-waiting queue or retry.
 `ashlr runtime run` still forwards Universe commands only; it does not forward
 the standalone resource-pool CLI.
+
+## Z.ai GLM Coding Lite lane
+
+Phantom runs coding tasks on Z.ai models through a lane mapped to queue
+tiers. The lane exposes two models, glm-5.3 (work) and glm-5.3-flash
+(fast). See [Z.ai GLM Coding Lite lane](lanes/zai.md) for models, credit
+formula, included allowance, rolling-window pacing, error classes, and test
+fixtures.
 
 ## Provider research and billing boundaries
 

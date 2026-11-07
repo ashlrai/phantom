@@ -426,6 +426,10 @@ function renderDashboard(rollup: ActivityRollup, forecast?: CostForecast | null,
  * Returns process exit code: 0 = ok/warn, 1 = budget over.
  */
 export async function cmdPulse(args: string[]): Promise<number> {
+  if (args[0] === 'memory') {
+    const { cmdPulseMemory } = await import('./pulse-memory.js');
+    return cmdPulseMemory(args.slice(1));
+  }
   // M62: dispatch `connect` subcommand before dashboard flag parsing
   if (args[0] === 'connect') {
     return cmdPulseConnect(args.slice(1));
@@ -550,6 +554,7 @@ function printPulseHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    phm pulse [options]`);
+  console.log(`    phm pulse memory --samples <file> [--json] [--send]`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');

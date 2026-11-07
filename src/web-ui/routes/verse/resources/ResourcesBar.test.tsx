@@ -27,6 +27,15 @@ import type { ProactiveProfile } from '../../../../core/proactive/types.js';
 import { VERSE_ANCHOR_EVENT, type VerseAnchorRequest } from '../verse-ui-store.js';
 import { installFetch, json } from '../context/context-fixtures.test-support.js';
 
+// These existing contracts exercise the complete evidence view. New default
+// account-only visibility is covered separately in ResourcesBar.evidence.test.tsx.
+function renderBar(ui: Parameters<typeof render>[0]) {
+  const view = render(ui);
+  const evidence = within(view.container).queryByRole('button', { name: /Usage sources and budgets/ });
+  if (evidence?.getAttribute('aria-expanded') === 'false') fireEvent.click(evidence);
+  return view;
+}
+
 const NOW = Date.parse('2026-09-25T02:00:00Z');
 
 describe('Grok Build display identity', () => {
@@ -78,7 +87,7 @@ describe('saved Grok Bot resource metadata', () => {
   const ids = (container: HTMLElement) => [...container.querySelectorAll('[data-resource-id]')].map(row => row.getAttribute('data-resource-id'));
 
   it('groups saved Bot locators as declared references while leaving distinct provider account identities unknown', async () => {
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     fireEvent.click(screen.getByRole('button', { name: 'Group by provider' }));
     await screen.findByText('Declared account reference · saved-account-a');
     const provider = view.container.querySelector('[data-provider-group="grok-bot"]')!;
@@ -91,7 +100,7 @@ describe('saved Grok Bot resource metadata', () => {
 
   it('keeps each declared Bot identity unknown beside the unchanged native Build meter and opens its management surface', () => {
     const native = barRows(buildCapacityRows([grokSeat()], { now: NOW }), { healthRead: false, now: NOW })[0]!;
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     const build = screen.getByRole('button', { name: `${native.summary}. Open Resources` });
     expect(build).toHaveTextContent('72% left');
     expect(view.container.querySelectorAll('[data-resource-id^="account:"]')).toHaveLength(1);
@@ -121,7 +130,7 @@ describe('saved Grok Bot resource metadata', () => {
   });
 
   it('preserves namespaced order across rename/deletion and isolates failed profile reads from native capacity', () => {
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     fireEvent.click(screen.getByRole('button', { name: 'Move bot-three · Grok Bot up' }));
     const expected = ids(view.container);
     profiles = profiles.filter(saved => saved.id !== 'bot-two').map(saved => saved.id === 'bot-three' ? { ...saved, displayName: 'Renamed Bot' } : saved);
@@ -131,12 +140,13 @@ describe('saved Grok Bot resource metadata', () => {
     vi.mocked(useQuery).mockImplementation(query => ({ data: query.key === proactiveProfilesQuery.key ? { schemaVersion: 1, profiles } : undefined,
       error: query.key === proactiveProfilesQuery.key ? new Error('Metadata unavailable') : undefined } as never));
     view.rerender(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(expected.filter(id => id?.startsWith('account:')));
+    // The personal session-log resource remains alongside the native accounts.
+    expect(ids(view.container)).toEqual(expected.filter(id => id?.startsWith('account:') || id === 'codex-personal:sessions'));
     expect(screen.getByText('72% left')).toBeVisible();
   });
 
   it('remembers compact density while keeping Build allowance, Bot uncertainty, focus details and ordering independent', () => {
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     const group = screen.getByRole('group', { name: 'Resources at a glance' });
     const toggle = screen.getByRole('button', { name: 'Compact resources' });
     const beforeOrder = ids(view.container);
@@ -153,7 +163,7 @@ describe('saved Grok Bot resource metadata', () => {
     const moved = ids(view.container);
     expect(moved).not.toEqual(beforeOrder);
     view.unmount(); reloadResourcesUiForTest(); reloadResourceOrderForTest();
-    const restored = render(<ResourcesBar expanded />);
+    const restored = renderBar(<ResourcesBar expanded />);
     expect(screen.getByRole('group', { name: 'Resources at a glance' })).toHaveAttribute('data-compact', 'true');
     expect(ids(restored.container)).toEqual(moved);
     restored.rerender(<ResourcesBar expanded={false} />);
@@ -174,13 +184,13 @@ describe('saved Grok Bot resource metadata', () => {
     const { calls } = installFetch(call => call.path === '/api/verse/proactive-agents' && call.method === 'GET'
       ? json({ schemaVersion: 1, profiles }) : json({ error: 'Unexpected request' }, 500));
     setResourcesBar(false);
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     await act(async () => { await Promise.resolve(); });
     expect(calls).toHaveLength(0);
     act(() => setResourcesBar(true));
     await screen.findByText('bot-one · Grok Bot');
     expect(calls.map(call => [call.path, call.method])).toEqual([['/api/verse/proactive-agents', 'GET']]);
-    const second = render(<ResourcesBar expanded={false} />);
+    const second = renderBar(<ResourcesBar expanded={false} />);
     expect(calls).toHaveLength(1);
     profiles = [{ ...profiles[0]!, version: 2, displayName: 'Edited Bot' }];
     const { invalidate } = await import('../../../data/cache.js');
@@ -382,43 +392,44 @@ describe('custom resource order', () => {
 
   const ids = (container: HTMLElement) => [...container.querySelectorAll('[data-resource-id]')].map(row => row.getAttribute('data-resource-id'));
 
+  // The personal session-log resource participates in the same saved order.
   it('moves independent accounts with keyboard controls and restores the same DOM order', () => {
-    const first = render(<ResourcesBar expanded />);
-    expect(ids(first.container)).toEqual(['account:codex-a', 'account:codex-b', 'budget:cloud']);
+    const first = renderBar(<ResourcesBar expanded />);
+    expect(ids(first.container)).toEqual(['account:codex-a', 'account:codex-b', 'codex-personal:sessions', 'budget:cloud']);
     expect(screen.getByRole('button', { name: 'Move Personal Codex up' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Move Work Codex up' }));
-    expect(ids(first.container)).toEqual(['account:codex-b', 'account:codex-a', 'budget:cloud']);
-    expect(screen.getByRole('status')).toHaveTextContent('Work Codex moved to position 1 of 3.');
+    expect(ids(first.container)).toEqual(['account:codex-b', 'account:codex-a', 'codex-personal:sessions', 'budget:cloud']);
+    expect(screen.getByRole('status')).toHaveTextContent('Work Codex moved to position 1 of 4.');
     first.unmount(); reloadResourceOrderForTest();
-    const reloaded = render(<ResourcesBar expanded={false} />);
-    expect(ids(reloaded.container)).toEqual(['account:codex-b', 'account:codex-a', 'budget:cloud']);
+    const reloaded = renderBar(<ResourcesBar expanded={false} />);
+    expect(ids(reloaded.container)).toEqual(['account:codex-b', 'account:codex-a', 'codex-personal:sessions', 'budget:cloud']);
     fireEvent.click(screen.getByRole('button', { name: 'Move Work Codex down' }));
-    expect(ids(reloaded.container)).toEqual(['account:codex-a', 'account:codex-b', 'budget:cloud']);
+    expect(ids(reloaded.container)).toEqual(['account:codex-a', 'account:codex-b', 'codex-personal:sessions', 'budget:cloud']);
   });
 
   it('drags cloud estimates with accounts and ignores an unrelated external drag', () => {
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     const row = (id: string) => view.container.querySelector(`[data-resource-id="${id}"]`)!;
     const dataTransfer = { effectAllowed: '', dropEffect: '', setData: vi.fn() };
     fireEvent.dragStart(row('budget:cloud'), { dataTransfer });
     fireEvent.dragOver(row('account:codex-a'), { dataTransfer });
     fireEvent.drop(row('account:codex-a'), { dataTransfer });
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b']);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b', 'codex-personal:sessions']);
     expect(dataTransfer.setData).toHaveBeenCalledWith('application/x-ashlr-resource', 'budget:cloud');
     fireEvent.drop(row('account:codex-b'), { dataTransfer });
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b']);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-a', 'account:codex-b', 'codex-personal:sessions']);
   });
 
   it('ignores removed accounts and appends new accounts without reordering on a reading', () => {
     localStorage.setItem(RESOURCE_ORDER_KEY, JSON.stringify(['account:gone', 'budget:cloud', 'account:codex-b', 'account:codex-a']));
     reloadResourceOrderForTest();
-    const view = render(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a']);
+    const view = renderBar(<ResourcesBar expanded />);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a', 'codex-personal:sessions']);
     const current = vi.mocked(useCapacityData).getMockImplementation()!();
     vi.mocked(useCapacityData).mockReturnValue({ ...current, seats: [...current.seats,
       nativeSeat(capacity(), { id: 'codex-new', engine: 'codex', label: 'New Codex' })] });
     view.rerender(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a', 'account:codex-new']);
+    expect(ids(view.container)).toEqual(['budget:cloud', 'account:codex-b', 'account:codex-a', 'account:codex-new', 'codex-personal:sessions']);
   });
 
   it('keeps Devin cloud consumption, CLI account and tracked budget independently reorderable', () => {
@@ -430,12 +441,12 @@ describe('custom resource order', () => {
       status: { enabled: true, connected: true }, budget: { acuBudgetTotal: 50, acuRemaining: 40, acuUsed: 10, acuInFlight: 0,
         reportedAcuUsed: 10, unconfirmedAcuExposure: 0, paused: false, running: 0, sessionsToday: 0 },
     } } : undefined } as never));
-    const view = render(<ResourcesBar expanded />);
-    expect(ids(view.container)).toEqual(['account:devin', 'account:devin-cli', 'budget:devin']);
+    const view = renderBar(<ResourcesBar expanded />);
+    expect(ids(view.container)).toEqual(['account:devin', 'account:devin-cli', 'codex-personal:sessions', 'budget:devin']);
     expect(screen.getByRole('button', { name: /Devin \(cloud\): consumption not reported · remaining quota unknown/ })).toBeInTheDocument();
     expect(screen.getByText('Devin budget')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Move Devin tracked budget up' }));
-    expect(ids(view.container)).toEqual(['account:devin', 'budget:devin', 'account:devin-cli']);
+    expect(ids(view.container)).toEqual(['account:devin', 'account:devin-cli', 'budget:devin', 'codex-personal:sessions']);
   });
 });
 
@@ -462,7 +473,7 @@ describe('fresh Devin sidebar readbacks', () => {
       status: { enabled: true, connected: true }, budget: { acuBudgetTotal: 50, acuRemaining: 50, acuUsed: 0, acuInFlight: 40,
         reportedAcuUsed: 0, unconfirmedAcuExposure: 40, paused: false, running: 0, sessionsToday: 0 }, consumption,
     } } : undefined } as never));
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     expect(screen.getByRole('button', { name: 'Devin (cloud): consumption not reported · remaining quota unknown. Open Resources' })).toBeInTheDocument();
     let complete!: (value: unknown) => void;
     const deferred = new Promise<unknown>((resolve) => { complete = resolve; });
@@ -498,7 +509,7 @@ describe('Devin tracked exposure in the bar', () => {
       budget: { acuBudgetTotal: 50, acuRemaining: 40, acuUsed: 10, acuInFlight: 8,
         reportedAcuUsed: 2, unconfirmedAcuExposure: 18, paused: false, running: 1, sessionsToday: 2 },
     } } : undefined } as never));
-    render(<ResourcesBar expanded />);
+    renderBar(<ResourcesBar expanded />);
     const devin = screen.getByRole('button', { name: /Devin tracked budget: 30 ACUs of 50 ACUs available, 18 ACUs held exposure/ });
     expect(within(devin).getByText('30 ACUs budget')).toBeInTheDocument();
     fireEvent.focus(devin);
@@ -513,7 +524,7 @@ describe('Devin tracked exposure in the bar', () => {
       budget: { acuBudgetTotal: 50, acuRemaining: 50, acuUsed: 0, acuInFlight: 0, accountingState,
         reportedAcuUsed: 0, unconfirmedAcuExposure: 0, paused: false, running: 0, sessionsToday: 0 },
     } } : undefined } as never));
-    render(<ResourcesBar expanded />);
+    renderBar(<ResourcesBar expanded />);
     const row = screen.getByRole('button', { name: 'Devin tracked budget capacity unknown: task evidence unavailable. Open Resources' });
     expect(row).toHaveAttribute('data-level', 'unknown');
     expect(screen.getByText('Capacity unknown')).toBeInTheDocument();
@@ -531,7 +542,7 @@ describe('Devin tracked exposure in the bar', () => {
         reportedAcuUsed: 0, unconfirmedAcuExposure: 40, paused: false, running: 0, sessionsToday: 0,
         canLaunch: { ok: false, reason } },
     } } : undefined } as never));
-    render(<ResourcesBar expanded />);
+    renderBar(<ResourcesBar expanded />);
     const devin = screen.getByRole('button', { name: `Devin tracked budget: 10 ACUs of 50 ACUs available, 40 ACUs held exposure. New chats paused: ${reason}. Open Resources` });
     expect(within(devin).getByText('10 ACUs budget')).toBeInTheDocument();
     expect(within(devin).getByText('New chats paused')).toBeInTheDocument();
@@ -658,7 +669,7 @@ describe('visible Codex subscription and credit balances', () => {
         observedAt: new Date(NOW - 30_000).toISOString(), credits: { hasCredits: true, unlimited: false, balance: '250' },
       }), { id: 'codex-cmp', engine: 'codex', label: 'Cash Margin Partners', accountId: 'codex-cmp' }),
     ], health: null, budget: null, loading: false, refreshing: false, readFailed: false, rosterUnavailable: false, pendingSeatIds: [] });
-    return render(<ResourcesBar expanded={expanded} />);
+    return renderBar(<ResourcesBar expanded={expanded} />);
   }
 
   it('renders both percentages and both account balances without filling a spent subscription battery', () => {
@@ -745,7 +756,7 @@ describe('Devin sidebar cached refresh lifetime', () => {
   const pending = { source: 'devin-v3-organization-daily', scope: 'organization', period: 'all-available-reporting-dates', dateUnit: 'provider-unspecified',
     dayBoundaryUtc: '08:00', state: 'not-checked', report: null, fetchedAt: null, checkedAt: null, expiresAt: null, retryAt: null, stale: false, error: null };
   const advance = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
-  const mount = (visible = true) => render(<SectionVisibilityProvider visible={visible}><ResourcesBar expanded /></SectionVisibilityProvider>);
+  const mount = (visible = true) => renderBar(<SectionVisibilityProvider visible={visible}><ResourcesBar expanded /></SectionVisibilityProvider>);
 
   beforeEach(async () => {
     evictAll();
@@ -887,7 +898,7 @@ describe('recorded Claude API promotion in the resource bar', () => {
   });
 
   it('shows recorded dollars and Held separately from the unchanged subscription, opens Resources and explains the hold', async () => {
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     const api = within(apiRow(view.container));
     const button = api.getByRole('button', { name: /Claude API promotion: \$200 last recorded.*held.*Open Resources/ });
     expect(api.getByText('$200 last recorded')).toBeVisible(); expect(api.getByText('Held')).toBeVisible();
@@ -901,7 +912,7 @@ describe('recorded Claude API promotion in the resource bar', () => {
   });
 
   it('keeps dollars and Held visible in the compact rail without manufacturing capacity', () => {
-    const view = render(<ResourcesBar expanded={false} />); const api = within(apiRow(view.container));
+    const view = renderBar(<ResourcesBar expanded={false} />); const api = within(apiRow(view.container));
     expect(api.getByText('$200')).toBeVisible(); expect(api.getByText('Held')).toBeVisible();
     expect(apiRow(view.container)).not.toHaveTextContent('%');
     expect(apiRow(view.container).querySelector('[class*="battery"]')).toBeNull();
@@ -910,13 +921,13 @@ describe('recorded Claude API promotion in the resource bar', () => {
   it.each([['0', '$0 last recorded'], [null, 'API promotional balance unknown']] as const)(
     'keeps recorded %s distinct from unknown and never enables use', (micros, label) => {
       recorded.apiGrants.rows[0]!.remainingUsdMicros = micros;
-      const view = render(<ResourcesBar expanded />); const api = within(apiRow(view.container));
+      const view = renderBar(<ResourcesBar expanded />); const api = within(apiRow(view.container));
       expect(api.getByText(label)).toBeVisible(); expect(api.getByText('Held')).toBeVisible();
     });
 
   it('counts multiple records without summing dollars or inventing an account identity', async () => {
     recorded.apiGrants.rows.push({ ...recorded.apiGrants.rows[0]!, remainingUsdMicros: '100000000' });
-    const view = render(<ResourcesBar expanded />); const api = within(apiRow(view.container));
+    const view = renderBar(<ResourcesBar expanded />); const api = within(apiRow(view.container));
     expect(api.getByText('2 records')).toBeVisible(); expect(api.queryByText('$300')).toBeNull();
     fireEvent.focus(api.getByRole('button', { name: /Claude API promotion: 2 records/ }));
     expect(await screen.findByText('$200 last recorded')).toBeVisible(); expect(screen.getByText('$100 last recorded')).toBeVisible();
@@ -928,15 +939,15 @@ describe('recorded Claude API promotion in the resource bar', () => {
       { ...recorded, apiGrants: { v: 1, state: 'missing', rows: [] } },
       { ...recorded, apiGrants: { v: 1, state: 'unavailable', rows: [] } }, null]) {
       vi.mocked(useQuery).mockImplementation(query => ({ data: query.key === creditPoolsQuery.key ? { value } : undefined } as never));
-      const view = render(<ResourcesBar expanded />); expect(apiRow(view.container)).toBeNull(); view.unmount();
+      const view = renderBar(<ResourcesBar expanded />); expect(apiRow(view.container)).toBeNull(); view.unmount();
     }
     vi.mocked(useQuery).mockImplementation(query => ({ data: query.key === creditPoolsQuery.key ? { value: recorded } : undefined,
       error: new Error('read failed') } as never));
-    const view = render(<ResourcesBar expanded />); expect(apiRow(view.container)).toBeNull();
+    const view = renderBar(<ResourcesBar expanded />); expect(apiRow(view.container)).toBeNull();
   });
 
   it('reuses the shared cache and existing visible cadence without polling an open drawer or hidden bar', () => {
-    const view = render(<ResourcesBar expanded />);
+    const view = renderBar(<ResourcesBar expanded />);
     expect(useQuery).toHaveBeenCalledWith(creditPoolsQuery, { enabled: true, freshMs: 15_000 });
     expect(usePollWhileVisible).toHaveBeenCalledWith(expect.any(Function), 15_000, { enabled: true });
     openResources(); view.rerender(<ResourcesBar expanded />);
@@ -951,7 +962,7 @@ describe('API promotion cold-start cached refresh', () => {
   let value: CreditPoolsRead;
   let fetch: MockInstance<typeof creditPoolsQuery.fetch>;
   const advance = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
-  const mount = () => render(<SectionVisibilityProvider visible><ResourcesBar expanded /></SectionVisibilityProvider>);
+  const mount = () => renderBar(<SectionVisibilityProvider visible><ResourcesBar expanded /></SectionVisibilityProvider>);
   beforeEach(async () => {
     evictAll(); localStorage.removeItem(RESOURCES_STORAGE_KEY); reloadResourcesUiForTest(); closeResources();
     vi.useFakeTimers(); vi.setSystemTime(NOW);

@@ -36,7 +36,8 @@ describe('seatSubscription — the binding window leads', () => {
     // 85% all-models would have been the comforting number to lead with. The
     // per-model week is what actually blocks the turn.
     expect(view.binding?.id).toBe('seven_day_fable');
-    expect(view.others.map((w) => w.id)).toEqual(['five_hour', 'seven_day']);
+    // The retired five_hour window is filtered even when the server sends it.
+    expect(view.others.map((w) => w.id)).toEqual(['seven_day']);
     expect(view.plan).toBe('max');
     expect(view.extended).toBe(true);
   });
@@ -62,7 +63,7 @@ describe('seatSubscription — the binding window leads', () => {
     const view = seatSubscription(CLAUDE_MAX_SEAT);
     expect(view.binding?.resetText).toBe('resets Sep 25 at 7pm (America/New_York)');
     expect(view.binding?.resetsAt).toBeNull();
-    expect(view.others[0]?.resetText).toBe('resets Sep 21 at 1:40am (America/New_York)');
+    expect(view.others[0]?.resetText).toBe('resets Sep 25 at 7pm (America/New_York)');
   });
 
   it('formats a machine-readable reset, and only a machine-readable one', () => {
@@ -171,12 +172,13 @@ describe('seatSubscription — no signal is never zero', () => {
     expect(view.binding).toBeNull();
     expect(view.summary).toBe('no capacity reading');
     // The provider's own plain-language fact travels so the panel can show it.
-    expect(view.notes).toEqual(['No probe has run for this account yet in this server.']);
+    expect(view.notes).toEqual(['No probe has run for this account yet in this server.',
+      'Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.']);
   });
 
   it('keeps a window with no percentage out of the meter entirely', () => {
     const view = seatSubscription(nativeSeat(capacity({
-      windows: [seatWindow({ id: 'five_hour', usedPercent: null })],
+      windows: [seatWindow({ id: 'seven_day', usedPercent: null })],
       usability: 'unknown',
     })));
     expect(view.binding).toBeNull();
@@ -276,7 +278,7 @@ describe('seatSubscriptionSentence / worthFlagging', () => {
   it('names the seat, the plan, the verdict, the evidence and the reset', () => {
     const view = seatSubscription(CLAUDE_MAX_SEAT);
     expect(seatSubscriptionSentence(CLAUDE_MAX_SEAT, view)).toBe(
-      'Claude Max · max · blocked · weekly fable window limit reached · resets Sep 25 at 7pm (America/New_York)',
+      'Claude Max · max · blocked · weekly fable window limit reached · Anthropic removed the 5-hour limit on this plan. Only the weekly window applies. · resets Sep 25 at 7pm (America/New_York)',
     );
   });
 

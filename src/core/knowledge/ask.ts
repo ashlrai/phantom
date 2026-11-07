@@ -51,45 +51,36 @@ function tokenize(text: string): string[] {
 // Cosine similarity
 // ---------------------------------------------------------------------------
 
-function cosine(a: number[], b: number[]): number {
-  if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
+/** Reject malformed, zero and nonfinite vectors before using them as evidence. */
+function validVector(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length > 0 &&
+    Array.from(value).every((v) => typeof v === 'number' && Number.isFinite(v)) &&
+    value.some((v) => v !== 0);
 }
 
-// ---------------------------------------------------------------------------
-// Keyword / TF-IDF scoring for a chunk
-// ---------------------------------------------------------------------------
+function cosine(a: number[], b: number[]): number {
+  if (!validVector(b) || a.length !== b.length) return 0;
+  // Scale before taking norms so even finite, very large coordinates cannot overflow.
+  const scale = (v: number[]): number => v.reduce((max, n) => Math.max(max, Math.abs(n)), 0);
+  const scaleA = scale(a), scaleB = scale(b);
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] / scaleA, y = b[i] / scaleB;
+    dot += x * y;
+    normA += x * x;
+    normB += y * y;
+  }
+  return Math.max(0, Math.min(1, dot / (Math.sqrt(normA) * Math.sqrt(normB))));
+}
 
+/** Unique query-term coverage in [0, 1]; repetition cannot swamp semantic evidence. */
 function keywordScoreChunk(query: string, chunk: KnowledgeChunk): number {
-  const queryTerms = new Set(tokenize(query));
-  if (queryTerms.size === 0) return 0;
-
-  // Weight file path tokens slightly (they indicate structural relevance)
-  const fileTokens = tokenize(chunk.file);
-  const textTokens = tokenize(chunk.text);
-
-  const weightedFreq = new Map<string, number>();
-  for (const t of fileTokens) {
-    weightedFreq.set(t, (weightedFreq.get(t) ?? 0) + 2);
-  }
-  for (const t of textTokens) {
-    weightedFreq.set(t, (weightedFreq.get(t) ?? 0) + 1);
-  }
-
-  if (weightedFreq.size === 0) return 0;
-
+  const terms = new Set(tokenize(query));
+  if (terms.size === 0) return 0;
+  const tokens = new Set(tokenize(chunk.file + ' ' + chunk.text));
   let hits = 0;
-  for (const term of queryTerms) {
-    hits += weightedFreq.get(term) ?? 0;
-  }
-  return hits === 0 ? 0 : hits / queryTerms.size;
+  for (const term of terms) if (tokens.has(term)) hits++;
+  return hits / terms.size;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +144,7 @@ async function fetchEmbedding(
       return null;
     }
     const embedding = (body as { embedding: unknown[] }).embedding;
-    if (!embedding.every((v) => typeof v === 'number')) return null;
+    if (!validVector(embedding)) return null;
     return embedding as number[];
   } catch {
     return null;
@@ -173,59 +164,61 @@ interface Hit {
 }
 
 /**
- * Retrieve the top-K most relevant chunks from the index for `question`.
- * Tries embedding cosine similarity first (local Ollama); falls back to
- * keyword/TF-IDF. Never throws; returns [] on any failure.
+ * Retrieve evidence only: no answer generation or provider client calls.
+ * Callers supplying chunks must use an enrollment-scoped source such as loadChunks().
+ * Both channels score every chunk in [0, 1]. Their mean gives equal weight to
+ * exact term coverage and positive cosine; without embeddings, use coverage alone.
+ * Invalid vectors lose only their semantic contribution, preserving lexical fallback.
  */
-async function retrieve(
+export async function retrieve(
   question: string,
   chunks: KnowledgeChunk[],
   ollamaBase: string,
 ): Promise<{ hits: Hit[]; method: 'embedding' | 'keyword' }> {
-  if (chunks.length === 0) return { hits: [], method: 'keyword' };
-
-  // --- Attempt embedding retrieval if any chunks have vectors ---
-  const chunksWithVectors = chunks.filter((c) => c.vector && c.vector.length > 0);
-
-  if (chunksWithVectors.length > 0) {
-    // Try to get a query embedding from local Ollama
-    try {
-      const modelProbe = await detectEmbeddingModel(ollamaBase);
-      if (modelProbe.available) {
-        const queryVec = await fetchEmbedding(ollamaBase, modelProbe.model, question);
-        if (queryVec !== null) {
-          // Score all chunks that have vectors by cosine; keyword score for the rest
-          const hits: Hit[] = chunks.map((chunk) => {
-            if (chunk.vector && chunk.vector.length > 0) {
-              return {
-                chunk,
-                score: cosine(queryVec, chunk.vector),
-                method: 'embedding' as const,
-              };
-            }
-            return {
-              chunk,
-              score: keywordScoreChunk(question, chunk),
-              method: 'keyword' as const,
-            };
-          });
-          hits.sort((a, b) => b.score - a.score);
-          return { hits: hits.slice(0, TOP_K), method: 'embedding' };
-        }
-      }
-    } catch {
-      // Fall through to keyword
-    }
+  let queryVec: number[] | null = null;
+  if (question.trim() && chunks.some((c) => validVector(c.vector))) {
+    const probe = await detectEmbeddingModel(ollamaBase);
+    if (probe.available) queryVec = await fetchEmbedding(ollamaBase, probe.model, question);
   }
 
-  // --- Keyword / TF-IDF fallback ---
-  const hits: Hit[] = chunks.map((chunk) => ({
-    chunk,
-    score: keywordScoreChunk(question, chunk),
-    method: 'keyword' as const,
-  }));
-  hits.sort((a, b) => b.score - a.score);
-  return { hits: hits.slice(0, TOP_K), method: 'keyword' };
+  const ranked = chunks.map((chunk): Hit => {
+    const lexical = keywordScoreChunk(question, chunk);
+    const semantic = queryVec && chunk.vector ? cosine(queryVec, chunk.vector) : 0;
+    return {
+      chunk,
+      score: queryVec ? (lexical + semantic) / 2 : lexical,
+      method: semantic > 0 ? 'embedding' : 'keyword',
+    };
+  }).filter((hit) => Number.isFinite(hit.score) && hit.score > 0);
+
+  // Stable content-based ties make selection independent of index traversal order.
+  const key = (c: KnowledgeChunk): string =>
+    JSON.stringify([c.repo, c.file, c.startLine, c.endLine]);
+  const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
+  ranked.sort((a, b) => b.score - a.score ||
+    compare(key(a.chunk), key(b.chunk)) || compare(a.chunk.text, b.chunk.text) ||
+    compare(a.method, b.method));
+
+  const seen = new Set<string>();
+  const hits: Hit[] = [];
+  let totalChars = 0;
+  for (const hit of ranked) {
+    const identity = key(hit.chunk);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const { chunk } = hit;
+    const size = sourceEntry(chunk).length + (hits.length > 0 ? '\n\n---\n'.length : 0);
+    if (totalChars + size > CONTEXT_TOTAL_CAP) continue;
+    hits.push(hit);
+    totalChars += size;
+    if (hits.length === TOP_K) break;
+  }
+  return { hits, method: hits.some((h) => h.method === 'embedding') ? 'embedding' : 'keyword' };
+}
+
+function sourceEntry(chunk: KnowledgeChunk): string {
+  return `[${chunk.repo}] ${chunk.file}:${chunk.startLine}-${chunk.endLine}
+${chunk.text.slice(0, CHUNK_TEXT_CAP)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,18 +230,7 @@ function buildPrompt(question: string, hits: Hit[]): string {
     return `Answer the following question as best you can. No source context is available.\n\nQuestion: ${question}`;
   }
 
-  const contextParts: string[] = [];
-  let totalChars = 0;
-
-  for (const hit of hits) {
-    const { chunk } = hit;
-    const header = `[${chunk.repo}] ${chunk.file}:${chunk.startLine}-${chunk.endLine}`;
-    const body = chunk.text.slice(0, CHUNK_TEXT_CAP);
-    const entry = `${header}\n${body}`;
-    if (totalChars + entry.length > CONTEXT_TOTAL_CAP) break;
-    contextParts.push(entry);
-    totalChars += entry.length;
-  }
+  const contextParts = hits.map((hit) => sourceEntry(hit.chunk));
 
   return [
     'You are a software assistant with access to source code excerpts from an enrolled code portfolio.',
@@ -270,8 +252,8 @@ function buildPrompt(question: string, hits: Hit[]): string {
 /**
  * Answer `question` using a local RAG pipeline over the persisted knowledge index.
  *
- * Retrieval: embedding cosine similarity (local Ollama) when vectors are present,
- * else keyword/TF-IDF. Synthesis: LOCAL model via getActiveClient (Ollama/LM Studio).
+ * Retrieval: bounded lexical coverage fused with local Ollama cosine when available.
+ * Synthesis: LOCAL model via getActiveClient (Ollama/LM Studio).
  *
  * PRIVACY GUARDRAIL: code chunks are only sent to the local synthesis model by
  * default. They are sent to a cloud model ONLY when opts.allowCloud === true AND

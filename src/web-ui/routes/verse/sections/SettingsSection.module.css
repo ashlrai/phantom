@@ -298,6 +298,32 @@
   color: var(--text-secondary);
 }
 
+.aboutStatus_current,
+.aboutStatus_behind,
+.aboutStatus_unknown,
+.aboutStatus_notInBuild {
+  height: auto;
+  min-height: calc(var(--density-row-sm) - var(--space-2));
+  line-height: var(--text-xs-line);
+  white-space: normal;
+}
+
+.aboutStatus_current {
+  background: var(--status-success-bg);
+  color: var(--status-success-fg);
+}
+
+.aboutStatus_behind {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-fg);
+}
+
+.aboutStatus_unknown,
+.aboutStatus_notInBuild {
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg);
+}
+
 .aboutName {
   font-family: var(--font-display);
   font-size: var(--text-lg-size);

@@ -4,8 +4,8 @@
  *
  * One row per resource the operator runs on — each paid account (provider
  * mark + a battery showing how much of its binding window is LEFT), the local
- * models, and the cloud credits — so capacity is visible on every surface
- * without opening anything. Hover (or keyboard focus) shows the detail: every
+ * models, and recorded credit grants. Supporting session logs, estimates and
+ * tracked budgets are available under their own disclosure. Hover (or keyboard focus) shows the detail: every
  * window with its reset, the reserve kept for Mason, the account's state.
  * Native and credit rows open the Resources drawer; saved Bot profiles open
  * Proactive agents and report no inferred allowance. The whole bar can be switched
@@ -19,16 +19,24 @@
  */
 import { codexCreditsAvailable } from '../../../../core/resources/codex-credits.js';
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle } from './codex-credit-value.js';
-import { Suspense, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { formatMetric } from '../../../components/charts/format-metric.js';
 import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
 import { IconChevronDown, IconChevronUp } from '../../../components/primitives/icons.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
+import { getQuerySnapshot, subscribeQuery } from '../../../data/cache.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usedPercentText } from '../percent-text.js';
 import { historicalLeftPercent } from './resource-usage-history.js';
 import { useCapacityClock, useCapacityData } from '../usage/CapacityStrip.js';
-import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { personalReader } from '../usage/codex-burn-queries.js';
+import { pacePerHour, readings, recordReading } from '../usage/codex-burn-model.js';
+import { personalRunwayText } from './personal-runway-text.js';
+import { personalSessionCurrent, personalSessionExpiresAt } from './personal-session-freshness.js';
+import { opsRunsQuery } from '../ops/ops-runs-queries.js';
+import { personalLaneFacts } from './personal-lane-facts.js';
+import { formatResetInstant } from '../seat-subscription.js';
 import { bindingLeftPercent } from '../usage/binding-left.js';
 import { buildCapacityRows, type AccountStatus, type CapacityRow } from '../usage/capacity-strip-model.js';
 import { formatUsd, localObservationAge } from './resources-model.js';
@@ -47,6 +55,11 @@ import { projectResourceDisplay, type ResourceDisplayView } from './resource-dis
 import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
 
 type Level = 'ok' | 'low' | 'out' | 'idle' | 'unknown';
+
+// Match the Codex seat's binding-window thresholds for a measured percentage.
+function personalLevel(left: number | null): Level {
+  return left === null ? 'unknown' : left === 0 ? 'out' : left < 20 ? 'low' : 'ok';
+}
 
 export interface BarRow {
   key: string;
@@ -250,6 +263,24 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const devinRead = useQuery(devinQuery);
   const refreshDevin = useRefetch(devinQuery);
   const resources = useResourcesUi();
+  const sectionVisible = useSectionVisible();
+  const documentVisible = useDocumentVisible();
+  const [personalQuery] = useState(() => {
+    const read = personalReader();
+    return { key: 'verse-codex-personal-sessions', fetch: (signal?: AbortSignal) => read(signal ?? new AbortController().signal) };
+  });
+  const personalRead = useQuery(personalQuery, { enabled: resources.bar && sectionVisible && documentVisible, freshMs: 30_000 });
+  const refreshPersonal = useRefetch(personalQuery);
+  // The personal reader hits the same endpoint. Once another surface warms the
+  // shared fleet snapshot, subscribe and refresh it without a second cold read.
+  const runsWarm = useSyncExternalStore(
+    useCallback((listener: () => void) => subscribeQuery(opsRunsQuery.key, listener), []),
+    () => getQuerySnapshot(opsRunsQuery.key).data !== undefined,
+    () => false,
+  );
+  const runs = useQuery(opsRunsQuery, { enabled: resources.bar && sectionVisible && documentVisible && runsWarm, freshMs: 30_000 });
+  const refreshRuns = useRefetch(opsRunsQuery);
+  usePollWhileVisible(() => { refreshPersonal(); if (runsWarm) refreshRuns(); }, 30_000, { enabled: resources.bar && !personalRead.data?.missing });
   const proactiveRead = useQuery(proactiveProfilesQuery, { enabled: resources.bar });
   const creditRead = useQuery(creditPoolsQuery, { enabled: resources.bar, freshMs: 15_000 });
   const refreshCredits = useRefetch(creditPoolsQuery);
@@ -274,12 +305,17 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const savedOrder = useResourceOrder();
   // 0: ordinary; 1: provider pending/unavailable; 2: provider ready.
   const [providerView, setProviderView] = useState(0);
+  const [showEvidence, setShowEvidence] = useState(false);
   const [dragged, setDragged] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   // The poll triggers expiry renders; query arrivals use the actual render time,
   // so a freshly retrieved reading is not rejected by an older clock tick.
-  const now = useCapacityClock(fixedNow, data.seats.map(seat => seat.capacity));
+  const personal = personalRead.error === undefined && personalRead.data?.sourceState === 'healthy' ? personalRead.data.reading : null;
+  const now = useCapacityClock(fixedNow, [...data.seats.map(seat => seat.capacity), {
+    expiresAt: personalSessionExpiresAt(personal, data.budget?.readingMaxAgeMs),
+    windows: [{ resetsAt: personal?.resetsAt }],
+  }]);
   const rows = useMemo(
     () => (data.loading ? [] : barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption })),
     [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption],
@@ -341,6 +377,38 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         </Tooltip>
     ),
   }));
+  const lastPersonalAsOf = useRef<string | null>(null);
+  const [personalHistory, setPersonalHistory] = useState(readings);
+  useEffect(() => {
+    if (!personal || personal.usedPct === null || personal.asOf === null || personal.asOf === lastPersonalAsOf.current) return;
+    recordReading(personal, Date.now());
+    lastPersonalAsOf.current = personal.asOf;
+    setPersonalHistory(readings());
+  }, [personal]);
+  const personalLeft = personal?.usedPct == null ? null : 100 - personal.usedPct;
+  const personalCurrent = personalSessionCurrent(personal, now, data.budget?.readingMaxAgeMs);
+  const personalAge = localObservationAge(personal?.asOf, now);
+  const personalPace = pacePerHour(personalHistory, now);
+  const personalRunway = personalCurrent ? personalRunwayText({ usedPct: personal?.usedPct ?? null, pacePerHour: personalPace, nowMs: now }) : null;
+  const personalPaceStatus = personalRunway ?? (personalPace === null ? 'pace unknown yet' : null);
+  const personalStatus = personal
+    ? `${personalCurrent ? 'Personal Codex weekly' : 'Last session reading · current usage unconfirmed'} · ${personal.usedPct === null ? 'usage unknown' : `${usedPercentText(personal.usedPct)} used`} · ${personal.resetsAt ? `${personalCurrent ? '' : 'recorded '}${formatResetInstant(personal.resetsAt, now) ?? 'reset unknown'}` : 'reset unknown'} · as of ${personalAge === 'just measured' ? 'just now' : personalAge} · from this Mac's session logs${personalCurrent && personalPaceStatus ? ` · ${personalPaceStatus}` : ''}`
+    : `no session-log reading yet · source ${personalRead.error !== undefined ? 'unavailable' : personalRead.data?.sourceState ?? 'unknown'}`;
+  const laneFacts = personalLaneFacts(runs.data?.lanes);
+  const personalRow: BarRow = { key: 'codex-personal:sessions', engine: 'codex', name: 'Codex personal · session logs',
+    leftPercent: personalLeft, level: personalCurrent ? personalLevel(personalLeft) : 'unknown', value: personal?.usedPct == null ? 'No reading' : `${usedPercentText(personal.usedPct)} used${personalCurrent ? '' : ' · last'}${personalRunway ? ` · ${personalRunway.split(' at ')[0]}` : ''}`,
+    summary: `Codex personal · session logs: ${personalStatus}`, detail: runs.error && laneFacts.length ? [...laneFacts, 'Last known lane facts · latest refresh failed.'] : laneFacts };
+  entries.push({ key: personalRow.key, name: personalRow.name, content: (
+    <Tooltip content={<RowTip row={personalRow} />} placement="right">
+      <button type="button" className={styles.row} data-level={personalRow.level}
+        aria-label={`${personalRow.summary}. Open Resources`} onClick={() => openResources()}>
+        <span className={styles.line}><ProviderLogo engine="codex" size={14} className={styles.logo} />
+          {expanded ? <span className={styles.name}>{personalRow.name}</span> : null}</span>
+        <span className={styles.line}><Battery left={personalLeft} level={personalRow.level} vertical={!expanded} />
+          {expanded ? <span className={styles.value}>{personalRow.value}</span> : null}</span>
+      </button>
+    </Tooltip>
+  ) });
   // Saved Bot identities are metadata, never native seats or allowance readings.
   // Keep each profile distinct: matching declared accounts do not prove billing binding.
   for (const profile of proactiveRead.error === undefined ? proactiveRead.data?.profiles ?? [] : []) {
@@ -493,15 +561,22 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         </Tooltip>
   ) });
   const ordered = orderedResources(entries, savedOrder);
-  const ids = ordered.map(entry => entry.key);
+  // Unbound session evidence, estimates and declared agents remain accessible,
+  // without presenting them as additional accounts or merging their allowances.
+  const primaryIds = new Set(rows.map(row => `account:${row.key}`));
+  // Recorded API funding is a distinct resource, unlike a session-log view or estimate.
+  primaryIds.add('budget:claude-api-promotions');
+  const evidenceCount = ordered.filter(entry => !primaryIds.has(entry.key)).length;
+  const visible = ordered.filter(entry => primaryIds.has(entry.key) || !expanded || showEvidence);
+  const ids = visible.map(entry => entry.key);
   const providerOf = (engine: string) => engine === 'codex' ? 'openai' : engine === 'claude' ? 'anthropic' : engine === 'grok' ? 'xai' : engine === 'devin' ? 'devin' : 'local';
   const descriptors: ProviderResourceDescriptor[] = ordered.map(entry => {
     const native = rows.find(row => `account:${row.key}` === entry.key);
     const seat = native ? data.seats.find(seat => seat.id === native.key) : undefined;
     const profile = proactiveRead.data?.profiles.find(profile => `proactive:${profile.id}` === entry.key);
-    return { resourceId: entry.key, provider: native ? providerOf(native.engine) : profile ? profile.identity.provider : entry.key === 'budget:devin' ? 'devin' : 'anthropic',
+    return { resourceId: entry.key, provider: native ? providerOf(native.engine) : profile ? profile.identity.provider : entry.key === personalRow.key ? 'openai' : entry.key === 'budget:devin' ? 'devin' : 'anthropic',
       accountId: seat?.accountId ?? profile?.identity.accountId ?? null, label: entry.name,
-      resourceKind: native ? native.engine === 'local' ? 'local-readiness' : 'native-account' : profile ? 'declared-agent' : 'funding-or-budget',
+      resourceKind: native ? native.engine === 'local' ? 'local-readiness' : 'native-account' : profile ? 'declared-agent' : entry.key === personalRow.key ? 'personal-session-usage' : 'funding-or-budget',
       readingState: native?.display?.usage.current ? 'current' : native?.display?.usage.freshness === 'stale' ? 'stale' : 'unknown', observedAt: native?.display?.usage.observedAt ?? null };
   });
   const entryByKey = new Map(ordered.map(entry => [entry.key, entry]));
@@ -512,8 +587,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
       setAnnouncement(`${name} moved to position ${ids.indexOf(target) + 1} of ${ids.length}.`);
     }
   };
-  const ordinaryRows = ordered.map((entry, index) => (
+  const ordinaryRows = ordered.map((entry) => {
+    const index = ids.indexOf(entry.key);
+    return (
     <div key={entry.key} className={styles.orderItem} data-resource-id={entry.key}
+      hidden={index === -1}
       data-dragging={dragged === entry.key || undefined} data-drop-target={dropTarget === entry.key || undefined}
       draggable
       onDragStart={(event) => {
@@ -537,10 +615,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
           disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
         <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
-          disabled={index === ordered.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
+          disabled={index === ids.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
       </span>
     </div>
-  ));
+  ); });
 
   if (ordered.length === 0) return null;
   return (
@@ -561,6 +639,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
           renderResource={resource => <div data-resource-id={resource.resourceId}>{entryByKey.get(resource.resourceId)?.content}</div>} />
       </Suspense> : null}
       {providerView === 2 && expanded ? null : ordinaryRows}
+      {expanded && providerView !== 2 && evidenceCount > 0 ? <button type="button" className={styles.densityToggle}
+        aria-expanded={showEvidence} onClick={() => setShowEvidence(value => !value)}>
+        <span>Usage sources and budgets ({evidenceCount})</span>{showEvidence ? <IconChevronUp /> : <IconChevronDown />}
+      </button> : null}
     </div>
   );
 }

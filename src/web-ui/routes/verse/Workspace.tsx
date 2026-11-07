@@ -75,8 +75,9 @@ import {
   expansiveCostCopy,
   standardSwitchCompacts,
 } from './ContextMeter.js';
-import { CopyGlyph, FocusGlyph, HandoffGlyph, MoreGlyph, PanelBottomGlyph, RenameGlyph, TrashGlyph } from './dock/dock-icons.js';
-import { getDockState, openDockPane, requestDiff, toggleDock, toggleDockPane, useDock, useDockValue } from './dock/dock-store.js';
+import { CopyGlyph, FocusGlyph, HandoffGlyph, MoreGlyph, PanelBottomGlyph, SplitGlyph, RenameGlyph, TrashGlyph } from './dock/dock-icons.js';
+import { getDockState, openDockPane, requestDiff, setDockWidth, setDockPlacement, toggleDock, toggleDockPane, useDock, useDockValue } from './dock/dock-store.js';
+import { useAgentWorkspace, setAgentWorkspace, WORKSPACE_PANES } from './dock/agent-workspace.js';
 import { paneApplies, paneChordLabel, usePanes } from './panes/index.js';
 import { setFocusMode, useFocusMode } from './shell/focus-mode.js';
 import { deepLinkUrl } from './shell/deep-link.js';
@@ -687,6 +688,7 @@ const ENGINE_NOTICE_WORD: Readonly<Record<VerseLiveNotice['kind'], string>> = {
   retry: 'Retrying',
   preflight: 'Preflight',
   watchdog: 'Still running',
+  'model-switch': 'Model switch',
 };
 
 /** The advice notes re-check their evidence on this clock (idle-cache advice appears on time, not on the next render). */
@@ -860,7 +862,8 @@ function PaneToggles({ sidebarCollapsed, onToggleSidebar, session, roots }: {
   const { state } = useDock();
   const registered = usePanes();
   const focus = useFocusMode();
-  const shows = (pane: string) => state.open && (state.active === pane || state.splitWith === pane);
+  const agentWorkspace = useAgentWorkspace(session?.id ?? null);
+  const shows = (pane: string) => state.open && ((agentWorkspace && WORKSPACE_PANES.some((id) => id === pane)) || state.active === pane || state.splitWith === pane);
   const context = { sessionId: session?.id ?? null, session, roots };
   const panes = session ? registered.filter((pane) => pane.toggle && paneApplies(pane, context)) : [];
   const dockKey = shortcutFor('dock.toggle');
@@ -881,6 +884,15 @@ function PaneToggles({ sidebarCollapsed, onToggleSidebar, session, roots }: {
   }
   return (
     <div className={styles.toggles} role="group" aria-label="Panels">
+      {session ? <Tooltip label="Split workspace: chat, terminal, browser, computer use and changes" placement="bottom"><button type="button" className={`${styles.ghostIcon} ${styles.paneToggle}`} aria-label="Split workspace" aria-pressed={agentWorkspace}
+        onClick={() => {
+          setAgentWorkspace(session.id, !agentWorkspace);
+          if (!agentWorkspace) {
+            setDockPlacement('right');
+            setDockWidth(Math.floor(window.innerWidth * 0.6));
+            for (const id of WORKSPACE_PANES) openDockPane(id);
+          }
+        }}><SplitGlyph size={16} /></button></Tooltip> : null}
       {panes.map((pane) => {
         const Icon = pane.icon;
         const key = paneChordLabel(pane);

@@ -1,0 +1,31 @@
+  PID  PPID     ELAPSED UCOMM    COMMAND
+     1     0    9000000 launchd  /sbin/launchd
+ 41000     1     180000 node     node /Users/masonwyatt/Projects/ashlrai/wt/RQ-DEAD-FLEET/dist/cli.js drive --once
+ 41001 41000     170000 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp
+ 42000     1     140000 node     node /opt/homebrew/lib/node_modules/npm/bin/npx-cli.js -y @ashlrai/locus-mcp@0.5.0
+ 42001 42000     130000 locus-mcp locus-mcp serve --state /Users/masonwyatt/.ashlr-runs/runs/RQ-STATE
+ 43000 99000     160000 node     node /Users/masonwyatt/Projects/ashlrai/wt/RQ-LIVE/dist/cli.js
+ 43001 43000     150000 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp
+ 44000     1     150000 Claude   /Applications/Claude.app/Contents/MacOS/Claude
+ 44001 44000     150000 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp
+ 45000     1     150000 node     node /Applications/Cursor.app/Contents/Resources/app/out/bootstrap-fork --type=extensionHost
+ 45001 45000     150000 locus-mcp locus-mcp
+ 45500     1     150000 node     node /opt/homebrew/bin/claude --resume fleet-orphan-lookalike
+ 45501 45500     150000 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp
+ 46000     1     150000 node     node /Users/masonwyatt/Projects/ashlrai/wt/RQ-YOUNG/dist/cli.js
+ 46001 46000      30000 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp
+ 47000     1     150000 node     node /Users/masonwyatt/.ashlr-runs-evil/spawn.js
+ 47001 47000     150000 locus-mcp locus-mcp --home /Users/masonwyatt/.ashlr-runs-evil/x
+ 48000 48001     150000 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp
+ 49000     1     150000 zsh      -zsh
+ 49001 49000     150000 locus-mcp locus-mcp --home /Users/masonwyatt/.ashlr-runs/q
+ 50000     1     150000 node     node /Users/masonwyatt/.locus/bin/locus-mcp
+ 51000 90000     150000 locus-mcp /opt/homebrew/bin/locus-mcp
+ 52000     1     150000 node     node /Users/masonwyatt/Projects/ashlrai/wt/RQ-MULTI/dist/cli.js
+ 52001 52000   1-22:40:00 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp --profile alpha
+ 52002 52000     150000 locus-mcp /Users/masonwyatt/.locus/bin/locus-mcp --profile beta
+ 55000     1     150000 node     node /opt/homebrew/bin/npx -y @ashlrai/locus-mcp@0.5.0
+ 55001 55000     150000 locus-mcp /Users/masonwyatt/Projects/ashlrai/wt/RQ-EMBEDDED/bin/locus-mcp
+ 56000     1     150000 node     node /Users/masonwyatt/Projects/ashlrai/wt/RQ-SCRIPT/scripts/reap-orphan-locus-mcp.mjs
+ 57000     1     150000 node     node /Users/masonwyatt/Projects/ashlrai/wt/RQ-OTHER/dist/cli.js
+ 57001 57000     150000 lexicon-mcp /Users/masonwyatt/.local/bin/lexicon-mcp

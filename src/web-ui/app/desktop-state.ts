@@ -6,10 +6,7 @@ import { getFeatureFlag, subscribeFeatureFlags, type FeatureFlag } from '../data
 export { getFeatureFlag, setFeatureFlag } from '../data/feature-flags.js';
 export type { FeatureFlag } from '../data/feature-flags.js';
 
-/**
- * Subscribe React to a browser-local presentation flag, independent of native
- * preferences. Server rendering defaults off; the browser reads its saved choice.
- */
+/** Live presentation gate, default off even when no native bridge is available. */
 export function useFeatureFlag(name: FeatureFlag): boolean {
   return useSyncExternalStore(subscribeFeatureFlags, () => getFeatureFlag(name), () => false);
 }

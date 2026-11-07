@@ -1,117 +1,148 @@
 # M523 — GitHub stable-release finalization
 
-M523 closes the public-channel gap after `@ashlr/hub@3.3.2` has already been
-published, accepted, and promoted to both npm `candidate` and npm `latest`.
-It changes only the existing GitHub Release with ID `383083121`: one protected
-workflow run changes `prerelease` from `true` to `false` and requests
-`make_latest=true`.
+The Phantom stable finalizer publishes an existing, fully stocked draft for an
+exact `@ashlr/phantom` version after canonical npm publication succeeds. It
+replaces the historical Hub 3.3.2 freeze. Historical receipts remain in
+[the release archive](../RELEASING-HISTORICAL.md); they do not admit a new release.
 
-## Fixed identity
+## Inputs and identity
 
-The workflow is pinned to all of the following:
+[Finalize GitHub stable release](../../.github/workflows/finalize-github-release.yml)
+is a manual `workflow_dispatch` on protected `master`, with these inputs:
 
-- package `@ashlr/hub`, version `3.3.2`, lightweight tag `v3.3.2`, and source
-  commit `2971c9f767c934e12fd056bf8c6dca5164ffe7d2`;
-- candidate SRI
-  `sha512-674ZY76hBxks8j9JR5QifoyMn6uxmRx6dhbgiYAuWRyrnB4Zeuo/H+rgQ1mQ/mNYf62s1ORnJcvTxbxHZFuqTA==`;
-- successful release run `33932333902`, attempt 1, and successful promotion
-  admission run `33933861238`, attempt 1;
-- admission artifact ID `9959487443`, artifact digest
-  `223193104d72509f481907e920a5fda586db055d9efaf3e846dd85c2c835953b`,
-  and admission receipt digest
-  `0b3552324284856423356d12e7b04334c530ea5471666f3fc82647426a57b86d`;
-- GitHub Release ID `383083121`, notes SHA-256
-  `f7b2dc191b3491ce29da3b31a6afb6703d9403f4c5ef3b0066ca0bed5a647ba5`,
-  and canonical assets SHA-256
-  `4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`;
-- prior GitHub latest Release ID `341086222`, tag `v3.0.0`; and
-- first-parent rollback source
-  `d6c1a5ec3626f715018a8ffb929906ac0f52f5c9`.
+| Input | Meaning |
+| --- | --- |
+| `version` | Exact stable `X.Y.Z` package version; tag is `vX.Y.Z`. |
+| `publish_run_id` | Completed successful `publish-canonical-npm.yml` run. |
+| `publish_run_attempt` | Exact successful attempt of that run. |
+| `candidate_sha` | Exact candidate commit, matching the tag and admitted package. |
+| `candidate_integrity` | Exact registry `sha512-…` integrity for that package. |
+| `confirm_stable_finalization` | Explicit `true` to request publication. |
 
-The empty asset list hashes as canonical JSON `[]`; the notes digest covers the
-exact GitHub API body bytes. Any later body or asset edit invalidates this lane.
+The canonical publisher remains the sole npm authority. Finalization binds the
+selected run and attempt, successful publisher jobs, immutable admitted package
+artifact, candidate SHA and SRI, current npm `latest`, registry bytes and audited
+npm provenance. A reconciled npm publication can have an earlier provenance run;
+that does not waive the selected successful canonical run or exact candidate and
+artifact checks. Reuse of CI or attestation is valid only for unchanged candidate
+SHA and artifact digests. It never waives desktop signing or quarantine checks.
+
+Use the [release runbook](../RELEASING.md#finalize-a-stocked-phantom-draft) for a
+copy-paste JSON dispatch and post-merge workflow-enable procedure. Dispatch
+inputs are strings except the boolean confirmation. The workflow invokes its
+read-only internal helper as `node scripts/finalize-github-release.mjs prepare
+--json` and `node --import tsx scripts/finalize-github-release.mjs verify --json`;
+use the dispatch example rather than supplying runner-only environment variables
+by hand. It emits JSON evidence receipts for machine inspection.
 
 ## Admission and effect
 
-`.github/workflows/finalize-github-release.yml` is manual, serialized, and
-one-shot. It must run from current protected `master`, and the release source
-must remain in that branch's history. A read-only preflight job performs the
-package, provenance, and evidence checks without a protected environment or
-release-mutation permission. It uploads a bounded attempt-specific receipt.
-Only the second job has `contents: write`; it downloads and verifies that exact
-current-run preflight, uses the dedicated `github-stable-release-finalization`
-environment, rechecks the live mutation-critical state, and verifies that the
-environment:
+The read-only verification job requires an existing non-prerelease draft for the
+exact tag and candidate commit, with nonempty notes and exactly the signed
+seven-asset desktop set:
 
-- admits protected branches only, with no custom branch policies;
-- has administrator bypass disabled; and
-- has exactly one required user reviewer, `masonwyatt23`, with self-review
-  permitted.
+1. Original CLI package archive.
+2. CLI archive signature sidecar.
+3. Signed app archive.
+4. App archive signature sidecar.
+5. `manifest.json`.
+6. `manifest.json.sig`.
+7. `latest.json`.
 
-That environment is an explicit single-owner production gate, not two-person
-review. It must be configured by a repository administrator before dispatch;
-the workflow neither creates nor modifies it. The workflow verifies the
-reviewer, protected-branch, custom-policy, and administrator-bypass settings and
-contains no environment-secret references. GitHub does not expose secret values
-to the job, so the repository administrator must separately confirm that the
-environment secret inventory is empty.
+Names, sizes and digests must agree with the signed manifest. Verification uses
+`verifyCompatibleUpdateManifest` and `verifyMinisign` with the commissioned trust
+key, checks the declared Apple signer identity, and hashes downloaded archive
+bytes. `latest.json` must contain the exact signed discovery envelope. Repository,
+version, source revision and source tree must match the candidate tag commit.
+The signed qualification package digest, attestor and producer run identities
+must match canonical npm admission, and `verifyUpdateAudit` rechecks the exact
+candidate audit run and required successful steps. Filenames or seven asset
+metadata rows alone are insufficient. Incomplete or changed evidence holds the
+draft; rerun only after the sanctioned publisher completes its work.
 
-Before the effect, the two-job lane proves the exact release and admission runs,
-artifact and receipt, protected branch, lightweight tag and merge parent,
-current prerelease, prior GitHub latest, unchanged notes/assets, exact npm SRI,
-`latest=candidate=3.3.2`, registry signature metadata, and the decoded SLSA
-provenance statement binding the package to the exact release workflow, ref,
-commit, run, and attempt. It then re-reads the mutable public state immediately
-before the effect.
+This read-only Linux verifier does not reconstruct the hosted desktop bundle or
+run Apple `codesign`, update or launch checks. Closure of the desktop quarantine
+root cause is an external prerequisite owned by
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, superseding
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; finalization cannot certify that closure.
 
-There is exactly one GitHub mutation:
+The workflow does not upload assets or create a release. It locates the existing
+release for the tag, preserves its ID, notes and asset bytes, and refuses an
+already public release. The normal sanctioned
+[`publish-desktop-release.mjs`](../../scripts/publish-desktop-release.mjs) path
+already uploads and publishes. This finalizer is for a complete draft left
+before that publisher's publication step, rather than a second mandatory
+publication step. Never use `gh release edit` or a hand API PATCH to make an
+empty draft public, and never hand-upload assets outside the sanctioned
+publisher.
 
-```http
-PATCH /repos/ashlrai/ashlr-hub/releases/383083121
-Content-Type: application/json
-
-{"prerelease":false,"make_latest":"true"}
-```
-
-The job then requires Release ID `383083121` to be non-draft and non-prerelease,
-and requires `/releases/latest` to return that same ID and `v3.3.2`. It also
-rechecks npm tags/SRI, the lightweight tag, notes digest, and asset digest. A
-bounded receipt records the exact evidence, effect, postconditions, and all
-excluded authorities.
-
-The protected effect job has `contents: write` only because GitHub's release
-update endpoint requires it. It does not check out or execute repository code,
-install npm, or download the published package. The read-only preflight is the
-only job that executes the provenance verifier and inspects installed package
-metadata. Neither job has OIDC permission, an npm credential, npm mutation
-command, tag write, package publish, install-pointer, daemon, activation,
-provider, communication, financial, or spend authority. A successful run
-proves public GitHub release metadata alignment; it does not install or activate
-Ashlr Hub.
-
-## Failure and rollback
-
-This lane is fail-closed and intentionally cannot be rerun successfully after
-finalization, because its precondition requires `prerelease=true`. GitHub's
-release update API has no compare-and-swap primitive, so an external repository
-administrator can still race the immediate pre-effect read. Any postverification
-failure is a release incident and requires inspection before another mutation.
-
-Rollback is never automatic. A rollback requires a new reviewed protected
-workflow revision, a fresh approval through the same
-`github-stable-release-finalization` environment, revalidation that no newer
-stable release superseded v3.3.2, and exactly this inverse GitHub request:
+The protected effect job uses the existing
+`github-stable-release-finalization` environment. Its protected-branch,
+reviewer and no-administrator-bypass policy remains enforced. Only that job has
+`contents: write`, for one request to the admitted release ID:
 
 ```http
-PATCH /repos/ashlrai/ashlr-hub/releases/383083121
+PATCH /repos/ashlrai/phantom/releases/{admitted_release_id}
 Content-Type: application/json
 
-{"prerelease":true,"make_latest":"false"}
+{"draft":false,"make_latest":"true"}
 ```
 
-The rollback postcondition is `/releases/latest` returning Release ID
-`341086222`, tag `v3.0.0`, while the v3.3.2 tag, notes, and assets remain
-byte-identical. This inverse request does not change npm. If package discovery
-must also roll back, npm `latest` restoration is a separate registry mutation
-requiring its own current-state validation, protected admission, fresh
-maintainer 2FA, receipt, and postverification; M523 grants no such authority.
+The effect job rechecks mutable state immediately before the PATCH and verifies
+that the same release is public, stable and latest afterward, with unchanged
+notes and assets. Its preflight receipt expires after one hour; if protected
+environment approval takes longer, redispatch for fresh verification. It records
+the preflight identity and post-effect evidence. After all pre-write checks,
+a bounded attempt records the request and preflight hash. An exit record retains
+phase, status and response size/hash, never raw transport output. Evidence
+uploads run on failure too. An attempt does not prove execution: an ambiguous
+response stays unknown, and a failed postcheck requires reconciliation without
+replay. Successful completion still requires the postverified success receipt.
+There is no npm mutation, OIDC permission, npm token, new secret reference, tag
+write, installation, runtime activation, provider, communication or spend
+authority. The GitHub token's broad `contents: write` capability does not grant
+those operations.
+
+## Failure and recovery
+
+The GitHub release API has no compare-and-swap primitive. An outside writer can
+race the final read; a failed postcheck is an incident requiring reconciliation,
+not an invitation to replay writes. A subsequent dispatch refuses a public
+release. No automatic rollback, unpublication or tag move is provided.
+
+As reported in the verified November 5, 2026 handoff, `v3.30.8` (release ID
+`435347257`) is already public with zero assets, and the configured
+`releases/latest/download/latest.json` redirects to a 404. Leave that release
+and tag as-is: no unpublish, tag move, reversal or hand asset upload. The desktop
+publisher's live-feed refusal remains intact. Fix forward on the next free
+patch, preferring `3.30.9` only if npm, GitHub tags and release records still show
+it is available immediately before candidate selection.
+
+Recovery coordinates with `RQ-RELEASE-DESKTOP-UNQUARANTINE-2`, which supersedes
+`RQ-RELEASE-DESKTOP-UNQUARANTINE-1`; signed binary
+publication belongs to that task. This workflow change is a Security pin-review
+`-sec` change: the PR title starts with `[SECURITY REVIEW]`, auto-merge stays off,
+and the workflow/permissions diff waits for Security review. Re-enable workflow
+ID `350636007` only after the reviewed YAML is merged on `master`.
+
+## Recovery evidence
+
+A file handoff, prompt copied into `leader/inbound/`, or `fleet-page.py say`
+proves no execution. Before claiming updater recovery, retain all of:
+
+- Actual fleet job ID, lane and start timestamp from sanctioned Mac read
+  surfaces: `dispatch-events.log` `LAUNCH` lines, `metrics/jobs.jsonl`, live
+  `launch.sh` or `queue/status.json`. Do not invent an ID or queue an unrelated
+  job to fill the record.
+- Sanctioned signed seven-asset publication for the next version, after the
+  desktop quarantine root cause is resolved. Never skip signing or bypass
+  quarantine guards.
+- GET of the configured GitHub `releases/latest/download/latest.json` returning
+  HTTP 200 after redirects, with signature and provenance verification matching
+  the publisher checks.
+- Supported installed-app update/version and successful launch evidence, only
+  after Mason or an explicitly authorized operator path grants Mac access.
+  Until then, installed version and launch remain unverified.
+
+npm `latest`, release metadata, green CI and a source-only handoff each prove
+only their own layer. None alone establishes updater or installed-app recovery.

@@ -27,6 +27,7 @@ import { redactKnownValues, scrubSecrets } from '../util/scrub.js';
 import {
   DEVIN_API_BASE_URL,
   DEVIN_ORG_ID_PATTERN,
+  DEVIN_PLAYBOOK_ID_PATTERN,
   isDevinOpaqueSelfId,
   isDevinSelfIdentity,
   type DevinSelfIdentity,
@@ -159,6 +160,12 @@ export interface DevinCreateSessionInput {
   structuredOutputRequired?: boolean;
   /** devin_mode, pinned (never `fusion`: multi-model routing has no single producer identity). */
   devinMode?: 'normal' | 'fast' | 'lite' | 'ultra';
+  /**
+   * playbook_id: an org playbook (`playbook-…`) attached to the session, so the
+   * prompt can reference it instead of repeating its conventions. An id, not a
+   * secret.
+   */
+  playbookId?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -534,6 +541,10 @@ export class DevinClient {
     if (input.devinMode !== undefined) {
       if (!['normal', 'fast', 'lite', 'ultra'].includes(input.devinMode)) throw new DevinApiError('invalid-request', 'That Devin mode is not accepted.');
       body['devin_mode'] = input.devinMode;
+    }
+    if (input.playbookId !== undefined) {
+      if (!DEVIN_PLAYBOOK_ID_PATTERN.test(input.playbookId)) throw new DevinApiError('invalid-request', 'That Devin playbook id is not accepted.');
+      body['playbook_id'] = input.playbookId;
     }
     if (input.structuredOutputSchema) {
       body['structured_output_schema'] = input.structuredOutputSchema;

@@ -1,0 +1,131 @@
+# Channel delivery contract
+
+`createChannelReceiver` is the shared inbound boundary for a trusted channel
+adapter, not an authentication or transport service. Before calling it, the
+adapter must authenticate the sender using its channel's trusted evidence and
+map that identity to a canonical `verifiedSenderId`. Use the same canonical ID
+for the same person across channels, and configure `allowedSenderIds` with the
+permitted IDs. When the channel's evidence id is per-channel (for example
+`telegram:<userId>` or `email:<address>`), the adapter also supplies
+`canonicalSenderId`: the shared person id the dedupe receipt and cross-channel
+merge key on (`OPERATOR_SENDER_ID` for the operator surfaces). Never use a
+sender or channel asserted in the message body as proof of identity. The
+receiver checks the supplied ID against the allowlist; it does not
+independently verify the adapter's claim.
+
+The default inbox records the receiving channel as its displayed `source`; it
+does not record `verifiedSenderId`. Source is presentation, not identity or
+evidence of who sent the message. A duplicate does not replace the original
+entry's source. Applications needing durable sender attribution must provide
+their own trusted persistence; they cannot recover it from the inbox source.
+
+## Receipt and acknowledgement
+
+The receiver normalizes the body to Unicode NFC, converts CRLF and CR to LF,
+and trims surrounding whitespace. For ten minutes from the first successful
+receipt, the same canonical sender and normalized body deduplicate across
+channels. A duplicate does not extend that window. Different canonical senders
+remain distinct. The first receipt returns an `accepted` ack; a duplicate returns
+`duplicate` with the same dedupe key and the current receiving channel.
+
+With the default inbox sink, receipts persist in the shared `runsDir` (default
+`~/.ashlr-runs`), so separate receivers using that directory share deduplication.
+A custom `write` sink with no `runsDir` and no `receiptStore` keeps receipts only
+in that receiver's memory. A custom sink with `runsDir` uses its local receipt
+store, or the caller can supply a `receiptStore` that serializes lookup, sink
+write and receipt commit across its users. A custom sink must report success
+only after persistence.
+
+The sink write and receipt commit are separate operations. A crash or receipt
+commit failure after a successful write can leave an inbox entry without a
+receipt; a retry may append again. This is not an exactly-once guarantee. A
+refused or failed sink write does not reserve a receipt or trigger an ack, and
+receipt-store failures return an error without an ack.
+
+The optional `acknowledge` callback is attempted after an accepted or duplicate
+receipt. It is best effort: a callback failure is swallowed, and a successful
+receive result does not prove delivery of the ack. Route the callback through
+the same authenticated channel and reply context that received the message.
+The callback receives a detached ack and is awaited while calls to that receiver
+are serialized; it must not await another receive on the same receiver.
+`accepted` means the sink accepted the entry and the receipt was committed; it
+does not mean a leader read or acted on it. `duplicate` means a matching receipt
+was already recorded within the window, not that the leader acted on it.
+
+## Agent-bus mirroring
+
+An `accepted` receipt is also mirrored onto the durable local agent bus as a
+`mason` → `leaders` P0 envelope whose body is
+`{ kind: 'interjection', channel, text, receivedAt, dedupeKey }`, so
+`phm comms bus read` and the fleet agent-bus API observe the interjection
+without reading the inbox. The bus id derives from the dedupe key, so a retry
+after a restart cannot double-post one receipt. Mirroring is best effort: it
+runs after the durable write and before the ack, outside the ack timeout, and
+a `duplicate` receipt is never republished. A successful result carries a
+`publishState` of `published`, `skipped` or `failed`; a failed mirror never
+changes the receipt, the result or the ack. `publish: null` disables mirroring
+and a `publish` function replaces the default sink. `busRoot` selects the store
+root for the default sink; the default stays hermetic for runsDir-scoped
+receivers that name no `busRoot`, while adapters that pass neither option
+publish to the canonical store.
+
+A pending mirror receipt stores only the source channel and a hash-only
+`envelopeDigest` (SHA-256 over the exact raw body, channel, verified sender and
+thread; not `receivedAt`, which the receipt pins). A duplicate retry rebuilds
+and republishes the original envelope only when its own tuple hashes to that
+digest. Case, whitespace, channel, thread or sender variants, and legacy
+receipts without a digest, still dedupe and ack as `duplicate` but never
+reconstruct a body: the mirror stays pending and the result reports
+`publishState: 'failed'`. A malformed digest makes the receipt store refuse the
+receive (`dedupe-store-unavailable`).
+
+The same binding gates every retried effect, not only the mirror. Each accepted
+record whose receiver has a background effect (mirror or COS queue) stores the
+digest, with `pending: false` when mirroring is disabled. On a duplicate, the
+COS queue write and the bus mirror use only the envelope rebuilt from a
+matching digest (original body, channel, thread and `receivedAt`); the receipt
+channel must also equal the hashed channel, otherwise the record fails closed.
+Variant and legacy unbound duplicates still ack as `duplicate` but enqueue and
+publish nothing.
+
+The inbox reader keeps ordinary Markdown headings inside a structured message.
+A dated legacy entry still starts a separate record when old and current
+writers share the inbox. The writer escapes entry-like headings in message
+bodies so they cannot create an extra record.
+
+### Fleet dispatch events
+
+The dispatch log's own events — launches, publishes, lane holds, incidents,
+inbox arrivals and the other kinds the live bus feed parses — are mirrored by
+`mirrorDispatchToBus` as `fleet` → `all` P2 envelopes with body
+`{ kind: 'fleet-event', event, at, text, job?, lane? }`. `event` is the feed
+kind, `at` the log timestamp, `text` bounded to 500 characters, `job` the
+first `RQ-PHX-[A-Z0-9]+` token and `lane` the first known lane name. The bus id
+is `fleet-<kind>-<16 hex of sha256(at + text)>`, so a re-scan of the same rows
+dedupes in the store; a `{at, key}` cursor file skips them earlier. Mirroring
+is bounded and headroom-aware: it stops when the store approaches its caps so
+room remains for agents and Mason, and a failed run leaves the cursor for the
+next pass to retry.
+
+## Minimal use
+
+The following assumes the adapter has already authenticated the request,
+resolved its canonical ID and captured the same-channel reply function. These
+values are supplied by the adapter, not parsed from the body.
+
+```ts
+import { createChannelReceiver } from '../src/core/fleet/channel-envelope.js';
+
+const receive = createChannelReceiver({
+  runsDir, // shared by the channel adapters using the default inbox
+  allowedSenderIds,
+  acknowledge: async (ack) => { await replyOnThisChannel(ack); },
+});
+const result = await receive({ channel: 'email', verifiedSenderId, body });
+// Handle !result.ok as a refusal; no successful ack was attempted for it.
+```
+
+Bind `replyOnThisChannel` to this request's authenticated reply destination.
+If a receiver is shared across requests, its callback must instead route each
+ack to the appropriate originating channel and reply context; the channel field
+alone does not identify a particular conversation.

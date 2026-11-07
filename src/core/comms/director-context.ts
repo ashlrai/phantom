@@ -255,11 +255,6 @@ function summarizeGoal(g: {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** For testing: reset the north-star cache. */
-export function _resetNorthStarCache(): void {
-  _northStarCache = null;
-}
-
 /**
  * Assemble the full DirectorContext snapshot.
  *

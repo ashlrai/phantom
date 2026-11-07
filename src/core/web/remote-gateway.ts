@@ -2,7 +2,8 @@
  * Dormant phone gateway HTTP adapter. No production startup path imports/calls
  * startRemoteReadGateway; Tunnel must target this listener, never Hub's :7777.
  * The browser receives a separate, short-lived device session. Hub's read
- * token and its read-session cookie stay exclusively on the loopback hop.
+ * token and its read-session cookie (for streams and agent-bus reads) stay
+ * exclusively on the loopback hop.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -16,8 +17,9 @@ import { checkRemoteEnvelope, classifyRemoteRoute, validateRemoteMutation, type 
 import type { RemoteDeviceStore } from './remote-device-store.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { createRemotePush } from './remote-push.js';
-import { serveStatic } from './static.js';
+import { isImmutableAssetPath, serveStatic } from './static.js';
 
+const READ_SESSION_ROUTES = new Set(['/api/verse/agent-bus', '/api/verse/agent-bus/status']);
 const COOKIE_NAME = '__Host-ashlr-remote';
 const PREAUTH_COOKIE_NAME = '__Host-ashlr-remote-preauth';
 const SESSION_MS = 15 * 60_000;
@@ -36,7 +38,7 @@ export interface RemoteReadGatewayOptions {
   devices: RemoteDeviceStore;
   pairing?: ReturnType<typeof createRemotePairing>;
   push?: ReturnType<typeof createRemotePush>;
-  /** Bundled web public dir. Assets stay off until the remote client is ready. */
+  /** Explicit asset override for isolated fixtures. Production reads the running Hub build. */
   assetsDir?: string;
   mobileAssetsEnabled?: boolean;
   port?: number;
@@ -112,6 +114,21 @@ function parsedMutation(decision: RemoteRouteDecision, body: string): unknown | 
     const parsed: unknown = body.length ? JSON.parse(body) : undefined;
     return validateRemoteMutation(decision, parsed) ? parsed ?? {} : null;
   } catch { return null; }
+}
+const REMOTE_INBOX_PATH = '/api/verse/fleet/runs/inbox';
+// The `source` label is presentation metadata the client picks; the channel is
+// a gateway-asserted fact. Every write this listener forwards arrived from a
+// paired phone, so the inbox body is re-serialized with the pinned source.
+export function pinRemoteInboxBody(path: string, parsed: unknown, raw: string): string {
+  if (path !== REMOTE_INBOX_PATH || !object(parsed) || typeof parsed.text !== 'string') return raw;
+  return JSON.stringify({ text: parsed.text, source: 'Phantom mobile' });
+}
+// The paired-phone assertion itself rides an internal header this listener
+// stamps on every forwarded inbox POST. Client headers are never forwarded —
+// forwardMutation builds the upstream header set — so a remote client cannot
+// mint the mobile channel through the gateway.
+function remoteChannelHeaders(target: string): Record<string, string> {
+  return target === REMOTE_INBOX_PATH ? { 'x-ashlr-channel': 'mobile' } : {};
 }
 function staticPath(path: string): boolean {
   return path === '/verse/m' || path === '/verse/m/' || path === '/verse/m/sw.js'
@@ -206,11 +223,13 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       pairing: !!options.pairing, push: !!options.push };
   }
 
-  async function forwardMutation(method: string, target: string, body: string): Promise<{ status: number; body: string } | null> {
+  async function forwardMutation(method: string, target: string, body: string,
+      extraHeaders?: Record<string, string>): Promise<{ status: number; body: string } | null> {
     if (!options.hub.mutationToken) return null;
     try {
       const response = await fetch(`${hubOrigin}${target}`, { method, redirect: 'manual',
-        headers: { 'Content-Type': 'application/json', 'x-ashlr-token': options.hub.mutationToken },
+        headers: { 'Content-Type': 'application/json', 'x-ashlr-token': options.hub.mutationToken,
+          ...extraHeaders, ...remoteChannelHeaders(target) },
         body: method === 'DELETE' && body === '' ? undefined : body, signal: AbortSignal.timeout(30_000) });
       if (response.status >= 300 && response.status < 400) return null;
       if (response.status === 204) return { status: 204, body: '' };
@@ -389,10 +408,12 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         }
         if (route.stepUp) { json(res, 403, { code: 'STEP_UP_REQUIRED', error: 'Fresh device authentication required' }); return; }
         const body = await bodyText(req);
-        if (body === null || parsedMutation(route, body) === null || !options.devices.getActive(session.deviceId, identity.subject)) {
+        const parsed = body === null ? null : parsedMutation(route, body);
+        if (body === null || parsed === null || !options.devices.getActive(session.deviceId, identity.subject)) {
           json(res, 400, { code: 'INVALID_MUTATION', error: 'Mutation denied' }); return;
         }
-        const result = await forwardMutation(req.method ?? '', target, body);
+        const result = await forwardMutation(req.method ?? '', target, pinRemoteInboxBody(route.path, parsed, body),
+          route.path === REMOTE_INBOX_PATH ? { 'x-ashlr-remote-device': session.deviceId } : undefined);
         if (!result) { json(res, 502, { code: 'HUB_UNAVAILABLE', error: 'Local Hub unavailable' }); return; }
         if (result.status === 204) { res.writeHead(204); res.end(); return; }
         res.writeHead(result.status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(result.body); return;
@@ -400,24 +421,56 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       if (req.method !== 'GET') { json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' }); return; }
       if (route.kind === 'deny') {
         const path = target.split('?')[0] ?? '';
-        if (!options.mobileAssetsEnabled || !options.assetsDir || !staticPath(path) || target !== path) {
+        if (!options.mobileAssetsEnabled || !staticPath(path) || target !== path) {
           json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' }); return;
+        }
+        // Only the exact static allowlist reaches the Hub. Never forward client
+        // headers, credentials, redirects or an arbitrary target. Reading from
+        // the running desktop keeps its assets and API state on one build.
+        let hubAsset: { bytes: Buffer; contentType: string } | null = null;
+        if (!options.assetsDir) {
+          try {
+            const upstream = await fetch(`${hubOrigin}${path}`, {
+              redirect: 'manual', signal: AbortSignal.timeout(5_000),
+            });
+            const contentType = upstream.headers.get('content-type') ?? '';
+            const bytes = upstream.status === 200 ? await boundedResponse(upstream, MAX_JSON_BYTES) : null;
+            if (upstream.status !== 200) await upstream.body?.cancel();
+            if (bytes && /^(?:text\/html|text\/css|application\/(?:javascript|manifest\+json)|image\/(?:svg\+xml|png|webp)|font\/woff2?)(?:;|$)/.test(contentType)) {
+              hubAsset = { bytes, contentType };
+            }
+          } catch { /* Fail closed when the desktop is unavailable. */ }
+          if (!hubAsset) {
+            json(res, 503, { code: 'REMOTE_ASSETS_UNAVAILABLE', error: 'Desktop assets unavailable' }); return;
+          }
         }
         if (path === '/verse/m' || path === '/verse/m/') {
           try {
-            const html = readFileSync(join(options.assetsDir, 'next', 'index.html'), 'utf8');
-            if (!html.includes('<head>') || !html.includes('</head>') || !html.includes('name="ashlr-remote-gateway"')) {
-              const body = html.replace('<head>', `<head>${REMOTE_MARKER}`);
-              if (body !== html) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(body); return; }
+            const html = hubAsset ? hubAsset.bytes.toString('utf8')
+              : readFileSync(join(options.assetsDir!, 'next', 'index.html'), 'utf8');
+            const heads = [...html.matchAll(/<\/?head\b/gi)];
+            const head = html.indexOf('<head>');
+            const end = html.indexOf('</head>');
+            const markers = [...html.matchAll(/name="ashlr-remote-gateway"/g)];
+            if (heads.length === 2 && heads[0]?.index === head && heads[1]?.index === end && head >= 0 && end > head
+              && (markers.length === 0 || (markers.length === 1 && html.indexOf(REMOTE_MARKER) > head
+                && html.indexOf(REMOTE_MARKER) + REMOTE_MARKER.length <= end))) {
+              const body = markers.length === 1 ? html : html.replace('<head>', `<head>${REMOTE_MARKER}`);
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(body); return;
             }
           } catch { /* missing build stays denied */ }
           json(res, 503, { code: 'REMOTE_ASSETS_UNAVAILABLE', error: 'Mobile assets unavailable' }); return;
         }
-        if (!serveStatic(req, res, options.assetsDir)) json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' });
+        if (hubAsset) {
+          res.writeHead(200, { 'Content-Type': hubAsset.contentType, 'Cache-Control': isImmutableAssetPath(path) ? 'private, max-age=31536000, immutable' : 'no-cache' });
+          res.end(hubAsset.bytes); return;
+        }
+        if (!serveStatic(req, res, options.assetsDir!)) json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' });
         return;
       }
       if (!session) { json(res, 401, { code: 'DEVICE_SESSION_REQUIRED', error: 'Device authentication required' }); return; }
-      if (route.kind === 'stream' && !(await localReadSession())) {
+      const sessionRead = route.kind === 'read' && READ_SESSION_ROUTES.has(route.path);
+      if ((route.kind === 'stream' || sessionRead) && !(await localReadSession())) {
         json(res, 503, { code: 'HUB_READ_UNAVAILABLE', error: 'Local read session unavailable' }); return;
       }
       const controller = new AbortController();
@@ -426,7 +479,9 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       const upstreamTarget = route.kind === 'stream'
         ? `${target}${target.includes('?') ? '&' : '?'}client=${localClient}` : target;
       const upstreamHeaders: Record<string, string> = route.kind === 'stream'
-        ? { cookie: localCookie } : { 'x-ashlr-token': options.hub.readToken };
+        ? { cookie: localCookie } : sessionRead
+          ? { cookie: localCookie, 'x-ashlr-read-client': localClient }
+          : { 'x-ashlr-token': options.hub.readToken };
       if (route.kind === 'stream') {
         const deadline = Math.min(session.expiresAt, identity.expiresAt);
         const close = () => { controller.abort(); if (!res.writableEnded) res.end(); };
@@ -439,7 +494,21 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
         res.once('close', () => { clearTimeout(timer); clearInterval(poll); streams.delete(res); });
       }
       try {
-        const upstream = await fetch(`${hubOrigin}${upstreamTarget}`, { headers: upstreamHeaders, redirect: 'manual', signal: controller.signal });
+        let upstream = await fetch(`${hubOrigin}${upstreamTarget}`, { headers: upstreamHeaders, redirect: 'manual', signal: controller.signal });
+        if (sessionRead && upstream.status === 401) {
+          await upstream.body?.cancel();
+          localCookie = ''; localCookieUntil = 0;
+          if (!(await localReadSession())) {
+            json(res, 503, { code: 'HUB_READ_UNAVAILABLE', error: 'Local read session unavailable' }); return;
+          }
+          upstreamHeaders.cookie = localCookie;
+          upstream = await fetch(`${hubOrigin}${upstreamTarget}`, { headers: upstreamHeaders, redirect: 'manual', signal: controller.signal });
+          if (upstream.status === 401) {
+            localCookie = ''; localCookieUntil = 0;
+            await upstream.body?.cancel();
+            json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub refused read' }); return;
+          }
+        }
         if (upstream.status >= 300 && upstream.status < 400) {
           json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub refused read' }); return;
         }
@@ -447,7 +516,8 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
           const type = upstream.headers.get('content-type') ?? '';
           if (!type.startsWith('application/json')) { json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub returned unexpected content' }); return; }
           const bytes = await boundedResponse(upstream, MAX_JSON_BYTES);
-          if (!bytes || hubSecrets.some((secret) => bytes.includes(secret))) {
+          if (!bytes || [...hubSecrets, localCookie, upstreamHeaders.cookie ?? '']
+            .filter(Boolean).some((secret) => bytes.includes(secret) || bytes.includes(secret.replace(/^ashlr_read_session=/, '')))) {
             json(res, 502, { code: 'HUB_BAD_RESPONSE', error: 'Local Hub response rejected' }); return;
           }
           res.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });

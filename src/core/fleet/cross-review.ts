@@ -626,6 +626,10 @@ export type DecisionCode =
   | 'review-failed'
   | 'reviewer-not-independent'
   | 'verdict-reject'
+  | 'checks-unreadable'
+  | 'checks-missing'
+  | 'checks-not-successful'
+  | 'checks-stale'
   | 'verdict-approve'
   | ScanCode;
 
@@ -662,6 +666,7 @@ export function decideCrossReview(input: {
   scan: SensitiveScan;
   killSwitch: boolean;
   paused: boolean;
+  checks?: { headSha: string; code: 'checks-unreadable' | 'checks-missing' | 'checks-not-successful' | 'checks-stale' | null };
   now?: Date;
 }): CrossReviewDecision {
   const { request, review, scan } = input;
@@ -699,5 +704,8 @@ export function decideCrossReview(input: {
     return decision('escalate', ['reviewer-not-independent']);
   }
   if (review.outcome === 'reject') return decision('reject', ['verdict-reject']);
+  if (!input.checks) return decision('hold', ['checks-unreadable']);
+  if (input.checks.headSha !== input.currentHeadSha) return decision('hold', ['checks-stale']);
+  if (input.checks.code) return decision('hold', [input.checks.code]);
   return decision('enable-auto-merge', ['verdict-approve']);
 }
