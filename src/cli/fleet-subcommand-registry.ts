@@ -219,6 +219,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'procs': () => import('./fleet-procs.js'),
   'queue-age': () => import('./fleet-queue-age.js'),
   'queue-latency': () => import('./fleet-queue-latency.js'),
+  'queue-counts': () => import('./fleet-queue-counts.js'),
   'queue-shape': () => import('./fleet-queue-shape.js'),
   'ready-supply': () => import('./fleet-ready-supply.js'),
   'real-supply': () => import('./fleet-real-supply.js'),
