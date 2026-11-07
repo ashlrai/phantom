@@ -875,6 +875,45 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertNotIn('REAP ', result.stdout)
         self.assertFalse((home / '.ashlr-runs/publish-order').exists())
 
+    def test_merged_job_is_not_republished_when_base_survives(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-LOCUSMCPLEAKQ7'
+        self.finished_worktree(home, job)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        url = f'https://example.invalid/{job}'
+        with ledger.open('a') as f:
+            for row in [fin(job), pub(job), {'event': 'outcome', 'url': url, 'state': 'MERGED'}]:
+                f.write(json.dumps(row) + '\n')
+        for _ in range(2):
+            self.assertNotIn('REAP ' + job, self.run_tick(home, env).stdout)
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(sum(r.get('event') == 'finish' and r.get('job') == job for r in rows), 1)
+        self.assertEqual(sum(r.get('event') == 'outcome' and r.get('state') == 'MERGED' for r in rows), 1)
+        self.assertFalse((home / '.ashlr-runs/publish-order').exists())
+
+    def test_retry_records_finish_once_and_new_launch_resets_attempt(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-RETRY'
+        self.finished_worktree(home, job)
+        root = home / '.ashlr-runs'
+        reap = root / 'bin/reap-one.sh'
+        reap.write_text('#!/bin/sh\nrmdir "$HOME/.ashlr-runs/queue/run/$1.reaping"\n')
+        for _ in range(2):
+            self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
+            deadline = time.monotonic() + 3
+            while (root / 'queue/run' / f'{job}.reaping').exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        ledger = root / 'metrics/jobs.jsonl'
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(sum(r.get('event') == 'finish' and r.get('job') == job for r in rows), 1)
+        with ledger.open('a') as f:
+            f.write(json.dumps({'event': 'launch', 'job': job}) + '\n')
+        self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(sum(r.get('event') == 'finish' and r.get('job') == job for r in rows), 2)
+
     def test_stale_orphan_reap_marker_does_not_block_other_publishers(self):
         home, env = self.fixture(())
         self.publish_stubs(home)
@@ -912,6 +951,66 @@ class DispatchPriorityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DiffMetricsTests(unittest.TestCase):
+    def measure(self, scenario, base_override=None):
+        tmp = build(slots=held_lanes())
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        job = 'RQ-DIFF-METRICS'
+        wt = home / 'Projects/ashlrai/wt' / job
+        wt.mkdir()
+        other = home / 'Projects/ashlrai/wt' / 'other-repo'
+        other.mkdir()
+        subprocess.run(['git', '-C', str(other), 'init', '-q'], check=True, capture_output=True)
+        for i in range(30): (other / f'unrelated-{i}').write_text('unrelated\n')
+        def git(*args):
+            return subprocess.run(['git', '-C', str(wt), *args], check=True, capture_output=True, text=True).stdout.strip()
+        git('init', '-q')
+        git('config', 'user.name', 'Fixture')
+        git('config', 'user.email', 'fixture@example.invalid')
+        for i in range(30): (wt / f'prior-{i}').write_text('old\n')
+        (wt / 'job-file').write_text('before\n')
+        git('add', '.')
+        git('commit', '-qm', 'earlier repository work')
+        base = base_override or git('rev-parse', 'HEAD')
+        scenario(wt, git)
+        r = home / '.ashlr-runs'
+        for path, content in [(r / f'{job}.base', f'{base} phantom {wt} codex-cmp\n'),
+                              (r / f'{job}.log', 'finished\n')]:
+            path.write_text(content)
+            os.utime(path, (time.time() - 600, time.time() - 600))
+        (r / 'bin/reap-one.sh').write_text('#!/bin/sh\nexit 0\n')
+        (r / 'phantom-open-prs').write_text(f'{int(time.time())} 0\n')
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = [json.loads(line) for line in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
+        return next(row for row in rows if row.get('event') == 'finish' and row.get('job') == job)
+
+    def test_committed_job_diff_excludes_prior_repository_work(self):
+        def scenario(wt, git):
+            (wt / 'job-file').write_text('after\n')
+            git('add', '.')
+            git('commit', '-qm', 'job change')
+        row = self.measure(scenario)
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, 2, False))
+
+    def test_zero_line_mode_change_and_empty_tree(self):
+        row = self.measure(lambda wt, git: (wt / 'job-file').chmod(0o755))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, 0, False))
+        row = self.measure(lambda wt, git: (wt / 'BRIDGE_NOTES.md').write_text('notes\n'))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (0, 0, True))
+
+    def test_untracked_and_binary_lines_are_unavailable(self):
+        row = self.measure(lambda wt, git: (wt / 'new-file').write_text('new\n'))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, None, False))
+        row = self.measure(lambda wt, git: (wt / 'job-file').write_bytes(b'\x00binary'))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, None, False))
+
+    def test_missing_base_records_unknown_instead_of_zero(self):
+        row = self.measure(lambda wt, git: None, base_override='0' * 40)
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (None, None, None))
 
 
 class SnapshotSafetyTests(unittest.TestCase):

@@ -62,9 +62,8 @@ for l in CODEX:
     if l == "claude-api" and not slots.get(l, {}).get("target"): need[l] = 0; continue   # paced to 0: no credit pool open
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
-    need[l] = max(want - s.get("queued", 0), 0)
+    need[l] = want
 lines = rd(Q + "/router-queue.md").splitlines()
-if not lines: print("no router-queue.md copy"); sys.exit(0)
 status = {}; recs = []; held_pr = set()
 for i, l in enumerate(lines):
     m = re.match(r"^- ([A-Z][A-Z-]*)\b", l)
@@ -91,6 +90,26 @@ def ready_job_id(line):
     if PARK_DEP.match(f[0]): return f[1] if len(f) > 1 else None
     return f[0]
 inq = {j for j in (ready_job_id(x) for x in ready_raw) if j}
+# Count only distinct launchable rows. Dispatcher status can count parked or malformed
+# rows and is a previous-tick snapshot, so it cannot measure replenishment demand.
+queue_diagnostics = {"parked": 0, "invalid": 0, "empty_prompt": 0, "duplicate": 0}
+queue_seen = set()
+for row in ready_raw:
+    f = row.split("\t")
+    if PARK_DEP.match(f[0]) or (len(f) > 2 and PARK_DEP.match(f[2])):
+        queue_diagnostics["parked"] += 1
+        continue
+    valid = (len(f) >= 5 and re.fullmatch(r"[A-Za-z0-9._-]+", f[0]) and f[2] in CODEX
+             and f[3] in ("frontier", "work", "mid", "fast") and "/" not in f[1]
+             and os.path.isdir(H + "/Projects/ashlrai/" + f[1])
+             and os.path.realpath(f[4]).startswith(os.path.realpath(Q + "/prompts") + "/") and os.path.isfile(f[4]))
+    if not valid:
+        queue_diagnostics["invalid"] += 1; continue
+    if not rd(f[4]).strip():
+        queue_diagnostics["empty_prompt"] += 1; continue
+    if f[0] in queue_seen:
+        queue_diagnostics["duplicate"] += 1; continue
+    queue_seen.add(f[0]); need[f[2]] = max(need[f[2]] - 1, 0)
 merged = set(); completed = set()
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
@@ -151,12 +170,26 @@ def skip(j, why): skips[why] = skips.get(why, 0) + 1
 # RQ-QUEUE-AUTOUNPARK-1: each tick, unpark PARKED-DEP rows whose DEPENDENCY GATE ids are all MERGED in jobs.jsonl.
 # Unpark rewrites the ready.tsv row only — the prompt body (including "no merge without Security pin") is untouched.
 unparks = []   # (job, deps, ready_line, launch_line)
+parked_diagnostics = {"invalid": 0, "empty_gate": 0, "waiting": 0, "duplicate": 0}
+parked_seen = set(queue_seen)
 for line in ready_raw:
     parsed = parse_parked_dep(line)
-    if not parsed: continue
+    if not parsed:
+        f = line.split("\t")
+        if PARK_DEP.match(f[0]) or (len(f) > 2 and PARK_DEP.match(f[2])): parked_diagnostics["invalid"] += 1
+        continue
     j, repo, lane, tier, pf, _raw = parsed
+    if (not re.fullmatch(r"[A-Za-z0-9._-]+", j) or lane not in CODEX or tier not in ("frontier", "work", "mid", "fast")
+            or "/" in repo or not os.path.isdir(H + "/Projects/ashlrai/" + repo)
+            or not os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/") or not os.path.isfile(pf)):
+        parked_diagnostics["invalid"] += 1; continue
+    if j in parked_seen:
+        parked_diagnostics["duplicate"] += 1; continue
+    parked_seen.add(j)
     ids = gate_ids(rd(pf))
-    if not ids or any(d not in merged for d in ids): continue
+    if not ids: parked_diagnostics["empty_gate"] += 1; continue
+    if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
+    need[lane] = max(need[lane] - 1, 0)
     unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
 # bold census before the restock (RQ-QUEUEGEN-BOLD-30): the READY stock's share of bet=bold decides prefer_bold
 ready_n = len(recs); ready_bold = sum(1 for r in recs if ISBOLD.search(r[2]))
@@ -256,12 +289,14 @@ if "--json" not in sys.argv:
       "bold ready=%d/%d(%.2f) picked=%d/%d(%.2f)%s" % (ready_bold, ready_n, bold_frac, pk_b, pk_n, pk_b / pk_n if pk_n else 0.0, " prefer=bold" if prefer_bold else ""),
       "skips", json.dumps(skips),
       "unpark", len(unparks), "parked_dep", len(dep_out))
+ print("queue", json.dumps(queue_diagnostics), "parked_diagnostics", json.dumps(parked_diagnostics))
 for i, j in ([] if "--json" in sys.argv else seclist): print(("DRY " if DRY else "") + "HOLD-SECURITY\t" + j)
 for j, repo, l, tier, pf, p, i in ([] if "--json" in sys.argv else out): print(("DRY " if DRY else "") + "\t".join([j, repo, l, tier]))
 for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY " if DRY else "") + "UNPARK\t%s\tdeps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
     print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
+                      "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
                       "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
                       "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
 if not DRY:
@@ -295,7 +330,7 @@ if out or unparks or dep_out:
         repl = {old: new for _j, _ids, old, new in unparks}
         with open(Q + "/ready.tsv.tmp", "w") as f:
             for x in snap:
-                x = repl.get(x, x)
+                x = repl.pop(x, x)
                 if x.strip(): f.write(x + "\n")
             for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:

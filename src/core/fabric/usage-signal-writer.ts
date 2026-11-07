@@ -7,7 +7,7 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 
 export const USAGE_POOLS = ['grok-ultra', 'codex-cmp', 'codex-personal', 'claude-max', 'terra'] as const;
 export type UsagePool = typeof USAGE_POOLS[number];
-export const USAGE_EVENTS = ['dispatch-start', 'pr-merge', '429', 'limit-message', 'manual-reading'] as const;
+export const USAGE_EVENTS = ['dispatch-start', 'pr-merge', '429', 'limit-message', 'manual-reading', 'hourly'] as const;
 export type UsageEvent = typeof USAGE_EVENTS[number];
 export const USAGE_DEBOUNCE_MS = 30 * 60_000;
 const MAX_BYTES = 8 * 1024 * 1024;

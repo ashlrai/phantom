@@ -63,6 +63,31 @@ def _run(cmd, timeout, **kw):
         log("SLOW %s timeout %ds, group killed" % (name, timeout)); raise
     if time.time() - t0 > 5: log("SLOW %s %.0fs" % (name, time.time() - t0))
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+def job_diff_metrics(wt, job_base):
+    # Compare the final tracked tree to the launch base, including commits and
+    # staged edits. Untracked files count as files, but their line totals are
+    # unavailable; do not silently report a partial total as a measurement.
+    unknown = (None, None, None)
+    try:
+        pathspec = ["--", ".", ":(exclude,top)BRIDGE_NOTES.md"]
+        diff = _run(["git", "-C", wt, "-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z", job_base] + pathspec, 30)
+        untracked = _run(["git", "-C", wt, "ls-files", "--others", "--exclude-standard", "-z"] + pathspec, 30)
+        if diff.returncode or untracked.returncode: return unknown
+        entries = diff.stdout.split("\0")
+        if entries.pop() != "": return unknown
+        extra = untracked.stdout.split("\0")
+        if extra.pop() != "": return unknown
+        lines = 0; paths = set()
+        for entry in entries:
+            fields = entry.split("\t", 2)
+            if len(fields) != 3 or not fields[2]: return unknown
+            paths.add(fields[2])
+            if fields[:2] == ["-", "-"]: lines = None
+            elif not all(x.isascii() and x.isdigit() for x in fields[:2]): return unknown
+            elif lines is not None: lines += int(fields[0]) + int(fields[1])
+        count = len(paths.union(extra))
+        return count, None if extra else lines, count == 0
+    except (OSError, subprocess.SubprocessError, ValueError, UnicodeError): return unknown
 JID = re.compile(r"^[A-Za-z0-9._-]+$")
 # A launcher that could not fork (EAGAIN/ENOMEM, the per-user process limit) is the concurrency controller's
 # strongest backoff signal: it means the host is already past its limit.
@@ -558,6 +583,20 @@ for p in glob.glob(RUN + "/*.dispatched"):
 
 # ---- (a) reap
 running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
+# A leftover .base is not evidence that an already merged attempt needs another
+# publisher. A later launch starts a new attempt with the same job id.
+_attempts = {}; _merged_urls = set()
+for row in batcher.read_rows(MD + "/jobs.jsonl"):
+    if not isinstance(row, dict): continue
+    event, job = row.get("event"), row.get("job")
+    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED":
+        if isinstance(row.get("url"), str) and row["url"]: _merged_urls.add(row["url"])
+    if not isinstance(job, str): continue
+    if event == "launch": _attempts[job] = {"finished": False, "merged": False, "urls": set()}
+    attempt = _attempts.setdefault(job, {"finished": False, "merged": False, "urls": set()})
+    if event == "finish": attempt["finished"] = True
+    if event == "publish" and isinstance(row.get("url"), str) and row["url"]: attempt["urls"].add(row["url"])
+    if event == "outcome" and str(row.get("state", row.get("outcome", ""))).upper() == "MERGED": attempt["merged"] = True
 # A new marker covers the spawn-to-ps race. Old orphan markers still protect
 # their own job, but must not stop every other publisher forever.
 def _reap_starting(j):
@@ -620,6 +659,8 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
     if not os.path.isdir(wt) or j in reaping or j in publishing: continue
+    attempt = _attempts.get(j, {})
+    if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
     if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
@@ -653,16 +694,14 @@ for bp in sorted(glob.glob(R + "/*.base"), key=_prio):
     os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
     try:
         lp = "%s/%s.log" % (R, j); tl = logtail(lp, 20000)
-        st_ = _run(["git", "-C", wt, "diff", "--shortstat", b[0]], 30).stdout
-        nf = len([x for x in _run(["git", "-C", wt, "status", "--porcelain", "-uall"], 30).stdout.splitlines() if not x.endswith("BRIDGE_NOTES.md")])
-        ins = re.search(r"(\d+) insertion", st_); dele = re.search(r"(\d+) deletion", st_)
+        nf, diff_lines, empty = job_diff_metrics(wt, b[0])
         wall_s = int(os.path.getmtime(lp) - os.path.getmtime(bp)) if os.path.exists(lp) else None
         try: bsize = reap_batch(j, wt, pool, wall_s)
         except Exception as e: bsize = None; log("batch reap err %s %s" % (j, type(e).__name__))
-        if not os.path.exists(RUN + "/" + j + ".timeout"):
+        if not attempt.get("finished") and not os.path.exists(RUN + "/" + j + ".timeout"):
             metric({"event": "finish", "job": j, "lane": pool, "wall_s": wall_s, "batch_size": bsize,
                 "exit_code": _rc(j), "tokens_total": tokens(tl), "tokens_in": None, "tokens_out": None, "cost": None,
-                "diff_files": nf, "diff_lines": (int(ins.group(1)) if ins else 0) + (int(dele.group(1)) if dele else 0), "empty": nf == 0,
+                "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                 "pool_error": next((c for c, rx in CLS if any(rx.search(t) for t in errlines(tl.splitlines()[-30:]))), None)})
     except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
     subprocess.Popen(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,

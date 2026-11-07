@@ -134,6 +134,11 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+The reaper consults the job ledger before handoff: a merged outcome for the
+current launch, including one linked through its published PR URL, prevents a
+leftover `.base` from triggering another publication. Repeated handoffs for an
+unfinished attempt record its finish only once; a later launch starts a new
+attempt. These records do not remove the worktree or replace publisher recovery.
 
 ## Adaptive concurrency and batching
 
@@ -529,6 +534,15 @@ python3 contrib/mac/restock.py --dry-run --json
 phm fleet parked --json
 # … "unmetDeps": [{"job":"RQ-WAIT","lane":"devin","unmet":["RQ-UPSTREAM"]}] …
 ```
+
+Restock measures lane demand from distinct valid ready rows with nonempty prompts,
+not the previous dispatcher status count. Parked, invalid, empty and duplicate
+rows do not fill a lane. Its JSON output reports `queue_diagnostics` and
+`parked_diagnostics` counts; parked rows with missing gates, invalid fields,
+unmerged dependencies or duplicate job IDs remain in place for inspection.
+A merged dependency releases at most one row per job, preserving its prompt.
+These diagnostics do not modify or delete invalid rows. Restock source changes
+require Security re-pinning before host installation.
 
 Restock also cuts NOOP churn (RQ-PSEL-4-NOOPCUT): within one pass it keeps a
 single line per target PR and per `file=` target, and it parks a job for 24 h
