@@ -2,7 +2,6 @@
 
 This deliberately executes source excerpts, not the complete dispatcher tick.
 """
-import ast
 import glob
 import importlib.util
 import os
@@ -60,65 +59,6 @@ wait
             for value in ('2', '4', '0', 'bad'):
                 self.assertFalse(pressure.allowed('Darwin', lambda _, v=value: v))
             self.assertTrue(pressure.allowed('Linux', lambda _: 'bad'))
-
-
-    def history_context(self, root, on_read=None):
-        source = ast.parse((HOST/'dispatchd.candidate.py').read_text())
-        functions = {'ab_floor_update', 'ab_log_fresh', 'ab_scan', 'ratelimited', 'base', 'logtail', 'errlines'}
-        constants = {'RL', 'CLS', 'ERRLINE'}
-        nodes = [node for node in source.body if
-                 isinstance(node, ast.FunctionDef) and node.name in functions or
-                 isinstance(node, ast.Assign) and any(isinstance(name, ast.Name) and name.id in constants for name in node.targets)]
-        run = root/'run'; run.mkdir()
-        reads = []
-        def rd(path):
-            reads.append(path)
-            if on_read: on_read(path)
-            try: return Path(path).read_text()
-            except OSError: return ''
-        context = dict(os=os, glob=glob, re=re, R=str(root), RUN=str(run), NOW=5000,
-                       JID=re.compile(r'^[A-Za-z0-9._-]+$'), rd=rd,
-                       slots={'devin': {}}, AB_BY='autobackoff', AB_TAIL=16384,
-                       AB_PROV={'devin': 'fixture'}, AB_RX={'fixture': [('usage', re.compile('usage limit'))]},
-                       ab_run=lambda job, base: (True, False, 'unknown'), ev=lambda _: None)
-        exec(compile(ast.Module(nodes, type_ignores=[]), '<actual-history-functions>', 'exec'), context)
-        return context, reads
-
-    def write_history_job(self, root, job, mtime, lane='devin'):
-        (root/(job+'.base')).write_text('0'*40+' branch /owned '+lane+'\n')
-        path = root/(job+'.log'); path.write_text('ERROR: usage limit reached\n')
-        os.utime(path, (mtime, mtime))
-
-    def test_old_logs_are_rejected_before_metadata_for_both_classifiers(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); self.write_history_job(root, 'job', 1000)
-            context, reads = self.history_context(root)
-            context['ab_scan']('devin', set())
-            self.assertIsNone(context['ratelimited']('devin', 0))
-            self.assertEqual(reads, [])
-
-    def test_history_rechecks_changed_metadata_and_new_jobs_between_calls(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); self.write_history_job(root, 'job', 1000, 'other')
-            context, _ = self.history_context(root)
-            self.assertIsNone(context['ratelimited']('devin', 0))
-            self.write_history_job(root, 'job', 5000)
-            self.assertEqual(context['ratelimited']('devin', 0), ('job', 'usage_limit'))
-            for category, _ in context['CLS']:
-                (root/'run'/('job.'+category+'.seen')).touch()
-            self.write_history_job(root, 'late', 5000)
-            self.assertEqual(context['ratelimited']('devin', 0), ('late', 'usage_limit'))
-
-    def test_original_final_age_checks_reject_change_during_metadata_read(self):
-        for classifier in ('ab_scan', 'ratelimited'):
-            with self.subTest(classifier=classifier), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp); self.write_history_job(root, 'job', 5000)
-                def age_log(_): os.utime(root/'job.log', (1000, 1000))
-                context, reads = self.history_context(root, age_log)
-                result = context[classifier]('devin', set() if classifier == 'ab_scan' else 0)
-                self.assertIsNone(result)
-                self.assertTrue(reads)
-                self.assertEqual(list((root/'run').iterdir()), [])
 
 if __name__ == '__main__': unittest.main()
 

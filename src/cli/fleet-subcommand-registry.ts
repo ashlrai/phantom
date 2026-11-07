@@ -180,6 +180,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'lane-yield': () => import('./fleet-lane-yield.js'),
   'launch-proof': () => import('./fleet-launch-proof.js'),
   'launch-stall': () => import('./fleet-launch-stall.js'),
+  'launchable': () => import('./fleet-launchable.js'),
   'leader-health': () => import('./fleet-leader-health.js'),
   'leader-score': () => import('./fleet-leader-score.js'),
   'load': () => import('./fleet-load.js'),
