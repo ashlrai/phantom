@@ -48,7 +48,13 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         const s = teamState(team);
         if (json) return out(s, '');
         const lines = [`Team ${team} — ${s.members.length} members, ${s.claims.length} claims, ${s.handoffs.filter((h) => h.state !== 'completed' && h.state !== 'declined').length} open handoffs`];
-        for (const m of s.members) lines.push(`  ${m.online ? '●' : '○'} ${m.id} (${m.role}${m.provider ? `, ${m.provider}` : ''})${m.status ? ` — ${m.status}` : ''}`);
+        // Role labels state approval responsibility, so a member can see who may decide a handoff.
+        const roleLabels: Record<string, string> = {
+          owner: 'human owner; approves consequential actions', admin: 'human admin; approves consequential actions',
+          member: 'human member; cannot approve consequential actions', agent: 'agent; cannot approve consequential actions',
+        };
+        for (const m of s.members) lines.push(`  ${m.online ? '●' : '○'} ${m.id} (${roleLabels[m.role] ?? m.role}${m.provider ? `, ${m.provider}` : ''})${m.status ? ` — ${m.status}` : ''}`);
+        lines.push('  Presence: ● seen within 5 minutes; ○ inactive (membership is retained).');
         for (const repo of s.repos) lines.push(`  repo: ${repo}`);
         for (const c of s.claims) lines.push(`  ⚑ ${c.target.repo}${c.target.branch ? `@${c.target.branch}` : ''}${c.target.path ? `:${c.target.path}` : ''} by ${c.holder} until ${c.expiresAt} [${c.id}]`);
         for (const h of s.handoffs.filter((x) => x.state !== 'completed' && x.state !== 'declined')) lines.push(`  → ${h.title} (${h.state}) ${h.from} → ${h.assignee ?? h.to ?? 'anyone'} [${h.id}]`);
@@ -56,6 +62,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         for (const a of pending) lines.push(`  ! approval needed: ${a.action} requested by ${a.requestedBy} — human owner/admin: phm team approve ${a.id} --team ${team}`);
         for (const m of s.messages.slice(-5)) lines.push(`  # ${m.channel} ${m.from} (${m.ts}): ${m.text}`);
         lines.push('Local log only: matching team names on other machines do not sync state.');
+        lines.push('Shared context: phm_team_context_add / phm_team_context_get (MCP), with an explicit owner scope (personal, company, or client:<name>). This overview does not print context entries.');
         lines.push(s.members.length === 0
           ? `Next: confirm this is the intended local log with the team owner, then join from a human terminal: phm team join --team ${team}`
           : `Next: confirm your role and task with the owner; review handoff details and context refs: phm team view --team ${team} --json`);
