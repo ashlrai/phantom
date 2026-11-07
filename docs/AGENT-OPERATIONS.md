@@ -11,6 +11,15 @@ either name.
 
 ## 1. Working on this repository
 
+`ashlr router rank --tier frontier --routes routes.json --slots codex-cmp=2 --json`
+returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget reset.
+`routes.json` maps pool names to existing `routeBackend` decisions, e.g.
+`{"codex-cmp":{"backend":"codex","tier":"frontier","reason":"prior route"}}`.
+Supply currently free slots; missing routes, slots or usable budgets exclude a lane.
+This reads the pool-budget ledger without writes or reservations. Decisions remain
+advisory: the dispatcher must recheck policy, account admission and capacity.
+The command consumes route evidence because invoking the legacy router can publish usage.
+
 | Need | Command |
 | --- | --- |
 | Node version | `>=22.15.0` (`package.json` `engines`) |
