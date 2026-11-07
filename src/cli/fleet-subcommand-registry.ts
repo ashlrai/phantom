@@ -123,6 +123,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'guardian-resume': () => import('./fleet-guardian-resume.js'),
   'guardian-retry': () => import('./fleet-guardian-retry.js'),
   'guardian-stream-continue': () => import('./fleet-guardian-stream-continue.js'),
+  'guardian-stuck': () => import('./fleet-guardian-stuck.js'),
   'guardian-verify': () => import('./fleet-guardian-verify.js'),
   'guardian-wait-continue': () => import('./fleet-guardian-wait-continue.js'),
   'handoff-pipe': () => import('./fleet-handoff-pipe.js'),
