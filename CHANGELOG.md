@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.24 |
-| Latest dated changelog release (2026-11-07) | 3.30.24 |
+| Source package | 3.30.25 |
+| Latest dated changelog release (2026-11-07) | 3.30.25 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.25](https://github.com/ashlrai/phantom/compare/v3.30.24...v3.30.25) (2026-11-07)
+## [Unreleased]
+
+## [3.30.25] — 2026-11-07
 
 
 ### Changes
@@ -34,8 +36,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-TSCWARMQ8:** RQ-TSCWARMQ8 bridge notes ([#3862](https://github.com/ashlrai/phantom/issues/3862)) ([fcb6144](https://github.com/ashlrai/phantom/commit/fcb61448c32ab28255c46f6db938a4d2581d9e48))
 * **RQ-WTDEPSQ8:** RQ-WTDEPSQ8 bridge notes ([#3864](https://github.com/ashlrai/phantom/issues/3864)) ([a82c20a](https://github.com/ashlrai/phantom/commit/a82c20a777587e59c9562f4881377f666d8a28d0))
 * **RQ-WTHEALQ8:** RQ-WTHEALQ8 bridge notes ([#3869](https://github.com/ashlrai/phantom/issues/3869)) ([6778b16](https://github.com/ashlrai/phantom/commit/6778b16f0ec524bfe9f6e273b5ecc156bfcb1c0a))
-
-## [Unreleased]
 
 ## [3.30.24] — 2026-11-07
 
