@@ -60,6 +60,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ci-receipt-await-batch': () => import('./fleet-ci-receipt-await-batch.js'),
   'ci-receipt-batch-replan': () => import('./fleet-ci-receipt-batch-replan.js'),
   'ci-receipt-discover': () => import('./fleet-ci-receipt-discover.js'),
+  'ci-receipt-retry-batch': () => import('./fleet-ci-receipt-retry-batch.js'),
   'ci-receipt-select': () => import('./fleet-ci-receipt-select.js'),
   'ci-regression': () => import('./fleet-ci-regression.js'),
   'ci-resume-inputs': () => import('./fleet-ci-resume-inputs.js'),
