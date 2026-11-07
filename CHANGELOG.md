@@ -19,6 +19,14 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ## [3.30.0] — Unreleased
 
 ### Added
+- `phm disk` reports worktree and quarantine sizes, free space and conservative
+  cleanup eligibility without deleting files. Unreadable evidence stays unknown.
+- Fleet adds read-only lane trim suggestions and abort summaries, including a
+  GitHub push failure signal. Idle-lane reports can identify lanes stuck after
+  a measured period of inactivity.
+- Fleet draft checks validate batches against a single `origin/master` snapshot
+  and report path collisions. MCP tools expose batch prechecks and bounded job
+  and path history as advisory evidence, not dispatch or merge authorization.
 - `phm autopilot` drives Phantom's own pull requests toward green: it fixes CI,
   answers review, updates the merge base and stops when the PR is not ours.
   Operator credentials stay out of fixer and verify children.
@@ -61,6 +69,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Internal dead code: 143 exported symbols with zero references anywhere in the repo (knip plus whole-repo `rg`), plus imports and private helpers they alone used. Several symbols were already cleaned by intervening PRs (the original sweep targeted 150; 7 were superseded). No CLI command, flag or config key changes.
 
 ### Fixed
+- Self-update status shows scrubbed paths blocking a clean update, and automatic
+  updates pause after a failed build until a newer master commit is available.
+  Fleet capacity distinguishes idle lanes without a usage meter from other
+  unknown lane states.
 - Resolve MCP gateway TS2300 duplicate-identifier error by deriving the
   JSON-RPC message type from `serializeMessage` rather than importing from
   a conflicting SDK module path.

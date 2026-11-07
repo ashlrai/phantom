@@ -1501,7 +1501,9 @@ are under `~/.ashlr-runs`. Removing a switch file resumes its activity.
 In **Settings ▸ Desktop ▸ Updates**, you can see the running version and short
 commit, how far it is behind or ahead of `origin/master`, whether a fast-forward
 is possible, and the native updater phase. Use **Check now** to refresh. The
-browser never installs anything.
+view also lists up to three local change paths when available, with a count of
+additional changes. Local changes block a fast-forward update; inspect them
+before deciding how to resolve them. The browser never installs anything.
 
 - `GET /api/verse/fleet/runs` reads the fleet runs view.
 - `GET /api/verse/ops/self-update` reads update status.

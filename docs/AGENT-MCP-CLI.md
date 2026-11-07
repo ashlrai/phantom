@@ -133,7 +133,9 @@ After MCP initialization, call `tools/list`, then `fleet_status` with `{}`. Argu
 
 ## 10. Optional cloud handoff
 
-Off unless you run these. They do not merge by themselves.
+Off unless you run these. Cloud launch spends Claude credits; Devin launch
+spends ACUs. Check the applicable budget before launching. Neither merges by
+itself.
 
 ```sh
 phm cloud launch "<task>" --repo owner/name
