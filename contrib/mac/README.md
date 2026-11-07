@@ -139,6 +139,9 @@ current launch, including one linked through its published PR URL, prevents a
 leftover `.base` from triggering another publication. Repeated handoffs for an
 unfinished attempt record its finish only once; a later launch starts a new
 attempt. These records do not remove the worktree or replace publisher recovery.
+The shared ledger reader also recognizes terminal records written by
+`metrics-outcomes reconcile`, including records written before a restart; their
+position in the ledger preserves the same launch boundaries.
 
 ## Adaptive concurrency and batching
 
