@@ -28,6 +28,18 @@ describe('KNOWN_SWITCHES', () => {
       expect(k.meaning).toBeTruthy();
     }
   });
+
+  it('never names a provider: planning runs on any declared login', () => {
+    const PROVIDER_NAME = /\b(claude|anthropic|opus|fable|sonnet|sol|codex|openai|gpt|grok|xai|gemini|google|glm|zhipu|devin|swe|qwen|kimi|nim)\b/i;
+    const texts = KNOWN_SWITCHES.flatMap((k) => [k.label, k.meaning]);
+    for (const k of KNOWN_SWITCHES.filter((row) => row.id !== 'HOLD')) {
+      for (const on of [true, false]) {
+        const text = confirmText(k.id, on);
+        texts.push(text.title, text.body, text.confirmLabel, text.done);
+      }
+    }
+    for (const text of texts) expect(text).not.toMatch(PROVIDER_NAME);
+  });
 });
 
 describe('readSwitches', () => {
