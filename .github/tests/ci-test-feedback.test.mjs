@@ -4,6 +4,9 @@ import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
+import { fileURLToPath, URL } from 'node:url';
+import { loadConfigFromFile } from 'vite';
+import { BaseSequencer } from 'vitest/node';
 import { WeightedCalibrationSequencer } from '../../test/config/weighted-sequencer.mjs';
 import { FEEDBACK_SCHEMA, decodeFeedback, encodeFeedback, feedbackId, orderFeedback,
   replayFeedback, summarizeFeedback, validateFeedback } from '../scripts/ci-test-feedback.mjs';
@@ -14,6 +17,41 @@ const event = (overrides = {}) => ({ schema: FEEDBACK_SCHEMA, source: 'a'.repeat
   file: 'test/a.test.ts', result: 'passed', elapsedMs: 1000, endedAt: '2026-11-06T16:00:00.1234567Z', ...overrides });
 const spec = (name, project = 'unit') => ({ file: `test/${name}.test.ts`, project, original: Symbol(name) });
 const options = { role, fileOf: (value) => value.file, projectOf: (value) => value.project };
+
+test('real Vitest configuration enables each independent sequencer opt-in', async (t) => {
+  const names = ['ASHLR_TEST_CI_FAILURE_FIRST', 'ASHLR_TEST_CI_WEIGHTED_PARTITION', 'ASHLR_TEST_CI_WEIGHTED_HINTS'];
+  const before = names.map((name) => process.env[name]);
+  t.after(() => names.forEach((name, index) => {
+    if (before[index] === undefined) delete process.env[name]; else process.env[name] = before[index];
+  }));
+  const configPath = fileURLToPath(new URL('../../vitest.config.ts', import.meta.url));
+  let projects;
+  for (const [name, failureFirst, weighted, enabled] of [
+    ['neither flag', undefined, undefined, false],
+    ['failure-first only', '1', undefined, true],
+    ['weighted only', undefined, '1', true],
+    ['both flags', '1', '1', true],
+    ['non-opt-in values', 'true', '2', false],
+  ]) await t.test(name, async () => {
+    for (const [key, value] of [[names[0], failureFirst], [names[1], weighted], [names[2], undefined]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    // Exercise Vite's real TS configuration loader, not a source-text assertion
+    // or a manually constructed adapter that bypasses configuration wiring.
+    const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, configPath, undefined, 'silent');
+    assert.ok(loaded);
+    const actual = loaded.config.test;
+    const laneInventory = actual.projects.map((project) => ({
+      name: project.test.name, include: project.test.include, exclude: project.test.exclude,
+      maxWorkers: project.test.maxWorkers, sequence: project.test.sequence,
+    }));
+    projects ??= laneInventory;
+    assert.deepEqual(laneInventory, projects, 'an ordering opt-in must not alter project collection');
+    const Sequencer = actual.sequence?.sequencer;
+    assert.equal(Boolean(Sequencer), enabled);
+    if (enabled) assert.ok(Sequencer.prototype instanceof BaseSequencer);
+  });
+});
 
 test('replay survives out-of-order delivery and identical retry without losing filtered occurrences', () => {
   const a = event(); const b = event({ occurrence: 1, result: 'failed' });
