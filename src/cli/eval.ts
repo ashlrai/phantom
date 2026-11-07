@@ -263,6 +263,12 @@ export async function cmdEval(args: string[]): Promise<number> {
     return cmdEvalRouter(args.slice(1));
   }
 
+  // RQ-SELFOPT-PROMPT-OPT: prompt-variant A/B eval + promotion dashboard.
+  if (args[0] === 'prompts') {
+    const { cmdEvalPrompts } = await import('./eval-prompts.js');
+    return cmdEvalPrompts(args.slice(1));
+  }
+
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     printEvalHelp();
     return 0;
@@ -367,6 +373,7 @@ function printEvalHelp(): void {
   console.log(`    ashlr eval attention [--window 1d|7d|30d] [--limit N] [--json] [--save]`);
   console.log(`    ashlr eval swe-bench [--fixtures] [--dataset <path>] [--engine <id>]`);
   console.log(`    ashlr eval router --dataset <jobs.jsonl> [--policy <name>] [--check <baseline.json>] [--json]`);
+  console.log(`    ashlr eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--json]`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');
