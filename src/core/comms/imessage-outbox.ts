@@ -1,16 +1,23 @@
 /** iMessage outbox: owner and locally registered agents send directly. */
-import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { commsEnabled, isSelfIMessageHandle, sendIMessage } from '../integrations/imessage.js';
+import { readPrivateFileCapped } from '../verse/preferences.js';
 import type { AshlrConfig } from '../types.js';
+
+/** A registry grants send authority; oversized reads fail closed. */
+const TEAMMATES_MAX_BYTES = 64 * 1024;
 
 /** Local registration grants agent delivery only; malformed/unavailable data fails closed. */
 async function isAgentTeammate(to: string): Promise<boolean> {
   const handle = to.trim().toLowerCase();
   if (!handle) return false;
   try {
-    const entries: unknown = JSON.parse(await readFile(join(homedir(), '.phantom', 'agents', 'teammates.json'), 'utf8'));
+    // The registry confers send authority, so it gets the same verified read as
+    // every other authority file: no symlinks, regular file only, bounded size.
+    const read = readPrivateFileCapped(join(homedir(), '.phantom', 'agents', 'teammates.json'), TEAMMATES_MAX_BYTES);
+    if (!read || read.truncated) return false;
+    const entries: unknown = JSON.parse(read.text);
     return Array.isArray(entries) && entries.some((entry: unknown) => {
       if (!entry || typeof entry !== 'object') return false;
       const row = entry as Record<string, unknown>;

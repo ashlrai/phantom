@@ -11,13 +11,17 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { useTheme } from '../../../data/hooks.js';
+import { ApiError, apiGet } from '../../../data/client.js';
+import { useQuery, useRefetch, useTheme } from '../../../data/hooks.js';
+import type { QueryDef } from '../../../data/queries.js';
 import type { ThemePreference } from '../../../data/theme-store.js';
 import { useVerseUi } from '../useVerseUi.js';
 import { AppsIcon, AutomationsIcon, OpsIcon, PlaybooksIcon, SettingsIcon, UsageIcon, WikiIcon } from '../verse-icons.js';
 import { IconKeyboard } from '../../../components/primitives/icons.js';
 import { openVerseOverlay, setVerseSection, toggleVerseRail } from '../verse-ui-store.js';
 import { detectKeyPlatform, findCommand, formatChord } from './command-catalog.js';
+import { APP_UPDATE_STATUS_PATH, appUpdateLine, readAppUpdateResponse } from './app-update-line.js';
+import { usePollWhileVisible } from './section-visibility.js';
 import { useSelfUpdateBadge } from './self-update-badge.js';
 import styles from './GearTray.module.css';
 
@@ -53,16 +57,42 @@ const THEMES: ReadonlyArray<{ value: ThemePreference; label: string }> = [
   { value: 'high-contrast', label: 'High contrast' },
 ];
 
+const APP_UPDATE_POLL_MS = 300_000;
+
+// The staged-update status route landed after this shell: its 404 means "not
+// in this build", remembered like the self-update badge's own missing memo so
+// the poll stops asking. Any other failure leaves the last line standing.
+let appUpdateMissing: ApiError | null = null;
+const appUpdateStatusQuery: QueryDef<unknown> = {
+  key: 'verse-app-update-status',
+  fetch: async (signal) => {
+    if (appUpdateMissing) throw appUpdateMissing;
+    try {
+      return await apiGet<unknown>(APP_UPDATE_STATUS_PATH, signal);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) appUpdateMissing = error;
+      throw error;
+    }
+  },
+};
+
 export function GearTray({ open, anchorRef, onClose, compact }: GearTrayProps) {
   const ui = useVerseUi();
   const theme = useTheme();
   const update = useSelfUpdateBadge();
+  // The staged-update line only refines an update the badge already reports,
+  // so its read is skipped when there is no update to describe.
+  const stagedQuery = useQuery(appUpdateStatusQuery, { enabled: update !== null });
+  usePollWhileVisible(useRefetch(appUpdateStatusQuery), APP_UPDATE_POLL_MS, { enabled: update !== null });
+  const stagedStatus = appUpdateMissing ? null : readAppUpdateResponse(stagedQuery.data);
+  const stagedLine = stagedStatus ? appUpdateLine(stagedStatus) : null;
+  const updateLine = stagedLine ?? update?.label ?? null;
   const menuRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [position, setPosition] = useState<{ left: number; bottom: number } | null>(null);
 
   const entries: Entry[] = [
-    ...(update ? [{ key: 'update', role: 'menuitem' as const, label: update.label, icon: <SettingsIcon />, run: () => setVerseSection('settings') }] : []),
+    ...(updateLine ? [{ key: 'update', role: 'menuitem' as const, label: updateLine, icon: <SettingsIcon />, run: () => setVerseSection('settings') }] : []),
     { key: 'settings', role: 'menuitem', label: 'Settings', icon: <SettingsIcon />, shortcut: shortcutOf('section.settings'), run: () => setVerseSection('settings') },
     { key: 'apps', role: 'menuitem', label: 'Apps & Accounts', icon: <AppsIcon />, run: () => setVerseSection('apps') },
     { key: 'usage', role: 'menuitem', label: 'Usage', icon: <UsageIcon />, run: () => setVerseSection('usage') },

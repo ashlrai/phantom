@@ -1,8 +1,8 @@
 /** Read-only, bounded projection of dispatchd's queue and precheck log. */
 import { constants } from 'node:fs';
-import { lstat, open, readFile } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve, sep } from 'node:path';
 import { parseReadyTsv } from './lane-console.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -281,23 +281,56 @@ async function readUnmetDeps(
   if (depPromptByJob.size === 0) return [];
   const mergedSource = await readSource(join(root, 'metrics', 'jobs.jsonl'), MAX_JOBS_JSONL, true);
   const merged = mergedJobsFromJsonl(mergedSource.text);
+  const realRoot = await realpath(root).then(
+    (real) => (real.endsWith(sep) ? real : real + sep),
+    () => null,
+  );
   const rows: ParkedUnmetDep[] = [];
   for (const [job, meta] of [...depPromptByJob.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     let ids: string[] = [];
-    if (meta.promptPath) {
-      try {
-        // Prefer queue-relative prompts under the runs dir; absolute paths must stay inside it.
-        const abs = meta.promptPath.startsWith('/') ? meta.promptPath : join(root, 'queue', meta.promptPath);
-        const normalizedRoot = root.endsWith('/') ? root : `${root}/`;
-        if (abs === root || abs.startsWith(normalizedRoot) || abs.startsWith(join(root, 'queue'))) {
-          const text = await readFile(abs, 'utf8');
-          ids = parseDependencyGateIds(text.slice(0, MAX_PROMPT));
-        }
-      } catch { ids = []; }
+    if (meta.promptPath && realRoot) {
+      const text = await readDepPrompt(root, realRoot, meta.promptPath);
+      if (text !== null) ids = parseDependencyGateIds(text);
     }
     const unmet = ids.filter((id) => !merged.has(id));
     if (unmet.length === 0) continue;
     rows.push({ job, lane: meta.lane, unmet });
+    if (rows.length >= 50) break;
   }
-  return rows.slice(0, 50);
+  return rows;
+}
+
+/**
+ * Read at most MAX_PROMPT bytes of a DEP prompt that must stay physically
+ * inside the runs dir. Absolute paths are normalized before the lexical
+ * containment check, the open uses O_NOFOLLOW so a symlinked final component
+ * is refused, and realpath containment is verified while the descriptor is
+ * held — bytes are never read through a separately checked pathname.
+ */
+async function readDepPrompt(root: string, realRootWithSep: string, promptPath: string): Promise<string | null> {
+  const resolved = isAbsolute(promptPath) ? resolve(promptPath) : resolve(root, 'queue', promptPath);
+  const rootAbs = resolve(root);
+  const rootWithSep = rootAbs.endsWith(sep) ? rootAbs : rootAbs + sep;
+  if (!resolved.startsWith(rootWithSep)) return null;
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = await file.stat();
+    if (!opened.isFile()) return null;
+    const real = await realpath(resolved);
+    if (!real.startsWith(realRootWithSep)) return null;
+    const named = await lstat(resolved);
+    if (named.isSymbolicLink() || !named.isFile() ||
+      named.dev !== opened.dev || named.ino !== opened.ino) return null;
+    const size = Math.min(opened.size, MAX_PROMPT);
+    const buffer = Buffer.alloc(size);
+    let length = 0;
+    while (length < size) {
+      const { bytesRead } = await file.read(buffer, length, size - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    return buffer.subarray(0, length).toString('utf8');
+  } catch { return null; }
+  finally { await file?.close().catch(() => undefined); }
 }

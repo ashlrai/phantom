@@ -17,6 +17,7 @@
 | ci-nightly | `src/cli/fleet-ci-nightly.ts` | Reads CI nightly hotspots for a repo, configurable repo flag | no |
 | class-share | `src/cli/fleet-class-share.ts` | Offline accounting only; never changes dispatch or merge authority | no |
 | dead-heads | `src/cli/fleet-dead-heads.ts` | Read-only report; never edits queue state or launches jobs | no |
+| dep-gate | `src/cli/fleet-dep-gate.ts` | Read-only gate over `queue/ready.tsv`: each non-PARKED row's prompt `DEPENDENCY GATE: <ids>` must be fully MERGED in `metrics/jobs.jsonl`; prints `UNMET-DEP` rows and exits 1 when any id lacks a MERGED outcome | no |
 | dispatch-summary | `src/cli/fleet-dispatch-summary.ts` | Read-only dispatch intent rollup; never writes and never contacts a provider | no |
 | dirty-landed | `src/cli/fleet-dirty-landed.ts` | Read-only landed / partly-landed / needs-recut / unknown class per open conflicting PR; scratch git objects in a temporary bare repo | no |
 | disk | `src/cli/fleet-disk.ts` | Read-only disk-pressure view: free-GB trend from LEADER rows in the last 12 hours projected against the lane freeze and halve lines from queue/budget-overrides.json, plus the ten largest folders under the runs dir; unread sources print unknown | no |
@@ -34,8 +35,10 @@
 | filler-yield | `src/cli/fleet-filler-yield.ts` | Read-only per-repo yield of author-filler jobs (`RQ-…A…Q8`) from metrics/jobs.jsonl: launches, code-13 precheck skips, empty finishes, MERGED outcomes; red (exit 1) when skips are over half of 10+ rows; unread file prints unknown | no |
 | launch-proof | `src/cli/fleet-launch-proof.ts` | Read one status snapshot and one live process table; never dispatch work | no |
 | memory | `src/cli/fleet-memory.ts` | Read-only host memory view: memstat.json free/swap/disk plus .memguard2.json level and stopped ids | no |
+| mission | `src/cli/fleet-mission.ts` | Read-only briefing of the Mac fleet. `ashlr fleet mission --json` prints `fleet.mission.v1`, the same document as `GET /api/verse/fleet/runs/mission`: health, merges this hour, what needs a look, and the detail behind them. Missing files stay unknown | no |
 | meter-drop | `src/cli/fleet-meter-drop.ts` | Read-only meter drop verdict from lane state and meter samples | no |
 | orders | `src/cli/fleet-orders.ts` | Read-only order coverage and job states, with optional age and uncovered filters; omits order bodies | no |
+| pr-hygiene | `src/cli/fleet-pr-hygiene.ts` | Read-only audit of open PRs into a `fleet.pr-hygiene.v1` triage report for the merge cockpit: close-candidate (superseded), refix (conflicting) and review (stale ≥ `--stale-days` idle, or file-overlapping) lanes; degraded reads stay unknown, never clean | no |
 | real-supply | `src/cli/fleet-real-supply.ts` | Read-only live supply for the planner: Dependabot alerts, red scheduled suites and open issues across the seven repos, plus local registry↔docs drift signals | no |
 | red-merges | `src/cli/fleet-red-merges.ts` | Read-only per-hour rollup of merges landed on red vs green checks per lane, from metrics/jobs.jsonl outcome rows joined to launches by job id; unread ledger prints unknown | no |
 | resources | `src/cli/fleet-resources.ts` | Read-only per-lane resource window from queue/slots.json and queue/resources.json: one line per lane with target, used_frac (or "unset, router assumes 0.5") and reset time; marks `skipped` at used_frac 1 or more and `unseen` when a lane with target above 0 has no entry; exit 1 on any unseen lane | no |

@@ -20,7 +20,7 @@
  * scrubbed, capped and flagged `untrusted: true` for the caller to frame.
  */
 import { scrubSecrets } from '../util/scrub.js';
-import { computerAppPolicy } from './computer-types.js';
+import { bundleMatches, computerAppPolicy, COMPUTER_BROWSER_BUNDLES, type ComputerTier } from './computer-types.js';
 import type { VerseMcpToolResult } from './verse-mcp-computer.js';
 
 export type DesktopAppId = 'devin' | 'claude' | 'codex';
@@ -283,6 +283,8 @@ export interface RunningApp {
   name: string;
   bundleId: string | null;
   frontmost: boolean;
+  /** The tier this chat already holds for the app, when the listing said so. */
+  heldTier: ComputerTier | null;
 }
 
 export type AppControlResult =
@@ -308,13 +310,22 @@ export interface AppControlOptions {
   maxDepth?: number;
 }
 
+const HELD_TIER: Record<string, ComputerTier> = { 'read only': 'read', 'click only': 'click', 'full control': 'full' };
+
 /** Parse `computer_list_apps` lines: `- Name (bundle.id): ...[; this chat holds X] [frontmost]`. */
 export function parseRunningApps(text: string): RunningApp[] {
   const apps: RunningApp[] = [];
   for (const line of text.split('\n')) {
     const m = /^- (.+?) \(([^)]*)\): (.*)$/.exec(line);
     if (!m) continue;
-    apps.push({ name: m[1]!, bundleId: m[2] && m[2] !== 'no bundle id' ? m[2] : null, frontmost: m[3]!.includes('[frontmost]') });
+    const tail = m[3]!;
+    const held = /this chat holds (read only|click only|full control)/i.exec(tail);
+    apps.push({
+      name: m[1]!,
+      bundleId: m[2] && m[2] !== 'no bundle id' ? m[2] : null,
+      frontmost: tail.includes('[frontmost]'),
+      heldTier: held ? HELD_TIER[held[1]!.toLowerCase()]! : null,
+    });
   }
   return apps;
 }
@@ -471,6 +482,45 @@ export interface DesktopSmokeOptions {
 }
 
 export type DesktopSmokeReport = { ok: true; text: string; polls: number } | { ok: false; stage: 'start' | 'status' | 'collect'; error: string };
+
+/** The first running app whose bundle id is a browser's (computer-types.ts list). */
+export function runningBrowserApp(apps: readonly RunningApp[]): RunningApp | null {
+  for (const app of apps) {
+    if (app.bundleId && COMPUTER_BROWSER_BUNDLES.some((pattern) => bundleMatches(pattern, app.bundleId!))) return app;
+  }
+  return null;
+}
+
+/**
+ * The browser as an interchangeable desktop resource (RQ-SWE2-DESKTOPCTL-1).
+ *
+ * Browsers hold `read` at most (computer-types.ts policy): an agent may look
+ * through the accessibility tree but may never click, type or press — acting
+ * on the web goes through the Phantom Browser pane instead. So `start` always
+ * refuses, `status` reports whether a readable tree exists, and `collect`
+ * returns the window's scrubbed text flagged untrusted.
+ */
+export function createBrowserDesktopAdapter(call: ToolCall, opts: { maxDepth?: number } = {}): DesktopAdapter {
+  const maxDepth = opts.maxDepth ?? 10;
+  return {
+    id: 'browser',
+    async start() {
+      return { ok: false, error: 'Browsers are read-only for agents: act on the web through the Phantom Browser pane, not by driving a browser window.' };
+    },
+    async status(handle) {
+      const read = await readTree(call, handle, maxDepth);
+      return read.ok ? { state: 'idle', signals: ['ax-tree'] } : { state: 'unknown', signals: [] };
+    },
+    async collect(handle) {
+      const read = await readTree(call, handle, maxDepth);
+      if (!read.ok) return read;
+      const body = scrubSecrets(chatText(read.entries));
+      if (!body) return { ok: false, error: 'nothing readable in the browser window.' };
+      const truncated = body.length > MAX_COLLECT_CHARS;
+      return { ok: true, text: truncated ? body.slice(-MAX_COLLECT_CHARS) : body, truncated, untrusted: true };
+    },
+  };
+}
 
 /**
  * start → poll status until the task leaves `working` → collect. `needs-input`

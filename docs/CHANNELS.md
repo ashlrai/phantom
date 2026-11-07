@@ -123,3 +123,14 @@ report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
   `phm comms bus read` shows every accepted bus envelope;
   `phm comms inbox read` reads the inbox file directly.
 - **API** — the `GET /api/verse/fleet/runs/inbox` route exposes the inbox in JSON.
+
+## Gmail triage building block
+
+[`pollGmailBridge`](../src/core/comms/gmail-bridge.ts) is a local programmatic
+triage function, not a configured Gmail integration or CLI command. Its caller
+must provide a read-only inbox adapter and classification, composition and
+summary functions. A poll accepts at most 100 messages; updates return summaries,
+and eligible replies become local drafts. A reply is drafted only when the
+provider's `autoSubmitted` value is `no` (case-insensitive); missing or other
+values go to review. Duplicate or empty IDs in one poll also go to review.
+The function has no provider send operation; drafting is not delivery.

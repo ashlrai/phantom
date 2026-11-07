@@ -38,6 +38,14 @@ export function teammateNeedsReply(text: string): boolean {
     && /\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text);
 }
 
+/** Keep requests for a decision or action in the local inbox for leader review. */
+export function classifyTeammateIntent(text: string): 'ignore' | 'reply' | 'leader' {
+  if (!teammateNeedsReply(text)) return 'ignore';
+  if (/\b(?:approve|approval|authorize|authorise|permission|decision|decide|escalat\w*|leader|mason)\b/i.test(text)
+      || /\b(?:please|can you|could you|need you to)\s+(?:deploy|release|ship|merge|delete|remove|change|create|pay|buy|run|execute)\b/i.test(text)) return 'leader';
+  return 'reply';
+}
+
 function read(file: string, anchor: string, maxBytes: number): string | null {
   if (!existsSync(file)) return null;
   const result = readStableRegularFile(file, { anchorPath: anchor, maxFileBytes: maxBytes, remainingBytes: maxBytes });
@@ -74,7 +82,7 @@ export async function generateLocalTeammateReply(text: string, context: string, 
 
 /** One bounded, serialized pass. Sending state is never replayed: only reconciled. */
 export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWorkerOptions = {}) {
-  const report = { schema: 'imessage.teammate-responder.v1', state: 'unavailable', examined: 0, sent: 0, suppressed: 0, pending: 0 };
+  const report = { schema: 'imessage.teammate-responder.v1', state: 'unavailable', examined: 0, sent: 0, suppressed: 0, pending: 0, leader: 0 };
   const runs = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const dir = imessageStateDir(runs);
   const now = options.now ?? Date.now;
@@ -95,7 +103,8 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
     const inbox = readTeammateTexts({ runsDir: runs, now });
     if (inbox.sourceState === 'degraded') return report;
     store.replies = store.replies.filter(row => !(['sent', 'suppressed'].includes(row.state) && now() - row.at > 7 * 86400000));
-    for (const message of inbox.texts.slice(0, 3)) {
+    let processed = 0;
+    for (const message of inbox.texts.slice(0, 256)) {
       if (options.signal?.aborted) break;
       report.examined++;
       let row = store.replies.find(value => value.rowid === message.rowid);
@@ -103,18 +112,23 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       if (row?.state === 'sent' || row?.state === 'suppressed') { markTeammateTextsAnswered([message.rowid], runs); continue; }
       if (!(options.approved ?? approvedTeammateHandle)(message.senderId, cfg, options)) { report.pending++; continue; }
       if (row?.state === 'sending') {
+        if (processed++ >= 3) { report.examined--; break; }
         const receipt = row.text && row.attemptedAt !== undefined ? await (options.reconcile ?? reconcileTeammateMessage)(row.text, row.senderId, row.attemptedAt, cfg, options) : null;
         if (receipt?.sent && receipt.error === 0) { row.state = 'sent'; row.receipt = receipt; save(); markTeammateTextsAnswered([message.rowid], runs); report.sent++; }
         else report.pending++;
         continue;
       }
+      const intent = classifyTeammateIntent(message.text);
+      // Keep leader requests visible without allowing them to starve later replies.
+      if (intent === 'leader') { report.leader++; report.pending++; continue; }
+      if (processed++ >= 3) { report.examined--; break; }
       if (row?.state === 'claimed' && row.claimUntil > now()) { report.pending++; continue; }
       if (!row) {
         if (store.replies.length >= 256) { report.pending++; continue; }
         row = { rowid: message.rowid, senderId: message.senderId, state: 'claimed', at: now(), claimUntil: now() + CLAIM_MS };
         store.replies.push(row);
       }
-      if (!teammateNeedsReply(message.text)) { row.state = 'suppressed'; save(); markTeammateTextsAnswered([message.rowid], runs); report.suppressed++; continue; }
+      if (intent === 'ignore') { row.state = 'suppressed'; save(); markTeammateTextsAnswered([message.rowid], runs); report.suppressed++; continue; }
       if (!row.text) {
         row.state = 'claimed'; row.claimUntil = now() + CLAIM_MS; save();
         try {

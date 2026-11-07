@@ -369,6 +369,7 @@
 /test/fixtures/m518/visionquality-gate-robustness-false-positive-mer-c9c62c.json.b64 @masonwyatt23
 /test/fixtures/queue/router-queue-live.md @masonwyatt23
 /test/fixtures/queue/router-queue.md @masonwyatt23
+/test/fixtures/radar-local-bench/routing.json @masonwyatt23
 /test/fixtures/top-pools/capacity.ts @masonwyatt23
 /test/fleet-apps-ensure-wall-budget-03.test.ts @masonwyatt23
 /test/fleet-apps-watch-attempt-budget-03-sonz1.test.ts @masonwyatt23
@@ -394,6 +395,7 @@
 /test/fleet-companion-mcp.test.ts @masonwyatt23
 /test/fleet-control-315.test.ts @masonwyatt23
 /test/fleet-daily-reds.test.ts @masonwyatt23
+/test/fleet-dep-gate.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23
 /test/fleet-graph-agent-live-01.test.ts @masonwyatt23
 /test/fleet-graph-context-budget-01.test.ts @masonwyatt23
@@ -409,10 +411,12 @@
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-delay.test.ts @masonwyatt23
 /test/fleet-merge-latency.test.ts @masonwyatt23
 /test/fleet-merge-pace-core-02.test.ts @masonwyatt23
 /test/fleet-merge-pace.test.ts @masonwyatt23
 /test/fleet-merge-queue-age.test.ts @masonwyatt23
+/test/fleet-merge-recover.test.ts @masonwyatt23
 /test/fleet-merge-state-class.test.ts @masonwyatt23
 /test/fleet-post-merge-verify-31.test.ts @masonwyatt23
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
@@ -428,6 +432,7 @@
 /test/fleet-self-loop-stream-02solc1.test.ts @masonwyatt23
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
 /test/fleet-ship-gap-stage.test.ts @masonwyatt23
+/test/fleet-staging-budget-reconcile-05-stf2.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
@@ -917,6 +922,7 @@
 /test/manager-scope.test.ts @masonwyatt23
 /test/mcp-context-pack-31y1.test.ts @masonwyatt23
 /test/mcp-firm-resources.test.ts @masonwyatt23
+/test/mcp-fleet-doctor.test.ts @masonwyatt23
 /test/mcp-fleet-observations.test.ts @masonwyatt23
 /test/mcp-gateway-discovery.test.ts @masonwyatt23
 /test/mcp-gateway-policy.test.ts @masonwyatt23
@@ -997,6 +1003,7 @@
 /test/quarantine-ledger.test.ts @masonwyatt23
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
+/test/recut-loop-attempts.test.ts @masonwyatt23
 /test/recut-loop-landed-03.test.ts @masonwyatt23
 /test/red-team-routing-310.test.ts @masonwyatt23
 /test/redact-known.test.ts @masonwyatt23
