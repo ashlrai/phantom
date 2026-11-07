@@ -14,6 +14,7 @@ const words = z.array(name).max(128).default([]);
 const entry = z.object({
   id: name,
   kind: z.enum(['mcp-stdio', 'mcp-http', 'cli', 'plugin']),
+  description: z.string().min(1).max(500).optional(),
   command: z.string().min(1).max(1024).optional(),
   args: z.array(z.string().max(2048)).max(128).default([]),
   url: z.string().max(2048).optional(),

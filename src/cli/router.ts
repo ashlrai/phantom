@@ -6,7 +6,7 @@ import type { EngineTier } from '../core/types.js';
 
 const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE] [--slots pool=count ...] [--json]\n' +
   'Slots are currently free slots supplied by the dispatcher; omitted pools are unknown.\n' +
-  'FILE maps pools to routeBackend decisions. Omitted routes are unknown. Reads budgets; never reserves or dispatches.';
+  'FILE maps pools to routeBackend decisions. Omitted routes are unknown. Reads budgets; prioritizes lanes without imminent forecast exhaustion. Never reserves or dispatches.';
 
 export async function cmdRouter(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || args.join(' ') === 'rank --help') {

@@ -12,7 +12,12 @@ export interface LaneResourceSnapshot {
   /** Collected by routeBackend outside this pure projection; missing routes are unknown. */
   routes: Partial<Record<BudgetPool, RouteDecision>>;
 }
-export interface RankedLane { pool: BudgetPool; backend: EngineId; availableSlots: number; resetAt: string | null }
+export interface RankedLane { pool: BudgetPool; backend: EngineId; availableSlots: number; resetAt: string | null;
+  projectedExhaustion: string | null; spillRecommended: boolean }
+
+/** Prefer another eligible lane when exhaustion is expected within one hour. */
+const SPILL_HORIZON_MS = 60 * 60 * 1000;
+const MAX_OBSERVATION_AGE_MS = 2 * 60 * 60 * 1000;
 
 /** Advisory only: no reservation or dispatch authority. Unknown evidence never creates capacity. */
 export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapshot, laneSlots: LaneSlots): RankedLane[] {
@@ -34,9 +39,18 @@ export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapsh
       !b.timestamp || !Number.isFinite(Date.parse(b.timestamp)) || Date.parse(b.timestamp) > now ||
       b.resetAt !== null && (!Number.isFinite(Date.parse(b.resetAt)) || Date.parse(b.resetAt) <= now))) continue;
     const resets = observed.flatMap(b => b.resetAt === null ? [] : [Date.parse(b.resetAt)]);
+    const forecasts = observed.flatMap(b => {
+      const at = b.projectedExhaustion && Date.parse(b.projectedExhaustion);
+      const observedAt = b.timestamp && Date.parse(b.timestamp);
+      return typeof at === 'number' && Number.isFinite(at) && typeof observedAt === 'number' &&
+        now - observedAt <= MAX_OBSERVATION_AGE_MS && (b.resetAt === null || at < Date.parse(b.resetAt)) ? [at] : [];
+    });
+    const exhaustion = forecasts.length ? Math.min(...forecasts) : null;
     ranked.push({ pool, backend: route.backend, availableSlots: slots!,
-      resetAt: resets.length ? new Date(Math.min(...resets)).toISOString() : null });
+      resetAt: resets.length ? new Date(Math.min(...resets)).toISOString() : null,
+      projectedExhaustion: exhaustion === null ? null : new Date(exhaustion).toISOString(),
+      spillRecommended: exhaustion !== null && exhaustion <= now + SPILL_HORIZON_MS });
   }
-  return ranked.sort((a, b) => (a.resetAt === null ? Infinity : Date.parse(a.resetAt)) -
+  return ranked.sort((a, b) => Number(a.spillRecommended) - Number(b.spillRecommended) || (a.resetAt === null ? Infinity : Date.parse(a.resetAt)) -
     (b.resetAt === null ? Infinity : Date.parse(b.resetAt)) || BUDGET_POOLS.indexOf(a.pool) - BUDGET_POOLS.indexOf(b.pool));
 }

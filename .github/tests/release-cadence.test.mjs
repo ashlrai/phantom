@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { cadenceMinutes, nextPatch, planReleaseCadence, createPublicMetadataReader } from '../scripts/release-cadence.mjs';
+import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader } from '../scripts/release-cadence.mjs';
 import { reconcileTaggedReleasePrs } from '../scripts/release-pr-labels.mjs';
 import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
 
@@ -96,7 +96,7 @@ function metadataReaderFixture(responses) {
       assert.ok(response, 'unexpected metadata request');
       if (response.error) throw response.error;
       clock += response.elapsed ?? 0;
-      return { status: response.status, text: async () => {
+      return { status: response.status, headers: { get: name => response.headers?.[name] ?? null }, text: async () => {
         clock += response.bodyElapsed ?? 0;
         return response.text ?? JSON.stringify(response.data ?? {});
       } };
@@ -186,6 +186,19 @@ test('malformed, oversized, permission and transport failures never become retry
   const foreign = metadataReaderFixture([]);
   await assert.rejects(foreign.read('repos/other/phantom'));
   assert.equal(foreign.calls.length, 0);
+});
+
+test('confirmed anonymous rate limits defer the release without masking other 403s', async () => {
+  for (const status of [403, 429]) {
+    const f = metadataReaderFixture([{ status, headers: { 'x-ratelimit-remaining': '0' } }]);
+    assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read: f.read }),
+      { due: false, reason: 'metadata-rate-limited' });
+    assert.equal(f.calls.length, 1);
+    assert.match(f.reports[0], /rate limited at repos\/ashlrai\/phantom/);
+  }
+  const denied = metadataReaderFixture([{ status: 403, headers: { 'x-ratelimit-remaining': '5' } }]);
+  await assert.rejects(planReleaseCadenceWhenAvailable({ ...fixture().input, read: denied.read }),
+    /403.*repos\/ashlrai\/phantom/);
 });
 
 test('a recovered metadata read still passes every cadence identity and fresh-tip guard', async () => {

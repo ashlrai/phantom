@@ -48,6 +48,14 @@ describe('teammate worker', () => {
     expect(await runTeammateResponder(cfg, deps)).toMatchObject({ pending: 1 });
     expect(deps.send).not.toHaveBeenCalled(); expect(deps.generate).not.toHaveBeenCalled();
   });
+  it('retains decision and action requests for leader review without generating or sending', async () => {
+    seed('Please deploy the release?'); const deps = options();
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ state: 'pending', leader: 1, sent: 0 });
+    expect(deps.generate).not.toHaveBeenCalled(); expect(deps.send).not.toHaveBeenCalled();
+    expect(readTeammateTexts({ runsDir }).texts).toHaveLength(1);
+    expect(await runTeammateResponder(cfg, deps)).toMatchObject({ leader: 1 });
+    expect(deps.send).not.toHaveBeenCalled();
+  });
   it('suppresses acknowledgements and artifact-only updates without generating acknowledgement loops', async () => {
     seed('Acknowledged.'); const deps = options();
     expect(await runTeammateResponder(cfg, deps)).toMatchObject({ suppressed: 1 });

@@ -49,6 +49,8 @@
  *   swarms [--json]            List past swarm runs.
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+ *   pages publish <file> [opts]  Publish a Markdown/JSON report into the local dashboard (/pages/<slug>).
+ *   pages list [--json]          List published report pages.
  *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
@@ -357,6 +359,11 @@ const loadAppsCmd = lazyCmd(
   'apps command requires src/cli/apps-control.ts.',
 );
 
+const loadDesktopctlCmd = lazyCmd(
+  () => import('./desktopctl.js'), (m) => m.cmdDesktopctl as Cmd,
+  'desktopctl command requires src/cli/desktopctl.ts.',
+);
+
 const loadDesktopUpdateCmd = lazyCmd(
   () => import('./desktop-update.js'), (m) => m.cmdDesktopUpdate as Cmd,
   'desktop-update command requires the installed compiled update consumer.',
@@ -426,6 +433,14 @@ const loadDashboardCmd = lazyCmd(
   () => import('./dashboard.js' as unknown as string),
   (m) => m.cmdDashboard as Cmd,
   'dashboard command requires src/cli/dashboard.ts (M211 module not yet built).',
+);
+
+// ─── COS report pages command loader ────────────────────────────────
+
+const loadPagesCmd = lazyCmd(
+  () => import('./pages.js' as unknown as string),
+  (m) => m.cmdPages as Cmd,
+  'pages command requires src/cli/pages.ts.',
 );
 
 // ─── M14 command loader ────────────────────────────────────────────
@@ -2086,6 +2101,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pr': {
+        if (rest[0] !== 'cockpit') { console.error('Usage: phm pr cockpit --repo owner/name [--json]'); process.exitCode = 2; break; }
+        const { cmdPrCockpit } = await import('./pr-cockpit.js');
+        process.exitCode = await cmdPrCockpit(rest.slice(1));
+        break;
+      }
+
       case 'autopilot': {
         const { cmdAutopilot } = await import('./autopilot.js');
         process.exitCode = await cmdAutopilot(rest);
@@ -2289,6 +2311,10 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadAppsCmd())(rest);
         break;
       }
+      case 'desktopctl': {
+        process.exitCode = await (await loadDesktopctlCmd())(rest);
+        break;
+      }
       case 'desktop-update': {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
@@ -2346,6 +2372,14 @@ async function main(): Promise<void> {
         // opens browser. `--stop` / `--status` subcommands also supported.
         const cmdDashboard = await loadDashboardCmd();
         process.exitCode = await cmdDashboard(rest);
+        break;
+      }
+
+      case 'pages': {
+        // COS report pages: publish a .md/.json report into the loopback
+        // dashboard at /pages/<slug>, or list published pages.
+        const cmdPages = await loadPagesCmd();
+        process.exitCode = await cmdPages(rest);
         break;
       }
 
@@ -2467,6 +2501,12 @@ async function main(): Promise<void> {
         // M112: one-command spare-Mac worker provisioning (keepAwake daemon + identity)
         const cmdWorker = await loadWorkerCmd();
         process.exitCode = await cmdWorker(rest);
+        break;
+      }
+
+      case 'repos': {
+        const { cmdReposRank } = await import('./repos-rank.js');
+        process.exitCode = cmdReposRank(rest);
         break;
       }
 
@@ -2613,6 +2653,12 @@ async function main(): Promise<void> {
       case 'verify': {
         const { cmdVerify } = await import('./verify.js');
         process.exitCode = await cmdVerify(rest);
+        break;
+      }
+
+      case 'engineering-receipt': {
+        const { cmdReceipt } = await import('./engineering-receipt.js');
+        process.exitCode = await cmdReceipt(rest);
         break;
       }
 

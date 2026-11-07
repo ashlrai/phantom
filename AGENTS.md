@@ -91,6 +91,11 @@ Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
 plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
 See [DISK-MAINT](docs/DISK-MAINT.md).
 
+Report pages: `phm pages publish <file.md|file.json> --json` renders a report
+into the loopback console at `/pages/<slug>`; `phm pages list --json` lists
+published pages. Store is `~/.ashlr/pages`; nothing leaves the machine. See
+[report pages](docs/PAGES.md).
+
 ## Publish subscription capacity
 
 Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;
@@ -177,6 +182,26 @@ Allowlisted apps only, through the desktop adapter, every action logged to the
 feed. A quit with unsaved work goes to needs-you (exit 3). No keystrokes, no
 reading app contents, no TCC changes.
 
+## Desktop control
+
+`phm desktopctl capabilities|status|run <resource> [--json]` drives the Claude,
+Codex and Devin desktop apps as interchangeable resources through the
+`computer_*` tools, off until `~/.ashlr/desktopctl.json` holds
+`{"enabled": true}`. Copy and paste these commands; see
+[DESKTOPCTL](docs/DESKTOPCTL.md):
+
+```sh
+phm desktopctl capabilities --json
+phm desktopctl status claude --json
+phm desktopctl run claude --task "summarise this repo" --json
+```
+
+`capabilities` (the doctor) always runs and reports the connection, each macOS
+TCC grant and per-resource reasons for what is blocked. `run` needs a `full`
+grant and returns untrusted screen text. `browser` is read-only — act on the
+web through the Phantom Browser pane. Nothing prompts for or changes TCC
+grants; every action is feed-logged and refuses to run unlogged.
+
 ## Drafts
 
 `phm drafts list|show|approve|reject --json` handles outbound mail waiting for
@@ -251,3 +276,12 @@ production dispatchd cutover or runner installation is performed. See
 [Agent network](docs/AGENT-NETWORK.md) and [Nodes](docs/NODES.md).
 
 Agent network channels: `phm agents bus channels list --json` and `phm agents bus channels test email --json` are offline dry runs. See [agent network channels](docs/AGENT-NETWORK-CHANNELS.md) for the default-deny policy and adapter contract.
+
+Repository ranking: `phm repos rank --json` blends seed priority with local merged
+PR recency and autonomy leverage, at most daily. `phm repos rank --recompute --json`
+honors the same ceiling. `phm repos rank proposals --json` reads suggestions only;
+enrollment remains a manual config change. See [repo ranking](docs/REPO-RANK.md).
+
+## Import scheduled routines
+
+Preview a local routines JSON array with `ashlr automations import --from routines.json --dry-run --json`, then import with `ashlr automations import --from routines.json --json`. Imports start disabled and skip existing names. See [Automations](docs/VERSE.md#automations-315) for the format and schedule restrictions.
