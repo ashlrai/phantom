@@ -316,6 +316,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ttm': () => import('./fleet-ttm.js'),
   'union-apply': () => import('./fleet-union-apply.js'),
   'union-preview': () => import('./fleet-union-preview.js'),
+  'usage': () => import('./fleet-usage.js'),
   'verbs': () => import('./fleet-verbs.js'),
   'verdict': () => import('./fleet-verdict.js'),
   'vision-lint': () => import('./fleet-vision-lint.js'),
