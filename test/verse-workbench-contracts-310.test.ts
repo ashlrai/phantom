@@ -153,6 +153,8 @@ const EXISTING_ROUTES = {
 } as const;
 
 const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
+  // Agent Bus v2: the fleet's shared message bus (agent-bus-api.ts).
+  'agent-bus': 'handleAgentBusApi',
   // SPEC-310C §7 route contracts.
   activity: 'handleActivityApi',
   'session-controls': 'handleSessionControlsApi',
@@ -195,6 +197,12 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   agents: 'handleAgentsApi',
   outcomes: 'handleOutcomesApi',
   'proactive-agents': 'handleProactiveAgentsApi',
+  // The desktop command center's own reads: runs, chief-of-staff intake, the
+  // staged self-update status line and memory.
+  'fleet-runs': 'handleFleetRunsApi',
+  'fleet-cos': 'handleFleetCosApi',
+  'app-update': 'handleAppUpdateApi',
+  'cos-memory': 'handleCosMemoryApi',
   // The desktop command center: board, router, releases and the leaders' channel.
   ops: 'handleOpsApi',
 };
