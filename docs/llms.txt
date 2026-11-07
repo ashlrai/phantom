@@ -375,3 +375,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Agent network](AGENT-NETWORK.md): SSH multi-Mac node pool; first join needs explicit aliases and owner, repeat node join --json reuses config; RAM/disk pressure admission, local auth, mobile control only, split-brain fencing and primary-only publication.
 
 - [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.
+
+- [Mac queue parking](QUEUE.md#parking): `phm queue parked --json` and `phm queue unpark --dry-run --json`; read-only dependency evidence and next-pass promotion preview. Restock and its shared helper require Security re-pin before live install.
