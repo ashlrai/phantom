@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, expect, it, vi } from 'vitest';
 import { FLEET_APPS } from '../src/core/verse/fleet-apps-api.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
@@ -27,7 +28,7 @@ describe('native fleet app changes', () => {
   it('shares selected transitions with the native call and never writes or mutates', async () => {
     let time = 0, i = 0;
     const runChild = vi.fn(async (args: string[]) => {
-      expect(args).toEqual(['fleet', 'apps-status', '--json']);
+      expect(args).toEqual(['fleet', 'apps-status', '--json', '--app', FLEET_APPS[0]]);
       return { code: 0, stdout: snapshot([true, false, true][Math.min(i++, 2)]!) };
     });
     const deps = { runChild, now: () => time, sleep: async (ms: number) => { time += ms; } };
@@ -58,3 +59,5 @@ describe('native fleet app changes', () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual({ error: 'Fleet observation unavailable' });
   });
 });
+
+registerFleetNativeTools();

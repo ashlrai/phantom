@@ -22,9 +22,9 @@ Topic summary and discovery hints.
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, knowledge, ask, …)
-    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (enroll, …)
+    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
     observability   Observability - cost, telemetry, audit (radar, router, router-calibration, …)
-    integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, sessions, …)
+    integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
     scaffold        Scaffold - new projects + shipping (new, ship, …)
@@ -58,6 +58,7 @@ Every command, grouped by topic.
     init [--yes]                                                                                                   Idempotent onboarding: ensure config, detect phantom + models, set editor.
     desktop install [--apply]                                                                                      Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.
     apps list|open|quit|focus|status [<app>] [--json]                                                              Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you.
+    desktopctl capabilities|status|run <resource> [--json]                                                         Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.
     desktop-update inspect|apply --stage <32hex> --json                                                            Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.
     app update status [--json]                                                                                     Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.
     update [--check] [--json]                                                                                      Self-update; mutation requires service registration proven absent and not running. --check remains read-only.
@@ -85,9 +86,11 @@ Every command, grouped by topic.
     models start                                                          Best-effort start a locally-installed Ollama (never downloads).
     local-runtime <status|start|stop|restart|reshape|logs|resolve-model>  Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.
     local-runtime install|uninstall                                       Add or remove the opt-in launch agent that keeps llama-server up across logout/crashes; install is refused while the kill switch is engaged.
+    context read | write [--json]                                         Read current company context or save a sourced note.
     eval [--limit N]                                                      Local-agent eval harness: adaptive prompts OFF vs ON, steps/done/tokens (M44).
     eval attention [--window 1d|7d|30d]                                   Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.
     skills list [--status <s>] [--limit N] [--json]                       List skills learned from merged PRs (newest revision each; counts are real or "unknown").
+    eval prompts --dataset <jobs.jsonl>                                   Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.
     skills audit <pack-path> [--json]                                     Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.
 
   Swarm - specs + multi-agent fleets
@@ -118,6 +121,7 @@ Every command, grouped by topic.
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
+    metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
     enroll add <repo> [--locus-firm]                                                                                                                              Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).
     enroll remove <repo>                                                                                                                                          Remove a repo from the enrollment registry.
@@ -197,6 +201,7 @@ Every command, grouped by topic.
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
+    routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance                                                       Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.
     jev status [--json]                                                                                                                                           Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.
@@ -272,6 +277,7 @@ Every command, grouped by topic.
     usage                                                                                      Frontier usage table: per-engine calls/tokens/cost + window state.
     queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     repos rank [proposals] [--json] [--recompute]                                              Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
+    job cost <id> [--json]                                                                     Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
     telemetry [status]                                                                         M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
     telemetry test                                                                             Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
@@ -280,6 +286,7 @@ Every command, grouped by topic.
 
   Integrations - MCP, GitHub, Vercel, editors
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
+    checkpoint save <source> <destination> <worktree> [--json]                       Save a handoff with a Git worktree inventory. See docs/AGENT-CHECKPOINT.md.
     checkpoint resume <file> [--json]                                                Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.
     sessions list|revoke <id> [--json]                                               See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.
     mcp list                                                                         List native ashlr tools + discovered MCP servers with per-server tool counts.
@@ -306,6 +313,8 @@ Every command, grouped by topic.
     daemon activation-preflight --request <path> [--json]                                 Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]     Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
+    whoami [--json]                                                                       Who am I: person, teams, orgs and owner scopes from local auth (no tokens).
+    org list|add <org> [--team <team>] [--json]                                           List your orgs or add one grouping teams; nodes, jobs, forum and packs are owner-scoped.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
     node join|beat|enqueue|plan|pull|complete|status [--json]                             Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.

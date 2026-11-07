@@ -164,7 +164,7 @@ describe('fleet self-loop --stream', () => {
       return { exitCode: 0, output: JSON.stringify({ ok: name }) };
     };
     const steps = {
-      'reset-release': stub('reset-release'),
+      'claude-quota': async () => ({ exitCode: 0, output: '' }), 'reset-release': stub('reset-release'),
       'lane-autohold': stub('lane-autohold'),
       'planner-tick': stub('planner-tick'),
       'inbox-acks': stub('inbox-acks'),

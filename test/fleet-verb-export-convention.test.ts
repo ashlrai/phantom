@@ -44,6 +44,7 @@ function expectedExportName(filename: string): string {
 /* ------------------------------------------------------------------ */
 
 const ALLOW_LIST: Record<string, string> = {
+  'fleet-entry.ts': 'entry point — forwards to cmdFleet via the subcommand registry, not a CLI verb',
   'fleet-subcommand-resolve.ts': 'helper — resolves verb names, not a CLI verb',
   'fleet-subcommand-registry.ts': 'generated registry — populated by gen-fleet-registry.mjs',
   'fleet-planner-tick.test.ts': 'test stub — exported functions are test fixtures',
@@ -51,6 +52,7 @@ const ALLOW_LIST: Record<string, string> = {
   'fleet-red-fix.test.ts': 'test stub — exported functions are test fixtures',
   'fleet-superseded-close.test.ts': 'test stub — exported functions are test fixtures',
   'fleet-teammates.test.ts': 'colocated vitest suite — tests the verb, is not itself a verb',
+  'fleet-outcome-why.test.ts': 'colocated vitest suite — tests the verb, is not itself a verb',
 };
 
 const CLI_DIR = join(__dirname, '..', 'src', 'cli');

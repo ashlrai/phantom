@@ -143,6 +143,7 @@ These do not merge by themselves. See [CLOUD.md](CLOUD.md) and [DEVIN.md](DEVIN.
 - [AUTOMATIC-OUTCOMES.md](AUTOMATIC-OUTCOMES.md): chat routing and fleet outcomes
 - [AUTONOMY-SETUP.md](AUTONOMY-SETUP.md): dormant autonomy commissioning
 - [FLEET-MCP-ONRAMP.md](FLEET-MCP-ONRAMP.md): read-only fleet MCP
+- [JOB-COST.md](JOB-COST.md): per-job cost breakdown by model call
 - [Repository README](../README.md): agent quickstart
 
 Route hysteresis: see docs/ROUTE-HYSTERESIS.md. Dispatcher pool proposals keep a
@@ -155,3 +156,9 @@ ROUTE_HOLD. Read accepted trailing-hour moves with phm route explain --json.
 Multi-Mac node pool: see docs/AGENT-NETWORK.md and docs/NODES.md. Configure explicit team SSH aliases with phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json. First join: npm install -g @ashlr/phantom && phm node join --owner mason --primary primary-mac --backup backup-mac --json. Node ID defaults to sanitized hostname; repeat phm node join --json rechecks saved config without changing roles. RAM slots reserve max(4 GiB, 30%) then budget 4 GiB/job: 8 GiB gives one, 16 GiB gives two. Hold on available RAM below 30%, swap use, disk below 20 GB or unknown telemetry; pressure stops running work. Worker launches one bounded batch up to the RAM ceiling concurrently under one session, waits for all started slots and leaves; no permanent supervisor. Disk telemetry covers the home filesystem; runner DISKGUARD must cover checkout/artifact volumes. Nominal three-second pressure checks can be delayed by bounded synchronous probes and SSH. DISKGUARD remains in force. Share credential-free Phantom connector metadata and reviewed checkout MCP/skill files, never client auth; no automatic config synchronization. Independent per-node lanes; sharded inference has no measured win. iPad and phone are mobile control only. See examples/node-pool/README.md. Use phm node watch [--once] --json, phm node worker --runner /absolute/host-owned-runner --json and phm node list|status --json. phm node rpc --json is the SSH stdin endpoint. The backup witnesses every admission and promotes after fifteen minutes; returning primary is demoted. No copied auth, new paid service, message sends or worker publication.
 
 Agent network channels: see AGENT-NETWORK-CHANNELS.md for channel metadata, default-deny policy, and offline CLI examples.
+
+Tier-1 import diagnosis: npx tsx scripts/tier1-why.ts <file> [--json]
+Prints a shortest runtime import chain from a Tier-1 root, or unreachable.
+Guide: docs/TIER1-WHY.md. The ordinary test/tier1-apps-boundary.test.ts guards fleet apps isolation. Do not regenerate the protected snapshot.
+
+Small-Mac oMLX lanes: see docs/OMLX-SMALL-MACS.md. Enable with ~/.ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}; phm node lanes --json prints the evidence-picked model, slots, backoff and suggested caps, and phm node join/worker advertise the omlx/omlx-work caps automatically. HF/oMLX weight caches under protected model roots are never deleted by disk maintenance by default; sharded inference stays off until a measured comparison beats per-node.

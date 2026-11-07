@@ -10,6 +10,7 @@
  * updated in the same commit (that IS the versioning act).
  */
 
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
@@ -161,3 +162,5 @@ describe('AGENT_COMMANDS registry lock', () => {
     }
   });
 });
+
+registerFleetNativeTools();

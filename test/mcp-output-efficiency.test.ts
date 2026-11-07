@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, expect, it, vi } from 'vitest';
 import { dirname } from 'node:path';
 import { listNativeTools } from '../src/core/mcp-native.js';
@@ -47,6 +48,10 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_drop_job',
   'phantom_fleet_job_reassign',
   'phantom_fleet_planner_run',
+  'phantom_fleet_doctor',
+  'phantom_fleet_orders',
+  'phantom_fleet_graph',
+  'phantom_fleet_session',
   'phantom_fleet_apps_history',
   'phantom_fleet_apps_follow',
   'phantom_fleet_apps_recovery_wait',
@@ -55,11 +60,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_apps_ensure',
   'phantom_fleet_apps_changes',
   'phantom_fleet_apps_status',
-  'phantom_fleet_doctor',
   'phantom_fleet_apps_await',
-  'phantom_fleet_orders',
-  'phantom_fleet_graph',
-  'phantom_fleet_session',
 ] as const;
 
 function classifyNativeNames(names: readonly string[]): { old: string[]; added: string[]; unallocated: string[] } {
@@ -146,3 +147,5 @@ describe('MCP CLI JSON inventory', () => {
     expect({ fields: Object.keys(parsed), registryFields: Object.keys(parsed.tools), toolFields: Object.keys(parsed.tools.tools[0]!), native: parsed.native }).toMatchSnapshot();
   });
 });
+
+registerFleetNativeTools();

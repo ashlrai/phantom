@@ -38,19 +38,7 @@ import {
   TOOL_TRUNCATION_MARK,
   type NativeToolResult,
 } from './knowledge/index.js';
-import { recall } from './genome/recall.js';
-import { ask } from './knowledge/ask.js';
-import { impact } from './knowledge/graph.js';
-import { computeHealth } from './quality/health.js';
-import { loadPreviousReport } from './quality/store.js';
-import { buildRollup } from './observability/rollup.js';
-import { buildSnapshot } from './dashboard.js';
-import { buildOrientation } from './orient.js';
-import { selectGenomeSync, selectInboxStore, selectBacklogSource } from './seams/index.js';
-import { loadDaemonState, loadDaemonStateStrict } from './daemon/state.js';
-import { buildFleetDigest } from './fleet/digest.js';
-import { computeQualityMetrics } from './fleet/quality-metrics.js';
-import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
+import type { OversightSnapshot } from './fleet/oversight-export.js';
 import { readDecisions } from './fleet/decisions-ledger.js';
 import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
@@ -58,10 +46,14 @@ import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
-// M169: best-effort imports for new elite-state tools
-// Each is wrapped in a lazy async import inside the handler so module-level
-// import failures never crash mcp-native at load time.
-// (Types only — runtime imports done lazily in handlers below.)
+// Handler-only dependencies are imported lazily inside each handler so
+// `tools/list` pays for schemas and the safety gate only — not the ~300-file
+// dashboards/seams/orient/knowledge graphs — and a missing build can never
+// crash mcp-native at load time. Static imports remain for symbols the tool
+// DEFINITIONS and callNativeTool's structural gates need synchronously:
+// schema objects (proactive, team, fleet apps, drop-job enums), killSwitchOn,
+// audit, scrubSecrets/textResult output hygiene, and listProposals/
+// readDecisions behind the synchronous deriveRoutingData contract.
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -170,7 +162,7 @@ export function deriveRoutingData(limit = 50): RoutingData {
 // ---------------------------------------------------------------------------
 
 /** A native tool definition plus its handler (handler kept out of types.ts). */
-interface NativeToolImpl extends NativeToolDef {
+export interface NativeToolImpl extends NativeToolDef {
   handler: (args: Record<string, unknown>, cfg: AshlrConfig) => Promise<unknown>;
 }
 
@@ -288,164 +280,11 @@ const TOOLS: NativeToolImpl[] = [
     },
   },
   {
-    name: 'phantom_fleet_apps_history',
-    description: 'Read retained app recovery observations and summaries without starting a watcher.',
-    inputSchema: { type: 'object', properties: {
-      after: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0 },
-      limit: { type: 'integer', minimum: 1, maximum: 100, default: 25 },
-      invocationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
-    }, additionalProperties: false },
-    safety: 'read',
-    handler: async args => (await import('./fleet/apps-recovery-history.js')).readAppsRecoveryHistory(
-      process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
-      (args.after as number | undefined) ?? 0, (args.limit as number | undefined) ?? 25, args.invocationId as string | undefined,
-    ),
-  },
-  {
-    name: 'phantom_fleet_apps_follow',
-    description: 'Follow retained app recovery events within a bounded deadline; resume using the returned cursor.',
-    inputSchema: { type: 'object', properties: {
-      durationMs: { type: 'integer', minimum: 1, maximum: 30000 },
-      after: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-      invocationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
-      untilSummary: { type: 'boolean' },
-      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
-      maxEvents: { type: 'integer', minimum: 1, maximum: 100 },
-    }, required: ['durationMs'], additionalProperties: false },
-    safety: 'read',
-    handler: async args => {
-      const flags = ['--root', process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), '--duration-ms', String(args.durationMs), '--max-events', String(args.maxEvents ?? 100), '--jsonl'];
-      for (const [key, flag] of [['after', '--after'], ['invocationId', '--invocation-id'], ['intervalMs', '--interval-ms']] as const) {
-        if (args[key] !== undefined) flags.push(flag, String(args[key]));
-      }
-      if (args.untilSummary) flags.push('--until-summary');
-      const events: unknown[] = [];
-      let summary: unknown = null;
-      const exitCode = await (await import('../cli/fleet-apps-follow.js')).cmdFleetAppsFollow(flags, {
-        emit: line => {
-          const record = JSON.parse(line) as { type: string; event?: unknown };
-          if (record.type === 'event') events.push(record.event);
-          else if (record.type === 'summary') summary = record;
-          else throw new Error('Invalid follow record');
-        },
-      });
-      return { events, summary, exitCode, ...(exitCode !== 0 || !summary ? { error: 'Fleet app follow failed' } : {}) };
-    },
-  },
-  {
-    name: 'phantom_fleet_apps_recovery_wait',
-    description: 'Wait for retained recovery evidence for one invocation to become fresh and healthy or terminal.',
-    inputSchema: { type: 'object', properties: {
-      invocationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
-      maxAgeMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
-      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
-    }, required: ['invocationId', 'maxAgeMs', 'timeoutMs'], additionalProperties: false },
-    safety: 'read',
-    handler: async args => (await import('./fleet/apps-recovery-wait.js')).waitAppsRecovery({
-      root: process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), invocation: args.invocationId as string,
-      maxAge: args.maxAgeMs as number, duration: args.timeoutMs as number, interval: (args.intervalMs as number | undefined) ?? 1000,
-    }),
-  },
-  {
-    name: 'phantom_fleet_apps_recovery_check',
-    description: 'Check whether one recovery invocation retains fresh, healthy evidence in the local runs store. Reads only; never queries or launches apps. Returns stale, terminal, unhealthy, or unknown evidence outcomes without substituting healthy.',
-    inputSchema: { type: 'object', properties: {
-      invocationId: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' },
-      maxAgeMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-    }, required: ['invocationId', 'maxAgeMs'], additionalProperties: false },
-    safety: 'read',
-    handler: async args => {
-      const { readAppsRecoveryInvocations } = await import('./fleet/apps-recovery-invocations.js');
-      const { appsRecoveryVerdict } = await import('./fleet/apps-recovery-verdict.js');
-      const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-      const projection = readAppsRecoveryInvocations(root);
-      return appsRecoveryVerdict(projection, args.invocationId as string, args.maxAgeMs as number, Date.now());
-    },
-  },
-  {
-    name: 'phantom_fleet_apps_recovery_batch',
-    description: 'Wait for retained recovery evidence for multiple invocations. Read-only; no live probe or app control.',
-    inputSchema: { type: 'object', properties: {
-      invocationIds: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true,
-        items: { type: 'string', pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' } },
-      maxAgeMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-      durationMs: { type: 'integer', minimum: 1, maximum: 300000 },
-      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
-    }, required: ['invocationIds', 'maxAgeMs', 'durationMs'], additionalProperties: false },
-    safety: 'read',
-    handler: async args => {
-      const { cmdFleetAppsRecoveryBatch } = await import('../cli/fleet-apps-recovery-batch.js');
-      const commandArgs = ['--root', process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), '--json',
-        '--max-age-ms', String(args.maxAgeMs), '--duration-ms', String(args.durationMs)];
-      if (args.intervalMs !== undefined) commandArgs.push('--interval-ms', String(args.intervalMs));
-      for (const id of args.invocationIds as string[]) commandArgs.push('--invocation', id);
-      let output = '';
-      const code = await cmdFleetAppsRecoveryBatch(commandArgs, { emit: line => { output = line; } });
-      const result: unknown = JSON.parse(output);
-      if (!result || typeof result !== 'object' || Array.isArray(result) ||
-        !('outcome' in result) || !('evidence' in result) || result.evidence !== 'retained' ||
-        !('liveProbe' in result) || result.liveProbe !== false ||
-        (code === 0) !== (result.outcome === 'healthy')) throw new Error('Invalid batch result');
-      return result;
-    },
-  },
-  {
-    name: 'phantom_fleet_apps_ensure',
-    description: 'Ensure an explicit group of local managed apps is running under one shared deadline.',
-    get inputSchema() { return { type: 'object', properties: {
-      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
-      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
-    }, required: ['apps'], additionalProperties: false }; },
-    safety: 'append',
-    handler: async args => (await import('../cli/fleet-apps-ensure.js')).ensureFleetApps({
-      apps: args.apps as string[], timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
-    }),
-  },
-  {
-    name: 'phantom_fleet_apps_changes',
-    description: 'Observe selected local managed app state changes within a bounded deadline.',
-    get inputSchema() { return { type: 'object', properties: {
-      durationMs: { type: 'integer', minimum: 1, maximum: 10000 },
-      intervalMs: { type: 'integer', minimum: 100, maximum: 10000 },
-      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
-    }, required: ['durationMs'], additionalProperties: false }; },
-    safety: 'read',
-    handler: async args => (await import('../cli/fleet-apps-changes.js')).observeFleetAppsChanges({
-      durationMs: args.durationMs as number, intervalMs: args.intervalMs as number | undefined,
-      apps: args.apps as string[] | undefined, maxEvents: 256,
-    }),
-  },
-  {
-    name: 'phantom_fleet_apps_status',
-    description: 'Read the bounded local inventory of managed desktop app running states; unavailable and unknown states are reported explicitly.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    safety: 'read',
-    handler: async () => (await import('../cli/fleet-apps-status.js')).readFleetAppsStatus(),
-  },
-  {
     name: 'phantom_fleet_doctor',
     description: 'Read the fleet health report, including checks and their reasons.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     safety: 'read',
     handler: async () => (await import('../cli/fleet-doctor.js')).runFleetDoctor(),
-  },
-  {
-    name: 'phantom_fleet_apps_await',
-    description: 'Wait for an explicit group of managed apps to reach a stated state (running or stopped) under a shared wall deadline. Read-only; never launch, quit, or restart.',
-    get inputSchema() { return { type: 'object', properties: {
-      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
-      target: { type: 'string', enum: ['running', 'stopped'] },
-      timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
-      intervalMs: { type: 'integer', minimum: 100, maximum: 60000 },
-    }, required: ['apps'], additionalProperties: false }; },
-    safety: 'read',
-    handler: async args => (await import('../cli/fleet-apps-await.js')).awaitFleetApps({
-      apps: args.apps as string[],
-      target: (args.target as 'running' | 'stopped') ?? 'running',
-      timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
-      intervalMs: (args.intervalMs as number | undefined) ?? 1000,
-    }),
   },
   {
     name: 'phantom_fleet_orders',
@@ -591,6 +430,7 @@ const TOOLS: NativeToolImpl[] = [
           return { error: `repo '${repo}' is not a directory. Pass an existing repo checkout's full path.` };
         }
       }
+      const { buildOrientation } = await import('./orient.js');
       return buildOrientation(cfg, repo);
     },
   },
@@ -610,7 +450,7 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (args) =>
       // allowCloud is HARDCODED false (CONTRACT-M31 invariant 3).
-      ask(String(args['question']), {
+      (await import('./knowledge/ask.js')).ask(String(args['question']), {
         repo: typeof args['repo'] === 'string' ? args['repo'] : undefined,
         allowCloud: false,
       }),
@@ -632,6 +472,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, cfg) => {
       const rawLimit = typeof args['limit'] === 'number' ? args['limit'] : 5;
       const limit = Math.max(1, Math.min(20, Math.floor(rawLimit)));
+      const { recall } = await import('./genome/recall.js');
       const hits = await recall(String(args['query']), cfg, { limit });
       return hits.map((h) => ({
         title: h.entry.title,
@@ -660,6 +501,7 @@ const TOOLS: NativeToolImpl[] = [
     },
     safety: 'append',
     handler: async (args, cfg) => {
+      const { selectGenomeSync } = await import('./seams/index.js');
       const genome = selectGenomeSync(cfg);
       // hubOnly FORCED true: an agent can never drop a note file into a repo
       // working tree via this surface (CONTRACT-M31 invariant 4).
@@ -688,6 +530,7 @@ const TOOLS: NativeToolImpl[] = [
     },
     safety: 'read',
     handler: async (args, cfg) => {
+      const { selectBacklogSource } = await import('./seams/index.js');
       const backlog = selectBacklogSource(cfg).load();
       if (!backlog) {
         return {
@@ -730,6 +573,7 @@ const TOOLS: NativeToolImpl[] = [
         // computeHealth hard-errors on non-enrolled repos (core invariant);
         // surface that as a normal message, not a tool crash.
         try {
+          const { computeHealth } = await import('./quality/health.js');
           const score = await computeHealth(repo);
           return {
             repo: score.repo,
@@ -745,6 +589,7 @@ const TOOLS: NativeToolImpl[] = [
           return { error: err instanceof Error ? err.message : String(err) };
         }
       }
+      const { loadPreviousReport } = await import('./quality/store.js');
       const report = loadPreviousReport();
       if (!report) {
         return { note: 'No health report recorded — run `ashlr health` (CLI) first.' };
@@ -765,6 +610,7 @@ const TOOLS: NativeToolImpl[] = [
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
     handler: async (_args, cfg) => {
+      const { buildSnapshot } = await import('./dashboard.js');
       const snap = await buildSnapshot(cfg);
       return {
         generatedAt: snap.generatedAt,
@@ -789,7 +635,7 @@ const TOOLS: NativeToolImpl[] = [
       required: ['target'],
     },
     safety: 'read',
-    handler: async (args) => impact(String(args['target'])),
+    handler: async (args) => (await import('./knowledge/graph.js')).impact(String(args['target'])),
   },
   {
     name: 'ashlr_pulse',
@@ -806,6 +652,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, cfg) => {
       const w = args['window'];
       const window = w === '1d' || w === '7d' || w === '30d' ? w : '7d';
+      const { buildRollup } = await import('./observability/rollup.js');
       return buildRollup(window, cfg);
     },
   },
@@ -827,6 +674,7 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (args, cfg) => {
       const status = typeof args['status'] === 'string' ? (args['status'] as ProposalStatus) : undefined;
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposals = selectInboxStore(cfg).list(status ? { status } : undefined);
       return proposals.map((p) => ({
         id: p.id,
@@ -879,6 +727,7 @@ const TOOLS: NativeToolImpl[] = [
       if (kind !== 'patch' && kind !== 'pr' && kind !== 'note') {
         return { error: `invalid kind "${kind}" — agent proposals may be patch | pr | note` };
       }
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo: typeof args['repo'] === 'string' ? args['repo'] : null,
         origin: 'agent',
@@ -954,6 +803,7 @@ const TOOLS: NativeToolImpl[] = [
       }
 
       // Create a PENDING proposal — NEVER execute here.
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo,
         origin: 'agent',
@@ -994,6 +844,8 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (_args, cfg) => {
       // loadDaemonState and buildFleetDigest both never throw.
+      const { loadDaemonState, loadDaemonStateStrict } = await import('./daemon/state.js');
+      const { buildFleetDigest } = await import('./fleet/digest.js');
       const ds = loadDaemonState();
       let budget: import('./fleet/budget-view.js').FleetBudget | null;
       try { budget = (await import('./fleet/budget-view.js')).fleetBudget(cfg, loadDaemonStateStrict()); } catch { budget = null; }
@@ -1040,6 +892,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, _cfg) => {
       const w = args['window'];
       const window = w === '7d' || w === '30d' || w === 'all' ? w : '7d';
+      const { computeQualityMetrics } = await import('./fleet/quality-metrics.js');
       return computeQualityMetrics(window);
     },
   },
@@ -1057,6 +910,7 @@ const TOOLS: NativeToolImpl[] = [
       // buildOversightSnapshot accepts PulseExportCfg; AshlrConfig is structurally
       // compatible (both have optional pulse?: { enabled?, endpoint? }).
       // The cfg arg is currently void'd inside the function but passed for future scoping.
+      const { buildOversightSnapshot } = await import('./fleet/oversight-export.js');
       const snap: OversightSnapshot = buildOversightSnapshot(cfg as { pulse?: { enabled?: boolean; endpoint?: string } });
       return snap;
     },
@@ -1319,6 +1173,7 @@ const TOOLS: NativeToolImpl[] = [
       }
 
       // Create a PENDING proposal — NEVER execute here.
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo,
         origin: 'agent',
@@ -1344,6 +1199,15 @@ const TOOLS: NativeToolImpl[] = [
 // ---------------------------------------------------------------------------
 // Public registry surface
 // ---------------------------------------------------------------------------
+
+/** Register entry-point extensions without importing their implementation into authority code. */
+export function registerNativeTools(tools: readonly NativeToolImpl[]): void {
+  for (const tool of tools) {
+    const existing = TOOLS.find(candidate => candidate.name === tool.name);
+    if (existing && existing !== tool) throw new Error(`Duplicate native tool: ${tool.name}`);
+    if (!existing) TOOLS.push(tool);
+  }
+}
 
 /** The native tool definitions (no handlers) for diagnostics/docs surfaces. */
 export function nativeToolDefs(): NativeToolDef[] {

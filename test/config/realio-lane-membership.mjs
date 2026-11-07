@@ -43,8 +43,12 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/company-context-store.test.ts', // concurrent context writer processes
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
+  'test/ecosystem-changelog-generator.test.ts', // spawnSync runs the changelog generator as a real child
+  'test/verse-standby-python-contract-02somp1.test.ts', // execFileSync runs the real python3 host_lease bridge
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
+  'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
   'test/repo-rank.test.ts', // Creates local Git evidence and runs the Python restock rank consumer.
@@ -101,6 +105,7 @@ export const REAL_IO_TEST_FILES = [
   'test/agentbootreport31ak1.test.ts', // spawnSync and spawn run the agent-boot-report script as real children
   'test/agentcapacitywatchcli31ak4.test.ts', // spawn runs the agent-wait-capacity script as a real child
   'test/artifactpackcli31ak3.test.ts', // spawnSync and spawn run the agent-artifact-pack script as real children
+  'test/bin-ashlr-entry.test.ts', // spawnSync runs `node bin/ashlr --version` as a real child
   'test/channel-ack-replay-31za.test.ts', // spawnSync runs the channel-ack-replay example as a real child
   'test/cli-legacy-exit-codes.test.ts', // spawnSync runs real CLI children to check exit codes
   'test/composer-commands-doc-31.test.ts', // execSync runs git show against origin/master as a real child
@@ -122,6 +127,7 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp-gateway-stdin-eof.test.ts', // spawn runs a real Node child for the gateway stdin lifecycle
   'test/no-orig-files-31.test.ts', // execSync runs git ls-files and grep as real children
   'test/perf-budget.test.ts', // spawnSync runs scripts/perf-budget.mjs as a real child
+  'test/perf-mcp-tools-list.test.ts', // spawnSync runs the MCP tools/list harness (real `phm mcp` gateway child)
   'test/phx-agentbusresume31j3.test.ts', // spawnSync runs the bus-resume example as a real child
   'test/phx-agentbusroundtask31k2.test.ts', // execFileSync runs the bus-task-roundtrip example as real children
   'test/phx-agentchangessnap31j2.test.ts', // spawnSync runs the job-changes example as a real child

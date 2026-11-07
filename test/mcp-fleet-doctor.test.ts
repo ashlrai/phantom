@@ -43,9 +43,12 @@ describe('phantom_fleet_doctor MCP tool', () => {
     expect(runFleetDoctor).not.toHaveBeenCalled();
   });
 
-  it.each([null, [], 'invalid'])('rejects non-object arguments: %j', async (args) => {
-    const result = await callNativeTool('phantom_fleet_doctor', args);
-    expect(result.isError).toBe(true);
+  it('rejects a non-object argument bag without running the doctor', async () => {
+    for (const raw of [null, 'x', [1]]) {
+      const result = await callNativeTool('phantom_fleet_doctor', raw);
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text)).toEqual({ error: 'Fleet observation tools accept no arguments' });
+    }
     expect(runFleetDoctor).not.toHaveBeenCalled();
   });
 

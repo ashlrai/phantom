@@ -26,6 +26,7 @@ import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
+import { isPagesApiPath, pagesApiGetResponse } from '../cos/pages.js';
 import { serveStatic } from './static.js';
 import { gcRunStreams } from '../run/streaming.js';
 import { resetVerseEngine } from '../verse/verse-api.js';
@@ -175,6 +176,16 @@ export async function startServer(
       sendJson(res, 401, { error: 'unauthorized: read session required' }, {
         Vary: 'Cookie, X-Ashlr-Token, X-Ashlr-Read-Client',
       });
+      return;
+    }
+
+    // Published report pages (`phm pages publish`): read-only payloads under
+    // the same read authority the gate above just checked. Dispatched here
+    // rather than inside handleApi so the Tier-1 import closure of api.ts is
+    // untouched; non-GET traffic falls through to handleApi and 404s.
+    if (method === 'GET' && isPagesApiPath(path)) {
+      const out = pagesApiGetResponse(path);
+      sendJson(res, out.status, out.body);
       return;
     }
 
