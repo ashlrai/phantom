@@ -158,7 +158,7 @@ export async function readSource(path: string, max: number, tail: boolean): Prom
   } finally { await file?.close().catch(() => undefined); }
 }
 
-export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number } = {}): Promise<FleetQueueV1> {
+export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
   const now = (opts.now ?? Date.now)();
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const [readySource, skipsSource] = await Promise.all([
@@ -230,6 +230,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const parkedState = statusParked.parked ? statusParked : poolParked;
     if (!row.id || !JOB_ID.test(row.id) || (!parkedState.parked && row.status !== 'READY')) { malformed++; continue; }
     const lane = (parkedState.parked ? parkedState.lane : null) ?? row.pool;
+    opts.onWaitingJob?.(lane, row.id);
     const counts = lanes.get(lane) ?? { lane, ready: 0, parked: 0, phantom: 0, other: 0, otherRepos: new Set<string>() };
     lanes.set(lane, counts);
     if (!parkedState.parked) {
