@@ -25,8 +25,10 @@ and each channel has display labels in
 
 Private chat to the configured bot ([`telegram-inbox-bridge.ts`](../src/core/comms/telegram-inbox-bridge.ts)).
 Verified as Mason when `comms.telegram.chatId` in the config matches the event's
-`senderUserId` (canonical ID: `telegram:<id>`). The first accepted message pairs
-that id; a later id is refused until `queue/telegram-pair.json` is removed.
+`senderUserId` (canonical ID: `telegram:<id>`). Explicitly enroll that private owner
+with `phm comms pair-telegram` on the local host, or send `/pair <code>` from the
+configured account using the existing private operator secret. A later identity
+is refused; setup never overwrites an existing pairing record.
 Plain language is enough: "how's the fleet?" returns the short glance, and any
 other sentence is an order in `MASON-INBOX.md`. Setup is the existing bot token
 and chat id ([operator glance](OPERATOR-GLANCE.md)).
