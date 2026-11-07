@@ -914,6 +914,66 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class DiffMetricsTests(unittest.TestCase):
+    def measure(self, scenario, base_override=None):
+        tmp = build(slots=held_lanes())
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        job = 'RQ-DIFF-METRICS'
+        wt = home / 'Projects/ashlrai/wt' / job
+        wt.mkdir()
+        other = home / 'Projects/ashlrai/wt' / 'other-repo'
+        other.mkdir()
+        subprocess.run(['git', '-C', str(other), 'init', '-q'], check=True, capture_output=True)
+        for i in range(30): (other / f'unrelated-{i}').write_text('unrelated\n')
+        def git(*args):
+            return subprocess.run(['git', '-C', str(wt), *args], check=True, capture_output=True, text=True).stdout.strip()
+        git('init', '-q')
+        git('config', 'user.name', 'Fixture')
+        git('config', 'user.email', 'fixture@example.invalid')
+        for i in range(30): (wt / f'prior-{i}').write_text('old\n')
+        (wt / 'job-file').write_text('before\n')
+        git('add', '.')
+        git('commit', '-qm', 'earlier repository work')
+        base = base_override or git('rev-parse', 'HEAD')
+        scenario(wt, git)
+        r = home / '.ashlr-runs'
+        for path, content in [(r / f'{job}.base', f'{base} phantom {wt} codex-cmp\n'),
+                              (r / f'{job}.log', 'finished\n')]:
+            path.write_text(content)
+            os.utime(path, (time.time() - 600, time.time() - 600))
+        (r / 'bin/reap-one.sh').write_text('#!/bin/sh\nexit 0\n')
+        (r / 'phantom-open-prs').write_text(f'{int(time.time())} 0\n')
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = [json.loads(line) for line in (r / 'metrics/jobs.jsonl').read_text().splitlines()]
+        return next(row for row in rows if row.get('event') == 'finish' and row.get('job') == job)
+
+    def test_committed_job_diff_excludes_prior_repository_work(self):
+        def scenario(wt, git):
+            (wt / 'job-file').write_text('after\n')
+            git('add', '.')
+            git('commit', '-qm', 'job change')
+        row = self.measure(scenario)
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, 2, False))
+
+    def test_zero_line_mode_change_and_empty_tree(self):
+        row = self.measure(lambda wt, git: (wt / 'job-file').chmod(0o755))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, 0, False))
+        row = self.measure(lambda wt, git: (wt / 'BRIDGE_NOTES.md').write_text('notes\n'))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (0, 0, True))
+
+    def test_untracked_and_binary_lines_are_unavailable(self):
+        row = self.measure(lambda wt, git: (wt / 'new-file').write_text('new\n'))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, None, False))
+        row = self.measure(lambda wt, git: (wt / 'job-file').write_bytes(b'\x00binary'))
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (1, None, False))
+
+    def test_missing_base_records_unknown_instead_of_zero(self):
+        row = self.measure(lambda wt, git: None, base_override='0' * 40)
+        self.assertEqual((row['diff_files'], row['diff_lines'], row['empty']), (None, None, None))
+
+
 class SnapshotSafetyTests(unittest.TestCase):
     def preserved_fixture(self, lane='codex-cmp'):
         tmp = build(slots=held_lanes())
