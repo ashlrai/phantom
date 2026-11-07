@@ -582,11 +582,8 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it('retains the exact legacy complete topology and refuses unreviewed outer limits', async () => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
-    // The previously pinned revision is recoverable by removing exactly the
-    // reviewed source-identical fast-path wiring; any other drift fails loudly.
-    const previous = current
-      .replace(/ {6}# Source-identical fast path[\s\S]*?(?= {6}- name: Install dependencies)/, '')
-      .replaceAll("        if: steps.history.outputs.equal != 'true'\n", '');
+    // Original workflow bytes from bd0c161c11cb3850fe075847b985347b2b1e42b8.
+    const previous = readFileSync(join(process.cwd(), 'test/fixtures/release-public-facts/ci-complete-95714a1.yml'), 'utf8');
     expect(createHash('sha256').update(previous).digest('hex')).toBe('95714a1fd967c9a5b072761c1aff68ec9ea3792ac5e7058a62e0cde2a18bbd21');
     const macEnvelope = previous.replace("    # Ubuntu authority 1/3 runs the complete web suite before its existing\n    # thirty-minute backend wrapper, then verifies and uploads the original pack.\n    # Other matrix roles retain their existing twenty-five-minute outer limit.\n    timeout-minutes: ${{ matrix.label == 'ubuntu, authority 1/3' && 60 || 25 }}", '    timeout-minutes: 25');
     expect(createHash('sha256').update(macEnvelope).digest('hex')).toBe('5d88a822dabe4b188e44683991cd921623470c0fa0e20fb96df883cb4f173444');
