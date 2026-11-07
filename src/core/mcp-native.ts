@@ -38,19 +38,7 @@ import {
   TOOL_TRUNCATION_MARK,
   type NativeToolResult,
 } from './knowledge/index.js';
-import { recall } from './genome/recall.js';
-import { ask } from './knowledge/ask.js';
-import { impact } from './knowledge/graph.js';
-import { computeHealth } from './quality/health.js';
-import { loadPreviousReport } from './quality/store.js';
-import { buildRollup } from './observability/rollup.js';
-import { buildSnapshot } from './dashboard.js';
-import { buildOrientation } from './orient.js';
-import { selectGenomeSync, selectInboxStore, selectBacklogSource } from './seams/index.js';
-import { loadDaemonState, loadDaemonStateStrict } from './daemon/state.js';
-import { buildFleetDigest } from './fleet/digest.js';
-import { computeQualityMetrics } from './fleet/quality-metrics.js';
-import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversight-export.js';
+import type { OversightSnapshot } from './fleet/oversight-export.js';
 import { readDecisions } from './fleet/decisions-ledger.js';
 import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
@@ -58,10 +46,14 @@ import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
 
-// M169: best-effort imports for new elite-state tools
-// Each is wrapped in a lazy async import inside the handler so module-level
-// import failures never crash mcp-native at load time.
-// (Types only — runtime imports done lazily in handlers below.)
+// Handler-only dependencies are imported lazily inside each handler so
+// `tools/list` pays for schemas and the safety gate only — not the ~300-file
+// dashboards/seams/orient/knowledge graphs — and a missing build can never
+// crash mcp-native at load time. Static imports remain for symbols the tool
+// DEFINITIONS and callNativeTool's structural gates need synchronously:
+// schema objects (proactive, team, fleet apps, drop-job enums), killSwitchOn,
+// audit, scrubSecrets/textResult output hygiene, and listProposals/
+// readDecisions behind the synchronous deriveRoutingData contract.
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -591,6 +583,7 @@ const TOOLS: NativeToolImpl[] = [
           return { error: `repo '${repo}' is not a directory. Pass an existing repo checkout's full path.` };
         }
       }
+      const { buildOrientation } = await import('./orient.js');
       return buildOrientation(cfg, repo);
     },
   },
@@ -610,7 +603,7 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (args) =>
       // allowCloud is HARDCODED false (CONTRACT-M31 invariant 3).
-      ask(String(args['question']), {
+      (await import('./knowledge/ask.js')).ask(String(args['question']), {
         repo: typeof args['repo'] === 'string' ? args['repo'] : undefined,
         allowCloud: false,
       }),
@@ -632,6 +625,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, cfg) => {
       const rawLimit = typeof args['limit'] === 'number' ? args['limit'] : 5;
       const limit = Math.max(1, Math.min(20, Math.floor(rawLimit)));
+      const { recall } = await import('./genome/recall.js');
       const hits = await recall(String(args['query']), cfg, { limit });
       return hits.map((h) => ({
         title: h.entry.title,
@@ -660,6 +654,7 @@ const TOOLS: NativeToolImpl[] = [
     },
     safety: 'append',
     handler: async (args, cfg) => {
+      const { selectGenomeSync } = await import('./seams/index.js');
       const genome = selectGenomeSync(cfg);
       // hubOnly FORCED true: an agent can never drop a note file into a repo
       // working tree via this surface (CONTRACT-M31 invariant 4).
@@ -688,6 +683,7 @@ const TOOLS: NativeToolImpl[] = [
     },
     safety: 'read',
     handler: async (args, cfg) => {
+      const { selectBacklogSource } = await import('./seams/index.js');
       const backlog = selectBacklogSource(cfg).load();
       if (!backlog) {
         return {
@@ -730,6 +726,7 @@ const TOOLS: NativeToolImpl[] = [
         // computeHealth hard-errors on non-enrolled repos (core invariant);
         // surface that as a normal message, not a tool crash.
         try {
+          const { computeHealth } = await import('./quality/health.js');
           const score = await computeHealth(repo);
           return {
             repo: score.repo,
@@ -745,6 +742,7 @@ const TOOLS: NativeToolImpl[] = [
           return { error: err instanceof Error ? err.message : String(err) };
         }
       }
+      const { loadPreviousReport } = await import('./quality/store.js');
       const report = loadPreviousReport();
       if (!report) {
         return { note: 'No health report recorded — run `ashlr health` (CLI) first.' };
@@ -765,6 +763,7 @@ const TOOLS: NativeToolImpl[] = [
     inputSchema: { type: 'object', properties: {} },
     safety: 'read',
     handler: async (_args, cfg) => {
+      const { buildSnapshot } = await import('./dashboard.js');
       const snap = await buildSnapshot(cfg);
       return {
         generatedAt: snap.generatedAt,
@@ -789,7 +788,7 @@ const TOOLS: NativeToolImpl[] = [
       required: ['target'],
     },
     safety: 'read',
-    handler: async (args) => impact(String(args['target'])),
+    handler: async (args) => (await import('./knowledge/graph.js')).impact(String(args['target'])),
   },
   {
     name: 'ashlr_pulse',
@@ -806,6 +805,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, cfg) => {
       const w = args['window'];
       const window = w === '1d' || w === '7d' || w === '30d' ? w : '7d';
+      const { buildRollup } = await import('./observability/rollup.js');
       return buildRollup(window, cfg);
     },
   },
@@ -827,6 +827,7 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (args, cfg) => {
       const status = typeof args['status'] === 'string' ? (args['status'] as ProposalStatus) : undefined;
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposals = selectInboxStore(cfg).list(status ? { status } : undefined);
       return proposals.map((p) => ({
         id: p.id,
@@ -879,6 +880,7 @@ const TOOLS: NativeToolImpl[] = [
       if (kind !== 'patch' && kind !== 'pr' && kind !== 'note') {
         return { error: `invalid kind "${kind}" — agent proposals may be patch | pr | note` };
       }
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo: typeof args['repo'] === 'string' ? args['repo'] : null,
         origin: 'agent',
@@ -954,6 +956,7 @@ const TOOLS: NativeToolImpl[] = [
       }
 
       // Create a PENDING proposal — NEVER execute here.
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo,
         origin: 'agent',
@@ -994,6 +997,8 @@ const TOOLS: NativeToolImpl[] = [
     safety: 'read',
     handler: async (_args, cfg) => {
       // loadDaemonState and buildFleetDigest both never throw.
+      const { loadDaemonState, loadDaemonStateStrict } = await import('./daemon/state.js');
+      const { buildFleetDigest } = await import('./fleet/digest.js');
       const ds = loadDaemonState();
       let budget: import('./fleet/budget-view.js').FleetBudget | null;
       try { budget = (await import('./fleet/budget-view.js')).fleetBudget(cfg, loadDaemonStateStrict()); } catch { budget = null; }
@@ -1040,6 +1045,7 @@ const TOOLS: NativeToolImpl[] = [
     handler: async (args, _cfg) => {
       const w = args['window'];
       const window = w === '7d' || w === '30d' || w === 'all' ? w : '7d';
+      const { computeQualityMetrics } = await import('./fleet/quality-metrics.js');
       return computeQualityMetrics(window);
     },
   },
@@ -1057,6 +1063,7 @@ const TOOLS: NativeToolImpl[] = [
       // buildOversightSnapshot accepts PulseExportCfg; AshlrConfig is structurally
       // compatible (both have optional pulse?: { enabled?, endpoint? }).
       // The cfg arg is currently void'd inside the function but passed for future scoping.
+      const { buildOversightSnapshot } = await import('./fleet/oversight-export.js');
       const snap: OversightSnapshot = buildOversightSnapshot(cfg as { pulse?: { enabled?: boolean; endpoint?: string } });
       return snap;
     },
@@ -1319,6 +1326,7 @@ const TOOLS: NativeToolImpl[] = [
       }
 
       // Create a PENDING proposal — NEVER execute here.
+      const { selectInboxStore } = await import('./seams/index.js');
       const proposal = selectInboxStore(cfg).create({
         repo,
         origin: 'agent',
