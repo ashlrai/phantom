@@ -193,6 +193,9 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'fleet-runs': 'handleFleetRunsApi',
   'fleet-comms-status': 'handleFleetCommsStatusApi',
   'fleet-cos': 'handleFleetCosApi',
+  // The desktop command center's own reads: runs, chief-of-staff intake, the
+  // staged self-update status line and memory.
+  'app-update': 'handleAppUpdateApi',
   'cos-memory': 'handleCosMemoryApi',
   team: 'handleTeamApi',
   // 3.16: run many agents — the board, agent workspaces, Checks, Plan first, spend caps.
@@ -329,10 +332,10 @@ describe('the real workbench mount table', () => {
 
   it('resolves a landed module to its named handler, and an absent one to "not landed"', async () => {
     setWorkbenchApiModulesForTest(null);
-    for (const entry of workbenchApiModules()) {
+    const loaded = await Promise.all(workbenchApiModules().map(async (entry) => ({ entry, handler: await entry.load() })));
+    for (const { entry, handler } of loaded) {
       const family = WORKBENCH_ROUTE_FAMILIES.find((f) => f.id === entry.id)!;
       const landed = fs.existsSync(path.join(REPO, family.module));
-      const handler = await entry.load();
       if (landed) expect(typeof handler, `${family.id} landed at ${family.module} but did not export ${family.handler}`).toBe('function');
       else expect(handler, `${family.id} has not landed, so it must be a clean "not landed"`).toBeNull();
     }

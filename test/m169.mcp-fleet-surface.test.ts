@@ -118,7 +118,7 @@ vi.mock('../src/core/comms/requests.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
+import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 import { nativeToolDefs, callNativeTool } from '../src/core/mcp-native.js';
 
 // ---------------------------------------------------------------------------

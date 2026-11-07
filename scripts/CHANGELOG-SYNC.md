@@ -16,7 +16,10 @@ scripts/changelog-sync verify --snapshot snapshot.json
 
 Update defaults to a dry run. It selects the first heading marked Unreleased,
 preserves manual text and historical sections, and replaces only its generated
-HTML comment block. Missing or malformed headings and markers fail closed.
+HTML comment block. Repeated section headings are tolerated on update — the
+first match is the live section, so changelogs that keep historical
+`## [Unreleased] — <milestone>` sections still sync. Missing or malformed
+headings and markers fail closed.
 Conventional PR titles and direct commit subjects become Added, Fixed,
 Performance, Reverted, or Changed entries. An exclamation mark records a breaking
 change. Non-conventional subjects are omitted. PR merge and constituent commit
@@ -35,8 +38,9 @@ No network request or credential discovery occurs in the script.
 Verification requires `releases`, containing `tagName`, `body`, and `isDraft`,
 and all release `tags` as strings. Omit `tags` to read all local tags; fetch a
 complete tag history through the authorized transport first. Every supplied tag
-must have exactly one non-draft release and one nonempty matching changelog
-section. Only outer whitespace and CRLF are normalized; content drift fails.
+must have exactly one non-draft release and exactly one matching changelog
+section — a tag that names a duplicated `## [x.y.z]` heading fails. Only outer
+whitespace and CRLF are normalized; content drift fails.
 An empty tag inventory fails. Non-release tags should be excluded explicitly in
 the snapshot. Snapshot completeness and branch/range scoping are the exporting
 transport's responsibility; offline verification cannot authenticate a snapshot.

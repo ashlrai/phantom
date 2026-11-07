@@ -28,6 +28,7 @@ export function formatLaneModelDrift(report: LaneModelDriftReport, all = false):
 }
 
 export async function cmdFleetLaneModelDrift(args: string[]): Promise<number> {
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
   const bad = rejectUnknownOptions(args, { flags: ['--all', '--json'], values: ['--runs-dir', '--models'] });
   if (bad) {
     process.stderr.write(red('error: ') + `fleet lane-model-drift: ${bad.message}\n${USAGE}\n`);

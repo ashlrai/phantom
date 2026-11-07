@@ -11,7 +11,7 @@ export interface CosTaskSummary {
   /** Draft origin channel when a draft exists, else the intake channel. */
   channel: string;
   needsYou: boolean;
-  delivery: 'sending' | 'sent' | 'uncertain' | null;
+  delivery: 'sending' | 'sent' | 'uncertain' | 'declined' | null;
   hasDraft: boolean;
   /** Scope collapsed to one line, scrubbed, at most 140 characters. */
   request: string;

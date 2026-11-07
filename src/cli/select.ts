@@ -1,11 +1,14 @@
 /** `phm select`: rank candidates, fund the top few as READY lines, record the picks. Logic lives in core/routing/selector. */
+import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { appendBusInbox, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
+import { collectFrictionTop, frictionLedgerPath, type FrictionItem } from '../core/fleet/friction-ledger.js';
 import { learnOutcomes } from '../core/routing/outcome-learning.js';
 import {
-  DEFAULT_FUND_COUNT, fundedIds, parseCandidates, pickRecords, rankCandidates, readyLine, type SelectorResult,
+  DEFAULT_FUND_COUNT, fundedIds, parseCandidates, pickRecords, rankCandidates, readyLine,
+  type SelectorCandidate, type SelectorResult,
 } from '../core/routing/selector.js';
 import { selectorSchedule } from '../core/routing/selector-schedule.js';
 
@@ -21,10 +24,20 @@ posts a summary to the local bus inbox. A candidate already in picks.jsonl is no
              Default: <runs-dir>/selector/candidates.jsonl
 --events <file>      Dispatch event log the minutes, usage and merge rate are learned from.
              Default: <runs-dir>/queue/dispatch-events.log
+--friction <file>    Friction ledger (JSONL): top open items join the pool as RQ-FRICTION-*
+             ids carrying friction_id=<item id>. Default: ~/.ashlr/friction-ledger.jsonl
 --runs-dir   Default: $ASHLR_RUNS_DIR or ~/.ashlr-runs
 schedule     Preview the hourly launchd agent (macOS); --write installs the plist without loading it.`;
 
 const MAX_BYTES = 8 * 1024 * 1024;
+
+/** A top ledger item becomes one candidate: a stable RQ-FRICTION id (picks.jsonl dedupes it) and the ledger id end to end. */
+export function frictionCandidate(item: FrictionItem): SelectorCandidate {
+  const id = `RQ-FRICTION-${createHash('sha256').update(item.id).digest('hex').slice(0, 24).toUpperCase()}`;
+  return { id, scope: `${item.title} — ${item.detail}`.slice(0, 400), acceptance: '', repo: item.repo,
+    jobType: 'friction', priority: 'P2', value: Math.max(1, item.score), leverage: 1, pool: 'claude',
+    tier: 'work', estMinutes: null, estUsage: null, frictionId: item.id };
+}
 
 export interface SelectDeps {
   now?: () => Date;
@@ -40,7 +53,7 @@ async function readCapped(path: string): Promise<string | null> {
   } catch { return null; }
 }
 
-interface Parsed { json: boolean; dryRun: boolean; top: number; candidates?: string; events?: string; runsDir?: string }
+interface Parsed { json: boolean; dryRun: boolean; top: number; candidates?: string; events?: string; runsDir?: string; friction?: string }
 
 function parse(args: string[]): Parsed | null {
   const p: Parsed = { json: false, dryRun: false, top: DEFAULT_FUND_COUNT };
@@ -51,15 +64,15 @@ function parse(args: string[]): Parsed | null {
     seen.add(arg);
     if (arg === '--json') p.json = true;
     else if (arg === '--dry-run') p.dryRun = true;
-    else if (arg === '--top' || arg === '--candidates' || arg === '--events' || arg === '--runs-dir') {
+    else if (arg === '--top' || arg === '--candidates' || arg === '--events' || arg === '--runs-dir' || arg === '--friction') {
       const value = args[++i];
       if (value === undefined || value.startsWith('--')) return null;
       if (arg === '--top') {
         if (!/^\d{1,3}$/.test(value)) return null;
         p.top = Number(value);
-      } else if (arg === '--runs-dir') {
+      } else if (arg === '--runs-dir' || arg === '--friction') {
         if (!isAbsolute(value)) return null;
-        p.runsDir = value;
+        if (arg === '--runs-dir') p.runsDir = value; else p.friction = value;
       } else p[arg === '--candidates' ? 'candidates' : 'events'] = value;
     } else return null;
   }
@@ -105,6 +118,10 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
   const events = await readCapped(parsed.events ?? join(root, 'queue', 'dispatch-events.log')) ?? '';
 
   const { candidates, rejected } = parseCandidates(candidateText);
+  // The ledger is a second candidate pool: top open items fund RQ-FRICTION-* lines (noop churn absorbed first; dry run writes nothing).
+  const top = collectFrictionTop(parsed.friction ?? frictionLedgerPath(homedir()),
+    parsed.dryRun ? undefined : join(root, 'queue', 'noop-streak.json'), 20);
+  candidates.push(...top.map(frictionCandidate).filter((c) => !candidates.some((f) => f.id === c.id)));
   const result: SelectorResult = rankCandidates(candidates, learnOutcomes(events), {
     count: parsed.top, rejected, exclude: fundedIds(await readCapped(picksPath) ?? ''),
   });

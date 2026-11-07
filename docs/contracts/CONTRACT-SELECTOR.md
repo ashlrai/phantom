@@ -31,6 +31,14 @@ duplicate row is counted as `rejected`, never fatal. Scope and acceptance are
 untrusted text: control characters and parentheses are removed so a candidate
 cannot add fields, jobs, or dependencies to the line it produces.
 
+A candidate row may also carry `friction_id` (a ledger id): the READY line
+names `friction_id=<id>` in its attr group and the picks log records
+`frictionId`. `--friction` points at the ledger (default
+`~/.ashlr/friction-ledger.jsonl`): its top open items join the pool as
+`RQ-FRICTION-<sha256-24>` candidates after each run absorbs PSEL-4 noop
+churn from `<runs-dir>/queue/noop-streak.json`. A closed item is reopened
+by nothing automatic; only the pick grader's 7d grade closes it.
+
 ## Funding
 
 `phm select` takes the top `--top` (default 5) candidates that are not already

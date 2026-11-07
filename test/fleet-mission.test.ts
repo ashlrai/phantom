@@ -193,3 +193,17 @@ describe('mission route', () => {
     expect(JSON.parse(wire)).toMatchObject({ schema: 'fleet.mission.v1', overview: { health: 'unknown' } });
   });
 });
+
+it('projects recorded merge timestamps and leader log without inferring billing', async () => {
+  const dir = await root();
+  await mkdir(join(dir, 'metrics'), { recursive: true });
+  await mkdir(join(dir, 'leader'), { recursive: true });
+  const event = { event: 'merged', pr: 'https://github.com/ashlrai/phantom/pull/42', ts: '2026-11-02T04:00:00Z', costUsd: 99 };
+  await writeFile(join(dir, 'metrics', 'jobs.jsonl'), [event, { ...event, ts: '2026-11-02T03:30:00Z' }, event, { ...event, ts: '2027-01-01T00:00:00Z' }].map((row) => JSON.stringify(row)).join('\n'));
+  await writeFile(join(dir, 'leader', 'PLAN-LOG.md'), '# Leader\n- Keep main green\n');
+  const view = await readMissionControl({ runsDir: dir, now: () => NOW });
+  expect(view.timeline).toEqual([{ pr: 'ashlrai/phantom#42', at: event.ts }]);
+  expect(view.planLog.points).toContain('Keep main green');
+  expect(view.costPerMergedPrUsd).toBeNull();
+  expect(view.mergeQueue).toBe('unknown');
+});

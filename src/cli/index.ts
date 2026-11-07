@@ -49,6 +49,8 @@
  *   swarms [--json]            List past swarm runs.
  *   tui [--once]               Interactive terminal dashboard (alias: dash).
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+ *   pages publish <file> [opts]  Publish a Markdown/JSON report into the local dashboard (/pages/<slug>).
+ *   pages list [--json]          List published report pages.
  *   verse [--port N] [--no-open]  Ashlr Verse console (serve with dispatch on) at /verse/.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
@@ -433,6 +435,14 @@ const loadDashboardCmd = lazyCmd(
   'dashboard command requires src/cli/dashboard.ts (M211 module not yet built).',
 );
 
+// ─── COS report pages command loader ────────────────────────────────
+
+const loadPagesCmd = lazyCmd(
+  () => import('./pages.js' as unknown as string),
+  (m) => m.cmdPages as Cmd,
+  'pages command requires src/cli/pages.ts.',
+);
+
 // ─── M14 command loader ────────────────────────────────────────────
 
 const loadServeCmd = lazyCmd(
@@ -713,6 +723,11 @@ const loadChannelsCmd = lazyCmd(
   () => import('./channels.js'),
   (m) => m.cmdChannels as Cmd,
   'channels command requires src/cli/channels.ts (RQ-CHANNELS-18 module not yet built).',
+);
+const loadForumCmd = lazyCmd(
+  () => import('./forum.js'),
+  (m) => m.cmdForum as Cmd,
+  'forum command requires src/cli/forum.ts.',
 );
 
 // ─── M257 director command loader ────────────────────────────────────────────
@@ -2091,6 +2106,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pr': {
+        if (rest[0] !== 'cockpit') { console.error('Usage: phm pr cockpit --repo owner/name [--json]'); process.exitCode = 2; break; }
+        const { cmdPrCockpit } = await import('./pr-cockpit.js');
+        process.exitCode = await cmdPrCockpit(rest.slice(1));
+        break;
+      }
+
       case 'autopilot': {
         const { cmdAutopilot } = await import('./autopilot.js');
         process.exitCode = await cmdAutopilot(rest);
@@ -2283,6 +2305,15 @@ async function main(): Promise<void> {
       }
 
       case 'app': {
+        if (rest[0] === 'state') {
+          const { cmdFleetMission } = await import('./fleet-mission.js');
+          process.exitCode = await cmdFleetMission(rest.slice(1));
+          break;
+        }
+        if (rest.length === 1 && wantsHelp(rest)) {
+          console.log('Usage: phm app state [--json]\n       phm app update status [--json]');
+          break;
+        }
         process.exitCode = await (await import('./app.js')).cmdApp(rest);
         break;
       }
@@ -2355,6 +2386,14 @@ async function main(): Promise<void> {
         // opens browser. `--stop` / `--status` subcommands also supported.
         const cmdDashboard = await loadDashboardCmd();
         process.exitCode = await cmdDashboard(rest);
+        break;
+      }
+
+      case 'pages': {
+        // COS report pages: publish a .md/.json report into the loopback
+        // dashboard at /pages/<slug>, or list published pages.
+        const cmdPages = await loadPagesCmd();
+        process.exitCode = await cmdPages(rest);
         break;
       }
 
@@ -2744,6 +2783,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'forum': {
+        const cmdForum = await loadForumCmd();
+        process.exitCode = await cmdForum(rest);
+        break;
+      }
+
       case 'director': {
         // M257 → 3.14: retired (the Leader handles this); prints a notice and the read-only god-view.
         const cmdDirector = await loadDirectorCmd();
@@ -2860,6 +2905,12 @@ async function main(): Promise<void> {
 
       case 'agents': {
         // Agent Bus v2 contract (docs/AGENT-BUS.md "v2"); read-only, no bus access.
+        // `agents list|show|validate|versions` read portable profiles (docs/AGENT-PROFILES.md).
+        if (rest[0] === undefined || ['list', 'show', 'validate', 'versions', 'help', '--help', '-h'].includes(rest[0])) {
+          const { cmdAgents } = await import('./agents.js');
+          process.exitCode = await cmdAgents(rest);
+          break;
+        }
         const cmdAgents = await loadAgentsCmd();
         process.exitCode = await cmdAgents(rest);
         break;

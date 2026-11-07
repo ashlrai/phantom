@@ -7,6 +7,8 @@
  * Never writes. A missing or unreadable file degrades its own slice.
  * Symlinks are not followed. Free text is scrubbed; paths and prompts drop out.
  */
+import { forumRoot, readForum } from './forum/service.js';
+import { sanitizePublicJson } from '../util/public-json.js';
 import { constants } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -413,7 +415,8 @@ export function emptyMission(nowMs: number): MissionControlV1 {
     generatedAt: new Date(nowMs).toISOString(),
     overview: missionOverview({ reported: false, mergesReported: false, merges: 0, mains: [], incidents: [], resources: [], memory }),
     sources, jobs: [], decisions: [], resources: [], merges: [], mains: [], incidents: [], memory,
-    plan: { title: null, points: [] },
+    plan: { title: null, points: [] }, planLog: { title: null, points: [] },
+    activity: [], timeline: [], costPerMergedPrUsd: null, mergeQueue: 'unknown', forum: null,
   };
 }
 
@@ -479,7 +482,7 @@ export async function readMissionControl(opts: { runsDir?: string; now?: () => n
   if (!root) return emptyMission(nowMs);
   const view = emptyMission(nowMs);
   view.generatedAt = new Date(nowMs).toISOString();
-  const [runs, models, memstat, memguard, resourcesFile, usageFile, queueEvents, rootEvents, metrics, queueJobs, mains, incidentsFile, planFile] = await Promise.all([
+  const [runs, models, memstat, memguard, resourcesFile, usageFile, queueEvents, rootEvents, metrics, queueJobs, mains, incidentsFile, planFile, planLog, forum] = await Promise.all([
     readFleetRunsDirState({ runsDir: root, now: () => nowMs }).catch(() => null),
     getLaneModelSnapshot({ runsDir: root, now: () => new Date(nowMs) }).catch(() => null),
     readText(join(root, 'memstat.json'), 1024 * 1024, false),
@@ -493,8 +496,13 @@ export async function readMissionControl(opts: { runsDir?: string; now?: () => n
     readMains(root),
     readText(join(root, 'leader', 'INCIDENTS.md'), 128 * 1024, false),
     readText(join(root, 'leader', 'VISION.md'), 64 * 1024, false),
+    readText(join(root, 'leader', 'PLAN-LOG.md'), 64 * 1024, false),
+    readForum({ limit: 30 }, { root: forumRoot(), now: () => new Date(nowMs) }).catch(() => null),
   ]);
+  view.forum = forum?.ok ? sanitizePublicJson(forum.view) as typeof forum.view : null;
+  if (planLog.state === 'healthy') view.planLog = parsePlan(planLog.text);
   if (runs) {
+    view.activity = runs.claimed.slice(0, 50).map(({ job, lane, at }) => ({ job: prose(job), lane: prose(lane), at }));
     view.sources.runs = runs.runsDirPresent ? runs.sources.status : 'missing';
     const hints: MissionModelHint[] = models?.lanes.map((lane) => ({
       lane: lane.lane, tiers: lane.tiers, lastLaunch: lane.lastLaunch,
@@ -526,7 +534,17 @@ export async function readMissionControl(opts: { runsDir?: string; now?: () => n
   if (events.state === 'healthy') view.decisions = parseRouterDecisions(events.text);
   const jobs = metrics.state === 'healthy' ? metrics : queueJobs;
   view.sources.merges = jobs.state;
-  if (jobs.state === 'healthy') view.merges = projectMerges(jobs.text, nowMs);
+  if (jobs.state === 'healthy') {
+    if (parseJobsJsonl(jobs.text).dropped > 0) view.sources.merges = 'degraded';
+    view.merges = projectMerges(jobs.text, nowMs);
+    const merged = new Map<string, { pr: string; at: string }>();
+    for (const event of parseJobsJsonl(jobs.text).events) {
+      if (event.merge && event.pr && event.at && stamp(event.at) && Date.parse(event.at) <= nowMs
+        && Date.parse(merged.get(event.pr)?.at ?? '1970-01-01T00:00:00Z') <= Date.parse(event.at))
+        merged.set(event.pr, { pr: event.pr, at: event.at });
+    }
+    view.timeline = [...merged.values()].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 50);
+  }
   view.sources.mains = mains.state;
   view.mains = mains.mains;
   view.sources.incidents = incidentsFile.state;

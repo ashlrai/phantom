@@ -1,4 +1,5 @@
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
+import { handleMissionStream } from './verse-stream.js';
 import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { VERSE_FLEET_LANE_MODELS_PATH, toFleetLaneModelsV1, type FleetLaneModelsV1 } from './fleet-lane-models-contract.js';
 import { homedir } from 'node:os';
@@ -288,6 +289,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     catch { return emptyMission(now()); }
   }
   return async (ctx, req, res, path, method) => {
+    if (path === `${VERSE_FLEET_MISSION_PATH}/events`) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.readSession) { sendJson(res, 401, { error: 'Read session required.' }); return true; }
+      const { forumRoot } = await import('../fleet/forum/service.js');
+      await handleMissionStream(req, res, ctx.readSession, [deps.runsDir ?? defaultRunsDir(), forumRoot()]);
+      return true;
+    }
     if (path === VERSE_FLEET_MISSION_PATH) {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       if (!missionFlight && (!missionCache || now() - missionCache.at >= 2000)) {
