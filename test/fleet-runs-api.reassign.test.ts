@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createFleetRunsApi, VERSE_FLEET_RUNS_REASSIGN_PATH as PATH } from './fleet-runs-api.js';
-import { ReassignError, type ReassignInput, type ReassignOptions, type ReassignReportV1 } from '../fleet/runs-reassign.js';
-import type { VerseApiContext } from './verse-api.js';
+import { createFleetRunsApi, VERSE_FLEET_RUNS_REASSIGN_PATH as PATH } from '../src/core/verse/fleet-runs-api.js';
+import { ReassignError, type ReassignInput, type ReassignOptions, type ReassignReportV1 } from '../src/core/fleet/runs-reassign.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'runs-reassign-')); });

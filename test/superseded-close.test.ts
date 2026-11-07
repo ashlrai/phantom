@@ -2,8 +2,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { closeSupersededPrs, planSupersededClose, type SupersededCloseRunner } from './superseded-close.js';
-import type { MergedFleetPr, OpenFleetPr } from './superseded-prs.js';
+import { closeSupersededPrs, planSupersededClose, type SupersededCloseRunner } from '../src/core/fleet/superseded-close.js';
+import type { MergedFleetPr, OpenFleetPr } from '../src/core/fleet/superseded-prs.js';
 
 const open: OpenFleetPr[] = [
   { number: 2461, title: 'bridge: RQ-PHX-FAKE1: first fake', mergeStateStatus: 'DIRTY' },

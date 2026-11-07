@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createFleetRunsApi } from './fleet-runs-api.js';
-import { VERSE_FLEET_RUNS_STOP_PATH as PATH, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
-import type { VerseApiContext } from './verse-api.js';
+import { createFleetRunsApi } from '../src/core/verse/fleet-runs-api.js';
+import { VERSE_FLEET_RUNS_STOP_PATH as PATH, type JobStopResult, type StopJobOptions } from '../src/core/fleet/job-stop.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'runs-stop-')); });

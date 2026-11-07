@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { findJobProcesses, JOB_STOPS_FILE, stopJob, type JobProcessReaders } from './job-stop.js';
+import { findJobProcesses, JOB_STOPS_FILE, stopJob, type JobProcessReaders } from '../src/core/fleet/job-stop.js';
 
 const JOB = 'RQ-PHX-JOB1';
 const processes = [

@@ -2,11 +2,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { validateBusEnvelope } from './bus-envelope.js';
-import { CHANNEL_BUS_TTL_MS } from './channel-bus-publish.js';
-import { buildResetReleaseEnvelope, postResetReleaseNotice } from './reset-release-bus-notice.js';
-import { runResetReleaseOnce, type ResetReleaseRecord } from './usage-reset-release.js';
-import type { UsageResetRow } from './usage-reset-detect.js';
+import { validateBusEnvelope } from '../src/core/fleet/bus-envelope.js';
+import { CHANNEL_BUS_TTL_MS } from '../src/core/fleet/channel-bus-publish.js';
+import { buildResetReleaseEnvelope, postResetReleaseNotice } from '../src/core/fleet/reset-release-bus-notice.js';
+import { runResetReleaseOnce, type ResetReleaseRecord } from '../src/core/fleet/usage-reset-release.js';
+import type { UsageResetRow } from '../src/core/fleet/usage-reset-detect.js';
 
 const at = '2026-10-31T19:28:00.000Z';
 const now = () => Date.parse(at);

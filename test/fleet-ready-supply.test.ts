@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleetReadySupply } from './fleet-ready-supply.js';
-import type { ReadySupplyV1 } from '../core/fleet/ready-supply.js';
+import { cmdFleetReadySupply } from '../src/cli/fleet-ready-supply.js';
+import type { ReadySupplyV1 } from '../src/core/fleet/ready-supply.js';
 
 const sample: ReadySupplyV1 = {
   v: 1, generatedAt: '2026-11-01T00:00:00.000Z', sourceState: 'healthy', rows: 3, dropped: 0,

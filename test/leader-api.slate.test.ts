@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { expect, it, vi } from 'vitest';
-import { handleLeaderApi, setLeaderApiHooksForTest } from './leader-api.js';
-import type { VerseApiContext } from './verse-api.js';
-import type { PlannerRunResult } from '../fleet/planner-run.js';
+import { handleLeaderApi, setLeaderApiHooksForTest } from '../src/core/verse/leader-api.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+import type { PlannerRunResult } from '../src/core/fleet/planner-run.js';
 vi.mock('node:fs', async importOriginal => {
   const original = await importOriginal<typeof import('node:fs')>();
   return { ...original, existsSync: (path: string) => /\/(codex|claude)$/.test(path) ? path === '/opt/homebrew/bin/codex' : original.existsSync(path) };
