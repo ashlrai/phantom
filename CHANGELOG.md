@@ -25,11 +25,18 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Add validated agent checkpoint handoffs and the read-only `phm checkpoint resume` command ([#3921](https://github.com/ashlrai/phantom/pull/3921)).
 - Add explicit local delivery acknowledgments and receipt metadata to bus threads ([#3912](https://github.com/ashlrai/phantom/pull/3912)).
 - Add a read-only fleet status API projection through `phm fleet status-api --json` ([#3870](https://github.com/ashlrai/phantom/pull/3870)).
+- `phm disk` reports worktree and quarantine sizes, free space and conservative cleanup eligibility without deleting files. Unreadable evidence stays unknown. ([#3349](https://github.com/ashlrai/phantom/pull/3349)).
+- Fleet adds read-only lane trim suggestions and abort summaries, including a GitHub push failure signal. Idle-lane reports can identify lanes stuck after a measured period of inactivity. ([#3375](https://github.com/ashlrai/phantom/pull/3375), [#3370](https://github.com/ashlrai/phantom/pull/3370), [#3371](https://github.com/ashlrai/phantom/pull/3371)).
+- Fleet draft checks validate batches against a single `origin/master` snapshot and report path collisions. MCP tools expose batch prechecks and bounded job and path history as advisory evidence, not dispatch or merge authorization. ([#3345](https://github.com/ashlrai/phantom/pull/3345), [#3365](https://github.com/ashlrai/phantom/pull/3365), [#3389](https://github.com/ashlrai/phantom/pull/3389), [#3376](https://github.com/ashlrai/phantom/pull/3376)).
 
 ### Changed
 
 - Add fleet links and recent merges to phone Home, preserving unknown and unavailable states ([#3932](https://github.com/ashlrai/phantom/pull/3932)).
 - Show per-lane observability details and resource usage information in the console ([#3910](https://github.com/ashlrai/phantom/pull/3910), [#3936](https://github.com/ashlrai/phantom/pull/3936)).
+
+### Fixes
+
+- Self-update status shows scrubbed paths blocking a clean update, and automatic updates pause after a failed build until a newer master commit is available. Fleet capacity distinguishes idle lanes without a usage meter from other unknown lane states. ([#3367](https://github.com/ashlrai/phantom/pull/3367), [#3372](https://github.com/ashlrai/phantom/pull/3372), [#3362](https://github.com/ashlrai/phantom/pull/3362)).
 
 ## [3.30.24] — 2026-11-07
 
