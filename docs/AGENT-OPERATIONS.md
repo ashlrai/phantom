@@ -794,3 +794,14 @@ target or the ledger could not be read. No work is launched or changed.
 against the newest timestamp in the last 3000 lines of the jobs ledger. Plain
 output shows one line per repository with its count and PR URLs; JSON returns
 the typed `fleet.slow-prs.v1` report. This command only reads the local ledger.
+
+`phm fleet pr-hygiene [--repo <owner/name>] [--stale-days <n>] [--limit <n>] [--json]`
+audits one repo's open PRs and emits the `fleet.pr-hygiene.v1` triage report
+for the merge cockpit: each PR is flagged superseded (the same merged-job
+prompt evidence the fleet superseded report uses), conflicted, stale (idle at
+least `--stale-days`, default 7), file-overlapping, behind or draft, then
+triaged close-candidate,
+refix, review or ok. A failed open-PR read still emits the versioned shape
+with `reads.open: 'failed'` (exit 1); a failed merged or prompts read degrades
+only the superseded leg. Read-only — `gh pr list` calls only. See
+[pr-hygiene](fleet/pr-hygiene.md) for the report shape.
