@@ -23,6 +23,24 @@ def ts(t):
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
 
 
+class LedgerTests(unittest.TestCase):
+    def test_reconciled_legacy_outcomes_are_projected_without_changing_other_rows(self):
+        terminal = {"source": "metrics-outcomes-reconciler", "job": "RQ-A",
+                    "pr": "https://github.com/ashlrai/phantom/pull/1/", "status": "CLOSED"}
+        unrelated = {"jobId": "RQ-B", "prUrl": "https://example.invalid/1", "outcome": "MERGED"}
+        incomplete = {"source": "metrics-outcomes-reconciler", "outcome": "MERGED"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.jsonl"
+            original = "\n".join(json.dumps(row) for row in (terminal, unrelated, incomplete))
+            path.write_text(original)
+            rows = b.read_rows(path)
+            self.assertEqual(rows[0]["event"], "outcome")
+            self.assertEqual((rows[0]["job"], rows[0]["state"], rows[0]["url"]),
+                             ("RQ-A", "CLOSED", terminal["pr"].rstrip("/")))
+            self.assertEqual(rows[1:], [unrelated, incomplete])
+            self.assertEqual(path.read_text(), original)
+
+
 class IdentityTests(unittest.TestCase):
     def test_solo_kinds_never_batch(self):
         for job in ("RQ-FIX-MAIN-phantom", "RQ-REL-1", "RQ-DESK-2", "RQ-BATCH-PHANTOM-X-1", "RQ-LAND-9",

@@ -10,6 +10,8 @@ devin's place in the restock trigger loop. Priority fixtures cover ready and
 publish ordering, serialized publisher handoffs, and the per-repo FIX-MAIN cap.
 """
 import json
+import importlib.machinery
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -920,6 +922,28 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertEqual(sum(r.get('event') == 'finish' and r.get('job') == job for r in rows), 1)
         self.assertEqual(sum(r.get('event') == 'outcome' and r.get('state') == 'MERGED' for r in rows), 1)
         self.assertFalse((home / '.ashlr-runs/publish-order').exists())
+
+    def test_reconciled_merge_survives_repeated_ticks_and_restart(self):
+        home, env = self.fixture(())
+        self.publish_stubs(home)
+        job = 'RQ-RECONCILED'
+        self.finished_worktree(home, job)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        url = 'https://github.com/ashlrai/phantom/pull/101'
+        ledger.write_text(json.dumps({'jobId': job, 'prUrl': url, 'outcome': 'PUBLISHED'}) + '\n')
+        loader = importlib.machinery.SourceFileLoader('reconcile_fixture', str(SCRIPT.parent / 'metrics-outcomes'))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        lookup = lambda _: {'state': 'MERGED', 'mergedAt': '2026-10-25T19:00:00Z'}
+        self.assertEqual(module.reconcile(ledger, lookup), (1, 0))
+        for _ in range(3):  # each tick starts a fresh dispatcher process
+            self.assertNotIn('REAP ' + job, self.run_tick(home, env).stdout)
+        self.assertEqual(module.reconcile(ledger, lookup), (0, 0))
+        self.assertFalse((home / '.ashlr-runs/publish-order').exists())
+        with ledger.open('a') as f:
+            f.write(json.dumps({'event': 'launch', 'job': job}) + '\n')
+        self.assertIn('REAP ' + job, self.run_tick(home, env).stdout)
+        self.assertEqual(self.published(home, 1), [job])
 
     def test_retry_records_finish_once_and_new_launch_resets_attempt(self):
         home, env = self.fixture(())
