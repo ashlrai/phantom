@@ -22,7 +22,7 @@ const snapshot: FleetRuns = {
   lastTick: '2026-10-31T11:59:00Z',
   paused: false, memFreePct: 50, diskFreeGb: 80, switches: [],
   claudeLane: 'down token rejected',
-  lanes: [{ lane: 'codex-cmp', running: 1, target: 2, queued: 0, held: false, heldReason: null, tokensLastHour: 100, merged24h: 2, mergeRate24h: 50 }],
+  lanes: [{ lane: 'claude', running: 1, target: 2, queued: 0, held: false, heldReason: null, tokensLastHour: 100, merged24h: 2, mergeRate24h: 50 }],
   workers: [{ job: 'job-one', repo: 'phantom', lane: 'codex-cmp', tier: 'frontier', ageSeconds: 120 }],
   leaders: [{ label: 'leader', ageSeconds: 30 }], orchestratorAgents: 1, publishesLastHour: [],
   mergesLastHour: { count: 1, items: [{ repo: 'phantom', number: 12, title: 'Fleet view' }] },
@@ -56,10 +56,10 @@ it('opens a prefilled interjection without opening the incident target', async (
   });
   render(<FleetNeedsYouRows split="fleet" nowMs={NOW} onResult={() => {}} />);
 
-  await user.click(await screen.findByRole('button', { name: 'Tell the leaders about The Claude lane is down' }));
+  await user.click(await screen.findByRole('button', { name: 'Tell the leaders about Claude lane is down: 1 slots idle' }));
 
   expect(openInterjectDialog).toHaveBeenCalledOnce();
-  expect(openInterjectDialog).toHaveBeenCalledWith({ prefill: expect.stringMatching(/^Re "The Claude lane is down"/) });
+  expect(openInterjectDialog).toHaveBeenCalledWith({ prefill: expect.stringMatching(/^Re "Claude lane is down: 1 slots idle"/) });
   expect(openDockPane).not.toHaveBeenCalled();
   expect(writeText).not.toHaveBeenCalled();
 });

@@ -17,7 +17,7 @@ describe('fleet verb catalog', () => {
 
   it('sorts verbs and retains unreadable sources', () => {
     expect(buildFleetVerbCatalog(['zebra', 'alpha'], () => null)).toEqual([
-      { verb: 'alpha', usage: null, summary: null }, { verb: 'zebra', usage: null, summary: null },
+      { verb: 'alpha', usage: null, summary: null, effect: 'unknown' }, { verb: 'zebra', usage: null, summary: null, effect: 'unknown' },
     ]);
   });
 });

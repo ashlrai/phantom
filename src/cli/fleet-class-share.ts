@@ -5,6 +5,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { laneClassShare } from '../core/fleet/lane-class-share.js';
 
+const usage = `ashlr fleet class-share [--hours N] [--json]
+Read-only event totals in the trailing window. Missing finishes contribute zero known tokens; PRs dedupe by URL.`;
+
 export async function readClassShareJobs(): Promise<string> {
   const file = await open(join(homedir(), '.ashlr-runs/metrics/jobs.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -25,7 +28,7 @@ export async function readClassShareJobs(): Promise<string> {
 
 export async function cmdFleetClassShare(args: string[], readJobs = readClassShareJobs, now = Date.now()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log('ashlr fleet class-share [--hours N] [--json]\nRead-only event totals in the trailing window. Missing finishes contribute zero known tokens; PRs dedupe by URL.');
+    console.log(usage);
     return 0;
   }
   let hours = 3;

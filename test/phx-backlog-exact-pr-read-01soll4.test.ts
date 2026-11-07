@@ -30,8 +30,8 @@ describe('fleet backlog exact PR reads', () => {
     };
     expect(await cmdFleetBacklog(['--repo', 'example/project', '--limit', '2', '--pr', '900', '--pr', '0900', '--json'], { gh, states: noStates })).toBe(0);
     expect(calls).toEqual([
-      ['pr', 'list', '--repo', 'example/project', '--state', 'open', '--limit', '2', '--json', FLEET_PR_GH_VIEW_FIELDS],
-      ['pr', 'view', '900', '--repo', 'example/project', '--json', FLEET_PR_GH_VIEW_FIELDS],
+      ['pr', 'list', '--repo', 'example/project', '--state', 'open', '--limit', '2', '--json', `${FLEET_PR_GH_VIEW_FIELDS},createdAt`],
+      ['pr', 'view', '900', '--repo', 'example/project', '--json', `${FLEET_PR_GH_VIEW_FIELDS},createdAt`],
     ]);
     expect(report()).toMatchObject({ open: 2, complete: false, selection: { requested: [900], found: [900], missing: [], complete: true },
       counts: { conflicting: 1 }, plan: { recuts: [{ number: 900, classification: { class: 'conflicted' } }], merges: [] } });

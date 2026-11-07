@@ -16,7 +16,7 @@ it.each([
   ['workers-unknown', { workers: null }], ['workers-unknown', { workers: { ...fleet, sources: { workers: 'missing' } } }],
   ['workers-unknown', { workers: { ...fleet, workers: [{ ...fleet.workers[0]!, ageSeconds: null }] } }],
   ['workers-active', { workers: { ...fleet, workers: [{ ...fleet.workers[0]!, ageSeconds: 120 }] } }],
-  ['recent-attempt', { lastAttempt: { originSha: 'bbbbbbb', at: 1_999_999, outcome: 'failed' } }],
+  ['recent-attempt', { lastAttempt: { originSha: 'bbbbbbb', at: 1_999_999, outcome: 'refused' } }],
 ] satisfies Array<[string, Partial<Parameters<typeof decideAutoUpdate>[0]>]>)('waits: %s', (reason, changes) => {
   expect(decideAutoUpdate({ ...input, ...changes })).toMatchObject({ apply: false, reason });
 });
@@ -24,7 +24,7 @@ it('accepts quiet, empty and boundary fleets, and expires attempts', () => {
   for (const workers of [fleet, { ...fleet, workers: [] }, { ...fleet, workers: [{ ...fleet.workers[0]!, ageSeconds: 600 }] }]) {
     expect(decideAutoUpdate({ ...input, workers }).apply).toBe(true);
   }
-  expect(decideAutoUpdate({ ...input, lastAttempt: { originSha: 'bbbbbbb', at: 200_000, outcome: 'failed' } }).apply).toBe(true);
+  expect(decideAutoUpdate({ ...input, lastAttempt: { originSha: 'bbbbbbb', at: 200_000, outcome: 'refused' } }).apply).toBe(true);
   expect(decideAutoUpdate({ ...input, lastAttempt: { originSha: 'ccccccc', at: input.nowMs, outcome: 'updated' } }).apply).toBe(true);
 });
 it('validates and persists policy', () => {

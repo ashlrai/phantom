@@ -112,7 +112,7 @@ describe('fleet workers watch', () => {
     ['--watch', '--interval-ms', '1.0'], ['--watch', '--interval-ms'],
     ['--watch', '--max-samples', '0'], ['--watch', '--max-samples', '10001'],
     ['--watch', '--max-samples', '1', '--max-samples', '2'], ['--watch', '--watch'],
-  ])('rejects invalid arguments %j without reading', async (...args) => {
+  ])('rejects invalid arguments %j without reading (%#)', async (...args) => {
     expect(await cmdFleet(['workers', ...args])).toBe(2);
     expect(fake.reads).toBe(0);
     expect(errors.join('')).toContain('invalid fleet workers arguments');

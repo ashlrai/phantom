@@ -105,6 +105,15 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
+// An idle fleet fixture requires a successful, empty GitHub observation.
+vi.mock('../src/core/fleet/fleet-truth.js', () => ({
+  getFleetTruth: async (sinceMs: number, opts: { nowMs?: number } = {}) => ({
+    windowStartMs: sinceMs, windowEndMs: opts.nowMs ?? Date.now(),
+    merged: [], mergeCountState: 'ok', truncated: false,
+    running: 0, queued: 0, blocked: 0,
+  }),
+}));
+
 // ---------------------------------------------------------------------------
 // Mock: imessage — capture sendIMessage calls
 // ---------------------------------------------------------------------------
@@ -185,13 +194,11 @@ vi.mock('../src/core/config.js', () => ({
 // Imports after mocks
 // ---------------------------------------------------------------------------
 import { registerCommsHandlers } from '../src/core/comms/handlers.js';
-import { postRequest, listRequests } from '../src/core/comms/requests.js';
+import { listRequests } from '../src/core/comms/requests.js';
 import { cmdComms } from '../src/cli/comms.js';
 import { setTelegramTransportForTests, TELEGRAM_PHANTOM_BRAND } from '../src/core/integrations/telegram.js';
 import type { AshlrConfig } from '../src/core/types.js';
 import type { StrategicBriefing } from '../src/core/vision/strategist.js';
-import type { OversightSnapshot } from '../src/core/fleet/oversight-export.js';
-import type { QualityMetrics } from '../src/core/types.js';
 import { makeCfg } from './helpers/h1-fixture.js';
 
 // ---------------------------------------------------------------------------
@@ -218,46 +225,6 @@ function makeBriefing(overrides: Partial<StrategicBriefing> = {}): StrategicBrie
       { objective: 'Implement self-improvement feedback loop', rationale: 'Closes the main gap', specPriority: 'Self-improvement' },
       { objective: 'Add proposal quality scoring', rationale: 'Reduces trivial ratio', specPriority: 'Quality' },
     ],
-    ...overrides,
-  };
-}
-
-function zeroMetrics(): QualityMetrics {
-  return {
-    proposalsCreated: 42,
-    merged: 34,
-    rejected: 4,
-    pending: 4,
-    emptyRate: 0.05,
-    trivialRatio: 0.1,
-    acceptRate: 0.81,
-    avgDiffLines: 28,
-    byEngine: {},
-    byRepo: {},
-    trends: [],
-    windowLabel: '30d',
-  };
-}
-
-function makeSnapshot(overrides: Partial<OversightSnapshot> = {}): OversightSnapshot {
-  return {
-    generatedAt: '2026-06-27T10:00:00.000Z',
-    scorecard: zeroMetrics(),
-    manager: {
-      generatedAt: '2026-06-27T09:00:00.000Z',
-      shipped: 30,
-      review: 3,
-      noise: 1,
-      harmful: 0,
-      recommendations: ['Focus on higher-impact proposals.'],
-    },
-    vision: {
-      northStar: 'Fully autonomous engineering fleet',
-      endState: 'No human intervention needed',
-      ambitionLevel: '9',
-      progressPct: 45,
-    },
-    goals: { active: 5, done: 12, progressPct: 60 },
     ...overrides,
   };
 }

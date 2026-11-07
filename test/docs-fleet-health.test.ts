@@ -12,10 +12,24 @@ const examples = [...page.matchAll(/\| `ashlr (fleet [^`]+ --json)` \|/g)].map(m
 describe('fleet health guide', () => {
   it('starts with doctor, is indexed and explains unknown evidence', () => {
     expect(page.startsWith('```sh\nashlr fleet doctor\n```')).toBe(true);
-    expect(readFileSync(join(root, 'docs/README.md'), 'utf8')).toContain('](fleet-health.md)');
+    expect(readFileSync(join(root, 'docs/README.md'), 'utf8'))
+      .toContain('](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md)');
     expect(page).toContain('Unknown does not mean healthy');
     expect(page).toContain('not an `ok`/`warn`/`red` report');
-    expect(examples).toHaveLength(19);
+    expect(examples).toEqual([
+      'fleet doctor --json', 'fleet status --json', 'fleet lanes --json',
+      'fleet idle-lanes --json', 'fleet api-pools --json', 'fleet load --json',
+      'fleet admission --json', 'fleet lane-share --json', 'fleet leader-health --json',
+      'fleet heartbeat --json', 'fleet main-health --json', 'fleet health-age --json',
+      'fleet login-health --json', 'fleet stuck-prs --json', 'fleet waste --json',
+      'fleet worktree-stale --json', 'fleet brains --json', 'fleet disk --json',
+      'fleet memory --json', 'fleet judge-health --json', 'fleet evidence doctor decisions --json',
+    ]);
+    const admission = page.split('\n').find(line => line.includes('fleet admission --json'));
+    expect(admission).toContain('Ok:');
+    expect(admission).toContain('Red:');
+    expect(admission).toContain('5 or more');
+    expect(admission).toContain('global cap');
     expect(page.split('\n').length).toBeLessThan(65);
   });
 

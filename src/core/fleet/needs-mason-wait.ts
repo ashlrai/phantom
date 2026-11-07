@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -41,15 +41,22 @@ function inspectLedger(path: string, id: string): 'resolved' | 'open' | 'unknown
   finally { if (fd !== undefined) closeSync(fd); }
 }
 
+// The stop file is an existence sentinel only: lstat never opens, follows or reads it,
+// so a dangling symlink still counts as present. Any error except ENOENT is unavailable.
+function stopFileState(path: string): 'clear' | 'requested' | 'unavailable' {
+  try { lstatSync(path); return 'requested'; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'clear' : 'unavailable'; }
+}
+
 export interface NeedsWaitOptions {
-  id: string; timeoutMs: number; pollMs: number; runsDir?: string;
+  id: string; timeoutMs: number; pollMs: number; runsDir?: string; stopFile?: string;
   now?: () => number; sleep?: (ms: number, signal: AbortSignal) => Promise<void>; signal?: AbortSignal;
 }
 
 export async function waitNeedsMason(options: NeedsWaitOptions): Promise<NeedsWaitStatus> {
-  const { id, timeoutMs, pollMs } = options;
+  const { id, timeoutMs, pollMs, stopFile } = options;
   if (!NEEDS_WAIT_ID.test(id) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > NEEDS_WAIT_MAX_MS ||
-      !Number.isSafeInteger(pollMs) || pollMs < 1 || pollMs > NEEDS_WAIT_MAX_MS) throw new RangeError('Invalid wait options');
+      !Number.isSafeInteger(pollMs) || pollMs < 1 || pollMs > NEEDS_WAIT_MAX_MS || stopFile === '') throw new RangeError('Invalid wait options');
   const path = join(options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'NEEDS-MASON.md');
   const now = options.now ?? (() => performance.now());
   const sleep = options.sleep ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
@@ -58,17 +65,29 @@ export async function waitNeedsMason(options: NeedsWaitOptions): Promise<NeedsWa
   process.on('SIGINT', abort); process.on('SIGTERM', abort);
   options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) abort();
+  // Returns a terminal status when the wait must stop before touching the ledger again.
+  const gate = (): NeedsWaitStatus | undefined => {
+    if (controller.signal.aborted) return 'cancelled';
+    if (stopFile === undefined) return undefined;
+    const state = stopFileState(stopFile);
+    return state === 'clear' ? undefined : state === 'requested' ? 'cancelled' : 'unavailable';
+  };
   try {
     const deadline = now() + timeoutMs;
     for (;;) {
-      if (controller.signal.aborted) return 'cancelled';
+      const before = gate();
+      if (before) return before;
       const status = inspectLedger(path, id);
+      // A stop requested while inspecting wins over any observed result, including resolved.
+      const observed = gate();
+      if (observed) return observed;
       if (status !== 'open') return status;
       const remaining = deadline - now();
       if (remaining <= 0) return 'timeout';
       try { await sleep(Math.min(pollMs, remaining), controller.signal); }
       catch { return controller.signal.aborted ? 'cancelled' : 'unavailable'; }
-      if (controller.signal.aborted) return 'cancelled';
+      const slept = gate();
+      if (slept) return slept;
       if (now() >= deadline) return 'timeout';
     }
   } finally {

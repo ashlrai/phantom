@@ -6,7 +6,8 @@ import type { ApiModule } from '../src/core/verse/api-modules.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
 const path = '/api/verse/fleet/apps/action';
-const ok = { stdout: JSON.stringify({ code: 'restart_requested' }), stderr: '' };
+// Accepted actions report ok:true; the API treats a result without it as unreadable (see fleet-apps-api-action-deadline-02somt1).
+const ok = { stdout: JSON.stringify({ ok: true, code: 'restart_requested' }), stderr: '' };
 function deferred() {
   let resolve!: (value: typeof ok) => void;
   let reject!: (reason: unknown) => void;
@@ -57,13 +58,14 @@ describe('fleet app action reservations', () => {
     const pending = call(api, restart);
     await vi.waitFor(() => expect(exec).toHaveBeenCalledTimes(1));
     expect((await call(api, restart, { token: '' })).status).toBe(401);
-    expect((await call(api, { ...restart, action: 'quit' })).status).toBe(400);
+    expect((await call(api, { ...restart, action: 'shutdown' })).status).toBe(400);
     first.resolve(ok);
     expect((await pending).status).toBe(202);
   });
 
   it.each([
-    ['refusal', { code: 1, stdout: JSON.stringify({ code: 'refused' }) }, 202],
+    // A known refusal from the script contract is a 422 (REFUSALS allowlist in fleet-apps-api.ts).
+    ['refusal', { code: 1, stdout: JSON.stringify({ ok: false, code: 'not_running' }) }, 422],
     ['malformed JSON', { code: 1, stdout: 'bad json' }, 503],
     ['malformed result', { code: 1, stdout: '{}' }, 503],
     ['exception', new Error('unavailable'), 503],

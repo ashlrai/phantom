@@ -68,6 +68,8 @@ it('serves stored runs through a failed launch sample and shares the recovered s
         v: 1, generatedAt: '2026-10-31T12:00:00.000Z',
         from: '2026-10-29T12:00:00.000Z', to: '2026-10-31T12:00:00.000Z',
         sourceState: 'healthy', dropped: 0, samples: [older, recent],
+        // Two samples two hours apart never bridge into an observed idle interval.
+        stallWindows: { sourceState: 'healthy', dropped: 0, maxSampleGapMs: 150_000, intervals: [] },
       },
     });
     expect(sample).toHaveBeenCalledTimes(1);

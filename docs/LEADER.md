@@ -1,5 +1,17 @@
 # Talking to the Leader (3.14+)
 
+The [CEO network endpoint](LEADER-NETWORK.md) bridges verified owner channels,
+the durable inbox/outbox, configured model tiers, and away-mode digests. The
+desktop's **Leader** pane is the shared point of contact.
+
+Roles describe responsibilities: coordination, implementation, review and release.
+They do not bind an agent to a model or provider. Use the shared tool catalog,
+durable context and work claims to coordinate agents; the Leader need not relay
+every tool call or merge. Each action still uses its current account, repository
+scope and standing authority. The Mac's **Scheduled planning passes** and
+**Claude planning loop** switches control supplementary historical schedules;
+they do not select the model used by the Leader.
+
 ## Release-backed articles (successor candidate)
 
 The opt-in `release-articles` maintenance lane follows Phantom's latest stable

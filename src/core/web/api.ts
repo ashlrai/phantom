@@ -97,7 +97,7 @@ import { sanitizePublicJson } from '../util/public-json.js';
 import { ReadProjectionError, type ReadProjectionReader } from './read-projections.js';
 import type { MissionShadowObservation } from '../vision/mission-shadow-observer.js';
 import { readAgentOsRuntimeSnapshotV1 } from '../vision/agent-os-runtime-read.js';
-import { readUniverseOverview } from '../universe/index.js';
+import { readUniverseOverview } from '../universe/overview.js';
 import { readUniverseGraph } from '../universe/graph-reader.js';
 import type { ProposalsReadResult } from '../inbox/store.js';
 import { handleRunEventsSse, RUN_EVENTS_PATH_RE } from './run-stream.js';
@@ -1296,6 +1296,7 @@ export async function handleApi(
     allowDispatch: boolean;
     readSession?: { id: string; expiresAt: number };
     readProjections?: ReadProjectionReader;
+    usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -2435,6 +2436,7 @@ export async function handleApi(
     if (isVerseApiPath(path)) {
       const handled = await handleVerseApi(
         { cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+          usageResourcesApi: ctx.usageResourcesApi,
           ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) },
         req,
         res,

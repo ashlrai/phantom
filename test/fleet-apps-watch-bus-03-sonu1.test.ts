@@ -20,6 +20,8 @@ it('publishes correlated, sanitized recovery and terminal events for distinct in
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   for (let i = 0; i < 2; i++) {
     let clock = 0;
+    // Keep both elapsed-time clocks on the same injected timeline.
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
     expect(await cmdFleetAppsWatch(['Phantom', '--duration-ms', '100', '--root', dir, '--bus', '--json'], {
       runChild: async () => batch(true, true), now: () => clock, sleep: async ms => { clock += ms; },
     })).toBe(0);

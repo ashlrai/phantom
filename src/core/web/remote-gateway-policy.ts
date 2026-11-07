@@ -11,7 +11,8 @@
  * POST fleet/live/drop-jobs behind step-up and agent-bus without step-up; GET
  * fleet/job with a single id matching the fleet job grammar; POST
  * fleet/runs/inbox {text, source?} without step-up (a message, not a
- * control); POST fleet/control/switches {id, on}, fleet/control/lanes
+ * control); POST fleet/live {action:'pause-repo', repo, reason} places
+ * an owner hold behind step-up; POST fleet/control/switches {id, on}, fleet/control/lanes
  * {lane, target} and fleet/control/holds {lane, action:'release', reason?}
  * behind step-up. Every path and body shape is exact — no wildcards.
  */
@@ -30,6 +31,7 @@ export type RemoteReadRoute = string;
 
 const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/bootstrap',
+  '/api/verse/version',
   '/api/verse/activity',
   '/api/verse/sessions',
   '/api/verse/control',
@@ -234,10 +236,13 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
   if (path === '/api/verse/authority') return (keys(body, ['action']) && body.action === 'stop')
     || (keys(body, ['action', 'to']) && body.action === 'switch'
       && typeof body.to === 'string' && ['off', 'propose', 'autonomous'].includes(body.to));
-  if (path === '/api/verse/fleet/live') return keys(body, ['action', 'repo', 'kind'])
+  if (path === '/api/verse/fleet/live') return (
+    keys(body, ['action', 'repo', 'reason']) && body.action === 'pause-repo'
+      && typeof body.repo === 'string' && REPO.test(body.repo) && boundedText(body.reason, 400)
+  ) || (keys(body, ['action', 'repo', 'kind'])
     && body.action === 'resume-repo' && typeof body.repo === 'string' && REPO.test(body.repo)
     && (body.kind === undefined || (typeof body.kind === 'string'
-      && ['quarantine', 'owner-hold', 'leader-pause', 'cooldown'].includes(body.kind)));
+      && ['quarantine', 'owner-hold', 'leader-pause', 'cooldown'].includes(body.kind))));
   if (path === '/api/verse/fleet/live/drop-jobs') return keys(body, ['id', 'lane', 'tier', 'body'])
     && validateDropJob({ id: body.id, lane: body.lane, tier: body.tier, body: body.body }).ok;
   if (path === '/api/verse/agent-bus') return validateBusEnvelope(body).ok;

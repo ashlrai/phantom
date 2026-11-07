@@ -19,11 +19,14 @@ export interface NodesOptions {
 export interface NodeProfile {
   owners: string[];
   caps?: string[];
+  /** Zero holds admission; omitted retains legacy unbounded routing. */
+  slots?: number;
 }
 
 /** Self-reported on each heartbeat. `auth` is the node's own local login status, never a token. */
 export interface NodeReport {
   usage?: number;
+  slots?: number;
   auth?: NodeAuth;
 }
 
@@ -50,7 +53,11 @@ export interface NodeView {
   owners: string[];
   caps: string[];
   usage: number;
+  slots?: number;
   auth: NodeAuth;
+  heartbeatAt: number;
+  expiresAt: number;
+  lanes: string[];
 }
 
 export interface Pulled {
@@ -63,6 +70,8 @@ function names(values: string[] | undefined, ok: (v: unknown) => boolean, what: 
   if (out.length > 64 || !out.every(ok)) throw new Error(`Invalid drive ${what}`);
   return out;
 }
+
+function validSlots(value: number): boolean { return Number.isSafeInteger(value) && value >= 0 && value <= 64; }
 
 function sameSession(a: NodeSession, b: NodeSession): boolean {
   return a.nodeId === b.nodeId && a.session === b.session;
@@ -114,7 +123,9 @@ export class DriveNodes implements QueueV1 {
 
   join(nodeId: string, profile?: NodeProfile): NodeSession | null {
     if (!validId(nodeId)) throw new Error('Invalid drive node ID');
-    const extra = profile && { owners: names(profile.owners, validId, 'owner scope'), caps: names(profile.caps, validCap, 'capability') };
+    if (profile?.slots !== undefined && !validSlots(profile.slots)) throw new Error('Invalid drive slots (integer 0-64)');
+    const extra = profile && { owners: names(profile.owners, validId, 'owner scope'), caps: names(profile.caps, validCap, 'capability'),
+      ...(profile.slots === undefined ? {} : { slots: profile.slots }) };
     if (extra && extra.owners.length === 0) throw new Error('Invalid drive owner scope');
     return this.transaction((state, now) => {
       const existing = state.nodes.find(n => n.nodeId === nodeId);
@@ -134,6 +145,7 @@ export class DriveNodes implements QueueV1 {
     if (report?.usage !== undefined && !(Number.isSafeInteger(report.usage) && report.usage >= 0 && report.usage <= 1000)) {
       throw new Error('Invalid drive usage (integer permille 0-1000)');
     }
+    if (report?.slots !== undefined && !validSlots(report.slots)) throw new Error('Invalid drive slots (integer 0-64)');
     return this.transaction((state, now) => {
       const node = state.nodes.find(n => sameSession(n, session));
       if (!node || node.expiresAt <= now) return null;
@@ -142,6 +154,7 @@ export class DriveNodes implements QueueV1 {
       node.heartbeatAt = now;
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
+      if (report?.slots !== undefined) node.slots = report.slots;
       if (report?.auth !== undefined) node.auth = report.auth;
       if (!previous) {
         state.leader = { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
@@ -226,7 +239,9 @@ export class DriveNodes implements QueueV1 {
       owners: [...scope],
       nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
         .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
-          caps: n.caps ?? [], usage: n.usage ?? 0, auth: n.auth ?? 'unknown' }))
+          caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c)),
+          heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? 0, auth: n.auth ?? 'unknown',
+          ...(n.slots === undefined ? {} : { slots: n.slots }) }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
       jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => this.jobView(j)),
       routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
@@ -246,6 +261,10 @@ export class DriveNodes implements QueueV1 {
       const current = this.liveLeader(state, now);
       if (!current || current.token !== leader.token || !sameSession(current, leader) ||
           !this.liveNode(state, worker, now)) return null;
+      const node = state.nodes.find(n => sameSession(n, worker))!;
+      const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
+        j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId).length;
+      if (node.slots !== undefined && active >= node.slots) return null;
       const job = state.jobs.find(j => j.id === jobId);
       if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,

@@ -18,6 +18,7 @@ is keyed so the next loop iteration skips already-verified work.
 | `ashlr fleet guardian-retry` | Removes a failed entry so it can be re-verified |
 | `ashlr fleet main-repair-time` | Measures how long each `FIXUP-MAIN` repair takes |
 | `ashlr fleet stuck-fixes` | Lists `FIXUP-MAIN` jobs whose PR is still open past 20 minutes |
+| `ashlr fleet guardian-stuck` | Reports repos red for over 60 minutes with no current job; use `--json` for the typed report |
 | `ashlr fleet main-red-age` | Reports each repo's guardian state and minutes red from `~/.ashlr-runs/guardian/state.json` (read-only; `--state <file>` overrides) |
 
 Exit codes: `0` pass, `1` fail, `2` invalid args, `3` unknown/cancelled,
@@ -58,3 +59,8 @@ ashlr fleet main-repair-time --json
 
 Agents read this data to decide whether to enqueue a retry, investigate a
 code failure, or flag infrastructure for a fleet member.
+
+`guardian-stuck` reads `guardian/state.json` under `ASHLR_RUNS_DIR` (or
+`~/.ashlr-runs` by default). It exits 1 for stuck entries or unread/invalid
+state, 0 when none are found, and 2 for invalid arguments. Revert status is
+unknown unless the state records `revert_status` or a boolean `reverted`.

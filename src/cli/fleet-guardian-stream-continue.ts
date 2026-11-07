@@ -10,6 +10,8 @@ type Deps = {
   delegate?: typeof cmdFleetGuardianContinue;
 };
 
+export const usage = 'Usage: ashlr fleet guardian-stream-continue --stdin [--input-timeout-ms <1..300000>] [--apply] [--json | --stream] [guardian-continue args]';
+
 export const cmdFleetGuardianStreamContinue = async (args: string[], deps: Deps = {}): Promise<number> => {
   const seen = new Set<string>();
   const forwarded: string[] = [];

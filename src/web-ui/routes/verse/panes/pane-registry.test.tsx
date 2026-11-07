@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { COMMAND_KEYS, SCOPE_LAYERS, chordId, parseChord } from '../shell/command-keys.js';
-import { DOCK_PANES } from '../shell/dock-catalog.js';
+import { DOCK_PANES } from '../shell/dock-pane-catalog.js';
 import {
   DISCOVERED_PANE_MODULES,
   definitionProblems,

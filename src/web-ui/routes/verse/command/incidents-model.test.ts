@@ -44,7 +44,7 @@ describe('incidents', () => {
     const state = 'down: token rejected (run fix-claude-lane.sh)';
     const rows = incidents({ ...healthy(), lastTick: at(21), claudeLane: state, switches: ['queue/HOLD'], paused: true }, now);
     expect(rows.map(row => row.id)).toEqual(['tick-stale', 'claude-lane', 'hold', 'paused']);
-    expect(rows[1]).toMatchObject({ severity: 'incident', title: 'Claude lane is down', detail: state, fix: null });
+    expect(rows[1]).toMatchObject({ severity: 'incident', title: 'Claude lane is down', detail: state, fix: '~/.ashlr-runs/bin/fix-claude-lane.sh' });
     expect(rows[2]).toMatchObject({ severity: 'warn', detail: 'HOLD is on: nothing launches until it is removed.' });
     expect(incidents({ ...healthy(), switches: ['HOLD'] }, now)[0]?.id).toBe('hold');
   });

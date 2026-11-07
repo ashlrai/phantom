@@ -13,6 +13,7 @@ import { readFleetRunsDirState } from './runs-dir-state.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readGuardianGlance } from './guardian-glance.js';
 import { readOperatorSecret, secretsMatch } from './operator-proof.js';
+import { summarizeFleetSlowPrs } from '../../cli/fleet-slow-prs.js';
 import { buildOperatorGlance, type OperatorGlance } from './operator-glance.js';
 
 import { readAppsRecoveryInvocations } from './apps-recovery-invocations.js';
@@ -42,6 +43,39 @@ async function readFileBounded(path: string): Promise<string | null> {
   } finally {
     await file.close();
   }
+}
+
+const JOBS_TAIL_BYTES = 2 * 1024 * 1024;
+
+/** Last 2 MiB of the jobs ledger, first partial line dropped; null when absent, a symlink or not a regular file. */
+async function readJobsTail(path: string): Promise<string | null> {
+  try {
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const info = await file.stat();
+      if (!info.isFile()) return null;
+      const start = Math.max(0, info.size - JOBS_TAIL_BYTES);
+      const bytes = Buffer.alloc(info.size - start);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, start + offset);
+        if (!bytesRead) break;
+        offset += bytesRead;
+      }
+      const text = bytes.subarray(0, offset).toString('utf8');
+      return start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text;
+    } finally { await file.close(); }
+  } catch { return null; }
+}
+
+/** Counts and repo names only; never the PR URLs. */
+async function slowPrsFact(runsDir: string): Promise<OperatorGlance['slowPrs']> {
+  const text = await readJobsTail(join(runsDir, 'metrics', 'jobs.jsonl'));
+  if (text === null) return undefined;
+  try {
+    const repos = summarizeFleetSlowPrs(text).repos.map(({ repo, count }) => ({ repo, count }));
+    return { count: repos.reduce((sum, row) => sum + row.count, 0), repos };
+  } catch { return undefined; }
 }
 
 async function newestStatus(runsDir: string): Promise<string | null> {
@@ -106,7 +140,8 @@ export async function readOperatorGlance(opts: { runsDir?: string; busRoot?: str
       await readFileBounded(join(runsDir, 'leader', 'INCIDENTS.md'))
     ].filter((text): text is string => text != null).join('\n') || null,
   });
-  return guardian.length > 0 ? { ...glance, guardian } : glance;
+  const slowPrs = await slowPrsFact(runsDir);
+  return { ...glance, ...(guardian.length > 0 ? { guardian } : {}), ...(slowPrs ? { slowPrs } : {}) };
 }
 
 /** Existing private pairing, or an explicit /pair code from the configured owner. */

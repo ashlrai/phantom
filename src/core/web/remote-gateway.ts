@@ -17,7 +17,7 @@ import { checkRemoteEnvelope, classifyRemoteRoute, validateRemoteMutation, type 
 import type { RemoteDeviceStore } from './remote-device-store.js';
 import type { createRemotePairing } from './remote-pairing.js';
 import type { createRemotePush } from './remote-push.js';
-import { serveStatic } from './static.js';
+import { isImmutableAssetPath, serveStatic } from './static.js';
 
 const READ_SESSION_ROUTES = new Set(['/api/verse/agent-bus', '/api/verse/agent-bus/status']);
 const COOKIE_NAME = '__Host-ashlr-remote';
@@ -38,7 +38,7 @@ export interface RemoteReadGatewayOptions {
   devices: RemoteDeviceStore;
   pairing?: ReturnType<typeof createRemotePairing>;
   push?: ReturnType<typeof createRemotePush>;
-  /** Bundled web public dir. Assets stay off until the remote client is ready. */
+  /** Explicit asset override for isolated fixtures. Production reads the running Hub build. */
   assetsDir?: string;
   mobileAssetsEnabled?: boolean;
   port?: number;
@@ -421,12 +421,33 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
       if (req.method !== 'GET') { json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' }); return; }
       if (route.kind === 'deny') {
         const path = target.split('?')[0] ?? '';
-        if (!options.mobileAssetsEnabled || !options.assetsDir || !staticPath(path) || target !== path) {
+        if (!options.mobileAssetsEnabled || !staticPath(path) || target !== path) {
           json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' }); return;
+        }
+        // Only the exact static allowlist reaches the Hub. Never forward client
+        // headers, credentials, redirects or an arbitrary target. Reading from
+        // the running desktop keeps its assets and API state on one build.
+        let hubAsset: { bytes: Buffer; contentType: string } | null = null;
+        if (!options.assetsDir) {
+          try {
+            const upstream = await fetch(`${hubOrigin}${path}`, {
+              redirect: 'manual', signal: AbortSignal.timeout(5_000),
+            });
+            const contentType = upstream.headers.get('content-type') ?? '';
+            const bytes = upstream.status === 200 ? await boundedResponse(upstream, MAX_JSON_BYTES) : null;
+            if (upstream.status !== 200) await upstream.body?.cancel();
+            if (bytes && /^(?:text\/html|text\/css|application\/(?:javascript|manifest\+json)|image\/(?:svg\+xml|png|webp)|font\/woff2?)(?:;|$)/.test(contentType)) {
+              hubAsset = { bytes, contentType };
+            }
+          } catch { /* Fail closed when the desktop is unavailable. */ }
+          if (!hubAsset) {
+            json(res, 503, { code: 'REMOTE_ASSETS_UNAVAILABLE', error: 'Desktop assets unavailable' }); return;
+          }
         }
         if (path === '/verse/m' || path === '/verse/m/') {
           try {
-            const html = readFileSync(join(options.assetsDir, 'next', 'index.html'), 'utf8');
+            const html = hubAsset ? hubAsset.bytes.toString('utf8')
+              : readFileSync(join(options.assetsDir!, 'next', 'index.html'), 'utf8');
             const heads = [...html.matchAll(/<\/?head\b/gi)];
             const head = html.indexOf('<head>');
             const end = html.indexOf('</head>');
@@ -440,7 +461,11 @@ export async function startRemoteReadGateway(options: RemoteReadGatewayOptions) 
           } catch { /* missing build stays denied */ }
           json(res, 503, { code: 'REMOTE_ASSETS_UNAVAILABLE', error: 'Mobile assets unavailable' }); return;
         }
-        if (!serveStatic(req, res, options.assetsDir)) json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' });
+        if (hubAsset) {
+          res.writeHead(200, { 'Content-Type': hubAsset.contentType, 'Cache-Control': isImmutableAssetPath(path) ? 'private, max-age=31536000, immutable' : 'no-cache' });
+          res.end(hubAsset.bytes); return;
+        }
+        if (!serveStatic(req, res, options.assetsDir!)) json(res, 404, { code: 'ROUTE_DENIED', error: 'Route unavailable' });
         return;
       }
       if (!session) { json(res, 401, { code: 'DEVICE_SESSION_REQUIRED', error: 'Device authentication required' }); return; }

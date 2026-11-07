@@ -63,18 +63,20 @@ it.each([
   { code: 0, stdout: JSON.stringify({ ok: true, apps: [{ app: 'Phantom', observedRunning: true }, { app: 'Phantom', observedRunning: true }] }) },
   { code: 1, stdout: JSON.stringify({ ok: false, apps: [{ app: 'Phantom', observedRunning: false, outcome: 'refused' }, { app: 'Cursor', observedRunning: true }] }) },
   { ...batch(), code: 1 },
-])('fails closed on malformed or unsuccessful batches', async result => {
+])('fails closed on malformed or unsuccessful batches (%#)', async result => {
   expect(await cmdFleetAppsWatch(['Phantom', 'Cursor', '--duration-ms', '1000', '--json'], { runChild: async () => result })).toBe(1);
   expect(events()).toHaveLength(1);
   expect(events()[0]).toMatchObject({ outcome: 'failed', cycles: 1 });
   expect(output).not.toContain('private child output');
 });
 
-it('retains the last observed state after an invalid later batch', async () => {
+it('clears the last observed state after an invalid later batch', async () => {
   let clock = 0;
   const runner = vi.fn<AppsEnsureChildRunner>().mockResolvedValueOnce(batch()).mockResolvedValueOnce({ code: 0, stdout: '{}' });
   expect(await cmdFleetAppsWatch(args, { runChild: runner, now: () => clock, sleep: async ms => { clock += ms; } })).toBe(1);
-  expect(events().at(-1)).toMatchObject({ outcome: 'failed', cycles: 2, lastObservedState: [{ app: 'Phantom', observedRunning: true }, { app: 'Cursor', observedRunning: true }] });
+  // Since #3142 an unreadable batch clears the retained observation rather than
+  // reporting a stale healthy sample (fleet-apps-watch-unknown-03-sons1).
+  expect(events().at(-1)).toMatchObject({ outcome: 'failed', cycles: 2, lastObservedState: null });
 });
 
 it.each(['before', 'child', 'sleep'] as const)('cancels %s without starting another child', async stage => {

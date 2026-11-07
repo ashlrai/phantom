@@ -690,6 +690,11 @@ fn create_main_window(handle: &AppHandle, startup: Option<&SidecarStartup>) {
         desktop.as_ref(),
     );
 
+    // A tokenless window may already exist because the listener beat its
+    // startup record. Reuse the live token-only event path so SessionGate
+    // re-adopts without stacking shell observers on that existing page.
+    let existing_tokens = startup.map(token_handoff_script);
+
     let saved = handle
         .try_state::<AppState>()
         .map(|state| match state.window.lock() {
@@ -702,9 +707,14 @@ fn create_main_window(handle: &AppHandle, startup: Option<&SidecarStartup>) {
     let handle2 = handle.clone();
     let result = handle.run_on_main_thread(move || {
         if let Some(existing) = handle2.get_webview_window(MAIN_WINDOW_LABEL) {
-            if let Err(e) = existing.eval(&script) {
-                eprintln!("[ashlr-desktop] could not hand tokens to the open window: {e}");
+            if let Some(token_script) = existing_tokens.as_deref() {
+                if let Err(e) = existing.eval(token_script) {
+                    eprintln!("[ashlr-desktop] could not hand tokens to the open window: {e}");
+                }
             }
+            // Keep the fresh preference/state handoff independently of tokens.
+            // The existing shell already installed its state callback.
+            push_desktop_state(&handle2);
             let _ = existing.show();
             let _ = existing.set_focus();
             close_launch_window(&handle2);
@@ -2345,6 +2355,9 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
 // ── entry point ──────────────────────────────────────────────────────────────
 
 fn main() {
+    if let Some(status) = ashlr_desktop::release_smoke::dispatch(&std::env::args().collect::<Vec<_>>()) {
+        std::process::exit(status);
+    }
     #[cfg(target_os = "macos")]
     if let Some(status) =
         ashlr_desktop::native_metadata_launch::dispatch(&std::env::args().collect::<Vec<_>>())
@@ -2455,6 +2468,10 @@ mod tests {
                 assert!(!first, "a late record must not count as the first readiness");
                 assert_eq!(startup.read_token, "aa11");
                 assert_eq!(startup.token.as_deref(), Some("bb22"));
+                let late = Some(&startup).map(token_handoff_script).expect("late handoff");
+                assert!(late.contains("new CustomEvent(\"ashlr:sidecar-restarted\")"));
+                assert!(late.contains("window.__ASHLR_TOKENS__ = Object.freeze(t)"));
+                assert!(!late.contains("MutationObserver"));
             }
             StdoutRoute::Forward => panic!("startup record was routed to the sidecar-stdout bus"),
         }

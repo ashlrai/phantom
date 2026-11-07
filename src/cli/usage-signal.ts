@@ -24,9 +24,12 @@ export async function runUsageSignal(argv: string[]): Promise<void> {
     else throw new Error('Invalid usage signal option');
   }
   if (!directory || !isAbsolute(directory) || !USAGE_EVENTS.includes(event as UsageEvent)) {
-    throw new Error('Usage: --directory ABS_PATH --event dispatch-start|pr-merge|429|limit-message|manual-reading [--pool POOL] [--readers ABS_PATH | --status-readers [--codex-home ABS_PATH]] [--dry-run]');
+    throw new Error('Usage: --directory ABS_PATH --event dispatch-start|pr-merge|429|limit-message|manual-reading|hourly [--pool POOL] [--readers ABS_PATH | --status-readers [--codex-home ABS_PATH]] [--dry-run]');
   }
   if (builtin && readersPath || codexHome && !builtin) throw new Error('Invalid usage signal option');
+  if (event === 'hourly' && (process.platform !== 'darwin' || !readersPath || pools.length)) {
+    throw new Error('Hourly usage requires macOS and a complete reader configuration');
+  }
   let commands = usageReaderCommands({});
   if (readersPath) {
     if (!isAbsolute(readersPath) || /(?:^|\/)\.codex(?:-2)?(?:\/|$)/.test(resolve(readersPath)) ||
@@ -50,6 +53,9 @@ export async function runUsageSignal(argv: string[]): Promise<void> {
       }
       commands = usageReaderCommands(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
     } finally { closeSync(fd); }
+  }
+  if (event === 'hourly' && USAGE_POOLS.some(pool => !commands[pool])) {
+    throw new Error('Hourly usage requires macOS and a complete reader configuration');
   }
   // Built-in readers cover only their own pools; default selection follows them.
   const readers = builtin ? statusReaders({ ...(codexHome ? { codexHome } : {}) }) : usageSignalReaders(commands);

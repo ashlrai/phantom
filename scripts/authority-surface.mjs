@@ -124,6 +124,9 @@ export const AUTHORITY_SURFACE_ROOTS = Object.freeze([
   'dist/core/run/sandboxed-engine.js',
   'dist/core/run/engine-registry.js',
   'dist/core/resources/native-profile.js',
+  // Fixed worker qualifies evidence for the main-owned quota commit. Worker
+  // URLs are not literal imports, so bind these validator bytes explicitly.
+  'dist/core/resources/quota-evidence-worker.js',
   'dist/core/vision/leader-apply.js',
   'dist/core/learn/harness-registry.js',
   'dist/core/learn/experiments.js',

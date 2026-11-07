@@ -12,7 +12,7 @@ describe('fleet verbs', () => {
     const result = JSON.parse(log.mock.calls[0][0] as string);
     expect(result.schema).toBe('fleet.verbs.v1');
     expect(result.count).toBe(3);
-    expect(result.verbs).toContainEqual({ verb: 'missing', usage: null, summary: null });
+    expect(result.verbs).toContainEqual({ verb: 'missing', usage: null, summary: null, effect: 'unknown' });
   });
 
   it('filters case-insensitively', async () => {

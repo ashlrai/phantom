@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createFleetServer, MAX_FLEET_OUTPUT_BYTES, type FleetReaders } from '../../src/mcp/fleet-server.js';
 import { cmdMcp } from '../../src/cli/mcp.js';
+import { FLEET_MCP_TOOL_NAMES } from '../support/fleet-mcp-tools.js';
 
 const connections: Client[] = [];
 afterEach(async () => {
@@ -20,12 +21,12 @@ async function connect(readers: FleetReaders = { status: async () => ({ pending:
 }
 
 describe('fleet MCP protocol', () => {
-  it('negotiates a tools-only server and advertises exactly three read-only tools', async () => {
+  it('negotiates a tools-only server and advertises only read-only tools', async () => {
     const client = await connect();
     expect(client.getServerCapabilities()).toEqual({ tools: {} });
     expect(client.getServerVersion()?.name).toBe('phantom-fleet');
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name)).toEqual(['fleet_status', 'fleet_loop', 'fleet_bus_hops']);
+    expect(tools.map(t => t.name)).toEqual([...FLEET_MCP_TOOL_NAMES]);
     for (const tool of tools) {
       expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       expect(tool.inputSchema.additionalProperties).toBe(false);

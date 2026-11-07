@@ -100,12 +100,16 @@ export const TIER1_SOURCE_PATTERNS: readonly string[] = Object.freeze([
   'desktop/src-tauri/src/main.rs',
   'desktop/src-tauri/src/lib.rs',
   'src/core/run/desktop-metadata-launch-trust.ts',
+  // Fixed worker is an authority validator even though Worker URLs are not imports.
+  'src/core/resources/quota-evidence-worker.ts',
   // Governed-client gateway target validation decides where a provider key may be sent (#880).
   'src/core/run/gateway-target.ts',
   'src/cli/desktop-update.ts',
   'src/cli/desktop.ts',
   'scripts/desktop-release-policy.mjs',
   'scripts/finalize-desktop-update.mjs',
+  'scripts/finalize-github-release.mjs',
+  'scripts/publish-desktop-release.mjs',
   'src/core/daemon/activation-permit.ts',
   'src/core/daemon/tick-hooks.ts',
   'src/core/daemon/loop.ts',
@@ -317,6 +321,9 @@ const ALL_REPO_RULES: readonly ProtectedPathRule[] = [
       'scripts/hosted-build-artifact.mjs',
       // These coordinate the owned native app, current release and rollback links.
       'scripts/ship-local.mjs', 'scripts/local-app-transaction.mjs', 'scripts/install-desktop-artifacts.mjs',
+      // The sanctioned local publisher that attaches signed updater assets to a
+      // tag's GitHub release and flips the draft public.
+      'scripts/publish-desktop-release.mjs',
       // Release-path policy verifier gating npm `latest` on the live publisher.
       'scripts/verify-release-policy.mjs',
       'tools/custody/**', '**/*.plist', '**/*.entitlements', '**/src-tauri/capabilities/**',

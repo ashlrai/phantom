@@ -43,8 +43,10 @@ import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
 import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
+import { UsageResourcesCard } from '../UsageResourcesCard.js';
 import { MobileReleaseCard } from '../MobileReleaseCard.js';
 import { homeRunsQuery } from '../home-runs-query.js';
+import { formatUsd } from '../format-usd.js';
 import { mergeSpeedLines } from '../merge-speed-lines.js';
 import { runningMixLines, runningMixSummary } from '../running-mix-lines.js';
 import { canStop, fleetStateView, STOP_ACTION, type FleetHeadline } from '../fleet-state.js';
@@ -438,6 +440,13 @@ export function FleetScreen() {
   return (
     <Screen title="Fleet" onBack={() => navigate({ screen: 'more' })} backLabel="More" onRefresh={refreshFleetScreen} header={header} label="Fleet">
       {fleetCard}
+      <div className={styles.stats}>
+        <div className={styles.stat}>
+          <span className={styles.statValue}>{formatUsd(control.data?.spend.todayUsd)}</span>
+          <span className={styles.statLabel}>Spent today</span>
+          {control.data && control.data.spend.dailyBudgetUsd > 0 ? <span>{`of ${formatUsd(control.data.spend.dailyBudgetUsd)}`}</span> : null}
+        </div>
+      </div>
       {runningMix.length > 0 ? (
         <Section title="Running mix" trailing={runningMixSummary(runningMix)}>
           {runningMix.map((line) => (
@@ -458,6 +467,7 @@ export function FleetScreen() {
       </Section>
       <Section title="Right now" flat>{liveBody}</Section>
       <FleetUsageCard />
+      <UsageResourcesCard />
       <Section title="Waste forecast">
         {ledger.status === 'error' ? (
           <ErrorState title="Couldn’t read waste forecast" reason={readFailureReason(ledger.error)} onRetry={refetchLedger} />

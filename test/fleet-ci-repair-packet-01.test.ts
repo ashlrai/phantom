@@ -53,7 +53,7 @@ describe('CI repair packet', () => {
     const result = await packet(f);
     expect(result.items[0]?.unavailable).toBe('invalid_job_url'); expect(result.complete).toBe(false); expect(f.reads).toHaveLength(0);
   });
-  it.each([[{ head_sha: 'b'.repeat(40) }, 'head_mismatch'], [{ name: 'Other' }, 'job_mismatch'], [{ run_id: 11 }, 'job_invalid']] as const)('rejects evidence with mismatched identity', async (evidence, reason) => {
+  it.each([[{ head_sha: 'b'.repeat(40) }, 'head_mismatch'], [{ name: 'Other' }, 'job_mismatch'], [{ run_id: 11 }, 'job_invalid']] as const)('rejects evidence with mismatched identity (%#)', async (evidence, reason) => {
     const f = fixture({ evidence }); const result = await packet(f);
     expect(result.items[0]?.unavailable).toBe(reason); expect(result.complete).toBe(false);
     if (reason !== 'job_invalid') expect(result.items[0]?.evidence).toBeNull();

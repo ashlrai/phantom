@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCommsInboxCommand } from '../src/cli/comms-inbox.js';
 import { createChannelReceiver, type ChannelAck, type ChannelMessage } from '../src/core/fleet/channel-envelope.js';
+import { normalizeForDedupe } from '../src/core/fleet/cross-channel-dedupe.js';
 import { readInboxEntries } from '../src/core/fleet/mason-inbox.js';
 
 let root: string;
@@ -18,7 +19,12 @@ const receiptPath = (): string => join(runsDir, 'channel-receipts', 'receipts.js
 const inboxPath = (): string => join(runsDir, 'leader', 'MASON-INBOX.md');
 const eventsPath = (): string => join(runsDir, 'dispatch-events.log');
 const bodyHash = (id: string, body: string): string =>
-  createHash('sha256').update(JSON.stringify([id, body])).digest('hex');
+  createHash('sha256').update(JSON.stringify([id, normalizeForDedupe(body)])).digest('hex');
+
+const entryFor = (at: string, iso: string, text: string) => {
+  const id = `desk-${createHash('sha256').update(iso + text).digest('hex').slice(0, 16)}`;
+  return { at, channel: 'desktop', id, source: `desktop (${id})`, priority: null, text };
+};
 
 // Each call is a fresh channel adapter boot: new in-memory receipts, the same
 // persisted runsDir store, and its own acknowledgement transport recording.
@@ -62,10 +68,10 @@ describe('day-one 3.30.0 channel restart contract (31aj1)', () => {
     expect(first.ack).toEqual({ channel: 'desktop', status: 'accepted', dedupeKey: first.envelope.dedupeKey });
     expect(firstAcks).toEqual([first.ack]);
 
-    const entry = { at: '2026-10-31 00:13', source: 'desktop', priority: 'P0', text: orderBody };
+    const entry = entryFor('2026-10-31 00:13', '2026-10-31T04:13:00.000Z', orderBody);
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'healthy', entries: [entry] });
     const receipt = await readFile(receiptPath(), 'utf8');
-    expect(JSON.parse(receipt)).toEqual([[bodyHash(sender, orderBody), time, first.ack.dedupeKey]]);
+    expect(JSON.parse(receipt)).toEqual([[bodyHash(sender, orderBody), time, first.ack.dedupeKey, { channel: 'desktop', pending: false, envelopeDigest: expect.stringMatching(/^[a-f0-9]{64}$/) }]]);
     expect(receipt).not.toContain(sender);
     expect(receipt).not.toContain(orderBody);
     if (process.platform !== 'win32') {
@@ -84,7 +90,7 @@ describe('day-one 3.30.0 channel restart contract (31aj1)', () => {
     expect(retryAcks[0]).not.toBe(retry.ack);
 
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'healthy', entries: [entry] });
-    expect((await readFile(inboxPath(), 'utf8')).match(/^## /gm)).toHaveLength(1);
+    expect((await readFile(inboxPath(), 'utf8')).match(/^\d{4}-.* \[src:/gm)).toHaveLength(1);
     expect(await readFile(receiptPath(), 'utf8')).toBe(receipt);
     expect(await readFile(eventsPath(), 'utf8')).toBe('2026-10-31 04:13:00 INBOX new entry from desktop\n');
 
@@ -100,13 +106,13 @@ describe('day-one 3.30.0 channel restart contract (31aj1)', () => {
     expect(retryAcks).toEqual([retry.ack, followUp.ack]);
 
     const entries = [
-      { at: '2026-10-31 00:15', source: 'desktop', priority: 'P0', text: followUpBody },
+      entryFor('2026-10-31 00:15', '2026-10-31T04:15:00.000Z', followUpBody),
       entry,
     ];
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'healthy', entries });
     expect(JSON.parse(await readFile(receiptPath(), 'utf8'))).toEqual([
-      [bodyHash(sender, orderBody), Date.parse('2026-10-31T04:13:00.000Z'), first.ack.dedupeKey],
-      [bodyHash(sender, followUpBody), time, followUp.ack.dedupeKey],
+      [bodyHash(sender, orderBody), Date.parse('2026-10-31T04:13:00.000Z'), first.ack.dedupeKey, { channel: 'desktop', pending: false, envelopeDigest: expect.stringMatching(/^[a-f0-9]{64}$/) }],
+      [bodyHash(sender, followUpBody), time, followUp.ack.dedupeKey, { channel: 'desktop', pending: false, envelopeDigest: expect.stringMatching(/^[a-f0-9]{64}$/) }],
     ]);
     expect(await readFile(eventsPath(), 'utf8')).toBe(
       '2026-10-31 04:13:00 INBOX new entry from desktop\n2026-10-31 04:15:00 INBOX new entry from desktop\n',
@@ -124,7 +130,7 @@ describe('day-one 3.30.0 channel restart contract (31aj1)', () => {
     expect(await createCommsInboxCommand({ runsDir })(['read', '--json'])).toBe(0);
     expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
       sourceState: 'healthy',
-      entries: [...entries].reverse(),
+      entries: [...entries].reverse().map(({ at, source, priority, text }) => ({ at, source, priority, text })),
     });
 
     await expect(readdir(home)).resolves.toEqual([]);
@@ -149,7 +155,7 @@ describe('day-one 3.30.0 channel restart contract (31aj1)', () => {
     expect(retryAcks).toEqual([retry.ack]);
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'desktop', priority: 'P0', text: normalized }],
+      entries: [entryFor('2026-10-31 00:13', '2026-10-31T04:13:00.000Z', normalized)],
     });
     expect(await readFile(eventsPath(), 'utf8')).toBe('2026-10-31 04:13:00 INBOX new entry from desktop\n');
   });
@@ -169,7 +175,7 @@ describe('day-one 3.30.0 channel restart contract (31aj1)', () => {
     expect(await readFile(receiptPath(), 'utf8')).toBe(receipt);
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
-      entries: [{ at: '2026-10-31 00:13', source: 'desktop', priority: 'P0', text: orderBody }],
+      entries: [entryFor('2026-10-31 00:13', '2026-10-31T04:13:00.000Z', orderBody)],
     });
 
     time += 60_000;
@@ -182,8 +188,8 @@ describe('day-one 3.30.0 channel restart contract (31aj1)', () => {
     expect(await readInboxEntries({ runsDir })).toEqual({
       sourceState: 'healthy',
       entries: [
-        { at: '2026-10-31 00:14', source: 'desktop', priority: 'P0', text: orderBody },
-        { at: '2026-10-31 00:13', source: 'desktop', priority: 'P0', text: orderBody },
+        entryFor('2026-10-31 00:14', '2026-10-31T04:14:00.000Z', orderBody),
+        entryFor('2026-10-31 00:13', '2026-10-31T04:13:00.000Z', orderBody),
       ],
     });
   });

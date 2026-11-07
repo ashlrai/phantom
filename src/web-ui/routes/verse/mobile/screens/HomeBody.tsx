@@ -1,3 +1,4 @@
+import { formatUsd } from '../format-usd.js';
 /**
  * routes/verse/mobile/screens/HomeBody.tsx — Home's cards: is the fleet
  * moving (and the one button that matters), what is waiting on you, who is
@@ -31,6 +32,7 @@ import { homeLastOrder } from '../home-last-order-model.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileInterject } from '../MobileInterject.js';
+import { LeaderReplies } from '../LeaderReplies.js';
 import { HomeRuns } from '../HomeRuns.js';
 import { Button, SkeletonList } from '../ui.js';
 import { Badge, Row, Section, ui, type Tone } from '../ui-parts.js';
@@ -47,11 +49,6 @@ const HEADLINE_TONE: Readonly<Record<FleetHeadline, Tone>> = {
   blocked: 'danger',
   unknown: 'neutral',
 };
-
-export function formatUsd(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  return value >= 100 ? `$${Math.round(value)}` : `$${value.toFixed(2)}`;
-}
 
 /** "3m", "1h 12m" — how long a run has been going. */
 export function elapsedText(startedAt: string | null, now: number = Date.now()): string | null {
@@ -187,6 +184,7 @@ export function HomeBody() {
       </Section> : personal ? <Row title={personal.title} trailing={<Badge tone={personal.tone}>{personal.trailing}</Badge>} /> : null}
       <HomeRuns />
       <MobileInterject />
+      <LeaderReplies />
 
       <Suspense fallback={<Section title="Seats" flat><SkeletonList rows={3} label="Loading seats" /></Section>}>
         <HomeSeats />

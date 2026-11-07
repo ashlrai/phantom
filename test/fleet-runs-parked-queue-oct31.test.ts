@@ -11,8 +11,11 @@ describe('fleet parked queue', () => {
   it('projects counts, groups and skips without paths', async () => {
     const result = await readFleetQueue({ runsDir: fixture, now: () => now, limit: 2 });
     expect(result).toMatchObject({ v: 1, total: 6, ready: 2, parked: 4, malformed: 1,
-      sources: { ready: 'degraded', skips: 'healthy' }, skipsLast24h: 3 });
-    expect(result.byLane).toEqual([{ lane: 'codex-local', ready: 1, parked: 2 }, { lane: 'codex-personal', ready: 1, parked: 2 }]);
+      sources: { ready: 'degraded', skips: 'healthy' }, skipsLast24h: 3, unmetDeps: [] });
+    expect(result.byLane).toEqual([
+      { lane: 'codex-local', ready: 1, parked: 2, phantom: 0, other: 1, otherRepos: [] },
+      { lane: 'codex-personal', ready: 1, parked: 2, phantom: 0, other: 1, otherRepos: [] },
+    ]);
     expect(result.groups).toEqual([
       { reason: 'MERGERATE', lane: 'codex-personal', count: 2, jobs: ['JOB-MERGE-1', 'JOB-MERGE-2'] },
       { reason: 'INVALID', lane: 'codex-local', count: 1, jobs: ['JOB-INVALID'] },

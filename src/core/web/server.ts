@@ -22,6 +22,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js';
+import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
@@ -184,6 +185,7 @@ export async function startServer(
       allowDispatch: opts.allowDispatch,
       readSession: authority?.kind === 'session' ? authority.session : undefined,
       readProjections: readProjections ?? undefined,
+      usageResourcesApi: handleUsageResourcesApi,
     })
       .then((handled) => {
         // A mutation can partially succeed and still return 409/500 (for

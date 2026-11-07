@@ -15,6 +15,7 @@ function healthy(over: FleetDoctorOptions = {}): FleetDoctorOptions {
     leader: { readEvents: async () => `${localStamp(30)} OPUS-LEADER rc=0\n` },
     heartbeat: { queueStatus: async () => JSON.stringify({ last_tick: at(5) }), supervisorStatuses: async () => [] },
     readJobs: async () => '',
+    readKeptStatus: async () => '{"kept_worktrees":[]}',
     readLaneStatus: async () => JSON.stringify({ lanes: {} }),
     worktreeFs: { listDirs: async () => [], mtimeMs: async () => null },
     worktreeRoot: '/fixture/wt',
@@ -30,7 +31,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('fleet doctor', () => {
   it('prints one ok line per check and exits 0 when healthy', async () => {
     expect(await cmdFleetDoctor([], healthy())).toBe(0);
-    expect(out).toHaveLength(6);
+    expect(out).toHaveLength(8);
     expect(out.every(l => l.startsWith('ok '))).toBe(true);
   });
 
@@ -59,12 +60,12 @@ describe('fleet doctor', () => {
 
   it('warns when the ledger is unreadable and when waste appears', async () => {
     const report = await runFleetDoctor(healthy({ readJobs: async () => null }));
-    expect(report.checks.filter(c => c.level === 'warn').map(c => c.name)).toEqual(['stuck-prs', 'waste']);
+    expect(report.checks.filter(c => c.level === 'warn').map(c => c.name)).toEqual(['stuck-prs', 'slow-prs', 'waste']);
     expect(report.level).toBe('warn');
     const waste = row({ job: 'J1', ts: at(10), event: 'finish', pool_error: 'quota' });
     const w = await runFleetDoctor(healthy({ readWaste: async () => waste }));
-    expect(w.checks[3].name).toBe('waste');
-    expect(w.checks[3]).toMatchObject({ level: 'warn', reason: '1 pool errors, 0 empty, 0 without a PR in 6h' });
+    expect(w.checks[4].name).toBe('waste');
+    expect(w.checks[4]).toMatchObject({ level: 'warn', reason: '1 pool errors, 0 empty, 0 without a PR in 6h' });
   });
 
   it('degrades a throwing reader to warn instead of crashing, and lists stale worktrees (dry run)', async () => {
@@ -73,14 +74,14 @@ describe('fleet doctor', () => {
       worktreeFs: { listDirs: async () => ['OLD1'], mtimeMs: async () => NOW - 100 * 3_600_000 },
     }));
     expect(report.checks[1].level).toBe('red'); // a missing queue status is a dead tick
-    expect(report.checks[4]).toMatchObject({ level: 'warn', reason: expect.stringContaining('1 stale worktree') });
+    expect(report.checks[6]).toMatchObject({ level: 'warn', reason: expect.stringContaining('1 stale worktree') });
   });
 
   it('--json prints the typed report', async () => {
     expect(await cmdFleetDoctor(['--json'], healthy())).toBe(0);
     const parsed = JSON.parse(out[0]!);
     expect(parsed).toMatchObject({ v: 1, level: 'ok' });
-    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'waste', 'worktrees', 'lanes']);
+    expect(parsed.checks.map((c: { name: string }) => c.name)).toEqual(['leader', 'heartbeat', 'stuck-prs', 'slow-prs', 'waste', 'kept', 'worktrees', 'lanes']);
   });
 
   it('rejects bad usage with 2 and prints help with 0', async () => {

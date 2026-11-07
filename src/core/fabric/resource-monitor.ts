@@ -1528,6 +1528,8 @@ export async function getBackendResourceState(
  */
 export async function getResourceSnapshot(cfg: unknown): Promise<ResourceSnapshot> {
   try {
+    const { sampleMachineForDispatch } = await import('../resources/telemetry-store.js');
+    await sampleMachineForDispatch(cfg);
     const now = Date.now();
 
     // Determine which backends to sense (based on allowedBackends config)

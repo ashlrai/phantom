@@ -8,7 +8,12 @@ export interface FleetRepoRateDependencies {
   now: () => number;
 }
 
-/** Count each PR once using its newest outcome in the inclusive window. */
+/**
+ * Count each PR once using its newest outcome in the inclusive window.
+ * Accepts ISO-8601 timestamps ending with Z, ±HH:MM, or ±HHMM offsets.
+ * For ±HHMM (no colon), a colon is inserted before Date.parse so
+ * the built-in parser handles it correctly.
+ */
 export function fleetRepoRate(text: string, hours: number, target: number, all: boolean, now: number) {
   const merges = new Map<string, { repo: string; at: number; ttm: number | null }>();
   let ignored = 0;
@@ -19,7 +24,11 @@ export function fleetRepoRate(text: string, hours: number, target: number, all: 
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
       const row = value as Record<string, unknown>;
       if (row.event !== 'outcome' || row.state !== 'MERGED') continue;
-      const at = typeof row.ts === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/i.test(row.ts) ? Date.parse(row.ts) : NaN;
+      const raw = typeof row.ts === 'string' ? row.ts : '';
+      const z = /(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
+      const om = /(?:Z|[+-]\d{4})$/.test(raw);
+      const ts = (z || om) ? (row.ts as string).replace(/([+-])(\d{2})(\d{2})$/, '$1$2:$3') : '';
+      const at = (z || om) ? Date.parse(ts) : NaN;
       const match = typeof row.url === 'string'
         ? /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)\/?$/.exec(row.url) : null;
       if (!Number.isFinite(at) || !match) throw new Error();

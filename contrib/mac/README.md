@@ -2,18 +2,28 @@
 
 `restock.py` and `dispatchd.py` are reviewable repository copies of the
 deterministic Mac queue scripts that run under `~/.ashlr-runs` on the dispatch
-host. `dispatchd.py` here is the single source for the live dispatcher (see
-[Installing the dispatcher](#installing-the-dispatcher)). They are pinned artifacts: changes
-land by PR review, and Security re-pins the sha before any live install. Both
-are deterministic (no model or network calls of their own) and neither creates
-tokens.
+host. A repository snapshot can be older than the installed controller: compare
+its exact input hash before adoption. Current-host changes under
+`host-integration/` are surgical patches against their declared input, not
+permission to overwrite the whole controller with an older copy. Changes land
+by PR review and the adoption owner verifies immutable source hashes before any
+live install. The queue scripts are deterministic and do not create tokens.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
 the READY stock at >=30% `bet=bold` and parking security-pinned surfaces as
-`HOLD-SECURITY`. `dispatchd.py` is the per-tick supervisor: it reaps finished
-jobs, adapts per-lane slot targets inside `slots.json`, launches queued lines,
-and fires the restocker when a lane's queue runs shallow.
+`HOLD-SECURITY`. Lines whose `after=` dependencies are not yet landed are written
+as `PARKED-DEP.<lane>` rows with a `DEPENDENCY GATE:` id list in the prompt
+(RQ-QUEUE-AUTOUNPARK-1). Each restock tick re-reads those prompts; when
+`metrics/jobs.jsonl` shows every gate id `MERGED`, restock rewrites the row to a
+normal launch line and logs `UNPARK <job> deps=<ids>`. Unpark never rewrites the
+prompt body, so prose like `no merge without Security pin` stays put — unpark is
+not a merge. `phm fleet parked --json` lists the same parked rows and reports
+still-unmet gate ids under `unmetDeps`. `dispatchd.py` is the per-tick
+supervisor: it reaps finished jobs, adapts per-lane slot targets inside
+`slots.json`, launches queued lines, and fires the restocker when a lane's queue
+runs shallow. Restock changes need a Security re-pin before the live `bin/` copy
+is installed; do not install into `bin/` from an agent.
 
 Devin routing policy (RQ-DEVINROUTEDEFAULTQ7, DEVIN-LEVERAGE-20261026): a line
 that leaves its pool open (`pool=any` or no `pool=` attr) and is `tier=frontier`
@@ -37,14 +47,17 @@ Load above 3 x ncpu halves the four new claims per tick to two, without tripping
 Process count above 2500 only warns. Worktree count above 40 only warns and
 counts existing directories whose job is in the live `alive` set. Stale daemon
 status also only warns. The ramp pauses only on a hard trip. Running jobs are
-also capped fleet-wide at `min(sum of unheld lane targets, ncpu, hard_cap)`. Every
-pool has a `hard_cap` in `slots.json` and so does the file itself (top-level
-`hard_cap`, default 18); the stored floor, ceiling and target are clamped to it
-every tick, immediately after the autopilot's `budget-overrides.json` floor and
+also capped fleet-wide at `min(sum of unheld lane targets, adaptive cap, hard_cap)`
+(see [Adaptive concurrency and batching](#adaptive-concurrency-and-batching)). Every
+pool has a `hard_cap` in `slots.json`. The file may also carry a top-level `hard_cap`,
+which is now an optional operator ceiling with no default. The stored pool floor,
+ceiling and target are clamped to the pool `hard_cap` every tick, immediately after the autopilot's `budget-overrides.json` floor and
 ceiling are reapplied, so neither the overrides nor the ramp can lift a pool
 past its `hard_cap`. dispatchd writes `queue/admission.json` (also embedded in
 `status.json`) and logs `LOADGATE tripped|clear` once per change. `phm pool
-admission --json` reports the same verdict read-only. `queue/LOADGATE_OFF` is the
+admission --json` reports the same verdict read-only. `ashlr fleet admission --json`
+reads the embedded block and says, per lane, whether work is held, at target,
+blocked by the global cap, or ok. `queue/LOADGATE_OFF` is the
 owner's off switch. The `codex-local` mid-tier cap is 4 while the gate is clear
 and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
@@ -83,7 +96,7 @@ a tick: extra reaps and new empty-run prechecks. Disk guard: below
 `DISK_HARD_STOP_GB` (30) nothing launches (`DISKGUARD hard_stop` event) while reaps
 still run to free space.
 
-## Queue wait and claim fairness
+## Queue wait and dispatch priority
 
 The dispatcher writes `enqueue` on first observation of a ready job, including
 while admission is paused or its lane is held. `queue/run/<job>.enqueued`
@@ -95,14 +108,121 @@ and launch are separate phases. Observation starts at the dispatcher snapshot,
 so time between a writer appending and the next snapshot is not measured.
 Requeues of the same job retain their original enqueue observation.
 
-`queue/claim-cursor.json` remembers the last successfully spawned lane. The next
-tick starts round-robin after that lane, so backlogged early lanes cannot consume
-every tick's claim limit indefinitely. Held lanes and blocked jobs are still
-skipped, and all admission, disk, local health and capacity checks still apply.
+Ready jobs and finished worktrees use these priority buckets: `RQ-FIX-MAIN-*`
+first, then `RQ-REL-*`, `RQ-DESK-*`, LAND/FIXUP/RECUT (with or without `RQ-`),
+and all other jobs. Within each bucket the repo order is `phantom`,
+`phantom-secrets`, `locus`, `lexicon`, `ashlr-md`, `ashlr-stack`, `ashlr-plugin`,
+then unknown repos. Smaller numeric `size<=` hints in the task envelope sort
+first; absent or invalid hints sort last, followed by path as the final tie
+breaker. The repo comes from ready.tsv field 2 or the saved launch line when
+reaping. The full order applies across lanes and replaces the lane cursor.
+
+At most one launched, unfinished `RQ-FIX-MAIN-*` job per repo may run at a time,
+including launch grace before its worktree exists. Explicit worker exit or
+publish result releases that reservation. Sibling fixes remain in ready.tsv;
+the dispatcher continues scanning for eligible work. All admission, disk, local
+health and capacity checks still apply. If process enumeration fails, an
+unfinished fix keeps its repo reservation until liveness recovers or completion
+is explicit.
+
+Publish handoffs use the same key and run one at a time, including across ticks,
+so concurrent reapers cannot reverse entry into the publisher's auto-merge
+step. The external `reap-one.sh` remains responsible for the sanctioned
+`publish.sh` and auto-merge operation, and must wait through auto-merge
+enablement before exiting. Its process blocks new handoffs even if
+it has already removed its `.base` file. A new `.reaping` marker covers process
+startup for 120 seconds; with a successful process snapshot, an older orphan
+marker holds its own job but does not stop unrelated publishing. This changes
+throughput to one handoff per tick.
+The reaper consults the job ledger before handoff: a merged outcome for the
+current launch, including one linked through its published PR URL, prevents a
+leftover `.base` from triggering another publication. Repeated handoffs for an
+unfinished attempt record its finish only once; a later launch starts a new
+attempt. These records do not remove the worktree or replace publisher recovery.
+
+## Adaptive concurrency and batching
+
+RQ-QUEUE-BATCH-1 retires the fixed fleet cap of 18 and the `ncpu` bound beside it.
+Agent sessions mostly wait on model APIs, so the host's own signals decide.
+`concurrency.py` makes one decision per tick, using additive increase and
+multiplicative decrease, and keeps its state in `queue/concurrency.json`:
+
+| Signal | ok (headroom) | danger (back off) | Starvation gate trips at |
+|---|---|---|---|
+| load1 / (ncpu x `GATE_LOAD_PER_CPU`) | < 0.5 | >= 0.8 | warns only at 1.0 |
+| `kern.memorystatus_vm_pressure_level` | 1 | >= 2 | 4 |
+| `memory_pressure` free % | >= 25 | < 15 | n/a |
+| swap growth in the gate window | < 0.25 x `GATE_SWAP_GROWTH_GB` | >= 0.5 x | 1.0 x |
+| free disk | >= 2.5 x `DISK_HARD_STOP_GB` | < 1.5 x | 1.0 x |
+| processes / `GATE_PROCS_MAX` | < 0.7 | >= 0.85 | warns only |
+| fork failures (15 min) | 0 | >= 1 | n/a |
+| provider 429 / overload hits (15 min) | 0 | >= 3 | per-lane halving |
+
+- **Raise**: +2, at most every 120 s, and only when every signal is ok and the cap
+  is the binding limit: running sessions are at the cap, work is queued, and the
+  unheld lane targets sum above the cap.
+- **Back off**: x 0.75 (at least -1) when any signal is in danger, at most every
+  60 s. A fresh fork failure backs off at once. Fork failures are detected from
+  `EAGAIN`/`ENOMEM` on the launcher spawn and from fork errors in a failed launch
+  log (`FORK_FAILED`).
+- **Hold**: on anything between ok and danger, and on any unknown signal.
+- **Settle**: a backoff records the cap it started from (`trouble_cap`). Raises stay
+  below that cap for 15 minutes, then probe one session at a time. The cap settles
+  just under the host's real limit instead of oscillating.
+
+The first tick seeds the cap at `max(4, min(18, ncpu))`, the old effective cap, so
+nothing jumps on install. The cap stays between a floor of 4
+(`ASHLR_CONCURRENCY_MIN`) and a ceiling of 64 (`ASHLR_CONCURRENCY_MAX`). A
+top-level `slots.json` `hard_cap` set by the operator lowers that ceiling. The
+`hard_cap` of 18 that older ticks seeded is dropped once, on the controller's first
+tick. A malformed value fails closed to 18. Every change is logged as
+`CONCURRENCY <from>-><to> <reason> (<signals not ok>)` in `dispatch-events.log` and
+as a `concurrency` event in `metrics/jobs.jsonl`. `admission.json` carries
+`concurrency_cap`, `_floor`, `_ceiling` and `_zones`. `status.json` adds a
+`concurrency` block with `settled_6h`, the time-weighted cap over six hours.
+`python3 concurrency.py [state.json]` prints the same summary.
+
+**Batching.** `batcher.py` lets one session handle many related tasks. When a
+launchable job has at least 2 related ready peers (same repo and tier, and the same
+area: the source directory its prompt names most, such as `src/core/queue`), dispatchd
+launches them together as `RQ-BATCH-<REPO>-<AREA>-<hash>`. Prompts without paths group
+by job family (`RQ-PHX-*`). Tasks from areas too small to batch alone merge per repo;
+they never take members from an area that can batch alone. Batches are evened out
+(n tasks over `ceil(n / size)` batches) and are bounded by 200 000 prompt
+characters. These never batch: release (`RQ-REL-`), desktop (`RQ-DESK-`), main-repair
+(`RQ-FIX-MAIN-`) and PR-maintenance kinds (`LAND`, `FIXUP`, `RECUT`, `SALVAGE`,
+`CONSOLIDATE`, `CLOSE`), plus `codex-local`, parked, kept and retired jobs.
+
+The batch prompt (`queue/prompts/<batch>.md`) tells the session to fan out
+subagents. It also carries a per-task checklist that the session keeps in
+`BRIDGE_NOTES.md`, one line per task:
+`- [x] <JOB> — done: ...` or `- [ ] <JOB> — failed|skipped|deferred: ...`.
+`queue/batches/<batch>.json` records the members, their original ready lines and
+prompts. Each member gets `queue/run/<job>.batched` while the batch runs (a
+duplicate ready line is dropped as `SKIP_BATCHED`) and a `batch_claim` metric.
+
+At reap, every member gets its own `task_outcome` metric (`done`, `skipped`,
+`failed`, `deferred` or `unreported`). Members that are failed, deferred or
+unreported go back to `ready.tsv` as individual lines. A task runs in at most 2
+batches (`<job>.batch-attempts`) and then only solo. The `BATCH_REAPED` event
+summarises the counts. The batch per-job precheck is skipped, because the session
+checks each task.
+
+Batch size starts at 16 per lane and stays between 4 and 64
+(`queue/batch-tuning.json`). After each reap it grows x 1.25 when at least 85% of
+tasks are done or skipped within 4 h. It shrinks x 0.7 below 60%, on a timeout, or
+when the lane's batches complete fewer tasks per session-hour than its single
+sessions. The lane is the one with the most tasks per session-hour among the lanes
+the router proposed for the members that have a free slot (3 or more sessions of
+history; otherwise the lead's lane). Batches never move to a lane the router did
+not propose. `python3 batcher.py report [--json] [--window-h 168]` prints tasks per
+session-hour and per million tokens by lane and by mode (single vs batch): the
+before/after comparison. Only PR-published work counts. `queue/BATCH_OFF` is the off
+switch.
 
 ## Installing the dispatcher
 
-`install.sh` diffs `dispatchd.py`, `install-gate.py` and `launch-gate.sh` against
+`install.sh` diffs `dispatchd.py`, `concurrency.py`, `batcher.py`, `install-gate.py` and `launch-gate.sh` against
 `~/.ashlr-runs/bin` (or `$ASHLR_RUNS_BIN`, or `--bin DIR`) and installs the ones that
 differ, copying each replaced file to `<file>.bak-macdispatch-<YYYYmmdd-HHMMSS>`
 first. It prints the new sha256 of every file for Security to pin, refuses symlink
@@ -387,9 +507,16 @@ the live queue or GitHub:
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_staged_drain.py -v
 ```
 
-Restock and dispatch share `launch_precheck.py`. Restock treats precheck exit
-codes 10 through 13 as `DONE-NOOP` before writing a prompt, claim, or
-`ready.tsv` entry. Errors and timeouts keep the existing fail-open behavior;
+Restock and dispatch share `launch_precheck.py`. Only exit 10 with an exact
+job-matching merged/closed PR receipt proves completion. Restock also excludes
+exact jobs with recorded `MERGED` outcomes before creating prompts or claims;
+an explicit repository must match (legacy outcomes use fleet-wide job IDs).
+Restock keeps exit 11–13 rows READY with bounded retries recorded separately in
+`queue/restock-precheck-parked.json`. They consume neither lane slots nor target
+file/PR reservations, so actionable siblings can fill demand in the same pass.
+Each pass runs at most the larger of 20 prechecks or total lane demand.
+Retry and NOOP history is tied to task content; revised work retries immediately.
+Errors and timeouts keep the existing fail-open behavior;
 dispatch checks again at launch. In dispatch, legacy code 13 means acceptance
 unproven, not completion. The job remains in `ready.tsv` with per-job retry
 state in `queue/precheck-parked.json`: delays double from one minute to a
@@ -401,8 +528,21 @@ Host installation still requires Security review and re-pinning. Preview without
 
 ```sh
 python3 contrib/mac/restock.py --dry-run --json
-# {"dry_run": true, "queued": 0, "done_noop": ["RQ-EXAMPLE"], "skips": {"done-noop": 1}}
+# {"dry_run": true, "queued": 0, "done_noop": ["RQ-EXAMPLE"], "skips": {"done-noop": 1}, "unpark": [], "parked_dep": []}
+
+# Parked dependency rows still waiting on MERGED outcomes (read-only):
+phm fleet parked --json
+# … "unmetDeps": [{"job":"RQ-WAIT","lane":"devin","unmet":["RQ-UPSTREAM"]}] …
 ```
+
+Restock measures lane demand from distinct valid ready rows with nonempty prompts,
+not the previous dispatcher status count. Parked, invalid, empty and duplicate
+rows do not fill a lane. Its JSON output reports `queue_diagnostics` and
+`parked_diagnostics` counts; parked rows with missing gates, invalid fields,
+unmerged dependencies or duplicate job IDs remain in place for inspection.
+A merged dependency releases at most one row per job, preserving its prompt.
+These diagnostics do not modify or delete invalid rows. Restock source changes
+require Security re-pinning before host installation.
 
 Restock also cuts NOOP churn (RQ-PSEL-4-NOOPCUT): within one pass it keeps a
 single line per target PR and per `file=` target, and it parks a job for 24 h
@@ -429,3 +569,167 @@ require the host launcher's source and its sandbox review: emit readiness only
 after worktree preparation and an observed first model token, with the model
 endpoint restricted to loopback. A health GET alone is not readiness evidence.
 No production launch-to-ready or post-merge waste result is available locally.
+
+## Bounded process ownership inspection
+
+The dispatcher first lists process IDs and executable names, then reads arguments only for potential engine and shell owners. This avoids a Mac kernel stall while reading unrelated applications' arguments. Both inspection and cleanup have deadlines; a task stuck in uninterruptible sleep cannot hold the controller lock indefinitely.
+
+If a live worker cannot be identified, the tick records `queue/process-snapshot.json` with `known: false` and exits before reaping or claiming any work. A missing argument row counts as an exit only when the OS confirms the process is gone. This preserves active jobs instead of treating an incomplete snapshot as an empty fleet. The installer copies `process_snapshot.py` before its dispatcher consumer.
+
+
+# Existing PR and worktree recovery helpers
+
+These Bash 3.2 helpers integrate with the operator's external bridge scripts.
+The host launcher remains external; `publish.sh` is its reviewable publisher mirror. They need Git and an existing
+Locus-authorized `gh` context, with credentials supplied through Phantom Secrets
+when needed. They do not acquire tokens, switch accounts, push, or merge.
+
+## Two hook lines
+
+Set `PHANTOM_ROOT` to this checkout. Replace the existing PR creation in
+`publish.sh` and worktree creation in `launch.sh`, respectively, with:
+
+```bash
+bash "$PHANTOM_ROOT/contrib/mac/pr-create.sh" "$repo" "$fork:$branch" "$base" "$title" "$body_file" || exit $?
+bash "$PHANTOM_ROOT/contrib/mac/worktree-add.sh" "$repo_dir" "$job" "$worktree" "$start_ref" || exit $?
+```
+
+Map these variable names to the bridge's existing values. `repo` is the bare
+repository name (for example, `phantom`) under `ashlrai`; `fork` is the head
+owner login; `branch` is the already-pushed head branch. Pass an explicit base,
+title, and readable body file. The PR helper prints only the created or reused
+PR URL to stdout. Diagnostics go to stderr, without replaying raw CLI errors.
+Retain the publisher's existing push, validation and approval gates around this
+replacement. A successful URL does not establish CI or mergeability.
+
+The PR helper first runs `gh pr list --head fork:branch`. Because
+[gh documents qualified heads as unsupported](https://cli.github.com/manual/gh_pr_list),
+an empty or failed lookup is checked with REST GET using the exact head and base.
+Lookup failures stop creation. Existing open PRs are reused, including after an
+ambiguous create failure. Only HTTP 5xx or GraphQL timeout errors retry
+`gh pr create`, for three total attempts, with 2s and 4s backoff. After those
+failures it checks again, then makes one REST POST to
+`/repos/ashlrai/<repo>/pulls` through `gh api`, preserving title and body.
+Permanent errors stop; a failed POST is reconciled with a lookup, never repeated.
+Concurrent publishers can still race between lookup and creation; GitHub's
+duplicate-head rejection is reconciled by the same lookup.
+
+`job` is a single branch component; the launch helper creates
+`codex-bridge/<job>` at `start_ref` (for example, `origin/main`). If normal
+`git worktree add -b` fails specifically because that branch exists, the helper
+checks NUL-delimited worktree porcelain records. Only an unused branch may be
+reset with `-B`. Any registered worktree, including locked or missing paths,
+blocks reuse. Recovery also refuses an existing destination, even an empty
+directory: older Git can reset `-B` before reporting an occupied path. Nothing
+is pruned and `--force` is never used. Recovery reserves the destination with
+`mkdir` before `-B`, so its parent must already exist and be writable. If Git
+subsequently fails, only that empty directory is removed; inspect any partial
+worktree and the branch tip before retrying. An unused stale
+branch's tip is intentionally reset to `start_ref`; retain valuable commits
+elsewhere before relaunching that job. Paths can contain spaces or newlines.
+
+## Local verification
+
+```bash
+bridge_test_home=$(mktemp -d)
+HOME="$bridge_test_home" node --test contrib/mac/bridge.test.mjs
+```
+
+The tests use fake `gh` and `sleep` executables and disposable Git repositories.
+They never contact GitHub or use the operator's credentials. The helper scripts
+are invoked with `bash`, so no installation or executable-bit change is needed.
+
+
+## Reconciling an already-integrated original PR
+
+The host-owned `publish.sh <job> --integrated-merge` mode preserves a reviewed
+two-parent merge on the existing `codex-bridge/<job>` fork branch. It reuses the
+original open PR and requests its ordinary required CI and merge queue. It does
+not create a replacement PR. Both modes reject staged symlinks named
+`node_modules` before committing or pushing. A directory-only ignore rule does
+not exclude such a link; regular checked-in dependency fixtures remain allowed.
+An unavailable Git index also fails this check.
+
+For an existing PR repair, the operator must explicitly disable any previous
+auto-merge request before the first push and verify that readback. Merely leaving
+auto-merge disabled in the new publication command does not clear an older
+request. Restore normal queue admission after verifying the exact reviewed head.
+
+Use this only when reconciliation establishes that every original contribution
+is already present in current main. A final tree equal to main is necessary,
+but does not by itself establish that contributions were retained. The operator
+records per-path original changes, concrete main-source evidence and verification
+for every path changed between the original head and its merge base with main.
+Ambiguous or missing functionality must be repaired through the normal publisher.
+
+`integrated-merge.py` validates a short-lived, private operator receipt under
+`~/.ashlr-runs/integrated-merge/<job>.json`, bound by SHA-256 to the corresponding
+`evidence/<job>.json` reconciliation record. Both directories must be owned by the
+operator with mode700, and proof files must be regular, single-link mode600 files.
+The receipt pins schema1, job, repository, original PR number, original head,
+current main head, authored merge head, reviewed tree, creation/expiry times
+and evidence digest. Its lifetime cannot exceed30 minutes. The merge must have
+exactly the original head followed by current main as parents, and its committed
+and indexed trees must exactly equal reviewed current main. Extra worktree
+changes, links, stale records, missing path evidence and new deltas are refused.
+
+The existing publisher retains its Git-safe, G1, protected-path, secret-shape and
+fork checks. The helper uses the same pinned Git-safe implementation and literal
+GitHub.com upstream/fork identities. Before the ordinary non-force fork push, it
+rechecks the exact original PR state, owner/ref/head and current default-branch
+head. Probe timeouts stop only their freshly created process group, with bounded
+cleanup even when a grandchild retains stdout; unrelated workers are never signaled.
+A per-job publication claim prevents concurrent use; successful push
+consumes the receipt. A failure after push is reconciled against the existing PR,
+without resubmitting a new branch or inventing changes. No tag/default-branch
+push, CI override or protection bypass is introduced.
+
+The reviewable publisher mirror and helper are host-installed together only
+after independent review and digest pinning; neither is copied by `install.sh`.
+The host publisher pins its helper digest. Preserve the previous host publisher
+for rollback and inspect any partial push before retrying.
+
+```sh
+python3 -m unittest contrib/mac/tests/test_integrated_merge.py -v
+python3 -m unittest contrib/mac/tests/test_publish_dependency_links.py -v
+bash -n contrib/mac/publish.sh
+```
+
+
+## Host and session resource observations
+
+The fixed `host_session_tick.py` composes `host_session_runtime.py`,
+`host_session_observation.py` and `host_session_disk_cache.py`. The existing
+controller invokes it under its existing `dispatchd.lock`; there is no new
+service. Its fixed observation file is descriptive, not a quota, identity,
+permission, or capacity grant. CPU is the OS-reported per-core average; RSS
+sums shared resident pages and is not unique physical RAM. Disk is historical
+allocated worktree attribution excluding `node_modules`, never free or
+reclaimable capacity. Census, disk and UI freshness are independent.
+
+The launcher registers the actual just-launched child with PID birth, current
+boot and protected dispatch-record pins. Registration failure does not undo or
+kill a launched process. The private claim-directory lock serializes only
+registration and retirement. Each tick examines at most 512 current claims;
+archived history is excluded from the active 256-row budget. A current root
+must be absent in both complete fresh process censuses before retirement, with
+unchanged protected input/name pins and a matching recorded attempt, terminal
+exit receipt, or complete reaped-record absence. Reused PIDs, incomplete
+observations, changed records and legacy claims lacking registration pins stay
+unknown and are not retired. Archival does not prove provider quiescence or
+make an empty inventory healthy. It grants no launch or reclamation authority.
+
+`host_pressure_admission.py` reuses the bounded kernel observer. The surgical
+host patches check pressure before selection and again immediately before
+unreserved native Codex/Devin execution. On macOS only known-normal pressure
+permits new work; non-Darwin behavior is retained. A late hold uses the existing
+launch grace/requeue path, including reuse of its prepared worktree; retired
+jobs remain cancelled. No worker is stopped, no percentage reserve or new
+concurrency cap is added. Seven paced-lane final reservation/cancellation
+integration and the separate product machine producer are outside this patch.
+
+The existing whole `install.sh` is not the adoption transaction for these
+current-host patches. Immutable helper closure, exact current-input comparison,
+existing controller/ready locks, backups and post-adoption checks must be
+reviewed separately. Source tests and a synthetic locked-tick measurement do
+not by themselves establish live adoption or worst-case host latency.

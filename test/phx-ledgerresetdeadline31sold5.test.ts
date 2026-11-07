@@ -127,7 +127,7 @@ describe('ledger reset deadline', () => {
     ['--resets-within-seconds'], ['--resets-within-seconds', '-1'], ['--resets-within-seconds', '1.5'],
     ['--resets-within-seconds', '9007199254740992'], ['--resets-within-seconds', '1', '--resets-within-seconds', '2'],
     ['--watch', '--resets-within-seconds', '0'], ['--lane', 'devin', '--wait-headroom-seconds', '1', '--resets-within-seconds', '1'],
-  ])('rejects invalid arguments before reading: %j', async (...args) => {
+  ])('rejects invalid arguments before reading: %j (%#)', async (...args) => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const read = vi.fn();
     expect(await cmdResourceLedger(args, read)).toBe(2);
