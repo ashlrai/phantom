@@ -43,6 +43,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet/job` | id (required) | [FleetJobDetailV1](../src/core/fleet/runs-job-detail.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job?id=example-job'` |
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
+| GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
 | POST | `/api/fleet/pause` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/pause'` |
 | POST | `/api/fleet/resume` | none | [inline {ok, action, service, activation, fleet, mutation?}](../src/core/web/api.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:7777/api/fleet/resume'` |
 

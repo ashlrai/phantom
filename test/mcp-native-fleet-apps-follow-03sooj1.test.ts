@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,3 +68,5 @@ it('does not report success when delivery or summary fails', async () => {
   const answer = await call({ durationMs: 100 });
   expect(answer.result.isError).toBe(true); expect(answer.body).toMatchObject({ events: [], summary: null, exitCode: 1 });
 });
+
+registerFleetNativeTools();

@@ -15,6 +15,7 @@
  * ~/.ashlr is ever touched, no network, no downstream MCP servers.
  */
 
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { contractedNativeToolNames } from './helpers/native-tool-contract.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -468,3 +469,5 @@ describe('existing M129/M131 tools still present and read-only', () => {
     expect('goals' in payload).toBe(true);
   });
 });
+
+registerFleetNativeTools();

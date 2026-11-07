@@ -516,7 +516,8 @@ export function agentDocsText(): string {
   lines.push('phantom_agent_bus_post, phantom_fleet_drop_job, phantom_fleet_job_reassign,');
   lines.push('phantom_fleet_planner_run, phantom_fleet_apps_ensure, phantom_fleet_apps_changes,');
   lines.push('phantom_fleet_apps_status, phantom_fleet_apps_await, phantom_fleet_orders,');
-  lines.push('phantom_fleet_graph, phantom_fleet_session. Tool discovery is not authorization.');
+  lines.push('phantom_fleet_graph, phantom_fleet_session, phantom_fleet_doctor.');
+  lines.push('Tool discovery is not authorization.');
   lines.push('App recovery observation tools: phantom_fleet_apps_history,');
   lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
   lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
@@ -787,6 +788,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'benchmark run|--compare-reports', desc: 'Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.', topic: 'autonomy' },
   { cmd: 'devin connect [--org org-…]',   desc: 'Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.', topic: 'autonomy' },
   { cmd: 'devin launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).', topic: 'autonomy' },
+  { cmd: 'routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance', desc: 'Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.', topic: 'autonomy' },
   { cmd: 'automations list|templates|add|enable|disable|remove', desc: 'Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review — with queue, per-day, concurrency and spend limits.', topic: 'autonomy' },
   { cmd: 'automations fire <id> [--dry-run]', desc: 'Check one automation\'s trigger now and dispatch what it finds through the lane\'s own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.', topic: 'autonomy' },
   { cmd: 'jev status [--json]',          desc: 'Jev (TypeSafe) typed decisions today: on/keyed, decisions by kind, avg confidence, fallback rate, est. cost, latency. Reads the local ledger only.', topic: 'autonomy' },

@@ -46,6 +46,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'benchmark', 'queue', 'issues', 'select', 'pool',
   // 3.15 automations.
   'automations',
+  'routines',
   // 3.15 Jev decision layer.
   'jev',
   // 3.15 private repo wiki.
@@ -167,6 +168,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],
+  // Mirror the verb switch in src/cli/routines.ts (runRoutinesCli).
+  routines: ['list', 'status', 'tick', 'migrate', 'launchd', 'run', 'explain', 'export', 'import', 'rebalance', 'help'],
   // Mirror the verb switch in src/cli/automations.ts (runAutomationsCli).
   automations: ['list', 'templates', 'add', 'import', 'enable', 'disable', 'remove', 'fire', 'help'],
   // Mirrors the dispatch in src/cli/universe.ts (cmdUniverse).

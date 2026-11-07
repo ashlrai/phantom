@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,3 +63,5 @@ describe('native recovery batch', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
+
+registerFleetNativeTools();

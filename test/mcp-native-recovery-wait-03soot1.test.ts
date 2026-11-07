@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,3 +47,5 @@ it('rejects invalid arguments before reading and hides unavailable paths', async
   const result = await call(); expect(payload(result)).toMatchObject({ outcome: 'unavailable' });
   expect(JSON.stringify(result)).not.toContain(f.root);
 });
+
+registerFleetNativeTools();

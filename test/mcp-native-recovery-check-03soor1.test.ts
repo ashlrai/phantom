@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callNativeTool, listNativeTools } from '../src/core/mcp-native.js';
 import * as recoveryInvocations from '../src/core/fleet/apps-recovery-invocations.js';
@@ -159,3 +160,5 @@ describe('phantom_fleet_apps_recovery_check', () => {
     expect(result).toHaveProperty('terminalOutcome');
   });
 });
+
+registerFleetNativeTools();

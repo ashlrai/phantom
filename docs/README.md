@@ -219,6 +219,8 @@ canonical release guide for required hosted qualification and publication.
 
 - [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
 
+- [Routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): UTC-cron YAML schedules with executor failover, learned local-first placement runs, and a portable provider placement registry.
+
 ## All documents
 
 - [Agent network channels](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK-CHANNELS.md)
@@ -315,3 +317,8 @@ canonical release guide for required hosted qualification and publication.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
+
+- [Agent output evaluation](OUTPUT-EVAL.md): record privacy-limited job outcomes and report merge rates by lane and model.
+
+- [Tier-1 import diagnosis](TIER1-WHY.md) — shortest runtime chains and the fleet apps boundary.
+- [Merge cockpit](MERGE-COCKPIT.md) — read-only PR pipeline snapshots and rework links.

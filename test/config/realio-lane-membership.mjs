@@ -45,6 +45,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
 export const REAL_IO_TEST_FILES = [
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
+  'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
   'test/repo-rank.test.ts', // Creates local Git evidence and runs the Python restock rank consumer.

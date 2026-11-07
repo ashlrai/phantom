@@ -375,3 +375,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Agent network](AGENT-NETWORK.md): SSH multi-Mac node pool; first join needs explicit aliases and owner, repeat node join --json reuses config; RAM/disk pressure admission, local auth, mobile control only, split-brain fencing and primary-only publication.
 
 - [Repository ranking](REPO-RANK.md): `phm repos rank --json`, `phm repos rank --recompute --json` and `phm repos rank proposals --json`; daily local evidence, manual enrollment, read-only restock weights.
+
+- [Tier-1 import chains](TIER1-WHY.md): `npx tsx scripts/tier1-why.ts <file> [--json]` explains a shortest authority import chain.

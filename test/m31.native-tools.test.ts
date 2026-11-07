@@ -5,6 +5,7 @@
  * ~/.ashlr is ever touched, no network, no downstream MCP servers.
  */
 
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync, mkdirSync, writeFileSync, existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -209,3 +210,5 @@ describe('SDK confinement', () => {
     }
   });
 });
+
+registerFleetNativeTools();
