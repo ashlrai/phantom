@@ -3,7 +3,7 @@ import { isAwaitMs } from '../core/fleet/needs-mason-answer-await.js';
 import { awaitResetEvidence, RESET_AWAIT_MAX_POLL_MS, RESET_AWAIT_MAX_TIMEOUT_MS,
   type ResetAwaitDeps } from '../core/fleet/reset-evidence-await.js';
 
-const usage = 'Usage: ashlr fleet reset-await --lane NAME --timeout-ms N [--poll-ms N] [--runs-dir ABS] [--json]\nExit: 0 observed, 1 deadline or failure, 2 invalid arguments, 130 cancelled.';
+const usage = 'Usage: ashlr fleet reset-await --lane NAME --timeout-ms N [--poll-ms N] [--runs-dir ABS] [--stop-file PATH] [--json]\nExit: 0 observed, 1 deadline or failure, 2 invalid arguments, 130 cancelled.';
 
 export async function cmdFleetResetAwait(args: string[], deps: ResetAwaitDeps & {
   signal?: AbortSignal; emit?: (line: string) => void | Promise<void> } = {}): Promise<number> {
@@ -12,12 +12,13 @@ export async function cmdFleetResetAwait(args: string[], deps: ResetAwaitDeps & 
     await (deps.emit ?? console.log)(usage); return 0;
   }
   let lane: string | undefined, runsDir: string | undefined, timeoutMs: number | undefined,
-    pollMs: number | undefined, json = false;
+    pollMs: number | undefined, stopFile: string | undefined, json = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i], next = args[i + 1];
     if (arg === '--json' && !json) { json = true; continue; }
     if (arg === '--lane' && lane === undefined && next && !next.startsWith('-') && !next.includes('\0')) { lane = next; i++; continue; }
     if (arg === '--runs-dir' && runsDir === undefined && next && isAbsolute(next) && !next.includes('\0')) { runsDir = next; i++; continue; }
+    if (arg === '--stop-file' && stopFile === undefined && next && !next.startsWith('-') && !next.includes('\0')) { stopFile = next; i++; continue; }
     if ((arg === '--timeout-ms' || arg === '--poll-ms') && next && /^[1-9][0-9]*$/.test(next)) {
       const n = Number(next);
       if (arg === '--timeout-ms' && timeoutMs === undefined && isAwaitMs(n, RESET_AWAIT_MAX_TIMEOUT_MS)) timeoutMs = n;
@@ -28,7 +29,7 @@ export async function cmdFleetResetAwait(args: string[], deps: ResetAwaitDeps & 
     return invalid();
   }
   if (!lane || timeoutMs === undefined) return invalid();
-  const result = await awaitResetEvidence({ lane, timeoutMs, pollMs, runsDir, signal: deps.signal }, deps);
+  const result = await awaitResetEvidence({ lane, timeoutMs, pollMs, runsDir, stopFile, signal: deps.signal }, deps);
   await (deps.emit ?? console.log)(json ? JSON.stringify(result) : `fleet reset-await: ${JSON.stringify(result)}`);
   return result.outcome === 'observed' ? 0 : result.outcome === 'cancelled' ? 130 : 1;
 }
