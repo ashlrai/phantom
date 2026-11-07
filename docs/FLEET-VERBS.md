@@ -48,3 +48,5 @@
 | workers | `src/cli/fleet-workers.ts` | Lists live workers, filterable by lane, repo and age; watch mode | no |
 
 **Convention for adding a new verb.** Create `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>` (each dash-separated part title-cased and concatenated). The dispatcher in `resolveFleetSubcommand` resolves it automatically; no edits to `fleet.ts`, `index.ts`, completions or help are needed. Update this doc to keep it in sync.
+
+`dirty-landed --json` includes `diffAnomaly` for a complete PR diff of at least 1,000 files with zero added or deleted text lines in every file. Causes distinguish unchanged-content mode changes, generated-looking paths (a naming heuristic), and other zero-line changes. Binary, incomplete, and ordinary large text diffs are not classified as zero-line anomalies. The recut loop and recut sweep skip confirmed anomalies; inspect them before deciding what to do. The existing landed class remains independent of this diagnostic.

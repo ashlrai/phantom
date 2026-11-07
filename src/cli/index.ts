@@ -19,6 +19,7 @@
  *   run show <id>              Print a past run in detail.
  *   runs [--json]              List past runs.
  *   signals [--json]          Real repository adoption signals; missing sources stay explicit.
+ *   ci-metrics [--json]          Per-repo daily turn-time (red→green) metrics; writes ~/.ashlr/ci-metrics.json.
  *   friction [--json]         Dispatch→merge friction ledger: 7d counts, evidence, scores, before/after.
  *   pulse [--json] [--window]  Local observability dashboard: tokens, cost, activity.
  *   skills list [--json]       List skills learned from merged PRs (read-only).
@@ -54,6 +55,7 @@
  *   vercel <ls|logs>           Read Vercel deployments / latest logs (read-only via vercel CLI).
  *   wire [claude|codex|cursor|all]  Wire ashlr MCP gateway into editor config(s).
  *   notify test                Send a test ping to the configured webhook (no-op if unconfigured).
+ *   estates [--json] [--repo <repo-id>]  Per-repo estate cards: health, CI, security.
  *   help                       Show this help.
  *
  * Exit codes: 0 success, 1 error/not-found, 2 bad usage.
@@ -401,6 +403,14 @@ const loadUsageCmd = lazyCmd(
   () => import('./usage.js' as unknown as string),
   (m) => m.cmdUsage as Cmd,
   'usage command requires src/cli/usage.ts (M194 module not yet built).',
+);
+
+// ─── CI metrics command loader ──────────────────────────────────────────
+
+const loadCiMetricsCmd = lazyCmd(
+  () => import('./ci-metrics.js' as unknown as string),
+  (m) => m.cmdCiMetrics as Cmd,
+  "ci-metrics command requires src/cli/ci-metrics.ts (CI-Metrics module not yet built).",
 );
 
 // ─── M211 dashboard command loader ──────────────────────────────────────────
@@ -2832,6 +2842,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'estates': {
+        const { cmdEstates } = await import('./estates.js');
+        process.exitCode = await cmdEstates(rest);
+        break;
+      }
+
       case 'signals': {
         const { cmdSignals } = await import('./signals.js');
         process.exitCode = await cmdSignals(rest);
@@ -2847,6 +2863,12 @@ async function main(): Promise<void> {
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
+      case 'ci-metrics': {
+        const cmdCiMetrics = await loadCiMetricsCmd();
+        process.exitCode = await cmdCiMetrics(rest);
         break;
       }
 
