@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm tune prepare <reviewed-samples.jsonl> <new-output-directory> <scrub.pl> | evaluate <paired-report.json>', description: 'Prepare scrub-gated local-model datasets or assess paired evaluation evidence; never train or activate a lane.', safety: 'append', jsonShape: 'Dataset counts/hashed task IDs or paired evaluation decision' },
   {
     usage: 'phm connectors list|show <id> [--json]',
     description: 'Read validated connector metadata from ~/.phantom/connectors/profile.toml. Credential names only; never resolves secrets. Exit 0 success, 2 invalid profile/usage.',

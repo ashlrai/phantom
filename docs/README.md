@@ -316,3 +316,5 @@ canonical release guide for required hosted qualification and publication.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
+
+- [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.

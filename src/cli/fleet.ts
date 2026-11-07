@@ -2520,6 +2520,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'act') {
+    const { cmdFleetAct } = await import('./fleet-act.js');
+    return cmdFleetAct(args.slice(1));
+  }
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2699,6 +2703,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
 }
 
 function printFleetHelp(): void {
+  console.log('    ashlr fleet act <pause|resume|kill|reassign|set-slot|vision-edit> --dry-run [--path <target>] [--json]');
   console.log('');
   console.log(bold('  ashlr fleet') + dim(' — fleet control plane + observability (M49)'));
   console.log('');
