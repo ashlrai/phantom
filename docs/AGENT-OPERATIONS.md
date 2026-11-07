@@ -114,6 +114,42 @@ An accepted PR creates one deterministic follow-up asking for the next bounded,
 evidence-supported improvement. Replay is idempotent, even after completion;
 conflicting SHA/time metadata for the same PR is refused.
 
+After independently verifying a PR is conflicted on its base branch, the
+bridge pipes a JSON object to `phm fleet queue conflicted --json` on stdin,
+with exactly these fields:
+
+```json
+{
+  "v": 1,
+  "state": "CONFLICTING",
+  "prUrl": "https://github.com/ashlrai/phantom/pull/42",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baseRef": "master",
+  "observedAt": "2026-01-02T00:00:00.000Z"
+}
+```
+
+An accepted observation creates one deterministic recut job keyed by
+`(prUrl, headSha)`: re-read the source PR, preserve the intended change,
+rebuild it on the current base branch, run the required checks and affected
+tests, and open exactly one replacement PR through the protected merge path —
+the recut task forbids force pushes, admin bypass and protection/rule edits.
+Replay is idempotent per head: a repeated observation duplicates, a moved
+head supersedes the queued recut for the old one, a stale observation is
+obsolete, and a head that moves back revives its receipt only when the
+observation postdates every other one on record. A recorded merge for the PR
+supersedes every queued recut and blocks new ones. As with merges, this is an
+envelope for verified bridge metadata, not evidence by itself.
+
+`phm fleet queue ask --json` reads one `ask.v1` record on stdin —
+`{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
+as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
+2, frontier 3) over the first N listed repos. Every repo must be one of the
+seven configured `ashlrai/<repo>` names; a malformed or out-of-scope ask fails
+whole. The projection is deterministic, so replayed asks dedupe by job id at
+the queue store, and it mutates nothing: no receipts, queue file or audit log
+are written. `task` stays untrusted prompt data on each emitted job.
+
 ### Outcome learning
 
 `phm fleet outcomes --events <log> --json` reads a dispatch event log and
@@ -135,23 +171,18 @@ predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
 twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
 hourly launchd agent on the Mac. See
 [the selector contract](contracts/CONTRACT-SELECTOR.md).
-
-`phm fleet queue ask --json` reads one `ask.v1` record on stdin —
-`{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
-as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
-2, frontier 3) over the first N listed repos. Every repo must be one of the
-seven configured `ashlrai/<repo>` names; a malformed or out-of-scope ask fails
-whole. The projection is deterministic, so replayed asks dedupe by job id at
-the queue store, and it mutates nothing: no receipts, queue file or audit log
-are written. `task` stays untrusted prompt data on each emitted job.
-
 `phm fleet queue read --json` returns `{v:1,jobs:[{jobId,repo,prompt}]}`.
 The bridge passes `prompt` only as untrusted model input, never as shell,
 command arguments, configuration, an execution path, or authority. It must
 not copy prompts into `fleet.json` or logs. This command is a snapshot, not a
 worker lease: the existing supervisor must serialize assignment/claim work
 before dispatch. When work finishes, the trusted supervisor acknowledges it
-with `phm fleet queue complete <job-id> --json`.
+with `phm fleet queue complete <job-id> --json`. `phm fleet queue stats --json`
+returns a `stats.v1` document measuring queue health over the receipt log:
+outstanding/done/superseded totals and per-kind breakdown (merge follow-ups
+vs conflict recuts), oldest and mean outstanding queue age, mean/max
+event-to-completion latency, mean/max queue residence, and a `latencyUnknown`
+count for receipts written before timing metadata existed.
 
 `router-queue.md` holds JSON data in Markdown job sections. Operators can edit
 task strings; identities, repositories and SHAs must still match durable
