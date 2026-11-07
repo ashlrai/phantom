@@ -33,6 +33,7 @@ import { ProductionView } from '../routes/intelligence/production/ProductionView
 import { PortfolioView } from '../routes/portfolio/PortfolioView.js';
 import { RunsView } from '../routes/work/runs/RunsView.js';
 import { RunDetailView } from '../routes/work/runs/RunDetailView.js';
+import { SessionsView } from '../routes/work/sessions/SessionsView.js';
 import { SwarmsView } from '../routes/work/swarms/SwarmsView.js';
 import { SwarmDetailView } from '../routes/work/swarms/SwarmDetailView.js';
 import { DaemonView } from '../routes/control/daemon/DaemonView.js';
@@ -73,6 +74,7 @@ export function AppRoutes() {
         <Route path="/portfolio" element={<PortfolioView />} />
         <Route path="/work/runs" element={<RunsView />} />
         <Route path="/work/runs/:id" element={<RunDetailView />} />
+        <Route path="/work/sessions" element={<SessionsView />} />
         <Route path="/work/swarms" element={<SwarmsView />} />
         <Route path="/work/swarms/:id" element={<SwarmDetailView />} />
         <Route path="/control/daemon" element={<DaemonView />} />
