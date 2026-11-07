@@ -180,6 +180,10 @@ receipts require operator reconciliation. Do not reset sidecars to bypass a
 refusal. Review isolation, sensitive-path checks, PAUSE, rate limits, CI/revert
 halts and credentials remain the supervisor's independent gates.
 
+### Publish preflight for a proposed PR
+
+Run `node scripts/check-publish.mjs --base origin/master --body /path/to/pr-body.txt --held-path path/to/held` before handing a branch to a publish workflow. Repeat `--held-path` for each held file or directory, or explicitly use `--no-held-paths` when none apply. Supply the actual target base and exact proposed PR body; the script does not discover either or fetch remote state. It checks committed changes since the merge base plus staged, unstaged, and untracked files, reporting `.github` paths, recognized lockfiles under held paths, and em dashes in the body. It does not create a PR or certify CI, permissions, or mergeability. Rerun it after changes to the branch, held paths, or body.
+
 ## 2. Installing and running Phantom
 
 ```sh
