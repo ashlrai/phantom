@@ -347,10 +347,16 @@ describe('M30 CI workflow', () => {
     const quick = workflow.jobs.quick;
     expect(quick.name).toBe('Quick typecheck');
     expect(quick['continue-on-error']).toBeUndefined();
-    for (const name of ['Restore protected-branch compiler state', 'Save protected-branch compiler state']) {
-      const cache = quick.steps.find((step: { name?: string }) => step.name === name);
-      expect(cache.if).toContain("github.event_name == 'push' && github.ref == 'refs/heads/master'");
-    }
+    const restore = quick.steps.find((step: { name?: string }) => step.name === 'Restore protected-branch compiler state');
+    expect(restore.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(restore.uses).toBe('actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809');
+    expect(restore.with.path).toBe('node_modules/.cache/phantom-backend.tsbuildinfo');
+    expect(restore.with.key).toBe("master-typecheck-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}");
+    const save = quick.steps.find((step: { name?: string }) => step.name === 'Save protected-branch compiler state');
+    expect(save.if).toBe("success() && github.event_name == 'push' && github.ref == 'refs/heads/master'");
+    const compiler = quick.steps.find((step: { name?: string }) => step.name === 'Core no-emit type check');
+    expect(compiler.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(compiler.run).toBe('npx tsc --noEmit -p tsconfig.json');
     const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
     expect(drift.if).toBe("steps.history.outputs.equal != 'true'");
@@ -390,7 +396,7 @@ describe('M30 CI workflow', () => {
     expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
     expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
     // Every expensive step shares the exact same trusted flag — no variant.
-    const expensive = ['Install dependencies', 'Core no-emit type check', 'Check authority drift (hermetic)'];
+    const expensive = ['Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)'];
     for (const name of expensive) {
       expect(step(name).if, name).toBe("steps.history.outputs.equal != 'true'");
     }
@@ -410,8 +416,8 @@ describe('M30 CI workflow', () => {
     for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
       expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
     }
-    // Only the three expensive steps may key off the proof output — nothing
-    // else in Quick (caches, checkout, setup) may silently join the fast path.
+    // Only these four steps may key off the proof output — checkout, setup
+    // and protected-branch cache saving must never join the exemption.
     const gated = quick.steps
       .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
       .map((entry) => entry.name)
