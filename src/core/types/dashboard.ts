@@ -101,6 +101,16 @@ export interface DashboardSnapshot {
    * READ-ONLY; every subsection degrades independently.
    */
   visibility?: import('../web/visibility.js').VisibilitySnapshot;
+  /**
+   * OPTIONAL dispatcher session list for the TUI Sessions tab — agent jobs
+   * claimed under the fleet runs dir (~/.ashlr-runs, ASHLR_RUNS_DIR), read
+   * from queue/run markers + queue/status.json. READ-ONLY and value-blind:
+   * job id, repo, lane, tier, marker-derived status and timing only — never
+   * prompt paths, worktree paths, logs, env or secrets. Absent on producers
+   * that do not populate it; populated by buildSnapshot via
+   * fleet/runs-sessions.js.
+   */
+  sessions?: import('../fleet/runs-sessions.js').FleetSessionsView;
 }
 
 /**
@@ -252,5 +262,9 @@ export interface IntelligenceSummary {
  * goals, top backlog, cost+forecast, effectiveness headline, and a "today"
  * delta block). The tab renders nothing destructive; it only displays the
  * already-aggregated read-only snapshot.
+ *
+ * 'sessions' adds the dispatcher session list — agent jobs claimed under the
+ * fleet runs dir, rendered READ-ONLY from the optional
+ * `DashboardSnapshot.sessions` section (job id, repo, lane, status, elapsed).
  */
-export type TuiTab = 'overview' | 'runs' | 'swarms' | 'pulse' | 'mcp' | 'inbox' | 'portfolio';
+export type TuiTab = 'overview' | 'runs' | 'swarms' | 'pulse' | 'mcp' | 'inbox' | 'portfolio' | 'sessions';

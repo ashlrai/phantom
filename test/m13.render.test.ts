@@ -172,7 +172,7 @@ describe('renderFrame — pure and deterministic', () => {
 
 describe('renderFrame — respects cols width', () => {
   const COLS_CASES = [40, 80, 120, 200] as const;
-  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp'];
+  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp', 'sessions'];
 
   for (const cols of COLS_CASES) {
     for (const tab of TABS) {
@@ -199,7 +199,7 @@ describe('renderFrame — respects cols width', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderFrame — never throws at any width', () => {
-  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp'];
+  const TABS: TuiTab[] = ['overview', 'runs', 'swarms', 'pulse', 'mcp', 'sessions'];
   // tokens > 0 is required to exercise the Pulse token bar (the throw site).
   const snap = makeSnapshot({
     activity: { sessions: 8, tokens: 42000, estCostUsd: 1.23, commits: 15 },
@@ -736,5 +736,166 @@ describe('renderFrame — empty data edge cases', () => {
     for (const line of lines) {
       expect(line.length).toBeLessThanOrEqual(20);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sessions tab — dispatcher agent sessions (read-only, value-blind)
+// ---------------------------------------------------------------------------
+
+type SessionsView = NonNullable<DashboardSnapshot['sessions']>;
+type SessionRow = SessionsView['sessions'][number];
+
+const SESSION_NOW = Date.parse('2026-06-08T10:00:10.000Z');
+
+function makeSession(overrides: Partial<SessionRow> = {}): SessionRow {
+  return {
+    job: 'RQ-ALPHA-1',
+    repo: 'phantom',
+    lane: 'codex-personal',
+    tier: 'work',
+    status: 'running',
+    exitCode: null,
+    startedAtMs: SESSION_NOW - 12 * 60_000,
+    endedAtMs: null,
+    kept: false,
+    ...overrides,
+  };
+}
+
+function makeSessionsView(overrides: Partial<SessionsView> = {}): SessionsView {
+  return {
+    v: 1,
+    generatedAt: '2026-06-08T10:00:00.000Z',
+    runsDirPresent: true,
+    sourceState: 'healthy',
+    sources: { status: 'healthy', runs: 'healthy' },
+    lastTick: '2026-06-08T09:59:58.000Z',
+    paused: false,
+    queueDepth: 3,
+    lanes: [{ lane: 'codex-personal', running: 1, target: 2, queued: 3, held: false }],
+    sessions: [makeSession()],
+    truncated: false,
+    ...overrides,
+  };
+}
+
+const sessionsState = { ...DEFAULT_STATE, tab: 'sessions' as TuiTab, nowMs: SESSION_NOW };
+
+describe('renderFrame — sessions tab', () => {
+  it('renders job, repo, lane, status and elapsed columns', () => {
+    const snap = makeSnapshot({ sessions: makeSessionsView() });
+    const frame = stripAnsi(renderFrame(snap, sessionsState));
+    expect(frame).toContain('Sessions — dispatcher');
+    expect(frame).toContain('RQ-ALPHA-1');
+    expect(frame).toContain('phantom');
+    expect(frame).toContain('codex-personal');
+    expect(frame).toContain('running');
+    expect(frame).toContain('12m'); // elapsed since startedAtMs
+    expect(frame).toContain('queue 3');
+    expect(frame).toContain('tick 12s ago');
+    expect(frame).toContain('codex-personal 1/2');
+  });
+
+  it('shows PAUSED and held lane markers from status.json', () => {
+    const view = makeSessionsView({
+      paused: true,
+      lanes: [{ lane: 'devin', running: 0, target: 2, queued: 1, held: true }],
+    });
+    const frame = stripAnsi(renderFrame(makeSnapshot({ sessions: view }), sessionsState));
+    expect(frame).toContain('PAUSED');
+    expect(frame).toContain('devin 0/2 held');
+  });
+
+  it('renders a graceful fallback when the snapshot has no sessions section', () => {
+    const frame = stripAnsi(renderFrame(makeSnapshot(), sessionsState));
+    expect(frame).toContain('No session data in this snapshot.');
+  });
+
+  it('renders empty-state text for missing and present-but-empty runs dirs', () => {
+    const missing = stripAnsi(renderFrame(
+      makeSnapshot({ sessions: makeSessionsView({ sourceState: 'missing', runsDirPresent: false, sessions: [] }) }),
+      sessionsState,
+    ));
+    expect(missing).toContain('No dispatcher session state found.');
+    expect(missing).toContain('runs dir absent');
+
+    const empty = stripAnsi(renderFrame(
+      makeSnapshot({ sessions: makeSessionsView({ sessions: [] }) }),
+      sessionsState,
+    ));
+    expect(empty).toContain('(no agent sessions)');
+  });
+
+  it('warns on degraded sources without hiding the session rows', () => {
+    const view = makeSessionsView({
+      sourceState: 'degraded',
+      sources: { status: 'degraded', runs: 'healthy' },
+    });
+    const frame = stripAnsi(renderFrame(makeSnapshot({ sessions: view }), sessionsState));
+    expect(frame).toContain('Partial session data');
+    expect(frame).toContain('RQ-ALPHA-1');
+  });
+
+  it('highlights the selected row with reverse video', () => {
+    const view = makeSessionsView({
+      sessions: [
+        makeSession({ job: 'RQ-ONE' }),
+        makeSession({ job: 'RQ-TWO', status: 'done', exitCode: 0, endedAtMs: SESSION_NOW - 60_000 }),
+      ],
+    });
+    const frame = renderFrame(makeSnapshot({ sessions: view }), { ...sessionsState, selected: 1 });
+    const idx = frame.indexOf('RQ-TWO');
+    expect(idx).toBeGreaterThan(-1);
+    expect(frame.lastIndexOf('\x1b[7m', idx)).toBeGreaterThan(-1);
+    expect(frame.indexOf('\x1b[7m', idx)).toBeLessThan(idx);
+  });
+
+  it('renders null repo/lane as a dash and kept/truncated markers', () => {
+    const view = makeSessionsView({
+      sessions: [
+        makeSession({ job: 'RQ-NULLS', repo: null, lane: null, tier: null, kept: true }),
+      ],
+      truncated: true,
+    });
+    const frame = stripAnsi(renderFrame(makeSnapshot({ sessions: view }), sessionsState));
+    expect(frame).toContain('RQ-NULLS');
+    expect(frame).toContain('* worktree kept for supervisor');
+    expect(frame).toContain('list truncated');
+  });
+
+  it('respects width bounds at 40/80/120/200 cols', () => {
+    const snap = makeSnapshot({ sessions: makeSessionsView() });
+    for (const cols of [40, 80, 120, 200]) {
+      const frame = renderFrame(snap, { ...sessionsState, cols, rows: 30 });
+      for (const line of visibleLines(frame)) {
+        expect(line.length).toBeLessThanOrEqual(cols);
+      }
+    }
+  });
+
+  it('never throws at narrow widths with a populated session list', () => {
+    const snap = makeSnapshot({
+      sessions: makeSessionsView({
+        sessions: Array.from({ length: 12 }, (_, i) =>
+          makeSession({ job: `RQ-W${i}`, status: i % 3 === 0 ? 'running' : 'done' })),
+      }),
+    });
+    for (let cols = 20; cols <= 120; cols += 10) {
+      expect(() => renderFrame(snap, { ...sessionsState, cols, rows: 24 })).not.toThrow();
+    }
+  });
+
+  it('shows elapsed for terminal sessions from start/end markers', () => {
+    const view = makeSessionsView({
+      sessions: [makeSession({
+        status: 'done', exitCode: 0,
+        startedAtMs: SESSION_NOW - 30 * 60_000,
+        endedAtMs: SESSION_NOW - 20 * 60_000,
+      })],
+    });
+    const frame = stripAnsi(renderFrame(makeSnapshot({ sessions: view }), sessionsState));
+    expect(frame).toContain('10m');
+    expect(frame).toContain('done');
   });
 });
