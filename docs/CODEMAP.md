@@ -86,6 +86,7 @@ drift, not changed imports, individual files, semantics or contract coverage.
 - `src/core/context/`
 - `src/core/cos/`
 - `src/core/daemon/`
+- `src/core/dailyfix/`
 - `src/core/decide/`
 - `src/core/desktop/`
 - `src/core/devin/`

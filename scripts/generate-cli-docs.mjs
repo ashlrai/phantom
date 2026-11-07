@@ -27,8 +27,8 @@ const CLI_ENTRY = join('src', 'cli', 'index.ts');
 const CHILD_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-/** The `phm --help` family surfaces captured into docs/cli.md, in doc order. */
-const SURFACES = [
+/** The `phm --help` family surfaces captured into docs/cli.md, in doc order. Exported for scripts/lib/living-docs.mjs, which reuses the same captures. */
+export const SURFACES = [
   { title: 'phm --help', args: ['--help'], note: 'Topic summary and discovery hints.' },
   { title: 'phm help --all', args: ['help', '--all'], note: 'Every command, grouped by topic.' },
 ];
