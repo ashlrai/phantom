@@ -154,6 +154,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   mirror: ['list', 'add', 'sync', 'path', 'remove', 'reconcile', 'release', 'help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
   capacity: ['publish'],
+  checkpoint: ['resume', '--json', '--help'],
   sessions: ['list', 'revoke', 'help'],
   cloud: ['launch', 'list', 'refresh', 'improve', 'budget', 'backlog', 'stats', 'help'],
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).

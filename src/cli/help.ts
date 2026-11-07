@@ -860,6 +860,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'receipt list|status|show <run>|verify <run>|timeline <run> [--json]', desc: 'Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).', topic: 'observability' },
 
   { cmd: 'mcp',                          desc: 'Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).', topic: 'integrations' },
+  { cmd: 'checkpoint resume <file> [--json]', desc: 'Validate and print a structured agent checkpoint for a fresh session. See docs/AGENT-CHECKPOINT.md.', topic: 'integrations' },
   { cmd: 'sessions list|revoke <id> [--json]', desc: 'See running MCP gateway sessions and block one; every gateway call is logged (caller, tool, verdict) with arguments redacted, kept 14 days.', topic: 'integrations' },
   { cmd: 'mcp list',                     desc: 'List native ashlr tools + discovered MCP servers with per-server tool counts.', topic: 'integrations' },
   { cmd: 'mcp doctor',                   desc: 'Per-server MCP health: does it start? how many tools?', topic: 'integrations' },
