@@ -790,6 +790,7 @@
     "src/core/local-runtime/llama/record.ts",
     "src/core/local-runtime/llama/supervisor.ts",
     "src/core/local-runtime/missing-model-guard.ts",
+    "src/core/local-runtime/model-roots.ts",
     "src/core/mcp-argv-safety.ts",
     "src/core/mcp-firm-resources.ts",
     "src/core/mcp-gateway-policy.ts",

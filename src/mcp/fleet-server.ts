@@ -64,6 +64,7 @@ import { CI_RECEIPT_AWAIT_DEFAULT_POLL_MS, CI_RECEIPT_AWAIT_DEFAULT_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MAX_POLL_MS, CI_RECEIPT_AWAIT_MAX_TIMEOUT_MS,
   CI_RECEIPT_AWAIT_MIN_POLL_MS } from '../core/fleet/ci-receipt-await.js';
 import { CI_RECEIPT_AWAIT_BATCH_MAX_TARGETS } from '../core/fleet/ci-receipt-await-batch.js';
+import { parseFleetStagingInventoryArgs, readFleetStagingInventory, type FleetStagingInventoryArgs } from './fleet-staging-inventory.js';
 
 import { retryStagingInventory } from './fleet-staging-inventory-retry.js';
 import { parseStagingBatchArgs, readStagingBatch, type StagingScanner } from './fleet-staging-inventory-batch.js';
@@ -110,6 +111,7 @@ export interface FleetReaders {
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
   releaseCandidate?: (input: FleetReleaseCandidateArgs) => Promise<unknown>;
+  stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -137,6 +139,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       name: 'fleet_staging_inventory_batch',
       description: 'Inventory 1 to 8 explicit staging roots sequentially. Age and size do not establish cleanup eligibility. Does not delete or propose approval to delete.',
       inputSchema: { type: 'object', properties: { roots: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string' } } }, required: ['roots'], additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_staging_inventory',
+      description: 'Inventory the local release-staging directory: listing children (name, modifiedAt, bytes), total measured bytes, completeness flags, skipped symlink count, and an age-and-size disclaimer. The tool *only* reports measured size; measurement does not grant permission to clean, reclaim, or unblock any launch. Root is the fixed ~/.local/share/ashlr/release-staging path — no arbitrary root or command parameter is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
     {
@@ -538,7 +546,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate') {
+    if (name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_staging_inventory') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -574,7 +582,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
+    const fleetStagingInventory = name === 'fleet_staging_inventory' ? parseFleetStagingInventoryArgs(args) : null;
     if (name === 'fleet_release_candidate' ? releaseCandidate === null :
+        name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
         name === 'fleet_staging_inventory_batch' ? stagingRoots === null :
         name === 'fleet_ci_receipt_await_batch' ? ciReceiptAwaitBatch === null :
@@ -643,6 +653,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
+        : name === 'fleet_staging_inventory' ? await (readers.stagingInventory ?? readFleetStagingInventory)(fleetStagingInventory as FleetStagingInventoryArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.

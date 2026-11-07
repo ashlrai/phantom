@@ -7,6 +7,7 @@
 export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_staging_inventory_retry',
   'fleet_staging_inventory_batch',
+  'fleet_staging_inventory',
   'fleet_status',
   'fleet_loop',
   'fleet_bus_hops',
