@@ -65,6 +65,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-job-compare-snapshot-04-sqe1.test.ts', // Creates real git history and replays a pinned snapshot for job compare.
   'test/fleet-job-current-batch-04-spx1.test.ts', // Creates real git history for batch current-job lookups.
   'test/fleet-job-current-batch-snapshot-04-sqc2.test.ts', // Creates real git history and replays a pinned snapshot for batch current-job reads.
+  'test/fleet-job-current-batch-stdin-04-spz1.test.ts', // Creates real git history and invokes the stdin batch current-job CLI.
   'test/fleet-job-current-filter-04-spy2.test.ts', // Creates real git history for filtered current-job lookups.
   'test/fleet-job-current-snapshot-04-sqa2.test.ts', // Creates real git history and replays a pinned snapshot for current-job reads.
   'test/fleet-job-history-await-04-spu2.test.ts', // Creates real git history for awaited batch job-history reads.
