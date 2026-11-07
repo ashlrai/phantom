@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import {createHash,generateKeyPairSync,sign} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {basename,dirname,join,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {gzipSync} from 'node:zlib';
 import {Header} from 'tar';
 import {canonicalJson} from '../src/core/authority/canonical-json.js';
@@ -12,7 +13,9 @@ import {readPinnedRuntimeArchive,extractPinnedRuntimeArchive,extractPinnedRuntim
 import {verifyUpdateManifest,verifyCompatibleUpdateManifest,desktopUpdateProfileForPackage,getDesktopUpdateProfile,verifyMinisign,verifyUpdateBundleRecord} from '../src/core/desktop/update-manifest.js';
 import {inspectSignedAppArchive,extractSignedAppArchive,verifyInstalledRuntimeArchive} from '../src/core/desktop/qualified-update.js';
 import {qualifiedFixture} from '../.github/tests/helpers/hosted-artifact-fixture.mjs';
-import {artifactInstallFailure,applyInspectedDesktopArtifacts,assertPairedHostedProof,inspectDesktopArtifactInstall,parseArtifactInstallArguments,readFinalizedDesktopArtifacts,verifyManualDesktopSource,withArtifactInstallTiming} from '../scripts/install-desktop-artifacts.mjs';
+import {artifactInstallFailure,applyInspectedDesktopArtifacts,assertPairedHostedProof,inspectDesktopArtifactInstall,parseArtifactInstallArguments,readFinalizedDesktopArtifacts,runDesktopArtifactInstall,verifyManualDesktopSource,withArtifactInstallTiming} from '../scripts/install-desktop-artifacts.mjs';
+import {censusExecutionLeases} from '../src/core/sandbox/execution-leases.js';
+import {startTsxChild} from './helpers/throughput-310b.js';
 import type {CompatibleUpdateManifest,DesktopUpdateProfileName,UpdateTrust} from '../src/core/desktop/update-manifest.js';
 
 const ownPorts=vi.hoisted(()=>({trust:null as any,dirty:false}));
@@ -52,7 +55,7 @@ function tar(rows:{path:string;data:Buffer|string;mode?:number;directory?:boolea
 function write(path:string,data:Buffer|string,mode=0o600) {fs.mkdirSync(dirname(path),{recursive:true,mode:0o700});fs.writeFileSync(path,data,{mode});fs.chmodSync(path,mode);}
 function fileIdentity(path:string) {const s=fs.lstatSync(path);return {dev:s.dev,ino:s.ino,ctimeMs:s.ctimeMs,mode:s.mode};}
 beforeEach(()=>{for(const spy of Object.values(ports))spy.mockReset();ownPorts.dirty=false;});
-afterEach(()=>{for(const fn of finalizers.splice(0).reverse())fn();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{for(const fn of finalizers.splice(0).reverse())fn();vi.unstubAllEnvs();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 
 function fixture(profileName:DesktopUpdateProfileName='legacy-v1',currentPackageName='@ashlr/hub',archivePackageName?:string) {
   const profile=getDesktopUpdateProfile(profileName);
@@ -264,6 +267,65 @@ describe.skipIf(process.platform==='win32')('manual original paired artifact ins
     expect(ports.createIo).not.toHaveBeenCalled();expect(f.io.executionLeaseCensus).not.toHaveBeenCalled();expect(ports.spawn).not.toHaveBeenCalled();
     expect(fs.readdirSync(f.home).sort()).toEqual(before);expect(fs.readdirSync(f.artifacts).map(n=>[n,fileIdentity(join(f.artifacts,n))])).toEqual(inputs);
   });
+  it.each(['stop','active-lease','unknown-lease','native','quota-pending','quota-lock'])('explicit apply holds %s before hosted proof or install effects',async kind=> {
+    const f=fixture(),oldApp=f.io.appInventory('/Applications/Phantom.app'),held=fs.readFileSync(join(f.retained,'transaction.json'));
+    if(kind==='stop')fs.unlinkSync(join(f.home,'.ashlr/KILL'));
+    if(kind==='active-lease')f.census.leases.push({runId:'held'});
+    if(kind==='unknown-lease')f.census.unknown=1;
+    if(kind==='native')f.setLive(true);
+    if(kind.startsWith('quota-'))write(join(f.home,'.ashlr/account-connections/ledger',kind==='quota-pending'?'.resource-quota-refresh-pending.json':'.resource-quota-refresh.lock'),'held');
+    const error=await runDesktopArtifactInstall({...f.input,apply:true},f.deps).catch(error=>error);
+    expect(artifactInstallFailure(error)).toEqual({state:'held',phase:'quiescence',installationAccepted:false,authorityResumed:false});
+    expect(ports.verify).not.toHaveBeenCalled();expect(ports.audit).not.toHaveBeenCalled();expect(ports.publication).not.toHaveBeenCalled();
+    expect(f.deps.transport.githubRead).not.toHaveBeenCalled();expect(f.deps.transport.attestRun).not.toHaveBeenCalled();
+    if(kind==='native' || kind.startsWith('quota-'))expect(ports.spawn).toHaveBeenCalledWith('/bin/ps',['-axww','-o','pid=,ppid=,lstart=,args='],
+      {cwd:resolve(import.meta.dirname,'..'),encoding:'utf8',timeout:120_000,maxBuffer:1024*1024,env:f.deps.environment});
+    expect(f.stages.size).toBe(0);expect(fs.readlinkSync(f.current)).toBe(f.old);expect(f.io.appInventory('/Applications/Phantom.app')).toBe(oldApp);
+    expect(fs.existsSync(join(f.home,'.local/share/ashlr/releases',f.m.source.revision))).toBe(false);
+    for(const name of ['phm','ashlr'])expect(fs.existsSync(join(f.home,'.local/bin',name))).toBe(false);
+    if(kind.startsWith('quota-'))expect(fs.readFileSync(join(f.home,'.ashlr/account-connections/ledger',kind==='quota-pending'?'.resource-quota-refresh-pending.json':'.resource-quota-refresh.lock'),'utf8')).toBe('held');
+    expect(fs.readFileSync(join(f.retained,'transaction.json'))).toEqual(held);
+  });
+  it('orchestrated artifact inspection does not run quiescence or mutate local state',async()=> {
+    const f=fixture(),before=fs.readdirSync(f.home).sort();
+    expect(await runDesktopArtifactInstall(f.input,f.deps)).toMatchObject({state:'verified-artifacts',installationPerformed:false});
+    expect(ports.createIo).not.toHaveBeenCalled();expect(f.io.executionLeaseCensus).not.toHaveBeenCalled();expect(fs.readdirSync(f.home).sort()).toEqual(before);
+  });
+  it('a lease appearing after the early check still blocks before staging',async()=> {
+    const f=fixture();ports.verify.mockImplementation(()=>{f.census.leases.push({runId:'new-work'});return structuredClone(f.proof);});
+    await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow();
+    expect(ports.verify).toHaveBeenCalledTimes(1);expect(f.stages.size).toBe(0);expect(fs.readlinkSync(f.current)).toBe(f.old);
+  });
+  it('orchestrated valid published apply retains all four fresh hosted proofs',async()=> {
+    const f=fixture(),cap=Object.freeze({});
+    ports.publication.mockImplementation(async envelope=>{verifyCompatibleUpdateManifest({manifestText:envelope.manifestText,signature:envelope.signature},trust);return cap;});
+    ports.historical.mockImplementation((_input,token)=>{expect(token).toBe(cap);return structuredClone({...f.proof,publication:{digest:'stable original signed release'}});});
+    expect(await runDesktopArtifactInstall({...f.input,apply:true,publishedRelease:true},f.deps)).toMatchObject({state:'installed',installationPerformed:true,authorityResumed:false});
+    expect(ports.publication).toHaveBeenCalledTimes(4);expect(ports.historical).toHaveBeenCalledTimes(4);expect(ports.audit).toHaveBeenCalledTimes(4);
+  });
+  it('real isolated census holds a live lease and reaps it only after its owner exits',async()=> {
+    const f=fixture();vi.stubEnv('HOME',f.home);vi.stubEnv('USERPROFILE',f.home);
+    const moduleUrl=(path:string)=>pathToFileURL(resolve(import.meta.dirname,'../src/core/sandbox',path)).href;
+    const child=await startTsxChild(`import { acquireOutwardMutationFence, releaseOutwardMutationFence } from ${JSON.stringify(moduleUrl('mutation-fence.ts'))};
+      import { registerExecutionLease } from ${JSON.stringify(moduleUrl('execution-leases.ts'))};
+      const fence=acquireOutwardMutationFence(5000); const reg=registerExecutionLease(fence,{runId:'child',repoKey:'/fixture/repo',engine:'fixture'});
+      releaseOutwardMutationFence(fence); if(!reg.ok)process.exit(3); console.log('LEASE-READY'); setInterval(()=>{},1000);`,f.home,'LEASE-READY');
+    f.io.executionLeaseCensus.mockImplementation(async()=>censusExecutionLeases());
+    try {
+      await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow();
+      expect(ports.verify).not.toHaveBeenCalled();expect(ports.audit).not.toHaveBeenCalled();
+      const directory=join(f.home,'.ashlr/authority/leases');expect(fs.readdirSync(directory).filter(n=>n.startsWith('exec-'))).toHaveLength(1);
+      await child.kill();
+      ports.verify.mockImplementation(()=>{throw new Error('fixture proof stop after early census');});
+      await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow('fixture proof stop');
+      expect(f.io.log).toHaveBeenCalledWith(expect.stringContaining('reaped 1 proven-dead execution leases'));
+      expect(fs.readdirSync(directory).filter(n=>n.startsWith('exec-'))).toHaveLength(0);
+      ports.verify.mockClear();ports.audit.mockClear();
+      const uncertain=join(directory,'exec-aaaaaaaaaaaaaaaa-uncertain.lock');fs.symlinkSync(join(f.root,'missing'),uncertain);
+      await expect(runDesktopArtifactInstall({...f.input,apply:true},f.deps)).rejects.toThrow();
+      expect(ports.verify).not.toHaveBeenCalled();expect(fs.lstatSync(uncertain).isSymbolicLink()).toBe(true);
+    } finally {await child.kill();}
+  },60_000);
   it.each(['manifest','archive','qualification','package','producer','attestor','audit','source'])('refuses mixed %s proof before IO',async kind=> {
     const f=fixture(),p=structuredClone(f.proof);
     if(kind==='producer')p.official.runId++;else if(kind==='attestor')p.attestor.runId++;else if(kind==='audit')ports.audit.mockReturnValue({...f.m.qualification.audit,runId:99});else if(kind==='source')p.source={...p.source,tree:'f'.repeat(40)};else p[`${kind}Sha256` as keyof typeof p]='f'.repeat(64) as never;
