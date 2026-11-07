@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -46,4 +46,19 @@ it('exposes group publishing and cursor reads through the comms CLI', async () =
   expect(await cmdCommsBus(['group', 'read', 'team', 'work', '0'], { root, now: () => 101 }, deps)).toBe(0);
   expect(JSON.parse(output[1]!).messages[0].envelope.body.value).toEqual({ text: 'hi' });
   expect(await cmdCommsBus(['group', 'publish', 'team', 'work', 'bad', 'claude', '1000', '{'], { root }, deps)).toBe(2);
+});
+
+it('runs the documented group commands through the CLI', async () => {
+  const { cmdCommsBus } = await import('../src/cli/comms-bus.js');
+  const doc = readFileSync(join(__dirname, '../docs/GROUP-CHAT.md'), 'utf8');
+  const commands = [...doc.matchAll(/^phm comms bus group (.+)$/gm)].map((match) => match[1]!);
+  expect(commands).toHaveLength(4);
+  const root = setup();
+  const output: string[] = [];
+  for (const command of commands) {
+    const args = [...command.matchAll(/'([^']*)'|(\S+)/g)].map((match) => match[1] ?? match[2]!);
+    expect(await cmdCommsBus(['group', ...args], { root, now: () => 100 }, { emit: (value) => { output.push(value); } })).toBe(0);
+  }
+  expect(JSON.parse(output[1]!).messages[0].envelope.body.value).toEqual({ text: 'Ready for review' });
+  expect(JSON.parse(output[3]!).members[0].member).toBe('codex');
 });
