@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.22 |
-| Latest dated changelog release (2026-11-07) | 3.30.22 |
+| Source package | 3.30.23 |
+| Latest dated changelog release (2026-11-07) | 3.30.23 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.23](https://github.com/ashlrai/phantom/compare/v3.30.22...v3.30.23) (2026-11-07)
+## [Unreleased]
+
+## [3.30.23] — 2026-11-07
 
 
 ### Changes
@@ -60,8 +62,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * RQ-REAPMARKSQ8 ([#3837](https://github.com/ashlrai/phantom/issues/3837)) ([ea82450](https://github.com/ashlrai/phantom/commit/ea824505ac3d919c79073bafa216e8b5f766b367))
 * **RQ-REAPMARKSQ8:** RQ-REAPMARKSQ8 bridge notes ([#3828](https://github.com/ashlrai/phantom/issues/3828)) ([328b7de](https://github.com/ashlrai/phantom/commit/328b7decd99705fefbea475c465a06dd342a2799))
 * **RQ-ROUTEMOVESQ8:** RQ-ROUTEMOVESQ8 ([#3843](https://github.com/ashlrai/phantom/issues/3843)) ([24c9bd7](https://github.com/ashlrai/phantom/commit/24c9bd7dc56736f5f8f08049a17f5ceacbaf1b82))
-
-## [Unreleased]
 
 ## [3.30.22] — 2026-11-07
 
