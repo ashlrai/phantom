@@ -245,6 +245,8 @@ There are two ways to launch backlog items:
   reaches the $40 reserve. The two jobs never overlap themselves, and each
   distinct error is logged once.
 
+Scheduled discovery also aggregates a seven-day improvement digest from up to 100 recently updated closed PRs and 100 completed CI runs, plus the local jobs ledger. It proposes focused CI, test-speed, documentation, dead-code and queue investigations when their evidence is present. These are bounded samples, and queue event counts do not measure lane capacity or utilization; unavailable sources stay unknown. The existing budget, stop and pause gates still apply. Delivery opens draft PRs and forbids auto-merge; promotion remains subject to the existing green-check and measurement gates.
+
 ---
 
 ## Using it
