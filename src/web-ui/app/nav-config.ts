@@ -87,6 +87,13 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Inbox',
     leaves: [
       {
+        path: '/approvals',
+        label: 'Pending approvals',
+        description:
+          'Every consent request waiting on you — proposals, email drafts, team approvals — value-blind, oldest first, with safe approve/deny where the backend allows it.',
+        implemented: true,
+      },
+      {
         path: '/inbox',
         label: 'Proposals',
         description: 'Review, filter, and approve/reject proposals — including history (rejected/approved).',
