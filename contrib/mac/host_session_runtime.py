@@ -212,7 +212,7 @@ def claim_directory(runs, create=False):
                 os.close(fd)
 
 
-def _owner_witness(root, run_directory, job, worktree_root=None):
+def _owner_witness(root, run_directory, job, worktree_root=None, *, prepare_private=False):
     """Hash protected attempt records and physical worktree; never export bodies.
 
     Root-managed jobs retain the legacy owner-only witness where the dispatcher
@@ -240,18 +240,23 @@ def _owner_witness(root, run_directory, job, worktree_root=None):
     try:
         line, li = read_bytes_at(run_directory, job + '.line', 16384)
     except FileNotFoundError:
-        if owner is None:
+        if owner is None or prepare_private:
             raise ValueError('missing dispatcher ownership')
         return hashlib.sha256(json.dumps(owner, separators=(',', ':')).encode()).hexdigest()
     base, bi = read_bytes_at(root, job + '.base', 16384)
-    dispatched, di = read_bytes_at(run_directory, job + '.dispatched', 128)
+    try:
+        dispatched, di = read_bytes_at(run_directory, job + '.dispatched', 128)
+    except FileNotFoundError:
+        if owner is None:
+            raise ValueError('private session owner unavailable')
+        dispatched, di = None, None
     fields = line.decode('utf-8', errors='strict').rstrip('\n').split('\t')
     tokens = base.decode('utf-8', errors='strict').split()
     if (len(fields) not in (5, 6) or fields[0] != job or (len(fields) == 6 and fields[5] != 'pin')
             or any(not x or any(ord(c) < 32 or ord(c) == 127 for c in x) for x in fields)
             or len(tokens) != 4 or tokens[1] != 'codex-bridge/' + job or tokens[3] != fields[2]
             or not re.fullmatch(r'[0-9a-fA-F]{40,64}', tokens[0])
-            or not re.fullmatch(r'[0-9]+', dispatched.decode('ascii').strip())):
+            or dispatched is not None and not re.fullmatch(r'[0-9]+', dispatched.decode('ascii').strip())):
         raise ValueError('malformed dispatcher ownership')
     parent = worktree_root or os.path.expanduser('~/Projects/ashlrai/wt')
     if not os.path.isabs(parent) or os.path.normpath(parent) != parent or tokens[2] != os.path.join(parent, job):
@@ -266,8 +271,61 @@ def _owner_witness(root, run_directory, job, worktree_root=None):
             physical = (info.st_dev, info.st_ino)
         finally:
             os.close(fd)
-    binding = [line.hex(), li, base.hex(), bi, dispatched.hex(), di, physical, owner]
-    return hashlib.sha256(json.dumps(binding, separators=(',', ':')).encode()).hexdigest()
+    if dispatched is not None:
+        if prepare_private:
+            raise ValueError('dispatched attempt cannot be private')
+        binding = [line.hex(), li, base.hex(), bi, dispatched.hex(), di, physical, owner]
+        return hashlib.sha256(json.dumps(binding, separators=(',', ':')).encode()).hexdigest()
+    binding = [line.hex(), li, base.hex(), bi, physical, owner]
+    digest = hashlib.sha256(json.dumps(binding, separators=(',', ':')).encode()).hexdigest()
+    if prepare_private:
+        return digest
+    owner_fd = os.open(job + '.root-owner', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=run_directory)
+    try:
+        def same_owner():
+            current = os.fstat(owner_fd)
+            named = os.stat(job + '.root-owner', dir_fd=run_directory, follow_symlinks=False)
+            return (current.st_dev, current.st_ino) == tuple(owner[2]) == (named.st_dev, named.st_ino)
+        if not same_owner():
+            raise ValueError('private session owner changed')
+        try:
+            marker, mi = read_bytes_at(owner_fd, 'private-session-' + digest + '.json', 4096)
+        except FileNotFoundError:
+            raise ValueError('private session marker unavailable') from None
+        if not same_owner():
+            raise ValueError('private session owner changed')
+    finally:
+        os.close(owner_fd)
+    expected = {'schemaVersion': 1, 'kind': 'root-private-session', 'jobId': job, 'attemptDigest': digest}
+    if json.loads(marker.decode('utf-8')) != expected:
+        raise ValueError('private session marker changed')
+    return hashlib.sha256(json.dumps([binding, marker.hex(), mi], separators=(',', ':')).encode()).hexdigest()
+
+
+def prepare_private_phase(runs, job, *, worktree_root=None):
+    """Owner-only pre-launch witness; it grants observation, never launch authority."""
+    if not JOB.fullmatch(job):
+        raise ValueError('invalid job')
+    with claim_directory(runs, create=True) as (run_directory, _):
+        with runs_directory(runs) as root:
+            digest = _owner_witness(root, run_directory, job, worktree_root, prepare_private=True)
+            data = (json.dumps({'schemaVersion': 1, 'kind': 'root-private-session', 'jobId': job,
+                                'attemptDigest': digest}, separators=(',', ':')) + '\n').encode()
+            owner_fd = os.open(job + '.root-owner', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=run_directory)
+            try:
+                fd = os.open('private-session-' + digest + '.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=owner_fd)
+                try:
+                    n = os.write(fd, data)
+                    if n != len(data):
+                        raise ValueError('short marker write')
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.fsync(owner_fd)
+            finally:
+                os.close(owner_fd)
+            if _owner_witness(root, run_directory, job, worktree_root) is None:
+                raise ValueError('private session marker unavailable')
 
 
 def _attempt_binding(records, pid, start, boot):
