@@ -1,14 +1,15 @@
-import { lstat, readdir, rmdir } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const usage = 'Usage: phm fleet reap-marks [--min <minutes>] [--apply] [--json]';
-type Marker = { jobId: string; ageMinutes: number; status?: 'removed' | 'not-empty' | 'changed' | 'failed' };
+type Marker = { jobId: string; ageMinutes: number; status?: 'blocked' };
+const applyBlocker = '--apply is disabled: marker age and emptiness do not prove abandoned ownership. Safe removal requires shared ownership and fencing with every marker writer and retry reader.';
 
-/** List stale reaping markers; apply only removes empty directories. */
+/** Inventory old reaping markers without asserting that they are abandoned. */
 export async function cmdFleetReapMarks(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nList marker directories older than 20 minutes by default. Use --apply to remove empty markers.`);
+    console.log(`${usage}\nList marker directories older than 20 minutes by default. This is a read-only inventory.\n${applyBlocker}`);
     return 0;
   }
   let min = 20, seenMin = false, apply = false, json = false;
@@ -41,30 +42,25 @@ export async function cmdFleetReapMarks(args: string[]): Promise<number> {
       if (!stat.isDirectory() || ageMinutes <= min) continue;
       const marker: Marker = { jobId: name.slice(0, -'.reaping'.length), ageMinutes };
       markers.push(marker);
-      if (apply) {
-        try {
-          const current = await lstat(path);
-          if (!current.isDirectory() || current.dev !== stat.dev || current.ino !== stat.ino || (Date.now() - current.mtimeMs) / 60_000 <= min) {
-            marker.status = 'changed';
-          } else {
-            await rmdir(path);
-            marker.status = 'removed';
-          }
-        } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          marker.status = code === 'ENOTEMPTY' || code === 'EEXIST' ? 'not-empty' : code === 'ENOENT' ? 'changed' : 'failed';
-        }
-      }
+      // Legacy markers are empty mkdir locks: they have neither an owner token
+      // nor a lease. Even repeated lstat checks cannot fence a pathname rmdir
+      // against replacement. Do not mutate until ALL writers/readers share a
+      // protocol that proves ownership and makes reclamation race-safe.
+      if (apply) marker.status = 'blocked';
     }
   } catch {
     console.error('Unable to read reaping markers.');
     return 1;
   }
-  const report = { schema: 'fleet.reap-marks.v1', minMinutes: min, applied: apply, markers, total: markers.length };
+  if (apply) console.error(applyBlocker);
+  const report = {
+    schema: 'fleet.reap-marks.v1', minMinutes: min, applied: false, markers, total: markers.length,
+    ...(apply ? { applyRequested: true, blockedReason: 'ownership-and-fencing-unavailable' } : {}),
+  };
   if (json) console.log(JSON.stringify(report));
   else {
     for (const marker of markers) console.log(`${marker.jobId}: ${marker.ageMinutes.toFixed(2)} minutes${marker.status ? ` (${marker.status})` : ''}`);
     console.log(`Total: ${markers.length}`);
   }
-  return markers.some(marker => marker.status === 'failed') ? 1 : 0;
+  return apply ? 1 : 0;
 }
