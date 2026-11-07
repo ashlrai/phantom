@@ -2520,6 +2520,10 @@ const FLEET_VERB_OPTIONS: Record<string, { allowed: AllowedOptions; usage: strin
 };
 
 export async function cmdFleet(args: string[]): Promise<number> {
+  if (args[0] === 'act') {
+    const { cmdFleetAct } = await import('./fleet-act.js');
+    return cmdFleetAct(args.slice(1));
+  }
   if (args[0] === 'merge-throughput') {
     const { cmdMergeThroughput } = await import('./telemetry.js');
     return cmdMergeThroughput(args.slice(1));
@@ -2596,6 +2600,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
     case 'grok-usage': {
       const { cmdFleetGrokUsage } = await import('./fleet-grok-usage.js');
       return cmdFleetGrokUsage(rest);
+    }
+    case 'usage': {
+      const { cmdFleetUsage } = await import('./fleet-usage.js');
+      return cmdFleetUsage(rest);
     }
     case 'status':
       // This baseline's status handler already produces the legacy control-plane
@@ -2695,6 +2703,7 @@ export async function cmdFleet(args: string[]): Promise<number> {
 }
 
 function printFleetHelp(): void {
+  console.log('    ashlr fleet act <pause|resume|kill|reassign|set-slot|vision-edit> --dry-run [--path <target>] [--json]');
   console.log('');
   console.log(bold('  ashlr fleet') + dim(' — fleet control plane + observability (M49)'));
   console.log('');
@@ -2704,6 +2713,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
+  console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);

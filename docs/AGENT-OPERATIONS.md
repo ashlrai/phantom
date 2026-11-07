@@ -389,6 +389,13 @@ Known scores sort first, descending, rounded to two decimals. Ties use the table
 order, including unavailable entries, so the report always contains three rows.
 Use the reasons to investigate before changing routing or templates.
 
+`phm fleet act <pause|resume|kill|reassign|set-slot|vision-edit> --dry-run
+[--path <target>] [--json]` records a proposal only. Each successful call appends
+one versioned intent to the operator-provisioned `~/.ashlr/router-queue/actions.jsonl`;
+it does not apply the action. Targets are confined to that queue or
+`~/.ashlr/vision/leader/`, without symlink components. Audit failures fail the
+command; no executor consumes these intents automatically.
+
 ### Stop and pause
 
 | Control | Effect |
