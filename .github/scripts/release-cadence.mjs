@@ -77,9 +77,10 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
 // Public reads deliberately carry no credential. The existing release-please
 // job has no Actions permission; adding a scheduling read must not widen it.
 export function createPublicMetadataReader({ fetchImpl = fetch, now = () => performance.now(),
-  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), report = message => console.warn(message) } = {}) {
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), report = message => console.warn(message),
+  timeoutSignal = ms => AbortSignal.timeout(ms) } = {}) {
   // One small budget covers the whole plan, not a renewed budget per endpoint.
-  // Only gateway/service failures retry; JSON, identity and permission failures
+  // Only timeouts and gateway/service failures retry; JSON, identity and permission failures
   // still refuse. This reader never receives credentials or performs writes.
   const deadline = now() + 30_000;
   let firstTransient;
@@ -91,19 +92,29 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
   return async endpoint => {
     assert.match(endpoint, /^repos\/ashlrai\/phantom(?:\/|$)/);
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const response = await fetchImpl(`https://api.github.com/${endpoint}`, {
-        method: 'GET', headers: { Accept: 'application/vnd.github+json' }, redirect: 'error',
-        signal: AbortSignal.timeout(Math.min(15_000, remaining())),
-      });
+      const signal = timeoutSignal(Math.min(5_000, remaining()));
+      let response, text, transient;
+      try {
+        response = await fetchImpl(`https://api.github.com/${endpoint}`, {
+          method: 'GET', headers: { Accept: 'application/vnd.github+json' }, redirect: 'error', signal,
+        });
+        if ([502, 503, 504].includes(response.status)) {
+          void response.body?.cancel().catch(() => {});
+          transient = String(response.status);
+        } else if (response.status === 200) {
+          text = await response.text();
+        }
+      } catch (error) {
+        if (!signal.aborted || !['TimeoutError', 'AbortError'].includes(error.name)) throw error;
+        transient = 'timeout';
+      }
       remaining();
-      if ([502, 503, 504].includes(response.status)) {
-        // Do not retain an unused error body across a retry.
-        void response.body?.cancel().catch(() => {});
+      if (transient) {
         if (!firstTransient) {
-          firstTransient = `${response.status} at ${endpoint}`;
+          firstTransient = `${transient} at ${endpoint}`;
           report(`release metadata transient read failure: ${firstTransient}`);
         }
-        assert.ok(attempt < 3, `release metadata unavailable (${response.status}) after ${attempt} read attempts; first transient ${firstTransient}`);
+        assert.ok(attempt < 3, `release metadata unavailable (${transient}) after ${attempt} read attempts; first transient ${firstTransient}`);
         const delay = attempt * 250;
         assert.ok(remaining() > delay, `release metadata read deadline exhausted; first transient ${firstTransient}`);
         await sleep(delay);
@@ -111,8 +122,6 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
       }
       if (response.status === 404 && endpoint.includes('/git/ref/tags/')) return null;
       assert.equal(response.status, 200, `release metadata unavailable (${response.status})`);
-      const text = await response.text();
-      remaining();
       assert.ok(text.length <= 4 * 1024 * 1024, 'release metadata too large');
       return JSON.parse(text);
     }
