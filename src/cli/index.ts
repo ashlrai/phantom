@@ -2079,6 +2079,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pr': {
+        if (rest[0] !== 'cockpit') { console.error('Usage: phm pr cockpit --repo owner/name [--json]'); process.exitCode = 2; break; }
+        const { cmdPrCockpit } = await import('./pr-cockpit.js');
+        process.exitCode = await cmdPrCockpit(rest.slice(1));
+        break;
+      }
+
       case 'autopilot': {
         const { cmdAutopilot } = await import('./autopilot.js');
         process.exitCode = await cmdAutopilot(rest);
