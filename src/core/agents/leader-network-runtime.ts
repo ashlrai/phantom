@@ -16,6 +16,7 @@ import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../flee
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities, type DeliverResult, type TeamIdentity } from './channel-policy.js';
 import { createLeaderNetwork, parseMasonIdentities, type LeaderNetworkOptions } from './leader-network.js';
 import type { BusEnvelope } from '../fleet/bus-envelope.js';
+import { approvedLeaderInboxAppender, type LeaderInboxAppender } from './leader-inbox-writer.js';
 
 export const LOCAL_LEADER_IDENTITY: TeamIdentity = { channel: 'bus', id: 'local-owner' };
 export interface LeaderRuntimeOptions {
@@ -26,6 +27,8 @@ export interface LeaderRuntimeOptions {
   /** Trusted host transport seam; credentials never appear in persisted options. */
   slackCall?: import('./slack-transport.js').SlackCall;
   signal?: AbortSignal;
+  /** Trusted host injection for synthetic tests; never serialized or wire-controlled. */
+  appendInbox?: LeaderInboxAppender;
 }
 
 function runsRoot(options: LeaderRuntimeOptions): string {
@@ -40,6 +43,31 @@ export function readLeaderNetworkConfig(options: LeaderRuntimeOptions = {}): { c
     return result.ok ? result.text : '';
   };
   return { configSource: read('agent-network.toml'), commsSource: read('comms.toml') };
+}
+
+/** Capture startup input plus a trusted fresh reader for later async recovery. */
+export function leaderNetworkSources(options: LeaderRuntimeOptions = {}) {
+  return { ...readLeaderNetworkConfig(options), readCurrentPolicy: () => readLeaderNetworkConfig(options) };
+}
+
+/** The installed host's sole writer is a fixed dependency. Custom isolated roots
+ * keep their existing file writer unless the trusted test/host supplies a seam. */
+export function leaderInboxAppender(options: LeaderRuntimeOptions = {}): LeaderInboxAppender | undefined {
+  if (!options.appendInbox && runsRoot(options) !== join(homedir(), '.ashlr-runs')) return undefined;
+  const authorize = (request: Parameters<LeaderInboxAppender>[0]): boolean => {
+    if (options.signal?.aborted) return false;
+    const current = readLeaderNetworkConfig(options);
+    return parseMasonIdentities(current.configSource).some(identity => identity.channel === 'slack' && identity.id === request.ownerId) &&
+      checkSendPolicy({ channel: 'slack', recipients: [request.ownerId], external: false,
+        teamIdentities: parseTeamIdentities(current.configSource), confirmedByMason: parseCommsConfirmation(current.commsSource) }).status === 'sent';
+  };
+  const writer = options.appendInbox ?? approvedLeaderInboxAppender(authorize, options.signal);
+  return async request => {
+    if (!authorize(request)) throw new Error('Leader inbox owner is no longer approved');
+    const result = await writer(request);
+    if (!authorize(request)) throw new Error('Leader inbox owner is no longer approved');
+    return result;
+  };
 }
 
 /** A shared read projection backs the CLI and desktop endpoint. */
@@ -59,11 +87,11 @@ export async function readLeaderInbox(options: LeaderRuntimeOptions & { limit?: 
 /** Local terminal / mutation-authenticated desktop compose. The trusted endpoint
  * supplies local-owner; the request body cannot choose an owner identity. */
 export async function composeLeaderInbox(text: string, options: LeaderRuntimeOptions = {}) {
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   const decision = checkSendPolicy({ channel: 'bus', recipients: ['leader'], teamIdentities: parseTeamIdentities(sources.configSource), external: false, confirmedByMason: parseCommsConfirmation(sources.commsSource) });
   if (decision.status !== 'sent') return { ok: false as const, reason: decision.reason, status: decision.status };
   const at = (options.now ?? Date.now)();
-  const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now });
+  const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) });
   const result = await network.ingest({ message: {
     id: `local-${randomUUID()}`, from: 'mason', to: 'leader', priority: 'P0', ttl: CHANNEL_BUS_TTL_MS,
     body: { text }, channel: 'bus', channel_ref: 'local-owner',
@@ -77,10 +105,10 @@ export async function composeLeaderInbox(text: string, options: LeaderRuntimeOpt
  * iMessage intentionally stays local and never enters the bus. */
 export async function receiptLeaderChannel(envelope: ChannelEnvelope, options: LeaderRuntimeOptions = {}): Promise<'published' | 'ignored' | 'failed'> {
   if (envelope.channel !== 'telegram' && envelope.channel !== 'email') return 'ignored';
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   const identity: TeamIdentity = { channel: envelope.channel, id: envelope.verifiedSenderId };
   if (!parseMasonIdentities(sources.configSource).some(row => row.channel === identity.channel && row.id === identity.id)) return 'ignored';
-  const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now });
+  const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) });
   const result = await network.ingest({ message: {
     id: `mason-${envelope.channel}-${envelope.dedupeKey.slice(0, 16)}`, from: 'mason', to: 'leader', priority: 'P0', ttl: CHANNEL_BUS_TTL_MS,
     body: { text: envelope.body }, channel: identity.channel, channel_ref: envelope.threadId ?? identity.id,
@@ -165,9 +193,9 @@ async function generateLeaderReply(text: string, cfg: AshlrConfig, options: Lead
 }
 
 export async function hasPendingLeaderNetwork(options: LeaderRuntimeOptions = {}): Promise<boolean> {
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   if (!parseMasonIdentities(sources.configSource).length) return false;
-  return (await createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now }).pending()).length > 0;
+  return (await createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options) }).pending()).length > 0;
 }
 
 export async function tickLeaderNetwork(cfg: AshlrConfig, options: LeaderRuntimeOptions = {}, deps: LeaderNetworkTickDeps = {}) {
@@ -176,14 +204,14 @@ export async function tickLeaderNetwork(cfg: AshlrConfig, options: LeaderRuntime
     const { tickTeammateMessages } = await import('../comms/imessage-teammate-worker.js');
     await tickTeammateMessages(cfg, options).catch(() => undefined);
   }
-  const sources = readLeaderNetworkConfig(options);
+  const sources = leaderNetworkSources(options);
   if (!parseMasonIdentities(sources.configSource).length) return { status: 'disabled' as const, replies: 0 };
   const directory = join(runsRoot(options), 'leader');
   ensurePrivateDirectory(directory);
   const acquired = acquireLocalStoreLockWithOutcome(join(directory, 'network-tick.lock'), 0, { anchorPath: directory });
   if (acquired.state !== 'acquired') return { status: 'busy' as const, replies: 0 };
   try {
-    const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, deliver: deps.deliver ?? defaultLeaderDelivery(cfg, options) });
+    const network = createLeaderNetwork({ ...sources, runsDir: runsRoot(options), busRoot: options.busRoot, now: options.now, appendInbox: leaderInboxAppender(options), deliver: deps.deliver ?? defaultLeaderDelivery(cfg, options) });
     const pending = await network.pending();
     // Round-robin through retained requests: an unavailable channel or model
     // must not monopolize every bounded batch for months.

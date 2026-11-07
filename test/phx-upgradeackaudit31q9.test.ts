@@ -32,7 +32,9 @@ describe('installed channel receipt upgrade audit', () => {
     const inbox = await readInboxEntries({ runsDir: scratch });
     expect(inbox.sourceState).toBe('healthy');
     expect(inbox.entries).toHaveLength(1);
-    expect(inbox.entries[0]).toMatchObject({ source: 'desktop', text: 'Fake upgrade audit message; no real transport is involved.' });
+    expect(inbox.entries[0]).toMatchObject({ channel: 'desktop', source: expect.stringMatching(/^desktop \(desk-[a-f0-9]{16}\)$/),
+      text: 'Fake upgrade audit message; no real transport is involved.' });
+    expect(inbox.entries[0]!.source).toBe(`desktop (${inbox.entries[0]!.id})`);
   });
 
   it('keeps different senders separate in the same persistent store', async () => {
@@ -45,7 +47,32 @@ describe('installed channel receipt upgrade audit', () => {
     expect(first.ok && retry.ok && first.ack.dedupeKey === retry.ack.dedupeKey).toBe(true);
     expect(other.ok && other.ack.status).toBe('accepted');
     expect(first.ok && other.ok && first.ack.dedupeKey !== other.ack.dedupeKey).toBe(true);
-    expect((await readInboxEntries({ runsDir: scratch })).entries.map(entry => entry.source)).toEqual(['mobile', 'desktop']);
+    const entries = (await readInboxEntries({ runsDir: scratch })).entries;
+    expect(entries.map(entry => entry.channel)).toEqual(['phone', 'desktop']);
+    expect(entries.map(entry => entry.source)).toEqual(entries.map(entry => `${entry.channel} (${entry.id})`));
+  });
+
+  it.each([
+    { channel: 'mobile' },
+    { source: 'desktop (desk-2222222222222222)' },
+    { id: 'desk-invalid' },
+    { source: 'desktop', channel: 'mobile' },
+  ])('refuses mismatched structured channel attribution (%#)', async change => {
+    const entry = { at: '2026-10-31 00:13', channel: 'desktop', id: 'desk-1111111111111111',
+      source: 'desktop (desk-1111111111111111)', priority: null,
+      text: 'Fake upgrade audit message; no real transport is involved.', ...change };
+    const altered = { ...actual, readInbox: async () => ({ sourceState: 'healthy' as const, entries: [entry] }) };
+    expect(await run(args(), { load: async () => altered, write })).toBe(1);
+    expect(result()).toMatchObject({ verified: false, firstSourceRetained: false });
+  });
+
+  it('retains compatibility with a legacy reader without structured fields', async () => {
+    const legacy = { ...actual, readInbox: async () => ({ sourceState: 'healthy' as const, entries: [{
+      at: '2026-10-31 00:13', source: 'desktop', priority: 'P0',
+      text: 'Fake upgrade audit message; no real transport is involved.',
+    }] }) };
+    expect(await run(args(), { load: async () => legacy, write })).toBe(0);
+    expect(result()).toMatchObject({ verified: true, firstSourceRetained: true });
   });
 
   it('refuses relative, missing, nonempty, and symlink scratch directories without touching them', async () => {
@@ -100,7 +127,9 @@ describe('installed channel receipt upgrade audit', () => {
       { encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH } });
     expect(child.status, child.stderr).toBe(0);
     expect(JSON.parse(child.stdout)).toMatchObject({ verified: true, accepted: 1, duplicate: 1 });
-    expect((await readInboxEntries({ runsDir: scratch })).entries[0]?.source).toBe('desktop');
+    const [entry] = (await readInboxEntries({ runsDir: scratch })).entries;
+    expect(entry?.channel).toBe('desktop');
+    expect(entry?.source).toBe(`desktop (${entry?.id})`);
   });
 
   it('handles help and usage without loading adapters or writing scratch artifacts', async () => {

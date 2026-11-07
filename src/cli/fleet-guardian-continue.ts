@@ -5,6 +5,7 @@ const LIMIT = 32 * 1024;
 const valueFlags = new Set(['--manifest', '--output-dir', '--max-retries', '--timeout-ms', '--stop-file', '--duration-ms', '--interval-ms', '--idle-backoff-max-ms', '--max-passes']);
 const switches = new Set(['--stdin', '--apply', '--json', '--stream']);
 const terminations = new Set(['planned', 'no-work', 'drained', 'exhausted', 'max-retries', 'stopped', 'deadline', 'refused', 'collision', 'cancelled', 'unsafe', 'observer-error', 'duration']);
+export const usage = 'Usage: ashlr fleet guardian-continue --stdin [--apply] [--json | --stream] [guardian-resume args]';
 
 type ResumeDeps = NonNullable<Parameters<typeof cmdFleetGuardianResume>[1]>;
 type ContinueDeps = ResumeDeps & {

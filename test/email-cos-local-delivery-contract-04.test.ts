@@ -125,7 +125,7 @@ describe('email chief-of-staff approval → local .result.eml staging', () => {
     // `.result.eml` lacks the `.reply.eml` suffix the sender scans, so the
     // read-only listing sees nothing and a send pass invokes no transport —
     // no Mail.app, no network, no external send from this path.
-    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 0, stuck: 0 });
+    expect(readEmailOutbox(outboxDir).counts).toEqual({ queued: 0, sent: 0, stuck: 0, drafted: 0 });
     const transport: EmailTransport = vi.fn(async () => ({ ok: true }));
     const pass = await sendEmailOutbox({ dir: outboxDir, allowedRecipients: new Set([ADDRESS]), transport });
     expect(pass).toMatchObject({ queued: 0, sent: 0, drafted: 0, refused: 0, failed: 0, stuck: 0 });

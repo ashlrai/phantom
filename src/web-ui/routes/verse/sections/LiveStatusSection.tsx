@@ -38,6 +38,11 @@ export function LiveStatusSection() {
     {result.status === 'error' && <p role="alert">Live status unavailable. Retry with Refresh. Previous readings may be stale.</p>}
     {!data ? <p role="status">Loading live status…</p> : <>
       <p>{data.state} · {data.reason} · Updated <time dateTime={data.generatedAt}>{new Date(data.generatedAt).toLocaleString()}</time></p>
+      {data.summary && <p>Running: {data.summary.building ?? 'unknown'} · Queued: {data.summary.queued ?? 'unknown'} · Parked: {data.summary.parked ?? 'unknown'}</p>}
+      <h2>Lanes</h2>
+      {!data.lanes ? <p>Lane readings unavailable</p> : <ul>{data.lanes.map(row => <li key={row.lane}>{row.lane}: {row.busy} busy / {row.slots} slots{row.capReason ? ` · ${row.capReason}` : ''}</li>)}{!data.lanes.length && <li>None recorded</li>}</ul>}
+      <h2>Repositories</h2>
+      {!data.repos ? <p>Repository readings unavailable</p> : <ul>{data.repos.map(row => <li key={row.repo}>{row.repo}: {row.openFleetPrs ?? 'unknown'} open fleet PRs · Post-merge green {row.greenPct7d === null ? 'unknown' : `${row.greenPct7d}%`}</li>)}{!data.repos.length && <li>None recorded</li>}</ul>}
       <h2>Running</h2>
       {data.running === null ? <p>Unknown</p> : <ul>{data.running.map(run => <li key={run.id}>{run.repo}: {run.title} · {run.phase}</li>)}{!data.running.length && <li>None</li>}</ul>}
       <h2>Merged (24h)</h2>

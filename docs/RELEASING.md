@@ -53,15 +53,15 @@ and live acceptance remain separate.
 
 The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
 
-- Nightly at `3 9 * * *`, or manual dispatch with `release_gate=false`: retain
+- At `17 */6 * * *`, or manual dispatch with `release_gate=false`: retain
   the exhaustive platform suites and the existing seven-day Mac rotation.
   Failed jobs stay red and emit scrubbed `tier=work` repair lines in the
   `phantom-fixup-queue` artifact. Router ingestion is a separate operation.
 - At `0,30 * * * *`, or manual dispatch with `release_gate=true`: reuse a
   completed successful **push** CI run for the exact master SHA. The unsigned
-  preparation job reuses an immutable artifact for that source when available,
-  otherwise builds once with cached compiler inputs. The following one-minute
-  smoke job downloads that artifact, checks source/version/package identity,
+  combined `Desktop release smoke` job reuses an immutable artifact for that
+  source when available, otherwise builds once with cached compiler inputs.
+  On that same runner, the smoke phase checks source/version/package identity,
   parses the updater feed/manifest contract under canonical-v2 trust and
   launches the native binary with `--release-smoke` in an isolated home.
   Only a repeated HTTP 404 redirected to the observed latest tag, bracketed
@@ -78,7 +78,12 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   the live endpoint remains HTTP 404. The unchanged parser/launch receipt does
   not establish updater recovery, cryptographic publication verification or
   installed acceptance; those remain separate gates. It never installs dependencies
-  or rebuilds. No current per-PR desktop producer exists; cold preparation,
+  or rebuilds. The combined job retains the existing 90-minute build ceiling,
+  while push verification, smoke and qualified upload share a separate hard
+  five-minute phase deadline. Command cancellation retains the existing bounded
+  cleanup grace. Native launch stays bounded at five seconds and the smoke body
+  still asserts its 60-second limit. This is not a five-minute cold-build promise.
+  No current per-PR desktop producer exists; cold preparation,
   hosted queueing, attestation and signing are outside the smoke budget.
 
 The fast handoff uses profile `fast-release-v1`. A successful hosted smoke job
@@ -100,7 +105,20 @@ finalization still requires the attestor revision to equal live master. Merges
 between preparation, attestation and signing can therefore defer a release.
 The host `release-autorun` consumer and published signed updater acceptance
 must be verified separately before claiming continuous release operation.
-The one-minute smoke timeout is a budget, not a measured hosted runtime.
+The one-minute smoke-body limit is a budget, not a measured hosted runtime.
+The phase deadline does not shorten the build job or weaken qualification.
+
+The pinned immutable input upload binds the same four local files before and
+after upload to the exact source/run/attempt and artifact ID/digest. Smoke
+rechecks those bytes and fresh API metadata instead of downloading them again.
+Reused older input is downloaded by its producer artifact ID/run, never by a
+name reconstructed from the consumer attempt, then uploaded under the current
+producer tuple. Fresh workspace `dist` must exactly match admitted archive
+membership/bytes/modes before retention in a private backup; smoke still
+restores the original archive itself. Mutation or unknown identity refuses.
+The qualified upload is the same pinned action; its Node process has a fixed
+phase watchdog and cannot spawn executable children. All three canonical
+critical steps remain actual successful API steps under `fast-release-v1`.
 No test has been newly quarantined by this change; individual quarantine needs
 reproducible evidence and a linked issue in the existing ledger.
 

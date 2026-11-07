@@ -50,7 +50,7 @@ describe('fleet bus-peers delivery', () => {
     ['--session-id', 'session', '--to', 'a', '--to=b'],
     ['--session-id', 'session', '--session-id=other', '--to', 'a'],
     ['--session-id', 'session', '--to', ''],
-  ])('rejects invalid arguments without endpoint or probe activity: %j', async (...args) => {
+  ])('rejects invalid arguments without endpoint or probe activity: %j (%#)', async (...args) => {
     const h = setup();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetBusPeers(args, h.deps)).toBe(2);

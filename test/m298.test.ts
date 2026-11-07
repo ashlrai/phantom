@@ -50,7 +50,8 @@ vi.mock('../src/core/sandbox/policy.js', () => ({
   isEnrolled: vi.fn(() => true),
   setKill: vi.fn(),
 }));
-vi.mock('../src/core/goals/store.js', () => ({
+vi.mock('../src/core/goals/store.js', async (importOriginal) => ({
+  DEFAULT_STALE_GOAL_MILESTONE_MS: (await importOriginal<typeof import('../src/core/goals/store.js')>()).DEFAULT_STALE_GOAL_MILESTONE_MS,
   loadGoal: vi.fn(),
   updateMilestoneStatus: vi.fn(),
   resumeMilestone: vi.fn(),

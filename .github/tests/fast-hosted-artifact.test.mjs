@@ -65,6 +65,21 @@ test('scheduled producer and attestor preserve exact-source fast qualification',
   f.qualify(); assert.equal(f.verify().official.runId, 100);
 });
 
+test('combined build and smoke preserves fast-v1 identity without pretending exhaustive coverage', t => {
+  const f = fastFixture(t);
+  f.fastJobs[0].steps.unshift({ name: 'Build unsigned desktop and original package once', status: 'completed', conclusion: 'success' });
+  f.fastJobs[0].steps.push({ name: 'Finish bounded release smoke phase', status: 'completed', conclusion: 'success' });
+  const result = f.qualify(); assert.equal(result.profile, 'fast-release-v1'); assert.deepEqual(result.lanes, []);
+});
+
+for (const mutation of ['failed phase', 'failed critical step', 'duplicate critical step']) test(`same-runner fast-v1 refuses ${mutation}`, t => {
+  const f = fastFixture(t);
+  if (mutation === 'failed phase') f.fastJobs[0].conclusion = 'failure';
+  if (mutation === 'failed critical step') f.fastJobs[0].steps[1].conclusion = 'failure';
+  if (mutation === 'duplicate critical step') f.fastJobs[0].steps.push({ ...f.fastJobs[0].steps[1] });
+  assert.throws(f.qualify);
+});
+
 for (const mutation of ['push failure', 'manual CI', 'wrong push sha', 'wrong push attempt', 'fork CI', 'skipped step', 'duplicate job', 'self-hosted CI', 'wrong producer workflow', 'wrong producer event', 'wrong producer branch', 'self-hosted smoke', 'missing smoke step', 'binary changed', 'version mismatch', 'receipt false', 'unknown profile', 'full lanes']) {
   test(`fast qualification refuses ${mutation}`, t => {
     const f = fastFixture(t);

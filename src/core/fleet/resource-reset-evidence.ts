@@ -6,7 +6,7 @@ export interface QuotaMeasurement {
   usedPct: number | null;
   resetAt: string | null;
   source: string | null;
-  /** Status uses last_tick as an ordering bound, not a quota measurement time. */
+  /** The quota's captured timestamp; controller last_tick never substitutes for it. */
   observedAt: string | null;
 }
 export interface QuotaEvidence {

@@ -89,7 +89,7 @@ describe('graph node CLI', () => {
     ['node'], ['node', '--'], ['node', '--unknown'], ['node', 'a', 'b'],
     ['node', 'a', '--depth', '1'], ['node', 'a', '--direction', 'out'],
     ['node', 'a', '--json', '--json'], ['node', 'a', '--', 'b'],
-  ])('rejects malformed args %j before loading', async (...args) => {
+  ])('rejects malformed args %j before loading (%#)', async (...args) => {
     expect(await cmdGraph(args)).toBe(2);
     expect(loader.loadGraph).not.toHaveBeenCalled();
   });

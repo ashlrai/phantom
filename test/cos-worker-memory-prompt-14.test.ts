@@ -46,7 +46,7 @@ async function capture() {
     });
     return proc;
   };
-  expect(await runCosWorkOnce({ runsDir, home, spawn, candidates: [{ provider: 'fake', argv: ['fake-cli'] }] }))
+  expect(await runCosWorkOnce({ runsDir, home, spawn, fleetFacts: async () => null, candidates: [{ provider: 'fake', argv: ['fake-cli'] }] }))
     .toEqual({ outcome: 'drafted', id, provider: 'fake' });
   expect((await new QueueStore(join(runsDir, 'queue'), 250).read()).jobs.find(job => job.id === id)?.status).toBe('DONE');
   const draft = JSON.parse(await readFile(join(runsDir, 'cos', `${id}.json`), 'utf8'));

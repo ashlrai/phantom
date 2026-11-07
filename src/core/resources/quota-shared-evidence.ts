@@ -16,7 +16,7 @@ export const RESOURCE_SHARED_QUOTA_EVIDENCE_TTL_MS = 5_000;
 export const RESOURCE_SHARED_QUOTA_EVIDENCE_FILENAME = '.resource-quota-shared-evidence.json';
 const MAX_BYTES = 128 * 1024;
 const UNAVAILABLE = 'Shared resource quota evidence unavailable';
-interface SharedQuotaScope { root: string; pool: ResourcePool; bindings: ResourceBinding[]; config: ResourceQuotaRefreshConfig }
+export interface SharedQuotaScope { root: string; pool: ResourcePool; bindings: ResourceBinding[]; config: ResourceQuotaRefreshConfig }
 export interface SharedQuotaEvidence { observations: ResourceObservation[]; unavailableWorkerIds: string[]; quotaUnavailableWorkerIds?: string[] }
 
 function scope(options: SharedQuotaScope) {
@@ -32,7 +32,7 @@ function iso(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
     Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
-function checkedEvidence(value: unknown, checked: ReturnType<typeof scope>, now: number): SharedQuotaEvidence {
+function timedEvidence(value: unknown, checked: ReturnType<typeof scope>, now: number): SharedQuotaEvidence {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
   const input = value as SharedQuotaEvidence;
   const ids = new Set(checked.config.workers.map((worker) => worker.workerId));
@@ -40,14 +40,6 @@ function checkedEvidence(value: unknown, checked: ReturnType<typeof scope>, now:
   if (observations.some((row) => !ids.has(row.workerId)) || !Array.isArray(input.unavailableWorkerIds) ||
     input.unavailableWorkerIds.length > ids.size || input.unavailableWorkerIds.some((id) => !ids.has(id)) ||
     new Set(input.unavailableWorkerIds).size !== input.unavailableWorkerIds.length) throw new Error();
-  const captures = captureResourceCommissioningObservations(checked.root, checked.pool, checked.bindings, checked.config, observations.map(row => row.workerId));
-  for (const row of observations) {
-    const expected = captures.get(row.workerId);
-    if (expected && canonical(row.commissioning) !== canonical(expected)) throw new Error();
-    // This Codex quota producer does not implement native billing attestation.
-    // A generic observation import cannot stand in for a supported same-account source port.
-    if (row.commissioning?.subscriptionOnlyBoundary !== undefined) throw new Error();
-  }
   const unavailable = new Set(input.unavailableWorkerIds);
   const quotaIds = input.quotaUnavailableWorkerIds === undefined ? [] : input.quotaUnavailableWorkerIds;
   if (!Array.isArray(quotaIds) || quotaIds.length > ids.size || quotaIds.some((id) => !ids.has(id)) ||
@@ -74,6 +66,30 @@ function checkedEvidence(value: unknown, checked: ReturnType<typeof scope>, now:
   return { observations, unavailableWorkerIds: [...unavailable].sort(),
     ...(checked.pool.workers.some((worker) => worker.quotaScope) || input.quotaUnavailableWorkerIds !== undefined ? {
       quotaUnavailableWorkerIds: expandResourceQuotaDenials(checked.pool, checked.bindings, [...quotaUnavailable]).sort() } : {}) };
+}
+
+/** Stored-data validation only. This cannot qualify commissioning or grant execution. */
+export function sharedQuotaEvidenceAtTime(options: SharedQuotaScope & { evidence: SharedQuotaEvidence; now: number }): SharedQuotaEvidence {
+  if (!Number.isSafeInteger(options.now) || options.now < 0) throw new Error(UNAVAILABLE);
+  return timedEvidence(options.evidence, scope(options), options.now);
+}
+function checkedEvidence(value: unknown, checked: ReturnType<typeof scope>, now: number): SharedQuotaEvidence {
+  const input = timedEvidence(value, checked, now);
+  const observations = input.observations;
+  const captures = captureResourceCommissioningObservations(checked.root, checked.pool, checked.bindings, checked.config, observations.map(row => row.workerId));
+  for (const row of observations) {
+    const expected = captures.get(row.workerId);
+    if (expected && canonical(row.commissioning) !== canonical(expected)) throw new Error();
+    // This Codex quota producer does not implement native billing attestation.
+    // A generic observation import cannot stand in for a supported same-account source port.
+    if (row.commissioning?.subscriptionOnlyBoundary !== undefined) throw new Error();
+  }
+  return input;
+}
+/** Read-only fresh preparation for the fixed background publisher. No saved witness is accepted. */
+export function prepareSharedQuotaEvidence(options: SharedQuotaScope & { evidence: SharedQuotaEvidence; now: number }): SharedQuotaEvidence {
+  if (!Number.isSafeInteger(options.now) || options.now < 0) throw new Error(UNAVAILABLE);
+  return checkedEvidence(options.evidence, scope(options), options.now);
 }
 
 export function publishSharedQuotaEvidence(options: SharedQuotaScope & {

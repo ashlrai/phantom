@@ -11,7 +11,7 @@
  *     Approve / Veto on any launch still inside its veto window.
  *   - Result pings for work Mason asked for ("PR is up", "failed: …").
  *   - Event pings only when they matter (a revert, a failed revert, the
- *     Leader down) — Jev's `decide` when present, deterministic otherwise.
+ *     Leader down), using local notification policy.
  *
  * NEVER NAGS
  *   - Quiet hours (`comms.quietHours`, default 23:00–07:00 local): only
@@ -48,7 +48,7 @@ import { sendTelegramMessage, telegramEnabled, type InboundEvent, type TelegramB
 import { leaderDisplayText } from '../integrations/telegram-format.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
-import { classifyOperatorText, jevChooseLane, jevWorthInterrupting, type OperatorIntent, type TaskLane, type TaskRequest } from '../vision/leader-intent.js';
+import { classifyIntentByRules, type OperatorIntent, type TaskLane, type TaskRequest } from '../vision/leader-intent.js';
 import { zonedParts } from '../vision/leader-drive.js';
 import type { LeaderApplyDeps } from '../vision/leader-apply.js';
 import type { LeaderAction } from '../vision/leader-types.js';
@@ -660,17 +660,8 @@ export async function runLeaderLine(cfg: AshlrConfig): Promise<LeaderLineResult>
       seen.add(e.key);
       state.seenEvents.push(e.key);
       if (e.kind !== 'revert' && e.kind !== 'revert-failed') continue; // merges and PRs ride the brief
-      // A failed revert is urgent (bad code is live); a landed revert is worth
-      // a ping unless Jev judges it can wait for the brief.
+      // Revert notification decisions use local policy.
       const urgent = e.kind === 'revert-failed';
-      const todays = state.pings.filter((p) => zonedParts(Date.parse(p.at), lc.timeZone).day === zonedParts(nowMs, lc.timeZone).day);
-      const lastPing = state.pings.map((p) => Date.parse(p.at)).sort((a, b) => b - a)[0];
-      const { interrupt } = await jevWorthInterrupting(
-        { id: e.key, title: e.text, kind: e.kind, source: 'fleet', severity: urgent ? 'high' : 'warn', since: null },
-        { quietHours: inQuietHours(nowMs, lc), pushesToday: todays.length, minutesSinceLastPush: lastPing === undefined ? null : (nowMs - lastPing) / 60_000 },
-        true,
-      );
-      if (!interrupt) continue;
       if (!pingAllowed(nowMs, lc, state, urgent ? 'urgent' : 'normal').ok) continue;
       const text = e.kind === 'revert-failed' ? `Urgent: ${e.text}. The fleet could not undo a bad merge — look now.` : `Reverted: ${e.text}${e.url ? ` ${e.url}` : ''}. The fleet caught it; I'm on the root cause.`;
       if (await send(text, cfg, {}, { kind: 'notification' })) {
@@ -759,7 +750,7 @@ function taskPrompt(task: TaskRequest, repo: string): string {
   return `Mason (the owner) asked for this directly, via Telegram:\n\n"${task.text}"\n\nRepository: ${repo}. First confirm what exists today; then deliver the smallest complete change that does it, with tests that prove it. Say in the PR how you verified it and anything you chose not to do.`;
 }
 
-/** Cheapest capable lane for a task (deterministic; Jev may pick among the allowed ones). */
+/** Cheapest capable lane for a task. */
 export function defaultLane(task: TaskRequest, budget: LaneBudget): TaskLane {
   if (task.size === 'small') return 'fleet';
   if (budget.mode !== 'reserve' && budget.cloud?.ok) return 'cloud';
@@ -842,12 +833,8 @@ export async function handleTaskRequest(event: InboundEvent, task: TaskRequest, 
     return;
   }
   const budget = await d.laneBudget(apply).catch((): LaneBudget => ({ mode: 'balanced', cloud: null, devin: null }));
+  // Telegram request text stays local when choosing a lane.
   let lane: TaskLane = task.lane ?? defaultLane(task, budget);
-  if (!task.lane) {
-    // Jev's chooseLane may pick among the lanes open right now; the cheapest capable lane is the fallback.
-    const open: TaskLane[] = ['fleet', ...(budget.mode !== 'reserve' && budget.cloud?.ok ? ['cloud' as const] : []), ...(budget.mode !== 'reserve' && budget.devin?.ok ? ['devin' as const] : [])];
-    lane = (await jevChooseLane({ title: titleFor(task.text), body: task.text, repo, githubRepo: true }, open, open.includes(lane) ? lane : 'fleet')).lane;
-  }
   const { enactDirectLeaderActions } = await import('../vision/leader-drive.js');
   const enact = async (l: TaskLane): Promise<LeaderAction | null> => {
     const draft = await draftFor(l, task, repo);
@@ -928,7 +915,8 @@ async function approveOrVeto(event: InboundEvent, intent: OperatorIntent, cfg: A
 export async function routeLeaderText(event: InboundEvent, text: string, cfg: AshlrConfig): Promise<boolean> {
   try {
     const repliedTo = lookupTelegramMessage(event.replyToMessageId);
-    const intent = await classifyOperatorText(text, {
+    // Telegram request text stays local during intent classification.
+    const intent = classifyIntentByRules(text, {
       replyToKind: repliedTo?.kind ?? null,
       replyActionIds: repliedTo?.actionIds ?? [],
     });

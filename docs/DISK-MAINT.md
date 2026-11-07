@@ -42,6 +42,11 @@ and the apply report's `freedBytes` attribute every byte to one of:
 - `worktrees-runs`: `~/.ashlr-runs/wt` worktrees whose job is `merged` or
   `empty` in the ledger, using `git worktree remove` (never `--force`).
 - `worktrees-jobs`: `~/Projects/ashlrai/wt` worktrees, merged only.
+- `job-artifacts`: archived dispatcher results (`JOB.publish.prev-<timestamp>`)
+  older than 45 days for jobs whose latest attempt finished and merged. A
+  surviving workspace, base, dispatch or reap marker keeps the artifact;
+  completion and activity are checked again before deletion. Missing or
+  damaged ledger evidence keeps it too. Current publish results are retained.
 - `bridge-targets`: `~/.ashlr-runs/repos/<key>/target` build output quiet
   for 30 days.
 - `venvs` (gated): side-project `.venv` trees with `pyvenv.cfg` quiet for 14
@@ -99,5 +104,6 @@ printed activation commands' disable forms (`launchctl bootout` /
 `phm disk-maint --json` prints `disk-maint.v1`: `roots`, `freeGb`,
 `diskguardReuseOnlyGb`, `jobsSource`, per-class `candidates`/`bytes`, plan
 `totals`, and the `refused` evidence list. With `--apply` the same object
-gains `results` (per-class per-path status and `freedBytes`) and
+gains `results` (per-class per-path status and `freedBytes`), updates `freeGb`
+from the runs volume after the sweep, and adds
 `totals.freedBytes`/`failures`. Paths are home-relative sanitized.

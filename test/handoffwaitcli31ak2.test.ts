@@ -1,3 +1,4 @@
+import { nodeFixtureHeader } from './helpers/node-fixture.js';
 import { execFile, spawn } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -24,7 +25,7 @@ const notes = (state: string) => ({ v: 1, job, kind: 'notes', state, bytes: stat
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'handoff-wait-'));
   bin = join(dir, 'fake-phm');
-  await writeFile(bin, `#!${process.execPath}\n` + `
+  await writeFile(bin, nodeFixtureHeader() + `
 const fs = require('node:fs');
 const path = require('node:path');
 const dir = process.env.FAKE_DIR;

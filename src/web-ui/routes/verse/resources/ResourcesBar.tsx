@@ -4,8 +4,8 @@
  *
  * One row per resource the operator runs on — each paid account (provider
  * mark + a battery showing how much of its binding window is LEFT), the local
- * models, and the cloud credits — so capacity is visible on every surface
- * without opening anything. Hover (or keyboard focus) shows the detail: every
+ * models, and recorded credit grants. Supporting session logs, estimates and
+ * tracked budgets are available under their own disclosure. Hover (or keyboard focus) shows the detail: every
  * window with its reset, the reserve kept for Mason, the account's state.
  * Native and credit rows open the Resources drawer; saved Bot profiles open
  * Proactive agents and report no inferred allowance. The whole bar can be switched
@@ -33,6 +33,7 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { personalReader } from '../usage/codex-burn-queries.js';
 import { pacePerHour, readings, recordReading } from '../usage/codex-burn-model.js';
 import { personalRunwayText } from './personal-runway-text.js';
+import { personalSessionCurrent, personalSessionExpiresAt } from './personal-session-freshness.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { personalLaneFacts } from './personal-lane-facts.js';
 import { formatResetInstant } from '../seat-subscription.js';
@@ -304,12 +305,17 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const savedOrder = useResourceOrder();
   // 0: ordinary; 1: provider pending/unavailable; 2: provider ready.
   const [providerView, setProviderView] = useState(0);
+  const [showEvidence, setShowEvidence] = useState(false);
   const [dragged, setDragged] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   // The poll triggers expiry renders; query arrivals use the actual render time,
   // so a freshly retrieved reading is not rejected by an older clock tick.
-  const now = useCapacityClock(fixedNow, data.seats.map(seat => seat.capacity));
+  const personal = personalRead.error === undefined && personalRead.data?.sourceState === 'healthy' ? personalRead.data.reading : null;
+  const now = useCapacityClock(fixedNow, [...data.seats.map(seat => seat.capacity), {
+    expiresAt: personalSessionExpiresAt(personal, data.budget?.readingMaxAgeMs),
+    windows: [{ resetsAt: personal?.resetsAt }],
+  }]);
   const rows = useMemo(
     () => (data.loading ? [] : barRows(buildCapacityRows(data.seats, { health: data.health, budget: data.budget, local: 'collapse', now }), { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption })),
     [data.loading, data.seats, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption],
@@ -371,7 +377,6 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         </Tooltip>
     ),
   }));
-  const personal = personalRead.error === undefined && personalRead.data?.sourceState === 'healthy' ? personalRead.data.reading : null;
   const lastPersonalAsOf = useRef<string | null>(null);
   const [personalHistory, setPersonalHistory] = useState(readings);
   useEffect(() => {
@@ -381,16 +386,17 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     setPersonalHistory(readings());
   }, [personal]);
   const personalLeft = personal?.usedPct == null ? null : 100 - personal.usedPct;
+  const personalCurrent = personalSessionCurrent(personal, now, data.budget?.readingMaxAgeMs);
   const personalAge = localObservationAge(personal?.asOf, now);
   const personalPace = pacePerHour(personalHistory, now);
-  const personalRunway = personalRunwayText({ usedPct: personal?.usedPct ?? null, pacePerHour: personalPace, nowMs: now });
+  const personalRunway = personalCurrent ? personalRunwayText({ usedPct: personal?.usedPct ?? null, pacePerHour: personalPace, nowMs: now }) : null;
   const personalPaceStatus = personalRunway ?? (personalPace === null ? 'pace unknown yet' : null);
   const personalStatus = personal
-    ? `Personal Codex weekly · ${personal.usedPct === null ? 'usage unknown' : `${usedPercentText(personal.usedPct)} used`} · ${personal.resetsAt ? formatResetInstant(personal.resetsAt, now) ?? 'reset unknown' : 'reset unknown'} · as of ${personalAge === 'just measured' ? 'just now' : personalAge} · from this Mac's session logs${personalPaceStatus ? ` · ${personalPaceStatus}` : ''}`
+    ? `${personalCurrent ? 'Personal Codex weekly' : 'Last session reading · current usage unconfirmed'} · ${personal.usedPct === null ? 'usage unknown' : `${usedPercentText(personal.usedPct)} used`} · ${personal.resetsAt ? `${personalCurrent ? '' : 'recorded '}${formatResetInstant(personal.resetsAt, now) ?? 'reset unknown'}` : 'reset unknown'} · as of ${personalAge === 'just measured' ? 'just now' : personalAge} · from this Mac's session logs${personalCurrent && personalPaceStatus ? ` · ${personalPaceStatus}` : ''}`
     : `no session-log reading yet · source ${personalRead.error !== undefined ? 'unavailable' : personalRead.data?.sourceState ?? 'unknown'}`;
   const laneFacts = personalLaneFacts(runs.data?.lanes);
   const personalRow: BarRow = { key: 'codex-personal:sessions', engine: 'codex', name: 'Codex personal · session logs',
-    leftPercent: personalLeft, level: personalLevel(personalLeft), value: personal?.usedPct == null ? 'No reading' : `${usedPercentText(personal.usedPct)} used${personalRunway ? ` · ${personalRunway.split(' at ')[0]}` : ''}`,
+    leftPercent: personalLeft, level: personalCurrent ? personalLevel(personalLeft) : 'unknown', value: personal?.usedPct == null ? 'No reading' : `${usedPercentText(personal.usedPct)} used${personalCurrent ? '' : ' · last'}${personalRunway ? ` · ${personalRunway.split(' at ')[0]}` : ''}`,
     summary: `Codex personal · session logs: ${personalStatus}`, detail: runs.error && laneFacts.length ? [...laneFacts, 'Last known lane facts · latest refresh failed.'] : laneFacts };
   entries.push({ key: personalRow.key, name: personalRow.name, content: (
     <Tooltip content={<RowTip row={personalRow} />} placement="right">
@@ -555,7 +561,14 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         </Tooltip>
   ) });
   const ordered = orderedResources(entries, savedOrder);
-  const ids = ordered.map(entry => entry.key);
+  // Unbound session evidence, estimates and declared agents remain accessible,
+  // without presenting them as additional accounts or merging their allowances.
+  const primaryIds = new Set(rows.map(row => `account:${row.key}`));
+  // Recorded API funding is a distinct resource, unlike a session-log view or estimate.
+  primaryIds.add('budget:claude-api-promotions');
+  const evidenceCount = ordered.filter(entry => !primaryIds.has(entry.key)).length;
+  const visible = ordered.filter(entry => primaryIds.has(entry.key) || !expanded || showEvidence);
+  const ids = visible.map(entry => entry.key);
   const providerOf = (engine: string) => engine === 'codex' ? 'openai' : engine === 'claude' ? 'anthropic' : engine === 'grok' ? 'xai' : engine === 'devin' ? 'devin' : 'local';
   const descriptors: ProviderResourceDescriptor[] = ordered.map(entry => {
     const native = rows.find(row => `account:${row.key}` === entry.key);
@@ -574,8 +587,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
       setAnnouncement(`${name} moved to position ${ids.indexOf(target) + 1} of ${ids.length}.`);
     }
   };
-  const ordinaryRows = ordered.map((entry, index) => (
+  const ordinaryRows = ordered.map((entry) => {
+    const index = ids.indexOf(entry.key);
+    return (
     <div key={entry.key} className={styles.orderItem} data-resource-id={entry.key}
+      hidden={index === -1}
       data-dragging={dragged === entry.key || undefined} data-drop-target={dropTarget === entry.key || undefined}
       draggable
       onDragStart={(event) => {
@@ -599,10 +615,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         <button type="button" aria-label={`Move ${entry.name} up`} title={`Move ${entry.name} up`}
           disabled={index === 0} onClick={() => move(entry.key, ids[index - 1]!)}><span aria-hidden="true">↑</span></button>
         <button type="button" aria-label={`Move ${entry.name} down`} title={`Move ${entry.name} down`}
-          disabled={index === ordered.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
+          disabled={index === ids.length - 1} onClick={() => move(entry.key, ids[index + 1]!)}><span aria-hidden="true">↓</span></button>
       </span>
     </div>
-  ));
+  ); });
 
   if (ordered.length === 0) return null;
   return (
@@ -623,6 +639,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
           renderResource={resource => <div data-resource-id={resource.resourceId}>{entryByKey.get(resource.resourceId)?.content}</div>} />
       </Suspense> : null}
       {providerView === 2 && expanded ? null : ordinaryRows}
+      {expanded && providerView !== 2 && evidenceCount > 0 ? <button type="button" className={styles.densityToggle}
+        aria-expanded={showEvidence} onClick={() => setShowEvidence(value => !value)}>
+        <span>Usage sources and budgets ({evidenceCount})</span>{showEvidence ? <IconChevronUp /> : <IconChevronDown />}
+      </button> : null}
     </div>
   );
 }

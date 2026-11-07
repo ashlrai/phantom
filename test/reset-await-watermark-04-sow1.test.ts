@@ -49,7 +49,7 @@ it.each([
   ['equal to the watermark', iso(start - 60_000)],
   ['before the watermark', iso(start - 90_000)],
   ['in the future', iso(start + 3_600_000)],
-])('does not observe a reading %s', async (_label, readingAsOf) => {
+])('reset-await does not observe a reading %s', async (_label, readingAsOf) => {
   const read = vi.fn(async () => snapshot([row({ readingAsOf })]));
   const pending = awaitResetEvidence({ ...opts, after: watermark }, { read, now });
   await vi.advanceTimersByTimeAsync(100);
@@ -83,7 +83,7 @@ it('treats a future watermark as unsatisfiable and reaches the deadline', async 
   expect((await pending).outcome).toBe('deadline');
 });
 
-it('rejects invalid and duplicate --after flags before reading', async () => {
+it('reset-await rejects invalid and duplicate --after flags before reading', async () => {
   const read = vi.fn(async () => snapshot());
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   for (const args of [
@@ -104,7 +104,7 @@ it('rejects invalid and duplicate --after flags before reading', async () => {
   expect(read).not.toHaveBeenCalled();
 });
 
-it('fails closed on an invalid core after option without reading', async () => {
+it('reset-await fails closed on an invalid core after option without reading', async () => {
   const read = vi.fn(async () => snapshot());
   for (const after of ['not-a-date', '2026-11-01', '2026-11-01T18:06:00', '2026-11-01T18:06:00+24:00']) {
     expect((await awaitResetEvidence({ ...opts, after }, { read, now })).outcome).toBe('failed');
@@ -112,7 +112,7 @@ it('fails closed on an invalid core after option without reading', async () => {
   expect(read).not.toHaveBeenCalled();
 });
 
-it.each(['read', 'sleep'])('cancels during %s with --after and cleans listeners', async phase => {
+it.each(['read', 'sleep'])('reset-await cancels during %s with --after and cleans listeners', async phase => {
   const before = process.listenerCount('SIGINT');
   const controller = new AbortController();
   const read = phase === 'read' ? () => new Promise<UsageResetsV1>(() => {}) : async () => snapshot([]);
@@ -132,7 +132,7 @@ it('exits 1 at the deadline when no reading passes the watermark', async () => {
   expect(await pending).toBe(1);
 });
 
-it('help explains the caller-persisted watermark', async () => {
+it('reset-await --help explains the caller-persisted watermark', async () => {
   const lines: string[] = [];
   expect(await cmdFleetResetAwait(['--help'], { emit: line => { lines.push(line); } })).toBe(0);
   expect(lines[0]).toContain('--after');

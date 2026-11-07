@@ -112,7 +112,7 @@ describe('graph neighbors edge kind', () => {
     ['neighbors', 'a', '--kind', 'can-delegate'], ['edges', '--edge-kind', 'can-delegate'],
     ['nodes', '--edge-kind', 'can-delegate'], ['node', 'a', '--edge-kind', 'can-delegate'],
     ['status', '--edge-kind', 'can-delegate'],
-  ])('rejects invalid arguments %j before loading', async (...args) => {
+  ])('rejects invalid arguments %j before loading (%#)', async (...args) => {
     expect(await query(args, 2)).toMatchObject({ status: 'error', error: { code: 'GRAPH_USAGE' } });
     expect(loader.loadGraph).not.toHaveBeenCalled();
   });

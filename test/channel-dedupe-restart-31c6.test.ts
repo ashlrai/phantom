@@ -118,7 +118,7 @@ describe('channel receipts across receiver restarts (31c6)', () => {
     const retry = await createChannelReceiver(options)(message);
     expect(retry.ok && retry.ack.status).toBe('duplicate');
     const inbox = readFileSync(join(s.runsDir, 'leader', 'MASON-INBOX.md'), 'utf8');
-    expect(inbox.match(/^## /gm)).toHaveLength(1);
+    expect(inbox.match(/^\d{4}-.* \[src:/gm)).toHaveLength(1);
     const receive = createChannelReceiver({ ...s.options, runsDir: undefined, receiptStore: createLocalChannelDedupeStore(s.runsDir) });
     expect((await receive(message)).ok).toBe(true);
     expect(s.write).not.toHaveBeenCalled();

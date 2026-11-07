@@ -6,7 +6,7 @@
  *  1. STATS-CACHE 7D SUM: senseResources sums messageCount from stats-cache.json
  *     over the rolling 7-day window and maps availability by protectPct/cap.
  *
- *  2. CODEX DELEGATION: senseResources delegates to readCodexRateLimits() and
+ *  2. CODEX DELEGATION: senseResources delegates to the Codex session collector and
  *     maps primary/secondary usedPercent → availability correctly.
  *
  *  3. NIM CREDENTIAL + BACKOFF: missing executor-resolvable credentials make
@@ -29,7 +29,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -39,16 +39,25 @@ import { join } from 'node:path';
 
 let tmpHome: string;
 let origHome: string | undefined;
+let origAshlrHome: string | undefined;
+let origCodexHome: string | undefined;
+let origCodexHomeAlt: string | undefined;
 let origNimApiKey: string | undefined;
 let origMoonshotApiKey: string | undefined;
 
 const FAKE_NIM_API_KEY = 'm250-fake-nim-credential';
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'ashlr-m250-'));
+  tmpHome = realpathSync(mkdtempSync(join(tmpdir(), 'ashlr-m250-')));
   mkdirSync(join(tmpHome, '.ashlr', 'fleet'), { recursive: true });
   mkdirSync(join(tmpHome, '.claude'), { recursive: true });
   origHome = process.env['HOME'];
+  origAshlrHome = process.env['ASHLR_HOME'];
+  origCodexHome = process.env['CODEX_HOME'];
+  origCodexHomeAlt = process.env['CODEX_HOME_ALT'];
+  process.env['ASHLR_HOME'] = join(tmpHome, '.ashlr');
+  process.env['CODEX_HOME'] = join(tmpHome, '.codex');
+  process.env['CODEX_HOME_ALT'] = join(tmpHome, '.codex-2');
   origNimApiKey = process.env['NVIDIA_NIM_API_KEY'];
   origMoonshotApiKey = process.env['MOONSHOT_API_KEY'];
   process.env['HOME'] = tmpHome;
@@ -60,7 +69,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env['HOME'] = origHome;
+  for (const [key, value] of Object.entries({ HOME: origHome, ASHLR_HOME: origAshlrHome, CODEX_HOME: origCodexHome, CODEX_HOME_ALT: origCodexHomeAlt })) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  vi.doUnmock('../src/core/fleet/codex-session-usage.js');
   if (origNimApiKey === undefined) delete process.env['NVIDIA_NIM_API_KEY'];
   else process.env['NVIDIA_NIM_API_KEY'] = origNimApiKey;
   if (origMoonshotApiKey === undefined) delete process.env['MOONSHOT_API_KEY'];
@@ -73,6 +86,25 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
+
+import type { CodexSessionUsage, CodexSessionWindow } from '../src/core/fleet/codex-session-usage.js';
+
+function mockCodexSession(primary: CodexSessionWindow | null, secondary: CodexSessionWindow | null = null): void {
+  const usage: CodexSessionUsage = {
+    accountId: 'codex-personal', slot: 'secondary', observedAt: new Date().toISOString(),
+    planType: 'pro', limitId: 'codex', limitName: null, rateLimitReachedType: null,
+    spendControlReached: null, individualLimit: null, model: null, originator: null,
+    cliVersion: null, primary, secondary, credits: null,
+  };
+  vi.doMock('../src/core/fleet/codex-session-usage.js', async (importOriginal) => ({
+    ...await importOriginal<typeof import('../src/core/fleet/codex-session-usage.js')>(),
+    collectCodexSessionUsages: vi.fn((options) => {
+      expect(options.env.CODEX_HOME).toBe(join(tmpHome, '.codex-2'));
+      expect(options.env.CODEX_HOME_ALT).toBe(join(tmpHome, '.codex-2'));
+      return primary ? [usage] : [];
+    }),
+  }));
+}
 
 function writeStatsCache(
   days: Array<{ daysAgo: number; messageCount: number }>,
@@ -429,6 +461,7 @@ describe('M250 ResourceMonitor — operator resource overrides', () => {
 
 describe('M250 ResourceMonitor — Codex delegation', () => {
   it('maps usedPercent=45 → open', async () => {
+    mockCodexSession({ usedPercent: 45, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary: { usedPercent: 45, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
@@ -449,6 +482,7 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
   });
 
   it('maps usedPercent=95 → throttled', async () => {
+    mockCodexSession({ usedPercent: 95, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 1800 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary: { usedPercent: 95, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 1800 },
@@ -463,6 +497,7 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
   });
 
   it('maps usedPercent=100 → exhausted', async () => {
+    mockCodexSession({ usedPercent: 100, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 900 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary: { usedPercent: 100, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 900 },
@@ -477,6 +512,7 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
   });
 
   it('uses higher of primary/secondary (most conservative)', async () => {
+    mockCodexSession({ usedPercent: 30, windowMinutes: 300,   resetsAt: Math.floor(Date.now() / 1000) + 3600 }, { usedPercent: 92, windowMinutes: 10080, resetsAt: Math.floor(Date.now() / 1000) + 86400 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary:   { usedPercent: 30, windowMinutes: 300,   resetsAt: Math.floor(Date.now() / 1000) + 3600 },
@@ -491,7 +527,8 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
     expect(state.availability).toBe('throttled');
   });
 
-  it('returns unknown when readCodexRateLimits returns null', async () => {
+  it('returns unknown when the session collector has no reading', async () => {
+    mockCodexSession(null);
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue(null),
     }));
@@ -871,6 +908,7 @@ describe('M252 Gateway — resource-aware demote', () => {
     // Claude open: 20%
     writeStatsCache([{ daysAgo: 0, messageCount: 400 }]);
 
+    mockCodexSession({ usedPercent: 20, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary: { usedPercent: 20, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
@@ -941,6 +979,7 @@ describe('M252 Gateway — resource-aware demote', () => {
         lastComputedDate: '2000-01-01',
       }),
     );
+    mockCodexSession({ usedPercent: 20, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary: { usedPercent: 20, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
@@ -1187,6 +1226,7 @@ describe('M252 Gateway — resource-aware demote', () => {
 
   it('final resource guard re-senses after m53 invalidates resource cache', async () => {
     await grantAutonomyHeadroom(); // V3.10 autonomy gate — see helper
+    mockCodexSession({ usedPercent: 20, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
         primary: { usedPercent: 20, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
