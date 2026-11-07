@@ -342,6 +342,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'OrientResult',
   },
   {
+    usage: 'phm context read [--section NAME] [--max-tokens N] [--json]',
+    description: 'Read a bounded digest of current company context; default budget 1024, maximum 16000.',
+    safety: 'read',
+    jsonShape: '{schema:company.context.v1, digest, maxTokens, truncated}',
+  },
+  {
+    usage: 'phm context write --section NAME --text TEXT --source SOURCE [--id ID] [--expires ISO] [--json]',
+    description: 'Locked append of plain company context. Duplicate IDs are unchanged; keys and credentials are refused.',
+    safety: 'append',
+    jsonShape: '{id, appended}',
+  },
+  {
     usage: 'phm channels status [--json]',
     description: 'Per-channel rollup: configured, credential custody, pairing, received, pendingOutbound, lastSeenAt. Counts are measured or "unknown", never fabricated. Exit 0 success/help, 2 bad usage.',
     safety: 'read',
@@ -797,6 +809,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'vision <show|review|preview|shadow|approve|reconcile|set>', desc: 'Mission OS: inspect strategy, preview a bounded DAG, record observation-only shadow evidence, or explicitly adopt planning state.', topic: 'autonomy' },
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
+  { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
   { cmd: 'comms <status|cycle|digest>',  desc: 'Operator comms channel (Telegram/iMessage): digests, approve-by-text.', topic: 'autonomy' },
   { cmd: 'connectors add|list|remove|show|import [--json]', desc: 'Manage credential-free connector profiles and import safe client metadata; vault references only.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },

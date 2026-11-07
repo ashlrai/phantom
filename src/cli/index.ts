@@ -2050,6 +2050,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdRouter(rest);
         break;
       }
+      case 'context': {
+        const { cmdCompanyContext } = await import('./company-context.js');
+        cmdCompanyContext(rest);
+        break;
+      }
       case 'router-calibration': {
         const { cmdRouterCalibration } = await import('./router-calibration.js');
         process.exitCode = await cmdRouterCalibration(rest);
