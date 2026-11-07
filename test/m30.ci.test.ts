@@ -141,7 +141,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'windows-service-authority'];
-    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build', 'release-smoke'];
+    const keys = ['secret-shape', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
@@ -193,10 +193,10 @@ describe('M30 CI workflow', () => {
       }
     }
     // Release mode reuses prior push CI, but still requires preparation and smoke.
-    const releaseOk = { ...ok, 'release-build': 'success', 'release-smoke': 'success' };
+    const releaseOk = { ...ok, 'release-build': 'success' };
     for (const event of ['schedule', 'workflow_dispatch']) {
       expect(execute(event, 'full', releaseOk, undefined, 'refs/heads/master', true)).not.toThrow();
-      for (const job of ['release-build', 'release-smoke']) {
+      for (const job of ['release-build']) {
         for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
           expect(execute(event, 'full', { ...releaseOk, [job]: outcome }, undefined, 'refs/heads/master', true)).toThrow();
         }
@@ -235,7 +235,6 @@ describe('M30 CI workflow', () => {
       .map(([name, job]) => [name, (job as { permissions: unknown }).permissions]);
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
-      ['release-smoke', { contents: 'read', actions: 'read' }],
     ]);
     expect(ciYml).toContain("concurrency:\n  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     // Master pushes run the seconds-fast gate only so the required Merge Gate
@@ -338,7 +337,6 @@ describe('M30 CI workflow', () => {
         expect(evaluateIf(jobs[id]!.if, event, 'full', masterRef, 'true'), `release ${id}`).toBe(false);
       }
       expect(evaluateIf(jobs['release-build']!.if, event, 'full', masterRef, 'true')).toBe(true);
-      expect(evaluateIf(jobs['release-smoke']!.if, event, 'full', masterRef, 'true', 'true')).toBe(true);
     }
   });
 
@@ -715,9 +713,8 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(24);
-    expect(new Set(names).size).toBe(24);
-    expect(names).toContain('Prepare unsigned desktop release');
+    expect(names).toHaveLength(23);
+    expect(new Set(names).size).toBe(23);
     expect(names).toContain('Desktop release smoke');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
@@ -1358,8 +1355,12 @@ describe('M30 CI workflow', () => {
     expect(effectText).not.toMatch(/\b(npm\s+publish|gh\s+release|git\s+(?:push|tag)|(?:vercel|netlify)\s+deploy)\b/i);
     expect(ciYml).not.toMatch(/(?:contents|attestations|id-token):\s*write|secrets\./);
     const workflow = parse(ciYml);
-    expect(workflow.jobs['release-smoke']['timeout-minutes']).toBe(5);
-    expect(workflow.jobs['release-smoke'].steps.some((step: { run?: string }) => /npm (ci|install|run build)/.test(step.run ?? ''))).toBe(false);
+    expect(workflow.jobs['release-build']['timeout-minutes']).toBe(90);
+    const steps = workflow.jobs['release-build'].steps;
+    const phaseStart = steps.findIndex((step: { name?: string }) => step.name === 'Start bounded release smoke phase');
+    expect(phaseStart).toBeGreaterThan(steps.findIndex((step: { id?: string }) => step.id === 'build'));
+    expect(steps.slice(phaseStart).some((step: { run?: string }) => /npm (ci|install|run build)/.test(step.run ?? ''))).toBe(false);
+    expect(readFileSync(resolve(repoRoot, '.github/scripts/release-smoke-phase.mjs'), 'utf8')).toContain('SMOKE_PHASE_MS = 300_000');
     expect(workflow.jobs['release-build'].steps.find((step: { id?: string }) => step.id === 'build').run).toContain('npm run build:desktop:nightly');
     expect(readFileSync(resolve(repoRoot, 'scripts/build-desktop-nightly.mjs'), 'utf8')).toContain("'--no-sign'");
     expect(ciYml).not.toMatch(/vercel|netlify|gh-pages|pages-deploy/i);
