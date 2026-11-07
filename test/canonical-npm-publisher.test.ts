@@ -1,6 +1,6 @@
 import {describe, it, expect, vi} from 'vitest';
 import {createHash} from 'node:crypto';
-import {mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync} from 'node:fs';
+import {mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parse} from 'yaml';
@@ -125,6 +125,10 @@ describe('canonical publication recovery', () => {
 describe('public registry processing', () => {
   const accepted = acceptPackageIdentity(input, pkg, receipt, bytes);
   const packument = (latest: string) => ({name: accepted.name, 'dist-tags': {latest}});
+  const versionMetadata = () => ({name: accepted.name, version: accepted.version,
+    dist: {tarball: `https://registry.npmjs.org/@ashlr/phantom/-/phantom-${accepted.version}.tgz`, integrity: accepted.integrity,
+      attestations: {provenance: {predicateType: 'https://slsa.dev/provenance/v1'}}}});
+  const installCatalog = (metadata = versionMetadata()) => ({name: accepted.name, versions: {[accepted.version]: metadata}});
   it('reconciles a stale latest read without replaying publication or tag changes', async () => {
     vi.useFakeTimers();
     const read = vi.fn().mockResolvedValueOnce(Response.json(packument('3.26.1')))
@@ -197,13 +201,14 @@ describe('public registry processing', () => {
     const metadata = {name: accepted.name, version: accepted.version, dist: {tarball: `https://registry.npmjs.org/@ashlr/phantom/-/phantom-${accepted.version}.tgz`, integrity: accepted.integrity, attestations: {provenance: {predicateType: 'https://slsa.dev/provenance/v1'}}}};
     vi.useFakeTimers();
     const read = vi.fn().mockResolvedValueOnce(new Response('', {status: 404}))
-      .mockResolvedValueOnce(Response.json(metadata)).mockResolvedValueOnce(new Response(bytes));
+      .mockResolvedValueOnce(Response.json(metadata)).mockResolvedValueOnce(Response.json(installCatalog(metadata)))
+      .mockResolvedValueOnce(new Response(bytes));
     vi.stubGlobal('fetch', read);
     try {
       const pending = reconcileRegistry(accepted, dir);
       await vi.runAllTimersAsync(); await pending;
       expect(JSON.parse(readFileSync(join(dir, 'registry-metadata.json'), 'utf8'))).toEqual(metadata);
-      expect(read).toHaveBeenCalledTimes(3);
+      expect(read).toHaveBeenCalledTimes(4);
     } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
   });
   it('caps registry backoff at five seconds and logs every attempt without changing tarball requests', async () => {
@@ -213,7 +218,7 @@ describe('public registry processing', () => {
     const started = Date.now();
     const times: number[] = [];
     const responses = [new Error('network unavailable'), new Response('', {status: 404}),
-      new Response('', {status: 429}), new Response('', {status: 503}), Response.json(metadata), new Response(bytes)];
+      new Response('', {status: 429}), new Response('', {status: 503}), Response.json(metadata), Response.json(installCatalog(metadata)), new Response(bytes)];
     const read = vi.fn().mockImplementation(async () => {
       times.push(Date.now() - started);
       const response = responses.shift();
@@ -225,13 +230,16 @@ describe('public registry processing', () => {
     try {
       const pending = reconcileRegistry(accepted, dir);
       await vi.runAllTimersAsync(); await pending;
-      expect(times).toEqual([0, 2000, 6000, 11000, 16000, 16000]);
+      expect(times).toEqual([0, 2000, 6000, 11000, 16000, 16000, 16000]);
       expect(log.mock.calls).toEqual(['unavailable', 404, 429, 503, 200].map((status, index) =>
         [`Registry verification attempt ${index + 1}: elapsed=${times[index]}ms HTTP status=${status}`]));
-      for (const [url, options] of read.mock.calls.slice(0, -1)) {
+      for (const [url, options] of read.mock.calls.slice(0, -2)) {
         expect(url).toBe(`https://registry.npmjs.org/@ashlr%2Fphantom/${accepted.version}`);
         expect(options).toEqual({redirect: 'error', signal: expect.any(AbortSignal), headers: {'Cache-Control': 'no-cache'}});
       }
+      const [catalogUrl, catalogOptions] = read.mock.calls.at(-2)!;
+      expect(catalogUrl).toBe('https://registry.npmjs.org/@ashlr%2Fphantom');
+      expect(catalogOptions).toEqual({redirect: 'error', signal: expect.any(AbortSignal), headers: {Accept: 'application/vnd.npm.install-v1+json'}});
       const [url, options] = read.mock.calls.at(-1)!;
       expect(String(url)).toBe(metadata.dist.tarball);
       expect(options).toEqual({redirect: 'error', signal: expect.any(AbortSignal)});
@@ -239,6 +247,134 @@ describe('public registry processing', () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally {log.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
   });
+
+  it('waits for npm install catalog visibility even when version metadata and archive are already available', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-'));
+    vi.useFakeTimers(); const started = Date.now(); const metadata = versionMetadata();
+    const catalogTimes: number[] = []; const archiveTimes: number[] = [];
+    const read = vi.fn(async (url: string | URL, _options?: RequestInit) => {
+      if (String(url).endsWith(`/${accepted.version}`)) return Response.json(metadata);
+      if (String(url) === metadata.dist.tarball) {archiveTimes.push(Date.now() - started); return new Response(bytes);}
+      expect(url).toBe('https://registry.npmjs.org/@ashlr%2Fphantom');
+      catalogTimes.push(Date.now() - started);
+      return Response.json(catalogTimes.length < 3 ? {name: accepted.name, versions: {}} : installCatalog(metadata));
+    });
+    vi.stubGlobal('fetch', read);
+    try {
+      const pending = reconcileRegistry(accepted, dir);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(catalogTimes).toEqual([0]); expect(archiveTimes).toEqual([]);
+      expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(catalogTimes).toEqual([0, 2000]); expect(archiveTimes).toEqual([]);
+      await vi.advanceTimersByTimeAsync(4000); await pending;
+      expect(catalogTimes).toEqual([0, 2000, 6000]); expect(archiveTimes).toEqual([6000]);
+      expect(JSON.parse(readFileSync(join(dir, 'registry-metadata.json'), 'utf8'))).toEqual(metadata);
+      expect(vi.getTimerCount()).toBe(0);
+      for (const [, options] of read.mock.calls) {expect(options).toMatchObject({redirect: 'error'}); expect(options?.method).toBeUndefined(); expect(options?.body).toBeUndefined();}
+    } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('uses the existing transient-read backoff for the install catalog without fetching the archive repeatedly', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); const metadata = versionMetadata();
+    vi.useFakeTimers(); const started = Date.now(); const catalogTimes: number[] = []; let archiveReads = 0;
+    const transient = [new Error('network unavailable'), 404, 429, 503];
+    const read = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith(`/${accepted.version}`)) return Response.json(metadata);
+      if (String(url) === metadata.dist.tarball) {archiveReads++; return new Response(bytes);}
+      catalogTimes.push(Date.now() - started); const next = transient.shift();
+      if (next instanceof Error) throw next;
+      return next ? new Response('', {status: next}) : Response.json(installCatalog(metadata));
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {}); vi.stubGlobal('fetch', read);
+    try {
+      const pending = reconcileRegistry(accepted, dir); await vi.runAllTimersAsync(); await pending;
+      expect(catalogTimes).toEqual([0, 2000, 6000, 11000, 16000]); expect(archiveReads).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {log.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it.each([
+    {name: '@other/phantom', versions: {}},
+    {name: accepted.name, versions: null},
+    {name: accepted.name, versions: []},
+    {name: accepted.name, versions: {[accepted.version]: null}},
+    installCatalog({...versionMetadata(), name: '@other/phantom'}),
+    installCatalog({...versionMetadata(), version: '3.26.0'}),
+    installCatalog({...versionMetadata(), dist: {...versionMetadata().dist, integrity: 'sha512-changed'}}),
+    installCatalog({...versionMetadata(), dist: {...versionMetadata().dist, tarball: 'https://attacker.example/package.tgz'}}),
+  ])('refuses malformed or substituted install catalog immediately: %j', async catalog => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); vi.useFakeTimers();
+    const read = vi.fn().mockResolvedValueOnce(Response.json(versionMetadata())).mockResolvedValueOnce(Response.json(catalog));
+    vi.stubGlobal('fetch', read);
+    try {
+      await expect(reconcileRegistry(accepted, dir)).rejects.toThrow();
+      expect(read).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+      expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false);
+    } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('keeps the same fifteen-minute deadline when only the install catalog is stale', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); const metadata = versionMetadata();
+    vi.useFakeTimers(); const started = Date.now(); const versionTimes: number[] = []; const catalogTimes: number[] = [];
+    const read = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith(`/${accepted.version}`)) {versionTimes.push(Date.now() - started); return Response.json(metadata);}
+      expect(url).toBe('https://registry.npmjs.org/@ashlr%2Fphantom'); catalogTimes.push(Date.now() - started);
+      return Response.json({name: accepted.name, versions: {}});
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {}); vi.stubGlobal('fetch', read);
+    try {
+      const rejected = expect(reconcileRegistry(accepted, dir)).rejects.toThrow('Public install catalog is still processing');
+      await vi.runAllTimersAsync(); await rejected;
+      expect(Date.now() - started).toBe(900_000);
+      const attempts = [0, 2000, 6000, ...Array.from({length: 178}, (_, index) => 11000 + index * 5000)];
+      expect(catalogTimes).toEqual(attempts); expect(versionTimes).toEqual([...attempts, 900_000]);
+      expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false); expect(vi.getTimerCount()).toBe(0);
+    } finally {log.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('refuses an exact catalog that arrives at the existing deadline without fetching an archive', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); vi.useFakeTimers(); const started = Date.now();
+    const read = vi.fn().mockResolvedValueOnce(Response.json(versionMetadata())).mockImplementationOnce(async () => {
+      vi.setSystemTime(started + 900_000); return Response.json(installCatalog());
+    });
+    vi.stubGlobal('fetch', read);
+    try {
+      await expect(reconcileRegistry(accepted, dir)).rejects.toThrow('Public install catalog is still processing');
+      expect(read).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+      expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false);
+    } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('caps the new catalog request by the remaining original deadline', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); vi.useFakeTimers(); const started = Date.now();
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const read = vi.fn().mockImplementationOnce(async () => {vi.setSystemTime(started + 899_990); return Response.json(versionMetadata());})
+      .mockResolvedValueOnce(Response.json(installCatalog())).mockResolvedValueOnce(new Response(bytes));
+    vi.stubGlobal('fetch', read);
+    try {
+      await reconcileRegistry(accepted, dir);
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([30_000, 10, 30_000]);
+      expect(read).toHaveBeenCalledTimes(3); expect(vi.getTimerCount()).toBe(0);
+    } finally {timeout.mockRestore(); vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('refuses malformed install-catalog JSON immediately', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); vi.useFakeTimers();
+    const read = vi.fn().mockResolvedValueOnce(Response.json(versionMetadata())).mockResolvedValueOnce(new Response('{', {status: 200}));
+    vi.stubGlobal('fetch', read);
+    try {
+      await expect(reconcileRegistry(accepted, dir)).rejects.toThrow();
+      expect(read).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+      expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false);
+    } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+  it('still refuses original archive substitution after matching catalog visibility', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'phantom-registry-catalog-')); vi.useFakeTimers();
+    const read = vi.fn().mockResolvedValueOnce(Response.json(versionMetadata()))
+      .mockResolvedValueOnce(Response.json(installCatalog())).mockResolvedValueOnce(new Response('substituted'));
+    vi.stubGlobal('fetch', read);
+    try {
+      await expect(reconcileRegistry(accepted, dir)).rejects.toThrow();
+      expect(read).toHaveBeenCalledTimes(3); expect(vi.getTimerCount()).toBe(0);
+      expect(existsSync(join(dir, 'registry-metadata.json'))).toBe(false);
+    } finally {vi.useRealTimers(); vi.unstubAllGlobals(); rmSync(dir, {recursive: true, force: true});}
+  });
+
   it('keeps the fifteen-minute registry deadline with capped waits and logs the final failure', async () => {
     vi.useFakeTimers();
     const started = Date.now();
