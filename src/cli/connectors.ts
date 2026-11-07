@@ -1,10 +1,11 @@
 import { ConnectorError, importClients, readProfile, updateProfile, validateProfile } from '../core/connectors/profile.js';
 
 import { runConnector } from '../core/connectors/run.js';
+import { buildToolMesh } from '../core/connectors/mesh.js';
 
 const USAGE = `phm connectors list|show <id>|remove <id> [--json]
-phm connectors add <id> --kind mcp-stdio|mcp-http|cli|plugin [--command <executable> | --url <https-url>] [--arg <argument>] [--scope <scope>] [--tool <tool>] [--lane <lane>] [--credential <binding=vault-name>] [--json]
-phm connectors import [--json]
+phm connectors add <id> --kind mcp-stdio|mcp-http|cli|plugin [--description <text>] [--command <executable> | --url <https-url>] [--arg <argument>] [--scope <scope>] [--tool <tool>] [--lane <lane>] [--credential <binding=vault-name>] [--json]
+phm connectors import|mesh [--json]
 phm connectors run <id> --scope <scope> --tool <tool> --lane <lane> [--json] -- <args>
 Run is denied pending Security review; credentials are Phantom Secrets names. See docs/CONNECTORS.md.`;
 
@@ -31,6 +32,10 @@ export async function cmdConnectors(args: string[]): Promise<number> {
       return 0;
     }
     if (separator >= 0) throw new ConnectorError('Argument separator is supported only for run.');
+    if (verb === 'mesh') {
+      if (a.length) throw new ConnectorError('Unexpected arguments. Run phm connectors --help.');
+      emit(await buildToolMesh()); return 0;
+    }
     if (verb === 'list' || verb === 'import') {
       if (a.length) throw new ConnectorError('Unexpected arguments. Run phm connectors --help.');
       if (verb === 'list') { emit(await readProfile()); return 0; }
@@ -51,7 +56,7 @@ export async function cmdConnectors(args: string[]): Promise<number> {
           const parts = value.split('=');
           if (parts.length !== 2) throw new ConnectorError('Use --credential binding=vault-name; never supply a credential value.');
           (data.credentials as unknown[]).push({ binding: parts[0], name: parts[1] });
-        } else if (['--kind', '--command', '--url'].includes(flag) && data[flag.slice(2)] === undefined) data[flag.slice(2)] = value;
+        } else if (['--kind', '--command', '--url', '--description'].includes(flag) && data[flag.slice(2)] === undefined) data[flag.slice(2)] = value;
         else throw new ConnectorError('Unknown or repeated option. Run phm connectors --help.');
       }
       const connector = validateProfile({ version: 1, connectors: [data] }).connectors[0]!;
