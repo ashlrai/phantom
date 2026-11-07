@@ -512,9 +512,21 @@ describe('Devin tracked exposure in the bar', () => {
     renderBar(<ResourcesBar expanded />);
     const devin = screen.getByRole('button', { name: /Devin tracked budget: 30 ACUs of 50 ACUs available, 18 ACUs held exposure/ });
     expect(within(devin).getByText('30 ACUs budget')).toBeInTheDocument();
+    expect(within(devin).getByText('4% of tracked budget used')).toBeInTheDocument();
     fireEvent.focus(devin);
     expect(screen.getByRole('tooltip')).toHaveTextContent('2 ACUs reported usage + adjustment · 18 ACUs held exposure');
     expect(devin.querySelector('[aria-hidden="true"][data-level] > [style]')).toHaveStyle({ '--fill': '60%' });
+  });
+
+  it('shows a fully used tracked budget as 100% used', () => {
+    vi.mocked(useCapacityData).mockReturnValue({ seats: [], health: null, budget: null, loading: false, refreshing: false, readFailed: false, rosterUnavailable: false, pendingSeatIds: [] });
+    vi.mocked(useQuery).mockImplementation(query => ({ data: query.key === 'verse-devin' ? { value: {
+      status: { enabled: true, connected: true },
+      budget: { acuBudgetTotal: 50, acuRemaining: 0, acuUsed: 50, acuInFlight: 0,
+        reportedAcuUsed: 50, unconfirmedAcuExposure: 0, paused: true, running: 0, sessionsToday: 1 },
+    } } : undefined } as never));
+    renderBar(<ResourcesBar expanded />);
+    expect(screen.getByText('100% of tracked budget used')).toBeInTheDocument();
   });
 
   it.each(['missing', 'unavailable'])('keeps %s local Devin capacity unknown without changing provider quota', accountingState => {

@@ -25,6 +25,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from '../components/layout/Shell.js';
 import { PlaceholderView } from '../routes/PlaceholderView.js';
 import { FleetDashboardView } from '../routes/fleet-dashboard/FleetDashboardView.js';
+import { ShowView } from '../routes/show/ShowView.js';
 import { JournalView } from '../routes/journal/JournalView.js';
 import { PulseView } from '../routes/intelligence/pulse/PulseView.js';
 import { GenomeView } from '../routes/intelligence/genome/GenomeView.js';
@@ -64,6 +65,7 @@ export function AppRoutes() {
         <Route path="/overview" element={<FleetDashboardView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
         <Route path="/universe" element={<UniverseView />} />
+        <Route path="/show" element={<ShowView />} />
         <Route path="/journal" element={<JournalView />} />
         <Route path="/intelligence/pulse" element={<PulseView />} />
         <Route path="/intelligence/genome" element={<GenomeView />} />

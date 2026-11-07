@@ -14,6 +14,7 @@ phm bus thread create 'Release review' --peer alice --json
 phm bus thread join THREAD --peer bob
 phm bus thread post THREAD 'Tests are ready for review' --peer alice
 phm bus thread read THREAD --peer bob
+phm bus thread pending THREAD --peer bob
 phm bus thread hops THREAD --peer bob
 phm bus thread list --peer alice
 
@@ -116,3 +117,10 @@ Labels are cooperative routing labels, not authenticated identities: a receipt
 records an assertion under a label, not proof that a particular person or agent
 read, understood, or acted on content. It grants no execution authority. Do not
 put secret values in messages. This local board does not contact remote peers.
+
+`thread pending` reads only deliveries addressed to the caller that have no
+explicit receipt. It is a repeatable polling view over the same durable board:
+polling never acknowledges a message, and an acknowledgement removes only that
+delivery from subsequent pending reads. Historical `thread read` is unchanged.
+The view and receipt check share one locked snapshot; labels remain cooperative
+and neither a pending read nor a receipt grants execution authority.
