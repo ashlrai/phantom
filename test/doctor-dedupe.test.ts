@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultConfig } from '../src/core/config.js';
 
 const probes = vi.hoisted(() => ({
@@ -32,6 +32,13 @@ vi.mock('../src/core/readiness.js', () => ({
 }));
 
 import { runDoctor } from '../src/core/doctor.js';
+
+// runDoctor imports its optional probe modules lazily, so the first call pays
+// a cold module-graph transform. Warm that graph outside the timed tests; the
+// call counts it leaves behind are cleared by beforeEach below.
+beforeAll(async () => {
+  await runDoctor(defaultConfig());
+}, 60_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
