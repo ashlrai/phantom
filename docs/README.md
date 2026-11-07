@@ -81,6 +81,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
+| Explore the proposed path from personal nodes to shared compute | [Node scale path](https://github.com/ashlrai/phantom/blob/master/docs/architecture/scale-path.md) |
 | See the skills learned from merged PRs | [Learned skills](https://github.com/ashlrai/phantom/blob/master/docs/SKILLS.md) |
 | Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
 | Understand macOS CLI launch holds and memory recovery thresholds | [Host headroom](https://github.com/ashlrai/phantom/blob/master/docs/HOST-HEADROOM.md) |
