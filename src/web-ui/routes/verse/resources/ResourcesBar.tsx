@@ -329,6 +329,10 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const devinUsage = devin ? devinUsageEvidence(devin.budget) : null;
   const devinAvailable = devinUsage?.free ?? (devin ? Math.max(0, devin.budget.acuRemaining - Math.max(0, devin.budget.acuInFlight)) : 0);
   const devinLeft = devinAccountingKnown && devin && devin.budget.acuBudgetTotal > 0 ? (devinAvailable / devin.budget.acuBudgetTotal) * 100 : null;
+  // Held exposure reduces available capacity but is not observed usage.
+  const devinReported = devinUsage?.reported ?? devin?.budget.acuUsed;
+  const devinUsed = devinAccountingKnown && devin && Number.isFinite(devinReported) && devinReported !== undefined && devin.budget.acuBudgetTotal > 0
+    ? Math.min(100, Math.max(0, devinReported / devin.budget.acuBudgetTotal * 100)) : null;
   const devinLevel: Level = !devinAccountingKnown ? 'unknown' : devin.budget.paused || devinAvailable <= 0 ? 'out' : (devinLeft ?? 0) < 20 ? 'low' : 'ok';
   // Admission is separate from tracked capacity and from provider quota readings.
   const devinNewChatPause = devin?.budget.canLaunch?.ok === false
@@ -549,6 +553,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
                   <Battery left={devinLeft} level={devinLevel} vertical={false} />
                   <span className={styles.value}>{devinAccountingKnown ? `${formatAcu(devinAvailable)} budget` : 'Capacity unknown'}</span>
                 </span>
+                {devinUsed !== null ? <span className={styles.line}><span className={styles.value}>{usedPercentText(devinUsed)} of tracked budget used</span></span> : null}
                 {devinNewChatPause ? <span className={styles.line}><span className={styles.value}>New chats paused</span></span> : null}
               </>
             ) : (
