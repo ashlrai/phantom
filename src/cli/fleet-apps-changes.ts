@@ -155,7 +155,9 @@ export async function observeFleetAppsChanges(
   let previous: State[] | undefined, samples = 0, transitions = 0, valid = false;
   while (!deps.signal?.aborted && !fileStopped && !fileError && remaining() > 0) {
     const budget = Math.max(1, Math.ceil(remaining()));
-    const result = await bounded(budget, signal => runChild!(['fleet', 'apps-status', ...(root === undefined ? [] : ['--root', root]), '--json'], { timeoutMs: budget, signal }));
+    const appArgs = selected.size < FLEET_APPS.length
+      ? FLEET_APPS.flatMap((app, i) => selected.has(i) ? ['--app', app] : []) : [];
+    const result = await bounded(budget, signal => runChild!(['fleet', 'apps-status', ...(root === undefined ? [] : ['--root', root]), '--json', ...appArgs], { timeoutMs: budget, signal }));
     if (deps.signal?.aborted || fileStopped || fileError) break;
     const parsed = result ? inventory(result.code, result.stdout, selected) : { states: FLEET_APPS.map((): State => 'unknown'), valid: false };
     valid ||= parsed.valid;
