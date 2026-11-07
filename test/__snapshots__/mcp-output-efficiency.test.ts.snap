@@ -65,6 +65,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phantom_fleet_doctor",
+      "safety": "read",
+    },
+    {
       "name": "phantom_fleet_apps_await",
       "safety": "read",
     },
@@ -664,6 +668,14 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_apps_status",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+    },
+    "name": "phantom_fleet_doctor",
   },
   {
     "inputSchema": {

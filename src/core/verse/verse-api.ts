@@ -466,6 +466,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'fleet-cos': async () => {
     try { return (await import('./fleet-cos-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'fleet-cos-api.js'); }
   },
+  'app-update': async () => {
+    try { return (await import('./app-update-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'app-update-api.js'); }
+  },
   'cos-memory': async () => {
     try { return (await import('./cos-memory-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'cos-memory-api.js'); }
   },
