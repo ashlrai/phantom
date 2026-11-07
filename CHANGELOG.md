@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.23 |
-| Latest dated changelog release (2026-11-07) | 3.30.23 |
+| Source package | 3.30.24 |
+| Latest dated changelog release (2026-11-07) | 3.30.24 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,9 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.24](https://github.com/ashlrai/phantom/compare/v3.30.23...v3.30.24) (2026-11-07)
+## [Unreleased]
+
+## [3.30.24] — 2026-11-07
 
 
 ### Changes
@@ -26,8 +28,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 * **RQ-SKIPREASONSQ8:** RQ-SKIPREASONSQ8 handoff ([#3857](https://github.com/ashlrai/phantom/issues/3857)) ([100d609](https://github.com/ashlrai/phantom/commit/100d6096bddf8f7ac2ae7fc9b63c3decea101ecf))
 * **RQ-STRANDEDQ8:** RQ-STRANDEDQ8 bridge notes ([#3860](https://github.com/ashlrai/phantom/issues/3860)) ([e4b744b](https://github.com/ashlrai/phantom/commit/e4b744b29d23af7253983728e7e3f0b2f6cfb0d2))
 * **RQ-TICKWALLQ8:** RQ-TICKWALLQ8 ([#3856](https://github.com/ashlrai/phantom/issues/3856)) ([4312fc4](https://github.com/ashlrai/phantom/commit/4312fc4cf2f56e65732c89015cedd154f406c68f))
-
-## [Unreleased]
 
 ## [3.30.23] — 2026-11-07
 
