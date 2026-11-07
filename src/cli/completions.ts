@@ -64,6 +64,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
+  // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
+  'pages',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -146,6 +148,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   completions: ['zsh', 'bash'],
   plugins: ['init', 'list', 'info', 'enable', 'disable'],
   skills: ['list', 'audit'],
+  pages: ['publish', 'list', '--json', '--help'],
   runtime: ['install', 'status', 'rollback', 'run'],
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
   'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model', 'missing-model-guard'],

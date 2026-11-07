@@ -60,6 +60,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_orders',
   'phantom_fleet_graph',
   'phantom_fleet_session',
+  'phantom_fleet_verbs',
 ] as const;
 
 function classifyNativeNames(names: readonly string[]): { old: string[]; added: string[]; unallocated: string[] } {
@@ -98,12 +99,12 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(54);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(55);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
     expect(classified.unallocated).toEqual([]);
-    expect(classifyNativeNames([...names, 'unallocated_55th_tool']).unallocated).toEqual(['unallocated_55th_tool']);
+    expect(classifyNativeNames([...names, 'unallocated_56th_tool']).unallocated).toEqual(['unallocated_56th_tool']);
 
     const addedNames = new Set<string>(ADDED_NATIVE_NAMES);
     const oldTools = tools.filter(tool => !addedNames.has(tool.name));
@@ -118,7 +119,7 @@ describe('native MCP tool inventory', () => {
     expect(doctorBytes).toBeLessThanOrEqual(250);
     const addedBytes = addedTools.filter(tool => tool !== doctor).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9195);
-    // 24,205 + 9,195 preserves only the historical headroom for all 53 tools.
+    // 24,205 + 9,195 preserves only the historical headroom for all 55 tools.
     expect(responseBytes(tools)).toBeLessThan(33400 + doctorBytes);
   });
 });

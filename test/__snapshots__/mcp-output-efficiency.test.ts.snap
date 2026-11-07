@@ -85,6 +85,10 @@ exports[`MCP CLI JSON inventory > keeps the inventory fields and native classifi
       "safety": "read",
     },
     {
+      "name": "phantom_fleet_verbs",
+      "safety": "read",
+    },
+    {
       "name": "phm_proactive_agents_list",
       "safety": "read",
     },
@@ -757,6 +761,19 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
       "type": "object",
     },
     "name": "phantom_fleet_session",
+  },
+  {
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "grep": {
+          "maxLength": 64,
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "phantom_fleet_verbs",
   },
   {
     "inputSchema": {
