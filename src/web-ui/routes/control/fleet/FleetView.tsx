@@ -1,3 +1,4 @@
+import { LiveFleetBoard } from './LiveFleetBoard.js';
 /**
  * routes/control/fleet/FleetView.tsx — queue depth, lease health, and the
  * kill switch (GET /api/fleet, GET /api/fleet-activity; POST
@@ -286,6 +287,8 @@ export function FleetView() {
           </section>
         </>
       )}
+
+      <LiveFleetBoard />
 
       <LanesPanel />
 
