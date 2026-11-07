@@ -599,7 +599,7 @@ focus.
 | Terminal | ⌃` (⌃⇧` new tab) | Your shells in the chat's folders, with command blocks, and a read-only Agent tab |
 | Browser | ⇧⌘B | A browser you and the chat's agents share |
 | Changes | ⇧⌘D | Every turn's checkpoint, a diff review, Accept / Reject, Undo and Redo |
-| Files | ⇧⌘O | The chat's folders, and the files it read or changed (a simple list for now) |
+| Files | ⇧⌘O | Browse the chat's folders and preview text files (bounded, behind the mutation token), plus the files it read or changed |
 | Sources | ⇧⌘S | Everything the chat's answers drew on, de-duplicated across the chat |
 | Reasoning | ⇧⌘Y | Every turn's reasoning in one scroll, with what the turn did |
 | Tasks, Context | — | Running tools and subagents; this chat's memory, roots and handoff |
@@ -1883,8 +1883,12 @@ clear it or remove a surviving lease merely to make a status look healthy.
   per-turn MCP grant; they
   act in the page only in the desktop app on macOS. See
   [VERSE-BROWSER.md](VERSE-BROWSER.md).
-- The Files pane is a simple list of folders and touched files, not a file
-  browser yet. Side chats and split sessions are not built yet.
+- The Files pane browses and previews the chat's own folders — one directory
+  listing at a time (256 entries max) and a 64 KiB UTF-8 text preview behind
+  the mutation token — but it is read-only: no editing, search inside files,
+  or images/binary previews. Listings are fetched on expand and can be stale
+  while the agent works; collapse and re-expand an errored directory to retry.
+  Side chats and split sessions are not built yet.
 - Past 40 turns the transcript renders far-away turns as placeholders, but a
   very long session still costs context — continue in a fresh chat when the
   handoff banner appears.
