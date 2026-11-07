@@ -8,7 +8,7 @@ vi.mock('../../../data/hooks.js', () => ({
 it('shows the four lists without inventing usage or merge counts', () => {
   render(<LiveStatusSection />);
   for (const name of ['Running', 'Merged (24h)', 'Blocked', 'Spent']) expect(screen.getByRole('heading', { name })).toBeTruthy();
-  expect(screen.getByText('Unknown')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Merged (24h)' }).nextElementSibling?.textContent).toBe('Unknown');
   expect(screen.getByText('claude-max: unknown · Reset unknown')).toBeTruthy();
   expect(screen.getByText('Running: 1 · Queued: 2 · Parked: unknown')).toBeTruthy();
   expect(screen.getByText('local: 1 busy / 2 slots')).toBeTruthy();
