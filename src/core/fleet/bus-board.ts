@@ -26,7 +26,8 @@ import { emit } from './event-bus.js';
 
 interface BoardThread { id: string; title: string; members: string[] }
 interface BoardTask { id: string; threadId: string; itemId: string; title: string; claim?: QueueClaimRef }
-interface BoardState { schemaVersion: 1; threads: BoardThread[]; tasks: BoardTask[]; deliveries: BusBoardDelivery[] }
+interface BoardReceipt { deliveryId: string; recipient: string; receivedAt: string }
+interface BoardState { schemaVersion: 1; threads: BoardThread[]; tasks: BoardTask[]; deliveries: BusBoardDelivery[]; receipts?: BoardReceipt[] }
 
 /** Public task projection: the capability token and owner key never leave the store. */
 export interface BusTaskView {
@@ -171,6 +172,18 @@ export class BusBoard {
       ) throw new Error('Invalid bus delivery');
       envelopes.add(delivery.id);
     }
+    if (state.receipts !== undefined) {
+      if (!Array.isArray(state.receipts) || state.receipts.length > MAX_RECORDS) throw new Error('Invalid bus receipt');
+      const acknowledged = new Set<string>();
+      const deliveries = new Map(state.deliveries.map((row) => [row.id, row]));
+      for (const receipt of state.receipts) {
+        const delivery = deliveries.get(receipt?.deliveryId);
+        if (!delivery || delivery.recipient !== receipt.recipient || acknowledged.has(receipt.deliveryId) ||
+          typeof receipt.receivedAt !== 'string' || !Number.isFinite(Date.parse(receipt.receivedAt)) ||
+          new Date(receipt.receivedAt).toISOString() !== receipt.receivedAt) throw new Error('Invalid bus receipt');
+        acknowledged.add(receipt.deliveryId);
+      }
+    }
     return state;
   }
 
@@ -187,7 +200,7 @@ export class BusBoard {
         const json = JSON.stringify(state);
         if (
           Buffer.byteLength(json) > MAX_BYTES ||
-          [state.threads, state.tasks, state.deliveries].some((rows) => rows.length > MAX_RECORDS)
+          [state.threads, state.tasks, state.deliveries, state.receipts ?? []].some((rows) => rows.length > MAX_RECORDS)
         ) throw new Error('Bus storage is full');
         const file = join(this.root, 'state.json');
         const pending = join(this.root, '.pending-state');
@@ -308,6 +321,32 @@ export class BusBoard {
           ...delivery,
           content: { trust: 'untrusted' as const, text: presentBusBoardText(delivery.content.text) },
         }));
+    });
+  }
+
+  /** Record explicit receipt; reading a thread alone never acknowledges it. */
+  acknowledge(actor: string, threadId: string, deliveryId: string): BoardReceipt {
+    actor = this.peer(actor); boardId(deliveryId);
+    return this.transaction(true, (state) => {
+      this.member(state, threadId, actor);
+      const delivery = state.deliveries.find((row) => row.id === deliveryId && row.threadId === threadId && row.recipient === actor);
+      if (!delivery) throw new Error('Bus delivery not found');
+      const receipts = state.receipts ??= [];
+      const existing = receipts.find((row) => row.deliveryId === deliveryId);
+      if (existing) return { ...existing };
+      const receipt = { deliveryId, recipient: actor, receivedAt: new Date().toISOString() };
+      receipts.push(receipt);
+      return { ...receipt };
+    });
+  }
+
+  /** Only the sender sees receipt metadata for its own deliveries. */
+  receipts(actor: string, threadId: string): BoardReceipt[] {
+    actor = this.peer(actor);
+    return this.transaction(false, (state) => {
+      this.member(state, threadId, actor);
+      const sent = new Set(state.deliveries.filter((row) => row.threadId === threadId && row.sender === actor).map((row) => row.id));
+      return (state.receipts ?? []).filter((row) => sent.has(row.deliveryId)).map((row) => ({ ...row }));
     });
   }
 

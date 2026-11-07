@@ -100,3 +100,19 @@ beginning with a letter or digit). `BusBoard` also accepts an injected peer
 allowlist for callers that want admission tied to an external registry; the
 CLI leaves admission open because every label is only a cooperative routing
 hint on a private store anyway.
+
+## Explicit delivery receipts
+
+A thread routes each post to the membership snapshot at posting time. After
+reading, a recipient may record `phm bus thread ack <thread-id> <delivery-id>
+--peer <recipient> --json`. Retrying returns the original receipt and timestamp.
+`phm bus thread receipts <thread-id> --peer <sender> --json` lists receipt
+metadata for that sender's deliveries; it contains no message body. Reading or
+posting does not acknowledge a delivery. Existing board state without receipts
+remains valid; malformed receipts make the board unavailable rather than being
+discarded. Receipt records share the board's bounded private local storage.
+
+Labels are cooperative routing labels, not authenticated identities: a receipt
+records an assertion under a label, not proof that a particular person or agent
+read, understood, or acted on content. It grants no execution authority. Do not
+put secret values in messages. This local board does not contact remote peers.
