@@ -18,6 +18,7 @@ const importRuns = () => import('./screens/RunsScreen.js');
 const importInbox = () => import('./screens/InboxScreen.js');
 const importDropJob = () => import('./screens/DropJobScreen.js');
 const importMore = () => import('./screens/MoreScreen.js');
+const importForum = () => import('./screens/ForumScreen.js');
 
 const AgentsScreen = lazy(() => importAgents().then((m) => ({ default: m.AgentsScreen })));
 const AgentDetailScreen = lazy(() => importAgentDetail().then((m) => ({ default: m.AgentDetailScreen })));
@@ -30,9 +31,10 @@ const RunsScreen = lazy(() => importRuns().then((m) => ({ default: m.RunsScreen 
 const InboxScreen = lazy(() => importInbox().then((m) => ({ default: m.InboxScreen })));
 const DropJobScreen = lazy(() => importDropJob().then((m) => ({ default: m.DropJobScreen })));
 const MoreScreen = lazy(() => importMore().then((m) => ({ default: m.MoreScreen })));
+const ForumScreen = lazy(() => importForum().then((m) => ({ default: m.ForumScreen })));
 
 /** Most-visited first: Needs you and Agents are what a phone is opened for. */
-const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importDropJob, importMore];
+const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importDropJob, importForum, importMore];
 
 /** Warm every screen chunk (the shell calls this once the phone is idle); failures are the mount's to report. */
 export function prefetchMobileScreens(): void {
@@ -61,6 +63,8 @@ export function ScreenHost({ route }: { route: Exclude<MobileRoute, { screen: 'h
       return <InboxScreen />;
     case 'drop-job':
       return <DropJobScreen />;
+    case 'forum':
+      return <ForumScreen />;
     case 'more':
       return <MoreScreen />;
   }

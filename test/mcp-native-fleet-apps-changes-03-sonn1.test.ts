@@ -27,7 +27,7 @@ describe('native fleet app changes', () => {
   it('shares selected transitions with the native call and never writes or mutates', async () => {
     let time = 0, i = 0;
     const runChild = vi.fn(async (args: string[]) => {
-      expect(args).toEqual(['fleet', 'apps-status', '--json']);
+      expect(args).toEqual(['fleet', 'apps-status', '--json', '--app', FLEET_APPS[0]]);
       return { code: 0, stdout: snapshot([true, false, true][Math.min(i++, 2)]!) };
     });
     const deps = { runChild, now: () => time, sleep: async (ms: number) => { time += ms; } };

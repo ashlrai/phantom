@@ -24,6 +24,13 @@ function emptyPayload(url: string): unknown {
   if (url.includes('/fleet/live/bus')) return { v: 1, hops: [], hopsDropped: 0, lastHopAt: null, events: [], sources: { hops: 'healthy', events: 'healthy' } };
   if (url.includes('/ops/leader-journal')) return { v: 1, generatedAt: '2026-01-01T00:00:00Z', sources: { planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' }, passes: [], ingest: [], ingested: [], rejectedLastHour: 0 };
   if (url.includes('/ops/releases')) return { v: 1, generatedAt: '2026-01-01T00:00:00Z', sourceState: 'healthy', repos: [] };
+  if (url.includes('/api/verse/activity')) return {
+    v: 1, cursor: '', generatedAt: '2026-01-01T00:00:00Z',
+    running: [], needsYou: [], completions: [],
+    counts: { running: 0, needsYou: 0, unread: 0 },
+    sources: { approvals: 'ok', authority: 'ok', fleet: 'ok', leader: 'ok', chats: 'ok', accounts: 'ok' },
+    autonomy: null, capacity: null, mind: null,
+  };
   return {};
 }
 function visibleText(container: HTMLElement): string {

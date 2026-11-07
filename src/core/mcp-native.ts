@@ -54,6 +54,7 @@ import { buildOversightSnapshot, type OversightSnapshot } from './fleet/oversigh
 import { readDecisions } from './fleet/decisions-ledger.js';
 import { DROP_JOB_LANES, DROP_JOB_TIERS, DropJobExistsError, DropJobValidationError, resolveDropJobRoot, writeDropJob } from './fleet/drop-job-writer.js';
 import { STRAY_ID_PATTERN } from './fleet/stray-slots.js';
+import { forumToolIsRead, handleForumTool } from './fleet/forum/mcp.js';
 import { listProposals } from './inbox/store.js';
 import { FLEET_APPS } from './fleet/app-await.js';
 import { TEAM_TOOL_SCHEMAS } from './teams/tools.js';
@@ -207,6 +208,19 @@ const TOOLS: NativeToolImpl[] = [
     }, required: ['id', 'from', 'to', 'priority', 'ttl', 'body'], additionalProperties: false },
     safety: 'append',
     handler: async args => (await import('./fleet/bus-inbox.js')).appendBusInbox(args),
+  },
+  {
+    name: 'phantom_forum',
+    description: 'Read or post on the fleet forum. op selects channels, read, post, commitments, sweep, standup, invite, bridge, or tick. Posts are authenticated data and are never executed as commands.',
+    inputSchema: { type: 'object', properties: {
+      op: { type: 'string', enum: ['channels', 'read', 'post', 'reply', 'commitments', 'sweep', 'standup', 'invite', 'bridge', 'tick'] },
+      channel: { type: 'string' }, thread: { type: 'string' }, author: { type: 'string' }, kind: { type: 'string' },
+      body: { type: 'string' }, parent: { type: 'string' }, title: { type: 'string' }, member: { type: 'string' },
+      adapter: { type: 'string' }, id: { type: 'string' }, clientId: { type: 'string' }, signature: { type: 'string' },
+      runsDir: { type: 'string' }, limit: { type: 'number' },
+    }, required: ['op'], additionalProperties: false },
+    safety: 'append',
+    handler: async (args) => handleForumTool(args),
   },
   {
     name: 'phantom_fleet_drop_job',
@@ -438,6 +452,23 @@ const TOOLS: NativeToolImpl[] = [
       target: (args.target as 'running' | 'stopped') ?? 'running',
       timeoutMs: (args.timeoutMs as number | undefined) ?? 30000,
       intervalMs: (args.intervalMs as number | undefined) ?? 1000,
+    }),
+  },
+  {
+    name: 'phantom_fleet_apps_watch',
+    description: 'Supervise an explicit group of local managed apps through sequential batches under a shared deadline.',
+    get inputSchema() { return { type: 'object', properties: {
+      apps: { type: 'array', items: { type: 'string', enum: [...FLEET_APPS] }, minItems: 1, maxItems: 8, uniqueItems: true },
+      durationMs: { type: 'integer', minimum: 1, maximum: 10000 },
+      intervalMs: { type: 'integer', minimum: 100, maximum: 10000 },
+      maxConsecutiveFailures: { type: 'integer', minimum: 1, maximum: 10 },
+    }, required: ['apps', 'durationMs'], additionalProperties: false }; },
+    safety: 'append',
+    handler: async args => (await import('../cli/fleet-apps-watch.js')).watchFleetApps({
+      apps: args.apps as string[],
+      durationMs: args.durationMs as number,
+      intervalMs: args.intervalMs as number | undefined,
+      maxConsecutiveFailures: args.maxConsecutiveFailures as number | undefined,
     }),
   },
   {
@@ -1547,6 +1578,16 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ('timeoutMs' in args && (!Number.isInteger(args.timeoutMs) || (args.timeoutMs as number) < 1 || (args.timeoutMs as number) > 30000)) ||
       ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 60000))
       ? 'invalid fleet apps await arguments' : null;
+  } else if (name === 'phantom_fleet_apps_watch') {
+    const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
+    const apps = args.apps;
+    invalid = !object || Object.keys(args).some(key => !['apps', 'durationMs', 'intervalMs', 'maxConsecutiveFailures'].includes(key)) ||
+      !Array.isArray(apps) || apps.length < 1 || apps.length > 8 || new Set(apps).size !== apps.length ||
+      apps.some(app => typeof app !== 'string' || !FLEET_APPS.some(allowed => allowed === app)) ||
+      !Number.isInteger(args.durationMs) || (args.durationMs as number) < 1 || (args.durationMs as number) > 10000 ||
+      ('intervalMs' in args && (!Number.isInteger(args.intervalMs) || (args.intervalMs as number) < 100 || (args.intervalMs as number) > 10000)) ||
+      ('maxConsecutiveFailures' in args && (!Number.isInteger(args.maxConsecutiveFailures) || (args.maxConsecutiveFailures as number) < 1 || (args.maxConsecutiveFailures as number) > 10))
+      ? 'invalid fleet apps watch arguments' : null;
   } else if (name === 'phantom_fleet_drop_job') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => !['id', 'lane', 'tier', 'body'].includes(key)) ||
@@ -1598,7 +1639,8 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
   }
 
   // ── Safety gate: KILL refuses all writes (CONTRACT-M31 invariant 2) ───────
-  if (tool.safety !== 'read' && killSwitchOn()) {
+  const forumRead = name === 'phantom_forum' && forumToolIsRead(args);
+  if (tool.safety !== 'read' && !forumRead && killSwitchOn()) {
     auditNativeCall(`${tool.name} keys=${argKeys} — refused: kill switch on`, 'refused');
     return textResult(
       `${tool.name} refused: the ashlr kill switch is engaged (~/.ashlr/KILL). ` +
@@ -1613,7 +1655,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     cfg = loadConfig();
   } catch (err) {
     auditNativeCall(`${tool.name} keys=${argKeys} — config load failed`, 'error');
-    if (fleetObservation || ['phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
+    if (fleetObservation || ['phantom_fleet_apps_ensure', 'phantom_fleet_apps_await', 'phantom_fleet_apps_watch', 'phantom_fleet_apps_follow', 'phantom_fleet_apps_recovery_check', 'phantom_fleet_apps_recovery_batch'].includes(name)) return textResult({ error: 'Fleet configuration unavailable' }, true);
     return textResult(
       `${tool.name} failed: could not load ~/.ashlr/config.json (${err instanceof Error ? err.message : String(err)})`,
       true,
@@ -1678,6 +1720,10 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
     if (name === 'phantom_fleet_apps_await') {
       auditNativeCall(`${tool.name} keys=${argKeys} — await unavailable`, 'error');
       return textResult({ error: 'Fleet app await unavailable' }, true);
+    }
+    if (name === 'phantom_fleet_apps_watch') {
+      auditNativeCall(`${tool.name} keys=${argKeys} — watch unavailable`, 'error');
+      return textResult({ error: 'Fleet app watch unavailable' }, true);
     }
     if (fleetObservation) {
       auditNativeCall(`${tool.name} keys=${argKeys} — observation unavailable`, 'error');

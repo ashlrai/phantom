@@ -228,3 +228,48 @@ export function handleVerseEventsSse(
     cleanup();
   }
 }
+
+/** File-backed Mission invalidations share the session stream lifecycle and cap.
+ * Full snapshots stay on the existing read API. Reconnect always invalidates.
+ */
+export async function handleMissionStream(
+  req: IncomingMessage, res: ServerResponse,
+  session: { id: string; expiresAt: number }, roots: string[],
+): Promise<void> {
+  if (!Number.isFinite(session.expiresAt) || session.expiresAt <= Date.now()) {
+    sendJson(res, 401, { error: 'A current read session is required.' }); return;
+  }
+  if (sseConnectionCapReached()) { sendJson(res, 503, { error: 'too many live connections' }); return; }
+  const { watch } = await import('node:fs');
+  const watchers: import('node:fs').FSWatcher[] = [];
+  let ended = false;
+  let pending: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = () => {
+    if (ended) return;
+    ended = true;
+    watchers.forEach((watcher) => watcher.close());
+    clearTimeout(pending); clearTimeout(expiry); clearInterval(keepalive);
+    deregisterSse(id);
+    res.end();
+  };
+  const signal = () => {
+    if (ended || pending) return;
+    pending = setTimeout(() => {
+      pending = undefined;
+      if (!ended && !res.write('event: mission\ndata: {}\n\n')) cleanup();
+    }, 150);
+  };
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-store', 'X-Content-Type-Options': 'nosniff' });
+  const id = registerSse(cleanup, session.id);
+  const expiry = setTimeout(cleanup, Math.max(0, session.expiresAt - Date.now()));
+  const keepalive = setInterval(() => { if (!res.write(': keepalive\n\n')) cleanup(); }, VERSE_SSE_KEEPALIVE_MS);
+  req.on('close', cleanup); res.on('error', cleanup);
+  for (const root of roots) {
+    try {
+      const watcher = watch(root, { recursive: true }, signal);
+      watcher.on('error', cleanup);
+      watchers.push(watcher);
+    } catch { /* Missing sources stay unknown; a reconnect retries attachment. */ }
+  }
+  signal();
+}

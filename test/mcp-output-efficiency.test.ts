@@ -44,6 +44,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_agent_bus_read',
   'phantom_agent_bus_status',
   'phantom_agent_bus_post',
+  'phantom_forum',
   'phantom_fleet_drop_job',
   'phantom_fleet_job_reassign',
   'phantom_fleet_planner_run',
@@ -56,6 +57,7 @@ const ADDED_NATIVE_NAMES = [
   'phantom_fleet_apps_changes',
   'phantom_fleet_apps_status',
   'phantom_fleet_apps_await',
+  'phantom_fleet_apps_watch',
   'phantom_fleet_orders',
   'phantom_fleet_graph',
   'phantom_fleet_session',
@@ -97,7 +99,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(53);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(55);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -110,12 +112,12 @@ describe('native MCP tool inventory', () => {
     // The historical 35-tool response measured 23,547 bytes; retain its strict
     // pre-audit 24,205-byte ceiling and its 658 bytes of measured headroom.
     expect(responseBytes(oldTools)).toBeLessThan(24205);
-    // The 18 legitimate additions measured 9,177 object bytes plus 18 commas.
-    // Their fixed 9,195-byte allowance has no unmeasured growth headroom.
+    // The 20 legitimate additions measured 10,633 object bytes plus 20 commas.
+    // Their fixed 10,653-byte allowance has no unmeasured growth headroom.
     const addedBytes = addedTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
-    expect(addedBytes).toBeLessThanOrEqual(9195);
-    // 24,205 + 9,195 preserves only the historical headroom for all 53 tools.
-    expect(responseBytes(tools)).toBeLessThan(33400);
+    expect(addedBytes).toBeLessThanOrEqual(10653);
+    // 24,205 + 10,653 preserves only the historical headroom for all 55 tools.
+    expect(responseBytes(tools)).toBeLessThan(34858);
   });
 });
 
