@@ -36,6 +36,7 @@ export type * from './types/learning.js';
 export type * from './types/observability.js';
 export type * from './types/oversight.js';
 export type * from './types/portfolio.js';
+export type * from './types/estates.js';
 export type * from './types/projects.js';
 export type * from './types/proposals.js';
 export type * from './types/providers.js';
