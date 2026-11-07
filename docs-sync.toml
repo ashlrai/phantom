@@ -1,0 +1,11 @@
+version = 1
+name = "phantom"
+docsDir = "docs"
+agentsFile = "AGENTS.md"
+llmsFile = "docs/llms.txt"
+llmsFullFile = "docs/llms-full.txt"
+hostedDir = "site/docs"
+registry = "phantom"
+llmsReferenceFile = "docs/llms-reference.txt"
+cliName = "phm"
+siteOrigin = "https://verse.ashlr.ai"

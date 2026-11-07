@@ -35,6 +35,7 @@ const steps: SelfTickSteps = {
   'inbox-acks': stub('inbox-acks'),
   'order-notices': stub('order-notices'),
   'landed-sweep': stub('landed-sweep'),
+  'cos-work': stub('cos-work'),
 };
 
 const run = async (args: string[]) => {

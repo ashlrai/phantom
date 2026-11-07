@@ -809,7 +809,8 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import precheck as shared_precheck, park_key, parked, park
+from launch_precheck import (precheck as shared_precheck, attempt_identity, empty_reason, read_attempts,
+                             park_key, parked, park)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
 if not isinstance(park_state, dict): park_state = {}
@@ -1016,6 +1017,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
     cand.sort(key=lambda f: _job_priority(f[0], f[1], f[4], f[4]))
     seen = set(); pc_n = 0; local_ok = None
+    empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
         try:
@@ -1098,6 +1100,16 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
+        if repo not in base_identities:
+            base_identities[repo] = attempt_identity(repo, "", H, _run)
+        identity = dict(base_identities[repo])
+        if identity:
+            import hashlib
+            identity['prompt_hash'] = hashlib.sha256(rd(pf).encode()).hexdigest()
+        reason = empty_reason(j, identity, empty_attempts, NOW)
+        if reason:
+            metric(dict(identity, event="skipped_empty", job=j, lane=lane, reason=reason))
+            ev("SKIPPED_EMPTY %s %s" % (j, reason)); continue
         batch = form_batch(f)
         if batch:   # the batch session runs each member's own checks, so the per-job precheck is skipped
             picked, lane, size = batch; area = picked[0]["area"]
@@ -1139,7 +1151,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             except FileNotFoundError: pass
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
-        metric({"event": "claim", "job": j, "repo": repo, "lane": lane, "tier": tier})
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane == "codex-local"
                       else ["/bin/bash", R + "/bin/launch.sh"])

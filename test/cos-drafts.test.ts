@@ -103,6 +103,7 @@ describe('email outbox routing', () => {
   const run = (calls: EmailOutboxMessage[], draftsRunsDir?: string) => sendEmailOutbox({
     dir: outboxDir, allowedRecipients: new Set([mason]), draftsRunsDir,
     transport: async (m) => { calls.push(m); return { ok: true }; },
+    policyCheck: () => ({ decision: 'allow', reason: 'test-allow' }),   // transport path; the pending-review stub stays production default
   });
 
   it('sends Mason directly and drafts everyone else without sending', async () => {

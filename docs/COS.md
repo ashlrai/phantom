@@ -34,10 +34,12 @@ Other ways in:
 ## Worker
 
 ```sh
-phm fleet cos-work [--json]
+phm fleet cos-work [--apply] [--runs-dir <abs>] [--json]
 ```
 
-One bounded pass; call it once per tick, it never loops. It claims the oldest
+Dry run by default: it counts the READY `cos-*` jobs without claiming or
+spawning. With `--apply` it runs one bounded pass; call it once per tick, it
+never loops. It claims the oldest
 READY `cos-*` job whose dependencies are done and runs one headless model turn
 on the declared planner slate (10 minute timeout, output capped at 64 KB, draft
 at 16,000 characters, secrets scrubbed). The request is passed as untrusted data.
@@ -52,6 +54,11 @@ at 16,000 characters, secrets scrubbed). The request is passed as untrusted data
 
 Exit 0 for idle, paused and drafted, 1 for blocked, 2 for bad usage. A drafted or
 blocked pass posts one best-effort bus notice.
+
+`ashlr fleet cos-loop --duration-ms 3600000 --json` repeats the worker pass
+for a bounded window — a host timer (for example launchd) or an agent can
+start it once and queued tasks get drafted without a person; the loop only
+drafts, and sending still needs digest approval.
 
 Stored memory (doctrine, then preferences, then facts, up to 4000 characters)
 is added to the prompt. See `phm memory`. Memory never authorizes an action.

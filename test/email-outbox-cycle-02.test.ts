@@ -20,6 +20,8 @@ vi.mock('../src/core/comms/email-outbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/core/comms/email-outbox.js')>();
   return {
     ...actual,
+    sendEmailOutbox: (opts: Parameters<typeof actual.sendEmailOutbox>[0]) =>
+      actual.sendEmailOutbox({ ...opts, policyCheck: () => ({ decision: 'allow', reason: 'test-allow' }) }),
     macMailTransport: () => {
       mock.built += 1;
       return async (message: EmailOutboxMessage) => {

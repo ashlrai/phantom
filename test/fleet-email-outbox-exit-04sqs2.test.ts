@@ -31,7 +31,7 @@ function reply(name: string, to = recipient, dir = outboxDir): void {
 }
 
 async function run(transport: EmailTransport, send = true): Promise<{ code: number; result: Record<string, unknown> }> {
-  const code = await cmdFleetEmailOutbox(send ? ['--send', '--json'] : ['--json'], { runsDir, transport });
+  const code = await cmdFleetEmailOutbox(send ? ['--send', '--json'] : ['--json'], { runsDir, transport, policyCheck: () => ({ decision: 'allow', reason: 'test-allow' }) });
   expect(output.join('\n')).not.toContain(body);
   return { code, result: JSON.parse(output[0]!) as Record<string, unknown> };
 }

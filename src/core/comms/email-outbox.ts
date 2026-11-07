@@ -47,6 +47,9 @@ const SENDING_DIR = 'sending';
 const SENT_DIR = 'sent';
 const DRAFTED_DIR = 'drafted';
 const MAIL_TIMEOUT_MS = 30_000;
+export interface EmailSendPolicyVerdict { decision: 'allow' | 'draft' | 'deny'; reason: string }
+/** Main-PR stub: no dependency on the separately reviewed send-policy module. */
+const pendingPolicyReview = (): EmailSendPolicyVerdict => ({ decision: 'draft', reason: 'agent-profile-policy-review-required' });
 const ADDRESS = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/g;
 
 export interface EmailOutboxMessage {
@@ -86,6 +89,14 @@ export interface EmailOutboxSendOptions {
   transport: EmailTransport;
   /** Runs dir holding `drafts/`; when set, non-allowlisted single recipients become drafts. */
   draftsRunsDir?: string;
+  /**
+   * RQ-AGENTPROFILE-1: per-reply send policy. Production callers leave it
+   * unset — the pending-review stub fails closed (every sendable reply is
+   * refused) until the separately reviewed policy integration binds a pinned
+   * profile and trusted recipient identity. Tests inject an allow verdict to
+   * exercise the transport path.
+   */
+  policyCheck?: (reply: EmailOutboxMessage) => EmailSendPolicyVerdict;
   /** Clock seam for tests; stamps `at` on sent details. */
   now?: () => Date;
 }
@@ -267,6 +278,13 @@ export async function sendEmailOutbox(opts: EmailOutboxSendOptions): Promise<Ema
         to: reply.to ?? undefined,
         reason: reply.toCount > 1 ? 'multiple-recipients' : reply.to === null ? 'no-recipient' : 'recipient-not-allowed',
       });
+      continue;
+    }
+    // RQ-AGENTPROFILE-1: fail closed until the separately reviewed policy
+    // integration binds a pinned profile and trusted recipient identity.
+    const policy = (opts.policyCheck ?? pendingPolicyReview)({ to: reply.to!, subject: reply.subject, body: reply.body });
+    if (policy.decision !== 'allow') {
+      record(entry.name, 'refused', { to: reply.to ?? undefined, reason: policy.reason });
       continue;
     }
     const claim = join(sending, entry.name);

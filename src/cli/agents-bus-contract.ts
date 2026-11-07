@@ -1,13 +1,20 @@
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
 
 import { CHANNEL_IDS } from '../core/agents/channel-policy.js';
+import { cmdAgents } from './agents.js';
 
 const HELP = `ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--json]
+ashlr agents list [--json]
+ashlr agents show <id> [--json]
+ashlr agents validate <id> [--json]
+ashlr agents versions <id> [--json]
 
 Print the Agent Bus v2 contract version, providers, body kinds, work statuses and
-claim key forms. Read-only: no network, no store access. Spec: docs/AGENT-BUS.md ("v2").`;
+claim key forms. Read-only: no network, no store access. Spec: docs/AGENT-BUS.md ("v2").
+The list/show/validate/versions verbs read portable agent profiles
+(docs/AGENT-PROFILES.md); profiles grant no transport or spending authority.`;
 
 /** Agent Bus inspection commands never touch the bus or network. */
 export async function runAgentsCli(
@@ -18,6 +25,7 @@ export async function runAgentsCli(
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
   const json = args.includes('--json');
   const rest = args.filter((a) => a !== '--json');
+  if (rest[0] !== 'bus') return cmdAgents(args, out, err);
   if (args.length - rest.length <= 1 && rest[0] === 'bus' && rest[1] === 'channels') {
     if (rest.length === 3 && rest[2] === 'list') {
       const result = { dryRun: true, channels: CHANNEL_IDS.map((id) => ({ id, adapterRegistered: false })) };
