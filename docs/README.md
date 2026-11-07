@@ -60,6 +60,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
+| Evaluate learned routing and adaptive compute allocation offline | [Routing RL and test-time compute research](https://github.com/ashlrai/phantom/blob/master/docs/research/routing-rl-ttc.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
 | Install Phantom locally, connect agents over MCP, upgrade and uninstall | [Self-hosting](SELF-HOSTING.md) |
