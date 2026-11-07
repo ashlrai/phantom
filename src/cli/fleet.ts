@@ -1,3 +1,4 @@
+import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 /**
  * `ashlr fleet` — M49 fleet control plane + observability CLI.
  *
@@ -113,6 +114,7 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
     const memory = s.memory;
     lines.push(`Memory: PAUSE ${memory.pause.state}${memory.pause.reason ? ` (${memory.pause.reason})` : ''}`);
@@ -2597,6 +2599,10 @@ export async function cmdFleet(args: string[]): Promise<number> {
       const { cmdFleetGrokUsage } = await import('./fleet-grok-usage.js');
       return cmdFleetGrokUsage(rest);
     }
+    case 'usage': {
+      const { cmdFleetUsage } = await import('./fleet-usage.js');
+      return cmdFleetUsage(rest);
+    }
     case 'status':
       // This baseline's status handler already produces the legacy control-plane
       // report; accept the explicit selector used by activation-readiness callers.
@@ -2704,6 +2710,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet status [--json] [--legacy] ${cyan('# read-only fleet snapshot')}`);
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
+  console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);
