@@ -232,12 +232,12 @@ function readMirrorRepo(repoId: string): {
     const ci = readJsonFile('ci.json');
 
     return {
-      openPrs: Array.isArray(prs) ? prs.filter((p: any) => !p.merged && !p.closed).length : null,
+      openPrs: Array.isArray(prs) ? prs.filter((p: { merged?: unknown; closed?: unknown }) => !p.merged && !p.closed).length : null,
       openSecurityAdvisories: Array.isArray(advisories) ? advisories.length : null,
-      lastReleaseAt: releases ? (releases as any[])[0]?.published_at ?? null : null,
-      lastCommitAt: commits ? (commits as any[])[0]?.date ?? null : null,
-      ciGreenRate: typeof (ci as any)?.rate === 'number' ? (ci as any).rate : null,
-      ciGreenRateWindow: (ci as any)?.window ?? '30d' as '30d',
+      lastReleaseAt: releases ? (releases as Array<{ published_at?: string }>)[0]?.published_at ?? null : null,
+      lastCommitAt: commits ? (commits as Array<{ date?: string }>)[0]?.date ?? null : null,
+      ciGreenRate: typeof (ci as { rate?: unknown } | null)?.rate === 'number' ? (ci as { rate: number }).rate : null,
+      ciGreenRateWindow: (ci as { window?: string } | null)?.window ?? '30d',
     };
   } catch {
     return {
@@ -285,7 +285,7 @@ export function buildSLO(repoId: string): EstateSLO {
     lastCommitDaysAgo: daysSince(mirror.lastCommitAt),
     openPrCount: mirror.openPrs,
     oldestOpenPrDays: mirror.openPrs !== null && mirror.openPrs > 0
-      ? daysSince((mirror as any)._oldestPrDate ?? null) ?? mirror.openPrs * 3
+      ? daysSince((mirror as typeof mirror & { _oldestPrDate?: string | null })._oldestPrDate ?? null) ?? mirror.openPrs * 3
       : null,
     securitySeverity: severityForAdvisories(mirror.openSecurityAdvisories),
     openSecurityAdvisories: mirror.openSecurityAdvisories,

@@ -16,6 +16,7 @@
  */
 
 import { buildEstateReport, buildEstateCardReport } from '../core/estates.js';
+import type { EstateCard } from '../core/types/estates.js';
 
 const HELP = `Usage: phm estates [--json] [--repo <repo-id>]
 
@@ -28,7 +29,7 @@ Examples:
   phm estates --json
   phm estates --repo phantom --json`;
 
-function formatTableRow(c: { id: string; name: string; agent: string; tier: string; slo: any }): string {
+function formatTableRow(c: Pick<EstateCard, 'id' | 'name' | 'agent' | 'tier' | 'slo'>): string {
   const label = `${c.name} [${c.id}]`.padEnd(50);
   const s = c.slo;
   const ciVal = s.ciGreenRate;
@@ -42,7 +43,7 @@ function formatTableRow(c: { id: string; name: string; agent: string; tier: stri
   return `${label}${ci}${relAgeStr}${prsStr}${sec}${grade}`;
 }
 
-function formatTable(cards: Array<{ id: string; name: string; agent: string; tier: string; slo: any }>): string {
+function formatTable(cards: Array<Pick<EstateCard, 'id' | 'name' | 'agent' | 'tier' | 'slo'>>): string {
   const header = 'Estate Cards'.padEnd(50) + 'CI    Release  PRs  Security  Health';
   const divider = '-'.repeat(50) + '------- -------- ----- --------- ------';
   const rows = cards.map(formatTableRow);
