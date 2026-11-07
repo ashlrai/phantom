@@ -16,6 +16,25 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.25](https://github.com/ashlrai/phantom/compare/v3.30.24...v3.30.25) (2026-11-07)
+
+
+### Changes
+
+* RQ-AGENTNET-SLACK-1 ([#3865](https://github.com/ashlrai/phantom/issues/3865)) ([b4c10d7](https://github.com/ashlrai/phantom/commit/b4c10d72201d6ced2f2ca4c790f8956f4147092b))
+* **RQ-DRAIN-PH-001:** RQ-DRAIN-PH-001 ([#3876](https://github.com/ashlrai/phantom/issues/3876)) ([04a98b9](https://github.com/ashlrai/phantom/commit/04a98b91794e4f893bbe5ae9fae37e5c6693c9bf))
+* **RQ-DRAIN-PH-002:** RQ-DRAIN-PH-002 ([#3873](https://github.com/ashlrai/phantom/issues/3873)) ([07e7329](https://github.com/ashlrai/phantom/commit/07e73299580c951ee757d72220f3e11fbcbafacb))
+* **RQ-DRAIN-PH-015:** RQ-DRAIN-PH-015 bridge notes ([#3883](https://github.com/ashlrai/phantom/issues/3883)) ([d77a9e1](https://github.com/ashlrai/phantom/commit/d77a9e10fb42c5c7b5d2382550a2d3ee4fbcc8f0))
+* **RQ-DRAIN-PH-018:** RQ-DRAIN-PH-018 ([#3885](https://github.com/ashlrai/phantom/issues/3885)) ([ec03acf](https://github.com/ashlrai/phantom/commit/ec03acf5fa0c28a762873d813ffe30e6d59405c3))
+* **RQ-EMPTYWHYQ8:** RQ-EMPTYWHYQ8 ([#3863](https://github.com/ashlrai/phantom/issues/3863)) ([d824ce7](https://github.com/ashlrai/phantom/commit/d824ce7647d97f81dbd96dff07cfdbe6e174d949))
+* RQ-PHX-PRESSURELAUNCHE2E03 ([#3867](https://github.com/ashlrai/phantom/issues/3867)) ([7306473](https://github.com/ashlrai/phantom/commit/73064737347b9edb5e5c65f2aa26f9ff811e3b48))
+* **RQ-SWE-API-STATUS-1:** Bridge notes ([#3870](https://github.com/ashlrai/phantom/issues/3870)) ([154e014](https://github.com/ashlrai/phantom/commit/154e014d6089d381e14d2b731e996cd48145b008))
+* **RQ-SWE-CODEMAP-1:** Bridge notes ([#3872](https://github.com/ashlrai/phantom/issues/3872)) ([56aeeff](https://github.com/ashlrai/phantom/commit/56aeefffa8675b00475b6cc7cbd88f033587458d))
+* **RQ-SWE-NOTIFY-1:** Notification surface handoff ([#3871](https://github.com/ashlrai/phantom/issues/3871)) ([bb9e4c1](https://github.com/ashlrai/phantom/commit/bb9e4c1919f1c2b3a9880c6b1bad2f813168cb9f))
+* **RQ-TSCWARMQ8:** RQ-TSCWARMQ8 bridge notes ([#3862](https://github.com/ashlrai/phantom/issues/3862)) ([fcb6144](https://github.com/ashlrai/phantom/commit/fcb61448c32ab28255c46f6db938a4d2581d9e48))
+* **RQ-WTDEPSQ8:** RQ-WTDEPSQ8 bridge notes ([#3864](https://github.com/ashlrai/phantom/issues/3864)) ([a82c20a](https://github.com/ashlrai/phantom/commit/a82c20a777587e59c9562f4881377f666d8a28d0))
+* **RQ-WTHEALQ8:** RQ-WTHEALQ8 bridge notes ([#3869](https://github.com/ashlrai/phantom/issues/3869)) ([6778b16](https://github.com/ashlrai/phantom/commit/6778b16f0ec524bfe9f6e273b5ecc156bfcb1c0a))
+
 ## [Unreleased]
 
 ## [3.30.24] — 2026-11-07
